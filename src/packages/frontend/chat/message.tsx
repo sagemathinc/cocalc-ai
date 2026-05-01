@@ -1995,6 +1995,61 @@ export default function Message({
     );
   }
 
+  function renderCodexSectionChrome({
+    label,
+    accentColor,
+    background,
+    borderColor,
+    action,
+    children,
+  }: {
+    label: string;
+    accentColor: string;
+    background: string;
+    borderColor: string;
+    action?: ReactNode;
+    children: ReactNode;
+  }) {
+    return (
+      <div
+        style={{
+          marginTop: 10,
+          padding: "10px 12px 12px 12px",
+          borderRadius: 12,
+          background,
+          border: `1px solid ${borderColor}`,
+        }}
+      >
+        <div
+          style={{
+            marginBottom: 10,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          }}
+        >
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: `${Math.max((font_size ?? 14) - 2, 11)}px`,
+              fontWeight: 600,
+              letterSpacing: "0.03em",
+              textTransform: "uppercase",
+              color: accentColor,
+            }}
+          >
+            {label}
+          </span>
+          {action}
+        </div>
+        {children}
+      </div>
+    );
+  }
+
   function renderInterleavedCodexBody({
     blocks,
     message_class,
@@ -2002,6 +2057,7 @@ export default function Message({
     openCommitFromMessage,
     showHeader = false,
     onHideActivity,
+    showQuotaHelp = true,
   }: {
     blocks: Array<{
       kind: "agent" | "guidance";
@@ -2014,44 +2070,14 @@ export default function Message({
     openCommitFromMessage: (e: any) => void;
     showHeader?: boolean;
     onHideActivity?: () => void;
+    showQuotaHelp?: boolean;
   }) {
     const combinedAgentText = blocks
       .filter((block) => block.kind === "agent")
       .map((block) => block.text)
       .join("\n\n");
-    return (
+    const body = (
       <div onClickCapture={openCommitFromMessage}>
-        {showHeader ? (
-          <div
-            style={{
-              marginBottom: 8,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
-              color: COLORS.GRAY_M,
-              fontSize: `${Math.max((font_size ?? 14) - 2, 11)}px`,
-            }}
-          >
-            <span>
-              <Icon name="list" /> Agent activity
-            </span>
-            {onHideActivity ? (
-              <Button
-                size="small"
-                type="text"
-                style={{ color: COLORS.GRAY_M }}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onHideActivity();
-                }}
-              >
-                Hide activity
-              </Button>
-            ) : null}
-          </div>
-        ) : null}
         <div
           style={{
             display: "flex",
@@ -2103,9 +2129,35 @@ export default function Message({
             ),
           )}
         </div>
-        <CodexQuotaHelp message={combinedAgentText} projectId={project_id} />
+        {showQuotaHelp ? (
+          <CodexQuotaHelp message={combinedAgentText} projectId={project_id} />
+        ) : null}
       </div>
     );
+    if (!showHeader) {
+      return body;
+    }
+    return renderCodexSectionChrome({
+      label: "Agent activity",
+      accentColor: COLORS.GRAY_D,
+      background: COLORS.GRAY_LLL,
+      borderColor: COLORS.GRAY_LL,
+      action: onHideActivity ? (
+        <Button
+          size="small"
+          type="text"
+          style={{ color: COLORS.GRAY_M }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onHideActivity();
+          }}
+        >
+          Hide activity
+        </Button>
+      ) : undefined,
+      children: body,
+    });
   }
 
   function renderMessageBody({ message_class }) {
@@ -2127,6 +2179,11 @@ export default function Message({
     const shouldRenderInterleavedCodexActivityBody =
       Array.isArray(activityBlocksToRender) &&
       activityBlocksToRender.length > 0;
+    const shouldRenderCompletedFinalResponse =
+      inlineCodexActivityMode === "completed" &&
+      shouldRenderInterleavedCodexActivityBody &&
+      !suppressPlaceholderBody &&
+      value.trim().length > 0;
     const openCommitFromMessage = (e: any) => {
       const target = e.target as HTMLElement | null;
       const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
@@ -2220,22 +2277,59 @@ export default function Message({
             </span>
           </div>
         ) : null}
-        {shouldRenderInterleavedCodexActivityBody ? (
-          renderInterleavedCodexBody({
-            blocks: activityBlocksToRender,
-            message_class,
-            inlineCodeLinks: Array.isArray(inlineCodeLinks)
-              ? inlineCodeLinks
-              : undefined,
-            openCommitFromMessage,
-            showHeader: inlineCodexActivityMode === "completed",
-            onHideActivity:
-              inlineCodexActivityMode === "completed" &&
-              onExpandedCodexActivityChange
-                ? () => onExpandedCodexActivityChange(false)
+        {shouldRenderInterleavedCodexActivityBody
+          ? renderInterleavedCodexBody({
+              blocks: activityBlocksToRender,
+              message_class,
+              inlineCodeLinks: Array.isArray(inlineCodeLinks)
+                ? inlineCodeLinks
                 : undefined,
+              openCommitFromMessage,
+              showHeader: inlineCodexActivityMode === "completed",
+              showQuotaHelp: !shouldRenderCompletedFinalResponse,
+              onHideActivity:
+                inlineCodexActivityMode === "completed" &&
+                onExpandedCodexActivityChange
+                  ? () => onExpandedCodexActivityChange(false)
+                  : undefined,
+            })
+          : null}
+        {shouldRenderCompletedFinalResponse ? (
+          renderCodexSectionChrome({
+            label: "Final response",
+            accentColor: COLORS.BLUE_DD,
+            background: COLORS.BLUE_LLLL,
+            borderColor: COLORS.BLUE_LLL,
+            children: (
+              <div onClickCapture={openCommitFromMessage}>
+                {messageBodyMode === "select" ? (
+                  renderSelectableMarkdownBody({
+                    value,
+                    message_class,
+                    style: MARKDOWN_STYLE,
+                  })
+                ) : (
+                  <StaticMarkdown
+                    style={MARKDOWN_STYLE}
+                    value={value}
+                    className={message_class}
+                    editorTheme={editorTheme}
+                    highlightQuery={searchHighlight}
+                    inlineCodeLinks={
+                      Array.isArray(inlineCodeLinks)
+                        ? inlineCodeLinks
+                        : undefined
+                    }
+                    inlineCodeProjectRoot={activityBasePath}
+                  />
+                )}
+                <CodexQuotaHelp message={value} projectId={project_id} />
+              </div>
+            ),
           })
-        ) : !suppressPlaceholderBody && value.trim().length > 0 ? (
+        ) : !shouldRenderInterleavedCodexActivityBody &&
+          !suppressPlaceholderBody &&
+          value.trim().length > 0 ? (
           <div onClickCapture={openCommitFromMessage}>
             {messageBodyMode === "select" ? (
               renderSelectableMarkdownBody({
