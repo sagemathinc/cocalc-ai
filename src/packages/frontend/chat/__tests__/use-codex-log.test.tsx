@@ -42,7 +42,7 @@ const { webapp_client } = require("@cocalc/frontend/webapp-client");
 const {
   resetSharedProjectDStreamCacheForTests,
 } = require("@cocalc/frontend/conat/project-dstream");
-const { useCodexLog } = require("../use-codex-log");
+const { useCodexLog, useCodexLiveActivityStatus } = require("../use-codex-log");
 
 class FakeSubscription {
   private closed = false;
@@ -204,6 +204,27 @@ function StatusComponent({
   return <div data-testid="live-status">{liveStatus}</div>;
 }
 
+function ActivityStatusComponent({
+  logSubject = "subject-1",
+  liveLogStream,
+}: {
+  logSubject?: string;
+  liveLogStream?: string;
+}) {
+  const { lastActivityAtMs, liveStatus } = useCodexLiveActivityStatus({
+    enabled: true,
+    projectId: "project-1",
+    logSubject,
+    liveLogStream,
+  });
+  return (
+    <>
+      <div data-testid="activity-last-time">{`${lastActivityAtMs ?? ""}`}</div>
+      <div data-testid="activity-live-status">{liveStatus}</div>
+    </>
+  );
+}
+
 describe("useCodexLog", () => {
   const reconnectRegisterMock = (webapp_client.conat_client as any)
     .registerReconnectResource as jest.Mock;
@@ -316,7 +337,7 @@ describe("useCodexLog", () => {
     expect(screen.getByTestId("latest-event").textContent).toBe("");
 
     await act(async () => {
-      await jest.advanceTimersByTimeAsync(550);
+      await jest.advanceTimersByTimeAsync(1050);
     });
 
     await waitFor(() => {
@@ -357,7 +378,7 @@ describe("useCodexLog", () => {
 
     await act(async () => {
       await Promise.resolve();
-      await jest.advanceTimersByTimeAsync(550);
+      await jest.advanceTimersByTimeAsync(1050);
     });
 
     await waitFor(() => {
@@ -422,7 +443,7 @@ describe("useCodexLog", () => {
 
     await act(async () => {
       await Promise.resolve();
-      await jest.advanceTimersByTimeAsync(550);
+      await jest.advanceTimersByTimeAsync(1050);
     });
 
     await waitFor(() => {
@@ -485,7 +506,7 @@ describe("useCodexLog", () => {
 
     await act(async () => {
       await Promise.resolve();
-      await jest.advanceTimersByTimeAsync(550);
+      await jest.advanceTimersByTimeAsync(1050);
     });
 
     await waitFor(() => {
@@ -534,7 +555,7 @@ describe("useCodexLog", () => {
 
     await act(async () => {
       await Promise.resolve();
-      await jest.advanceTimersByTimeAsync(550);
+      await jest.advanceTimersByTimeAsync(1050);
     });
 
     await waitFor(() => {
@@ -578,7 +599,7 @@ describe("useCodexLog", () => {
 
     await act(async () => {
       await Promise.resolve();
-      await jest.advanceTimersByTimeAsync(550);
+      await jest.advanceTimersByTimeAsync(1050);
     });
 
     await waitFor(() => {
@@ -722,6 +743,55 @@ describe("useCodexLog", () => {
     });
     expect(reconnectResource.requestReconnect).toHaveBeenCalledWith({
       reason: "codex_log_stream_not_ready",
+    });
+  });
+
+  it("tracks live activity time without materializing the full log", async () => {
+    jest.useFakeTimers();
+    const stream = new FakeDstream([
+      {
+        type: "event",
+        seq: 1,
+        time: 10,
+        event: { type: "message", text: "Hello" },
+      },
+    ]);
+    dstreamMock.mockResolvedValue(stream);
+    conatMock.mockReturnValue({
+      subscribe: jest.fn(),
+      sync: {
+        akv: () => ({ get: jest.fn().mockResolvedValue(null) }),
+      },
+    });
+
+    render(
+      <ActivityStatusComponent liveLogStream="live-stream-activity-status" />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("activity-live-status").textContent).toBe(
+        "connected",
+      );
+      expect(screen.getByTestId("activity-last-time").textContent).toBe("10");
+    });
+
+    act(() => {
+      stream.push({
+        type: "event",
+        seq: 2,
+        time: 20,
+        event: { type: "message", text: " world" },
+      });
+    });
+
+    expect(screen.getByTestId("activity-last-time").textContent).toBe("10");
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1050);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("activity-last-time").textContent).toBe("20");
     });
   });
 

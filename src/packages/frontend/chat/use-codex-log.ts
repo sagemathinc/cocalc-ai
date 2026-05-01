@@ -16,7 +16,8 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 // batch land, so mid-turn openings still see early events. If the backend
 // cadence changes, update this constant too.
 const LOG_PERSIST_THROTTLE_MS = 250;
-const LIVE_LOG_FLUSH_MS = 500;
+const LIVE_LOG_FLUSH_MS = 1000;
+const LIVE_ACTIVITY_STATUS_FLUSH_MS = 1000;
 const RECENT_LOG_CACHE_SIZE = 5;
 
 const recentLogCache = new LRUCache<string, any[]>({
@@ -40,6 +41,18 @@ export interface CodexLogResult {
   liveStatus: CodexLiveLogStatus;
   loadState: CodexPersistedLogLoadState;
   loadError?: string;
+}
+
+export interface CodexLiveActivityStatusOptions {
+  projectId?: string;
+  logSubject?: string | null;
+  liveLogStream?: string | null;
+  enabled?: boolean;
+}
+
+export interface CodexLiveActivityStatusResult {
+  lastActivityAtMs?: number;
+  liveStatus: CodexLiveLogStatus;
 }
 
 export type CodexLiveLogStatus =
@@ -116,6 +129,20 @@ function normalizeLiveStreamPayload(
   payload: AcpStreamMessage | AcpStreamMessage[] | null | undefined,
 ): AcpStreamMessage[] {
   return normalizeIncomingLogPayload(payload).map(normalizeLiveStreamEvent);
+}
+
+function getLatestEventTimeFromEvents(
+  events: Array<{ time?: number } | null | undefined>,
+): number | undefined {
+  let latest: number | undefined;
+  for (const evt of events) {
+    const time = getEventTime(evt);
+    if (time == null) continue;
+    if (latest == null || time > latest) {
+      latest = time;
+    }
+  }
+  return latest;
 }
 
 function isDStreamLiveConnected(stream: DStream<any>): boolean {
@@ -727,4 +754,336 @@ export function useCodexLog({
   };
 
   return { events, hasLogRef, deleteLog, liveStatus, loadState, loadError };
+}
+
+export function useCodexLiveActivityStatus({
+  projectId,
+  logSubject,
+  liveLogStream,
+  enabled = true,
+}: CodexLiveActivityStatusOptions): CodexLiveActivityStatusResult {
+  const [lastActivityAtMs, setLastActivityAtMs] = useState<number>();
+  const [liveStatus, setLiveStatus] = useState<CodexLiveLogStatus>("idle");
+  const [liveReconnectToken, setLiveReconnectToken] = useState(0);
+  const mountedRef = useRef<boolean>(true);
+  const liveConnectedRef = useRef<boolean>(false);
+  const liveStreamRef = useRef<DStream<
+    AcpStreamMessage | AcpStreamMessage[]
+  > | null>(null);
+  const reconnectResourceRef = useRef<RegisteredReconnectResource | null>(null);
+  const latestPendingActivityAtMsRef = useRef<number | undefined>(undefined);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasLiveSource = Boolean(projectId && (liveLogStream || logSubject));
+  const canReconnectLive = enabled === true && hasLiveSource;
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const setLiveConnectionState = useCallback(
+    (connected: boolean, status: CodexLiveLogStatus) => {
+      liveConnectedRef.current = connected;
+      if (mountedRef.current) {
+        setLiveStatus(status);
+      }
+    },
+    [],
+  );
+
+  const flushPendingActivity = useCallback(() => {
+    if (flushTimerRef.current != null) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    const latest = latestPendingActivityAtMsRef.current;
+    latestPendingActivityAtMsRef.current = undefined;
+    if (latest == null || !mountedRef.current) return;
+    setLastActivityAtMs((prev) => {
+      if (prev == null || latest > prev) return latest;
+      return prev;
+    });
+  }, []);
+
+  const schedulePendingActivityFlush = useCallback(
+    (immediate: boolean = false) => {
+      if (immediate) {
+        flushPendingActivity();
+        return;
+      }
+      if (flushTimerRef.current != null) return;
+      flushTimerRef.current = setTimeout(
+        flushPendingActivity,
+        LIVE_ACTIVITY_STATUS_FLUSH_MS,
+      );
+    },
+    [flushPendingActivity],
+  );
+
+  const recordLiveActivity = useCallback(
+    (
+      payload: AcpStreamMessage | AcpStreamMessage[] | null | undefined,
+      immediate: boolean = false,
+    ) => {
+      const latest = getLatestEventTimeFromEvents(
+        normalizeLiveStreamPayload(payload),
+      );
+      if (latest == null) return;
+      latestPendingActivityAtMsRef.current =
+        latestPendingActivityAtMsRef.current == null
+          ? latest
+          : Math.max(latestPendingActivityAtMsRef.current, latest);
+      schedulePendingActivityFlush(immediate);
+    },
+    [schedulePendingActivityFlush],
+  );
+
+  useEffect(() => {
+    setLastActivityAtMs(undefined);
+    latestPendingActivityAtMsRef.current = undefined;
+    if (flushTimerRef.current != null) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+  }, [enabled, projectId, logSubject, liveLogStream]);
+
+  const waitForLiveReconnect = useCallback(async () => {
+    if (!canReconnectLive) {
+      return;
+    }
+    const started = Date.now();
+    while (mountedRef.current && canReconnectLive) {
+      if (liveConnectedRef.current) {
+        return;
+      }
+      if (Date.now() - started > 30_000) {
+        setLiveConnectionState(false, "error");
+        throw Error("timed out waiting for codex activity reconnect");
+      }
+      await delay(100);
+    }
+  }, [canReconnectLive, setLiveConnectionState]);
+
+  useEffect(() => {
+    if (!canReconnectLive) {
+      reconnectResourceRef.current?.close();
+      reconnectResourceRef.current = null;
+      setLiveConnectionState(false, "idle");
+      return;
+    }
+    reconnectResourceRef.current?.close();
+    reconnectResourceRef.current =
+      webapp_client.conat_client.registerReconnectResource({
+        canReconnect: () => canReconnectLive,
+        isConnected: () => liveConnectedRef.current,
+        priority: () => "foreground",
+        reconnect: async () => {
+          setLiveConnectionState(false, "reconnecting");
+          if (!mountedRef.current) {
+            return;
+          }
+          const liveStream = liveStreamRef.current;
+          if (liveStream != null && !isDStreamLiveConnected(liveStream)) {
+            try {
+              await liveStream.recoverNow({
+                priority: "foreground",
+                reason: "codex_activity_reconnect",
+              });
+            } catch (err) {
+              console.warn("codex activity stream recovery failed", err);
+            }
+          }
+          if (liveConnectedRef.current) {
+            return;
+          }
+          setLiveReconnectToken((n) => n + 1);
+          await waitForLiveReconnect();
+        },
+      });
+    return () => {
+      reconnectResourceRef.current?.close();
+      reconnectResourceRef.current = null;
+    };
+  }, [canReconnectLive, setLiveConnectionState, waitForLiveReconnect]);
+
+  useEffect(() => {
+    if (!canReconnectLive) {
+      setLiveConnectionState(false, "idle");
+      return;
+    }
+    const handleDisconnected = () => {
+      setLiveConnectionState(false, "reconnecting");
+      reconnectResourceRef.current?.requestReconnect({
+        reason: "codex_activity_disconnected",
+      });
+    };
+    webapp_client.conat_client.on("disconnected", handleDisconnected);
+    return () => {
+      webapp_client.conat_client.off("disconnected", handleDisconnected);
+    };
+  }, [canReconnectLive, setLiveConnectionState]);
+
+  useEffect(() => {
+    let sub: any;
+    let liveStream: DStream<AcpStreamMessage | AcpStreamMessage[]> | undefined;
+    let releaseLiveStream: SharedProjectDStreamRelease | undefined;
+    let liveStreamListener:
+      | ((event: AcpStreamMessage | AcpStreamMessage[], seq?: number) => void)
+      | undefined;
+    let liveStreamDisconnected: (() => void) | undefined;
+    let liveStreamRecovered: (() => void) | undefined;
+    let stopped = false;
+
+    async function subscribe() {
+      if (!enabled || !projectId) {
+        setLiveConnectionState(false, "idle");
+        return;
+      }
+      if (!liveLogStream && !logSubject) {
+        setLiveConnectionState(false, "idle");
+        return;
+      }
+      setLiveConnectionState(false, "connecting");
+      try {
+        if (liveLogStream) {
+          const lease = await acquireSharedProjectDStream<AcpStreamMessage>({
+            project_id: projectId,
+            name: liveLogStream,
+            ephemeral: true,
+            maxListeners: 50,
+          });
+          liveStream = lease.stream;
+          liveStreamRef.current = liveStream;
+          releaseLiveStream = lease.release;
+          if (stopped) {
+            await releaseLiveStream({ immediate: true });
+            return;
+          }
+          const streamConnected = isDStreamLiveConnected(liveStream);
+          setLiveConnectionState(
+            streamConnected,
+            streamConnected ? "connected" : "reconnecting",
+          );
+          if (!streamConnected) {
+            reconnectResourceRef.current?.requestReconnect({
+              reason: "codex_activity_stream_not_ready",
+            });
+          }
+          liveStreamDisconnected = () => {
+            if (stopped) return;
+            setLiveConnectionState(false, "reconnecting");
+            reconnectResourceRef.current?.requestReconnect({
+              reason: "codex_activity_stream_disconnected",
+            });
+          };
+          liveStreamRecovered = () => {
+            if (stopped) return;
+            setLiveConnectionState(true, "connected");
+          };
+          liveStream.on("disconnected", liveStreamDisconnected);
+          liveStream.on("recovering", liveStreamDisconnected);
+          liveStream.on("paused", liveStreamDisconnected);
+          liveStream.on("recovered", liveStreamRecovered);
+          liveStream.setMaxListeners(
+            Math.max(liveStream.getMaxListeners(), 50),
+          );
+          liveStreamListener = (
+            payload: AcpStreamMessage | AcpStreamMessage[],
+          ) => {
+            if (stopped) return;
+            recordLiveActivity(payload);
+          };
+          liveStream.on("change", liveStreamListener);
+          const initial = liveStream
+            .getAll()
+            .flatMap((payload) => normalizeLiveStreamPayload(payload as any));
+          if (!stopped && initial.length > 0) {
+            const latest = getLatestEventTimeFromEvents(initial);
+            if (latest != null) {
+              setLastActivityAtMs(latest);
+            }
+          }
+          return;
+        }
+        const cn = await webapp_client.conat_client.projectConat({
+          project_id: projectId,
+          caller: "useCodexLiveActivityStatus.subscribe",
+        });
+        sub = await cn.subscribe(logSubject!);
+        setLiveConnectionState(true, "connected");
+        for await (const mesg of sub) {
+          if (stopped) break;
+          recordLiveActivity(mesg?.data);
+        }
+        if (!stopped) {
+          setLiveConnectionState(false, "reconnecting");
+          reconnectResourceRef.current?.requestReconnect({
+            reason: "codex_activity_subscription_closed",
+          });
+        }
+      } catch (err) {
+        setLiveConnectionState(false, "reconnecting");
+        try {
+          if (liveStream && liveStreamListener) {
+            liveStream.off("change", liveStreamListener);
+          }
+        } catch {
+          // ignore
+        }
+        void releaseLiveStream?.({ immediate: true });
+        console.warn("live activity subscribe failed", err);
+        if (!stopped) {
+          reconnectResourceRef.current?.requestReconnect({
+            reason: "codex_activity_subscribe_failed",
+          });
+        }
+      }
+    }
+
+    void subscribe();
+    return () => {
+      stopped = true;
+      liveConnectedRef.current = false;
+      if (liveStreamRef.current === liveStream) {
+        liveStreamRef.current = null;
+      }
+      if (flushTimerRef.current != null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      latestPendingActivityAtMsRef.current = undefined;
+      try {
+        sub?.close?.();
+      } catch {
+        // ignore
+      }
+      try {
+        if (liveStream && liveStreamListener) {
+          liveStream.off("change", liveStreamListener);
+        }
+        if (liveStream && liveStreamDisconnected) {
+          liveStream.off("disconnected", liveStreamDisconnected);
+          liveStream.off("recovering", liveStreamDisconnected);
+          liveStream.off("paused", liveStreamDisconnected);
+        }
+        if (liveStream && liveStreamRecovered) {
+          liveStream.off("recovered", liveStreamRecovered);
+        }
+      } catch {
+        // ignore
+      }
+      void releaseLiveStream?.();
+    };
+  }, [
+    enabled,
+    liveReconnectToken,
+    liveLogStream,
+    logSubject,
+    projectId,
+    recordLiveActivity,
+    setLiveConnectionState,
+  ]);
+
+  return { lastActivityAtMs, liveStatus };
 }
