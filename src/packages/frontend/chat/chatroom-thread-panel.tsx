@@ -71,7 +71,7 @@ import {
   shouldOpenThreadSearchShortcut,
 } from "./chatroom-thread-panel-shortcuts";
 import { resolveAgentSessionIdForThread } from "./thread-session";
-import { useCodexLog } from "./use-codex-log";
+import { useCodexLiveActivityStatus } from "./use-codex-log";
 import {
   AutomationConfigFields,
   buildAutomationDraft,
@@ -237,19 +237,6 @@ function getAcpStartedAtMs(message: any): number | undefined {
   if (typeof value === "string") {
     const parsed = Number(value);
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  }
-  return undefined;
-}
-
-function getLatestCodexActivityAtMs(
-  events: any[] | null | undefined,
-): number | undefined {
-  if (!Array.isArray(events)) return undefined;
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const time = (events[i] as any)?.time;
-    if (typeof time === "number" && Number.isFinite(time)) {
-      return time;
-    }
   }
   return undefined;
 }
@@ -491,19 +478,12 @@ export function ChatRoomThreadPanel({
       selectedRunningFallbackLogRefs.liveStream,
     [selectedRunningCodexMessage, selectedRunningFallbackLogRefs.liveStream],
   );
-  const selectedRunningCodexLog = useCodexLog({
+  const selectedRunningCodexActivity = useCodexLiveActivityStatus({
     projectId: project_id,
-    logStore: selectedRunningLogStore,
-    logKey: selectedRunningLogKey,
     logSubject: selectedRunningLogSubject,
     liveLogStream: selectedRunningLiveLogStream,
-    generating: selectedRunningCodexMessage != null,
     enabled: selectedRunningCodexMessage != null,
   });
-  const selectedRunningLastActivityAtMs = useMemo(
-    () => getLatestCodexActivityAtMs(selectedRunningCodexLog.events),
-    [selectedRunningCodexLog.events],
-  );
   const selectedRunningSessionIdForInterrupt = useMemo(() => {
     if (!selectedThreadId) return undefined;
     const resolved = resolveAgentSessionIdForThread({
@@ -1531,7 +1511,6 @@ export function ChatRoomThreadPanel({
               show={true}
               generating={true}
               durationLabel=""
-              lastActivityAtMs={selectedRunningLastActivityAtMs}
               startedAtMs={selectedRunningAcpStartedAtMs}
               fontSize={fontSize}
               project_id={project_id}
@@ -1555,9 +1534,8 @@ export function ChatRoomThreadPanel({
                 project_id,
                 path,
               }}
-              logEvents={selectedRunningCodexLog.events}
-              deleteLog={selectedRunningCodexLog.deleteLog}
-              activityLiveStatus={selectedRunningCodexLog.liveStatus}
+              activityLiveStatus={selectedRunningCodexActivity.liveStatus}
+              lastActivityAtMs={selectedRunningCodexActivity.lastActivityAtMs}
               notifyOnTurnFinish={notifyOnTurnFinish}
               onNotifyOnTurnFinishChange={onNotifyOnTurnFinishChange}
               interruptRequested={interruptRequested}
