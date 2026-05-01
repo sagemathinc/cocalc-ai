@@ -3,6 +3,7 @@ import {
   Button,
   Card,
   Popconfirm,
+  Select,
   Space,
   Table,
   Tag,
@@ -50,6 +51,8 @@ type VersionRow = HostSoftwareAvailableVersion & {
   source: "configured" | "hub";
   running_hosts: number;
 };
+
+type ClusterDefaultCandidate = VersionRow;
 
 function artifactLabel(artifact: HostSoftwareArtifact): string {
   switch (artifact) {
@@ -169,6 +172,71 @@ function buildGlobalDefaultMap(
   return map;
 }
 
+function sourceLabel(source: VersionRow["source"]): string {
+  return source === "configured" ? "Configured catalog" : "Hub /software";
+}
+
+function compareVersionRows(a: VersionRow, b: VersionRow): number {
+  const aTs = a.built_at ? Date.parse(a.built_at) : 0;
+  const bTs = b.built_at ? Date.parse(b.built_at) : 0;
+  if (aTs !== bTs) return bTs - aTs;
+  return (b.version ?? "").localeCompare(a.version ?? "");
+}
+
+function buildClusterDefaultCandidates(
+  rows: VersionRow[],
+): Map<HostSoftwareArtifact, ClusterDefaultCandidate[]> {
+  const deduped = new Map<
+    HostSoftwareArtifact,
+    Map<string, ClusterDefaultCandidate>
+  >();
+  for (const row of rows) {
+    if (!row.version) continue;
+    let artifactRows = deduped.get(row.artifact);
+    if (!artifactRows) {
+      artifactRows = new Map();
+      deduped.set(row.artifact, artifactRows);
+    }
+    const existing = artifactRows.get(row.version);
+    if (
+      !existing ||
+      (existing.source === "hub" && row.source === "configured")
+    ) {
+      artifactRows.set(row.version, row);
+    }
+  }
+  return new Map(
+    Array.from(deduped.entries()).map(([artifact, versions]) => [
+      artifact,
+      Array.from(versions.values()).sort(compareVersionRows),
+    ]),
+  );
+}
+
+function defaultSelectionForArtifact({
+  artifact,
+  candidates,
+  globalDefaultMap,
+}: {
+  artifact: HostSoftwareArtifact;
+  candidates: Map<HostSoftwareArtifact, ClusterDefaultCandidate[]>;
+  globalDefaultMap: Map<HostRuntimeArtifact, HostRuntimeDeploymentRecord>;
+}): string | undefined {
+  const rows = candidates.get(artifact) ?? [];
+  if (!rows.length) return undefined;
+  const current = globalDefaultMap.get(toRuntimeArtifact(artifact));
+  const currentMatch = rows.find(
+    (row) => row.version === current?.desired_version,
+  );
+  return currentMatch?.key ?? rows[0].key;
+}
+
+const CLUSTER_DEFAULT_ARTIFACTS: HostSoftwareArtifact[] = [
+  "project-host",
+  "project",
+  "tools",
+];
+
 export const HostRuntimeVersionsPanel: React.FC<
   HostRuntimeVersionsPanelProps
 > = ({
@@ -195,6 +263,38 @@ export const HostRuntimeVersionsPanel: React.FC<
     () => buildGlobalDefaultMap(globalDeployments),
     [globalDeployments],
   );
+  const clusterDefaultCandidates = React.useMemo(
+    () => buildClusterDefaultCandidates(rows),
+    [rows],
+  );
+  const [selectedClusterDefaultKeys, setSelectedClusterDefaultKeys] =
+    React.useState<Partial<Record<HostSoftwareArtifact, string>>>({});
+
+  React.useEffect(() => {
+    setSelectedClusterDefaultKeys((current) => {
+      let changed = false;
+      const next: Partial<Record<HostSoftwareArtifact, string>> = {
+        ...current,
+      };
+      for (const artifact of CLUSTER_DEFAULT_ARTIFACTS) {
+        const rows = clusterDefaultCandidates.get(artifact) ?? [];
+        const existing = current[artifact];
+        if (existing && rows.some((row) => row.key === existing)) {
+          continue;
+        }
+        const fallback = defaultSelectionForArtifact({
+          artifact,
+          candidates: clusterDefaultCandidates,
+          globalDefaultMap,
+        });
+        if (next[artifact] !== fallback) {
+          next[artifact] = fallback;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [clusterDefaultCandidates, globalDefaultMap]);
 
   const columns: ColumnsType<VersionRow> = React.useMemo(
     () => [
@@ -293,7 +393,7 @@ export const HostRuntimeVersionsPanel: React.FC<
           return (
             <Popconfirm
               title={`Set ${artifactLabel(row.artifact)} cluster default?`}
-              description={`Promote ${row.version} from ${row.source === "configured" ? "configured catalog" : "hub /software"} and queue automatic reconcile on running hosts.`}
+              description={`Promote ${row.version} from ${sourceLabel(row.source)} and queue automatic reconcile on running hosts that follow the cluster default.`}
               okText="Set default"
               onConfirm={() =>
                 onSetClusterDefault({
@@ -307,7 +407,7 @@ export const HostRuntimeVersionsPanel: React.FC<
                 size="small"
                 loading={settingClusterDefaultKey === actionKey}
               >
-                Set cluster default
+                Use this version
               </Button>
             </Popconfirm>
           );
@@ -421,28 +521,123 @@ export const HostRuntimeVersionsPanel: React.FC<
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Published runtime versions across the configured catalog and the local
           hub software feed, annotated with how many running hosts are currently
-          on each version. Use Set cluster default to promote a version for the
-          fleet and for future hosts. For project-host, that promotes the
-          artifact version only; it does not automatically restart conat-router,
-          conat-persist, or acp-worker.
+          on each version. Cluster defaults are explicit version selections for
+          the fleet and for future hosts. You can move a cluster default forward
+          or backward to any available version shown here. For project-host,
+          that promotes the artifact version only; it does not automatically
+          restart conat-router, conat-persist, or acp-worker.
           {hubSourceLabel ? ` Hub source: ${hubSourceLabel}.` : ""}
         </Typography.Paragraph>
         <Alert
           type="info"
           showIcon
-          message="This is not a Kubernetes-style deployment table."
+          message="Cluster default is an explicit version, not an automatic newest-wins rule."
           description={
             <Space direction="vertical" size={4}>
               <Typography.Text>
-                Promoting a project-host cluster default changes the desired
-                artifact version. Use <strong>Align fleet stack</strong> only
-                when you intentionally want all running hosts to restart
-                project-host, conat-router, conat-persist, and acp-worker onto
-                that exact project-host build.
+                Use the selectors below or the per-row actions to choose the
+                exact cluster default version for each artifact, including
+                rolling back from a newer build to an older tested one.
+              </Typography.Text>
+              <Typography.Text>
+                Use <strong>Align fleet stack</strong> only when you
+                intentionally want all running hosts to restart project-host,
+                conat-router, conat-persist, and acp-worker onto that exact
+                project-host build.
               </Typography.Text>
             </Space>
           }
         />
+        <Card size="small" title="Cluster Defaults">
+          <Space direction="vertical" size={12} style={{ width: "100%" }}>
+            {CLUSTER_DEFAULT_ARTIFACTS.map((artifact) => {
+              const current = globalDefaultMap.get(toRuntimeArtifact(artifact));
+              const rows = clusterDefaultCandidates.get(artifact) ?? [];
+              const selectedKey = selectedClusterDefaultKeys[artifact];
+              const selected = rows.find((row) => row.key === selectedKey);
+              const actionKey =
+                selected && selected.version
+                  ? `${toRuntimeArtifact(artifact)}:${selected.version}`
+                  : undefined;
+              return (
+                <Space
+                  key={artifact}
+                  align="start"
+                  size={12}
+                  style={{ width: "100%", justifyContent: "space-between" }}
+                >
+                  <Space
+                    direction="vertical"
+                    size={4}
+                    style={{ minWidth: 180 }}
+                  >
+                    <Typography.Text strong>
+                      {artifactLabel(artifact)}
+                    </Typography.Text>
+                    {current?.desired_version ? (
+                      <Typography.Text type="secondary">
+                        Current default: <code>{current.desired_version}</code>
+                        {" · "}since <TimeAgo date={current.updated_at} />
+                      </Typography.Text>
+                    ) : (
+                      <Typography.Text type="secondary">
+                        No cluster default recorded yet.
+                      </Typography.Text>
+                    )}
+                  </Space>
+                  <Space
+                    size={8}
+                    style={{ flex: 1, justifyContent: "flex-end" }}
+                  >
+                    <Select
+                      style={{ minWidth: 360 }}
+                      placeholder={`Select ${artifactLabel(artifact).toLowerCase()} version`}
+                      value={selectedKey}
+                      onChange={(value) =>
+                        setSelectedClusterDefaultKeys((current) => ({
+                          ...current,
+                          [artifact]: value,
+                        }))
+                      }
+                      options={rows.map((row) => ({
+                        value: row.key,
+                        label: `${row.version} · ${sourceLabel(row.source)}`,
+                      }))}
+                    />
+                    <Popconfirm
+                      title={`Set ${artifactLabel(artifact)} cluster default?`}
+                      description={
+                        selected?.version
+                          ? `Promote ${selected.version} from ${sourceLabel(selected.source)} and queue automatic reconcile on running hosts that follow the cluster default.`
+                          : "Select a version first."
+                      }
+                      okText="Set default"
+                      disabled={!selected?.version || !onSetClusterDefault}
+                      onConfirm={() => {
+                        if (!selected?.version || !onSetClusterDefault) return;
+                        return onSetClusterDefault({
+                          artifact,
+                          desired_version: selected.version,
+                          source: selected.source,
+                        });
+                      }}
+                    >
+                      <Button
+                        type="primary"
+                        disabled={!selected?.version || !onSetClusterDefault}
+                        loading={
+                          !!actionKey && settingClusterDefaultKey === actionKey
+                        }
+                      >
+                        Set cluster default
+                      </Button>
+                    </Popconfirm>
+                  </Space>
+                </Space>
+              );
+            })}
+          </Space>
+        </Card>
         <Table<VersionRow>
           size="small"
           rowKey="key"

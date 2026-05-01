@@ -649,7 +649,11 @@ export const useHostsPageViewModel = () => {
   const runtimeVersionCatalog = useHostSoftwareVersionCatalog(hub, {
     enabled: isAdmin && (showRuntimeVersions || (drawerOpen && !!selected)),
     hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
-    historyLimit: drawerOpen && selected ? 24 : undefined,
+    historyLimit: showRuntimeVersions
+      ? 50
+      : drawerOpen && selected
+        ? 24
+        : undefined,
   });
   const [settingClusterDefaultKey, setSettingClusterDefaultKey] =
     React.useState<string>();
