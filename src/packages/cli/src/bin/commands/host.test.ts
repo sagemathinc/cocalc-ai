@@ -1066,6 +1066,143 @@ test("host get can return a deleted host via the admin list surface", async () =
   assert.equal(capture.data.bay_id, "bay-0");
 });
 
+test("host get includes runtime summary in json output", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture, {
+    resolveHost: async (_ctx, host) => ({
+      id: host,
+      name: `host-${host}`,
+      status: "running",
+      bay_id: "bay-0",
+      region: "us-west3",
+      pricing_model: "spot",
+      last_seen: "2026-05-01T18:38:02.717Z",
+      machine: {
+        cloud: "gcp",
+        zone: "us-west3-b",
+        machine_type: "t2d-standard-16",
+        disk_gb: 200,
+        disk_type: "balanced",
+        storage_mode: "persistent",
+      },
+      bootstrap_lifecycle: {
+        summary_status: "in_sync",
+        summary_message: "desired and installed software are aligned",
+        drift_count: 0,
+        items: [],
+        last_reconcile_result: "success",
+        last_reconcile_finished_at: "2026-05-01T18:39:46Z",
+      },
+    }),
+  });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync(["node", "test", "host", "get", "host-1"]);
+
+  assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.runtime_status.targets.length, 2);
+  assert.equal(
+    capture.data.runtime_status.targets[0].target,
+    "artifact:project-host",
+  );
+  assert.equal(
+    capture.data.runtime_status.targets[0].installed_version,
+    "bundle-v1",
+  );
+  assert.equal(capture.data.runtime_status.targets[0].executor, "host-upgrade");
+  assert.equal(
+    capture.data.runtime_status.targets[1].target,
+    "component:acp-worker",
+  );
+  assert.equal(
+    capture.data.runtime_status.targets[1].repair_path,
+    "drain then replace",
+  );
+  assert.equal(
+    capture.data.runtime_status.repair_state.bootstrap_last_reconcile_result,
+    "success",
+  );
+  assert.equal(
+    capture.data.runtime_status.repair_state
+      .project_host_last_known_good_version,
+    "bundle-v1",
+  );
+  assert.match(
+    capture.data.runtime_status.repair_state
+      .project_host_last_automatic_rollback,
+    /bundle-v2 -> bundle-v1/,
+  );
+});
+
+test("host get emits runtime operator summary in human output", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(
+    capture,
+    {
+      resolveHost: async (_ctx, host) => ({
+        id: host,
+        name: `host-${host}`,
+        status: "running",
+        bay_id: "bay-0",
+        region: "us-west3",
+        pricing_model: "spot",
+        size: "t2d-standard-16",
+        last_seen: "2026-05-01T18:38:02.717Z",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west3-b",
+          machine_type: "t2d-standard-16",
+          disk_gb: 200,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        bootstrap_lifecycle: {
+          summary_status: "in_sync",
+          summary_message: "desired and installed software are aligned",
+          drift_count: 0,
+          items: [],
+          last_reconcile_result: "success",
+          last_reconcile_finished_at: "2026-05-01T18:39:46Z",
+        },
+      }),
+    },
+    { json: false, output: "table" },
+  );
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  const output = await withConsoleCapture(async () => {
+    await program.parseAsync(["node", "test", "host", "get", "host-1"]);
+  });
+
+  assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
+  assert.match(output, /Host ID: host-1/);
+  assert.match(output, /Runtime Targets/);
+  assert.match(output, /artifact:pro/);
+  assert.match(output, /component:ac/);
+  assert.match(output, /host-upgrade/);
+  assert.match(output, /runtime-reco/);
+  assert.match(output, /Repair State/);
+  assert.match(output, /bootstrap_last_reconcile_result/);
+  assert.match(output, /project_host_last_automatic_rollback/);
+});
+
 test("host ssh-trust forwards the resolved host", async () => {
   const capture: Capture = {
     upgrades: [],

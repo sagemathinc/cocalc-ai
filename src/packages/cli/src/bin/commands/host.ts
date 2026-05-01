@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { Command } from "commander";
+import type { HostRuntimeDeploymentStatus } from "@cocalc/conat/hub/api/hosts";
 import { humanSize } from "@cocalc/util/misc";
 
 import { isValidUUID } from "@cocalc/util/misc";
@@ -631,6 +632,305 @@ type HostDeployStatusData = {
   observation_error?: unknown;
 };
 
+type HostGetRuntimeSummary = {
+  targets: Array<{
+    target: string;
+    artifact?: string;
+    desired_version: string;
+    installed_version?: string;
+    running_versions?: string[];
+    runtime_state?: string;
+    version_state?: string;
+    policy?: string;
+    executor: string;
+    repair_path: string;
+    rollback_hint?: string;
+  }>;
+  repair_state: {
+    bootstrap_summary_status?: string;
+    bootstrap_summary_message?: string;
+    bootstrap_last_reconcile_result?: string;
+    bootstrap_last_reconcile_finished_at?: string;
+    bootstrap_last_error?: string;
+    project_host_last_known_good_version?: string;
+    project_host_pending_rollout?: string;
+    project_host_last_automatic_rollback?: string;
+  };
+  observation_error?: string;
+  fetch_error?: string;
+};
+
+function artifactLabelForTarget(target?: string): string | undefined {
+  const normalized = `${target ?? ""}`.trim();
+  return normalized || undefined;
+}
+
+function formatRollbackHint({
+  previous_version,
+  last_known_good_version,
+}: {
+  previous_version?: unknown;
+  last_known_good_version?: unknown;
+}): string | undefined {
+  const previous = `${previous_version ?? ""}`.trim();
+  const lastKnownGood = `${last_known_good_version ?? ""}`.trim();
+  const parts: string[] = [];
+  if (previous) {
+    parts.push(`prev=${previous}`);
+  }
+  if (lastKnownGood) {
+    parts.push(`lkg=${lastKnownGood}`);
+  }
+  return parts.length ? parts.join(", ") : undefined;
+}
+
+function runtimeExecutorForTarget({
+  target_type,
+  target,
+}: {
+  target_type?: string;
+  target?: string;
+}): string {
+  const targetType = `${target_type ?? ""}`.trim();
+  const targetName = `${target ?? ""}`.trim();
+  if (targetType === "artifact") {
+    if (targetName === "bootstrap-environment") {
+      return "bootstrap-reconcile";
+    }
+    return "host-upgrade";
+  }
+  return "runtime-reconcile";
+}
+
+function runtimeRepairPathForTarget({
+  target_type,
+  target,
+  policy,
+}: {
+  target_type?: string;
+  target?: string;
+  policy?: string;
+}): string {
+  const targetType = `${target_type ?? ""}`.trim();
+  const targetName = `${target ?? ""}`.trim();
+  const rolloutPolicy = `${policy ?? ""}`.trim();
+  if (targetType === "artifact") {
+    if (targetName === "project-host") {
+      return "ssh-reconcile fallback";
+    }
+    if (targetName === "bootstrap-environment") {
+      return "ssh bootstrap repair";
+    }
+    return "reinstall artifact";
+  }
+  if (targetName === "project-host") {
+    return "host-agent rollback, ssh fallback";
+  }
+  if (rolloutPolicy === "drain_then_replace") {
+    return "drain then replace";
+  }
+  return "restart managed component";
+}
+
+function buildHostGetRuntimeSummary({
+  host,
+  status,
+}: {
+  host: any;
+  status: HostRuntimeDeploymentStatus;
+}): HostGetRuntimeSummary {
+  const observedArtifactByName = new Map(
+    (status.observed_artifacts ?? []).map((artifact) => [
+      artifact.artifact,
+      artifact,
+    ]),
+  );
+  const observedTargetByKey = new Map(
+    (status.observed_targets ?? []).map((target) => [
+      `${target.target_type}:${target.target}`,
+      target,
+    ]),
+  );
+  const rollbackTargetByKey = new Map(
+    (status.rollback_targets ?? []).map((target) => [
+      `${target.target_type}:${target.target}`,
+      target,
+    ]),
+  );
+  const targets = (status.effective ?? []).map((deployment) => {
+    const key = `${deployment.target_type}:${deployment.target}`;
+    const observedTarget = observedTargetByKey.get(key);
+    const rollbackTarget = rollbackTargetByKey.get(key);
+    const artifact = artifactLabelForTarget(
+      deployment.target_type === "artifact"
+        ? `${deployment.target ?? ""}`
+        : `${rollbackTarget?.artifact ?? "project-host"}`,
+    );
+    const observedArtifact = artifact
+      ? observedArtifactByName.get(artifact as any)
+      : undefined;
+    return {
+      target: key,
+      artifact,
+      desired_version: `${deployment.desired_version ?? ""}`.trim(),
+      installed_version:
+        `${observedTarget?.current_version ?? observedArtifact?.current_version ?? rollbackTarget?.current_version ?? ""}`.trim() ||
+        undefined,
+      running_versions:
+        Array.isArray(observedTarget?.running_versions) &&
+        observedTarget.running_versions.length
+          ? observedTarget.running_versions
+          : undefined,
+      runtime_state:
+        `${observedTarget?.observed_runtime_state ?? ""}`.trim() || undefined,
+      version_state:
+        `${observedTarget?.observed_version_state ?? ""}`.trim() || undefined,
+      policy:
+        `${deployment.rollout_policy ?? observedTarget?.rollout_policy ?? ""}`.trim() ||
+        undefined,
+      executor: runtimeExecutorForTarget(deployment),
+      repair_path: runtimeRepairPathForTarget({
+        ...deployment,
+        policy: deployment.rollout_policy ?? observedTarget?.rollout_policy,
+      }),
+      rollback_hint: formatRollbackHint({
+        previous_version: rollbackTarget?.previous_version,
+        last_known_good_version: rollbackTarget?.last_known_good_version,
+      }),
+    };
+  });
+  const projectHostAgent = status.observed_host_agent?.project_host;
+  const pendingRollout = projectHostAgent?.pending_rollout
+    ? `${projectHostAgent.pending_rollout.target_version} <= ${projectHostAgent.pending_rollout.previous_version}${projectHostAgent.pending_rollout.started_at ? ` @ ${projectHostAgent.pending_rollout.started_at}` : ""}`
+    : undefined;
+  const automaticRollback = projectHostAgent?.last_automatic_rollback
+    ? `${projectHostAgent.last_automatic_rollback.target_version} -> ${projectHostAgent.last_automatic_rollback.rollback_version}${projectHostAgent.last_automatic_rollback.finished_at ? ` @ ${projectHostAgent.last_automatic_rollback.finished_at}` : ""}${projectHostAgent.last_automatic_rollback.reason ? ` (${projectHostAgent.last_automatic_rollback.reason})` : ""}`
+    : undefined;
+  return {
+    targets,
+    repair_state: {
+      bootstrap_summary_status:
+        `${host?.bootstrap_lifecycle?.summary_status ?? ""}`.trim() ||
+        undefined,
+      bootstrap_summary_message:
+        `${host?.bootstrap_lifecycle?.summary_message ?? ""}`.trim() ||
+        undefined,
+      bootstrap_last_reconcile_result:
+        `${host?.bootstrap_lifecycle?.last_reconcile_result ?? ""}`.trim() ||
+        undefined,
+      bootstrap_last_reconcile_finished_at:
+        `${host?.bootstrap_lifecycle?.last_reconcile_finished_at ?? ""}`.trim() ||
+        undefined,
+      bootstrap_last_error:
+        `${host?.bootstrap_lifecycle?.last_error ?? ""}`.trim() || undefined,
+      project_host_last_known_good_version:
+        `${projectHostAgent?.last_known_good_version ?? ""}`.trim() ||
+        undefined,
+      project_host_pending_rollout: pendingRollout,
+      project_host_last_automatic_rollback: automaticRollback,
+    },
+    observation_error: `${status.observation_error ?? ""}`.trim() || undefined,
+  };
+}
+
+function formatHostGetRuntimeTargetRows(
+  targets: HostGetRuntimeSummary["targets"] | undefined,
+): Record<string, unknown>[] {
+  return (targets ?? []).map((target) => ({
+    target: target.target,
+    artifact: target.artifact ?? "",
+    desired: target.desired_version ?? "",
+    installed: target.installed_version ?? "",
+    running: formatList(target.running_versions),
+    runtime: target.runtime_state ?? "",
+    version: target.version_state ?? "",
+    policy: target.policy ?? "",
+    executor: target.executor,
+    repair: target.repair_path,
+    rollback: target.rollback_hint ?? "",
+  }));
+}
+
+function emitHostGetHuman({
+  host,
+  runtime_status,
+}: {
+  host: Record<string, any>;
+  runtime_status?: HostGetRuntimeSummary | null;
+}): void {
+  console.log(`Host ID: ${host.host_id}`);
+  if (`${host.name ?? ""}`.trim()) {
+    console.log(`Name: ${host.name}`);
+  }
+  console.log("");
+  printNamedSection(
+    "Host",
+    formatFieldValueRows({
+      status: host.status ?? "",
+      bay_id: host.bay_id ?? "",
+      region: host.region ?? "",
+      pricing_model: host.pricing_model ?? "",
+      interruption_restore_policy: host.interruption_restore_policy ?? "",
+      size: host.size ?? "",
+      gpu: host.gpu ? "yes" : "",
+      scope: host.scope ?? "",
+      last_seen: host.last_seen ?? "",
+      version: host.version ?? "",
+      project_bundle_version: host.project_bundle_version ?? "",
+      tools_version: host.tools_version ?? "",
+    }),
+  );
+  printNamedSection(
+    "Endpoints",
+    formatFieldValueRows({
+      public_ip: host.public_ip ?? "",
+      public_url: host.public_url ?? "",
+      internal_url: host.internal_url ?? "",
+      ssh_server: host.ssh_server ?? "",
+      provider_instance_id: host.provider_instance_id ?? "",
+    }),
+  );
+  const machine = host.machine ?? {};
+  printNamedSection(
+    "Machine",
+    formatFieldValueRows({
+      cloud: machine.cloud ?? "",
+      zone: machine.zone ?? "",
+      machine_type: machine.machine_type ?? "",
+      disk_gb: machine.disk_gb ?? "",
+      disk_type: machine.disk_type ?? "",
+      storage_mode: machine.storage_mode ?? "",
+    }),
+  );
+  if (runtime_status?.targets?.length) {
+    printNamedSection(
+      "Runtime Targets",
+      formatHostGetRuntimeTargetRows(runtime_status.targets),
+    );
+  }
+  if (runtime_status) {
+    printNamedSection(
+      "Repair State",
+      formatFieldValueRows(runtime_status.repair_state),
+    );
+    if (`${runtime_status.observation_error ?? ""}`.trim()) {
+      console.log(`Observation Error: ${runtime_status.observation_error}`);
+      console.log("");
+    }
+    if (`${runtime_status.fetch_error ?? ""}`.trim()) {
+      console.log(`Runtime Status Error: ${runtime_status.fetch_error}`);
+      console.log("");
+    }
+  }
+}
+
+function shouldLoadRuntimeStatusForHostGet(host: {
+  status?: string | null;
+}): boolean {
+  const status = `${host?.status ?? ""}`.trim().toLowerCase();
+  return status !== "deprovisioned" && status !== "deleted";
+}
+
 function componentArtifact(
   component: (typeof MANAGED_COMPONENT_KINDS)[number],
   data: HostDeployStatusData,
@@ -1039,7 +1339,42 @@ export function registerHostCommand(
     .action(async (hostIdentifier: string, command: Command) => {
       await withContext(command, "host get", async (ctx) => {
         const h = await resolveHostForInformationalLookup(ctx, hostIdentifier);
-        return {
+        let runtime_status: HostGetRuntimeSummary | undefined;
+        if (shouldLoadRuntimeStatusForHostGet(h)) {
+          try {
+            const runtimeDeploymentStatus =
+              await ctx.hub.hosts.getHostRuntimeDeploymentStatus({
+                id: h.id,
+              });
+            runtime_status = buildHostGetRuntimeSummary({
+              host: h,
+              status: runtimeDeploymentStatus,
+            });
+          } catch (err) {
+            runtime_status = {
+              targets: [],
+              repair_state: {
+                bootstrap_summary_status:
+                  `${h?.bootstrap_lifecycle?.summary_status ?? ""}`.trim() ||
+                  undefined,
+                bootstrap_summary_message:
+                  `${h?.bootstrap_lifecycle?.summary_message ?? ""}`.trim() ||
+                  undefined,
+                bootstrap_last_reconcile_result:
+                  `${h?.bootstrap_lifecycle?.last_reconcile_result ?? ""}`.trim() ||
+                  undefined,
+                bootstrap_last_reconcile_finished_at:
+                  `${h?.bootstrap_lifecycle?.last_reconcile_finished_at ?? ""}`.trim() ||
+                  undefined,
+                bootstrap_last_error:
+                  `${h?.bootstrap_lifecycle?.last_error ?? ""}`.trim() ||
+                  undefined,
+              },
+              fetch_error: `${(err as Error)?.message ?? err}`.trim(),
+            };
+          }
+        }
+        const result = {
           host_id: h.id,
           name: h.name,
           status: h.status ?? "",
@@ -1064,7 +1399,16 @@ export function registerHostCommand(
           bootstrap_lifecycle: h.bootstrap_lifecycle ?? null,
           runtime_exception_summary: h.runtime_exception_summary ?? null,
           observed_host_agent: h.observed_host_agent ?? null,
+          runtime_status: runtime_status ?? null,
         };
+        if (!ctx.globals.json && ctx.globals.output !== "json") {
+          emitHostGetHuman({
+            host: result,
+            runtime_status,
+          });
+          return null;
+        }
+        return result;
       });
     });
 
