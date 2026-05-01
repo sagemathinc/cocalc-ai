@@ -72,7 +72,8 @@ export interface LroRef {
   scope_id: string;
 }
 
-export type ManagedBackupEgressOverride = "admin-host-drain";
+export type ManagedProjectEgressOverride = "admin-host-drain";
+export type ManagedBackupEgressOverride = ManagedProjectEgressOverride;
 
 export interface FileTextPreview {
   content: string;

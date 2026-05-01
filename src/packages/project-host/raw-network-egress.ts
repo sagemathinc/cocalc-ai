@@ -6,6 +6,7 @@
 import { readFile } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
 import { podman } from "@cocalc/backend/podman";
+import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import { hubApi } from "@cocalc/lite/hub/api";
 import type { API as ProjectRunnerApi } from "@cocalc/conat/project/runner/run";
 import type { ManagedProjectEgressCategory } from "@cocalc/conat/hub/api/system";
@@ -323,9 +324,12 @@ function buildBlockedMessage(policy: ManagedEgressPolicy): string {
 
 export async function assertManagedRawNetworkStartAllowedBestEffort({
   project_id,
+  managed_egress_override,
 }: {
   project_id: string;
+  managed_egress_override?: ManagedProjectEgressOverride;
 }): Promise<void> {
+  if (managed_egress_override === "admin-host-drain") return;
   if (!isProjectHostManagedEgressEnforced()) return;
   if (!hubApi.system?.getManagedProjectEgressPolicy) return;
   try {

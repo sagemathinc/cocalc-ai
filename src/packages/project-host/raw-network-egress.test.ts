@@ -116,6 +116,17 @@ ens4\t0100B40A\t00000000\t0005
     ).rejects.toThrow("Project outbound network traffic limit reached.");
   });
 
+  it("bypasses the raw network start policy for admin host drain", async () => {
+    await expect(
+      assertManagedRawNetworkStartAllowedBestEffort({
+        project_id: "11111111-1111-4111-8111-111111111111",
+        managed_egress_override: "admin-host-drain",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(getManagedProjectEgressPolicyMock).not.toHaveBeenCalled();
+  });
+
   it("allows project start if the policy lookup fails", async () => {
     getManagedProjectEgressPolicyMock.mockRejectedValue(
       new Error("temporary hub error"),

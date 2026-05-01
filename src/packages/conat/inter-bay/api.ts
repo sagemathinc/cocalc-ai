@@ -102,6 +102,7 @@ export interface ProjectControlStartRequest {
   account_id: string;
   lro_op_id?: string;
   source_bay_id?: string;
+  managed_egress_override?: "admin-host-drain";
   epoch?: number;
 }
 

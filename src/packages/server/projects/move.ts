@@ -1482,6 +1482,7 @@ export async function moveProjectToHost(
             const startOp = await startProjectLro({
               account_id: context.account_id,
               project_id: context.project_id,
+              managed_egress_override: input.managed_egress_override,
               wait: false,
             });
             progress({

@@ -131,6 +131,7 @@ export async function handleProjectControlStart(
     await project.start({
       account_id: req.account_id,
       lro_op_id: req.lro_op_id,
+      managed_egress_override: req.managed_egress_override,
     });
   } finally {
     await stopForward();
