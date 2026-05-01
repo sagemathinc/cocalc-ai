@@ -962,6 +962,139 @@ function componentModeDetails({
   };
 }
 
+type RuntimeSummaryRow = {
+  key: string;
+  label: string;
+  target_kind: "artifact" | "component";
+  desired_version?: string;
+  installed_version?: string;
+  running_version?: string;
+  runtime_state?: ManagedComponentRuntimeState;
+  version_state?: HostRuntimeDeploymentObservedVersionState;
+  executor: string;
+  repair_path: string;
+  rollback_hint?: string;
+  host_override?: boolean;
+};
+
+function formatRollbackHint({
+  previous_version,
+  last_known_good_version,
+}: {
+  previous_version?: string;
+  last_known_good_version?: string;
+}): string | undefined {
+  const parts: string[] = [];
+  if (`${previous_version ?? ""}`.trim()) {
+    parts.push(`previous ${previous_version}`);
+  }
+  if (`${last_known_good_version ?? ""}`.trim()) {
+    parts.push(`last known good ${last_known_good_version}`);
+  }
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+function buildRuntimeSummaryRows({
+  host,
+  status,
+}: {
+  host: Host;
+  status: HostRuntimeDeploymentStatus | undefined;
+}): RuntimeSummaryRow[] {
+  if (!status) return [];
+  const projectHostArtifact = observedArtifactForArtifact(
+    status,
+    "project-host",
+  );
+  const projectHostInstalledVersion =
+    projectHostArtifact?.current_version ?? host.version;
+  const rows: RuntimeSummaryRow[] = [];
+
+  for (const { artifact, label } of SOFTWARE_ARTIFACTS) {
+    const deployment = deploymentRecordForArtifact(status, artifact);
+    const observedTarget = observedTargetForArtifact(status, artifact);
+    const observedArtifact = observedArtifactForArtifact(status, artifact);
+    const rollbackTarget = rollbackTargetForArtifact(status, artifact);
+    const currentRunningVersion = runningVersion(host, artifact);
+    if (
+      !deployment &&
+      !observedTarget &&
+      !observedArtifact &&
+      !currentRunningVersion
+    ) {
+      continue;
+    }
+    rows.push({
+      key: `artifact:${artifact}`,
+      label,
+      target_kind: "artifact",
+      desired_version:
+        deployment?.desired_version ?? observedTarget?.desired_version,
+      installed_version:
+        observedTarget?.current_version ??
+        observedArtifact?.current_version ??
+        currentRunningVersion,
+      running_version: currentRunningVersion,
+      version_state: observedTarget?.observed_version_state,
+      executor: "host-upgrade",
+      repair_path:
+        artifact === "project-host"
+          ? "ssh-reconcile fallback"
+          : "reinstall artifact",
+      rollback_hint: formatRollbackHint({
+        previous_version: rollbackTarget?.previous_version,
+        last_known_good_version: rollbackTarget?.last_known_good_version,
+      }),
+      host_override: deployment?.scope_type === "host",
+    });
+  }
+
+  for (const { component, label } of DAEMON_COMPONENTS) {
+    const deployment = componentDeploymentRecord(status, component);
+    const observedTarget = observedTargetForComponent(status, component);
+    const observedComponent = observedComponentForComponent(status, component);
+    const rollbackTarget = rollbackTargetForComponent(status, component);
+    const runningVersions =
+      observedTarget?.running_versions ?? observedComponent?.running_versions;
+    const runningVersionText = runningVersions?.length
+      ? runningVersions.join(", ")
+      : undefined;
+    if (!deployment && !observedTarget && !observedComponent) {
+      continue;
+    }
+    rows.push({
+      key: `component:${component}`,
+      label,
+      target_kind: "component",
+      desired_version:
+        deployment?.desired_version ?? observedTarget?.desired_version,
+      installed_version: projectHostInstalledVersion,
+      running_version: runningVersionText,
+      runtime_state:
+        observedTarget?.observed_runtime_state ??
+        observedComponent?.runtime_state,
+      version_state:
+        observedTarget?.observed_version_state ??
+        observedComponent?.version_state,
+      executor: "runtime-reconcile",
+      repair_path:
+        component === "project-host"
+          ? "host-agent rollback, ssh fallback"
+          : deployment?.rollout_policy === "drain_then_replace" ||
+              observedComponent?.upgrade_policy === "drain_then_replace"
+            ? "drain then replace"
+            : "restart managed component",
+      rollback_hint: formatRollbackHint({
+        previous_version: rollbackTarget?.previous_version,
+        last_known_good_version: rollbackTarget?.last_known_good_version,
+      }),
+      host_override: deployment?.scope_type === "host",
+    });
+  }
+
+  return rows;
+}
+
 const normalizeSpecValue = (
   key: keyof HostConfigSpec,
   value: HostConfigSpec[keyof HostConfigSpec],
@@ -1242,6 +1375,16 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     }
     return { upToDate, updatesAvailable, unknown };
   }, [deploymentStatus, host, softwareVersions]);
+  const runtimeSummaryRows = React.useMemo(
+    () =>
+      host
+        ? buildRuntimeSummaryRows({
+            host,
+            status: deploymentStatus,
+          })
+        : [],
+    [deploymentStatus, host],
+  );
   const latestLogEntry = hostLog[0];
   const latestLogChange = latestLogEntry
     ? describeSpecChange(latestLogEntry.spec)
@@ -1757,6 +1900,174 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 title="Hub source lookup failed"
                 description={softwareVersions.hubError}
               />
+            )}
+            {runtimeSummaryRows.length > 0 && (
+              <Card size="small" title="Runtime summary">
+                <Space
+                  orientation="vertical"
+                  size="small"
+                  style={{ width: "100%" }}
+                >
+                  {runtimeSummaryRows.map((row, index) => (
+                    <React.Fragment key={row.key}>
+                      <Space
+                        orientation="vertical"
+                        size={4}
+                        style={{ width: "100%" }}
+                      >
+                        <Space wrap align="center">
+                          <Typography.Text strong>{row.label}</Typography.Text>
+                          <Tag>{row.target_kind}</Tag>
+                          {row.host_override && (
+                            <Tag color="blue">host override</Tag>
+                          )}
+                          {row.runtime_state &&
+                            runtimeStateTag(row.runtime_state)}
+                          {row.version_state &&
+                            observedVersionStateTag(row.version_state)}
+                        </Space>
+                        <Typography.Text
+                          type="secondary"
+                          style={{ fontSize: 12 }}
+                        >
+                          desired <code>{row.desired_version ?? "n/a"}</code> ·
+                          installed{" "}
+                          <code>{row.installed_version ?? "n/a"}</code>
+                          {row.running_version ? (
+                            <>
+                              {" "}
+                              · running <code>{row.running_version}</code>
+                            </>
+                          ) : null}
+                        </Typography.Text>
+                        <Typography.Text
+                          type="secondary"
+                          style={{ fontSize: 12 }}
+                        >
+                          executor <code>{row.executor}</code> · repair{" "}
+                          <code>{row.repair_path}</code>
+                          {row.rollback_hint ? (
+                            <>
+                              {" "}
+                              · rollback <code>{row.rollback_hint}</code>
+                            </>
+                          ) : null}
+                        </Typography.Text>
+                      </Space>
+                      {index < runtimeSummaryRows.length - 1 && (
+                        <Divider style={{ margin: "4px 0" }} />
+                      )}
+                    </React.Fragment>
+                  ))}
+                </Space>
+              </Card>
+            )}
+            {(host.bootstrap_lifecycle || projectHostObservation) && (
+              <Card size="small" title="Repair state">
+                <Space
+                  orientation="vertical"
+                  size="small"
+                  style={{ width: "100%" }}
+                >
+                  <HostBootstrapLifecycle host={host} compact />
+                  {host.bootstrap_lifecycle?.last_reconcile_result &&
+                    host.bootstrap_lifecycle?.last_reconcile_finished_at && (
+                      <Typography.Text
+                        type="secondary"
+                        style={{ fontSize: 12 }}
+                      >
+                        Last reconcile{" "}
+                        <code>
+                          {host.bootstrap_lifecycle.last_reconcile_result}
+                        </code>{" "}
+                        ·{" "}
+                        {formatRuntimeTimestamp(
+                          host.bootstrap_lifecycle.last_reconcile_finished_at,
+                        )}
+                      </Typography.Text>
+                    )}
+                  {projectHostObservation?.last_known_good_version && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Project host last known good{" "}
+                      <code>
+                        {projectHostObservation.last_known_good_version}
+                      </code>
+                    </Typography.Text>
+                  )}
+                  {projectHostObservation?.pending_rollout && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Pending rollout{" "}
+                      <code>
+                        {projectHostObservation.pending_rollout.target_version}
+                      </code>{" "}
+                      from{" "}
+                      <code>
+                        {
+                          projectHostObservation.pending_rollout
+                            .previous_version
+                        }
+                      </code>
+                      {formatRuntimeTimestamp(
+                        projectHostObservation.pending_rollout.started_at,
+                      ) && (
+                        <>
+                          {" "}
+                          · started{" "}
+                          {formatRuntimeTimestamp(
+                            projectHostObservation.pending_rollout.started_at,
+                          )}
+                        </>
+                      )}
+                      {formatRuntimeTimestamp(
+                        projectHostObservation.pending_rollout.deadline_at,
+                      ) && (
+                        <>
+                          {" "}
+                          · deadline{" "}
+                          {formatRuntimeTimestamp(
+                            projectHostObservation.pending_rollout.deadline_at,
+                          )}
+                        </>
+                      )}
+                    </Typography.Text>
+                  )}
+                  {projectHostObservation?.last_automatic_rollback && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Last automatic rollback{" "}
+                      <code>
+                        {
+                          projectHostObservation.last_automatic_rollback
+                            .target_version
+                        }
+                      </code>{" "}
+                      to{" "}
+                      <code>
+                        {
+                          projectHostObservation.last_automatic_rollback
+                            .rollback_version
+                        }
+                      </code>
+                      {formatRuntimeTimestamp(
+                        projectHostObservation.last_automatic_rollback
+                          .finished_at,
+                      ) && (
+                        <>
+                          {" "}
+                          · finished{" "}
+                          {formatRuntimeTimestamp(
+                            projectHostObservation.last_automatic_rollback
+                              .finished_at,
+                          )}
+                        </>
+                      )}{" "}
+                      ·{" "}
+                      {projectHostRollbackReasonLabel(
+                        projectHostObservation.last_automatic_rollback.reason,
+                      )}
+                    </Typography.Text>
+                  )}
+                </Space>
+              </Card>
             )}
             {deploymentStatus?.observed_host_agent?.project_host && (
               <Card size="small" title="Host agent rollback state">
