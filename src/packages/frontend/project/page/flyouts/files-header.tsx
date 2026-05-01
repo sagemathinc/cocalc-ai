@@ -649,9 +649,16 @@ export function FilesHeader({
             activeFile={activeFile}
             refreshBackups={refreshBackups}
           />
-          {hasPendingUpdate ? (
+          <div
+            aria-hidden={!hasPendingUpdate}
+            style={{
+              display: "inline-flex",
+              visibility: hasPendingUpdate ? "visible" : "hidden",
+              pointerEvents: hasPendingUpdate ? undefined : "none",
+            }}
+          >
             <RefreshButton onClick={onRefreshListing} />
-          ) : null}
+          </div>
         </div>
         <FilesSelectButtons
           setMode={setMode}
