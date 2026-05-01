@@ -7,6 +7,18 @@ description: Use when asked to do autonomous QA, overnight bug hunting, reproduc
 
 Use this skill for repeated bug-hunt loops in the CoCalc codebase.
 
+Canonical repo copy:
+
+- `src/.skills/cocalc-bug-hunter/SKILL.md`
+
+Runtime copy:
+
+- `~/.codex/skills/cocalc-bug-hunter/SKILL.md`
+
+When the repo copy changes, sync it to the runtime copy with:
+
+- `pnpm -C src skill:bug-hunter:push`
+
 ## Goal
 
 Find real, user-visible bugs. Prioritize:
@@ -37,14 +49,17 @@ If the QA tooling is unreliable, fixing the tooling is a valid bug-hunt result.
    - Lite vs Launchpad
    - API URL
    - whether browser automation is available
+   - load the matching dev env before using `cocalc` or browser automation:
+     - Lite: `cd src && eval "$(pnpm -s dev:lite:env)"`
+     - Launchpad: `cd src && eval "$(pnpm -s dev:hub:env)"`
 2. Run the bug-hunt preflight early:
-   - `node scripts/bug-hunt/preflight.js --json`
+   - `pnpm -C src bug-hunt:preflight -- --json`
 3. If browser automation matters, read the repo doc:
    - `docs/browser-debugging.md`
 4. If task files are mentioned, inspect them early:
    - `/home/wstein/cocalc.com/work/wstein.tasks`
 5. To mine likely open bugs from `wstein.tasks`, use:
-   - `node scripts/bug-hunt/extract-open-bugs.js --fresh`
+   - `pnpm -C src bug-hunt:extract -- --fresh`
 6. If you are changing the workflow itself, read:
    - `src/.agents/bug-hunter.md`
 
