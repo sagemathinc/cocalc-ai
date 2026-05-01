@@ -338,14 +338,24 @@ async function inspectContainerPids(name: string): Promise<number[]> {
     err_on_exit: false,
     env: podmanEnv(),
   });
+  const conmonContainers = await getConmonContainers(name);
   const out = `${stdout ?? ""}`.trim();
-  if (!out) return [];
+  if (!out) {
+    if (!conmonContainers.length) return [];
+    return [
+      ...new Set(
+        conmonContainers.flatMap((container) => [
+          container.conmon_pid,
+          ...container.child_pids,
+        ]),
+      ),
+    ];
+  }
   const pids = out
     .split(/\s+/g)
     .map((s) => Number(s))
     .filter((n) => Number.isFinite(n) && n > 1 && n !== process.pid);
   if (pids.length) {
-    const conmonContainers = await getConmonContainers(name);
     return [
       ...new Set([
         ...pids,
@@ -356,7 +366,6 @@ async function inspectContainerPids(name: string): Promise<number[]> {
       ]),
     ];
   }
-  const conmonContainers = await getConmonContainers(name);
   if (!conmonContainers.length) return [];
   return [
     ...new Set(
@@ -860,8 +869,7 @@ export async function start({
       await cleanupOrphanedLiveContainer({
         project_id,
         name,
-        reason:
-          "start found live project container without podman metadata",
+        reason: "start found live project container without podman metadata",
       });
     }
 
