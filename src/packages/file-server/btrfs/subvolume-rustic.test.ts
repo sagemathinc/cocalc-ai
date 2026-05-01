@@ -1,3 +1,11 @@
+let btrfsMock: jest.Mock;
+let sudoMock: jest.Mock;
+
+jest.mock("./util", () => ({
+  btrfs: (...args: any[]) => btrfsMock(...args),
+  sudo: (...args: any[]) => sudoMock(...args),
+}));
+
 import {
   parseRusticSnapshotsOutput,
   SubvolumeRustic,
@@ -54,11 +62,19 @@ describe("parseRusticSnapshotsOutput", () => {
 });
 
 describe("SubvolumeRustic.backup", () => {
+  beforeEach(() => {
+    btrfsMock = jest.fn(async () => undefined);
+    sudoMock = jest.fn(async () => undefined);
+  });
+
   it("excludes .snapshots from future backups", async () => {
     const rusticCalls: any[] = [];
     const rustic = new SubvolumeRustic({
       name: "project-1",
       path: "/mnt/test/project-1",
+      filesystem: {
+        opts: { mount: "/mnt/test" },
+      },
       fs: {
         rustic: jest.fn(async (args, opts) => {
           rusticCalls.push({ args, opts });
@@ -76,28 +92,49 @@ describe("SubvolumeRustic.backup", () => {
           };
         }),
       },
-      snapshots: {
-        path: (name: string) => `.snapshots/${name}`,
-        create: jest.fn(async () => {}),
-        delete: jest.fn(async () => {}),
-      },
     } as any);
 
     await rustic.backup();
 
+    expect(sudoMock).toHaveBeenCalledWith({
+      command: "mkdir",
+      args: ["-p", "/mnt/test/.rustic-backup-staging/project-1"],
+    });
+    expect(btrfsMock).toHaveBeenNthCalledWith(1, {
+      args: [
+        "subvolume",
+        "snapshot",
+        "-r",
+        "/mnt/test/project-1",
+        expect.stringMatching(
+          /^\/mnt\/test\/\.rustic-backup-staging\/project-1\/temp-rustic-snapshot-/,
+        ),
+      ],
+    });
     expect(rusticCalls).toHaveLength(1);
     expect(rusticCalls[0].args).toEqual([
       "backup",
       "-x",
       "--json",
       "--glob",
-      ".snapshots",
+      "!.snapshots",
       "--glob",
-      ".snapshots/**",
+      "!.snapshots/**",
       ".",
     ]);
     expect(rusticCalls[0].opts.cwd).toMatch(
-      /^\.snapshots\/temp-rustic-snapshot-/,
+      /^\/mnt\/test\/\.rustic-backup-staging\/project-1\/temp-rustic-snapshot-/,
     );
+    expect(btrfsMock).toHaveBeenNthCalledWith(2, {
+      args: [
+        "subvolume",
+        "delete",
+        expect.stringMatching(
+          /^\/mnt\/test\/\.rustic-backup-staging\/project-1\/temp-rustic-snapshot-/,
+        ),
+      ],
+      err_on_exit: false,
+      verbose: false,
+    });
   });
 });

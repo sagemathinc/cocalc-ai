@@ -41,6 +41,7 @@ import {
   createRusticProgressHandler,
   type RusticProgressUpdate,
 } from "./rustic-progress";
+import { btrfs, sudo } from "./util";
 
 export const RUSTIC = "rustic";
 
@@ -49,7 +50,8 @@ const DEFAULT_SNAPSHOTS_TIMEOUT_MS = Math.max(
   10_000,
   Number(process.env.COCALC_RUSTIC_SNAPSHOTS_TIMEOUT_MS ?? 60_000),
 );
-const BACKUP_EXCLUDE_GLOBS = [".snapshots", ".snapshots/**"] as const;
+const BACKUP_EXCLUDE_GLOBS = ["!.snapshots", "!.snapshots/**"] as const;
+const RUSTIC_BACKUP_STAGING_DIR = ".rustic-backup-staging";
 
 function makeTempRusticSnapshotName(): string {
   const rand = Math.random().toString(36).slice(2, 10);
@@ -141,6 +143,34 @@ export type RusticRestoreRunner = (opts: {
 export class SubvolumeRustic {
   constructor(public readonly subvolume: Subvolume) {}
 
+  private backupStagingRoot(): string {
+    return join(
+      this.subvolume.filesystem.opts.mount,
+      RUSTIC_BACKUP_STAGING_DIR,
+      this.subvolume.name,
+    );
+  }
+
+  private async createTempBackupSnapshot(
+    name: string,
+  ): Promise<{ snapshotPath: string }> {
+    const stagingRoot = this.backupStagingRoot();
+    await sudo({ command: "mkdir", args: ["-p", stagingRoot] });
+    const snapshotPath = join(stagingRoot, name);
+    await btrfs({
+      args: ["subvolume", "snapshot", "-r", this.subvolume.path, snapshotPath],
+    });
+    return { snapshotPath };
+  }
+
+  private async deleteTempBackupSnapshot(snapshotPath: string): Promise<void> {
+    await btrfs({
+      args: ["subvolume", "delete", snapshotPath],
+      err_on_exit: false,
+      verbose: false,
+    });
+  }
+
   private rusticHost = async (
     args: string[],
     opts?: { timeout?: number; maxSize?: number },
@@ -184,13 +214,11 @@ export class SubvolumeRustic {
       glob,
     ]);
     const tempSnapshot = makeTempRusticSnapshotName();
-    const target = this.subvolume.snapshots.path(tempSnapshot);
-    const snapshotPath = join(this.subvolume.path, target);
+    const { snapshotPath } = await this.createTempBackupSnapshot(tempSnapshot);
     try {
       logger.debug(
-        `backup: creating ${tempSnapshot} to get a consistent backup`,
+        `backup: created ${tempSnapshot} at ${snapshotPath} to get a consistent backup`,
       );
-      await this.subvolume.snapshots.create(tempSnapshot);
       // Backup the snapshot path directly (no bind mounts). The project tree
       // already includes persistent metadata under ~/.local/share/cocalc/persist.
       logger.debug(`backup: backing up ${tempSnapshot} using rustic`);
@@ -208,7 +236,7 @@ export class SubvolumeRustic {
                 ["backup", "-x", "--json", ...tagArgs, ...excludeArgs, "."],
                 {
                   timeout,
-                  cwd: target,
+                  cwd: snapshotPath,
                   env: progress
                     ? { RUSTIC_PROGRESS_INTERVAL: "1s" }
                     : undefined,
@@ -259,7 +287,7 @@ export class SubvolumeRustic {
       this.snapshotsCache = null;
       logger.debug(`backup: deleting temporary ${tempSnapshot}`);
       try {
-        await this.subvolume.snapshots.delete(tempSnapshot);
+        await this.deleteTempBackupSnapshot(snapshotPath);
       } catch {}
     }
   };

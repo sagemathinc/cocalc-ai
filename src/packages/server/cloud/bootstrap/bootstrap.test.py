@@ -713,7 +713,7 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
             self.assertIn("project-rustic-backup)", script)
             self.assertIn("project-rustic-restore)", script)
             self.assertIn(
-                '--glob ".snapshots" --glob ".snapshots/**"',
+                '--glob "!.snapshots" --glob "!.snapshots/**"',
                 script,
             )
             self.assertIn("normalize-rootfs)", script)
