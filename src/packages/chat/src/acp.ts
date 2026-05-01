@@ -25,8 +25,32 @@ export function appendStreamMessage(
   events: AcpStreamMessage[],
   message: AcpStreamMessage,
 ): AcpStreamMessage[] {
+  const next = events.slice();
+  appendStreamMessageMutable(next, message);
+  return next;
+}
+
+export function appendStreamMessages(
+  events: AcpStreamMessage[],
+  messages: AcpStreamMessage[],
+): AcpStreamMessage[] {
+  if (!messages.length) {
+    return events;
+  }
+  const next = events.slice();
+  for (const message of messages) {
+    appendStreamMessageMutable(next, message);
+  }
+  return next;
+}
+
+function appendStreamMessageMutable(
+  events: AcpStreamMessage[],
+  message: AcpStreamMessage,
+): void {
   if (message.type !== "event") {
-    return [...events, message];
+    events.push(message);
+    return;
   }
   const last = events[events.length - 1];
   const nextEvent = message.event;
@@ -44,9 +68,10 @@ export function appendStreamMessage(
       },
       seq: message.seq ?? last.seq,
     };
-    return [...events.slice(0, -1), merged];
+    events[events.length - 1] = merged;
+    return;
   }
-  return [...events, message];
+  events.push(message);
 }
 
 function joinStreamText(previousText: string, nextText: string): string {
