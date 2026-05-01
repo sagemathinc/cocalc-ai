@@ -16,7 +16,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 // batch land, so mid-turn openings still see early events. If the backend
 // cadence changes, update this constant too.
 const LOG_PERSIST_THROTTLE_MS = 250;
-const LIVE_LOG_FLUSH_MS = 100;
+const LIVE_LOG_FLUSH_MS = 500;
 const RECENT_LOG_CACHE_SIZE = 5;
 
 const recentLogCache = new LRUCache<string, any[]>({
