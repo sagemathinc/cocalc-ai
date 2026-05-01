@@ -296,9 +296,9 @@ export function registerDevCommand(
 
   sync
     .command("hub")
-    .description("rebuild the hub package and restart the local hub daemon")
+    .description("rebuild the hub package and restart the local hub dev stack")
     .option("--no-build", "skip pnpm build for packages/hub")
-    .option("--no-restart", "skip restarting hub-daemon")
+    .option("--no-restart", "skip restarting the local hub dev stack")
     .action(
       async (
         opts: { build?: boolean; restart?: boolean },

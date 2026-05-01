@@ -212,7 +212,7 @@ def set_guarded_read_modes(
 
 
 def restart_hub() -> str:
-    run(["pnpm", "-C", str(SRC), "hub:daemon:restart"])
+    run(["pnpm", "-C", str(SRC), "dev:hub:restart"])
     wait_for_hub_ready()
     mode_line = ""
     if HUB_STDOUT_LOG.exists():

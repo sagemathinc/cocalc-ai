@@ -738,7 +738,7 @@ function main() {
   const daemon = ensureDaemon(mode, autoStart);
   if (mode === "lite" && !daemon.running) {
     throw new Error(
-      `lite daemon is not running. Start it with: pnpm lite:daemon:start`,
+      `lite dev server is not running. Start it with: pnpm dev:lite:start`,
     );
   }
   const source =

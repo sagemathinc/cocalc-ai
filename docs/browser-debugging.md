@@ -24,7 +24,7 @@ In practice, these bugs often come from runtime differences:
      - `eval "$(pnpm -s --dir src dev:env:hub)"`
 
 1. Confirm target server and auth context.
-   - `cd src && pnpm lite:daemon:status`
+   - `cd src && pnpm dev:lite:status`
    - Read the `url` (e.g. `http://localhost:7003`).
 
 2. List browser sessions for that exact server.
@@ -62,7 +62,7 @@ In practice, these bugs often come from runtime differences:
      - `--renderer dom`: force DOM renderer (`html2canvas`)
      - `--renderer media`: use browser Screen Capture API (explicit user share approval)
 
-9. Patch code, run focused tests, rebuild frontend, restart lite daemon, and retest in browser.
+9. Patch code, run focused tests, rebuild frontend, restart the Lite dev server, and retest in browser.
 
 ## Session modes
 
@@ -235,7 +235,7 @@ Example harness plan:
 - Remaining:
   - pretty "target context banner" display in non-JSON mode
 - Optional dry-run mode that shows which session would be targeted
-- Way to run the lite daemon and full hub daemon (launchpad) so that it is easy to get exactly the env needed, e.g., a valid `COCALC_BEARER_TOKEN`, etc. by just running a pnpm command.
+- Way to run the Lite dev server and full hub dev stack (launchpad) so that it is easy to get exactly the env needed, e.g., a valid `COCALC_BEARER_TOKEN`, etc. by just running a pnpm command.
 
 ## Implementation pointers
 

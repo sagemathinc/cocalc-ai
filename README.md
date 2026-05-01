@@ -103,10 +103,10 @@ Top-level:
 
 Inside `src/`:
 
-- `package.json` - the main build, test, Lite, and daemon scripts
+- `package.json` - the main build, test, Lite, and local dev scripts
 - `workspaces.py` - the workspace build/install helper used across packages
 - `packages/` - the monorepo packages
-- `scripts/dev/` - Lite and hub daemon helpers, smoke scripts, and local dev tooling
+- `scripts/dev/` - Lite and hub local dev helpers, smoke scripts, and local dev tooling
 - `python/` - the Python API client and related Python build surface
 
 Notable package areas:`src/packages/frontend` - main browser UI
@@ -156,9 +156,9 @@ This is the fastest way to get a local server running.
 
 ```bash
 cd src
-pnpm lite:daemon:init
-pnpm lite:daemon:start
-pnpm lite:daemon:status
+pnpm dev:lite:init
+pnpm dev:lite:start
+pnpm dev:lite:status
 ```
 
 To load the matching environment in your current shell:
@@ -176,9 +176,9 @@ For the fuller control-plane path:
 
 ```bash
 cd src
-pnpm hub:daemon:init
-pnpm hub:daemon:start
-pnpm hub:daemon:status
+pnpm dev:hub:init
+pnpm dev:hub:start
+pnpm dev:hub:status
 ```
 
 And load the corresponding shell environment:
@@ -221,7 +221,7 @@ pnpm prettier --write <file>
 ### Lite / Browser Validation
 
 ```bash
-pnpm lite:daemon:status
+pnpm dev:lite:status
 pnpm lite:test:e2e
 pnpm lite:test:e2e:headed
 ```

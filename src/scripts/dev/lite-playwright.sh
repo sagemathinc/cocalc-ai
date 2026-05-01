@@ -20,8 +20,8 @@ LITE_CONNECTION_INFO="${LITE_CONNECTION_INFO:-$STATE_DIR/connection-info.json}"
 if [ ! -f "$LITE_CONNECTION_INFO" ]; then
   cat >&2 <<EOF
 missing lite connection info: $LITE_CONNECTION_INFO
-start daemon first:
-  pnpm --dir src lite:daemon:start
+start the local Lite dev server first:
+  pnpm --dir src dev:lite:start
 or set COCALC_LITE_DAEMON_CONFIG to a config that points at the running daemon instance.
 EOF
   exit 1

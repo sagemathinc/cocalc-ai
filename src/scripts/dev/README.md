@@ -1,9 +1,9 @@
-# Local Hub Daemon + Smoke Tests
+# Local Hub Dev Stack + Smoke Tests
 
 ## One-time setup (optional)
 
 ```bash
-pnpm --dir src hub:daemon:init
+pnpm --dir src dev:hub:init
 ```
 
 This creates a local, untracked config at:
@@ -21,27 +21,27 @@ Notes:
 - Smoke rebuilds hub by default (`SMOKE_BUILD_HUB=1`) so software-manifest changes are picked up before each run.
 - Smoke now ensures full `tools-linux-*` artifacts are built (not `tools-minimal`) because project-start in smoke requires `dropbear`.
 
-## Hub daemon control
+## Hub dev commands
 
 ```bash
-pnpm --dir src hub:daemon:start
-pnpm --dir src hub:daemon:status
-pnpm --dir src hub:daemon:logs
-pnpm --dir src hub:daemon:stop
+pnpm --dir src dev:hub:start
+pnpm --dir src dev:hub:status
+pnpm --dir src dev:hub:logs
+pnpm --dir src dev:hub:stop
 ```
 
-## Lite daemon control
+## Lite dev commands
 
 ```bash
-pnpm --dir src lite:daemon:init
-pnpm --dir src lite:daemon:start
-pnpm --dir src lite:daemon:status
-pnpm --dir src lite:daemon:logs
-pnpm --dir src lite:daemon:stop
+pnpm --dir src dev:lite:init
+pnpm --dir src dev:lite:start
+pnpm --dir src dev:lite:status
+pnpm --dir src dev:lite:logs
+pnpm --dir src dev:lite:stop
 ```
 
-Run Jupyter Playwright tests against the daemon instance (auto-uses daemon
-connection info, so no long env prefix is needed):
+Run Jupyter Playwright tests against the local Lite dev instance (auto-uses
+saved connection info, so no long env prefix is needed):
 
 ```bash
 pnpm --dir src lite:test:e2e -- --grep "single-doc"
@@ -55,7 +55,7 @@ Defaults:
 - state/logs: `src/.local/lite-daemon`
 - isolated home: `$HOME/scratch/<repo-name>-lite-daemon`
 - connection info: `src/.local/lite-daemon/connection-info.json`
-- sqlite db: `$LITE_HOME/.local/share/cocalc-lite/hub.db` (shown in `lite:daemon:status`)
+- sqlite db: `$LITE_HOME/.local/share/cocalc-lite/hub.db` (shown in `dev:lite:status`)
 
 Safety note: `lite-daemon.sh` is PID-file scoped and only stops the exact process it started.
 It does not scan/kill other `node`/`cocalc-lite` processes.
@@ -71,7 +71,7 @@ By default this script:
 1. Builds local `project-host` + `project` bundles (and tools if missing).
 2. Builds `@cocalc/server`.
 3. Builds `@cocalc/cli` (used by smoke-runner for host/workspace actions).
-4. Starts hub daemon (if not running).
+4. Starts the local hub dev stack (if not running).
 5. Runs self-host multipass smoke tests end-to-end, including:
    - cross-project file copy (project A -> project B),
    - backup indexing,
@@ -150,7 +150,7 @@ This runs a focused smoke against the real routed `project codex exec` path:
 Notes:
 
 - The script refreshes `dev:env:hub` automatically before each `cocalc` call.
-- It expects a local hub daemon with Postgres available via
+- It expects a local hub dev stack with Postgres available via
   `scripts/dev/hub-daemon.sh status`.
 - By default it verifies site-key metering automatically when the resolved
   payment source is `site-api-key`.

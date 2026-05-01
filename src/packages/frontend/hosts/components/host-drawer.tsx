@@ -1173,8 +1173,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
         </Typography.Text>
         <Typography.Text type="secondary">
           Local development hubs can publish fresh runtime artifacts with{" "}
-          <code>pnpm hub:daemon:build</code>. Production sites normally publish
-          to the configured software base URL instead.
+          <code>pnpm dev:hub:build</code>. Production sites normally publish to
+          the configured software base URL instead.
         </Typography.Text>
       </Space>
       <UpgradeConfirmContent />
