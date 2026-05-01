@@ -962,7 +962,13 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     project_id: string;
     force?: boolean;
   }): Promise<void> {
+    logger.debug("stop: project-host request received", { project_id, force });
     const status = await runnerApi.stop({ project_id, force });
+    logger.debug("stop: runner stop completed", {
+      project_id,
+      force,
+      state: status?.state ?? "opened",
+    });
     ensureProjectRow({
       project_id,
       state: status?.state ?? "opened",
@@ -984,6 +990,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     } finally {
       resetProjectLastEditedRunning(project_id);
     }
+    logger.debug("stop: project-host request finished", { project_id, force });
   }
 
   async function restoreSnapshot({

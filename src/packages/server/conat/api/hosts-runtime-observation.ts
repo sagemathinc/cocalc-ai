@@ -57,6 +57,34 @@ function deploymentObservedVersionState({
   return running_versions[0] === desired_version ? "aligned" : "drifted";
 }
 
+function normalizeObservedComponentRunningVersions({
+  observed_component,
+  observed_artifact,
+}: {
+  observed_component: HostManagedComponentStatus;
+  observed_artifact?: HostRuntimeArtifactObservation;
+}): string[] {
+  const currentArtifactVersion =
+    `${observed_artifact?.current_version ?? ""}`.trim();
+  const currentArtifactBuildId =
+    `${observed_artifact?.current_build_id ?? ""}`.trim();
+  return Array.from(
+    new Set(
+      observed_component.running_versions.map((runningVersion) => {
+        if (
+          currentArtifactVersion &&
+          (runningVersion === currentArtifactVersion ||
+            (currentArtifactBuildId &&
+              runningVersion === currentArtifactBuildId))
+        ) {
+          return currentArtifactVersion;
+        }
+        return runningVersion;
+      }),
+    ),
+  );
+}
+
 function componentDeploymentObservedVersionState({
   deployment,
   observed_component,
@@ -73,36 +101,12 @@ function componentDeploymentObservedVersionState({
   ) {
     return "unknown";
   }
-  const currentArtifactVersion =
-    `${observed_artifact?.current_version ?? ""}`.trim();
-  const currentArtifactBuildId =
-    `${observed_artifact?.current_build_id ?? ""}`.trim();
-  if (
-    currentArtifactVersion &&
-    currentArtifactVersion === desiredArtifactVersion
-  ) {
-    const normalizedRunningVersions = Array.from(
-      new Set(
-        observed_component.running_versions.map((runningVersion) => {
-          if (
-            runningVersion === currentArtifactVersion ||
-            (currentArtifactBuildId &&
-              runningVersion === currentArtifactBuildId)
-          ) {
-            return currentArtifactVersion;
-          }
-          return runningVersion;
-        }),
-      ),
-    );
-    return deploymentObservedVersionState({
-      desired_version: currentArtifactVersion,
-      running_versions: normalizedRunningVersions,
-    });
-  }
   return deploymentObservedVersionState({
     desired_version: desiredArtifactVersion,
-    running_versions: observed_component.running_versions,
+    running_versions: normalizeObservedComponentRunningVersions({
+      observed_component,
+      observed_artifact,
+    }),
   });
 }
 
@@ -658,6 +662,12 @@ export function summarizeObservedRuntimeDeployments({
     const observedArtifact = artifacts.get(
       (observed.artifact ?? "project-host") as HostRuntimeArtifact,
     );
+    const normalizedRunningVersions = normalizeObservedComponentRunningVersions(
+      {
+        observed_component: observed,
+        observed_artifact: observedArtifact,
+      },
+    );
     return {
       target_type: deployment.target_type,
       target: deployment.target,
@@ -669,7 +679,7 @@ export function summarizeObservedRuntimeDeployments({
         observed_component: observed,
         observed_artifact: observedArtifact,
       }),
-      running_versions: observed.running_versions,
+      running_versions: normalizedRunningVersions,
       running_pids: observed.running_pids,
       enabled: observed.enabled,
       managed: observed.managed,
