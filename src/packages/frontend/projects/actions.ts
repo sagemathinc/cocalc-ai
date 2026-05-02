@@ -1503,7 +1503,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
         }
         void this.ensure_host_info(logInfo.dest_host_id, true);
       }
-      void refresh_projects_table();
+      // Do not eagerly recreate the synced projects table after a move
+      // succeeds. The move path already patches the destination host and region
+      // locally, and a lagging table refresh can rehydrate stale placement back
+      // into project_map before the projection catches up.
       this.handleOpenProjectHostChange({
         project_id: logInfo.project_id,
         source_host_id: previous_host_id,
