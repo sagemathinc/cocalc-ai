@@ -224,6 +224,56 @@ async function runCommand(command: string, args: string[]): Promise<void> {
   });
 }
 
+async function resetOwnedDirectory(
+  path: string,
+  {
+    mode,
+    forceRemove = false,
+  }: {
+    mode: number;
+    forceRemove?: boolean;
+  },
+): Promise<void> {
+  if (forceRemove) {
+    await rm(path, { recursive: true, force: true }).catch(() => {});
+  }
+  await mkdir(path, { recursive: true, mode });
+  await chmod(path, mode).catch(() => {});
+  await chown(path, 0, 0).catch((err) => {
+    logger.warn("unable to restore root ownership for runtime bootstrap path", {
+      path,
+      err: `${err}`,
+    });
+  });
+}
+
+async function repairAptStateBeforeInstall(): Promise<void> {
+  logger.info("runtime bootstrap: repairing apt state before install");
+  await resetOwnedDirectory("/tmp", {
+    mode: 0o1777,
+  });
+  await resetOwnedDirectory("/var/tmp", {
+    mode: 0o1777,
+  });
+  await resetOwnedDirectory("/var/lib/apt/lists", {
+    mode: 0o755,
+    forceRemove: true,
+  });
+  await resetOwnedDirectory("/var/lib/apt/lists/auxfiles", {
+    mode: 0o755,
+  });
+  await resetOwnedDirectory("/var/lib/apt/lists/partial", {
+    mode: 0o700,
+  });
+  await resetOwnedDirectory("/var/cache/apt/archives", {
+    mode: 0o755,
+    forceRemove: true,
+  });
+  await resetOwnedDirectory("/var/cache/apt/archives/partial", {
+    mode: 0o700,
+  });
+}
+
 async function detectMissingRuntimePackages(): Promise<MissingRuntimePackages> {
   return {
     sudo: (await findExecutable(["/usr/bin/sudo", "/bin/sudo"])) == null,
@@ -254,6 +304,7 @@ async function installMissingRuntimePackages(): Promise<void> {
       packageManager: "apt-get",
       packages,
     });
+    await repairAptStateBeforeInstall();
     await runCommand(aptGet, ["update"]);
     await runCommand(aptGet, [
       "install",
