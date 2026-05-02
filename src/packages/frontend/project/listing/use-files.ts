@@ -40,7 +40,7 @@ type FilesystemClientLike = {
 type ConatErrorLike = Error & { code?: string | number; data?: unknown };
 
 const DEFAULT_THROTTLE_FILE_UPDATE = 500;
-const INITIAL_LISTING_TIMEOUT_MS = 2000;
+const INITIAL_LISTING_TIMEOUT_MS = 10000;
 const INITIAL_LISTING_RETRY_DELAY_MS = 250;
 const INITIAL_LISTING_MAX_ATTEMPTS = 3;
 

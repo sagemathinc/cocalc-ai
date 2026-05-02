@@ -201,4 +201,38 @@ describe("useFiles", () => {
     expect(sleep).toHaveBeenCalled();
     expect(fs.listing).toHaveBeenCalledWith("/snapshots");
   });
+
+  it("allows a slower cold-start snapshot before surfacing timeout", async () => {
+    const listing = {
+      files: { "slow.txt": { mtime: 0, isDir: false, size: 1 } },
+      on: jest.fn(),
+      close: jest.fn(),
+    };
+    (withTimeout as jest.Mock).mockImplementation(
+      async (promise: Promise<any>, timeoutMs: number) => {
+        if (timeoutMs < 8000) {
+          throw new Error("timeout");
+        }
+        return await promise;
+      },
+    );
+
+    const fs = {
+      getListing: jest.fn().mockResolvedValue({
+        files: { "slow.txt": { mtime: 0, isDir: false, size: 1 } },
+      }),
+      listing: jest.fn().mockResolvedValue(listing),
+    };
+
+    useFilesForTest({ fs, path: "/slow" });
+    await flushEffects();
+
+    const result = useFilesForTest({ fs, path: "/slow" });
+    expect(result.error).toBeNull();
+    expect(result.files).toEqual({
+      "slow.txt": { mtime: 0, isDir: false, size: 1 },
+    });
+    expect(fs.getListing).toHaveBeenCalledWith("/slow");
+    expect(fs.listing).toHaveBeenCalledWith("/slow");
+  });
 });
