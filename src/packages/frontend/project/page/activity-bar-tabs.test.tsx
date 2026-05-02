@@ -169,6 +169,7 @@ jest.mock("./file-tab", () => ({
 }));
 
 import {
+  CustomizeRailButtonsModal,
   HiddenActivityBarLauncher,
   default as ProjectTabs,
   VerticalFixedTabs,
@@ -279,5 +280,41 @@ describe("HiddenActivityBarLauncher", () => {
     fireEvent.click(screen.getByTestId("menu-overflow:toggle-activity-bar"));
 
     expect(getActivityBarCollapsed()).toBe(true);
+  });
+});
+
+describe("CustomizeRailButtonsModal", () => {
+  it("does not reset checkbox edits when the parent rerenders with fresh preference arrays", () => {
+    const onClose = jest.fn();
+    const onSave = jest.fn();
+    const order = ["files", "agents", "log"] as any;
+    const hiddenTabs = ["log"] as any;
+
+    const { rerender } = render(
+      <CustomizeRailButtonsModal
+        open={true}
+        onClose={onClose}
+        onSave={onSave}
+        order={order}
+        hiddenTabs={hiddenTabs}
+      />,
+    );
+
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes[0]).toBeChecked();
+    fireEvent.click(checkboxes[0]);
+    expect(checkboxes[0]).not.toBeChecked();
+
+    rerender(
+      <CustomizeRailButtonsModal
+        open={true}
+        onClose={onClose}
+        onSave={onSave}
+        order={[...order]}
+        hiddenTabs={[...hiddenTabs]}
+      />,
+    );
+
+    expect(screen.getAllByRole("checkbox")[0]).not.toBeChecked();
   });
 });

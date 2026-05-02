@@ -393,6 +393,10 @@ export type BrowserSessionRegisterUtils = {
   spawnStateFile: (spawnId: string) => string;
   readSpawnState: (path: string) => SpawnStateRecord | undefined;
   isProcessRunning: (pid: number) => boolean;
+  resolveSpawnedBrowserProcessInfo: (browser_pid: unknown) => {
+    browser_pid?: number;
+    browser_running?: boolean;
+  };
   resolveSpawnTargetUrl: (opts: {
     apiUrl: string;
     projectId?: string;
@@ -423,6 +427,9 @@ export type BrowserSessionRegisterUtils = {
     ctx: BrowserCommandContext;
     marker: string;
     timeoutMs: number;
+    pollMs?: number;
+    stablePolls?: number;
+    sleepFn?: (ms: number) => Promise<void>;
   }) => Promise<BrowserSessionInfo>;
   nowIso: () => string;
   terminateSpawnedProcess: (opts: {
@@ -448,7 +455,30 @@ export type BrowserSessionRegisterUtils = {
       state_file_removed: boolean;
     }>
   >;
+  reapSpawnStatesWithMissingRemoteSessions: (opts: {
+    ctx: BrowserCommandContext;
+    timeoutMs: number;
+    removeStateFiles: boolean;
+  }) => Promise<
+    Array<{
+      spawn_id: string;
+      state_file: string;
+      daemon_pid: number;
+      browser_pid: number;
+      daemon_was_running: boolean;
+      browser_was_running: boolean;
+      daemon_terminated: boolean;
+      daemon_force_killed: boolean;
+      browser_terminated: boolean;
+      browser_force_killed: boolean;
+      state_file_removed: boolean;
+    }>
+  >;
   listSpawnStates: () => Array<{ file: string; state: SpawnStateRecord }>;
+  spawnStateHasActiveRemoteSession: (opts: {
+    state: Pick<SpawnStateRecord, "browser_id" | "target_url" | "session_url">;
+    sessions: BrowserSessionInfo[];
+  }) => boolean;
   resolveSpawnStateById: (
     id: string,
   ) => { file: string; state: SpawnStateRecord } | undefined;

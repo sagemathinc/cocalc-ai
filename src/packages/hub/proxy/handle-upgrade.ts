@@ -6,12 +6,15 @@ import { versionCheckFails } from "./version";
 import { proxyConatWebsocket } from "./proxy-conat";
 import basePath from "@cocalc/backend/base-path";
 import { parseReq } from "./parse";
-import hasAccess from "./check-for-access-to-project";
+import hasAccess, {
+  resolveAuthenticatedAccountId,
+} from "./check-for-access-to-project";
 import { stripBasePath } from "./util";
 import {
   isPublicAppSubdomainRequest,
   maybeRewritePublicAppSubdomainRequest,
 } from "./public-app-subdomain";
+import { setProjectHostProxyAccountId } from "./project-host";
 
 const logger = getLogger("proxy:handle-upgrade");
 
@@ -83,6 +86,14 @@ export default function initUpgrade(
 
     const parsed = parseReq(stripBasePath(req.url), remember_me, api_key);
     const accessType = parsed.type === "files" ? "read" : "write";
+    const authenticatedAccountId =
+      allowPublicSubdomainBypass || parsed.type === "conat"
+        ? undefined
+        : await resolveAuthenticatedAccountId({
+            remember_me,
+            api_key,
+          });
+    setProjectHostProxyAccountId(req, authenticatedAccountId);
     if (!allowPublicSubdomainBypass) {
       if (
         !(await hasAccess({
