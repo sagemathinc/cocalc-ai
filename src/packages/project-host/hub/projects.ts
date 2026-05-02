@@ -964,17 +964,31 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   }): Promise<void> {
     logger.debug("stop: project-host request received", { project_id, force });
     const status = await runnerApi.stop({ project_id, force });
+    let finalState = status?.state ?? "opened";
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const verified = await runnerApi.status({ project_id });
+      finalState = verified?.state ?? finalState;
+      if (finalState === "opened") {
+        break;
+      }
+      await delay(250 * (attempt + 1));
+    }
     logger.debug("stop: runner stop completed", {
       project_id,
       force,
-      state: status?.state ?? "opened",
+      state: finalState,
     });
     ensureProjectRow({
       project_id,
-      state: status?.state ?? "opened",
+      state: finalState,
       http_port: undefined,
       ssh_port: undefined,
     });
+    if (finalState !== "opened") {
+      throw new Error(
+        `project stop did not converge; runner still reports state='${finalState}'`,
+      );
+    }
     try {
       const base = getMountPoint();
       const projectPath = join(base, `project-${project_id}`);

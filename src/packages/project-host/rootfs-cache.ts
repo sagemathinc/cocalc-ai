@@ -85,12 +85,42 @@ type PullRootfsCacheOptions = {
 };
 
 const managedRootfsReplicationInFlight = new Map<string, Promise<void>>();
+const managedRootfsLocalPullInFlight = new Map<
+  string,
+  Promise<ManagedRootfsLocalCacheResult>
+>();
+
+type ManagedRootfsLocalCacheResult = {
+  access?: Extract<RootfsReleaseArtifactAccess, { artifact_format: "rustic" }>;
+  finalPath: string;
+};
 
 function reportPullProgress(
   onProgress: ((update: RootfsCachePullProgress) => void) | undefined,
   update: RootfsCachePullProgress,
 ): void {
   onProgress?.(update);
+}
+
+export async function withManagedRootfsPullInFlight<T>({
+  image,
+  fn,
+  onJoin,
+}: {
+  image: string;
+  fn: () => Promise<T>;
+  onJoin?: () => void;
+}): Promise<T> {
+  const existing = managedRootfsLocalPullInFlight.get(image);
+  if (existing) {
+    onJoin?.();
+    return (await existing) as T;
+  }
+  const task = fn().finally(() => {
+    managedRootfsLocalPullInFlight.delete(image);
+  }) as Promise<ManagedRootfsLocalCacheResult>;
+  managedRootfsLocalPullInFlight.set(image, task);
+  return (await task) as T;
 }
 
 function createRusticStreamHooks({
@@ -624,6 +654,76 @@ async function deleteCachedManagedRootfs({
   await rm(finalPreflightPath, { force: true }).catch(() => {});
 }
 
+async function ensureManagedRootfsCacheIsUsable({
+  image,
+  usage,
+  finalPath,
+  finalPreflightPath,
+}: {
+  image: string;
+  usage?: RootfsUsage;
+  finalPath: string;
+  finalPreflightPath: string;
+}): Promise<boolean> {
+  if (!(await exists(finalPath))) {
+    return false;
+  }
+  const usable = await looksLikeUsableManagedRootfs(finalPath).catch(
+    () => false,
+  );
+  if (!usable) {
+    await deleteCachedManagedRootfs({
+      image,
+      reason: "cached image is missing expected rootfs directories",
+    });
+    return false;
+  }
+  const preflight = await loadRootfsPreflightMetadata(finalPreflightPath);
+  if (preflight == null || preflight.version !== ROOTFS_NORMALIZER_VERSION) {
+    const counts = rootfsUsageCounts(usage);
+    if (counts.project_count > 0 || counts.running > 0) {
+      throw new Error(
+        `cached managed RootFS '${image}' does not satisfy RootFS preflight v${ROOTFS_NORMALIZER_VERSION} and is currently in use by ${counts.project_count} project(s); reprovision the host or flush the RootFS cache before using this image`,
+      );
+    }
+    await deleteCachedManagedRootfs({
+      image,
+      reason:
+        "cached image is missing or outdated RootFS preflight metadata; refreshing cache entry",
+    });
+    return false;
+  }
+  requireCurrentRootfsPreflightMetadata({
+    image,
+    metadataPath: finalPreflightPath,
+    metadata: preflight,
+  });
+  return true;
+}
+
+function reportManagedRootfsReady({
+  onProgress,
+  image,
+  release_id,
+  cached,
+}: {
+  onProgress?: (update: RootfsCachePullProgress) => void;
+  image: string;
+  release_id?: string;
+  cached: boolean;
+}): void {
+  reportPullProgress(onProgress, {
+    message: cached
+      ? "RootFS already cached on this host"
+      : "RootFS ready on host",
+    progress: 100,
+    detail: {
+      image,
+      release_id,
+    },
+  });
+}
+
 async function downloadManagedRootfsArtifact({
   image,
   onProgress,
@@ -634,291 +734,277 @@ async function downloadManagedRootfsArtifact({
   awaitRegionalReplication?: boolean;
 }): Promise<void> {
   const started = Date.now();
-  reportPullProgress(onProgress, {
-    message: "resolving RootFS release",
-    progress: 2,
-  });
-  const access = await hubApi.hosts.getManagedRootfsReleaseArtifact({
-    image,
-  });
-  logger.info("downloading managed RootFS artifact", {
-    image,
-    release_id: access.release_id,
-    content_key: access.content_key,
-    artifact_bytes: access.artifact_bytes,
-    artifact_backend: access.artifact_backend,
-  });
   const finalPath = imageCachePath(image);
   const finalInspectPath = inspectFilePath(image);
   const finalPreflightPath = preflightMetadataFilePath(image);
   const usage = rootfsUsageByImage().get(image);
-  if (await exists(finalPath)) {
-    const usable = await looksLikeUsableManagedRootfs(finalPath).catch(
-      () => false,
-    );
-    if (!usable) {
-      await deleteCachedManagedRootfs({
-        image,
-        reason: "cached image is missing expected rootfs directories",
-      });
-    } else {
-      const preflight = await loadRootfsPreflightMetadata(finalPreflightPath);
-      if (
-        preflight == null ||
-        preflight.version !== ROOTFS_NORMALIZER_VERSION
-      ) {
-        const counts = rootfsUsageCounts(usage);
-        if (counts.project_count > 0 || counts.running > 0) {
-          throw new Error(
-            `cached managed RootFS '${image}' does not satisfy RootFS preflight v${ROOTFS_NORMALIZER_VERSION} and is currently in use by ${counts.project_count} project(s); reprovision the host or flush the RootFS cache before using this image`,
-          );
-        }
-        await deleteCachedManagedRootfs({
-          image,
-          reason:
-            "cached image is missing or outdated RootFS preflight metadata; refreshing cache entry",
-        });
-      } else {
-        requireCurrentRootfsPreflightMetadata({
-          image,
-          metadataPath: finalPreflightPath,
-          metadata: preflight,
-        });
-      }
-    }
-  }
-  if (await exists(finalPath)) {
-    reportPullProgress(onProgress, {
-      message: "RootFS already cached on this host",
-      progress: access.regional_replication_target ? 88 : 100,
-      detail: {
-        image,
-        release_id: access.release_id,
-      },
-    });
-    logger.info("managed RootFS artifact already cached", {
+  if (
+    await ensureManagedRootfsCacheIsUsable({
       image,
-      release_id: access.release_id,
-      content_key: access.content_key,
+      usage,
+      finalPath,
+      finalPreflightPath,
+    })
+  ) {
+    logger.info("managed RootFS artifact already cached locally", {
+      image,
     });
-    if (access.inspect_data && !(await exists(finalInspectPath))) {
-      await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
-    }
-    if (awaitRegionalReplication) {
-      await maybeReplicateManagedRootfsRustic({
-        access,
-        sourcePath: finalPath,
-        onProgress,
-      });
-    } else {
-      scheduleManagedRootfsReplication({
-        access,
-        sourcePath: finalPath,
-      });
-    }
-    reportPullProgress(onProgress, {
-      message: "RootFS ready on host",
-      progress: 100,
-      detail: {
-        image,
-        release_id: access.release_id,
-      },
+    reportManagedRootfsReady({
+      onProgress,
+      image,
+      cached: true,
     });
     return;
   }
-  for (const tempDir of await findManagedRootfsRestoreTemps()) {
-    logger.warn("removing stale managed RootFS restore temp dir", {
-      image,
-      release_id: access.release_id,
-      content_key: access.content_key,
-      temp_dir: tempDir,
-    });
-    await cleanupManagedRootfsTempDir(tempDir);
-  }
-  const estimated_bytes = estimateManagedRootfsPullReservationBytes(access);
-  reportPullProgress(onProgress, {
-    message: "reserving host storage for RootFS pull",
-    progress: 4,
-    detail: {
-      image,
-      release_id: access.release_id,
-      estimated_bytes,
-    },
-  });
-  await withStorageReservation(
-    {
-      kind: "rootfs-pull",
-      resource_id: image,
-      estimated_bytes,
-    },
-    async () => {
-      await mkdir(IMAGE_CACHE, { recursive: true });
-      const tempDir = await mkdtemp(
-        join(IMAGE_CACHE, ".managed-rootfs-rustic-restore-"),
-      );
-      const stagedRootfsPath = join(tempDir, "rootfs");
-      try {
-        reportPullProgress(onProgress, {
-          message: "preparing RootFS cache",
-          progress: 8,
-          detail: {
-            image,
-            release_id: access.release_id,
-          },
-        });
-        await createManagedRootfsRestoreSubvolume(stagedRootfsPath);
-        const restoreStarted = Date.now();
-        reportPullProgress(onProgress, {
-          message: "restoring RootFS image from rustic",
-          progress: 12,
-          detail: {
-            image,
-            release_id: access.release_id,
-          },
-        });
-        await restoreManagedRootfsRustic({
-          access,
-          destPath: stagedRootfsPath,
-          onProgress,
-        });
-        logger.info("restored managed RootFS rustic snapshot", {
+  const { access } = await withManagedRootfsPullInFlight({
+    image,
+    onJoin: () =>
+      reportPullProgress(onProgress, {
+        message: "waiting for concurrent RootFS pull already in flight",
+        progress: 3,
+        detail: { image },
+      }),
+    fn: async (): Promise<ManagedRootfsLocalCacheResult> => {
+      reportPullProgress(onProgress, {
+        message: "resolving RootFS release",
+        progress: 2,
+      });
+      const access = await hubApi.hosts.getManagedRootfsReleaseArtifact({
+        image,
+      });
+      logger.info("downloading managed RootFS artifact", {
+        image,
+        release_id: access.release_id,
+        content_key: access.content_key,
+        artifact_bytes: access.artifact_bytes,
+        artifact_backend: access.artifact_backend,
+      });
+      if (
+        await ensureManagedRootfsCacheIsUsable({
+          image,
+          usage,
+          finalPath,
+          finalPreflightPath,
+        })
+      ) {
+        logger.info("managed RootFS artifact became available while waiting", {
           image,
           release_id: access.release_id,
           content_key: access.content_key,
-          artifact_bytes: access.artifact_bytes,
-          size_bytes: access.size_bytes,
-          elapsed_ms: Date.now() - restoreStarted,
         });
-        reportPullProgress(onProgress, {
-          message: "checking RootFS preflight prerequisites",
-          progress: 84,
-          detail: {
-            image,
-            release_id: access.release_id,
-          },
+        if (access.inspect_data && !(await exists(finalInspectPath))) {
+          await writeFile(
+            finalInspectPath,
+            JSON.stringify(access.inspect_data),
+          );
+        }
+        return { access, finalPath };
+      }
+      for (const tempDir of await findManagedRootfsRestoreTemps()) {
+        logger.warn("removing stale managed RootFS restore temp dir", {
+          image,
+          release_id: access.release_id,
+          content_key: access.content_key,
+          temp_dir: tempDir,
         });
-        let skipOwnershipBridge = false;
-        const inspectLabels = rootfsInspectLabels(access.inspect_data);
-        if (inspectLabels) {
+        await cleanupManagedRootfsTempDir(tempDir);
+      }
+      const estimated_bytes = estimateManagedRootfsPullReservationBytes(access);
+      reportPullProgress(onProgress, {
+        message: "reserving host storage for RootFS pull",
+        progress: 4,
+        detail: {
+          image,
+          release_id: access.release_id,
+          estimated_bytes,
+        },
+      });
+      await withStorageReservation(
+        {
+          kind: "rootfs-pull",
+          resource_id: image,
+          estimated_bytes,
+        },
+        async () => {
+          await mkdir(IMAGE_CACHE, { recursive: true });
+          const tempDir = await mkdtemp(
+            join(IMAGE_CACHE, ".managed-rootfs-rustic-restore-"),
+          );
+          const stagedRootfsPath = join(tempDir, "rootfs");
           try {
-            const usernsMapFingerprint =
-              await readCurrentProjectRuntimeUsernsMapFingerprint();
-            skipOwnershipBridge =
-              inspectLabelsSatisfyCurrentProjectRuntimeContract({
-                labels: inspectLabels,
-                usernsMapFingerprint,
-              });
-          } catch (err) {
-            logger.warn(
-              "unable to evaluate RootFS runtime-contract fast path",
-              {
+            reportPullProgress(onProgress, {
+              message: "preparing RootFS cache",
+              progress: 8,
+              detail: {
                 image,
                 release_id: access.release_id,
-                err: `${err}`,
               },
-            );
-          }
-        }
-        if (skipOwnershipBridge) {
-          reportPullProgress(onProgress, {
-            message: "reusing matching RootFS ownership mapping",
-            progress: 86,
-            detail: {
-              image,
-              release_id: access.release_id,
-              fast_path: "matching-runtime-contract",
-            },
-          });
-        }
-        const preflight = await preflightRootfsInPlace({
-          image,
-          rootfsPath: stagedRootfsPath,
-          skipOwnershipBridge,
-          onProgress: ({ message, detail }) => {
+            });
+            await createManagedRootfsRestoreSubvolume(stagedRootfsPath);
+            const restoreStarted = Date.now();
             reportPullProgress(onProgress, {
-              message,
-              progress: 88,
-              detail,
+              message: "restoring RootFS image from rustic",
+              progress: 12,
+              detail: {
+                image,
+                release_id: access.release_id,
+              },
             });
-          },
-        });
-        try {
-          reportPullProgress(onProgress, {
-            message: "finalizing RootFS cache entry",
-            progress: 90,
-            detail: {
+            await restoreManagedRootfsRustic({
+              access,
+              destPath: stagedRootfsPath,
+              onProgress,
+            });
+            logger.info("restored managed RootFS rustic snapshot", {
               image,
               release_id: access.release_id,
-            },
-          });
-          await snapshotManagedRootfsReadonly({
-            source: stagedRootfsPath,
-            dest: finalPath,
-          });
-          if (access.inspect_data) {
-            await writeFile(
-              finalInspectPath,
-              JSON.stringify(access.inspect_data),
-            );
-          }
-          await writeRootfsPreflightMetadata({
-            metadataPath: finalPreflightPath,
-            metadata: {
-              ...preflight,
-              rootfs_path: finalPath,
-              size_bytes:
-                typeof access.size_bytes === "number" &&
-                Number.isFinite(access.size_bytes) &&
-                access.size_bytes >= 0
-                  ? Math.floor(access.size_bytes)
-                  : undefined,
-            },
-          });
-        } catch (err) {
-          if (await exists(finalPath)) {
-            await deleteCachedManagedRootfs({
-              image,
-              reason: `failed while finalizing restored rustic snapshot: ${err}`,
+              content_key: access.content_key,
+              artifact_bytes: access.artifact_bytes,
+              size_bytes: access.size_bytes,
+              elapsed_ms: Date.now() - restoreStarted,
             });
+            reportPullProgress(onProgress, {
+              message: "checking RootFS preflight prerequisites",
+              progress: 84,
+              detail: {
+                image,
+                release_id: access.release_id,
+              },
+            });
+            let skipOwnershipBridge = false;
+            const inspectLabels = rootfsInspectLabels(access.inspect_data);
+            if (inspectLabels) {
+              try {
+                const usernsMapFingerprint =
+                  await readCurrentProjectRuntimeUsernsMapFingerprint();
+                skipOwnershipBridge =
+                  inspectLabelsSatisfyCurrentProjectRuntimeContract({
+                    labels: inspectLabels,
+                    usernsMapFingerprint,
+                  });
+              } catch (err) {
+                logger.warn(
+                  "unable to evaluate RootFS runtime-contract fast path",
+                  {
+                    image,
+                    release_id: access.release_id,
+                    err: `${err}`,
+                  },
+                );
+              }
+            }
+            if (skipOwnershipBridge) {
+              reportPullProgress(onProgress, {
+                message: "reusing matching RootFS ownership mapping",
+                progress: 86,
+                detail: {
+                  image,
+                  release_id: access.release_id,
+                  fast_path: "matching-runtime-contract",
+                },
+              });
+            }
+            const preflight = await preflightRootfsInPlace({
+              image,
+              rootfsPath: stagedRootfsPath,
+              skipOwnershipBridge,
+              onProgress: ({ message, detail }) => {
+                reportPullProgress(onProgress, {
+                  message,
+                  progress: 88,
+                  detail,
+                });
+              },
+            });
+            try {
+              reportPullProgress(onProgress, {
+                message: "finalizing RootFS cache entry",
+                progress: 90,
+                detail: {
+                  image,
+                  release_id: access.release_id,
+                },
+              });
+              await snapshotManagedRootfsReadonly({
+                source: stagedRootfsPath,
+                dest: finalPath,
+              });
+              if (access.inspect_data) {
+                await writeFile(
+                  finalInspectPath,
+                  JSON.stringify(access.inspect_data),
+                );
+              }
+              await writeRootfsPreflightMetadata({
+                metadataPath: finalPreflightPath,
+                metadata: {
+                  ...preflight,
+                  rootfs_path: finalPath,
+                  size_bytes:
+                    typeof access.size_bytes === "number" &&
+                    Number.isFinite(access.size_bytes) &&
+                    access.size_bytes >= 0
+                      ? Math.floor(access.size_bytes)
+                      : undefined,
+                },
+              });
+            } catch (err) {
+              if (await exists(finalPath)) {
+                await deleteCachedManagedRootfs({
+                  image,
+                  reason: `failed while finalizing restored rustic snapshot: ${err}`,
+                });
+              }
+              throw err;
+            }
+            logger.info("cached managed RootFS from rustic snapshot", {
+              image,
+              release_id: access.release_id,
+              content_key: access.content_key,
+              total_elapsed_ms: Date.now() - started,
+            });
+          } finally {
+            await deleteCachedRootfsPath(stagedRootfsPath).catch(() => {});
+            await rm(tempDir, {
+              recursive: true,
+              force: true,
+              maxRetries: 3,
+            }).catch(() => {});
           }
-          throw err;
-        }
-        logger.info("cached managed RootFS from rustic snapshot", {
-          image,
-          release_id: access.release_id,
-          content_key: access.content_key,
-          total_elapsed_ms: Date.now() - started,
-        });
-        if (awaitRegionalReplication) {
-          await maybeReplicateManagedRootfsRustic({
-            access,
-            sourcePath: finalPath,
-            onProgress,
-          });
-        } else {
-          scheduleManagedRootfsReplication({
-            access,
-            sourcePath: finalPath,
-          });
-        }
-        reportPullProgress(onProgress, {
-          message: "RootFS ready on host",
-          progress: 100,
-          detail: {
-            image,
-            release_id: access.release_id,
-          },
-        });
-      } finally {
-        await deleteCachedRootfsPath(stagedRootfsPath).catch(() => {});
-        await rm(tempDir, {
-          recursive: true,
-          force: true,
-          maxRetries: 3,
-        }).catch(() => {});
-      }
+        },
+      );
+      return { access, finalPath };
     },
-  );
+  });
+  if (access?.inspect_data && !(await exists(finalInspectPath))) {
+    await writeFile(finalInspectPath, JSON.stringify(access.inspect_data));
+  }
+  if (!access) {
+    reportManagedRootfsReady({
+      onProgress,
+      image,
+      cached: true,
+    });
+    return;
+  }
+  if (awaitRegionalReplication) {
+    await maybeReplicateManagedRootfsRustic({
+      access,
+      sourcePath: finalPath,
+      onProgress,
+    });
+  } else {
+    scheduleManagedRootfsReplication({
+      access,
+      sourcePath: finalPath,
+    });
+  }
+  reportManagedRootfsReady({
+    onProgress,
+    image,
+    release_id: access.release_id,
+    cached: false,
+  });
 }
 
 async function deleteCachedRootfsPath(path: string): Promise<void> {

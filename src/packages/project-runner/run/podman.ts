@@ -1293,6 +1293,14 @@ export async function stop({
             await podman(["rm", "-f", "-t", `${STOP_RM_PODMAN_TERM_S}`, name], {
               timeout: STOP_RM_TIMEOUT_S,
             });
+            if (await hasLiveConmonContainer(name)) {
+              await cleanupOrphanedLiveContainer({
+                project_id,
+                name,
+                reason:
+                  "podman rm returned success after timeout recovery but the live project container is still running",
+              });
+            }
           }
         }
       } else {
