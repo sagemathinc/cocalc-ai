@@ -634,10 +634,6 @@ export function CustomizeRailButtonsModal({
   const [draftOrder, setDraftOrder] = useState<FixedTab[]>(order);
   const [draftHidden, setDraftHidden] = useState<FixedTab[]>(hiddenTabs);
   const hiddenSet = useMemo(() => new Set(draftHidden), [draftHidden]);
-  const preview = useMemo(
-    () => splitRailTabs(draftOrder, draftHidden),
-    [draftHidden, draftOrder],
-  );
   const wasOpenRef = useRef(open);
 
   useEffect(() => {
@@ -699,39 +695,6 @@ export function CustomizeRailButtonsModal({
         Check a button to show it on the left rail. Drag to reorder buttons.
         These preferences are stored in this browser only.
       </p>
-      <div
-        data-testid="customize-rail-preview"
-        style={{
-          marginBottom: "12px",
-          padding: "10px 12px",
-          border: `1px solid ${COLORS.GRAY_LLL}`,
-          borderRadius: "8px",
-          background: COLORS.GRAY_LLL,
-        }}
-      >
-        <div
-          style={{
-            fontSize: "12px",
-            fontWeight: 600,
-            color: COLORS.GRAY_D,
-            marginBottom: "8px",
-          }}
-        >
-          Live preview
-        </div>
-        <PreviewBucket
-          items={preview.visible}
-          intl={intl}
-          label="Rail"
-          labelColor={COLORS.ANTD_GREEN_D}
-        />
-        <PreviewBucket
-          items={preview.overflow}
-          intl={intl}
-          label="More"
-          labelColor={COLORS.ANTD_LINK_BLUE_DARK}
-        />
-      </div>
       <SortableList
         items={draftOrder}
         onDragStop={(oldIndex, newIndex) =>
@@ -784,81 +747,6 @@ export function CustomizeRailButtonsModal({
         })}
       </SortableList>
     </Modal>
-  );
-}
-
-function PreviewBucket({
-  items,
-  intl,
-  label,
-  labelColor,
-}: {
-  items: FixedTab[];
-  intl: ReturnType<typeof useIntl>;
-  label: string;
-  labelColor: string;
-}) {
-  return (
-    <div
-      data-testid={`customize-rail-preview-${label.toLowerCase()}`}
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        gap: "10px",
-        marginBottom: items.length > 0 ? "8px" : "6px",
-      }}
-    >
-      <div
-        style={{
-          minWidth: "42px",
-          fontSize: "12px",
-          fontWeight: 600,
-          color: labelColor,
-          paddingTop: "4px",
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "6px",
-          flex: 1,
-        }}
-      >
-        {items.length > 0 ? (
-          items.map((name) => (
-            <span
-              key={`${label}:${name}`}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px",
-                borderRadius: "999px",
-                border: `1px solid ${COLORS.GRAY_L}`,
-                background: "white",
-                padding: "4px 10px",
-                fontSize: "12px",
-              }}
-            >
-              <Icon name={FIXED_PROJECT_TABS[name].icon} />
-              <span>{renderFixedTabLabel(name, intl)}</span>
-            </span>
-          ))
-        ) : (
-          <span
-            style={{
-              fontSize: "12px",
-              color: COLORS.GRAY,
-              paddingTop: "4px",
-            }}
-          >
-            Empty
-          </span>
-        )}
-      </div>
-    </div>
   );
 }
 
