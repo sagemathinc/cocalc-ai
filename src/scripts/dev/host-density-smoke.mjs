@@ -30,6 +30,9 @@ function usageAndExit(message, code = 1) {
       "  --rootfs-image <image>        Runtime RootFS image to assign to created projects",
       "  --rootfs-image-id <id>        Managed RootFS catalog entry id to record",
       "  --keep-projects               Leave created projects in place on success/failure",
+      "  --active-terminal             Keep one terminal session alive per started project",
+      "  --no-active-terminal          Disable active terminal sessions",
+      "  --terminal-hold-seconds <n>   Sleep time for active terminals (default: 1800)",
       "  --exec-smoke                  Run project exec verification at each tier",
       "  --no-exec-smoke               Disable project exec verification",
       "  --help                        Show this help",
@@ -70,6 +73,8 @@ function parseArgs(argv) {
     rootfsImage: "",
     rootfsImageId: "",
     keepProjects: false,
+    activeTerminal: false,
+    terminalHoldSeconds: 1800,
     execSmoke: false,
   };
 
@@ -125,6 +130,16 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === "--keep-projects") {
       options.keepProjects = true;
+    } else if (arg === "--active-terminal") {
+      options.activeTerminal = true;
+    } else if (arg === "--no-active-terminal") {
+      options.activeTerminal = false;
+    } else if (arg === "--terminal-hold-seconds" && next) {
+      options.terminalHoldSeconds = parsePositiveInt(
+        next,
+        "--terminal-hold-seconds",
+      );
+      i += 1;
     } else if (arg === "--exec-smoke") {
       options.execSmoke = true;
     } else if (arg === "--no-exec-smoke") {
@@ -586,6 +601,50 @@ async function execSmoke({ projectId, globalArgs }) {
   };
 }
 
+async function spawnActiveTerminal({
+  projectId,
+  terminalId,
+  holdSeconds,
+  globalArgs,
+}) {
+  const result = await runCocalcJson([
+    ...globalArgs,
+    "project",
+    "terminal",
+    "spawn",
+    "-w",
+    projectId,
+    "--id",
+    terminalId,
+    "--bash",
+    `echo DENSITY_ACTIVE; sleep ${holdSeconds}`,
+  ]);
+  const data = getData(result);
+  return {
+    project_id: projectId,
+    id: `${data?.id ?? terminalId}`.trim(),
+    pid: data?.pid ?? null,
+    history: `${data?.history ?? ""}`,
+  };
+}
+
+async function getTerminalState({ projectId, terminalId, globalArgs }) {
+  const result = await runCocalcJson([
+    ...globalArgs,
+    "project",
+    "terminal",
+    "state",
+    terminalId,
+    "-w",
+    projectId,
+  ]);
+  return {
+    project_id: projectId,
+    id: terminalId,
+    state: `${getData(result) ?? ""}`.trim(),
+  };
+}
+
 async function runInBatches(items, batchSize, worker) {
   const results = [];
   for (let i = 0; i < items.length; i += batchSize) {
@@ -626,6 +685,7 @@ async function main() {
   const runId = compactTimestamp();
   const createdProjects = [];
   const startedProjectIds = new Set();
+  const activeTerminals = new Map();
   const tierResults = [];
   const steps = [];
   let baselineSample = null;
@@ -715,6 +775,70 @@ async function main() {
           })
         : [];
 
+      const activeTerminalResults = [];
+      if (options.activeTerminal) {
+        const toActivate = createdProjects
+          .slice(0, tier)
+          .filter((project) => !activeTerminals.has(project.project_id));
+
+        if (toActivate.length > 0) {
+          const spawnedTerminals = await runStep(
+            `project_terminal_spawn:tier_${tier}`,
+            async () => {
+              return await runInBatches(
+                toActivate,
+                options.batchSize,
+                async (project) => {
+                  const terminalId = `density-${runId}-${project.project_id.slice(0, 8)}`;
+                  const spawned = await spawnActiveTerminal({
+                    projectId: project.project_id,
+                    terminalId,
+                    holdSeconds: options.terminalHoldSeconds,
+                    globalArgs,
+                  });
+                  activeTerminals.set(project.project_id, spawned.id);
+                  return spawned;
+                },
+              );
+            },
+          );
+          activeTerminalResults.push(...spawnedTerminals);
+        }
+
+        const terminalChecks = await runStep(
+          `project_terminal_state:tier_${tier}`,
+          async () => {
+            return await runInBatches(
+              createdProjects.slice(0, tier),
+              options.batchSize,
+              async (project) => {
+                const terminalId = activeTerminals.get(project.project_id);
+                ensure(
+                  terminalId,
+                  `missing active terminal id for ${project.project_id}`,
+                );
+                const state = await getTerminalState({
+                  projectId: project.project_id,
+                  terminalId,
+                  globalArgs,
+                });
+                ensure(
+                  state.state === "running",
+                  `terminal ${terminalId} for ${project.project_id} is ${state.state}`,
+                );
+                return state;
+              },
+            );
+          },
+        );
+        activeTerminalResults.push(
+          ...terminalChecks.map((entry) => ({
+            ...entry,
+            verified_running: true,
+          })),
+        );
+      }
+
       if (options.settleSeconds > 0) {
         await runStep(`settle:tier_${tier}`, async () => {
           await sleep(options.settleSeconds * 1000);
@@ -758,6 +882,7 @@ async function main() {
         started_count: startedProjectIds.size,
         created_this_tier: createdThisTier,
         started_this_tier: startedThisTier,
+        active_terminal: activeTerminalResults,
         sample,
         exec_smoke: execResults,
       });
@@ -858,6 +983,8 @@ async function main() {
     rootfs_image: options.rootfsImage || null,
     rootfs_image_id: options.rootfsImageId || null,
     keep_projects: options.keepProjects,
+    active_terminal: options.activeTerminal,
+    terminal_hold_seconds: options.terminalHoldSeconds,
     exec_smoke: options.execSmoke,
     baseline_sample: baselineSample,
     tier_results: tierResults,

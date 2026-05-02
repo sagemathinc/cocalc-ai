@@ -288,9 +288,12 @@ What it does:
    - `conmon` / `cloudflared` / `project-host` process counts
    - `podman` running/all project counts
    - network RX/TX delta over a configurable interval
-4. Optionally runs `project exec` on the first and last project at each tier
+4. Optionally keeps one live terminal session per started project when
+   `--active-terminal` is enabled, so the sampled tier reflects active running
+   workloads instead of only opened-state projects.
+5. Optionally runs `project exec` on the first and last project at each tier
    when `--exec-smoke` is enabled.
-5. Stops and soft-deletes the created projects by default, then records a final
+6. Stops and soft-deletes the created projects by default, then records a final
    post-cleanup sample.
 
 Useful options:
@@ -301,8 +304,24 @@ Useful options:
 - `--settle-seconds <n>` to wait after each tier before sampling.
 - `--rootfs-image <image>` or `--rootfs-image-id <id>` to force the same runtime image.
 - `--keep-projects` to leave the created projects in place for manual follow-up.
+- `--active-terminal` to keep one `bash -lc 'echo DENSITY_ACTIVE; sleep ...'`
+  terminal alive per started project during sampling.
+- `--terminal-hold-seconds <n>` to control how long those active terminals stay alive.
 - `--exec-smoke` to require a routed `project exec` check on the first and last
   project at each tier.
+
+For an active-density canary with real terminal sessions kept alive:
+
+```bash
+pnpm --dir src smoke:host-density -- \
+  --host host1 \
+  --ssh-target host \
+  --tiers 5,10 \
+  --batch-size 5 \
+  --active-terminal \
+  --terminal-hold-seconds 900 \
+  --rootfs-image buildpack-deps:noble-scm
+```
 
 For a quick local sanity check without much churn:
 
