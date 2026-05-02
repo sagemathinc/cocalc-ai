@@ -264,6 +264,58 @@ pnpm --dir src smoke:project-orphan-recovery -- \
   --yes-destructive
 ```
 
+## Host density smoke
+
+```bash
+pnpm --dir src smoke:host-density -- \
+  --host host1 \
+  --ssh-target host \
+  --tiers 5,10,25 \
+  --batch-size 5
+```
+
+This is a local multibay host-capacity canary for measuring how one project
+host behaves as more projects are placed and started on it.
+
+What it does:
+
+1. Creates disposable projects pinned to one requested host.
+2. Starts them in batches up to each requested tier.
+3. Samples host state over SSH after each tier:
+   - CPU/load average
+   - memory usage
+   - disk usage
+   - `conmon` / `cloudflared` / `project-host` process counts
+   - `podman` running/all project counts
+   - network RX/TX delta over a configurable interval
+4. Optionally runs `project exec` on the first and last project at each tier
+   when `--exec-smoke` is enabled.
+5. Stops and soft-deletes the created projects by default, then records a final
+   post-cleanup sample.
+
+Useful options:
+
+- `--tier <n>` or `--tiers <a,b,c>` to control the density steps.
+- `--batch-size <n>` to control concurrent starts/stops/deletes.
+- `--network-sample-seconds <n>` to lengthen or shorten the per-tier traffic sample.
+- `--settle-seconds <n>` to wait after each tier before sampling.
+- `--rootfs-image <image>` or `--rootfs-image-id <id>` to force the same runtime image.
+- `--keep-projects` to leave the created projects in place for manual follow-up.
+- `--exec-smoke` to require a routed `project exec` check on the first and last
+  project at each tier.
+
+For a quick local sanity check without much churn:
+
+```bash
+pnpm --dir src smoke:host-density -- \
+  --host host1 \
+  --ssh-target host \
+  --tiers 1,2 \
+  --batch-size 1 \
+  --network-sample-seconds 5 \
+  --settle-seconds 3
+```
+
 ## Multibay browser QA
 
 ```bash
