@@ -10,7 +10,10 @@ import hasAccess, {
   resolveAuthenticatedAccountId,
 } from "./check-for-access-to-project";
 import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
-import { getProjectHostRedirectUrl } from "./project-host";
+import {
+  getProjectHostRedirectUrl,
+  setProjectHostProxyAccountId,
+} from "./project-host";
 
 const logger = getLogger("proxy:handle-request");
 const APP_PUBLIC_TOKEN_QUERY_PARAM = "cocalc_app_token";
@@ -97,6 +100,7 @@ export default function init({
             remember_me,
             api_key,
           });
+    setProjectHostProxyAccountId(req, authenticatedAccountId);
 
     if (!allowAnonymousProxyBypass) {
       if (
