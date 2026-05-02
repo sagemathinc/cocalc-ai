@@ -4,6 +4,7 @@ import {
   Card,
   Divider,
   Drawer,
+  InputNumber,
   Popover,
   Popconfirm,
   Select,
@@ -27,18 +28,24 @@ import type {
   HostRuntimeDeploymentObservedTarget,
   HostRuntimeDeploymentObservedVersionState,
   HostRuntimeDeploymentStatus,
+  HostRuntimeLog,
   HostRuntimeRollbackTarget,
   HostRootfsGcResult,
   HostRootfsImage,
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
 } from "@cocalc/conat/hub/api/hosts";
+import {
+  HOST_RUNTIME_LOG_SOURCES,
+  type HostRuntimeLogSource,
+} from "@cocalc/conat/project-host/api";
 import type {
   ManagedComponentKind,
   ManagedComponentRuntimeState,
   ManagedComponentUpgradePolicy,
 } from "@cocalc/conat/project-host/api";
 import { humanSize } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLogEntry } from "../hooks/use-host-log";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
@@ -124,6 +131,16 @@ type HostDrawerViewModel = {
     refreshing: boolean;
     error?: string;
     refresh: () => Promise<void>;
+  };
+  runtimeLogViewer?: {
+    log?: HostRuntimeLog;
+    loading: boolean;
+    error?: string;
+    load: (opts?: {
+      source?: HostRuntimeLogSource;
+      lines?: number;
+    }) => Promise<void>;
+    clear: () => void;
   };
   onSetRuntimeArtifactDeployment?: (opts: {
     host: Host;
@@ -275,6 +292,17 @@ const DAEMON_COMPONENTS: Array<{
   { component: "conat-persist", label: "Conat persist" },
   { component: "acp-worker", label: "ACP worker" },
 ];
+const RUNTIME_LOG_SOURCE_LABELS: Record<HostRuntimeLogSource, string> = {
+  "project-host": "Project host daemon",
+  "conat-router": "Conat router",
+  "conat-persist": "Conat persist",
+  "host-agent": "Host agent",
+  "acp-worker": "ACP worker",
+  cloudflared: "Cloudflared",
+  "bootstrap-reconcile": "Bootstrap reconcile",
+  "project-host-watchdog": "Project host watchdog",
+  "supervision-events": "Supervision events",
+};
 
 function clampDrawerWidth(width: number): number {
   return Math.min(MAX_DRAWER_WIDTH, Math.max(MIN_DRAWER_WIDTH, width));
@@ -1153,10 +1181,20 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     React.useState<Partial<Record<HostRuntimeArtifact, string>>>({});
   const [componentRollbackSelection, setComponentRollbackSelection] =
     React.useState<Partial<Record<ManagedComponentKind, string>>>({});
+  const [runtimeLogSource, setRuntimeLogSource] =
+    React.useState<HostRuntimeLogSource>("project-host");
+  const [runtimeLogLines, setRuntimeLogLines] = React.useState<number>(200);
+  const [runtimeLogRequest, setRuntimeLogRequest] = React.useState<{
+    source: HostRuntimeLogSource;
+    lines: number;
+  }>();
   React.useEffect(() => {
     setShowAdvancedRuntime(false);
     setArtifactRollbackSelection({});
     setComponentRollbackSelection({});
+    setRuntimeLogSource("project-host");
+    setRuntimeLogLines(200);
+    setRuntimeLogRequest(undefined);
   }, [vm.host?.id]);
   const handleResize = React.useCallback((next: number) => {
     const clamped = clampDrawerWidth(next);
@@ -1183,6 +1221,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     loadingLog,
     softwareVersions,
     runtimeDeployments,
+    runtimeLogViewer,
     onSetRuntimeArtifactDeployment,
     onRollbackRuntimeArtifact,
     onResumeRuntimeArtifactClusterDefault,
@@ -1387,6 +1426,18 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
         : [],
     [deploymentStatus, host],
   );
+  const runtimeLogSourceOptions = React.useMemo(
+    () =>
+      HOST_RUNTIME_LOG_SOURCES.map((source) => ({
+        label: RUNTIME_LOG_SOURCE_LABELS[source],
+        value: source,
+      })),
+    [],
+  );
+  const runtimeLogResult = runtimeLogViewer?.log;
+  const runtimeLogResolvedSource = `${runtimeLogResult?.source ?? ""}`.trim();
+  const displayedRuntimeLogSource =
+    runtimeLogRequest?.source ?? runtimeLogSource;
   const latestLogEntry = hostLog[0];
   const latestLogChange = latestLogEntry
     ? describeSpecChange(latestLogEntry.spec)
@@ -2079,6 +2130,107 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 </Space>
               </Card>
             )}
+            <Card size="small" title="Runtime logs">
+              <Space
+                orientation="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  Load recent host-side output for a specific runtime component.
+                </Typography.Text>
+                <Space wrap align="center">
+                  <Select
+                    value={runtimeLogSource}
+                    options={runtimeLogSourceOptions}
+                    style={{ minWidth: 220 }}
+                    onChange={(value) =>
+                      setRuntimeLogSource(value as HostRuntimeLogSource)
+                    }
+                  />
+                  <InputNumber
+                    min={1}
+                    max={5000}
+                    value={runtimeLogLines}
+                    onChange={(value) =>
+                      setRuntimeLogLines(
+                        Math.max(
+                          1,
+                          Math.min(
+                            5000,
+                            Math.floor(Number(value ?? 200) || 200),
+                          ),
+                        ),
+                      )
+                    }
+                    style={{ width: 110 }}
+                  />
+                  <Button
+                    size="small"
+                    type="primary"
+                    disabled={!runtimeLogViewer}
+                    loading={!!runtimeLogViewer?.loading}
+                    onClick={() => {
+                      setRuntimeLogRequest({
+                        source: runtimeLogSource,
+                        lines: runtimeLogLines,
+                      });
+                      void runtimeLogViewer?.load({
+                        source: runtimeLogSource,
+                        lines: runtimeLogLines,
+                      });
+                    }}
+                  >
+                    {runtimeLogResult ? "Reload log" : "Load log"}
+                  </Button>
+                </Space>
+                {runtimeLogViewer?.error && (
+                  <Alert
+                    type="error"
+                    showIcon
+                    message="Failed to load runtime log"
+                    description={runtimeLogViewer.error}
+                  />
+                )}
+                {runtimeLogResult ? (
+                  <>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Requested <code>{displayedRuntimeLogSource}</code> ·
+                      showing{" "}
+                      <code>
+                        {runtimeLogResolvedSource || displayedRuntimeLogSource}
+                      </code>
+                      {" · "}
+                      {runtimeLogResult.lines} lines
+                    </Typography.Text>
+                    <div
+                      style={{
+                        maxHeight: 360,
+                        overflow: "auto",
+                        border: `1px solid ${COLORS.GRAY_LL}`,
+                        borderRadius: 6,
+                        background: COLORS.GRAY_LLL,
+                        padding: 12,
+                        fontFamily:
+                          "ui-monospace, SFMono-Regular, Menlo, monospace",
+                        fontSize: 12,
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {runtimeLogResult.text?.trim()
+                        ? runtimeLogResult.text
+                        : "(no output)"}
+                    </div>
+                  </>
+                ) : (
+                  !runtimeLogViewer?.error && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      No runtime log loaded yet.
+                    </Typography.Text>
+                  )
+                )}
+              </Space>
+            </Card>
             <Alert
               type="info"
               showIcon
