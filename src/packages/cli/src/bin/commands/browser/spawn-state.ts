@@ -547,6 +547,107 @@ export async function reapSpawnStates({
   return rows;
 }
 
+export function spawnStateHasActiveRemoteSession({
+  state,
+  sessions,
+}: {
+  state: Pick<SpawnStateRecord, "browser_id" | "target_url" | "session_url">;
+  sessions: BrowserSessionInfo[];
+}): boolean {
+  const browserId = `${state.browser_id ?? ""}`.trim();
+  if (browserId) {
+    return (sessions ?? []).some(
+      (session) =>
+        !session.stale && `${session.browser_id ?? ""}`.trim() === browserId,
+    );
+  }
+  const marker =
+    spawnMarkerFromUrl(`${state.target_url ?? ""}`) ??
+    spawnMarkerFromUrl(`${state.session_url ?? ""}`);
+  if (!marker) return false;
+  return (sessions ?? []).some(
+    (session) => !session.stale && sessionMatchesSpawnMarker(session, marker),
+  );
+}
+
+export async function reapSpawnStatesWithMissingRemoteSessions({
+  ctx,
+  timeoutMs,
+  removeStateFiles,
+}: {
+  ctx: BrowserCommandContext;
+  timeoutMs: number;
+  removeStateFiles: boolean;
+}): Promise<SpawnStateReapResult[]> {
+  const sessions = (await ctx.hub.system.listBrowserSessions({
+    include_stale: true,
+  })) as BrowserSessionInfo[];
+  const rows: SpawnStateReapResult[] = [];
+  for (const { file, state } of listSpawnStates()) {
+    const daemonPid = Number(state.pid);
+    const browserPid = Number(state.browser_pid ?? 0);
+    const daemonWasRunning = isProcessRunning(daemonPid);
+    const browserWasRunning = isProcessRunning(browserPid);
+    if (!daemonWasRunning) {
+      continue;
+    }
+    if (spawnStateHasActiveRemoteSession({ state, sessions })) {
+      continue;
+    }
+
+    const daemonStop = await terminateSpawnedProcess({
+      pid: daemonPid,
+      timeoutMs,
+    });
+    let browserStop = { terminated: false, killed: false };
+    if (browserPid > 0 && isProcessRunning(browserPid)) {
+      browserStop = await terminateSpawnedProcess({
+        pid: browserPid,
+        timeoutMs,
+      });
+    }
+
+    const daemonFinalRunning = isProcessRunning(daemonPid);
+    const browserFinalRunning = isProcessRunning(browserPid);
+    const fullyStopped = !daemonFinalRunning && !browserFinalRunning;
+    let stateFileRemoved = false;
+    if (fullyStopped) {
+      const stoppedState: SpawnStateRecord = {
+        ...state,
+        status: "stopped",
+        reason: "reap-missing-remote-session",
+        stopped_at: nowIso(),
+        updated_at: nowIso(),
+      };
+      if (removeStateFiles) {
+        try {
+          unlinkSync(file);
+          stateFileRemoved = true;
+        } catch {
+          writeSpawnState(file, stoppedState);
+        }
+      } else {
+        writeSpawnState(file, stoppedState);
+      }
+    }
+
+    rows.push({
+      spawn_id: state.spawn_id,
+      state_file: file,
+      daemon_pid: daemonPid,
+      browser_pid: browserPid,
+      daemon_was_running: daemonWasRunning,
+      browser_was_running: browserWasRunning,
+      daemon_terminated: daemonStop.terminated,
+      daemon_force_killed: daemonStop.killed,
+      browser_terminated: browserStop.terminated,
+      browser_force_killed: browserStop.killed,
+      state_file_removed: stateFileRemoved,
+    });
+  }
+  return rows;
+}
+
 export function listSpawnStates(): Array<{
   file: string;
   state: SpawnStateRecord;

@@ -264,7 +264,9 @@ export function registerBrowserSessionCommands({
     nowIso,
     terminateSpawnedProcess,
     reapSpawnStates,
+    reapSpawnStatesWithMissingRemoteSessions,
     listSpawnStates,
+    spawnStateHasActiveRemoteSession,
     resolveSpawnStateById,
     isSeaMode,
     sessionMatchesProject,
@@ -524,6 +526,11 @@ export function registerBrowserSessionCommands({
               stopRunning: false,
               removeStateFiles: true,
             });
+            await reapSpawnStatesWithMissingRemoteSessions({
+              ctx,
+              timeoutMs: 1_500,
+              removeStateFiles: true,
+            });
             const projectHint =
               `${opts.projectId ?? opts.project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim();
             const project_id = !projectHint
@@ -714,21 +721,42 @@ export function registerBrowserSessionCommands({
     .command("spawned")
     .description("list locally managed Playwright-spawned browser sessions")
     .action(async (_opts: unknown, command: Command) => {
-      await deps.withContext(command, "browser session spawned", async () => {
-        return listSpawnStates().map(({ file, state }) => ({
-          spawn_id: state.spawn_id,
-          pid: state.pid,
-          browser_pid: Number(state.browser_pid ?? 0) || undefined,
-          running: isProcessRunning(Number(state.pid)),
-          browser_running: isProcessRunning(Number(state.browser_pid ?? 0)),
-          status: state.status,
-          browser_id: `${state.browser_id ?? ""}`.trim(),
-          session_url: `${state.session_url ?? state.page_url ?? ""}`.trim(),
-          target_url: state.target_url,
-          updated_at: state.updated_at,
-          state_file: file,
-        }));
-      });
+      await deps.withContext(
+        command,
+        "browser session spawned",
+        async (ctx) => {
+          await reapSpawnStates({
+            timeoutMs: 1_500,
+            stopRunning: false,
+            removeStateFiles: true,
+          });
+          await reapSpawnStatesWithMissingRemoteSessions({
+            ctx,
+            timeoutMs: 1_500,
+            removeStateFiles: true,
+          });
+          const sessions = (await ctx.hub.system.listBrowserSessions({
+            include_stale: true,
+          })) as BrowserSessionInfo[];
+          return listSpawnStates().map(({ file, state }) => ({
+            spawn_id: state.spawn_id,
+            pid: state.pid,
+            browser_pid: Number(state.browser_pid ?? 0) || undefined,
+            running: isProcessRunning(Number(state.pid)),
+            browser_running: isProcessRunning(Number(state.browser_pid ?? 0)),
+            remote_session_active: spawnStateHasActiveRemoteSession({
+              state,
+              sessions,
+            }),
+            status: state.status,
+            browser_id: `${state.browser_id ?? ""}`.trim(),
+            session_url: `${state.session_url ?? state.page_url ?? ""}`.trim(),
+            target_url: state.target_url,
+            updated_at: state.updated_at,
+            state_file: file,
+          }));
+        },
+      );
     });
 
   session

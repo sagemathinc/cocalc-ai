@@ -5,6 +5,7 @@ import {
   buildControlPlaneOriginStorageKey,
   buildRememberMeStorageKeys,
   buildSpawnCookies,
+  spawnStateHasActiveRemoteSession,
   waitForSpawnedSession,
 } from "./spawn-state";
 
@@ -89,4 +90,48 @@ test("waitForSpawnedSession ignores transient registrations and returns a stable
   });
   assert.equal(result.browser_id, "browser-b");
   assert.equal(calls, 4);
+});
+
+test("spawnStateHasActiveRemoteSession matches active session by browser id", () => {
+  const state = {
+    browser_id: "browser-1",
+    target_url:
+      "http://localhost:9100/projects/test/files?_cocalc_browser_spawn=pw-test-1",
+  };
+  const sessions = [
+    {
+      browser_id: "browser-1",
+      stale: false,
+      url: "http://localhost:9100/projects/test/files?_cocalc_browser_spawn=pw-test-1",
+    },
+  ];
+  assert.equal(
+    spawnStateHasActiveRemoteSession({
+      state: state as any,
+      sessions: sessions as any,
+    }),
+    true,
+  );
+});
+
+test("spawnStateHasActiveRemoteSession treats stale matching rows as inactive", () => {
+  const state = {
+    browser_id: "browser-1",
+    target_url:
+      "http://localhost:9100/projects/test/files?_cocalc_browser_spawn=pw-test-1",
+  };
+  const sessions = [
+    {
+      browser_id: "browser-1",
+      stale: true,
+      url: "http://localhost:9100/projects/test/files?_cocalc_browser_spawn=pw-test-1",
+    },
+  ];
+  assert.equal(
+    spawnStateHasActiveRemoteSession({
+      state: state as any,
+      sessions: sessions as any,
+    }),
+    false,
+  );
 });
