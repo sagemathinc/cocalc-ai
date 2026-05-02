@@ -14,7 +14,7 @@ describe("project-host conat router managed egress", () => {
             user: { account_id: "account-1" },
             browser_id: "browser-a",
             send: { messages: 1, bytes: 100 },
-            recv: { messages: 1, bytes: 500 },
+            recv: { messages: 1, bytes: 100 },
             egress: { messages: 1, bytes: 1000 },
             subs: 1,
           },
@@ -24,7 +24,7 @@ describe("project-host conat router managed egress", () => {
             user: { account_id: "account-1" },
             browser_id: "browser-a",
             send: { messages: 2, bytes: 250 },
-            recv: { messages: 2, bytes: 750 },
+            recv: { messages: 2, bytes: 250 },
             egress: { messages: 2, bytes: 1250 },
             subs: 1,
           },
@@ -32,7 +32,7 @@ describe("project-host conat router managed egress", () => {
             user: { account_id: "account-1" },
             browser_id: "browser-b",
             send: { messages: 1, bytes: 5 },
-            recv: { messages: 1, bytes: 200 },
+            recv: { messages: 1, bytes: 55 },
             egress: { messages: 1, bytes: 55 },
             subs: 1,
           },
@@ -40,7 +40,7 @@ describe("project-host conat router managed egress", () => {
             user: { account_id: "account-2" },
             browser_id: "browser-c",
             send: { messages: 1, bytes: 7 },
-            recv: { messages: 1, bytes: 80 },
+            recv: { messages: 1, bytes: 70 },
             egress: { messages: 1, bytes: 70 },
             subs: 1,
           },
@@ -64,7 +64,7 @@ describe("project-host conat router managed egress", () => {
     ).toEqual([
       {
         account_id: "account-1",
-        bytes: 305,
+        bytes: 205,
         socket_ids: ["socketA", "socketB"],
         browser_ids: ["browser-a", "browser-b"],
       },
@@ -115,6 +115,33 @@ describe("project-host conat router managed egress", () => {
         browser_ids: ["browser-a"],
       },
     ]);
+  });
+
+  it("ignores socket.io overhead when client-reported recv bytes stay flat", () => {
+    expect(
+      __test__.summarizeManagedConatEgressDeltas({
+        previous: {
+          socketA: {
+            user: { account_id: "account-1" },
+            browser_id: "browser-a",
+            send: { messages: 1, bytes: 0 },
+            recv: { messages: 10, bytes: 1024 },
+            egress: { messages: 10, bytes: 4096 },
+            subs: 1,
+          },
+        },
+        current: {
+          socketA: {
+            user: { account_id: "account-1" },
+            browser_id: "browser-a",
+            send: { messages: 1, bytes: 0 },
+            recv: { messages: 10, bytes: 1024 },
+            egress: { messages: 15, bytes: 12288 },
+            subs: 1,
+          },
+        },
+      }),
+    ).toEqual([]);
   });
 
   it("formats the interactive session block message", () => {

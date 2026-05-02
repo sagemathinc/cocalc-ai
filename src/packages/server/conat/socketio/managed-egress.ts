@@ -164,8 +164,8 @@ export function summarizeManagedConatEgressDeltas({
     const account_id = normalizeAccountId(stats);
     if (!account_id) continue;
     const deltaBytes = diffCounter(
-      stats.egress?.bytes,
-      previous[socket_id]?.egress?.bytes,
+      stats.recv?.bytes,
+      previous[socket_id]?.recv?.bytes,
     );
     if (!(deltaBytes > 0)) continue;
     const browser_id = getBrowserId(stats)!;
