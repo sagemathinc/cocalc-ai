@@ -196,6 +196,8 @@ import {
   type RotateChatStoreApplyHeadChangesContext,
 } from "@cocalc/backend/chat-store/sqlite-offload";
 import {
+  clearAcpWorkerHeartbeat,
+  recordAcpWorkerHeartbeat,
   ensureAcpWorkerRunning,
   startAcpWorkerSupervisor,
 } from "./worker-manager";
@@ -4668,6 +4670,7 @@ export async function runDetachedAcpQueueWorker(
     return { state: nextState, runningJobs, runningTurnLeases };
   };
   try {
+    recordAcpWorkerHeartbeat({ pid: process.pid });
     if (workerContext) {
       upsertAcpWorker({
         worker_id: workerContext.worker_id,
@@ -4775,9 +4778,11 @@ export async function runDetachedAcpQueueWorker(
         workerStopReason = "idle_timeout";
         return;
       }
+      recordAcpWorkerHeartbeat({ pid: process.pid });
       await sleep(ACP_WORKER_POLL_MS);
     }
   } finally {
+    clearAcpWorkerHeartbeat();
     if (workerHeartbeatTimer != null) {
       clearInterval(workerHeartbeatTimer);
     }

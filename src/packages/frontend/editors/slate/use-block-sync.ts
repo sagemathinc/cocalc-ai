@@ -152,6 +152,9 @@ export function useBlockSync({
   );
 
   useEffect(() => {
+    if (actions?._syncstring != null) {
+      return;
+    }
     const nextValue = value ?? "";
     const valueChanged = lastObservedValueRef.current !== nextValue;
     lastObservedValueRef.current = nextValue;
@@ -186,6 +189,7 @@ export function useBlockSync({
     if (pendingRemoteRef.current != null) return;
     applyBlocksFromValue(nextValue);
   }, [
+    actions,
     value,
     focusedIndex,
     ignoreRemoteWhileFocused,
@@ -204,6 +208,21 @@ export function useBlockSync({
   function shouldDeferRemoteMerge(): boolean {
     const idleMs = mergeIdleMsRef.current;
     return Date.now() - lastLocalEditAtRef.current < idleMs;
+  }
+
+  function clearPendingRemoteState(reason: string, remote?: string) {
+    if (pendingRemoteTimerRef.current != null) {
+      window.clearTimeout(pendingRemoteTimerRef.current);
+      pendingRemoteTimerRef.current = null;
+    }
+    if (pendingRemoteRef.current != null) {
+      debugSyncLog("pending-remote:clear", {
+        reason,
+        remoteLength: remote?.length,
+      });
+    }
+    pendingRemoteRef.current = null;
+    setPendingRemoteIndicator(false);
   }
 
   function schedulePendingRemoteMerge() {
@@ -228,7 +247,9 @@ export function useBlockSync({
       schedulePendingRemoteMerge();
       return;
     }
-    debugSyncLog("pending-remote:flush", { force });
+    debugSyncLog("pending-remote:flush", {
+      force,
+    });
     pendingRemoteRef.current = null;
     setPendingRemoteIndicator(false);
     lastRemoteMergeAtRef.current = Date.now();
@@ -251,6 +272,7 @@ export function useBlockSync({
     if (actions?._syncstring == null) return;
     const change = () => {
       const remote = actions._syncstring?.to_str() ?? "";
+      clearPendingRemoteState("new-syncstring", remote);
       debugSyncLog("syncstring:change", {
         focusedIndex,
         remoteLength: remote.length,
