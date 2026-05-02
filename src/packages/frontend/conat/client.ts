@@ -66,6 +66,7 @@ import {
 } from "@cocalc/frontend/misc/remember-me";
 import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
+import { parseRetryInAboutSeconds } from "@cocalc/conat/auth/retry-window";
 import {
   get as getLroStream,
   waitForCompletion as waitForLroCompletion,
@@ -998,10 +999,8 @@ export class ConatClient extends EventEmitter {
 
   private projectHostAuthRetryDelayMs = (err: unknown): number | undefined => {
     const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
-    const match = message.match(/retry in about\s+(\d+)\s*s\b/);
-    if (!match) return;
-    const seconds = Number(match[1]);
-    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    const seconds = parseRetryInAboutSeconds(message);
+    if (!seconds) return;
     return seconds * 1000;
   };
 

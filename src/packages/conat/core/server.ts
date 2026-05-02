@@ -32,6 +32,7 @@ import {
   isValidSubject,
   isValidSubjectWithoutWildcards,
 } from "@cocalc/conat/util";
+import { formatRetryInAbout } from "@cocalc/conat/auth/retry-window";
 import { Server } from "socket.io";
 import { delay } from "awaiting";
 import {
@@ -1084,7 +1085,7 @@ export class ConatServer extends EventEmitter {
         );
         const waitSec = Math.ceil(waitMs / 1000);
         throw new ConatError(
-          `too many authentication failures from ${address}; retry in about ${waitSec}s`,
+          `too many authentication failures from ${address}; ${formatRetryInAbout(waitSec)}`,
           { code: 429 },
         );
       }
