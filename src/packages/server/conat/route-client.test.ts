@@ -355,6 +355,34 @@ describe("server/conat route-client", () => {
     expect(authValue).toEqual({ bearer: "token-1" });
   });
 
+  it("reuses one account-routed host client across multiple projects on the same host", async () => {
+    const central = createFakeClient();
+    const routed = createFakeClient();
+    connectMock
+      .mockImplementationOnce(() => central)
+      .mockImplementationOnce(() => routed);
+    routeProjectSubjectMock.mockReturnValue({
+      host_id: "host-local",
+      address: "https://host-local.example",
+    });
+
+    const { conatWithProjectRoutingForAccount } =
+      await import("./route-client");
+    const client = conatWithProjectRoutingForAccount({
+      account_id: "account-1",
+    }) as any;
+    const first = client.routeSubject(
+      "file-server.12345678-1234-1234-1234-123456789012.api",
+    );
+    const second = client.routeSubject(
+      "file-server.87654321-4321-4321-4321-210987654321.api",
+    );
+
+    expect(first?.client).toBe(routed);
+    expect(second?.client).toBe(routed);
+    expect(connectMock).toHaveBeenCalledTimes(2);
+  });
+
   it("asks the owning bay to issue account-scoped auth for remote hosts", async () => {
     const central = createFakeClient();
     const routed = createFakeClient();
@@ -390,7 +418,6 @@ describe("server/conat route-client", () => {
     expect(projectHostAuthTokenIssueMock).toHaveBeenCalledWith({
       account_id: "account-1",
       host_id: "host-remote",
-      project_id: "12345678-1234-1234-1234-123456789012",
     });
     expect(authValue).toEqual({ bearer: "remote-account-token" });
   });

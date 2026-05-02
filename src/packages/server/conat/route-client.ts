@@ -14,7 +14,6 @@ import {
 import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
-import { isValidUUID } from "@cocalc/util/misc";
 import {
   materializeHostRouteTarget,
   materializeProjectHostTarget,
@@ -38,7 +37,6 @@ type RoutedHubClientState = {
   client: Client;
   host_session_id?: string;
   account_id?: string;
-  project_id?: string;
   token?: string;
   expiresAt?: number;
   inFlight?: Promise<string>;
@@ -111,11 +109,9 @@ async function issueHubRouteToken(host_id: string): Promise<{
 async function issueAccountRouteToken({
   host_id,
   account_id,
-  project_id,
 }: {
   host_id: string;
   account_id: string;
-  project_id?: string;
 }): Promise<{
   token: string;
   expiresAt: number;
@@ -124,7 +120,7 @@ async function issueAccountRouteToken({
   if (ownership && ownership.bay_id !== getConfiguredBayId()) {
     const issued = await getInterBayBridge()
       .projectHostAuthToken(ownership.bay_id, { timeout_ms: 15_000 })
-      .issue({ account_id, host_id, project_id });
+      .issue({ account_id, host_id });
     return { token: issued.token, expiresAt: issued.expires_at };
   }
   const { token, expires_at } = issueProjectHostAuthToken({
@@ -156,7 +152,6 @@ async function getHubRouteToken(
       ? await issueAccountRouteToken({
           host_id,
           account_id: state.account_id,
-          project_id: state.project_id,
         })
       : await issueHubRouteToken(host_id);
     state.token = token;
@@ -173,15 +168,11 @@ async function getHubRouteToken(
 function routedClientKey({
   host_id,
   account_id,
-  project_id,
 }: {
   host_id: string;
   account_id?: string;
-  project_id?: string;
 }): string {
-  return account_id
-    ? `${host_id}:account:${account_id}:project:${project_id ?? ""}`
-    : `${host_id}:hub`;
+  return account_id ? `${host_id}:account:${account_id}` : `${host_id}:hub`;
 }
 
 function getOrCreateRoutedHubClient({
@@ -189,15 +180,13 @@ function getOrCreateRoutedHubClient({
   address,
   host_session_id,
   account_id,
-  project_id,
 }: {
   host_id: string;
   address: string;
   host_session_id?: string;
   account_id?: string;
-  project_id?: string;
 }): Client {
-  const key = routedClientKey({ host_id, account_id, project_id });
+  const key = routedClientKey({ host_id, account_id });
   const existing = routedHubClients[key];
   if (
     existing?.address === address &&
@@ -213,7 +202,6 @@ function getOrCreateRoutedHubClient({
     address,
     host_session_id,
     account_id,
-    project_id,
     client: undefined as unknown as Client,
   };
   state.client = connect({
@@ -251,7 +239,7 @@ function getOrCreateRoutedHubClient({
             return;
           }
           try {
-            const fresh = await refreshRoutedTarget({ host_id, project_id });
+            const fresh = await refreshRoutedTarget({ host_id });
             if (
               !fresh?.address ||
               (fresh.host_id && fresh.host_id !== host_id) ||
@@ -265,7 +253,6 @@ function getOrCreateRoutedHubClient({
             log.debug("failed refreshing routed hub client target", {
               host_id,
               address,
-              project_id,
               err: `${err}`,
             });
           }
@@ -303,7 +290,7 @@ function getOrCreateRoutedHubClient({
 }
 
 function routeTargetToClient(
-  subject: string,
+  _subject: string,
   target?: {
     address?: string;
     host_id?: string;
@@ -320,22 +307,8 @@ function routeTargetToClient(
       address: target.address,
       host_session_id: target.host_session_id,
       account_id,
-      project_id: account_id ? extractProjectRouteSubject(subject) : undefined,
     }),
   };
-}
-
-function extractProjectRouteSubject(subject: string): string | undefined {
-  const parts = subject.split(".");
-  if (parts[0] === "project" || parts[0] === "file-server") {
-    const project_id = parts[1];
-    return project_id && isValidUUID(project_id) ? project_id : undefined;
-  }
-  const maybe = parts[1];
-  if (maybe?.startsWith("project-")) {
-    const project_id = maybe.slice("project-".length);
-    return isValidUUID(project_id) ? project_id : undefined;
-  }
 }
 
 function hasRoutedClient(target?: RoutedTarget): target is { client: Client } {
