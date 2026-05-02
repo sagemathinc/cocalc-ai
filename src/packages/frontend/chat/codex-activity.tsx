@@ -1859,6 +1859,81 @@ export function codexEventsToMarkdown(
   activitySteers?: AttachedSteerMessage[],
 ): string {
   const entries = normalizeEvents(events ?? [], activitySteers);
+  return activityEntriesToMarkdown(entries);
+}
+
+export function codexIntermediateActivityToMarkdown(
+  events: AcpLogStreamMessage[],
+  activitySteers?: AttachedSteerMessage[],
+): string {
+  const entries = stripFinalResponseEntries(
+    normalizeEvents(events ?? [], activitySteers),
+    getLatestSummaryFinalResponse(events),
+  );
+  return activityEntriesToMarkdown(entries);
+}
+
+function stripFinalResponseEntries(
+  entries: ActivityEntry[],
+  finalResponse?: string,
+): ActivityEntry[] {
+  const withoutSummary = entries.filter(
+    (entry) => !(entry.kind === "status" && entry.label === "Summary"),
+  );
+  const normalizedFinalResponse = normalizeJumpText(finalResponse);
+  if (!normalizedFinalResponse) {
+    return withoutSummary;
+  }
+  let lastAgentIndex = -1;
+  for (let i = withoutSummary.length - 1; i >= 0; i -= 1) {
+    const entry = withoutSummary[i];
+    if (
+      entry.kind === "agent" &&
+      shouldDropFinalAgentEntry(
+        normalizeJumpText(entry.text),
+        normalizedFinalResponse,
+      )
+    ) {
+      lastAgentIndex = i;
+      break;
+    }
+  }
+  if (lastAgentIndex === -1) {
+    return withoutSummary;
+  }
+  return withoutSummary.filter((_, index) => index !== lastAgentIndex);
+}
+
+function shouldDropFinalAgentEntry(
+  normalizedAgentText: string,
+  normalizedFinalResponse: string,
+): boolean {
+  if (!normalizedAgentText || !normalizedFinalResponse) {
+    return false;
+  }
+  return (
+    normalizedAgentText.includes(normalizedFinalResponse) ||
+    normalizedFinalResponse.includes(normalizedAgentText)
+  );
+}
+
+function getLatestSummaryFinalResponse(
+  events: AcpLogStreamMessage[],
+): string | undefined {
+  for (let i = (events?.length ?? 0) - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event?.type !== "summary") continue;
+    if (
+      typeof event.finalResponse === "string" &&
+      event.finalResponse.trim().length > 0
+    ) {
+      return event.finalResponse;
+    }
+  }
+  return undefined;
+}
+
+function activityEntriesToMarkdown(entries: ActivityEntry[]): string {
   if (!entries.length) return "";
   const lines: string[] = [];
   for (const entry of entries) {
