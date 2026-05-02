@@ -317,4 +317,32 @@ describe("CustomizeRailButtonsModal", () => {
 
     expect(screen.getAllByRole("checkbox")[0]).not.toBeChecked();
   });
+
+  it("updates the live preview when a checkbox changes", () => {
+    render(
+      <CustomizeRailButtonsModal
+        open={true}
+        onClose={jest.fn()}
+        onSave={jest.fn()}
+        order={["files", "agents", "log"] as any}
+        hiddenTabs={["log"] as any}
+      />,
+    );
+
+    expect(
+      screen.getByTestId("customize-rail-preview-rail").textContent,
+    ).toContain("Files");
+    expect(
+      screen.getByTestId("customize-rail-preview-more").textContent,
+    ).toContain("Log");
+
+    fireEvent.click(screen.getAllByRole("checkbox")[0]);
+
+    expect(
+      screen.getByTestId("customize-rail-preview-rail").textContent,
+    ).not.toContain("Files");
+    expect(
+      screen.getByTestId("customize-rail-preview-more").textContent,
+    ).toContain("Files");
+  });
 });
