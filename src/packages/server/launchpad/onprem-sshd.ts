@@ -928,6 +928,67 @@ function clearPidFileSync(path: string): void {
   }
 }
 
+async function listCloudflaredPidsForConfig(
+  configPath: string,
+): Promise<number[]> {
+  try {
+    const { stdout, exit_code } = await executeCode({
+      command: "ps",
+      args: ["-eo", "pid=,args="],
+      timeout: 10,
+    });
+    if (exit_code !== 0) return [];
+    return `${stdout ?? ""}`
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(
+        (line) =>
+          line.includes("cloudflared") &&
+          line.includes(configPath) &&
+          line.includes(" tunnel "),
+      )
+      .map((line) => parsePid(line.split(/\s+/, 1)[0]))
+      .filter((pid): pid is number => !!pid);
+  } catch {
+    return [];
+  }
+}
+
+async function stopCloudflaredPids(pids: Iterable<number>): Promise<void> {
+  const unique = [...new Set([...pids].filter((pid) => isPidRunning(pid)))];
+  if (unique.length === 0) return;
+  for (const pid of unique) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // ignore
+    }
+  }
+  await new Promise((resolve) => setTimeout(resolve, 750));
+  for (const pid of unique) {
+    if (!isPidRunning(pid)) continue;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // ignore
+    }
+  }
+}
+
+async function stopManagedLaunchpadCloudflared(): Promise<void> {
+  const pidPath = cloudflaredPidFilePath();
+  const configPath = join(cloudflaredStateDir(), "config.yml");
+  const persistedPid = await readPidFile(pidPath);
+  const pids = [
+    ...(await listCloudflaredPidsForConfig(configPath)),
+    ...(cloudflaredState?.pid ? [cloudflaredState.pid] : []),
+    ...(persistedPid ? [persistedPid] : []),
+  ].filter((pid): pid is number => !!pid);
+  await stopCloudflaredPids(pids);
+  await clearPidFile(pidPath);
+  cloudflaredState = null;
+}
+
 type StoredRestServerState = {
   pid: number;
   rest_port: number;
@@ -1199,6 +1260,14 @@ async function startCloudflared(): Promise<CloudflaredState | null> {
   cloudflaredLastError = null;
   if (!isLaunchpadProduct()) {
     logger.info("cloudflare tunnel not started (product is not launchpad)");
+    return null;
+  }
+  if (getConfiguredClusterRole() === "attached") {
+    await stopManagedLaunchpadCloudflared();
+    logger.info(
+      "cloudflare tunnel not started on attached bay (managed bay tunnel handles public ingress)",
+      { bay_id: getConfiguredBayId() },
+    );
     return null;
   }
   const settings = await getServerSettings();
