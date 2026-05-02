@@ -56,14 +56,12 @@ import {
   getLiveResponseBlocks,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
+  getMountedIntermediateResponseBlocks,
   type InlineCodeLink,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
 import { getUserName } from "./chat-log";
-import {
-  codexEventsToMarkdown,
-  codexIntermediateActivityToMarkdown,
-} from "./codex-activity";
+import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
   resetAcpThreadState,
@@ -412,12 +410,34 @@ export type InlineCodexActivityBlock = {
   state?: "sending" | "sent" | "queued" | "not-sent";
 };
 
-export function blocksFromCodexActivityMarkdown(
-  markdown?: string,
+export function trimCompletedCachedCodexActivityBlocks(
+  blocks: InlineCodexActivityBlock[] | undefined,
+  finalResponse?: string,
 ): InlineCodexActivityBlock[] | undefined {
-  const value = `${markdown ?? ""}`.trim();
-  if (!value) return undefined;
-  return [{ kind: "agent", text: value }];
+  if (!Array.isArray(blocks) || blocks.length === 0) return undefined;
+  const normalizedFinal = `${finalResponse ?? ""}`
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!normalizedFinal) return blocks;
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    const block = blocks[i];
+    if (block.kind !== "agent") continue;
+    const normalizedBlock = `${block.text ?? ""}`
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (
+      !normalizedBlock ||
+      (!normalizedBlock.includes(normalizedFinal) &&
+        !normalizedFinal.includes(normalizedBlock))
+    ) {
+      return blocks;
+    }
+    const next = blocks.filter((_, index) => index !== i);
+    return next.length > 0 ? next : undefined;
+  }
+  return blocks;
 }
 
 export function resolveEditedMessageForSave(
@@ -1187,31 +1207,37 @@ export default function Message({
             typeof steer?.text === "string" && steer.text.trim().length > 0,
         )
       : [];
-    return blocksFromCodexActivityMarkdown(
-      codexIntermediateActivityToMarkdown(
+    const blocks = (
+      getMountedIntermediateResponseBlocks(
         codexPreviewLog.events as any,
-        steerItems,
-      ),
+        steerItems.map(({ date, text, state }) => ({ date, text, state })),
+      ) as InlineCodexActivityBlock[]
+    ).filter(
+      (block) => typeof block.text === "string" && block.text.trim().length > 0,
     );
+    return blocks.length > 0 ? blocks : undefined;
   }, [activitySteers, codexPreviewLog.events]);
   const completedCodexActivityBlocks = useMemo(() => {
     if (inlineCodexActivityMode !== "completed") {
       return undefined;
+    }
+    const trimmedCachedBlocks = trimCompletedCachedCodexActivityBlocks(
+      cachedCodexActivityBlocks,
+      rowMessageValue,
+    );
+    if (
+      canUseCompletedCachedCodexActivity({
+        liveStatus: codexPreviewLog.liveStatus,
+      }) &&
+      trimmedCachedBlocks != null
+    ) {
+      return trimmedCachedBlocks;
     }
     if (
       allowAsyncCompletedCodexActivityLoad &&
       completedCodexActivityBlocksFromEvents != null
     ) {
       return completedCodexActivityBlocksFromEvents;
-    }
-    if (
-      canUseCompletedCachedCodexActivity({
-        liveStatus: codexPreviewLog.liveStatus,
-      }) &&
-      Array.isArray(cachedCodexActivityBlocks) &&
-      cachedCodexActivityBlocks.length > 0
-    ) {
-      return cachedCodexActivityBlocks;
     }
     return undefined;
   }, [
@@ -1220,28 +1246,17 @@ export default function Message({
     codexPreviewLog.liveStatus,
     completedCodexActivityBlocksFromEvents,
     inlineCodexActivityMode,
+    rowMessageValue,
   ]);
   useEffect(() => {
     if (
-      completedCodexActivityBlocksFromEvents == null ||
+      liveInterleavedCodexBlocks == null ||
       !onCachedCodexActivityBlocksChange
     ) {
       return;
     }
-    onCachedCodexActivityBlocksChange(completedCodexActivityBlocksFromEvents);
-  }, [
-    completedCodexActivityBlocksFromEvents,
-    onCachedCodexActivityBlocksChange,
-  ]);
-  useEffect(() => {
-    if (
-      completedCodexActivityBlocks == null ||
-      !onCachedCodexActivityBlocksChange
-    ) {
-      return;
-    }
-    onCachedCodexActivityBlocksChange(completedCodexActivityBlocks);
-  }, [completedCodexActivityBlocks, onCachedCodexActivityBlocksChange]);
+    onCachedCodexActivityBlocksChange(liveInterleavedCodexBlocks);
+  }, [liveInterleavedCodexBlocks, onCachedCodexActivityBlocksChange]);
   const lastCodexActivityAtMs = useMemo(
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
     [codexPreviewLog.events],

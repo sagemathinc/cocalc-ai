@@ -1,7 +1,6 @@
 import {
   codexActivityToMarkdown,
   codexEventsToMarkdown,
-  codexIntermediateActivityToMarkdown,
   findActivityEntryIndexForJumpEvents,
   findActivityEntryIndexForJumpText,
   parsePathLineTarget,
@@ -227,83 +226,6 @@ describe("codexEventsToMarkdown", () => {
     expect(markdown).toContain(
       "![Generated image](/blobs/diagram.png?uuid=blob-1)",
     );
-  });
-
-  it("drops the summary row and final agent row for completed inline activity", () => {
-    const markdown = codexIntermediateActivityToMarkdown(
-      [
-        {
-          type: "status",
-          seq: 1,
-          state: "running",
-          time: 1000,
-        },
-        {
-          type: "event",
-          seq: 2,
-          time: 1010,
-          event: {
-            type: "terminal",
-            terminalId: "term-5",
-            phase: "start",
-            command: "/bin/bash -lc 'sleep 10'",
-            cwd: "/root",
-          },
-        },
-        {
-          type: "event",
-          seq: 3,
-          time: 1020,
-          event: {
-            type: "message",
-            text: "Implemented in `abc123`.",
-          },
-        },
-        {
-          type: "summary",
-          seq: 4,
-          time: 1030,
-          finalResponse: "Implemented in `abc123`.",
-        },
-      ] as any,
-      [
-        {
-          messageId: "steer-1",
-          date: 1015,
-          text: "check tests",
-          state: "sent",
-        },
-      ],
-    );
-
-    expect(markdown).toContain("- Codex started");
-    expect(markdown).toContain("- Terminal (cwd /root)");
-    expect(markdown).toContain("- Guidance: check tests");
-    expect(markdown).not.toContain("- Summary");
-    expect(markdown).not.toContain("- Agent: Implemented in `abc123`.");
-  });
-
-  it("keeps the latest agent row when it does not duplicate the summary", () => {
-    const markdown = codexIntermediateActivityToMarkdown([
-      {
-        type: "event",
-        seq: 1,
-        event: {
-          type: "message",
-          text: "I updated the failing selector and reran the focused test.",
-        },
-      },
-      {
-        type: "summary",
-        seq: 2,
-        finalResponse: "Fixed the selector regression in the chat header.",
-      },
-    ] as any);
-
-    expect(markdown).toContain(
-      "- Agent: I updated the failing selector and reran the focused test.",
-    );
-    expect(markdown).not.toContain("- Summary");
   });
 });
 

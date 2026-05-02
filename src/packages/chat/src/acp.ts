@@ -458,9 +458,19 @@ export function getMountedIntermediateResponseBlocks(
   state?: "sending" | "sent" | "queued" | "not-sent";
 }> {
   const blocks = getLiveResponseBlocks(events, guidance);
+  const normalizedSummary = normalizeProgressiveCompareText(
+    getLatestSummaryText(events) ?? "",
+  );
+  if (!normalizedSummary) {
+    return blocks;
+  }
   let lastAgentIndex = -1;
   for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    if (blocks[i].kind === "agent") {
+    const block = blocks[i];
+    if (
+      block.kind === "agent" &&
+      shouldDropMountedAgentBlock(block.text, normalizedSummary)
+    ) {
       lastAgentIndex = i;
       break;
     }
@@ -469,6 +479,18 @@ export function getMountedIntermediateResponseBlocks(
     return blocks;
   }
   return blocks.filter((_, index) => index !== lastAgentIndex);
+}
+
+function shouldDropMountedAgentBlock(
+  blockText: string,
+  normalizedSummary: string,
+): boolean {
+  const normalizedBlock = normalizeProgressiveCompareText(blockText);
+  if (!normalizedBlock || !normalizedSummary) return false;
+  return (
+    normalizedBlock.includes(normalizedSummary) ||
+    normalizedSummary.includes(normalizedBlock)
+  );
 }
 
 function getInterleavedAgentSegmentText(
@@ -550,9 +572,28 @@ export function getMountedIntermediateResponseMarkdown(
   events: AcpStreamMessage[],
 ): string | undefined {
   const blocks = getAgentMessageTexts(events);
-  if (blocks.length <= 1) return undefined;
-  const content = blocks.slice(0, -1).join("\n\n").trim();
+  const normalizedSummary = normalizeProgressiveCompareText(
+    getLatestSummaryText(events) ?? "",
+  );
+  const trimmedBlocks =
+    normalizedSummary && blocks.length > 0
+      ? trimTrailingMountedResponseBlock(blocks, normalizedSummary)
+      : blocks;
+  const content = trimmedBlocks.join("\n\n").trim();
   return content.length > 0 ? content : undefined;
+}
+
+function trimTrailingMountedResponseBlock(
+  blocks: string[],
+  normalizedSummary: string,
+): string[] {
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    if (!shouldDropMountedAgentBlock(blocks[i], normalizedSummary)) {
+      return blocks;
+    }
+    return blocks.filter((_, index) => index !== i);
+  }
+  return blocks;
 }
 
 export function getInterruptedResponseMarkdown(
