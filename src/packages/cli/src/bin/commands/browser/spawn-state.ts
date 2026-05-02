@@ -163,6 +163,20 @@ export function isProcessRunning(pid: number): boolean {
   }
 }
 
+export function resolveSpawnedBrowserProcessInfo(browser_pid: unknown): {
+  browser_pid?: number;
+  browser_running?: boolean;
+} {
+  const pid = Number(browser_pid ?? 0);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return {};
+  }
+  return {
+    browser_pid: pid,
+    browser_running: isProcessRunning(pid),
+  };
+}
+
 export function resolveSecret(value: unknown): string | undefined {
   const raw = `${value ?? ""}`.trim();
   if (!raw) return undefined;

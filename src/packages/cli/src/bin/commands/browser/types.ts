@@ -393,6 +393,10 @@ export type BrowserSessionRegisterUtils = {
   spawnStateFile: (spawnId: string) => string;
   readSpawnState: (path: string) => SpawnStateRecord | undefined;
   isProcessRunning: (pid: number) => boolean;
+  resolveSpawnedBrowserProcessInfo: (browser_pid: unknown) => {
+    browser_pid?: number;
+    browser_running?: boolean;
+  };
   resolveSpawnTargetUrl: (opts: {
     apiUrl: string;
     projectId?: string;

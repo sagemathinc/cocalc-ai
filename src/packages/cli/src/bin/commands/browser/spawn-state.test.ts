@@ -5,6 +5,7 @@ import {
   buildControlPlaneOriginStorageKey,
   buildRememberMeStorageKeys,
   buildSpawnCookies,
+  resolveSpawnedBrowserProcessInfo,
   spawnStateHasActiveRemoteSession,
   waitForSpawnedSession,
 } from "./spawn-state";
@@ -54,6 +55,17 @@ test("buildControlPlaneOriginStorageKey matches frontend control-plane key", () 
     buildControlPlaneOriginStorageKey("https://example.test/cocalc/"),
     "cocalc-control-plane-origin:/cocalc",
   );
+});
+
+test("resolveSpawnedBrowserProcessInfo omits browser_running when pid is unknown", () => {
+  assert.deepEqual(resolveSpawnedBrowserProcessInfo(undefined), {});
+  assert.deepEqual(resolveSpawnedBrowserProcessInfo(0), {});
+});
+
+test("resolveSpawnedBrowserProcessInfo reports browser pid when present", () => {
+  const info = resolveSpawnedBrowserProcessInfo(process.pid);
+  assert.equal(info.browser_pid, process.pid);
+  assert.equal(info.browser_running, true);
 });
 
 test("waitForSpawnedSession ignores transient registrations and returns a stable session", async () => {

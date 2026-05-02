@@ -250,6 +250,7 @@ export function registerBrowserSessionCommands({
     spawnStateFile,
     readSpawnState,
     isProcessRunning,
+    resolveSpawnedBrowserProcessInfo,
     resolveSpawnTargetUrl,
     withSpawnMarker,
     resolveChromiumExecutablePath,
@@ -739,11 +740,10 @@ export function registerBrowserSessionCommands({
             include_stale: true,
           })) as BrowserSessionInfo[];
           return listSpawnStates().map(({ file, state }) => ({
+            ...resolveSpawnedBrowserProcessInfo(state.browser_pid),
             spawn_id: state.spawn_id,
             pid: state.pid,
-            browser_pid: Number(state.browser_pid ?? 0) || undefined,
             running: isProcessRunning(Number(state.pid)),
-            browser_running: isProcessRunning(Number(state.browser_pid ?? 0)),
             remote_session_active: spawnStateHasActiveRemoteSession({
               state,
               sessions,
