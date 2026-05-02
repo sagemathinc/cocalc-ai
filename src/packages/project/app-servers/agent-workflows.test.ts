@@ -291,6 +291,59 @@ describe("app server agent workflows", () => {
     }
   });
 
+  test("managed fixed-port apps fail loudly when the preferred port is unavailable", async () => {
+    const id = appId("fixed-port");
+    const occupied = await new Promise<ReturnType<typeof createServer>>(
+      (resolve) => {
+        const srv = createServer((_req, res) => {
+          res.statusCode = 200;
+          res.end("occupied");
+        });
+        srv.listen(0, "127.0.0.1", () => resolve(srv));
+      },
+    );
+    const occupiedPort = (occupied.address() as any).port as number;
+    expect(occupiedPort).toBeGreaterThan(0);
+
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "service",
+      command: {
+        exec: process.execPath,
+        args: [
+          "-e",
+          `
+            const http = require("http");
+            http
+              .createServer((_req, res) => res.end("ok"))
+              .listen(${occupiedPort}, "127.0.0.1");
+          `,
+        ],
+      },
+      network: {
+        listen_host: "127.0.0.1",
+        port: occupiedPort,
+        protocol: "http",
+      },
+      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
+      wake: { enabled: true, keep_warm_s: 300, startup_timeout_s: 15 },
+    });
+
+    try {
+      await expect(
+        ensureRunning(id, { timeout: 5_000, interval: 100 }),
+      ).rejects.toThrow(
+        `preferred port ${occupiedPort} is unavailable for app '${id}'`,
+      );
+      const status = await statusApp(id);
+      expect(status.state).toBe("stopped");
+      expect(status.pid).toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve) => occupied.close(() => resolve()));
+    }
+  });
+
   test("static app routing and public-readiness audit are agent-usable", async () => {
     const id = appId("static");
     const root = mkdtempSync(join(testHome, "static-app-"));

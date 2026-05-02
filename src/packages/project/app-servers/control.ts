@@ -195,6 +195,32 @@ type StartAppOptions = {
   publicMode?: boolean;
 };
 
+async function resolveAppListenPort({
+  fixedPort,
+  preferredPort,
+  host,
+  appId,
+}: {
+  fixedPort?: number;
+  preferredPort?: number;
+  host: string;
+  appId: string;
+}): Promise<number> {
+  if (fixedPort != null) {
+    const port = await getPort({ port: fixedPort, host });
+    if (port !== fixedPort) {
+      throw new Error(
+        `preferred port ${fixedPort} is unavailable for app '${appId}'`,
+      );
+    }
+    return port;
+  }
+  if (preferredPort != null) {
+    return await getPort({ port: preferredPort, host });
+  }
+  return await getPort({ host });
+}
+
 function getProxyUrl(port: number): string {
   return join(basePath, `/${project_id}/proxy/${port}/`);
 }
@@ -929,9 +955,14 @@ export async function startApp(
 
   const exposure = await getAppExposureState(spec.id);
   const publicMode = opts?.publicMode ?? exposure?.mode === "public";
-  const preferredPort = opts?.preferredPort ?? spec.network.port;
+  const preferredPort = opts?.preferredPort;
   const host = spec.network.listen_host || "127.0.0.1";
-  const port = await getPort({ port: preferredPort, host });
+  const port = await resolveAppListenPort({
+    fixedPort: spec.network.port,
+    preferredPort,
+    host,
+    appId: spec.id,
+  });
   const localUrl = getProxyUrl(port);
   const appBaseUrl = publicMode ? "/" : localUrl;
   const cmd = spec.command.exec;
