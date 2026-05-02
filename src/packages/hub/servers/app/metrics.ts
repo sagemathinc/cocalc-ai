@@ -22,9 +22,7 @@ const responseTimeHistogram = new_histogram("http_histogram", "http server", {
 // response time metrics
 function metrics(req, res, next) {
   const resFinished = responseTimeHistogram.startTimer();
-  const originalEnd = res.end;
-  res.end = (...args) => {
-    originalEnd.apply(res, args);
+  res.once("finish", () => {
     if (!req.path) {
       return;
     }
@@ -35,7 +33,7 @@ function metrics(req, res, next) {
       method: req.method,
       code: res.statusCode,
     });
-  };
+  });
   next();
 }
 
