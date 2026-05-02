@@ -423,6 +423,9 @@ export type BrowserSessionRegisterUtils = {
     ctx: BrowserCommandContext;
     marker: string;
     timeoutMs: number;
+    pollMs?: number;
+    stablePolls?: number;
+    sleepFn?: (ms: number) => Promise<void>;
   }) => Promise<BrowserSessionInfo>;
   nowIso: () => string;
   terminateSpawnedProcess: (opts: {

@@ -5,6 +5,7 @@ import {
   buildControlPlaneOriginStorageKey,
   buildRememberMeStorageKeys,
   buildSpawnCookies,
+  waitForSpawnedSession,
 } from "./spawn-state";
 
 test("buildSpawnCookies prefers remember_me over hub/api cookies", () => {
@@ -52,4 +53,40 @@ test("buildControlPlaneOriginStorageKey matches frontend control-plane key", () 
     buildControlPlaneOriginStorageKey("https://example.test/cocalc/"),
     "cocalc-control-plane-origin:/cocalc",
   );
+});
+
+test("waitForSpawnedSession ignores transient registrations and returns a stable session", async () => {
+  const marker = "pw-test-abc123";
+  const sessionA = {
+    browser_id: "browser-a",
+    stale: false,
+    url: `http://localhost:9100/projects/test/files?_cocalc_browser_spawn=${marker}`,
+  };
+  const sessionAStale = {
+    ...sessionA,
+    stale: true,
+  };
+  const sessionB = {
+    browser_id: "browser-b",
+    stale: false,
+    url: `http://localhost:9100/projects/test/files?_cocalc_browser_spawn=${marker}`,
+  };
+  const sequences = [[sessionA], [sessionAStale], [sessionB], [sessionB]];
+  let calls = 0;
+  const result = await waitForSpawnedSession({
+    ctx: {
+      hub: {
+        system: {
+          listBrowserSessions: async () =>
+            (sequences[calls++] ?? [sessionB]) as any,
+        },
+      },
+    } as any,
+    marker,
+    timeoutMs: 5_000,
+    pollMs: 0,
+    sleepFn: async () => {},
+  });
+  assert.equal(result.browser_id, "browser-b");
+  assert.equal(calls, 4);
 });

@@ -365,12 +365,25 @@ export async function waitForSpawnedSession({
   ctx,
   marker,
   timeoutMs,
+  pollMs = 1_000,
+  stablePolls = 2,
+  sleepFn = sleep,
 }: {
   ctx: BrowserCommandContext;
   marker: string;
   timeoutMs: number;
+  pollMs?: number;
+  stablePolls?: number;
+  sleepFn?: (ms: number) => Promise<void>;
 }): Promise<BrowserSessionInfo> {
   const started = Date.now();
+  const requiredStablePolls = Math.max(1, Math.floor(stablePolls));
+  let candidate:
+    | {
+        browser_id: string;
+        stableHits: number;
+      }
+    | undefined;
   for (;;) {
     const sessions = (await ctx.hub.system.listBrowserSessions({
       include_stale: true,
@@ -378,13 +391,30 @@ export async function waitForSpawnedSession({
     const match = (sessions ?? []).find(
       (s) => sessionMatchesSpawnMarker(s, marker) && !s.stale,
     );
-    if (match) return match;
+    if (match) {
+      const browser_id = `${match.browser_id ?? ""}`.trim();
+      candidate =
+        candidate?.browser_id === browser_id
+          ? {
+              browser_id,
+              stableHits: candidate.stableHits + 1,
+            }
+          : {
+              browser_id,
+              stableHits: 1,
+            };
+      if (candidate.stableHits >= requiredStablePolls) {
+        return match;
+      }
+    } else {
+      candidate = undefined;
+    }
     if (Date.now() - started > timeoutMs) {
       throw new Error(
         "timed out waiting for spawned browser session registration",
       );
     }
-    await sleep(1_000);
+    await sleepFn(pollMs);
   }
 }
 
