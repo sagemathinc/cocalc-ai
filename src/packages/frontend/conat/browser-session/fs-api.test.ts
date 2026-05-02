@@ -17,7 +17,7 @@ describe("createBrowserExecFsApi", () => {
 
     const fsApi = createBrowserExecFsApi({
       loadFsClient,
-      timeoutMs: 3210,
+      bootstrapTimeoutMs: 3210,
       withTimeoutImpl,
     });
 
@@ -52,5 +52,34 @@ describe("createBrowserExecFsApi", () => {
     await expect((fsApi as any).cwd()).resolves.toBe("/home/user");
 
     expect(loadFsClient).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out a stalled fs method call with a clear error", async () => {
+    const fsClient = {
+      stat: jest.fn(() => new Promise(() => undefined)),
+    };
+    const loadFsClient = jest.fn(async () => fsClient);
+    const withTimeoutImpl = jest.fn(
+      async (promise: Promise<any>, timeoutMs) => {
+        if (timeoutMs === 4321) {
+          return await promise;
+        }
+        throw new Error("timeout");
+      },
+    );
+
+    const fsApi = createBrowserExecFsApi({
+      loadFsClient,
+      bootstrapTimeoutMs: 4321,
+      callTimeoutMs: 6789,
+      withTimeoutImpl,
+    });
+
+    await expect((fsApi as any).stat("/home/user")).rejects.toThrow(
+      "browser-session fs call 'stat' timed out after 6789ms",
+    );
+
+    expect(loadFsClient).toHaveBeenCalledTimes(1);
+    expect(fsClient.stat).toHaveBeenCalledTimes(1);
   });
 });

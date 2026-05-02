@@ -2,6 +2,7 @@ import { withTimeout } from "@cocalc/util/async-utils";
 import type { BrowserExecApi } from "./api-types";
 
 const DEFAULT_BROWSER_EXEC_FS_BOOTSTRAP_TIMEOUT_MS = 10_000;
+const DEFAULT_BROWSER_EXEC_FS_CALL_TIMEOUT_MS = 15_000;
 
 type WithTimeoutLike = <T>(
   promise: Promise<T>,
@@ -20,13 +21,31 @@ function normalizeFsBootstrapError(err: unknown, timeoutMs: number): unknown {
   return wrapped;
 }
 
+function normalizeFsCallError(
+  err: unknown,
+  prop: PropertyKey,
+  timeoutMs: number,
+): unknown {
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  if (!message.includes("timeout")) {
+    return err;
+  }
+  const wrapped = new Error(
+    `browser-session fs call '${String(prop)}' timed out after ${timeoutMs}ms`,
+  );
+  (wrapped as any).cause = err;
+  return wrapped;
+}
+
 export function createBrowserExecFsApi({
   loadFsClient,
-  timeoutMs = DEFAULT_BROWSER_EXEC_FS_BOOTSTRAP_TIMEOUT_MS,
+  bootstrapTimeoutMs = DEFAULT_BROWSER_EXEC_FS_BOOTSTRAP_TIMEOUT_MS,
+  callTimeoutMs = DEFAULT_BROWSER_EXEC_FS_CALL_TIMEOUT_MS,
   withTimeoutImpl = withTimeout,
 }: {
   loadFsClient: () => Promise<any>;
-  timeoutMs?: number;
+  bootstrapTimeoutMs?: number;
+  callTimeoutMs?: number;
   withTimeoutImpl?: WithTimeoutLike;
 }): BrowserExecApi["fs"] {
   let fsApiPromise: Promise<any> | undefined;
@@ -34,10 +53,10 @@ export function createBrowserExecFsApi({
     if (!fsApiPromise) {
       fsApiPromise = withTimeoutImpl(
         Promise.resolve(loadFsClient()),
-        timeoutMs,
+        bootstrapTimeoutMs,
       ).catch((err) => {
         fsApiPromise = undefined;
-        throw normalizeFsBootstrapError(err, timeoutMs);
+        throw normalizeFsBootstrapError(err, bootstrapTimeoutMs);
       });
     }
     return await fsApiPromise;
@@ -53,7 +72,14 @@ export function createBrowserExecFsApi({
           if (typeof value !== "function") {
             return value;
           }
-          return await value.apply(fs, args);
+          try {
+            return await withTimeoutImpl(
+              Promise.resolve(value.apply(fs, args)),
+              callTimeoutMs,
+            );
+          } catch (err) {
+            throw normalizeFsCallError(err, prop, callTimeoutMs);
+          }
         };
       },
     },
