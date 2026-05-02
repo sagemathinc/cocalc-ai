@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { resolve as resolvePath } from "node:path";
 import test from "node:test";
 
 import { Command } from "commander";
 
 import { registerBrowserCommand } from "./browser";
+import { resolveBrowserSessionDaemonScriptPath } from "./browser/register-session-commands";
 
 const PROJECT_A = "00000000-1000-4000-8000-0000000000aa";
 const PROJECT_B = "00000000-1000-4000-8000-0000000000bb";
@@ -202,6 +204,42 @@ test("browser session spawn fails fast with a clear message under agent auth", a
       ]),
     /browser session spawn is unavailable under agent auth/,
   );
+});
+
+test("resolveBrowserSessionDaemonScriptPath falls back to COCALC_CLI_BIN dist", () => {
+  const bundledPath = "/opt/core/browser-session-playwright-daemon.js";
+  const repoPath = resolvePath(
+    "/home/user/cocalc-ai/src/packages/cli/dist/bin",
+    "core",
+    "browser-session-playwright-daemon.js",
+  );
+  const resolved = resolveBrowserSessionDaemonScriptPath({
+    moduleDir: "/opt/cocalc/bin/commands/browser",
+    cliBinPath: "/home/user/cocalc-ai/src/packages/cli/dist/bin/cocalc.js",
+    argvPath: "/opt/cocalc/bin2/cocalc-cli.js",
+    resolvePath,
+    existsSync: (path) => path === repoPath,
+  });
+  assert.equal(resolved, repoPath);
+  assert.notEqual(resolved, bundledPath);
+});
+
+test("resolveBrowserSessionDaemonScriptPath prefers bundled daemon when present", () => {
+  const bundledPath = resolvePath(
+    "/opt/cocalc/bin/commands/browser",
+    "..",
+    "..",
+    "core",
+    "browser-session-playwright-daemon.js",
+  );
+  const resolved = resolveBrowserSessionDaemonScriptPath({
+    moduleDir: "/opt/cocalc/bin/commands/browser",
+    cliBinPath: "/home/user/cocalc-ai/src/packages/cli/dist/bin/cocalc.js",
+    argvPath: "/opt/cocalc/bin2/cocalc-cli.js",
+    resolvePath,
+    existsSync: (path) => path === bundledPath,
+  });
+  assert.equal(resolved, bundledPath);
 });
 
 test.after(() => {

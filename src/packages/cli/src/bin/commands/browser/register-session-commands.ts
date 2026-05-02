@@ -3,6 +3,7 @@ Register `cocalc browser session ...` subcommands.
 */
 
 import { Command } from "commander";
+import { dirname } from "node:path";
 import { URL } from "node:url";
 import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
 import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/project-host-browser-session";
@@ -118,6 +119,50 @@ function firstSetCookiePart(header: string): { name: string; value: string } {
     name: firstPart.slice(0, eq).trim(),
     value: firstPart.slice(eq + 1).trim(),
   };
+}
+
+export function resolveBrowserSessionDaemonScriptPath({
+  moduleDir,
+  cliBinPath,
+  argvPath,
+  resolvePath,
+  existsSync,
+}: {
+  moduleDir?: string;
+  cliBinPath?: string;
+  argvPath?: string;
+  resolvePath: (...parts: string[]) => string;
+  existsSync: (path: string) => boolean;
+}): string | undefined {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const addCandidate = (path: string | undefined) => {
+    const normalized = `${path ?? ""}`.trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+  addCandidate(
+    resolvePath(
+      moduleDir ?? __dirname,
+      "..",
+      "..",
+      "core",
+      "browser-session-playwright-daemon.js",
+    ),
+  );
+  for (const binPath of [cliBinPath, argvPath]) {
+    const trimmed = `${binPath ?? ""}`.trim();
+    if (!trimmed) continue;
+    addCandidate(
+      resolvePath(
+        dirname(trimmed),
+        "core",
+        "browser-session-playwright-daemon.js",
+      ),
+    );
+  }
+  return candidates.find((path) => existsSync(path));
 }
 
 async function resolveProjectHostBrowserSessionCookies({
@@ -548,16 +593,15 @@ export function registerBrowserSessionCommands({
               SPAWN_STATE_DIR,
               `${spawnId}.config-${process.pid}-${Date.now()}.json`,
             );
-            const daemonScript = resolvePath(
-              __dirname,
-              "..",
-              "..",
-              "core",
-              "browser-session-playwright-daemon.js",
-            );
-            if (!existsSync(daemonScript)) {
+            const daemonScript = resolveBrowserSessionDaemonScriptPath({
+              resolvePath,
+              existsSync,
+              cliBinPath: process.env.COCALC_CLI_BIN,
+              argvPath: process.argv[1],
+            });
+            if (!daemonScript) {
               throw new Error(
-                `missing daemon script '${daemonScript}' (build @cocalc/cli first)`,
+                "missing browser-session-playwright-daemon.js (build @cocalc/cli first or set COCALC_CLI_BIN to a built CLI dist)",
               );
             }
             if (opts.headless && opts.headed) {
