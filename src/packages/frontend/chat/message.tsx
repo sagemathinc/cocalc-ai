@@ -56,12 +56,14 @@ import {
   getLiveResponseBlocks,
   getInterruptedResponseMarkdown,
   getLiveResponseMarkdown,
-  getMountedIntermediateResponseBlocks,
   type InlineCodeLink,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
 import { getUserName } from "./chat-log";
-import { codexEventsToMarkdown } from "./codex-activity";
+import {
+  codexEventsToMarkdown,
+  codexIntermediateActivityToMarkdown,
+} from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
   resetAcpThreadState,
@@ -410,20 +412,12 @@ export type InlineCodexActivityBlock = {
   state?: "sending" | "sent" | "queued" | "not-sent";
 };
 
-export function dropFinalAgentActivityBlock(
-  blocks?: InlineCodexActivityBlock[],
+export function blocksFromCodexActivityMarkdown(
+  markdown?: string,
 ): InlineCodexActivityBlock[] | undefined {
-  if (!Array.isArray(blocks) || blocks.length === 0) return undefined;
-  let lastAgentIndex = -1;
-  for (let i = blocks.length - 1; i >= 0; i -= 1) {
-    if (blocks[i].kind === "agent") {
-      lastAgentIndex = i;
-      break;
-    }
-  }
-  if (lastAgentIndex === -1) return blocks;
-  const next = blocks.filter((_, index) => index !== lastAgentIndex);
-  return next.length > 0 ? next : undefined;
+  const value = `${markdown ?? ""}`.trim();
+  if (!value) return undefined;
+  return [{ kind: "agent", text: value }];
 }
 
 export function resolveEditedMessageForSave(
@@ -557,11 +551,13 @@ export function shouldShowCodexShowActivityButton({
 export function resolveCodexShowActivityButtonState({
   allowAsyncCompletedCodexActivityLoad,
   hasVisibleCompletedActivity,
+  hasLoadedActivityEvents,
   hasLogRef,
   loadState,
 }: {
   allowAsyncCompletedCodexActivityLoad: boolean;
   hasVisibleCompletedActivity: boolean;
+  hasLoadedActivityEvents: boolean;
   hasLogRef: boolean;
   loadState: CodexPersistedLogLoadState;
 }): {
@@ -577,6 +573,18 @@ export function resolveCodexShowActivityButtonState({
     return {
       label: "Loading activity...",
       loading: true,
+      disabled: true,
+    };
+  }
+  if (
+    allowAsyncCompletedCodexActivityLoad &&
+    !hasVisibleCompletedActivity &&
+    hasLoadedActivityEvents &&
+    loadState === "loaded"
+  ) {
+    return {
+      label: "No separate activity",
+      loading: false,
       disabled: true,
     };
   }
@@ -1166,8 +1174,11 @@ export default function Message({
     effectiveGenerating,
     showCodexActivity,
   ]);
-  const completedCodexActivityBlocks = useMemo(() => {
-    if (inlineCodexActivityMode !== "completed") {
+  const completedCodexActivityBlocksFromEvents = useMemo(() => {
+    if (
+      !Array.isArray(codexPreviewLog.events) ||
+      codexPreviewLog.events.length === 0
+    ) {
       return undefined;
     }
     const steerItems = Array.isArray(activitySteers)
@@ -1176,21 +1187,22 @@ export default function Message({
             typeof steer?.text === "string" && steer.text.trim().length > 0,
         )
       : [];
+    return blocksFromCodexActivityMarkdown(
+      codexIntermediateActivityToMarkdown(
+        codexPreviewLog.events as any,
+        steerItems,
+      ),
+    );
+  }, [activitySteers, codexPreviewLog.events]);
+  const completedCodexActivityBlocks = useMemo(() => {
+    if (inlineCodexActivityMode !== "completed") {
+      return undefined;
+    }
     if (
       allowAsyncCompletedCodexActivityLoad &&
-      Array.isArray(codexPreviewLog.events) &&
-      codexPreviewLog.events.length > 0
+      completedCodexActivityBlocksFromEvents != null
     ) {
-      const blocks = (
-        getMountedIntermediateResponseBlocks(
-          codexPreviewLog.events as any,
-          steerItems.map(({ date, text, state }) => ({ date, text, state })),
-        ) as InlineCodexActivityBlock[]
-      ).filter(
-        (block) =>
-          typeof block.text === "string" && block.text.trim().length > 0,
-      );
-      return blocks.length > 0 ? blocks : undefined;
+      return completedCodexActivityBlocksFromEvents;
     }
     if (
       canUseCompletedCachedCodexActivity({
@@ -1199,26 +1211,28 @@ export default function Message({
       Array.isArray(cachedCodexActivityBlocks) &&
       cachedCodexActivityBlocks.length > 0
     ) {
-      return dropFinalAgentActivityBlock(cachedCodexActivityBlocks);
+      return cachedCodexActivityBlocks;
     }
     return undefined;
   }, [
-    activitySteers,
     allowAsyncCompletedCodexActivityLoad,
     cachedCodexActivityBlocks,
-    codexPreviewLog.events,
     codexPreviewLog.liveStatus,
+    completedCodexActivityBlocksFromEvents,
     inlineCodexActivityMode,
   ]);
   useEffect(() => {
     if (
-      liveInterleavedCodexBlocks == null ||
+      completedCodexActivityBlocksFromEvents == null ||
       !onCachedCodexActivityBlocksChange
     ) {
       return;
     }
-    onCachedCodexActivityBlocksChange(liveInterleavedCodexBlocks);
-  }, [liveInterleavedCodexBlocks, onCachedCodexActivityBlocksChange]);
+    onCachedCodexActivityBlocksChange(completedCodexActivityBlocksFromEvents);
+  }, [
+    completedCodexActivityBlocksFromEvents,
+    onCachedCodexActivityBlocksChange,
+  ]);
   useEffect(() => {
     if (
       completedCodexActivityBlocks == null ||
@@ -1887,6 +1901,9 @@ export default function Message({
     const showActivityButtonState = resolveCodexShowActivityButtonState({
       allowAsyncCompletedCodexActivityLoad,
       hasVisibleCompletedActivity,
+      hasLoadedActivityEvents:
+        Array.isArray(codexPreviewLog.events) &&
+        codexPreviewLog.events.length > 0,
       hasLogRef: codexPreviewLog.hasLogRef,
       loadState: codexPreviewLog.loadState,
     });

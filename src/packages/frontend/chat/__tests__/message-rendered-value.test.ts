@@ -2,7 +2,7 @@
 
 import {
   ACP_THINKING_PLACEHOLDER,
-  dropFinalAgentActivityBlock,
+  blocksFromCodexActivityMarkdown,
   resolveEffectiveGenerating,
   resolveInlineCodexActivityMode,
   resolveMountedCodexRenderedValue,
@@ -217,24 +217,15 @@ describe("resolveInlineCodexActivityMode", () => {
   });
 });
 
-describe("dropFinalAgentActivityBlock", () => {
-  it("removes the final agent block but keeps earlier guidance", () => {
-    expect(
-      dropFinalAgentActivityBlock([
-        { kind: "agent", text: "first" },
-        { kind: "guidance", text: "please check X", state: "sent" },
-        { kind: "agent", text: "final response" },
-      ]),
-    ).toEqual([
-      { kind: "agent", text: "first" },
-      { kind: "guidance", text: "please check X", state: "sent" },
+describe("blocksFromCodexActivityMarkdown", () => {
+  it("wraps non-empty activity markdown in a single inline activity block", () => {
+    expect(blocksFromCodexActivityMarkdown("- Terminal\n\nOutput")).toEqual([
+      { kind: "agent", text: "- Terminal\n\nOutput" },
     ]);
   });
 
-  it("returns nothing when the only block is the final agent response", () => {
-    expect(
-      dropFinalAgentActivityBlock([{ kind: "agent", text: "final response" }]),
-    ).toBeUndefined();
+  it("returns nothing for blank markdown", () => {
+    expect(blocksFromCodexActivityMarkdown("   ")).toBeUndefined();
   });
 });
 
@@ -339,6 +330,7 @@ describe("resolveCodexShowActivityButtonState", () => {
       resolveCodexShowActivityButtonState({
         allowAsyncCompletedCodexActivityLoad: true,
         hasVisibleCompletedActivity: false,
+        hasLoadedActivityEvents: false,
         hasLogRef: true,
         loadState: "loading",
       }),
@@ -354,6 +346,7 @@ describe("resolveCodexShowActivityButtonState", () => {
       resolveCodexShowActivityButtonState({
         allowAsyncCompletedCodexActivityLoad: true,
         hasVisibleCompletedActivity: false,
+        hasLoadedActivityEvents: false,
         hasLogRef: true,
         loadState: "loaded",
       }),
@@ -369,6 +362,7 @@ describe("resolveCodexShowActivityButtonState", () => {
       resolveCodexShowActivityButtonState({
         allowAsyncCompletedCodexActivityLoad: false,
         hasVisibleCompletedActivity: false,
+        hasLoadedActivityEvents: false,
         hasLogRef: true,
         loadState: "idle",
       }),
@@ -376,6 +370,22 @@ describe("resolveCodexShowActivityButtonState", () => {
       label: "Show activity",
       loading: false,
       disabled: false,
+    });
+  });
+
+  it("shows a distinct label when the log loaded but there is no separate pre-summary activity", () => {
+    expect(
+      resolveCodexShowActivityButtonState({
+        allowAsyncCompletedCodexActivityLoad: true,
+        hasVisibleCompletedActivity: false,
+        hasLoadedActivityEvents: true,
+        hasLogRef: true,
+        loadState: "loaded",
+      }),
+    ).toEqual({
+      label: "No separate activity",
+      loading: false,
+      disabled: true,
     });
   });
 });
