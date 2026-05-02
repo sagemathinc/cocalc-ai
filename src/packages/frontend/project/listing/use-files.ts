@@ -165,22 +165,38 @@ export default function useFiles({
         setErrorState((cur) =>
           cur.path === path && cur.error == null ? cur : { path, error: null },
         );
-        const snapshot = await getListingSnapshot({ fs, path });
-        if (requestId.current !== id) return;
-        const snapshotFiles = snapshot.files ?? {};
-        if (cacheId != null) {
-          cache.set(key(cacheId, path), snapshotFiles);
-          notifyCacheListeners();
-          cacheNeighbors({ fs, cacheId, path, files: snapshotFiles });
+        try {
+          const snapshot = await getListingSnapshot({ fs, path });
+          if (requestId.current !== id) return;
+          const snapshotFiles = snapshot.files ?? {};
+          if (cacheId != null) {
+            cache.set(key(cacheId, path), snapshotFiles);
+            notifyCacheListeners();
+            cacheNeighbors({ fs, cacheId, path, files: snapshotFiles });
+          }
+          setFilesState((cur) =>
+            cur.path === path && sameFiles(cur.files, snapshotFiles)
+              ? cur
+              : { path, files: { ...snapshotFiles } },
+          );
+          setErrorState((cur) =>
+            cur.path === path && cur.error == null
+              ? cur
+              : { path, error: null },
+          );
+        } catch (err) {
+          if (requestId.current !== id) return;
+          setErrorState((cur) =>
+            cur.path === path && cur.error === err
+              ? cur
+              : { path, error: err as ConatErrorLike },
+          );
+          setFilesState((cur) =>
+            cur.path === path && cur.files == null
+              ? cur
+              : { path, files: null },
+          );
         }
-        setFilesState((cur) =>
-          cur.path === path && sameFiles(cur.files, snapshotFiles)
-            ? cur
-            : { path, files: { ...snapshotFiles } },
-        );
-        setErrorState((cur) =>
-          cur.path === path && cur.error == null ? cur : { path, error: null },
-        );
       } catch (err) {
         if (requestId.current !== id) return;
         setErrorState((cur) =>
@@ -191,7 +207,6 @@ export default function useFiles({
         setFilesState((cur) =>
           cur.path === path && cur.files == null ? cur : { path, files: null },
         );
-        return;
       }
       void fs
         .listing(path)
@@ -212,6 +227,11 @@ export default function useFiles({
               cur.path === path && sameFiles(cur.files, listing.files)
                 ? cur
                 : { path, files: { ...(listing.files ?? {}) } },
+            );
+            setErrorState((cur) =>
+              cur.path === path && cur.error == null
+                ? cur
+                : { path, error: null },
             );
           };
           update();
