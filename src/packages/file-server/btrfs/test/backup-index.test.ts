@@ -15,7 +15,6 @@ describe("backup index", () => {
     await vol.fs.mkdir("dir");
     await vol.fs.writeFile("dir/b.txt", "world");
     await vol.fs.writeFile("line\nbreak.txt", "nl");
-    await vol.fs.mkdir(".snapshots");
     await vol.fs.writeFile(".snapshots/should-not-index.txt", "skip");
 
     await vol.snapshots.create("snap");
