@@ -692,7 +692,7 @@ export function CustomizeRailButtonsModal({
       ]}
     >
       <p style={{ color: COLORS.GRAY }}>
-        Drag to reorder buttons. Uncheck a button to move it into the More menu.
+        Drag to reorder buttons. Unchecked items stay available under More.
         These preferences are stored in this browser only.
       </p>
       <SortableList
@@ -711,7 +711,6 @@ export function CustomizeRailButtonsModal({
                   alignItems: "center",
                   gap: "10px",
                   padding: "8px 0",
-                  opacity: visible ? 1 : 0.6,
                   borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
                 }}
               >
@@ -724,12 +723,38 @@ export function CustomizeRailButtonsModal({
                   {renderFixedTabLabel(name, intl)}
                   <div
                     style={{
-                      color: COLORS.GRAY,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      color: COLORS.GRAY_D,
                       fontSize: "12px",
                       marginTop: "2px",
                     }}
                   >
-                    {visible ? "Pinned to rail" : "Shown in More"}
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        borderRadius: "999px",
+                        padding: "1px 8px",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        letterSpacing: "0.01em",
+                        background: visible
+                          ? COLORS.BS_GREEN_LL
+                          : COLORS.BLUE_LLLL,
+                        color: visible
+                          ? COLORS.ANTD_GREEN_D
+                          : COLORS.ANTD_LINK_BLUE_DARK,
+                      }}
+                    >
+                      {visible ? "Rail" : "More"}
+                    </span>
+                    <span>
+                      {visible
+                        ? "Shown on left rail"
+                        : "Available under More menu"}
+                    </span>
                   </div>
                 </div>
                 <DragHandle id={name} />
