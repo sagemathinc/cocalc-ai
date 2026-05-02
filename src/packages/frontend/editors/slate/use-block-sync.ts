@@ -10,7 +10,6 @@ import {
   debugSyncLog,
   getBlockDeferChars,
   getBlockDeferMs,
-  summarizeMarkdown,
 } from "./block-sync-utils";
 
 const DEFAULT_SAVE_DEBOUNCE_MS = 750;
@@ -131,34 +130,15 @@ export function useBlockSync({
 
   const applyBlocksFromValue = useCallback(
     (markdown: string) => {
-      debugSyncLog("apply-blocks:request", {
-        focusedIndex,
-        blocksLength: blocksRef.current.length,
-        sameAsValueRef: markdown === valueRef.current,
-        markdown: summarizeMarkdown(markdown),
-      });
       if (markdown === valueRef.current && blocksRef.current.length > 0) {
-        debugSyncLog("apply-blocks:skip-same-value", {
-          focusedIndex,
-          blocksLength: blocksRef.current.length,
-        });
         return;
       }
       const deferChars = getBlockDeferChars();
       if (focusedIndex == null && markdown.length >= deferChars) {
-        debugSyncLog("apply-blocks:defer-large-unfocused", {
-          focusedIndex,
-          deferChars,
-          markdown: summarizeMarkdown(markdown),
-        });
         schedulePendingValue(markdown);
         return;
       }
       flushPendingValue();
-      debugSyncLog("apply-blocks:apply-now", {
-        focusedIndex,
-        markdown: summarizeMarkdown(markdown),
-      });
       setBlocksFromValue(markdown);
     },
     [
@@ -173,11 +153,6 @@ export function useBlockSync({
 
   useEffect(() => {
     if (actions?._syncstring != null) {
-      debugSyncLog("value-prop:ignored-because-syncstring", {
-        focusedIndex,
-        value: summarizeMarkdown(value ?? ""),
-        current: summarizeMarkdown(valueRef.current),
-      });
       return;
     }
     const nextValue = value ?? "";
@@ -243,8 +218,7 @@ export function useBlockSync({
     if (pendingRemoteRef.current != null) {
       debugSyncLog("pending-remote:clear", {
         reason,
-        pending: summarizeMarkdown(pendingRemoteRef.current),
-        ...(remote == null ? {} : { remote: summarizeMarkdown(remote) }),
+        remoteLength: remote?.length,
       });
     }
     pendingRemoteRef.current = null;
@@ -266,20 +240,15 @@ export function useBlockSync({
   function flushPendingRemoteMerge(force = false) {
     const pending = pendingRemoteRef.current;
     if (pending == null) return;
-    const local = getFullMarkdown();
     if (!force && shouldDeferRemoteMerge()) {
       debugSyncLog("pending-remote:defer", {
         idleMs: mergeIdleMsRef.current,
-        pending: summarizeMarkdown(pending),
-        local: summarizeMarkdown(local),
       });
       schedulePendingRemoteMerge();
       return;
     }
     debugSyncLog("pending-remote:flush", {
       force,
-      pending: summarizeMarkdown(pending),
-      local: summarizeMarkdown(local),
     });
     pendingRemoteRef.current = null;
     setPendingRemoteIndicator(false);
@@ -303,17 +272,14 @@ export function useBlockSync({
     if (actions?._syncstring == null) return;
     const change = () => {
       const remote = actions._syncstring?.to_str() ?? "";
-      const local = getFullMarkdown();
       clearPendingRemoteState("new-syncstring", remote);
       debugSyncLog("syncstring:change", {
         focusedIndex,
-        remote: summarizeMarkdown(remote),
-        local: summarizeMarkdown(local),
-        pendingRemote: false,
+        remoteLength: remote.length,
         shouldDefer: shouldDeferRemoteMerge(),
       });
       if (ignoreRemoteWhileFocused && focusedIndex != null) {
-        updatePendingRemoteIndicator(remote, local);
+        updatePendingRemoteIndicator(remote, getFullMarkdown());
         return;
       }
       if (shouldDeferRemoteMerge()) {
@@ -321,10 +287,7 @@ export function useBlockSync({
         schedulePendingRemoteMerge();
         return;
       }
-      debugSyncLog("syncstring:apply", {
-        remote: summarizeMarkdown(remote),
-        local: summarizeMarkdown(local),
-      });
+      debugSyncLog("syncstring:apply", { remoteLength: remote.length });
       lastRemoteMergeAtRef.current = Date.now();
       mergeHelperRef.current.handleRemote({
         remote,
@@ -355,18 +318,7 @@ export function useBlockSync({
   const saveBlocksNow = useCallback(() => {
     if (actions?.set_value == null) return;
     const markdown = getFullMarkdown();
-    if (markdown === valueRef.current) {
-      debugSyncLog("save:skip-same-value", {
-        focusedIndex,
-        current: summarizeMarkdown(markdown),
-      });
-      return;
-    }
-    debugSyncLog("save:dispatch", {
-      focusedIndex,
-      current: summarizeMarkdown(markdown),
-      previousValueRef: summarizeMarkdown(valueRef.current),
-    });
+    if (markdown === valueRef.current) return;
     lastSetValueRef.current = markdown;
     valueRef.current = markdown;
     mergeHelperRef.current.noteSaved(markdown);
@@ -388,11 +340,6 @@ export function useBlockSync({
 
   const markLocalEdit = useCallback(() => {
     lastLocalEditAtRef.current = Date.now();
-    debugSyncLog("local-edit", {
-      focusedIndex,
-      current: summarizeMarkdown(getFullMarkdown()),
-      pendingRemote: pendingRemoteRef.current != null,
-    });
     if (
       ignoreRemoteWhileFocused &&
       focusedIndex != null &&

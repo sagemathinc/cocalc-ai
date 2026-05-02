@@ -36,29 +36,3 @@ export function debugSyncLog(
   // eslint-disable-next-line no-console
   console.log(`[slate-sync:block] ${type}`, data ?? {});
 }
-
-function checksum(text: string): string {
-  let hash = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    hash = (hash * 33 + text.charCodeAt(i)) >>> 0;
-  }
-  return hash.toString(16);
-}
-
-function previewStart(text: string, size = 80): string {
-  return text.slice(0, size).replace(/\n/g, "\\n");
-}
-
-function previewEnd(text: string, size = 80): string {
-  return text.slice(-size).replace(/\n/g, "\\n");
-}
-
-export function summarizeMarkdown(text: string): Record<string, unknown> {
-  return {
-    length: text.length,
-    lines: text === "" ? 0 : text.split("\n").length,
-    checksum: checksum(text),
-    start: previewStart(text),
-    end: previewEnd(text),
-  };
-}

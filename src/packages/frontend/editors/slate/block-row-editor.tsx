@@ -60,7 +60,7 @@ import {
 } from "./sync";
 import { buildCodeBlockDecorations } from "./elements/code-block/prism";
 import type { CodeBlock } from "./elements/code-block/types";
-import { debugSyncLog, summarizeMarkdown } from "./block-sync-utils";
+import { debugSyncLog } from "./block-sync-utils";
 import { normalizeBlockMarkdown } from "./block-markdown-utils";
 import { handleForcedPlainTextPaste } from "./clipboard";
 import useUpload from "./upload";
@@ -320,14 +320,6 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
     const lastRemoteVersionRef = useRef<number>(remoteVersion);
     useEffect(() => {
       if (remoteVersion === lastRemoteVersionRef.current) return;
-      debugSyncLog("row:remote-version-change", {
-        index,
-        previousRemoteVersion: lastRemoteVersionRef.current,
-        nextRemoteVersion: remoteVersion,
-        isFocused,
-        lastMarkdown: summarizeMarkdown(lastMarkdownRef.current),
-        incomingMarkdown: summarizeMarkdown(markdown),
-      });
       lastRemoteVersionRef.current = remoteVersion;
       lastMarkdownRef.current = markdown;
       syncCacheRef.current = {};
@@ -466,12 +458,6 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         editor.selection = null;
         editor.marks = null;
       }
-      debugSyncLog("row:remote-version-apply", {
-        index,
-        remoteVersion,
-        nextValueLength: nextValue.length,
-        markdown: summarizeMarkdown(markdown),
-      });
       setValue(nextValue);
     }, [
       remoteVersion,
@@ -579,22 +565,8 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
             previousMarkdown: lastMarkdownRef.current,
           })
         ) {
-          debugSyncLog("row:change-skip-selection-only", {
-            index,
-            remoteVersion,
-            previous: summarizeMarkdown(lastMarkdownRef.current),
-            next: summarizeMarkdown(nextMarkdown),
-            operationTypes: editor.operations.map((op) => op.type),
-          });
           return;
         }
-        debugSyncLog("row:change-apply", {
-          index,
-          remoteVersion,
-          previous: summarizeMarkdown(lastMarkdownRef.current),
-          next: summarizeMarkdown(nextMarkdown),
-          operationTypes: editor.operations.map((op) => op.type),
-        });
         setValue(newValue);
         setChange((prev) => prev + 1);
         onEditorChange?.(index);
