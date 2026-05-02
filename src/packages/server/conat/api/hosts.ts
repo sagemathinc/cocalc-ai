@@ -1904,6 +1904,7 @@ type ListHostsOptions = {
   include_deleted?: boolean;
   catalog?: boolean;
   show_all?: boolean;
+  trusted_admin_view?: boolean;
 };
 
 export async function listHostsLocal({
@@ -1912,9 +1913,10 @@ export async function listHostsLocal({
   include_deleted,
   catalog,
   show_all,
+  trusted_admin_view,
 }: ListHostsOptions): Promise<Host[]> {
   const owner = requireAccount(account_id);
-  if (admin_view && !(await isAdmin(owner))) {
+  if (admin_view && !trusted_admin_view && !(await isAdmin(owner))) {
     throw new Error("not authorized");
   }
   const filters: string[] = [];

@@ -565,7 +565,13 @@ async function startHostConnectionService(): Promise<void> {
       }
       return connection;
     },
-    list: async (opts) => await listHostsLocal(opts),
+    list: async (opts) =>
+      await listHostsLocal({
+        ...opts,
+        // The source bay has already authenticated and authorized the user
+        // before issuing this cluster-internal request.
+        trusted_admin_view: true,
+      }),
     getProjectStartMetadata: async ({ host_id, project_id }) => {
       const metadata = await getProjectStartMetadataLocal({
         host_id,
