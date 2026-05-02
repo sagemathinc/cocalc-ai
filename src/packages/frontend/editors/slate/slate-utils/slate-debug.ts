@@ -34,7 +34,7 @@ declare global {
   }
 }
 
-const DEFAULT_MAX_EVENTS = 200;
+const DEFAULT_MAX_EVENTS = 1000;
 
 function createBuffer(max: number): SlateDebugBuffer {
   return { events: [], max, cursor: 0, wrapped: false, seq: 0 };

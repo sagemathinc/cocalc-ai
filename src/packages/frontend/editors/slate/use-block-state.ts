@@ -9,6 +9,7 @@ import {
   splitMarkdownToBlocks,
   splitMarkdownToBlocksIncremental,
 } from "./block-chunking";
+import { debugSyncLog, summarizeMarkdown } from "./block-sync-utils";
 
 interface UseBlockStateOptions {
   initialValue: string;
@@ -93,10 +94,19 @@ export function useBlockState({
   const setBlocksFromValue = useCallback(
     (markdown: string) => {
       if (markdown === valueRef.current && blocksRef.current.length > 0) {
+        debugSyncLog("state:set-blocks-from-value:skip-same-value", {
+          blocksLength: blocksRef.current.length,
+          markdown: summarizeMarkdown(markdown),
+        });
         return;
       }
       const prevMarkdown = valueRef.current ?? "";
       const prevBlocks = blocksRef.current;
+      debugSyncLog("state:set-blocks-from-value:start", {
+        prevBlocksLength: prevBlocks.length,
+        previous: summarizeMarkdown(prevMarkdown),
+        next: summarizeMarkdown(markdown),
+      });
       valueRef.current = markdown;
       const nextBlocks =
         prevBlocks.length > 0 && prevMarkdown.length > 0
@@ -111,6 +121,16 @@ export function useBlockState({
           : splitMarkdownToBlocks(markdown, {
               targetChars: blockChunkTargetChars,
             });
+      debugSyncLog("state:set-blocks-from-value:parsed", {
+        prevBlocksLength: prevBlocks.length,
+        nextBlocksLength: nextBlocks.length,
+        previousLastBlock: prevBlocks[prevBlocks.length - 1]
+          ?.slice(-80)
+          .replace(/\n/g, "\\n"),
+        nextLastBlock: nextBlocks[nextBlocks.length - 1]
+          ?.slice(-80)
+          .replace(/\n/g, "\\n"),
+      });
       bumpRemoteVersions(nextBlocks);
       blocksRef.current = nextBlocks;
       setBlocks(nextBlocks);

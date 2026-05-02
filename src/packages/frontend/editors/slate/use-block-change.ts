@@ -5,6 +5,7 @@
  */
 
 import { useCallback } from "react";
+import { debugSyncLog, summarizeMarkdown } from "./block-sync-utils";
 
 interface UseBlockChangeOptions {
   readOnly?: boolean;
@@ -36,6 +37,13 @@ export function useBlockChange({
   const handleBlockChange = useCallback(
     (index: number, markdown: string) => {
       if (readOnly) return;
+      const previous = blocksRef.current[index] ?? "";
+      debugSyncLog("change:block", {
+        index,
+        isCurrent,
+        previous: summarizeMarkdown(previous),
+        next: summarizeMarkdown(markdown),
+      });
       markLocalEdit();
       skipSelectionResetRef.current.add(index);
       setBlocks((prev) => {
