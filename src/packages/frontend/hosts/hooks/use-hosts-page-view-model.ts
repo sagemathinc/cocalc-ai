@@ -21,6 +21,7 @@ import { useHostRootfsImages } from "./use-host-rootfs-images";
 import { useHostSoftwareVersions } from "./use-host-software-versions";
 import { useHostSoftwareVersionCatalog } from "./use-host-software-version-catalog";
 import { useHostRuntimeDeploymentStatus } from "./use-host-runtime-deployment-status";
+import { useHostRuntimeLog } from "./use-host-runtime-log";
 import { useParallelOps } from "./use-parallel-ops";
 import { formatHostUpgradeFailureMessage } from "./host-upgrade-errors";
 import {
@@ -523,6 +524,10 @@ export const useHostsPageViewModel = () => {
   const { hostLog, loadingLog } = useHostLog(hub, selected?.id, {
     enabled: drawerOpen,
     limit: 50,
+  });
+  const runtimeLogViewer = useHostRuntimeLog(hub, {
+    hostId: selected?.id,
+    enabled: drawerOpen,
   });
   const [hostViewMode, setHostViewMode] =
     React.useState<HostListViewMode>(readHostViewMode);
@@ -1603,6 +1608,7 @@ export const useHostsPageViewModel = () => {
       hubSourceBaseUrl: baseUrl ? `${baseUrl}/software` : undefined,
     },
     runtimeDeployments,
+    runtimeLogViewer,
     onSetRuntimeArtifactDeployment: isAdmin
       ? setRuntimeArtifactDeployment
       : undefined,

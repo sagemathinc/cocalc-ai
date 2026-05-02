@@ -2,12 +2,16 @@ import type {
   Host,
   HostRuntimeArtifact,
   HostRuntimeDeploymentStatus,
+  HostRuntimeLog,
   HostRootfsGcResult,
   HostRootfsImage,
   HostSoftwareArtifact,
   HostSoftwareAvailableVersion,
 } from "@cocalc/conat/hub/api/hosts";
-import type { ManagedComponentKind } from "@cocalc/conat/project-host/api";
+import type {
+  HostRuntimeLogSource,
+  ManagedComponentKind,
+} from "@cocalc/conat/project-host/api";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLogEntry } from "./use-host-log";
 import type { HostLroState } from "./use-host-ops";
@@ -56,6 +60,16 @@ type UseHostDrawerViewModelArgs = {
     refreshing: boolean;
     error?: string;
     refresh: () => Promise<void>;
+  };
+  runtimeLogViewer?: {
+    log?: HostRuntimeLog;
+    loading: boolean;
+    error?: string;
+    load: (opts?: {
+      source?: HostRuntimeLogSource;
+      lines?: number;
+    }) => Promise<void>;
+    clear: () => void;
   };
   onSetRuntimeArtifactDeployment?: (opts: {
     host: Host;
@@ -155,6 +169,7 @@ export const useHostDrawerViewModel = ({
   loadingLog,
   softwareVersions,
   runtimeDeployments,
+  runtimeLogViewer,
   onSetRuntimeArtifactDeployment,
   onRollbackRuntimeArtifact,
   onResumeRuntimeArtifactClusterDefault,
@@ -189,6 +204,7 @@ export const useHostDrawerViewModel = ({
     loadingLog,
     softwareVersions,
     runtimeDeployments,
+    runtimeLogViewer,
     onSetRuntimeArtifactDeployment,
     onRollbackRuntimeArtifact,
     onResumeRuntimeArtifactClusterDefault,

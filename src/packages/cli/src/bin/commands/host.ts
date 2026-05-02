@@ -1,13 +1,31 @@
 import { spawnSync } from "node:child_process";
 import { Command } from "commander";
 import type { HostRuntimeDeploymentStatus } from "@cocalc/conat/hub/api/hosts";
+import {
+  HOST_RUNTIME_LOG_SOURCES,
+  type HostRuntimeLogSource,
+} from "@cocalc/conat/project-host/api";
 import { humanSize } from "@cocalc/util/misc";
 
 import { isValidUUID } from "@cocalc/util/misc";
 
 import { printArrayTable } from "../core/cli-output";
 
-type HostRuntimeLogRow = any;
+type HostRuntimeLogRow = {
+  host_id: string;
+  source: string;
+  lines: number;
+  text: string;
+  requested_source?: HostRuntimeLogSource;
+  error?: string;
+};
+type HostRuntimeLogsRow = {
+  host_id: string;
+  name?: string | null;
+  lines: number;
+  requested_sources: HostRuntimeLogSource[];
+  logs: HostRuntimeLogRow[];
+};
 type HostSoftwareVersionRow = any;
 type HostRow = any;
 type HostSshAuthorizedKeysRow = any;
@@ -36,6 +54,7 @@ const HOST_DEPLOY_HISTORY_KINDS = new Set([
   "host-rollback-runtime-deployments",
   "host-rollout-managed-components",
 ]);
+const HOST_RUNTIME_LOG_SOURCES_SET = new Set<string>(HOST_RUNTIME_LOG_SOURCES);
 
 export function assertHostRehomeConfirmed({
   host_id,
@@ -617,6 +636,31 @@ function printNamedSection(
   console.log(title);
   printArrayTable(rows);
   console.log("");
+}
+
+function printHostRuntimeLogsHuman(
+  emitProjectFileCatHumanContent: (content: string) => void,
+  logs: HostRuntimeLogRow[],
+): void {
+  logs.forEach((log, index) => {
+    const requestedSource = `${log.requested_source ?? log.source ?? "project-host"}`;
+    const resolvedSource = `${log.source ?? ""}`.trim();
+    const title =
+      resolvedSource && resolvedSource !== requestedSource
+        ? `${requestedSource} (${resolvedSource})`
+        : requestedSource;
+    console.log(title);
+    if (log.error) {
+      console.log(`ERROR: ${log.error}`);
+    } else if (`${log.text ?? ""}`.trim()) {
+      emitProjectFileCatHumanContent(log.text ?? "");
+    } else {
+      console.log("(no output)");
+    }
+    if (index < logs.length - 1) {
+      console.log("");
+    }
+  });
 }
 
 type HostDeployStatusData = {
@@ -1873,47 +1917,86 @@ export function registerHostCommand(
 
   host
     .command("logs <host>")
-    .description("tail project-host runtime log")
+    .description("tail recent project-host runtime component logs")
     .option("--tail <n>", "number of log lines", "200")
     .option(
       "--source <source>",
-      "log source: project-host, conat-router, conat-persist, host-agent, supervision-events",
+      `log source: ${[...HOST_RUNTIME_LOG_SOURCES, "all"].join(", ")}`,
     )
+    .option("--all", "fetch all common project-host runtime log sources")
     .action(
       async (
         hostIdentifier: string,
-        opts: { tail?: string; source?: string },
+        opts: { tail?: string; source?: string; all?: boolean },
         command: Command,
       ) => {
         await withContext(command, "host logs", async (ctx) => {
           const h = await resolveHost(ctx, hostIdentifier);
           const lines = Number(opts.tail ?? "200");
-          const source = `${opts.source ?? "project-host"}`.trim();
-          const allowedSources = new Set([
-            "project-host",
-            "conat-router",
-            "conat-persist",
-            "host-agent",
-            "supervision-events",
-          ]);
+          const sourceRaw = `${opts.source ?? ""}`.trim();
+          const fetchAll = opts.all || sourceRaw === "all";
           if (!Number.isFinite(lines) || lines <= 0) {
             throw new Error("--tail must be a positive integer");
           }
-          if (!allowedSources.has(source)) {
+          if (fetchAll && sourceRaw && sourceRaw !== "all") {
+            throw new Error("use either --source <source> or --all");
+          }
+          if (
+            !fetchAll &&
+            sourceRaw &&
+            !HOST_RUNTIME_LOG_SOURCES_SET.has(sourceRaw)
+          ) {
             throw new Error(
-              "--source must be one of: project-host, conat-router, conat-persist, host-agent, supervision-events",
+              `--source must be one of: ${[...HOST_RUNTIME_LOG_SOURCES, "all"].join(", ")}`,
             );
           }
-          const log = (await ctx.hub.hosts.getHostRuntimeLog({
-            id: h.id,
-            lines: Math.floor(lines),
-            source: source as any,
-          })) as HostRuntimeLogRow;
+          const requestedSources = (
+            fetchAll
+              ? [...HOST_RUNTIME_LOG_SOURCES]
+              : [sourceRaw || "project-host"]
+          ) as HostRuntimeLogSource[];
+          const logs: HostRuntimeLogRow[] = [];
+          for (const source of requestedSources) {
+            try {
+              const log = (await ctx.hub.hosts.getHostRuntimeLog({
+                id: h.id,
+                lines: Math.floor(lines),
+                source,
+              })) as HostRuntimeLogRow;
+              logs.push({
+                ...log,
+                requested_source: source,
+              });
+            } catch (err) {
+              if (!fetchAll) throw err;
+              logs.push({
+                host_id: h.id,
+                source,
+                requested_source: source,
+                lines: Math.floor(lines),
+                text: "",
+                error: `${err}`,
+              });
+            }
+          }
           if (!ctx.globals.json && ctx.globals.output !== "json") {
-            emitProjectFileCatHumanContent(log.text ?? "");
+            if (!fetchAll) {
+              emitProjectFileCatHumanContent(logs[0]?.text ?? "");
+              return null;
+            }
+            printHostRuntimeLogsHuman(emitProjectFileCatHumanContent, logs);
             return null;
           }
-          return log;
+          if (!fetchAll) {
+            return logs[0];
+          }
+          return {
+            host_id: h.id,
+            name: h.name,
+            lines: Math.floor(lines),
+            requested_sources: requestedSources,
+            logs,
+          } satisfies HostRuntimeLogsRow;
         });
       },
     );

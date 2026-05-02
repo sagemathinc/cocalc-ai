@@ -39,6 +39,7 @@ import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases"
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
+  HostRuntimeLogSource,
   ManagedComponentKind,
 } from "@cocalc/conat/project-host/api";
 import type {
@@ -1904,6 +1905,7 @@ type ListHostsOptions = {
   include_deleted?: boolean;
   catalog?: boolean;
   show_all?: boolean;
+  trusted_admin_view?: boolean;
 };
 
 export async function listHostsLocal({
@@ -1912,9 +1914,10 @@ export async function listHostsLocal({
   include_deleted,
   catalog,
   show_all,
+  trusted_admin_view,
 }: ListHostsOptions): Promise<Host[]> {
   const owner = requireAccount(account_id);
-  if (admin_view && !(await isAdmin(owner))) {
+  if (admin_view && !trusted_admin_view && !(await isAdmin(owner))) {
     throw new Error("not authorized");
   }
   const filters: string[] = [];
@@ -2703,12 +2706,7 @@ export async function getHostRuntimeLog({
   account_id?: string;
   id: string;
   lines?: number;
-  source?:
-    | "project-host"
-    | "conat-router"
-    | "conat-persist"
-    | "host-agent"
-    | "supervision-events";
+  source?: HostRuntimeLogSource;
 }): Promise<{ host_id: string; source: string; lines: number; text: string }> {
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);

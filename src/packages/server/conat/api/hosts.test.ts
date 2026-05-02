@@ -2786,6 +2786,21 @@ describe("hosts.listHosts bootstrap normalization", () => {
     });
   });
 
+  it("allows trusted inter-bay admin_view without a local admin row", async () => {
+    isAdminMock = jest.fn(async () => false);
+
+    const { listHostsLocal } = await import("./hosts");
+    const hosts = await listHostsLocal({
+      account_id: ACCOUNT_ID,
+      admin_view: true,
+      include_deleted: true,
+      trusted_admin_view: true,
+    });
+
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0].id).toBe(HOST_ID);
+  });
+
   it("prefers deleted duplicate host rows over stale live rows", async () => {
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
     process.env.COCALC_BAY_ID = "bay-0";

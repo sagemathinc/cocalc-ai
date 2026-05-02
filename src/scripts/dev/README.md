@@ -190,6 +190,80 @@ Example:
 pnpm --dir src smoke:codex-launchpad -- --project 3a05a2be-2018-41c6-8aa7-a7e0085b4bab
 ```
 
+## Multibay reconnect smoke
+
+```bash
+pnpm --dir src smoke:multibay-reconnect -- --project <project-id>
+```
+
+This is a focused local 3-bay control-plane smoke for the reconnect-sensitive
+paths that recently broke:
+
+1. Restarts the local hub + attached bays by default.
+2. Refreshes `dev:hub:env` before every `cocalc` invocation.
+3. Verifies `host list` includes the requested hosts.
+4. Verifies `host get` works for `host1` and `host2` by default.
+5. Verifies `project get` and `project logs` on the target project.
+6. Stops and starts the project again by default.
+7. Runs `project exec` and requires an `EXEC_OK` marker in stdout.
+
+Useful options:
+
+- `--host <name>` to check different host names (repeatable).
+- `--no-restart` to reuse an already-running stack.
+- `--no-stop-start` to avoid changing project state during the smoke.
+- `--timeout <ms>` to widen CLI/RPC timeouts.
+- `--tail <n>` to control fetched runtime log lines.
+
+Example:
+
+```bash
+pnpm --dir src smoke:multibay-reconnect -- \
+  --project b0917d32-d749-4dd4-a527-aa306144233a
+```
+
+## Project orphan recovery smoke
+
+```bash
+pnpm --dir src smoke:project-orphan-recovery -- \
+  --project <project-id> \
+  --yes-destructive
+```
+
+This is a destructive local smoke for the conmon/libpod orphan-recovery path
+on disposable multibay hosts. It is designed for hosts like `host2` on
+`lite4b`, where direct SSH access and sudo are available.
+
+What it does:
+
+1. Ensures the target project is running on the expected host.
+2. Verifies a clean baseline: exactly one podman container row and one main
+   `conmon` tree for the project.
+3. Deliberately deletes that live container's libpod DB rows from the host's
+   rootless podman SQLite DB.
+4. Verifies `podman ps` loses the project while the `conmon` tree remains live.
+5. Stops the project through the normal routed control plane.
+6. Verifies the fallback recovery path actually removed the orphaned live
+   process tree.
+7. Starts the project again and requires exactly one normal container/tree.
+
+Notes:
+
+- `--yes-destructive` is required because this edits the host's rootless podman
+  DB directly.
+- The default host is `host2`; override with `--host` and `--ssh-target` if
+  needed.
+- Use `--keep-db-backup` if you want to retain the host-side DB backup file for
+  inspection after a passing run.
+
+Example:
+
+```bash
+pnpm --dir src smoke:project-orphan-recovery -- \
+  --project b0917d32-d749-4dd4-a527-aa306144233a \
+  --yes-destructive
+```
+
 ## Multibay browser QA
 
 ```bash

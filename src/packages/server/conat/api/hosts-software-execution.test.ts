@@ -502,6 +502,55 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
     );
   });
 
+  it("appends acp-worker diagnostics when acp worker rollout fails", async () => {
+    await expect(
+      rolloutHostManagedComponentsInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        components: ["acp-worker"],
+        reason: "host_software_upgrade",
+        loadHostForStartStop: async () => ({
+          id: "host-1",
+          status: "running",
+          metadata: {
+            owner: "account-1",
+            software: {
+              project_host: "ph-v1",
+            },
+          },
+        }),
+        assertHostRunningForUpgrade: () => undefined,
+        hostControlClient: async () => ({
+          getRuntimeLog: async ({ source }) => ({
+            source: source ?? "project-host",
+            lines: 25,
+            text:
+              source === "supervision-events"
+                ? '{"component":"acp-worker","action":"drain_timeout"}'
+                : "worker stalled during replacement",
+          }),
+          rolloutManagedComponents: async () => {
+            throw new Error("acp-worker did not report healthy replacement");
+          },
+        }),
+        waitForHostHeartbeatAfter: async () => undefined,
+        installedProjectHostArtifactVersion: () => "ph-v1",
+        recordProjectHostLocalRollbackInternal: async () => ({
+          host_id: "host-1",
+          rollback_version: "ph-v1",
+          source: "host-agent",
+        }),
+        project_host_local_rollback_error_code: "project_host_local_rollback",
+        setLastKnownGoodArtifactVersionInternal: async () => undefined,
+        runtimeDeploymentsForComponentRollout: () => [],
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => undefined,
+      }),
+    ).rejects.toThrow(
+      /Recent host diagnostics:[\s\S]*\[supervision-events\][\s\S]*\[acp-worker\]/,
+    );
+  });
+
   it("does not record a rollback when the restarted project-host is running the desired version", async () => {
     const loadHostForStartStop = jest
       .fn()
