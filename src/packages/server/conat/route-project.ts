@@ -166,6 +166,7 @@ async function fetchHostTarget(
           FROM project_hosts
           WHERE project_hosts.id = $1
             AND project_hosts.deleted IS NULL
+            AND project_hosts.status IN ('running', 'active')
         `,
         [host_id, defaultBayId],
       );
@@ -231,6 +232,7 @@ async function fetchHostAddress(
           LEFT JOIN project_hosts
             ON project_hosts.id = projects.host_id
            AND project_hosts.deleted IS NULL
+           AND project_hosts.status IN ('running', 'active')
           WHERE project_id=$1
         `,
         [project_id, defaultBayId],
