@@ -157,6 +157,14 @@ export function resolveBrowserSessionDaemonScriptPath({
     addCandidate(
       resolvePath(
         dirname(trimmed),
+        "..",
+        "core",
+        "browser-session-playwright-daemon.js",
+      ),
+    );
+    addCandidate(
+      resolvePath(
+        dirname(trimmed),
         "core",
         "browser-session-playwright-daemon.js",
       ),

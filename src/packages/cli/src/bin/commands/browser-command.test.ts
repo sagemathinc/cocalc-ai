@@ -210,6 +210,7 @@ test("resolveBrowserSessionDaemonScriptPath falls back to COCALC_CLI_BIN dist", 
   const bundledPath = "/opt/core/browser-session-playwright-daemon.js";
   const repoPath = resolvePath(
     "/home/user/cocalc-ai/src/packages/cli/dist/bin",
+    "..",
     "core",
     "browser-session-playwright-daemon.js",
   );
@@ -222,6 +223,23 @@ test("resolveBrowserSessionDaemonScriptPath falls back to COCALC_CLI_BIN dist", 
   });
   assert.equal(resolved, repoPath);
   assert.notEqual(resolved, bundledPath);
+});
+
+test("resolveBrowserSessionDaemonScriptPath falls back to parent core next to wrapper argvPath", () => {
+  const wrapperSiblingCore = resolvePath(
+    "/opt/cocalc/bin2",
+    "..",
+    "core",
+    "browser-session-playwright-daemon.js",
+  );
+  const resolved = resolveBrowserSessionDaemonScriptPath({
+    moduleDir: "/missing",
+    cliBinPath: "",
+    argvPath: "/opt/cocalc/bin2/cocalc-cli.js",
+    resolvePath,
+    existsSync: (path) => path === wrapperSiblingCore,
+  });
+  assert.equal(resolved, wrapperSiblingCore);
 });
 
 test("resolveBrowserSessionDaemonScriptPath prefers bundled daemon when present", () => {
