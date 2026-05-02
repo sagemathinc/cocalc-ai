@@ -335,27 +335,56 @@ export function getLiveResponseBlocks(
   time?: number;
   state?: "sending" | "sent" | "queued" | "not-sent";
 }> {
-  const timeline = [
-    ...(events ?? [])
-      .filter(
-        (
-          evt,
-        ): evt is AcpStreamMessage & {
-          type: "event";
-          event: Extract<AcpStreamEvent, { type: "message"; text: string }>;
-        } =>
-          evt?.type === "event" &&
-          evt.event?.type === "message" &&
-          typeof evt.event.text === "string" &&
-          evt.event.text.trim().length > 0,
-      )
-      .map((evt) => ({
-        kind: "agent-event" as const,
-        text: evt.event.text,
-        time: evt.time,
-        delta: evt.event.delta === true,
-        seq: evt.seq ?? 0,
-      })),
+  type TimelineItem =
+    | {
+        kind: "agent-event";
+        text: string;
+        time?: number;
+        delta: boolean;
+        seq: number;
+      }
+    | {
+        kind: "agent-boundary";
+        time?: number;
+        seq: number;
+      }
+    | {
+        kind: "guidance";
+        text: string;
+        time?: number;
+        state?: "sending" | "sent" | "queued" | "not-sent";
+        seq: number;
+      };
+
+  const timeline: TimelineItem[] = [
+    ...(events ?? []).flatMap<TimelineItem>((evt) => {
+      if (
+        evt?.type === "event" &&
+        evt.event?.type === "message" &&
+        typeof evt.event.text === "string" &&
+        evt.event.text.trim().length > 0
+      ) {
+        return [
+          {
+            kind: "agent-event" as const,
+            text: evt.event.text,
+            time: evt.time,
+            delta: evt.event.delta === true,
+            seq: evt.seq ?? 0,
+          },
+        ];
+      }
+      if (!isAgentMessageBoundaryEvent(evt)) {
+        return [];
+      }
+      return [
+        {
+          kind: "agent-boundary" as const,
+          time: evt?.time,
+          seq: evt?.seq ?? 0,
+        },
+      ];
+    }),
     ...(guidance ?? [])
       .filter(
         (item) => typeof item?.text === "string" && item.text.trim().length > 0,
@@ -402,6 +431,12 @@ export function getLiveResponseBlocks(
       continue;
     }
 
+    if (item.kind === "agent-boundary") {
+      pendingGuidanceSplitBaseText = latestFullText;
+      activeSegmentBaseText = undefined;
+      continue;
+    }
+
     const progressive = mergeProgressiveMessageText(latestFullText, item.text, {
       previousHasDelta: latestFullHasDelta,
       nextIsDelta: item.delta,
@@ -442,6 +477,12 @@ export function getLiveResponseBlocks(
   }
 
   return blocks;
+}
+
+function isAgentMessageBoundaryEvent(evt?: AcpStreamMessage): boolean {
+  if (!evt) return false;
+  if (evt.type !== "event") return true;
+  return evt.event?.type !== "message";
 }
 
 export function getMountedIntermediateResponseBlocks(

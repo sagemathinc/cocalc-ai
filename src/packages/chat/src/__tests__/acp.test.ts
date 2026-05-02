@@ -588,6 +588,65 @@ describe("response text helpers", () => {
     ]);
   });
 
+  test("treats non-message activity as a boundary between progressive agent messages", () => {
+    const events: AcpStreamMessage[] = [
+      {
+        type: "event",
+        event: { type: "message", text: "I traced the activity reducer." },
+        seq: 1,
+        time: 1000,
+      } as any,
+      {
+        type: "event",
+        event: {
+          type: "file",
+          path: "src/packages/frontend/chat/message.tsx",
+          operation: "read",
+        },
+        seq: 2,
+        time: 2000,
+      } as any,
+      {
+        type: "event",
+        event: {
+          type: "message",
+          text: "I traced the activity reducer.\n\nThe inline path was merging across tool events.",
+        },
+        seq: 3,
+        time: 3000,
+      } as any,
+      {
+        type: "summary",
+        finalResponse:
+          "I traced the activity reducer.\n\nThe inline path was merging across tool events.",
+        seq: 4,
+        time: 4000,
+      } as any,
+    ];
+    expect(getLiveResponseBlocks(events)).toEqual([
+      {
+        kind: "agent",
+        text: "I traced the activity reducer.",
+        time: 1000,
+        state: undefined,
+      },
+      {
+        kind: "agent",
+        text: "The inline path was merging across tool events.",
+        time: 3000,
+        state: undefined,
+      },
+    ]);
+    expect(getMountedIntermediateResponseBlocks(events)).toEqual([
+      {
+        kind: "agent",
+        text: "I traced the activity reducer.",
+        time: 1000,
+        state: undefined,
+      },
+    ]);
+  });
+
   test("keeps a single mounted intermediate markdown block when there is no summary to trim against", () => {
     const events: AcpStreamMessage[] = [
       textEvent("message", "**final summary**", 1),
