@@ -623,7 +623,7 @@ interface CustomizeRailButtonsModalProps {
   hiddenTabs: FixedTab[];
 }
 
-function CustomizeRailButtonsModal({
+export function CustomizeRailButtonsModal({
   open,
   onClose,
   onSave,
@@ -634,9 +634,12 @@ function CustomizeRailButtonsModal({
   const [draftOrder, setDraftOrder] = useState<FixedTab[]>(order);
   const [draftHidden, setDraftHidden] = useState<FixedTab[]>(hiddenTabs);
   const hiddenSet = useMemo(() => new Set(draftHidden), [draftHidden]);
+  const wasOpenRef = useRef(open);
 
   useEffect(() => {
-    if (!open) return;
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!open || wasOpen) return;
     setDraftOrder(order);
     setDraftHidden(hiddenTabs);
   }, [hiddenTabs, open, order]);
