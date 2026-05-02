@@ -6,6 +6,10 @@
 import { readFile } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
 import { podman } from "@cocalc/backend/podman";
+import {
+  getConmonContainerProcesses,
+  type ConmonContainerProcess,
+} from "@cocalc/backend/podman/conmon";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
 import { hubApi } from "@cocalc/lite/hub/api";
 import type { API as ProjectRunnerApi } from "@cocalc/conat/project/runner/run";
@@ -219,20 +223,57 @@ async function inspectProjectContainerPids(
   return out;
 }
 
+function pickConmonNamespacePid(
+  info: ConmonContainerProcess,
+): number | undefined {
+  return [...new Set(info.child_pids)].find(
+    (pid) => Number.isInteger(pid) && pid > 0,
+  );
+}
+
+async function inspectConmonOnlyProjectPids({
+  knownProjectIds,
+  getConmonProcesses,
+}: {
+  knownProjectIds: Set<string>;
+  getConmonProcesses: () => Promise<Map<string, ConmonContainerProcess>>;
+}): Promise<ProjectNetworkSample[]> {
+  const out: ProjectNetworkSample[] = [];
+  const states = await getConmonProcesses();
+  for (const info of states.values()) {
+    if (!info.project_id || knownProjectIds.has(info.project_id)) continue;
+    const pid = pickConmonNamespacePid(info);
+    if (!pid) continue;
+    out.push({
+      project_id: info.project_id,
+      pid,
+      interface_name: "",
+      tx_bytes: 0,
+    });
+  }
+  return out;
+}
+
 export async function collectRunningProjectNetworkSamples({
   podmanCommand = podman,
   readFileFn = readFile,
+  getConmonProcesses = getConmonContainerProcesses,
 }: {
   podmanCommand?: PodmanLike;
   readFileFn?: ReadFileLike;
+  getConmonProcesses?: () => Promise<Map<string, ConmonContainerProcess>>;
 } = {}): Promise<ProjectNetworkSample[]> {
   const containers = await listRunningProjectContainers(podmanCommand);
   const inspected = await inspectProjectContainerPids(
     containers,
     podmanCommand,
   );
+  const conmonOnly = await inspectConmonOnlyProjectPids({
+    knownProjectIds: new Set(inspected.map((sample) => sample.project_id)),
+    getConmonProcesses,
+  });
   const samples = await Promise.all(
-    inspected.map(async (sample) => {
+    [...inspected, ...conmonOnly].map(async (sample) => {
       try {
         const [routeContent, devContent] = await Promise.all([
           readFileFn(`/proc/${sample.pid}/net/route`, "utf8"),

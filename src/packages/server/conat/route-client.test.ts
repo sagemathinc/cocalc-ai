@@ -127,6 +127,10 @@ describe("server/conat route-client", () => {
       address: "https://host-1.example",
     });
     routeHostSubjectMock.mockReturnValue(undefined);
+    materializeHostRouteTargetMock.mockResolvedValue({
+      host_id: "host-1",
+      address: "https://host-1.example",
+    });
 
     const { conatWithProjectRouting } = await import("./route-client");
     const client = conatWithProjectRouting() as any;
@@ -137,9 +141,40 @@ describe("server/conat route-client", () => {
     expect(routedResult?.client).toBe(routed);
 
     routed.conn.emit("connect_error", new Error("websocket error"));
-    jest.advanceTimersByTime(1_000);
+    await jest.advanceTimersByTimeAsync(1_000);
 
     expect(routed.connect).toHaveBeenCalled();
+  });
+
+  it("evicts stale routed project clients when the fresh route disappears", async () => {
+    const central = createFakeClient();
+    const routed = createFakeClient();
+    connectMock
+      .mockImplementationOnce(() => central)
+      .mockImplementationOnce(() => routed);
+    routeProjectSubjectMock.mockReturnValue({
+      host_id: "host-1",
+      address: "https://host-1.example",
+    });
+    routeHostSubjectMock.mockReturnValue(undefined);
+    materializeHostRouteTargetMock.mockResolvedValue(undefined);
+
+    const { conatWithProjectRouting } = await import("./route-client");
+    const client = conatWithProjectRouting() as any;
+    const routedResult = client.routeSubject(
+      "project.12345678-1234-1234-1234-123456789012.api",
+    );
+
+    expect(routedResult?.client).toBe(routed);
+
+    routed.conn.emit("connect_error", new Error("websocket error"));
+    await jest.advanceTimersByTimeAsync(1_000);
+
+    expect(materializeHostRouteTargetMock).toHaveBeenCalledWith("host-1", {
+      fresh: true,
+    });
+    expect(routed.close).toHaveBeenCalled();
+    expect(routed.connect).not.toHaveBeenCalled();
   });
 
   it("evicts closed routed clients so the next request recreates them", async () => {
@@ -320,6 +355,34 @@ describe("server/conat route-client", () => {
     expect(authValue).toEqual({ bearer: "token-1" });
   });
 
+  it("reuses one account-routed host client across multiple projects on the same host", async () => {
+    const central = createFakeClient();
+    const routed = createFakeClient();
+    connectMock
+      .mockImplementationOnce(() => central)
+      .mockImplementationOnce(() => routed);
+    routeProjectSubjectMock.mockReturnValue({
+      host_id: "host-local",
+      address: "https://host-local.example",
+    });
+
+    const { conatWithProjectRoutingForAccount } =
+      await import("./route-client");
+    const client = conatWithProjectRoutingForAccount({
+      account_id: "account-1",
+    }) as any;
+    const first = client.routeSubject(
+      "file-server.12345678-1234-1234-1234-123456789012.api",
+    );
+    const second = client.routeSubject(
+      "file-server.87654321-4321-4321-4321-210987654321.api",
+    );
+
+    expect(first?.client).toBe(routed);
+    expect(second?.client).toBe(routed);
+    expect(connectMock).toHaveBeenCalledTimes(2);
+  });
+
   it("asks the owning bay to issue account-scoped auth for remote hosts", async () => {
     const central = createFakeClient();
     const routed = createFakeClient();
@@ -355,7 +418,6 @@ describe("server/conat route-client", () => {
     expect(projectHostAuthTokenIssueMock).toHaveBeenCalledWith({
       account_id: "account-1",
       host_id: "host-remote",
-      project_id: "12345678-1234-1234-1234-123456789012",
     });
     expect(authValue).toEqual({ bearer: "remote-account-token" });
   });

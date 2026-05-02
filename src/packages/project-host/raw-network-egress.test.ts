@@ -98,6 +98,48 @@ ens4\t0100B40A\t00000000\t0005
     ]);
   });
 
+  it("falls back to live conmon child pids when podman misses a project", async () => {
+    const sample = await collectRunningProjectNetworkSamples({
+      podmanCommand: jest.fn().mockResolvedValueOnce({
+        stdout: "[]",
+      }),
+      getConmonProcesses: jest.fn().mockResolvedValue(
+        new Map([
+          [
+            "project-11111111-1111-4111-8111-111111111111",
+            {
+              name: "project-11111111-1111-4111-8111-111111111111",
+              project_id: "11111111-1111-4111-8111-111111111111",
+              conmon_pid: 123,
+              child_pids: [4321],
+            },
+          ],
+        ]),
+      ),
+      readFileFn: jest.fn().mockImplementation(async (path: string) =>
+        path.endsWith("/route")
+          ? `Iface\tDestination\tGateway\tFlags
+ens4\t00000000\t0100B40A\t0003
+ens4\t0100B40A\t00000000\t0005
+`
+          : `Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo: 1 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0
+  ens4: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0
+`,
+      ),
+    });
+
+    expect(sample).toEqual([
+      {
+        project_id: "11111111-1111-4111-8111-111111111111",
+        pid: 4321,
+        interface_name: "ens4",
+        tx_bytes: 200,
+      },
+    ]);
+  });
+
   it("blocks project start when raw network egress policy is exceeded", async () => {
     getManagedProjectEgressPolicyMock.mockResolvedValue({
       allowed: false,

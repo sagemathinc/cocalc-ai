@@ -158,6 +158,31 @@ describe("route-project bay-aware routing", () => {
     expect(warnMock).not.toHaveBeenCalled();
   });
 
+  it("refuses to route a project when the assigned host is not running", async () => {
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          host_id: HOST_ID,
+          resolved_host_id: null,
+          project_owning_bay_id: "bay-0",
+          host_bay_id: "bay-0",
+          internal_url: null,
+          public_url: null,
+          metadata: null,
+        },
+      ],
+    });
+
+    const { materializeProjectHostTarget, routeProjectSubject } =
+      await import("./route-project");
+
+    await expect(
+      materializeProjectHostTarget(PROJECT_ID, { fresh: true }),
+    ).resolves.toBeUndefined();
+    expect(routeProjectSubject(`project.${PROJECT_ID}`)).toBeUndefined();
+    expect(warnMock).not.toHaveBeenCalled();
+  });
+
   it("materializes a remote collaborator project through the owning bay host connection", async () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
     resolveProjectBayAcrossClusterMock = jest.fn(async () => ({
@@ -265,5 +290,20 @@ describe("route-project bay-aware routing", () => {
         current_bay_id: "bay-0",
       }),
     );
+  });
+
+  it("refuses to route a direct host subject when the host is not running", async () => {
+    queryMock.mockResolvedValue({
+      rows: [],
+    });
+
+    const { materializeHostRouteTarget, routeHostSubject } =
+      await import("./route-project");
+
+    await expect(
+      materializeHostRouteTarget(HOST_ID, { fresh: true }),
+    ).resolves.toBeUndefined();
+    expect(routeHostSubject(`project-host.${HOST_ID}.api`)).toBeUndefined();
+    expect(warnMock).not.toHaveBeenCalled();
   });
 });
