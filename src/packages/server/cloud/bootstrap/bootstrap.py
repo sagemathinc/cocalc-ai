@@ -2011,6 +2011,32 @@ for dir in /bin /sbin /usr/bin /usr/sbin /usr/local/bin /usr/local/sbin /usr/lib
 done
 EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
 )"
+    normalize_runtime_package_state_rootfs() {
+      case "$package_manager" in
+        apt-get)
+          root_owner_uid="$(stat -c '%u' "$rootfs/etc")"
+          root_owner_gid="$(stat -c '%g' "$rootfs/etc")"
+          for dir in \
+            "$rootfs/var/lib/apt/lists" \
+            "$rootfs/var/cache/apt/archives"
+          do
+            [ -d "$dir" ] || continue
+            chown -R "$root_owner_uid:$root_owner_gid" "$dir"
+          done
+          mkdir -p \
+            "$rootfs/var/lib/apt/lists/partial" \
+            "$rootfs/var/lib/apt/lists/auxfiles" \
+            "$rootfs/var/cache/apt/archives/partial"
+          chmod 0755 \
+            "$rootfs/var/lib/apt/lists" \
+            "$rootfs/var/lib/apt/lists/auxfiles" \
+            "$rootfs/var/cache/apt/archives" || true
+          chmod 0700 \
+            "$rootfs/var/lib/apt/lists/partial" \
+            "$rootfs/var/cache/apt/archives/partial" || true
+          ;;
+      esac
+    }
     has_ca_certificates_rootfs() {
       [ -d "$rootfs/etc/ssl/certs" ] || \
         [ -f "$rootfs/etc/ssl/cert.pem" ] || \
@@ -2089,6 +2115,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
         "$rewrite_uid_map_file" \
         "$rewrite_gid_map_file" \
         "$ownership_source"
+      normalize_runtime_package_state_rootfs
       fix_setid_runtime_helpers_escaped="$(printf '%q' "$fix_setid_runtime_helpers_script")"
       /usr/bin/sudo -u "$podman_user" -H bash -lc "
           cd ~ &&
