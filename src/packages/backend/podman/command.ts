@@ -20,6 +20,8 @@ const STALE_PODMAN_STATE_HINT_PATTERNS = [
   "podman system migrate",
   "could not find any running process",
 ];
+const MAX_PODMAN_DEBUG_ARG_PREVIEW = 1024;
+const MAX_PODMAN_DEBUG_IO_PREVIEW = 512;
 let migrateInFlight: Promise<void> | undefined;
 
 function normalizeTimeoutSeconds(timeout?: number): number {
@@ -47,7 +49,7 @@ async function runPodman(
   sudo: boolean,
   retried: boolean,
 ) {
-  logger.debug(`${sudo ? "sudo " : ""}podman `, args.join(" "));
+  logger.debug(`${sudo ? "sudo " : ""}podman`, summarizePodmanInvocation(args));
   const command = sudo ? "sudo" : "podman";
   const cmdArgs = sudo ? ["podman", ...args] : args;
   try {
@@ -69,12 +71,38 @@ async function runPodman(
       }
       throw formatPodmanExitError(command, cmdArgs, x.exit_code, x.stderr);
     }
-    logger.debug("podman returned ", x);
+    logger.debug("podman returned", summarizePodmanResult(x));
     return x;
   } catch (err) {
-    logger.debug("podman run error: ", err);
+    logger.debug("podman run error", { err: `${err}` });
     throw err;
   }
+}
+
+function summarizePodmanInvocation(args: string[]) {
+  const joined = args.join(" ");
+  return {
+    argc: args.length,
+    preview: truncate(joined, MAX_PODMAN_DEBUG_ARG_PREVIEW),
+  };
+}
+
+function summarizePodmanResult(result: {
+  type?: string;
+  stdout?: string;
+  stderr?: string;
+  exit_code?: number;
+}) {
+  const stdout = `${result.stdout ?? ""}`;
+  const stderr = `${result.stderr ?? ""}`;
+  return {
+    type: result.type,
+    exit_code: result.exit_code,
+    stdout_bytes: stdout.length,
+    stderr_bytes: stderr.length,
+    stdout_preview: stdout ? truncate(stdout, MAX_PODMAN_DEBUG_IO_PREVIEW) : "",
+    stderr_preview: stderr ? truncate(stderr, MAX_PODMAN_DEBUG_IO_PREVIEW) : "",
+  };
 }
 
 function formatPodmanExitError(
