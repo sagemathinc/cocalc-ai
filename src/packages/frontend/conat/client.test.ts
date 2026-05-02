@@ -3972,6 +3972,132 @@ describe("ConatClient routed project-host reconnect", () => {
     expect(hubRequest).not.toHaveBeenCalled();
   });
 
+  it("does not fall back to the hub for projectFs in launchpad mode when host routing is unavailable", async () => {
+    const ensureHostInfo = jest.fn(async () => undefined);
+    const hubFs = jest.fn(() => {
+      throw new Error("hub fs should not be used");
+    });
+
+    jest.resetModules();
+
+    jest.doMock("@cocalc/frontend/app-framework", () => ({
+      redux: {
+        getStore: jest.fn((name: string) => {
+          if (name !== "projects") return undefined;
+          return immutable.Map({
+            project_map: immutable.Map({
+              "00000000-1000-4000-8000-000000000000": immutable.Map({}),
+            }),
+            host_info: immutable.Map({}),
+          });
+        }),
+        getActions: jest.fn(() => ({
+          ensure_host_info: ensureHostInfo,
+        })),
+      },
+    }));
+
+    const hubClient = {
+      inboxPrefixHook: undefined,
+      info: undefined,
+      conn: {
+        connected: true,
+        on: jest.fn(),
+        io: {
+          on: jest.fn(),
+          engine: {
+            close: jest.fn(),
+          },
+        },
+      },
+      on: jest.fn(),
+      connect: jest.fn(),
+      close: jest.fn(),
+      disconnect: jest.fn(),
+      request: jest.fn(),
+      fs: hubFs,
+    };
+
+    jest.doMock("@cocalc/conat/core/client", () => ({
+      connect: jest.fn(() => hubClient),
+    }));
+
+    jest.doMock("@cocalc/conat/client", () => ({
+      getClient: () => ({ on: jest.fn() }),
+      setConatClient: jest.fn(),
+      getLogger: () => ({
+        info: jest.fn(),
+        debug: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        silly: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/conat/time", () => ({
+      __esModule: true,
+      default: jest.fn(() => Date.now()),
+      getSkew: jest.fn(async () => 0),
+      init: jest.fn(),
+    }));
+
+    jest.doMock("@cocalc/conat/hub/api", () => ({
+      initHubApi: () => ({}),
+    }));
+
+    jest.doMock("./browser-session", () => ({
+      createBrowserSessionAutomation: () => ({
+        start: jest.fn(),
+        stop: jest.fn(),
+      }),
+    }));
+
+    jest.doMock("@cocalc/util/async-utils", () => {
+      const actual = jest.requireActual("@cocalc/util/async-utils");
+      return {
+        ...actual,
+        until: jest.fn(),
+      };
+    });
+
+    jest.doMock("@cocalc/frontend/customize/app-base-path", () => ({
+      appBasePath: "",
+    }));
+
+    jest.doMock("@cocalc/frontend/client/client", () => ({
+      ACCOUNT_ID_COOKIE: "account_id",
+    }));
+
+    jest.doMock("@cocalc/frontend/lite", () => ({
+      lite: false,
+    }));
+
+    jest.doMock("@cocalc/frontend/misc/remember-me", () => ({
+      deleteRememberMe: jest.fn(),
+      hasRememberMe: jest.fn(() => false),
+      setRememberMe: jest.fn(),
+    }));
+
+    const { ConatClient } = require("./client");
+
+    const client = new ConatClient(
+      {
+        account_id: "acct-1",
+        browser_id: "browser-1",
+        emit: jest.fn(),
+      },
+      { address: "http://hub", remote: true },
+    ) as any;
+
+    await expect(
+      client.projectFs({
+        project_id: "00000000-1000-4000-8000-000000000000",
+        caller: "test.projectFs",
+      }),
+    ).rejects.toThrow("unable to route 'test.projectFs' to project-host");
+    expect(hubFs).not.toHaveBeenCalled();
+  });
+
   it("falls back to the hub for chat-store APIs in lite mode when host routing is unavailable", async () => {
     const ensureHostInfo = jest.fn(async () => undefined);
     const hubRequest = jest.fn(async () => ({

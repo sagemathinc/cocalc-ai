@@ -2616,7 +2616,11 @@ export class ConatClient extends EventEmitter {
     project_id: string;
     caller?: string;
   }): Promise<FilesystemClient> => {
-    const client = await this.projectConat({ project_id, caller });
+    const client = await this.projectConat({
+      project_id,
+      caller,
+      requireRouting: true,
+    });
     return client.fs({ project_id });
   };
 
