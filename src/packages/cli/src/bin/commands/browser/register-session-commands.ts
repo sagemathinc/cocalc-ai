@@ -17,6 +17,22 @@ import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 
 const DEFAULT_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
 
+function normalizeBoolean(value: unknown): boolean {
+  const normalized = `${value ?? ""}`.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+function isCliAgentMode(): boolean {
+  return (
+    normalizeBoolean(process.env.COCALC_CLI_AGENT_MODE) ||
+    normalizeBoolean(process.env.COCALC_AGENT_MODE)
+  );
+}
+
+function isLikelyExactBrowserId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{8,}$/.test(value);
+}
+
 function extractCookieValue(
   cookieHeaders: string[],
   name: string,
@@ -247,6 +263,11 @@ export function registerBrowserSessionCommands({
         command: Command,
       ) => {
         await deps.withContext(command, "browser session list", async (ctx) => {
+          if (isCliAgentMode()) {
+            throw new Error(
+              "browser session list is unavailable under agent auth; use a known browser id via COCALC_BROWSER_ID or 'cocalc browser files --browser <id> ...' instead",
+            );
+          }
           const maxAgeMs = Number(opts.maxAgeMs ?? "120000");
           if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
             throw new Error("--max-age-ms must be a positive number");
@@ -294,6 +315,27 @@ export function registerBrowserSessionCommands({
         command: Command,
       ) => {
         await deps.withContext(command, "browser session use", async (ctx) => {
+          if (isCliAgentMode()) {
+            if (!isLikelyExactBrowserId(browserHint)) {
+              throw new Error(
+                "browser session discovery is unavailable under agent auth; pass the exact browser id to 'browser session use <browser>'",
+              );
+            }
+            const scopedApiUrl =
+              `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim() || undefined;
+            const saved = saveProfileBrowserId({
+              deps,
+              command,
+              browser_id: browserHint,
+              apiBaseUrl: scopedApiUrl,
+            });
+            return {
+              profile: saved.profile,
+              browser_id: browserHint,
+              stale: false,
+              api_scope: scopedApiUrl ?? null,
+            };
+          }
           const sessions = (await ctx.hub.system.listBrowserSessions({
             include_stale: true,
           })) as BrowserSessionInfo[];
@@ -407,6 +449,11 @@ export function registerBrowserSessionCommands({
         if (isSeaMode()) {
           throw new Error(
             "browser session spawn is unsupported in standalone SEA binary; use JS CLI (e.g. node ./packages/cli/dist/bin/cocalc.js ...).",
+          );
+        }
+        if (isCliAgentMode()) {
+          throw new Error(
+            "browser session spawn is unavailable under agent auth; use a signed-in CLI context to spawn a dedicated browser session, or reuse an existing COCALC_BROWSER_ID",
           );
         }
         await deps.withContext(

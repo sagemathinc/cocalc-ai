@@ -12,8 +12,12 @@ const ORIGINAL_COCALC_AGENT_MODE = process.env.COCALC_AGENT_MODE;
 
 function makeProgram({
   openFiles,
+  listBrowserSessions,
+  generateUserAuthToken,
 }: {
   openFiles: { project_id: string; title?: string; path: string }[];
+  listBrowserSessions?: () => Promise<any[]>;
+  generateUserAuthToken?: () => Promise<string>;
 }): { program: Command; results: unknown[] } {
   const results: unknown[] = [];
   const program = new Command();
@@ -32,20 +36,23 @@ function makeProgram({
         remote: { client: {} },
         hub: {
           system: {
-            listBrowserSessions: async () => [
-              {
-                browser_id: "browser-1",
-                active_project_id: PROJECT_A,
-                open_projects: [{ project_id: PROJECT_A }],
-                stale: false,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                url: `http://localhost:7003/projects/${PROJECT_A}/files`,
-              },
-            ],
+            listBrowserSessions:
+              listBrowserSessions ??
+              (async () => [
+                {
+                  browser_id: "browser-1",
+                  active_project_id: PROJECT_A,
+                  open_projects: [{ project_id: PROJECT_A }],
+                  stale: false,
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                  url: `http://localhost:7003/projects/${PROJECT_A}/files`,
+                },
+              ]),
             removeBrowserSession: async () => ({ removed: false }),
             issueBrowserSignInCookie: async () => ({}),
-            generateUserAuthToken: async () => "token",
+            generateUserAuthToken:
+              generateUserAuthToken ?? (async () => "token"),
           },
         },
       } as any);
@@ -125,6 +132,76 @@ test("browser tabs is an alias for browser files", async () => {
 
   assert.equal((results[0] as unknown[]).length, 1);
   assert.equal((results[0] as { path: string }[])[0]?.path, "/home/user/a.md");
+});
+
+test("browser session list fails fast with a clear message under agent auth", async () => {
+  process.env.COCALC_CLI_AGENT_MODE = "1";
+  delete process.env.COCALC_AGENT_MODE;
+  const { program } = makeProgram({
+    openFiles: [],
+    listBrowserSessions: async () => {
+      throw new Error("listBrowserSessions should not be called");
+    },
+  });
+
+  await assert.rejects(
+    () => program.parseAsync(["node", "test", "browser", "session", "list"]),
+    /browser session list is unavailable under agent auth/,
+  );
+});
+
+test("browser session use accepts an exact browser id under agent auth", async () => {
+  process.env.COCALC_CLI_AGENT_MODE = "1";
+  delete process.env.COCALC_AGENT_MODE;
+  const { program, results } = makeProgram({
+    openFiles: [],
+    listBrowserSessions: async () => {
+      throw new Error("listBrowserSessions should not be called");
+    },
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "session",
+    "use",
+    "wZbV6ZDCkk",
+  ]);
+
+  assert.deepEqual(results, [
+    {
+      profile: "default",
+      browser_id: "wZbV6ZDCkk",
+      stale: false,
+      api_scope: "http://localhost:7003",
+    },
+  ]);
+});
+
+test("browser session spawn fails fast with a clear message under agent auth", async () => {
+  process.env.COCALC_CLI_AGENT_MODE = "1";
+  delete process.env.COCALC_AGENT_MODE;
+  const { program } = makeProgram({
+    openFiles: [],
+    generateUserAuthToken: async () => {
+      throw new Error("generateUserAuthToken should not be called");
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      program.parseAsync([
+        "node",
+        "test",
+        "browser",
+        "session",
+        "spawn",
+        "--project-id",
+        PROJECT_A,
+      ]),
+    /browser session spawn is unavailable under agent auth/,
+  );
 });
 
 test.after(() => {
