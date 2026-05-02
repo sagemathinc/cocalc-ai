@@ -190,6 +190,38 @@ Example:
 pnpm --dir src smoke:codex-launchpad -- --project 3a05a2be-2018-41c6-8aa7-a7e0085b4bab
 ```
 
+## Multibay reconnect smoke
+
+```bash
+pnpm --dir src smoke:multibay-reconnect -- --project <project-id>
+```
+
+This is a focused local 3-bay control-plane smoke for the reconnect-sensitive
+paths that recently broke:
+
+1. Restarts the local hub + attached bays by default.
+2. Refreshes `dev:hub:env` before every `cocalc` invocation.
+3. Verifies `host list` includes the requested hosts.
+4. Verifies `host get` works for `host1` and `host2` by default.
+5. Verifies `project get` and `project logs` on the target project.
+6. Stops and starts the project again by default.
+7. Runs `project exec` and requires an `EXEC_OK` marker in stdout.
+
+Useful options:
+
+- `--host <name>` to check different host names (repeatable).
+- `--no-restart` to reuse an already-running stack.
+- `--no-stop-start` to avoid changing project state during the smoke.
+- `--timeout <ms>` to widen CLI/RPC timeouts.
+- `--tail <n>` to control fetched runtime log lines.
+
+Example:
+
+```bash
+pnpm --dir src smoke:multibay-reconnect -- \
+  --project b0917d32-d749-4dd4-a527-aa306144233a
+```
+
 ## Multibay browser QA
 
 ```bash
