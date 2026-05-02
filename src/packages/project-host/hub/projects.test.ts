@@ -203,6 +203,53 @@ describe("project host start ACP rehydrate ordering", () => {
     );
   });
 
+  it("verifies stop convergence before marking a project opened", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(async () => ({ state: "opened" })),
+      status: jest
+        .fn()
+        .mockResolvedValueOnce({ state: "running" })
+        .mockResolvedValueOnce({ state: "opened" }),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(hubApi.projects.stop({ project_id })).resolves.toBeUndefined();
+    expect(runnerApi.status).toHaveBeenCalledTimes(2);
+    expect(upsertProject).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        project_id,
+        state: "opened",
+        http_port: null,
+        ssh_port: null,
+      }),
+    );
+  });
+
+  it("fails stop when the runner still reports the project as active", async () => {
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(async () => ({ state: "opened" })),
+      status: jest.fn(async () => ({ state: "running" })),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(hubApi.projects.stop({ project_id })).rejects.toThrow(
+      "project stop did not converge",
+    );
+    expect(runnerApi.status).toHaveBeenCalledTimes(5);
+    expect(upsertProject).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        project_id,
+        state: "running",
+      }),
+    );
+  });
+
   it("forwards managed egress overrides to the raw-network start gate", async () => {
     const runnerApi = {
       start: jest.fn(async () => ({
