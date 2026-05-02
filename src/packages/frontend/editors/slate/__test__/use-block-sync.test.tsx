@@ -281,3 +281,114 @@ test("ignores stale value-prop replays when a syncstring is present", () => {
 
   expect(observedMarkdownRef.current).toBe("local typing");
 });
+
+function PendingRemoteSupersededHarness({
+  stage,
+  syncstring,
+  observedMarkdownRef,
+}: {
+  stage: number;
+  syncstring: EventEmitter & { to_str: () => string };
+  observedMarkdownRef: React.MutableRefObject<string>;
+}) {
+  const valueRef = useRef("base");
+  const blocksRef = useRef(["base"]);
+
+  const sync = useBlockSync({
+    actions: {
+      _syncstring: syncstring,
+      set_value: (value: string) => {
+        syncstring.to_str = () => value;
+      },
+      syncstring_commit: jest.fn(),
+    },
+    value: "base",
+    initialValue: "base",
+    valueRef,
+    blocksRef,
+    focusedIndex: 0,
+    remoteMergeIdleMs: 750,
+    setBlocksFromValue: (markdown) => {
+      blocksRef.current = [markdown];
+      valueRef.current = markdown;
+      observedMarkdownRef.current = markdown;
+    },
+    getFullMarkdown: () => blocksRef.current.join(""),
+  });
+
+  useEffect(() => {
+    observedMarkdownRef.current = blocksRef.current.join("");
+  });
+
+  useEffect(() => {
+    if (stage === 1) {
+      blocksRef.current = ["new local text"];
+      observedMarkdownRef.current = "new local text";
+      sync.markLocalEdit();
+      return;
+    }
+    if (stage === 2) {
+      syncstring.to_str = () => "stale remote text";
+      syncstring.emit("change");
+      observedMarkdownRef.current = blocksRef.current.join("");
+      return;
+    }
+    if (stage === 3) {
+      sync.saveBlocksNow();
+      syncstring.emit("change");
+      observedMarkdownRef.current = blocksRef.current.join("");
+    }
+  }, [stage, sync, syncstring, observedMarkdownRef]);
+
+  return null;
+}
+
+test("drops a stale deferred remote when a newer syncstring update arrives", () => {
+  jest.useFakeTimers();
+  const syncstring = new EventEmitter() as EventEmitter & {
+    to_str: () => string;
+  };
+  syncstring.to_str = () => "base";
+  const observedMarkdownRef = { current: "" };
+
+  const { rerender } = render(
+    <PendingRemoteSupersededHarness
+      stage={0}
+      syncstring={syncstring}
+      observedMarkdownRef={observedMarkdownRef}
+    />,
+  );
+
+  rerender(
+    <PendingRemoteSupersededHarness
+      stage={1}
+      syncstring={syncstring}
+      observedMarkdownRef={observedMarkdownRef}
+    />,
+  );
+  expect(observedMarkdownRef.current).toBe("new local text");
+
+  jest.advanceTimersByTime(100);
+  rerender(
+    <PendingRemoteSupersededHarness
+      stage={2}
+      syncstring={syncstring}
+      observedMarkdownRef={observedMarkdownRef}
+    />,
+  );
+  expect(observedMarkdownRef.current).toBe("new local text");
+
+  jest.advanceTimersByTime(700);
+  rerender(
+    <PendingRemoteSupersededHarness
+      stage={3}
+      syncstring={syncstring}
+      observedMarkdownRef={observedMarkdownRef}
+    />,
+  );
+  expect(observedMarkdownRef.current).toBe("new local text");
+
+  jest.advanceTimersByTime(100);
+  expect(observedMarkdownRef.current).toBe("new local text");
+  jest.useRealTimers();
+});

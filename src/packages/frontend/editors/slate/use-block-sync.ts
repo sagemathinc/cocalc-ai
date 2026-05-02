@@ -235,6 +235,22 @@ export function useBlockSync({
     return Date.now() - lastLocalEditAtRef.current < idleMs;
   }
 
+  function clearPendingRemoteState(reason: string, remote?: string) {
+    if (pendingRemoteTimerRef.current != null) {
+      window.clearTimeout(pendingRemoteTimerRef.current);
+      pendingRemoteTimerRef.current = null;
+    }
+    if (pendingRemoteRef.current != null) {
+      debugSyncLog("pending-remote:clear", {
+        reason,
+        pending: summarizeMarkdown(pendingRemoteRef.current),
+        ...(remote == null ? {} : { remote: summarizeMarkdown(remote) }),
+      });
+    }
+    pendingRemoteRef.current = null;
+    setPendingRemoteIndicator(false);
+  }
+
   function schedulePendingRemoteMerge() {
     if (pendingRemoteTimerRef.current != null) {
       window.clearTimeout(pendingRemoteTimerRef.current);
@@ -288,11 +304,12 @@ export function useBlockSync({
     const change = () => {
       const remote = actions._syncstring?.to_str() ?? "";
       const local = getFullMarkdown();
+      clearPendingRemoteState("new-syncstring", remote);
       debugSyncLog("syncstring:change", {
         focusedIndex,
         remote: summarizeMarkdown(remote),
         local: summarizeMarkdown(local),
-        pendingRemote: pendingRemoteRef.current != null,
+        pendingRemote: false,
         shouldDefer: shouldDeferRemoteMerge(),
       });
       if (ignoreRemoteWhileFocused && focusedIndex != null) {
