@@ -1127,10 +1127,11 @@ export default function RootFilesystemImage() {
                   title="Advanced OCI / Docker image"
                   description={
                     <>
-                      This bypasses the managed RootFS catalog. Some OCI images
-                      will not work correctly with CoCalc if they are missing
-                      expected basics such as certificates, shells, or standard
-                      userland packages.
+                      This bypasses the managed RootFS catalog. The supported
+                      path today is a glibc-based Debian or Ubuntu image, or an
+                      image that already includes <code>sudo</code> and CA
+                      certificates. Other package-manager bootstrap paths may
+                      work, but are still experimental.
                     </>
                   }
                 />
