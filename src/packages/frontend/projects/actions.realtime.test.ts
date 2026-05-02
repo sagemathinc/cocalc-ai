@@ -269,7 +269,7 @@ describe("ProjectsActions realtime feed", () => {
       dest_host_id: "host-new",
     });
     expect(resetProjectHostRuntime).toHaveBeenCalled();
-    expect(mockedWebappClient.conat_client.reconnect).toHaveBeenCalled();
+    expect(mockedWebappClient.conat_client.reconnect).not.toHaveBeenCalled();
   });
 
   it("bootstraps remote shared projects from account_project_index on init", async () => {
