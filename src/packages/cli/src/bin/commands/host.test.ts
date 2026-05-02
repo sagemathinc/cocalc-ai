@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Command } from "commander";
 
+import { HOST_RUNTIME_LOG_SOURCES } from "@cocalc/conat/project-host/api";
 import { registerHostCommand, type HostCommandDeps } from "./host";
 
 type Capture = {
@@ -55,6 +56,11 @@ type Capture = {
     id?: string;
     deployments: any[];
     replace?: boolean;
+  }>;
+  hostRuntimeLogRequests?: Array<{
+    id: string;
+    lines?: number;
+    source?: string;
   }>;
   lroListRequests?: Array<{
     scope_type: string;
@@ -130,6 +136,7 @@ function makeDeps(
   capture.rehomeRequests ??= [];
   capture.sshTrustRequests ??= [];
   capture.hostSshKeyInstallRequests ??= [];
+  capture.hostRuntimeLogRequests ??= [];
   return {
     withContext: async (_command, _label, fn) => {
       const ctx = {
@@ -336,6 +343,15 @@ function makeDeps(
               operation_status: "succeeded",
               status: "rehomed",
             }),
+            getHostRuntimeLog: async ({ id, lines, source }) => {
+              capture.hostRuntimeLogRequests!.push({ id, lines, source });
+              return {
+                host_id: id,
+                source: source ?? "project-host",
+                lines: lines ?? 200,
+                text: `${source ?? "project-host"} recent log line\n`,
+              };
+            },
             rollbackHostRuntimeDeployments: async ({
               id,
               target_type,
@@ -2392,4 +2408,103 @@ test("host deploy resume-default removes a project-host component pin when resum
   ]);
   assert.equal(capture.data.removed, true);
   assert.equal(capture.data.target, "project-host");
+});
+
+test("host logs accepts acp-worker as a runtime log source", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "logs",
+    "host-1",
+    "--source",
+    "acp-worker",
+    "--tail",
+    "12",
+  ]);
+
+  assert.deepEqual(capture.hostRuntimeLogRequests, [
+    { id: "host-1", lines: 12, source: "acp-worker" },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.source, "acp-worker");
+  assert.equal(capture.data.lines, 12);
+});
+
+test("host logs --all returns all sources and preserves per-source errors", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(capture);
+  const originalWithContext = deps.withContext;
+  deps.withContext = async (command, label, fn) =>
+    await originalWithContext(command, label, async (ctx) => {
+      const originalGetHostRuntimeLog = ctx.hub.hosts.getHostRuntimeLog;
+      ctx.hub.hosts.getHostRuntimeLog = async ({
+        id,
+        lines,
+        source,
+      }: {
+        id: string;
+        lines?: number;
+        source?: string;
+      }) => {
+        if (source === "cloudflared") {
+          capture.hostRuntimeLogRequests!.push({ id, lines, source });
+          throw new Error("cloudflared service not enabled");
+        }
+        return await originalGetHostRuntimeLog({ id, lines, source });
+      };
+      return await fn(ctx);
+    });
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "logs",
+    "host-1",
+    "--all",
+    "--tail",
+    "5",
+  ]);
+
+  assert.deepEqual(
+    capture.hostRuntimeLogRequests?.map((request) => request.source),
+    [...HOST_RUNTIME_LOG_SOURCES],
+  );
+  assert.equal(capture.data.host_id, "host-1");
+  assert.deepEqual(capture.data.requested_sources, [
+    ...HOST_RUNTIME_LOG_SOURCES,
+  ]);
+  assert.equal(capture.data.logs.length, HOST_RUNTIME_LOG_SOURCES.length);
+  const cloudflared = capture.data.logs.find(
+    (row: any) => row.requested_source === "cloudflared",
+  );
+  assert.ok(cloudflared);
+  assert.match(cloudflared.error, /cloudflared service not enabled/);
+  const bootstrap = capture.data.logs.find(
+    (row: any) => row.requested_source === "bootstrap-reconcile",
+  );
+  assert.ok(bootstrap);
+  assert.equal(bootstrap.source, "bootstrap-reconcile");
+  assert.equal(bootstrap.lines, 5);
 });

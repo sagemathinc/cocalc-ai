@@ -39,6 +39,7 @@ import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases"
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
+  HostRuntimeLogSource,
   ManagedComponentKind,
 } from "@cocalc/conat/project-host/api";
 import type {
@@ -2705,12 +2706,7 @@ export async function getHostRuntimeLog({
   account_id?: string;
   id: string;
   lines?: number;
-  source?:
-    | "project-host"
-    | "conat-router"
-    | "conat-persist"
-    | "host-agent"
-    | "supervision-events";
+  source?: HostRuntimeLogSource;
 }): Promise<{ host_id: string; source: string; lines: number; text: string }> {
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);

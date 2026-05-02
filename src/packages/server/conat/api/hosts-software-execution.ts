@@ -52,6 +52,7 @@ const RUNTIME_LOG_SOURCE_BY_COMPONENT: Partial<
   "project-host": "project-host",
   "conat-router": "conat-router",
   "conat-persist": "conat-persist",
+  "acp-worker": "acp-worker",
 };
 
 function uniqueRuntimeLogSourcesForComponents(

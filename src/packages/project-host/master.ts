@@ -401,6 +401,12 @@ function runtimeLogPath(source?: HostRuntimeLogSource): string {
       return join(dataDir, "conat-persist.log");
     case "host-agent":
       return join(dataDir, "host-agent.log");
+    case "acp-worker":
+      return join(dataDir, "logs", "acp-worker.log");
+    case "bootstrap-reconcile":
+      return join(dataDir, "logs", "bootstrap-reconcile.log");
+    case "project-host-watchdog":
+      return join(dataDir, "logs", "project-host-watchdog.log");
     case "supervision-events":
       return join(dataDir, "supervision-events.jsonl");
     case "project-host":
@@ -413,7 +419,6 @@ async function readRuntimeLogTail(
   source?: HostRuntimeLogSource,
   lines?: number,
 ) {
-  const logPath = runtimeLogPath(source);
   const tailLines = normalizeLogLines(lines);
   const runTail = async (command: string, args: string[]): Promise<string> => {
     const { stdout, stderr, exit_code } = await executeCode({
@@ -428,6 +433,42 @@ async function readRuntimeLogTail(
     }
     return String(stdout ?? "");
   };
+  if (source === "cloudflared") {
+    const args = [
+      "-u",
+      "cocalc-cloudflared.service",
+      "-o",
+      "cat",
+      "-n",
+      String(tailLines),
+      "--no-pager",
+    ];
+    try {
+      const text = await runTail("journalctl", args);
+      return {
+        source: "journalctl:cocalc-cloudflared.service",
+        lines: tailLines,
+        text,
+      };
+    } catch (err) {
+      try {
+        const text = await runTail("sudo", ["-n", "journalctl", ...args]);
+        return {
+          source: "journalctl:cocalc-cloudflared.service",
+          lines: tailLines,
+          text,
+        };
+      } catch (sudoErr) {
+        logger.warn("failed to read runtime log", {
+          source,
+          err: `${err}`,
+          sudo_err: `${sudoErr}`,
+        });
+        throw new Error(`failed to read runtime log '${source}': ${sudoErr}`);
+      }
+    }
+  }
+  const logPath = runtimeLogPath(source);
   try {
     const text = await runTail("tail", ["-n", String(tailLines), logPath]);
     return { source: logPath, lines: tailLines, text };

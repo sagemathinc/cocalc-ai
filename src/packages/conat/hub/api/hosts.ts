@@ -3,6 +3,7 @@ import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases"
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
+  HostRuntimeLogSource,
   HostRuntimeArtifactRetentionPolicy,
   ManagedComponentKind,
   ManagedComponentRuntimeState,
@@ -956,12 +957,7 @@ export interface Hosts {
     account_id?: string;
     id: string;
     lines?: number;
-    source?:
-      | "project-host"
-      | "conat-router"
-      | "conat-persist"
-      | "host-agent"
-      | "supervision-events";
+    source?: HostRuntimeLogSource;
   }) => Promise<HostRuntimeLog>;
   getHostMetricsHistory: (opts: {
     account_id?: string;

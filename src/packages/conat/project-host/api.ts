@@ -33,12 +33,19 @@ export interface HostRuntimeLogResponse {
   text: string;
 }
 
-export type HostRuntimeLogSource =
-  | "project-host"
-  | "conat-router"
-  | "conat-persist"
-  | "host-agent"
-  | "supervision-events";
+export const HOST_RUNTIME_LOG_SOURCES = [
+  "project-host",
+  "conat-router",
+  "conat-persist",
+  "host-agent",
+  "acp-worker",
+  "cloudflared",
+  "bootstrap-reconcile",
+  "project-host-watchdog",
+  "supervision-events",
+] as const;
+
+export type HostRuntimeLogSource = (typeof HOST_RUNTIME_LOG_SOURCES)[number];
 
 export interface HostProjectRuntimeLogResponse {
   project_id: string;
