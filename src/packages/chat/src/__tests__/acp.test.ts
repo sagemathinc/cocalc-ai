@@ -504,19 +504,24 @@ describe("response text helpers", () => {
     expect(getLiveResponseMarkdown(events)).toBe("first\n\nsecond");
   });
 
-  test("drops the last agent message from mounted intermediate markdown", () => {
+  test("drops the final duplicated summary block from mounted intermediate markdown", () => {
     const events: AcpStreamMessage[] = [
       textEvent("message", "first", 1),
       textEvent("thinking", "reasoning", 2),
       textEvent("message", "second", 3),
       textEvent("message", "**final summary**", 4),
+      {
+        type: "summary",
+        finalResponse: "**final summary**",
+        seq: 5,
+      } as AcpStreamMessage,
     ];
     expect(getMountedIntermediateResponseMarkdown(events)).toBe(
       "first\n\nsecond",
     );
   });
 
-  test("drops only the final agent block from mounted intermediate response blocks", () => {
+  test("keeps mounted intermediate blocks when there is no duplicated summary block", () => {
     const events: AcpStreamMessage[] = [
       {
         type: "event",
@@ -543,12 +548,63 @@ describe("response text helpers", () => {
         time: 2000,
         state: "sent",
       },
+      { kind: "agent", text: "second", time: 3000, state: undefined },
     ]);
   });
 
-  test("returns nothing for mounted intermediate markdown when there is only one agent block", () => {
+  test("drops only the final duplicated summary block from mounted intermediate response blocks", () => {
+    const events: AcpStreamMessage[] = [
+      {
+        type: "event",
+        event: { type: "message", text: "first" },
+        seq: 1,
+        time: 1000,
+      } as any,
+      {
+        type: "event",
+        event: { type: "message", text: "second" },
+        seq: 2,
+        time: 3000,
+      } as any,
+      {
+        type: "summary",
+        finalResponse: "second",
+        seq: 3,
+        time: 4000,
+      } as any,
+    ];
+    expect(
+      getMountedIntermediateResponseBlocks(events, [
+        { date: 2000, text: "please check X", state: "sent" },
+      ]),
+    ).toEqual([
+      { kind: "agent", text: "first", time: 1000, state: undefined },
+      {
+        kind: "guidance",
+        text: "please check X",
+        time: 2000,
+        state: "sent",
+      },
+    ]);
+  });
+
+  test("keeps a single mounted intermediate markdown block when there is no summary to trim against", () => {
     const events: AcpStreamMessage[] = [
       textEvent("message", "**final summary**", 1),
+    ];
+    expect(getMountedIntermediateResponseMarkdown(events)).toBe(
+      "**final summary**",
+    );
+  });
+
+  test("returns nothing for mounted intermediate markdown when the only block duplicates the summary", () => {
+    const events: AcpStreamMessage[] = [
+      textEvent("message", "**final summary**", 1),
+      {
+        type: "summary",
+        finalResponse: "**final summary**",
+        seq: 2,
+      } as AcpStreamMessage,
     ];
     expect(getMountedIntermediateResponseMarkdown(events)).toBeUndefined();
   });

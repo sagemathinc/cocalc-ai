@@ -2,7 +2,7 @@
 
 import {
   ACP_THINKING_PLACEHOLDER,
-  blocksFromCodexActivityMarkdown,
+  trimCompletedCachedCodexActivityBlocks,
   resolveEffectiveGenerating,
   resolveInlineCodexActivityMode,
   resolveMountedCodexRenderedValue,
@@ -217,15 +217,45 @@ describe("resolveInlineCodexActivityMode", () => {
   });
 });
 
-describe("blocksFromCodexActivityMarkdown", () => {
-  it("wraps non-empty activity markdown in a single inline activity block", () => {
-    expect(blocksFromCodexActivityMarkdown("- Terminal\n\nOutput")).toEqual([
-      { kind: "agent", text: "- Terminal\n\nOutput" },
+describe("trimCompletedCachedCodexActivityBlocks", () => {
+  it("drops the trailing cached agent block when it duplicates the final response", () => {
+    expect(
+      trimCompletedCachedCodexActivityBlocks(
+        [
+          { kind: "agent", text: "first step" },
+          { kind: "guidance", text: "please check tests" },
+          { kind: "agent", text: "Implemented in `abc123`." },
+        ],
+        "Implemented in `abc123`.",
+      ),
+    ).toEqual([
+      { kind: "agent", text: "first step" },
+      { kind: "guidance", text: "please check tests" },
     ]);
   });
 
-  it("returns nothing for blank markdown", () => {
-    expect(blocksFromCodexActivityMarkdown("   ")).toBeUndefined();
+  it("keeps cached blocks when the final response does not match the trailing agent block", () => {
+    expect(
+      trimCompletedCachedCodexActivityBlocks(
+        [
+          { kind: "agent", text: "first step" },
+          { kind: "agent", text: "I reran the focused test." },
+        ],
+        "Fixed the selector regression in the chat header.",
+      ),
+    ).toEqual([
+      { kind: "agent", text: "first step" },
+      { kind: "agent", text: "I reran the focused test." },
+    ]);
+  });
+
+  it("returns nothing when the only cached block duplicates the final response", () => {
+    expect(
+      trimCompletedCachedCodexActivityBlocks(
+        [{ kind: "agent", text: "Implemented in `abc123`." }],
+        "Implemented in `abc123`.",
+      ),
+    ).toBeUndefined();
   });
 });
 
