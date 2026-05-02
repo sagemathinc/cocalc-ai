@@ -152,6 +152,9 @@ export function useBlockSync({
   );
 
   useEffect(() => {
+    if (actions?._syncstring != null) {
+      return;
+    }
     const nextValue = value ?? "";
     const valueChanged = lastObservedValueRef.current !== nextValue;
     lastObservedValueRef.current = nextValue;
@@ -186,6 +189,7 @@ export function useBlockSync({
     if (pendingRemoteRef.current != null) return;
     applyBlocksFromValue(nextValue);
   }, [
+    actions,
     value,
     focusedIndex,
     ignoreRemoteWhileFocused,

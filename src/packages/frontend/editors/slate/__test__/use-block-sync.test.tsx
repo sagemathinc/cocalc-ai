@@ -215,3 +215,69 @@ test("ignores an out-of-order syncstring echo after a newer local save", () => {
 
   expect(observedMarkdownRef.current).toBe("hello world again");
 });
+
+function SyncstringValueHarness({
+  value,
+  syncstring,
+  observedMarkdownRef,
+}: {
+  value: string;
+  syncstring: EventEmitter & { to_str: () => string };
+  observedMarkdownRef: React.MutableRefObject<string>;
+}) {
+  const valueRef = useRef("server version");
+  const blocksRef = useRef(["local typing"]);
+
+  useBlockSync({
+    actions: {
+      _syncstring: syncstring,
+      set_value: jest.fn(),
+      syncstring_commit: jest.fn(),
+    },
+    value,
+    initialValue: "server version",
+    valueRef,
+    blocksRef,
+    focusedIndex: 0,
+    setBlocksFromValue: (markdown) => {
+      blocksRef.current = [markdown];
+      valueRef.current = markdown;
+      observedMarkdownRef.current = markdown;
+    },
+    getFullMarkdown: () => blocksRef.current.join(""),
+  });
+
+  useEffect(() => {
+    observedMarkdownRef.current = blocksRef.current.join("");
+  });
+
+  return null;
+}
+
+test("ignores stale value-prop replays when a syncstring is present", () => {
+  const syncstring = new EventEmitter() as EventEmitter & {
+    to_str: () => string;
+  };
+  syncstring.to_str = () => "server version";
+  const observedMarkdownRef = { current: "" };
+
+  const { rerender } = render(
+    <SyncstringValueHarness
+      value="server version"
+      syncstring={syncstring}
+      observedMarkdownRef={observedMarkdownRef}
+    />,
+  );
+
+  expect(observedMarkdownRef.current).toBe("local typing");
+
+  rerender(
+    <SyncstringValueHarness
+      value="older redux replay"
+      syncstring={syncstring}
+      observedMarkdownRef={observedMarkdownRef}
+    />,
+  );
+
+  expect(observedMarkdownRef.current).toBe("local typing");
+});
