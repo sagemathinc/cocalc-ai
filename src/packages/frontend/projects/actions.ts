@@ -17,7 +17,7 @@ import { notifyCollabInvitesChanged } from "@cocalc/frontend/collaborators/invit
 import type { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import { allow_project_to_run } from "@cocalc/frontend/project/client-side-throttle";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { once } from "@cocalc/util/async-utils";
+import { once, withTimeout } from "@cocalc/util/async-utils";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
@@ -123,6 +123,7 @@ type ProjectBackupBootstrapRow = {
 // Define projects actions
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
+  private static HOST_INFO_RPC_TIMEOUT_MS = 5_000;
   private static ARCHIVE_RPC_TIMEOUT_MS = 30_000;
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
@@ -206,10 +207,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
     }
     try {
-      const info: HostConnectionInfo =
-        await webapp_client.conat_client.hub.hosts.resolveHostConnection({
+      const info: HostConnectionInfo = await withTimeout(
+        webapp_client.conat_client.hub.hosts.resolveHostConnection({
           host_id,
-        });
+        }),
+        ProjectsActions.HOST_INFO_RPC_TIMEOUT_MS,
+      );
       const next = (hostInfo ?? Map<string, any>()).set(
         host_id,
         fromJS({ ...info, updated_at: now }),
