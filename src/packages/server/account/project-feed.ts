@@ -21,6 +21,7 @@ import {
   type InterBayAccountProjectFeedApi,
 } from "@cocalc/conat/inter-bay/api";
 import type {
+  AccountFeedEvent,
   AccountFeedProjectRemoveEvent,
   AccountFeedProjectRow,
   AccountFeedProjectUpsertEvent,
@@ -216,23 +217,17 @@ export async function applyAccountProjectFeedRemoveOnHomeBay(
 }
 
 async function forwardRemoteProjectFeedEventsBestEffort(opts: {
-  db: Queryable;
   bay_id: string;
   payload: ProjectOutboxPayload;
-  latestEvent: ProjectOutboxEventRow | null;
+  previousVisibleAccountIds: string[];
 }): Promise<void> {
   if (!isMultiBayCluster()) {
     return;
   }
   const currentVisible = visibleAccountIdsFromUsers(opts.payload.users_summary);
-  const previousVisible =
-    opts.latestEvent == null
-      ? []
-      : await loadPreviousVisibleAccountIds({
-          db: opts.db,
-          event: opts.latestEvent,
-        });
-  const impacted = [...new Set([...currentVisible, ...previousVisible])];
+  const impacted = [
+    ...new Set([...currentVisible, ...opts.previousVisibleAccountIds]),
+  ];
   if (impacted.length === 0) {
     return;
   }
@@ -301,35 +296,34 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
   const bay_id =
     `${opts.default_bay_id ?? getConfiguredBayId()}`.trim() || DEFAULT_BAY_ID;
   const client = await getPool().connect();
+  let events: AccountFeedEvent[] = [];
+  let collaboratorFeedEvents: AccountFeedEvent[] = [];
+  let payload: ProjectOutboxPayload | undefined;
+  let previousVisibleAccountIds: string[] = [];
   try {
     const latestEvent = await loadLatestProjectOutboxEvent({
       db: client,
       project_id: opts.project_id,
     });
-    const payload =
+    payload =
       latestEvent?.payload_json ??
       (await loadProjectOutboxPayload({
         db: client,
         project_id: opts.project_id,
         default_bay_id: bay_id,
       }));
-    const events = await computeAccountProjectFeedEvents({
+    events = await computeAccountProjectFeedEvents({
       db: client,
       bay_id,
       payload,
     });
-    for (const event of events) {
-      await publishAccountFeedEventBestEffort({
-        account_id: event.account_id,
-        event,
-      });
-    }
-    await forwardRemoteProjectFeedEventsBestEffort({
-      db: client,
-      bay_id,
-      payload,
-      latestEvent,
-    });
+    previousVisibleAccountIds =
+      latestEvent == null
+        ? []
+        : await loadPreviousVisibleAccountIds({
+            db: client,
+            event: latestEvent,
+          });
     const latestRows = await client.query<
       Pick<ProjectOutboxEventRow, "event_id">
     >(
@@ -353,14 +347,28 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
         bay_id,
         event: collaboratorEvent,
       });
-      for (const event of collaborator.feed_events) {
-        await publishAccountFeedEventBestEffort({
-          account_id: event.account_id,
-          event,
-        });
-      }
+      collaboratorFeedEvents = collaborator.feed_events;
     }
   } finally {
     client.release();
+  }
+  for (const event of events) {
+    await publishAccountFeedEventBestEffort({
+      account_id: event.account_id,
+      event,
+    });
+  }
+  if (payload) {
+    await forwardRemoteProjectFeedEventsBestEffort({
+      bay_id,
+      payload,
+      previousVisibleAccountIds,
+    });
+  }
+  for (const event of collaboratorFeedEvents) {
+    await publishAccountFeedEventBestEffort({
+      account_id: event.account_id,
+      event,
+    });
   }
 }

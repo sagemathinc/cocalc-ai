@@ -4,6 +4,7 @@
  */
 
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getLogger } from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getConfiguredClusterBayIdsForStaticEnumerationOnly,
@@ -11,8 +12,40 @@ import {
 } from "@cocalc/server/cluster-config";
 import type { Request, Response } from "express";
 
+const logger = getLogger("server:bay-public-origin");
+const PUBLIC_ORIGIN_LOOKUP_TIMEOUT_MS = 250;
+
 function trim(value: unknown): string {
   return `${value ?? ""}`.trim();
+}
+
+async function getConfiguredValueWithTimeout<T>(
+  label: string,
+  fn: () => Promise<T | undefined>,
+): Promise<T | undefined> {
+  const timedOut = Symbol(label);
+  try {
+    const result = await Promise.race<T | undefined | symbol>([
+      fn(),
+      new Promise<symbol>((resolve) =>
+        setTimeout(() => resolve(timedOut), PUBLIC_ORIGIN_LOOKUP_TIMEOUT_MS),
+      ),
+    ]);
+    if (result === timedOut) {
+      logger.warn("timed out resolving configured public origin metadata", {
+        label,
+        timeout_ms: PUBLIC_ORIGIN_LOOKUP_TIMEOUT_MS,
+      });
+      return undefined;
+    }
+    return result as T | undefined;
+  } catch (err) {
+    logger.warn("failed resolving configured public origin metadata", {
+      label,
+      err: `${err}`,
+    });
+    return undefined;
+  }
 }
 
 export function normalizeHostname(value: unknown): string | undefined {
@@ -253,7 +286,10 @@ export async function getSitePublicOrigin(): Promise<string | undefined> {
 export async function getSitePublicOriginForRequest(
   req?: Request,
 ): Promise<string | undefined> {
-  const configured = await getSitePublicOrigin();
+  const configured = await getConfiguredValueWithTimeout(
+    "site-public-origin",
+    () => getSitePublicOrigin(),
+  );
   if (configured) return configured;
   if (!req) return;
   const request_origin = detectRequestOrigin(req);
@@ -288,7 +324,10 @@ export async function getBrowserCookieDomain(): Promise<string | undefined> {
 export async function getBrowserCookieDomainForRequest(
   req?: Request,
 ): Promise<string | undefined> {
-  const configured = await getBrowserCookieDomain();
+  const configured = await getConfiguredValueWithTimeout(
+    "browser-cookie-domain",
+    () => getBrowserCookieDomain(),
+  );
   if (configured) return configured;
   if (!req) return;
   const request_origin = detectRequestOrigin(req);
@@ -335,7 +374,10 @@ function deriveSiteHostnameFromRequestOrigin(opts: {
 export async function getCurrentBayPublicOriginForRequest(
   req?: Request,
 ): Promise<string | undefined> {
-  const configured = await getBayPublicOrigin(getConfiguredBayId());
+  const configured = await getConfiguredValueWithTimeout(
+    "current-bay-public-origin",
+    () => getBayPublicOrigin(getConfiguredBayId()),
+  );
   if (configured) return configured;
   if (req) return detectRequestOrigin(req);
   return;
@@ -347,7 +389,10 @@ export async function getBayPublicOriginForRequest(
 ): Promise<string | undefined> {
   const requested = trim(bay_id);
   if (!requested) return;
-  const configured = await getBayPublicOrigin(requested);
+  const configured = await getConfiguredValueWithTimeout(
+    `bay-public-origin:${requested}`,
+    () => getBayPublicOrigin(requested),
+  );
   if (configured) {
     return configured;
   }
