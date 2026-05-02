@@ -68,6 +68,26 @@ function evictRoutedClient(key: string, expected?: RoutedHubClientState): void {
   }
 }
 
+async function refreshRoutedTarget({
+  host_id,
+  project_id,
+}: {
+  host_id: string;
+  project_id?: string;
+}): Promise<
+  | {
+      address?: string;
+      host_id?: string;
+      host_session_id?: string;
+    }
+  | undefined
+> {
+  if (project_id) {
+    return await materializeProjectHostTarget(project_id, { fresh: true });
+  }
+  return await materializeHostRouteTarget(host_id, { fresh: true });
+}
+
 async function issueHubRouteToken(host_id: string): Promise<{
   token: string;
   expiresAt: number;
@@ -223,21 +243,42 @@ function getOrCreateRoutedHubClient({
   const reconnectRouted = () => {
     for (const delayMs of ROUTED_RECONNECT_DELAYS_MS) {
       setTimeout(() => {
-        if (routedHubClients[key] !== state) {
-          return;
-        }
-        if (state.client.conn?.connected) {
-          return;
-        }
-        try {
-          state.client.connect();
-        } catch (err) {
-          log.debug("failed reconnecting routed hub client", {
-            host_id,
-            address,
-            err: `${err}`,
-          });
-        }
+        void (async () => {
+          if (routedHubClients[key] !== state) {
+            return;
+          }
+          if (state.client.conn?.connected) {
+            return;
+          }
+          try {
+            const fresh = await refreshRoutedTarget({ host_id, project_id });
+            if (
+              !fresh?.address ||
+              (fresh.host_id && fresh.host_id !== host_id) ||
+              fresh.address !== state.address ||
+              fresh.host_session_id !== state.host_session_id
+            ) {
+              evictRoutedClient(key, state);
+              return;
+            }
+          } catch (err) {
+            log.debug("failed refreshing routed hub client target", {
+              host_id,
+              address,
+              project_id,
+              err: `${err}`,
+            });
+          }
+          try {
+            state.client.connect();
+          } catch (err) {
+            log.debug("failed reconnecting routed hub client", {
+              host_id,
+              address,
+              err: `${err}`,
+            });
+          }
+        })();
       }, delayMs).unref?.();
     }
   };

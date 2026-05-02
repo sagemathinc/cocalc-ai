@@ -127,6 +127,10 @@ describe("server/conat route-client", () => {
       address: "https://host-1.example",
     });
     routeHostSubjectMock.mockReturnValue(undefined);
+    materializeHostRouteTargetMock.mockResolvedValue({
+      host_id: "host-1",
+      address: "https://host-1.example",
+    });
 
     const { conatWithProjectRouting } = await import("./route-client");
     const client = conatWithProjectRouting() as any;
@@ -137,9 +141,40 @@ describe("server/conat route-client", () => {
     expect(routedResult?.client).toBe(routed);
 
     routed.conn.emit("connect_error", new Error("websocket error"));
-    jest.advanceTimersByTime(1_000);
+    await jest.advanceTimersByTimeAsync(1_000);
 
     expect(routed.connect).toHaveBeenCalled();
+  });
+
+  it("evicts stale routed project clients when the fresh route disappears", async () => {
+    const central = createFakeClient();
+    const routed = createFakeClient();
+    connectMock
+      .mockImplementationOnce(() => central)
+      .mockImplementationOnce(() => routed);
+    routeProjectSubjectMock.mockReturnValue({
+      host_id: "host-1",
+      address: "https://host-1.example",
+    });
+    routeHostSubjectMock.mockReturnValue(undefined);
+    materializeHostRouteTargetMock.mockResolvedValue(undefined);
+
+    const { conatWithProjectRouting } = await import("./route-client");
+    const client = conatWithProjectRouting() as any;
+    const routedResult = client.routeSubject(
+      "project.12345678-1234-1234-1234-123456789012.api",
+    );
+
+    expect(routedResult?.client).toBe(routed);
+
+    routed.conn.emit("connect_error", new Error("websocket error"));
+    await jest.advanceTimersByTimeAsync(1_000);
+
+    expect(materializeHostRouteTargetMock).toHaveBeenCalledWith("host-1", {
+      fresh: true,
+    });
+    expect(routed.close).toHaveBeenCalled();
+    expect(routed.connect).not.toHaveBeenCalled();
   });
 
   it("evicts closed routed clients so the next request recreates them", async () => {
