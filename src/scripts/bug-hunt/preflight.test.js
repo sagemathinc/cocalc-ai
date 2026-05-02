@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   classifyEntries,
   normalizeEntryPaths,
+  parseArgs,
   parseGitStatusPorcelainZ,
 } = require("./preflight.js");
 
@@ -68,4 +69,11 @@ test("normalizeEntryPaths converts git-root paths back to repo-relative paths", 
     { status: "??", path: ".agents/bug-hunt/run.md" },
     { status: "??", path: "../wstein.tasks" },
   ]);
+});
+
+test("parseArgs ignores pnpm's standalone -- separator", () => {
+  const options = parseArgs(["--", "--json", "--fail-on-dirty"]);
+
+  assert.equal(options.json, true);
+  assert.equal(options.failOnDirty, true);
 });

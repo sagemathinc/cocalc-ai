@@ -26,7 +26,9 @@ function parseArgs(argv) {
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === "--repo") {
+    if (arg === "--") {
+      continue;
+    } else if (arg === "--repo") {
       options.repo = path.resolve(
         argv[++i] || usageAndExit("--repo requires a path"),
       );
