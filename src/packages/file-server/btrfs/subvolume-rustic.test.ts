@@ -1,9 +1,17 @@
 let btrfsMock: jest.Mock;
 let sudoMock: jest.Mock;
+let sandboxedFilesystemMock: jest.Mock;
+let backupFsRusticMock: jest.Mock;
 
 jest.mock("./util", () => ({
   btrfs: (...args: any[]) => btrfsMock(...args),
   sudo: (...args: any[]) => sudoMock(...args),
+}));
+
+jest.mock("@cocalc/backend/sandbox", () => ({
+  SandboxedFilesystem: function (...args: any[]) {
+    return sandboxedFilesystemMock(...args);
+  },
 }));
 
 import {
@@ -65,10 +73,27 @@ describe("SubvolumeRustic.backup", () => {
   beforeEach(() => {
     btrfsMock = jest.fn(async () => undefined);
     sudoMock = jest.fn(async () => undefined);
+    backupFsRusticMock = jest.fn(async (_args, _opts) => {
+      return {
+        stdout: Buffer.from(
+          JSON.stringify({
+            time: "2026-04-30T21:00:00.000Z",
+            id: "snap-1",
+            summary: { files_new: 1 },
+          }),
+        ),
+        stderr: Buffer.alloc(0),
+        code: 0,
+        truncated: false,
+      };
+    });
+    sandboxedFilesystemMock = jest.fn((_path, _opts) => ({
+      rustic: backupFsRusticMock,
+    }));
   });
 
   it("excludes .snapshots from future backups", async () => {
-    const rusticCalls: any[] = [];
+    const subvolumeFsRusticMock = jest.fn();
     const rustic = new SubvolumeRustic({
       name: "project-1",
       path: "/mnt/test/project-1",
@@ -76,21 +101,8 @@ describe("SubvolumeRustic.backup", () => {
         opts: { mount: "/mnt/test" },
       },
       fs: {
-        rustic: jest.fn(async (args, opts) => {
-          rusticCalls.push({ args, opts });
-          return {
-            stdout: Buffer.from(
-              JSON.stringify({
-                time: "2026-04-30T21:00:00.000Z",
-                id: "snap-1",
-                summary: { files_new: 1 },
-              }),
-            ),
-            stderr: Buffer.alloc(0),
-            code: 0,
-            truncated: false,
-          };
-        }),
+        rusticRepo: "/repo",
+        rustic: subvolumeFsRusticMock,
       },
     } as any);
 
@@ -111,19 +123,34 @@ describe("SubvolumeRustic.backup", () => {
         ),
       ],
     });
-    expect(rusticCalls).toHaveLength(1);
-    expect(rusticCalls[0].args).toEqual([
-      "backup",
-      "-x",
-      "--json",
-      "--glob",
-      "!.snapshots",
-      "--glob",
-      "!.snapshots/**",
-      ".",
-    ]);
-    expect(rusticCalls[0].opts.cwd).toMatch(
-      /^\/mnt\/test\/\.rustic-backup-staging\/project-1\/temp-rustic-snapshot-/,
+    expect(sandboxedFilesystemMock).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\/mnt\/test\/\.rustic-backup-staging\/project-1\/temp-rustic-snapshot-/,
+      ),
+      { host: "project-1", rusticRepo: "/repo" },
+    );
+    expect(backupFsRusticMock).toHaveBeenCalledWith(
+      [
+        "backup",
+        "-x",
+        "--json",
+        "--glob",
+        "!.snapshots",
+        "--glob",
+        "!.snapshots/**",
+        ".",
+      ],
+      {
+        timeout: 1800000,
+        cwd: ".",
+        env: undefined,
+        onStderrLine: undefined,
+      },
+    );
+    expect(subvolumeFsRusticMock).not.toHaveBeenCalled();
+    expect(backupFsRusticMock.mock.calls[0][1].cwd).toBe(".");
+    expect(backupFsRusticMock.mock.calls[0][1].cwd).not.toMatch(
+      /^\/mnt\/test\/\.rustic-backup-staging\//,
     );
     expect(btrfsMock).toHaveBeenNthCalledWith(2, {
       args: [

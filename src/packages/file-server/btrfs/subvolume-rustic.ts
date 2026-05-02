@@ -21,6 +21,7 @@ Instead of using btrfs send/recv for backups, we use Rustic because:
 import { type Subvolume } from "./subvolume";
 import { join } from "path";
 import getLogger from "@cocalc/backend/logger";
+import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { ConatError } from "@cocalc/conat/core/client";
@@ -143,6 +144,13 @@ export type RusticRestoreRunner = (opts: {
 export class SubvolumeRustic {
   constructor(public readonly subvolume: Subvolume) {}
 
+  private backupSnapshotFs(snapshotPath: string): SandboxedFilesystem {
+    return new SandboxedFilesystem(snapshotPath, {
+      host: this.subvolume.name,
+      rusticRepo: this.subvolume.fs.rusticRepo,
+    });
+  }
+
   private backupStagingRoot(): string {
     return join(
       this.subvolume.filesystem.opts.mount,
@@ -222,6 +230,7 @@ export class SubvolumeRustic {
       // Backup the snapshot path directly (no bind mounts). The project tree
       // already includes persistent metadata under ~/.local/share/cocalc/persist.
       logger.debug(`backup: backing up ${tempSnapshot} using rustic`);
+      const backupFs = this.backupSnapshotFs(snapshotPath);
       const backupResult = runner
         ? await runner({
             src: snapshotPath,
@@ -232,11 +241,11 @@ export class SubvolumeRustic {
           })
         : JSON.parse(
             parseOutput(
-              await this.subvolume.fs.rustic(
+              await backupFs.rustic(
                 ["backup", "-x", "--json", ...tagArgs, ...excludeArgs, "."],
                 {
                   timeout,
-                  cwd: snapshotPath,
+                  cwd: ".",
                   env: progress
                     ? { RUSTIC_PROGRESS_INTERVAL: "1s" }
                     : undefined,
