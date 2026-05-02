@@ -8,7 +8,6 @@ describe("hub conat managed egress", () => {
           socketA: {
             user: { account_id: "account-1" },
             browser_id: "browser-a",
-            recv: { messages: 1, bytes: 100 },
             egress: { messages: 1, bytes: 1000 },
             subs: 1,
           },
@@ -17,34 +16,29 @@ describe("hub conat managed egress", () => {
           socketA: {
             user: { account_id: "account-1" },
             browser_id: "browser-a",
-            recv: { messages: 2, bytes: 250 },
             egress: { messages: 2, bytes: 1250 },
             subs: 1,
           },
           socketB: {
             user: { account_id: "account-1" },
             browser_id: "browser-b",
-            recv: { messages: 1, bytes: 55 },
             egress: { messages: 1, bytes: 55 },
             subs: 1,
           },
           socketC: {
             user: { account_id: "account-1" },
-            recv: { messages: 1, bytes: 999 },
             egress: { messages: 1, bytes: 999 },
             subs: 1,
           },
           socketD: {
             user: { project_id: "project-1" },
             browser_id: "browser-d",
-            recv: { messages: 1, bytes: 999 },
             egress: { messages: 1, bytes: 999 },
             subs: 1,
           },
           socketE: {
             user: { hub_id: "system" },
             browser_id: "browser-e",
-            recv: { messages: 1, bytes: 999 },
             egress: { messages: 1, bytes: 999 },
             subs: 1,
           },
@@ -53,36 +47,11 @@ describe("hub conat managed egress", () => {
     ).toEqual([
       {
         account_id: "account-1",
-        bytes: 205,
+        bytes: 305,
         socket_ids: ["socketA", "socketB"],
         browser_ids: ["browser-a", "browser-b"],
       },
     ]);
-  });
-
-  it("ignores protocol chatter when no additional client recv bytes arrive", () => {
-    expect(
-      __test__.summarizeManagedConatEgressDeltas({
-        previous: {
-          socketA: {
-            user: { account_id: "account-1" },
-            browser_id: "browser-a",
-            recv: { messages: 10, bytes: 1024 },
-            egress: { messages: 10, bytes: 4096 },
-            subs: 1,
-          },
-        },
-        current: {
-          socketA: {
-            user: { account_id: "account-1" },
-            browser_id: "browser-a",
-            recv: { messages: 10, bytes: 1024 },
-            egress: { messages: 15, bytes: 12288 },
-            subs: 1,
-          },
-        },
-      }),
-    ).toEqual([]);
   });
 
   it("formats the hub interactive session block message", () => {
