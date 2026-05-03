@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { buildEntry, readJson, writeLedgerEntry } = require("./ledger-utils.js");
-const { main, parseArgs } = require("./commit.js");
+const { main, parseArgs, wantsJson } = require("./commit.js");
 
 function run(cmd, args, cwd) {
   const result = cp.spawnSync(cmd, args, {
@@ -39,6 +39,11 @@ test("parseArgs accepts commit helper flags", () => {
   assert.deepEqual(options.body, ["details"]);
   assert.equal(options.paths.length, 1);
   assert.equal(options.json, true);
+});
+
+test("wantsJson ignores a leading pnpm separator", () => {
+  assert.equal(wantsJson(["--", "--task-id", "task-1", "--json"]), true);
+  assert.equal(wantsJson(["--task-id", "task-1"]), false);
 });
 
 test("main commits staged paths and updates the matching ledger entry", () => {
@@ -91,4 +96,22 @@ test("main commits staged paths and updates the matching ledger entry", () => {
     run("git", ["log", "-1", "--pretty=%s"], repo),
     /frontend\/chat: save the fix/,
   );
+});
+
+test("cli keeps --json failures machine-readable", () => {
+  const script = path.join(__dirname, "commit.js");
+  const result = cp.spawnSync(
+    process.execPath,
+    [script, "--task-id", "missing-task", "--subject", "smoke", "--json"],
+    {
+      cwd: path.resolve(__dirname, "..", ".."),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.equal(`${result.stderr ?? ""}`.trim(), "");
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.ok, false);
+  assert.match(parsed.error.message, /no matching ledger entry found/);
 });
