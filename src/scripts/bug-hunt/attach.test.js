@@ -2,13 +2,18 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  attachToLiveSession,
+  buildDirectLiveSession,
   buildContext,
   buildUnattachedSession,
   extractSpawnSessionMarker,
+  isAgentAuthSessionListUnavailable,
+  isCliAgentMode,
   mergeCleanupResults,
   parseArgs,
   resolveSpawnedLiveSession,
   selectLiveSession,
+  shouldUseUnattachedAutoFallback,
   shouldDestroySpawnedRow,
   unwrapCliJsonPayload,
 } = require("./attach.js");
@@ -50,6 +55,124 @@ test("selectLiveSession ignores locally spawned browser ids when excluded", () =
     ["spawned-local"],
   );
   assert.equal(selected.browser_id, "real-live");
+});
+
+test("isAgentAuthSessionListUnavailable recognizes the agent-auth discovery failure", () => {
+  assert.equal(
+    isAgentAuthSessionListUnavailable(
+      new Error(
+        "cocalc browser session list failed: browser session list is unavailable under agent auth; use a known browser id via COCALC_BROWSER_ID instead",
+      ),
+    ),
+    true,
+  );
+});
+
+test("buildDirectLiveSession uses the known browser id from the dev env", () => {
+  assert.deepEqual(
+    buildDirectLiveSession(
+      {
+        project_id: "project-live",
+        exports: { COCALC_BROWSER_ID: "browser-env" },
+      },
+      {
+        projectId: "",
+        targetUrl:
+          "https://lite1b.cocalc.ai/projects/project-live/files/home/user/",
+      },
+    ),
+    {
+      browser_mode: "live",
+      browser_id: "browser-env",
+      session_url:
+        "https://lite1b.cocalc.ai/projects/project-live/files/home/user/",
+      active_project_id: "project-live",
+      session_name: "",
+    },
+  );
+});
+
+test("attachToLiveSession falls back to the known browser id when discovery is blocked by agent auth", () => {
+  const attached = attachToLiveSession(
+    {
+      browser_id: "browser-dev-env",
+      project_id: "project-live",
+      exports: { COCALC_BROWSER_ID: "browser-env" },
+    },
+    {
+      projectId: "",
+      targetUrl: "",
+      use: true,
+    },
+    [],
+    () => {
+      throw new Error(
+        "cocalc browser session list failed: browser session list is unavailable under agent auth; use a known browser id via COCALC_BROWSER_ID instead",
+      );
+    },
+  );
+  assert.deepEqual(attached, {
+    browser_mode: "live",
+    browser_id: "browser-dev-env",
+    session_url: "",
+    active_project_id: "project-live",
+    session_name: "",
+  });
+});
+
+test("isCliAgentMode recognizes agent-auth env flags", () => {
+  const originalCli = process.env.COCALC_CLI_AGENT_MODE;
+  const originalAgent = process.env.COCALC_AGENT_MODE;
+  process.env.COCALC_CLI_AGENT_MODE = "1";
+  delete process.env.COCALC_AGENT_MODE;
+  try {
+    assert.equal(isCliAgentMode(), true);
+  } finally {
+    if (originalCli == null) {
+      delete process.env.COCALC_CLI_AGENT_MODE;
+    } else {
+      process.env.COCALC_CLI_AGENT_MODE = originalCli;
+    }
+    if (originalAgent == null) {
+      delete process.env.COCALC_AGENT_MODE;
+    } else {
+      process.env.COCALC_AGENT_MODE = originalAgent;
+    }
+  }
+});
+
+test("shouldUseUnattachedAutoFallback prefers an unattached context in lite agent mode without a known browser id", () => {
+  const originalCli = process.env.COCALC_CLI_AGENT_MODE;
+  const originalAgent = process.env.COCALC_AGENT_MODE;
+  process.env.COCALC_CLI_AGENT_MODE = "1";
+  delete process.env.COCALC_AGENT_MODE;
+  try {
+    assert.equal(
+      shouldUseUnattachedAutoFallback(
+        {
+          browser_id: "",
+          exports: { COCALC_BROWSER_ID: "" },
+        },
+        {
+          browser: "auto",
+          mode: "lite",
+        },
+        undefined,
+      ),
+      true,
+    );
+  } finally {
+    if (originalCli == null) {
+      delete process.env.COCALC_CLI_AGENT_MODE;
+    } else {
+      process.env.COCALC_CLI_AGENT_MODE = originalCli;
+    }
+    if (originalAgent == null) {
+      delete process.env.COCALC_AGENT_MODE;
+    } else {
+      process.env.COCALC_AGENT_MODE = originalAgent;
+    }
+  }
 });
 
 test("extractSpawnSessionMarker reads the spawn marker from a target url", () => {

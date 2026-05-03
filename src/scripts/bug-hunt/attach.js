@@ -120,6 +120,18 @@ function run(cmd, args, opts = {}) {
   });
 }
 
+function normalizeBoolean(value) {
+  const normalized = `${value ?? ""}`.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+function isCliAgentMode() {
+  return (
+    normalizeBoolean(process.env.COCALC_CLI_AGENT_MODE) ||
+    normalizeBoolean(process.env.COCALC_AGENT_MODE)
+  );
+}
+
 function getDevEnv(mode) {
   const result = run(process.execPath, [
     path.join(ROOT, "scripts", "dev", "dev-env.js"),
@@ -163,6 +175,23 @@ function runCliJson(devEnv, args) {
   );
 }
 
+function preferredBrowserIdFromDevEnv(devEnv) {
+  return (
+    `${devEnv?.browser_id ?? ""}`.trim() ||
+    `${devEnv?.exports?.COCALC_BROWSER_ID ?? ""}`.trim()
+  );
+}
+
+function isAgentAuthSessionListUnavailable(err) {
+  const message =
+    `${err instanceof Error ? err.message : (err ?? "")}`.toLowerCase();
+  return (
+    message.includes("browser session list is unavailable under agent auth") ||
+    (message.includes("browser session list") &&
+      message.includes("known browser id via cocalc_browser_id"))
+  );
+}
+
 function selectLiveSession(
   sessions,
   preferredBrowserId,
@@ -194,6 +223,19 @@ function listActiveSessions(devEnv, projectId) {
     args.push("--project-id", projectId);
   }
   return runCliJson(devEnv, args);
+}
+
+function buildDirectLiveSession(devEnv, options) {
+  const browserId = preferredBrowserIdFromDevEnv(devEnv);
+  if (!browserId) return undefined;
+  const projectId = options.projectId || devEnv.project_id || "";
+  return {
+    browser_mode: "live",
+    browser_id: browserId,
+    session_url: options.targetUrl ?? "",
+    active_project_id: projectId,
+    session_name: "",
+  };
 }
 
 function extractSpawnSessionMarker(spawned) {
@@ -311,12 +353,25 @@ function shouldDestroySpawnedRow(row, browserMode) {
   );
 }
 
-function attachToLiveSession(devEnv, options, excludedBrowserIds = []) {
+function attachToLiveSession(
+  devEnv,
+  options,
+  excludedBrowserIds = [],
+  listSessionsFn = listActiveSessions,
+) {
   const projectId = options.projectId || devEnv.project_id || "";
-  const sessions = listActiveSessions(devEnv, projectId);
+  let sessions;
+  try {
+    sessions = listSessionsFn(devEnv, projectId);
+  } catch (err) {
+    if (!isAgentAuthSessionListUnavailable(err)) {
+      throw err;
+    }
+    return buildDirectLiveSession(devEnv, options);
+  }
   const selected = selectLiveSession(
     sessions,
-    `${devEnv.browser_id ?? ""}`.trim(),
+    preferredBrowserIdFromDevEnv(devEnv),
     projectId,
     excludedBrowserIds,
   );
@@ -419,6 +474,12 @@ function buildUnattachedSession(devEnv, options, warning) {
   };
 }
 
+function shouldUseUnattachedAutoFallback(devEnv, options, attached) {
+  if (attached || options.browser !== "auto") return false;
+  if (options.mode === "hub") return true;
+  return isCliAgentMode() && !preferredBrowserIdFromDevEnv(devEnv);
+}
+
 function buildContext(devEnv, options, cleanup, attached) {
   return {
     mode: options.mode,
@@ -481,11 +542,13 @@ function main(argv = process.argv.slice(2)) {
     const spawnedBrowserIds = cleanup.remaining.map((row) => row.browser_id);
     attached = attachToLiveSession(devEnv, options, spawnedBrowserIds);
     if (!attached) {
-      if (options.mode === "hub") {
+      if (shouldUseUnattachedAutoFallback(devEnv, options, attached)) {
         attached = buildUnattachedSession(
           devEnv,
           options,
-          "no active live browser session found; skipped spawned fallback for hub auto mode",
+          options.mode === "hub"
+            ? "no active live browser session found; skipped spawned fallback for hub auto mode"
+            : "no known live browser id available under agent auth; skipped spawned fallback",
         );
       } else {
         cleanup = mergeCleanupResults(
@@ -521,15 +584,20 @@ function main(argv = process.argv.slice(2)) {
 }
 
 module.exports = {
+  attachToLiveSession,
+  buildDirectLiveSession,
   buildContext,
   buildUnattachedSession,
   cleanupSpawnedSessions,
   createCliEnv,
   extractSpawnSessionMarker,
+  isAgentAuthSessionListUnavailable,
+  isCliAgentMode,
   mergeCleanupResults,
   parseArgs,
   resolveSpawnedLiveSession,
   selectLiveSession,
+  shouldUseUnattachedAutoFallback,
   shouldDestroySpawnedRow,
   unwrapCliJsonPayload,
 };
