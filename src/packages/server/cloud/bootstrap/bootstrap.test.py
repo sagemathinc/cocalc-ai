@@ -412,11 +412,11 @@ class BootstrapRootlessPodmanResetTest(unittest.TestCase):
             )
             self.assertIn(
                 (
-                    ["chown", "-R", "missing-runtime-user:missing-runtime-user",
+                    ["chown", "missing-runtime-user:missing-runtime-user",
                      "/mnt/cocalc/data/containers/rootless/missing-runtime-user",
                      "/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage",
                      "/mnt/cocalc/data/containers/rootless/missing-runtime-user/run"],
-                    "chown rootless podman paths",
+                    "chown rootless podman path roots",
                 ),
                 recorded,
             )
@@ -711,13 +711,12 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                 (
                     [
                         "chown",
-                        "-R",
                         "missing-runtime-user:missing-runtime-user",
                         "/mnt/cocalc/data/containers/rootless/missing-runtime-user",
                         "/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage",
                         "/mnt/cocalc/data/containers/rootless/missing-runtime-user/run",
                     ],
-                    "chown rootless podman paths",
+                    "chown rootless podman path roots",
                 ),
                 recorded,
             )
