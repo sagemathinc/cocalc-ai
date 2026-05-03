@@ -16,6 +16,14 @@ export function getActiveProjectIdFallback(opts: {
   openProjectIds: string[];
   url?: string;
 }): string | undefined {
+  const rawUrl = `${opts.url ?? ""}`.trim();
+  const urlProjectId = getProjectIdFromUrl(rawUrl);
+  if (urlProjectId) {
+    return urlProjectId;
+  }
+  if (rawUrl) {
+    return undefined;
+  }
   const activeTopTab = `${redux.getStore("page")?.get("active_top_tab") ?? ""}`;
   if (isValidUUID(activeTopTab)) {
     return activeTopTab;
@@ -24,7 +32,7 @@ export function getActiveProjectIdFallback(opts: {
   if (isValidUUID(openProjectId)) {
     return openProjectId;
   }
-  return getProjectIdFromUrl(opts.url);
+  return undefined;
 }
 
 export function collectOpenProjects({

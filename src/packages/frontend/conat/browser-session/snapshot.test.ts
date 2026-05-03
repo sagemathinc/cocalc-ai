@@ -27,11 +27,19 @@ describe("browser-session snapshot helpers", () => {
     ).toBe("00000000-1000-4000-8000-000000000222");
   });
 
-  it("prefers an open project id over the URL fallback", () => {
+  it("does not claim an active project on a non-project URL", () => {
     expect(
       getActiveProjectIdFallback({
         openProjectIds: ["00000000-1000-4000-8000-000000000333"],
-        url: "http://localhost:9100/projects/00000000-1000-4000-8000-000000000444/files/home/user/",
+        url: "http://localhost:9100/hosts",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("falls back to open project metadata only when no URL is available", () => {
+    expect(
+      getActiveProjectIdFallback({
+        openProjectIds: ["00000000-1000-4000-8000-000000000333"],
       }),
     ).toBe("00000000-1000-4000-8000-000000000333");
   });
