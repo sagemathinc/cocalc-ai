@@ -3,6 +3,7 @@ import {
   getLatestThreadMessageDate,
   hasActiveAcpTurnForComposer,
   latestThreadAcpInterrupted,
+  resolveImmediateAcpParentMessageId,
   resolveAgentSessionRecordStatus,
   splitCompletedCodexTurnNotifications,
 } from "../chatroom";
@@ -142,6 +143,88 @@ describe("resolveAgentSessionRecordStatus", () => {
         } as any,
       }),
     ).toBe("running");
+  });
+});
+
+describe("resolveImmediateAcpParentMessageId", () => {
+  it("prefers the running assistant turn over a newer queued user message", () => {
+    expect(
+      resolveImmediateAcpParentMessageId({
+        selectedThreadId: "thread-1",
+        acpState: immutable
+          .Map<string, string>()
+          .set("thread:thread-1", "queue"),
+        selectedThreadMessages: [
+          {
+            event: "chat",
+            sender_id: "user",
+            message_id: "user-1",
+            thread_id: "thread-1",
+            date: "2026-03-11T08:00:00.000Z",
+            history: [],
+          },
+          {
+            event: "chat",
+            sender_id: "assistant",
+            message_id: "assistant-1",
+            thread_id: "thread-1",
+            date: "2026-03-11T08:01:00.000Z",
+            acp_account_id: "acct-1",
+            generating: true,
+            history: [],
+          },
+          {
+            event: "chat",
+            sender_id: "user",
+            message_id: "user-queued",
+            thread_id: "thread-1",
+            date: "2026-03-11T08:02:00.000Z",
+            acp_state: "queued",
+            history: [],
+          },
+        ],
+      }),
+    ).toBe("assistant-1");
+  });
+
+  it("uses the newest ACP assistant when the thread is marked running", () => {
+    expect(
+      resolveImmediateAcpParentMessageId({
+        selectedThreadId: "thread-1",
+        acpState: immutable
+          .Map<string, string>()
+          .set("thread:thread-1", "running"),
+        selectedThreadMessages: [
+          {
+            event: "chat",
+            sender_id: "assistant",
+            message_id: "assistant-1",
+            thread_id: "thread-1",
+            date: "2026-03-11T08:01:00.000Z",
+            acp_account_id: "acct-1",
+            history: [],
+          },
+          {
+            event: "chat",
+            sender_id: "user",
+            message_id: "user-queued",
+            thread_id: "thread-1",
+            date: "2026-03-11T08:02:00.000Z",
+            acp_state: "queued",
+            history: [],
+          },
+          {
+            event: "chat",
+            sender_id: "assistant",
+            message_id: "assistant-2",
+            thread_id: "thread-1",
+            date: "2026-03-11T08:03:00.000Z",
+            acp_account_id: "acct-1",
+            history: [],
+          },
+        ],
+      }),
+    ).toBe("assistant-2");
   });
 });
 
