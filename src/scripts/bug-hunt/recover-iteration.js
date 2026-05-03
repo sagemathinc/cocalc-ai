@@ -159,6 +159,14 @@ function formatHumanPayload(payload) {
   return lines.join("\n");
 }
 
+function wantsJson(argv) {
+  const normalizedArgv = [...argv];
+  while (normalizedArgv[0] === "--") {
+    normalizedArgv.shift();
+  }
+  return normalizedArgv.includes("--json");
+}
+
 function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   const payload = buildRecoverPayload(options);
@@ -175,13 +183,29 @@ module.exports = {
   formatHumanPayload,
   main,
   parseArgs,
+  wantsJson,
 };
 
 if (require.main === module) {
   try {
     main();
   } catch (err) {
-    console.error(`bug-hunt recover-iteration error: ${err?.message ?? err}`);
+    if (wantsJson(process.argv.slice(2))) {
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            ok: false,
+            error: {
+              message: `${err?.message ?? err}`,
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    } else {
+      console.error(`bug-hunt recover-iteration error: ${err?.message ?? err}`);
+    }
     process.exit(1);
   }
 }

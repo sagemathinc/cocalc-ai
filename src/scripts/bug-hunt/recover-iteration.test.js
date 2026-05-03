@@ -6,7 +6,11 @@ const os = require("node:os");
 const path = require("node:path");
 
 const { buildEntry, writeLedgerEntry } = require("./ledger-utils.js");
-const { buildRecoverPayload, parseArgs } = require("./recover-iteration.js");
+const {
+  buildRecoverPayload,
+  parseArgs,
+  wantsJson,
+} = require("./recover-iteration.js");
 
 function run(cmd, args, cwd) {
   const result = cp.spawnSync(cmd, args, {
@@ -31,6 +35,11 @@ test("parseArgs accepts iteration selectors", () => {
   const options = parseArgs(["--task-id", "task-1", "--json"]);
   assert.equal(options.taskId, "task-1");
   assert.equal(options.json, true);
+});
+
+test("wantsJson ignores a leading pnpm separator", () => {
+  assert.equal(wantsJson(["--", "--task-id", "task-1", "--json"]), true);
+  assert.equal(wantsJson(["--task-id", "task-1"]), false);
 });
 
 test("buildRecoverPayload compares the snapshot before an iteration to the next snapshot", () => {
@@ -94,4 +103,22 @@ test("buildRecoverPayload compares the snapshot before an iteration to the next 
   assert.deepEqual(payload.changes, [
     { path: "tracked.txt", status: "modified" },
   ]);
+});
+
+test("cli keeps --json failures machine-readable", () => {
+  const script = path.join(__dirname, "recover-iteration.js");
+  const result = cp.spawnSync(
+    process.execPath,
+    [script, "--task-id", "missing-task", "--json"],
+    {
+      cwd: path.resolve(__dirname, "..", ".."),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.equal(`${result.stderr ?? ""}`.trim(), "");
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.ok, false);
+  assert.match(parsed.error.message, /matching ledger entry not found/);
 });
