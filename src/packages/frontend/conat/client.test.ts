@@ -1766,9 +1766,19 @@ describe("ConatClient routed project-host reconnect", () => {
     expect(hubClient.request).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();
     expect(connect).not.toHaveBeenCalled();
+    expect(client.projectHostTokens["host-1"]?.token).toBe("cached-token");
+    expect(client.projectHostBrowserSessions["host-1"]?.address).toBe(
+      "http://project-host",
+    );
     expect(client.projectHostTokens["host-1"]?.retryAfter).toBeGreaterThan(
       Date.now(),
     );
+
+    await jest.advanceTimersByTimeAsync(60_000);
+
+    expect(hubClient.request).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(connect).toHaveBeenCalledTimes(1);
 
     jest.useRealTimers();
   });
