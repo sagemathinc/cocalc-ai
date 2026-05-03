@@ -37,6 +37,7 @@ jest.mock("./managed-egress", () => ({
 
 describe("getMembershipUsageStatusForAccount", () => {
   beforeEach(() => {
+    jest.resetModules();
     jest.clearAllMocks();
     getManagedEgressUsageForAccountMock.mockResolvedValue({
       managed_egress_5h_bytes: 0,
@@ -272,5 +273,38 @@ describe("getMembershipUsageStatusForAccount", () => {
       limit5h: 1000,
       limit7d: 2000,
     });
+  });
+
+  it("reuses a recent usage-status result for the same account and limits", async () => {
+    queryMock.mockResolvedValue({
+      rows: [{ project_id: "project-1", host_id: "host-1", provisioned: true }],
+    });
+    getDiskQuotaMock.mockResolvedValue({ used: 64, size: 1000 });
+
+    const { getMembershipUsageStatusForAccount } =
+      await import("./usage-status");
+    const resolution = {
+      class: "pro",
+      source: "subscription" as const,
+      entitlements: {
+        usage_limits: {
+          total_storage_soft_bytes: 300,
+        },
+      },
+    };
+
+    const first = await getMembershipUsageStatusForAccount({
+      account_id: "account-1",
+      resolution,
+    });
+    const second = await getMembershipUsageStatusForAccount({
+      account_id: "account-1",
+      resolution,
+    });
+
+    expect(first.total_storage_bytes).toBe(64);
+    expect(second.total_storage_bytes).toBe(64);
+    expect(getDiskQuotaMock).toHaveBeenCalledTimes(1);
+    expect(getManagedEgressUsageForAccountMock).toHaveBeenCalledTimes(1);
   });
 });

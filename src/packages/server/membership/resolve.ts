@@ -108,6 +108,18 @@ async function buildMembershipCandidates(
   return candidates;
 }
 
+async function buildMembershipResolutionForAccount(
+  account_id: string,
+): Promise<{
+  candidates: MembershipCandidate[];
+  selected: MembershipResolution;
+}> {
+  const tiers = await getMembershipTierMap({ includeDisabled: true });
+  const candidates = await buildMembershipCandidates(account_id, tiers);
+  const selected = pickBestMembership(candidates, tiers);
+  return { candidates, selected };
+}
+
 function pickBestMembership(
   candidates: MembershipCandidate[],
   tiers: Record<string, MembershipTierRecord>,
@@ -206,9 +218,8 @@ async function getCachedMembershipUsageStatus({
 export async function resolveMembershipDetailsForAccount(
   account_id: string,
 ): Promise<MembershipDetails> {
-  const tiers = await getMembershipTierMap({ includeDisabled: true });
-  const candidates = await buildMembershipCandidates(account_id, tiers);
-  const selected = pickBestMembership(candidates, tiers);
+  const { candidates, selected } =
+    await buildMembershipResolutionForAccount(account_id);
   const usage_status = await getCachedMembershipUsageStatus({
     account_id,
     resolution: selected,
@@ -223,6 +234,6 @@ export async function resolveMembershipDetailsForAccount(
 export async function resolveMembershipForAccount(
   account_id: string,
 ): Promise<MembershipResolution> {
-  const details = await resolveMembershipDetailsForAccount(account_id);
-  return details.selected;
+  const { selected } = await buildMembershipResolutionForAccount(account_id);
+  return selected;
 }
