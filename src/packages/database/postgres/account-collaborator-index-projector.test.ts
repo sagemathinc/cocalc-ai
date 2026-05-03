@@ -161,6 +161,57 @@ describe("account_collaborator_index projector", () => {
     });
   });
 
+  it("ignores owner-only project.created events", async () => {
+    await getPool().query(
+      `INSERT INTO accounts
+         (account_id, first_name, last_name, created, email_address, home_bay_id)
+       VALUES
+         ($1, 'Alpha', 'Local', NOW(), 'alpha@example.com', $2)`,
+      [ACCOUNT_A, LOCAL_BAY_ID],
+    );
+    await getPool().query(
+      `INSERT INTO projects
+        (project_id, title, description, users, owning_bay_id, created, last_edited, deleted)
+       VALUES
+        ($1, 'Owner Only', 'no collaborators', $2::JSONB, $3, NOW(), NOW(), FALSE)`,
+      [
+        PROJECT_ID,
+        JSON.stringify({
+          [ACCOUNT_A]: { group: "owner" },
+        }),
+        LOCAL_BAY_ID,
+      ],
+    );
+    await appendProjectOutboxEventForProject({
+      event_type: "project.created",
+      project_id: PROJECT_ID,
+      default_bay_id: LOCAL_BAY_ID,
+    });
+
+    await expect(
+      drainAccountCollaboratorIndexProjection({
+        bay_id: LOCAL_BAY_ID,
+        limit: 10,
+        dry_run: false,
+      }),
+    ).resolves.toMatchObject({
+      applied_events: 1,
+      inserted_rows: 0,
+      deleted_rows: 0,
+      feed_events: [],
+      event_types: {
+        "project.created": 1,
+      },
+    });
+
+    await expect(
+      listProjectedCollaboratorsForAccount({
+        account_id: ACCOUNT_A,
+        limit: 10,
+      }),
+    ).resolves.toEqual([]);
+  });
+
   it("rebuilds impacted local-home accounts on membership changes and deletes", async () => {
     await seedBaseRows();
     await appendProjectOutboxEventForProject({

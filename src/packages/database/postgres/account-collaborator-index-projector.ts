@@ -185,6 +185,25 @@ function collaboratorFeedEventsForAccount(opts: {
   return events;
 }
 
+async function withAccountCollaboratorProjectionLock<T>(opts: {
+  db: PoolClient;
+  account_id: string;
+  fn: () => Promise<T>;
+}): Promise<T> {
+  await opts.db.query(
+    "SELECT pg_advisory_lock(hashtext($1::text), hashtext($2::text))",
+    ["account-collaborator-index", opts.account_id],
+  );
+  try {
+    return await opts.fn();
+  } finally {
+    await opts.db.query(
+      "SELECT pg_advisory_unlock(hashtext($1::text), hashtext($2::text))",
+      ["account-collaborator-index", opts.account_id],
+    );
+  }
+}
+
 export async function loadLatestCollaboratorProjectionEvent(opts: {
   db: PoolClient;
   project_id: string;
@@ -218,6 +237,13 @@ export async function applyProjectEventToAccountCollaboratorIndex(opts: {
   feed_events: AccountFeedEvent[];
 }> {
   const current = participantAccountIds(opts.event.payload_json);
+  if (opts.event.event_type === "project.created" && current.length <= 1) {
+    return {
+      inserted_rows: 0,
+      deleted_rows: 0,
+      feed_events: [],
+    };
+  }
   const previous = await previousParticipantAccountIds(opts.db, opts.event);
   const impacted = [...new Set([...current, ...previous])];
   const localAccounts = await localHomeAccountIds(opts.db, {
@@ -230,21 +256,36 @@ export async function applyProjectEventToAccountCollaboratorIndex(opts: {
   const feed_events: AccountFeedEvent[] = [];
   for (const account_id of impacted) {
     if (!localAccounts.has(account_id)) continue;
-    const previous_rows = await collaboratorRowsForAccount(opts.db, account_id);
-    const result = await replaceAccountCollaboratorIndexRows({
+    const result = await withAccountCollaboratorProjectionLock({
       db: opts.db,
       account_id,
+      fn: async () => {
+        const previous_rows = await collaboratorRowsForAccount(
+          opts.db,
+          account_id,
+        );
+        const replaceResult = await replaceAccountCollaboratorIndexRows({
+          db: opts.db,
+          account_id,
+        });
+        const current_rows = await collaboratorRowsForAccount(
+          opts.db,
+          account_id,
+        );
+        return {
+          inserted_rows: replaceResult.inserted_rows,
+          deleted_rows: replaceResult.deleted_rows,
+          feed_events: collaboratorFeedEventsForAccount({
+            account_id,
+            previous_rows,
+            current_rows,
+          }),
+        };
+      },
     });
-    const current_rows = await collaboratorRowsForAccount(opts.db, account_id);
     inserted_rows += result.inserted_rows;
     deleted_rows += result.deleted_rows;
-    feed_events.push(
-      ...collaboratorFeedEventsForAccount({
-        account_id,
-        previous_rows,
-        current_rows,
-      }),
-    );
+    feed_events.push(...result.feed_events);
   }
   return {
     inserted_rows,

@@ -47,6 +47,11 @@ import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 
 const log = getLogger("server:projects:create");
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
+// Explicit host placement provisions the workspace on the target host during
+// createProject. Under filesystem pressure that can take much longer than the
+// default RPC timeout, and timing out too early causes the hub to retry the
+// same project_id while the first create is still running.
+const PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS = 5 * 60 * 1000;
 
 function publishStartLroSummaryBestEffort({
   scope_type,
@@ -429,7 +434,7 @@ export default async function createProject(opts: CreateProjectOptions) {
           if (assignedHostBayId !== getConfiguredBayId()) {
             await getInterBayBridge()
               .hostControl(assignedHostBayId, {
-                timeout_ms: 15_000,
+                timeout_ms: PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS,
               })
               .createProject({
                 account_id: account_id!,
@@ -439,7 +444,7 @@ export default async function createProject(opts: CreateProjectOptions) {
           } else {
             const client = await getRoutedHostControlClient({
               host_id,
-              timeout: 15000,
+              timeout: PROJECT_CREATE_HOST_CONTROL_TIMEOUT_MS,
             });
             await client.createProject(createOpts);
           }
