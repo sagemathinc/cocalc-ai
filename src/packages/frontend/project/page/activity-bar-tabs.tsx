@@ -692,7 +692,7 @@ export function CustomizeRailButtonsModal({
       ]}
     >
       <p style={{ color: COLORS.GRAY }}>
-        Drag to reorder buttons. Unchecked items stay available under More.
+        Check a button to show it on the left rail. Drag to reorder buttons.
         These preferences are stored in this browser only.
       </p>
       <SortableList
@@ -719,44 +719,27 @@ export function CustomizeRailButtonsModal({
                   onChange={(e) => setTabVisible(name, e.target.checked)}
                 />
                 <Icon name={FIXED_PROJECT_TABS[name].icon} />
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   {renderFixedTabLabel(name, intl)}
-                  <div
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      color: COLORS.GRAY_D,
-                      fontSize: "12px",
-                      marginTop: "2px",
-                    }}
-                  >
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        borderRadius: "999px",
-                        padding: "1px 8px",
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        letterSpacing: "0.01em",
-                        background: visible
-                          ? COLORS.BS_GREEN_LL
-                          : COLORS.BLUE_LLLL,
-                        color: visible
-                          ? COLORS.ANTD_GREEN_D
-                          : COLORS.ANTD_LINK_BLUE_DARK,
-                      }}
-                    >
-                      {visible ? "Rail" : "More"}
-                    </span>
-                    <span>
-                      {visible
-                        ? "Shown on left rail"
-                        : "Available under More menu"}
-                    </span>
-                  </div>
                 </div>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    borderRadius: "999px",
+                    padding: "1px 8px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    letterSpacing: "0.01em",
+                    background: visible ? COLORS.BS_GREEN_LL : COLORS.BLUE_LLLL,
+                    color: visible
+                      ? COLORS.ANTD_GREEN_D
+                      : COLORS.ANTD_LINK_BLUE_DARK,
+                    marginRight: "4px",
+                  }}
+                >
+                  {visible ? "Rail" : "More"}
+                </span>
                 <DragHandle id={name} />
               </div>
             </SortableItem>

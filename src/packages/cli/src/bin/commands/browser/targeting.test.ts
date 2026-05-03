@@ -184,6 +184,37 @@ test("chooseBrowserSession lets an explicit browser id win even if sessionProjec
   assert.equal(session.browser_id, "browser-1");
 });
 
+test("chooseBrowserSession matches a project-scoped session by project id in the session URL", async () => {
+  const prev = process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  try {
+    const ctx = makeContext(async () => [
+      {
+        browser_id: "browser-1",
+        active_project_id: "",
+        open_projects: [],
+        stale: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        url: "http://localhost:13004/projects/00000000-1000-4000-8000-000000000111/files?_cocalc_browser_spawn=test",
+      },
+    ]);
+
+    const session = await chooseBrowserSession({
+      ctx,
+      sessionProjectId: "00000000-1000-4000-8000-000000000111",
+    });
+
+    assert.equal(session.browser_id, "browser-1");
+  } finally {
+    if (prev == null) {
+      delete process.env.COCALC_CLI_AGENT_MODE;
+    } else {
+      process.env.COCALC_CLI_AGENT_MODE = prev;
+    }
+  }
+});
+
 test("resolveTargetProjectId prefers the active browser-session project over ambient env", async () => {
   const prevProjectId = process.env.COCALC_PROJECT_ID;
   process.env.COCALC_PROJECT_ID = "00000000-1000-4000-8000-000000000099";

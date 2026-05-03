@@ -997,6 +997,16 @@ export class ConatClient extends EventEmitter {
     return err;
   };
 
+  private throwIfProjectHostAuthCooldownActive(host_id: string): void {
+    const state = this.projectHostTokens[host_id];
+    if (!state?.retryAfter) {
+      return;
+    }
+    if (Date.now() < state.retryAfter) {
+      throw this.getProjectHostTokenCooldownError(state);
+    }
+  }
+
   private projectHostAuthRetryDelayMs = (err: unknown): number | undefined => {
     const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
     const seconds = parseRetryInAboutSeconds(message);
@@ -1020,6 +1030,10 @@ export class ConatClient extends EventEmitter {
     state.failureCount = Math.max(state.failureCount ?? 0, 1);
     state.retryAfter = Math.max(state.retryAfter ?? 0, Date.now() + delayMs);
     state.lastError = err;
+  };
+
+  private shouldRetainProjectHostAuthState = (err: unknown): boolean => {
+    return this.projectHostAuthRetryDelayMs(err) != null;
   };
 
   private invalidateProjectHostToken = (
@@ -1434,6 +1448,7 @@ export class ConatClient extends EventEmitter {
         project_id,
       );
       try {
+        this.throwIfProjectHostAuthCooldownActive(host_id);
         await this.ensureProjectHostBrowserSession({
           host_id,
           address: state.address,
@@ -1813,8 +1828,10 @@ export class ConatClient extends EventEmitter {
         error,
       });
       this.noteProjectHostAuthBackoff(host_id, error);
-      this.invalidateProjectHostBrowserSession(host_id);
-      this.invalidateProjectHostToken(host_id);
+      if (!this.shouldRetainProjectHostAuthState(error)) {
+        this.invalidateProjectHostBrowserSession(host_id);
+        this.invalidateProjectHostToken(host_id);
+      }
     });
     state.client.on("disconnected", () => {
       reconnectDebugWarn(`routed host disconnected ${host_id}`, {
@@ -1833,10 +1850,10 @@ export class ConatClient extends EventEmitter {
       });
       if (this.isProjectHostAuthError(err)) {
         this.noteProjectHostAuthBackoff(host_id, err);
-        this.invalidateProjectHostBrowserSession(host_id);
-      }
-      if (this.isProjectHostAuthError(err)) {
-        this.invalidateProjectHostToken(host_id);
+        if (!this.shouldRetainProjectHostAuthState(err)) {
+          this.invalidateProjectHostBrowserSession(host_id);
+          this.invalidateProjectHostToken(host_id);
+        }
       }
       this.scheduleRoutedHostReconnect({ host_id, state, project_id });
     });

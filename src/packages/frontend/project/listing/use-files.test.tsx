@@ -235,4 +235,66 @@ describe("useFiles", () => {
     expect(fs.getListing).toHaveBeenCalledWith("/slow");
     expect(fs.listing).toHaveBeenCalledWith("/slow");
   });
+
+  it("recovers from an initial snapshot timeout when the live listing succeeds", async () => {
+    const timeoutErr = new Error("timeout");
+    const listing = {
+      files: { "live.txt": { mtime: 0, isDir: false, size: 1 } },
+      on: jest.fn(),
+      close: jest.fn(),
+    };
+    (withTimeout as jest.Mock).mockRejectedValue(timeoutErr);
+
+    const fs = {
+      getListing: jest.fn().mockResolvedValue({ files: {} }),
+      listing: jest.fn().mockResolvedValue(listing),
+    };
+
+    useFilesForTest({ fs, path: "/recover" });
+    await flushEffects();
+
+    const result = useFilesForTest({ fs, path: "/recover" });
+    expect(fs.getListing.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(fs.listing).toHaveBeenCalledWith("/recover");
+    expect(listing.on).toHaveBeenCalledWith("change", expect.any(Function));
+    expect(result.error).toBeNull();
+    expect(result.files).toEqual({
+      "live.txt": { mtime: 0, isDir: false, size: 1 },
+    });
+  });
+
+  it("retries live listing bootstrap after a transient failure", async () => {
+    const transientErr: any = new Error(
+      "failed to sign in - Error: too many authentication failures from ip:1.2.3.4; retry in about 51s",
+    );
+    transientErr.code = "408";
+    const listing = {
+      files: { "live.txt": { mtime: 0, isDir: false, size: 1 } },
+      on: jest.fn(),
+      close: jest.fn(),
+    };
+    (withTimeout as jest.Mock).mockImplementation(
+      async (promise: Promise<any>) => await promise,
+    );
+
+    const fs = {
+      getListing: jest.fn().mockResolvedValue({ files: {} }),
+      listing: jest
+        .fn()
+        .mockRejectedValueOnce(transientErr)
+        .mockResolvedValueOnce(listing),
+    };
+
+    useFilesForTest({ fs, path: "/watch-retry" });
+    await flushEffects();
+
+    const result = useFilesForTest({ fs, path: "/watch-retry" });
+    expect(fs.listing).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalled();
+    expect(listing.on).toHaveBeenCalledWith("change", expect.any(Function));
+    expect(result.error).toBeNull();
+    expect(result.files).toEqual({
+      "live.txt": { mtime: 0, isDir: false, size: 1 },
+    });
+  });
 });

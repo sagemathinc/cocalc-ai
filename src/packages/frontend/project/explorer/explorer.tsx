@@ -91,6 +91,10 @@ import {
 import { FileDndProvider } from "./dnd/file-dnd-provider";
 import { getSortAsync, setSort } from "./config";
 import { DEFAULT_ACTIVE_FILE_SORT, normalizeActiveFileSort } from "./sort";
+import {
+  getUserFacingListingError,
+  shouldShowWrongAccountListingError,
+} from "./listing-error";
 
 const FLEX_ROW_STYLE = {
   display: "flex",
@@ -599,8 +603,7 @@ export function Explorer() {
     project_is_running = false;
   }
 
-  if (listingError?.code == 403 || listingError?.code == 408) {
-    // 403 = permission denied, 408 = connection being closed (due to permission?)
+  if (shouldShowWrongAccountListingError(listingError)) {
     return (
       <div style={{ margin: "30px auto", textAlign: "center" }}>
         <ShowError
@@ -1056,7 +1059,7 @@ You can either wait for this host to become available again, or move this ${proj
               !shouldShowStartProjectWarning && (
                 <div style={{ margin: "30px auto", textAlign: "center" }}>
                   <ShowError
-                    error={listingError}
+                    error={getUserFacingListingError(listingError)}
                     style={{ textAlign: "left" }}
                   />
                   <br />

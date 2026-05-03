@@ -104,6 +104,9 @@ export function sessionMatchesProject(
   if (`${session.active_project_id ?? ""}`.trim() === target) {
     return true;
   }
+  if (projectIdFromSessionUrl(session.url) === target) {
+    return true;
+  }
   return (session.open_projects ?? []).some(
     (p) => `${p?.project_id ?? ""}`.trim() === target,
   );

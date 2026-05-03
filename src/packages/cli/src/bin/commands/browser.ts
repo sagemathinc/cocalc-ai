@@ -109,6 +109,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function listOpenBrowserFilesOrTabs(opts: {
+  sessionInfo: { open_projects: { project_id: string; title?: string }[] };
+  files: { project_id: string; title?: string; path: string }[];
+  projectId?: string;
+}): Array<{
+  kind: "project" | "file";
+  project_id: string;
+  title: string;
+  path?: string;
+}> {
+  const files = opts.files
+    .filter(
+      (row) => opts.projectId == null || row.project_id === opts.projectId,
+    )
+    .map((row) => ({
+      kind: "file" as const,
+      project_id: row.project_id,
+      title: row.title ?? "",
+      path: row.path,
+    }));
+  const projectIdsWithFiles = new Set(files.map((row) => row.project_id));
+  const projectTabs = opts.sessionInfo.open_projects
+    .filter(
+      (row) => opts.projectId == null || row.project_id === opts.projectId,
+    )
+    .filter((row) => !projectIdsWithFiles.has(row.project_id))
+    .map((row) => ({
+      kind: "project" as const,
+      project_id: row.project_id,
+      title: row.title ?? "",
+    }));
+  return [...projectTabs, ...files];
+}
+
 export function registerBrowserCommand(
   program: Command,
   deps: BrowserCommandDeps,
@@ -419,6 +453,7 @@ export function registerBrowserCommand(
             ctx,
             browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
+            requireDiscovery: true,
             sessionProjectId:
               `${opts.sessionProjectId ?? ""}`.trim() || projectId || undefined,
             activeOnly: !!opts.activeOnly,
@@ -429,15 +464,18 @@ export function registerBrowserCommand(
             client: ctx.remote.client,
           });
           const files = await browserClient.listOpenFiles();
-          return files
-            .filter((row) => projectId == null || row.project_id === projectId)
-            .map((row) => ({
-              browser_id: sessionInfo.browser_id,
-              project_id: row.project_id,
-              title: row.title ?? "",
-              path: row.path,
-              ...sessionTargetContext(ctx, sessionInfo, row.project_id),
-            }));
+          return listOpenBrowserFilesOrTabs({
+            sessionInfo,
+            files,
+            projectId,
+          }).map((row) => ({
+            browser_id: sessionInfo.browser_id,
+            kind: row.kind,
+            project_id: row.project_id,
+            title: row.title,
+            ...(row.path ? { path: row.path } : {}),
+            ...sessionTargetContext(ctx, sessionInfo, row.project_id),
+          }));
         });
       },
     );

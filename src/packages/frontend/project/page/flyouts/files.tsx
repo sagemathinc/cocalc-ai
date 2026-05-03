@@ -64,6 +64,7 @@ import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import ShowError from "@cocalc/frontend/components/error";
 import { useSpecialPathPreview } from "@cocalc/frontend/project/explorer/use-special-path-preview";
 import { useFlyoutSettings } from "@cocalc/frontend/project/explorer/use-explorer-settings";
+import { getUserFacingListingError } from "@cocalc/frontend/project/explorer/listing-error";
 import { lite } from "@cocalc/frontend/lite";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
@@ -1009,7 +1010,10 @@ export function FilesFlyout({
         !shouldShowArchivedProjectWarning &&
         !shouldShowNewProjectWarning &&
         !shouldShowStartProjectWarning && (
-          <ShowError error={effectiveError} setError={effectiveRefresh} />
+          <ShowError
+            error={getUserFacingListingError(effectiveError)}
+            setError={effectiveRefresh}
+          />
         )}
       <FilesHeader
         activeFile={activeFile}
