@@ -6,6 +6,7 @@
 import { getAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
 import {
   deleteAcpAutomationsForProject,
+  listAcpAutomationProjectIds,
   listAcpAutomationsForProject,
   toAutomationRecord,
   upsertAcpAutomation,
@@ -219,5 +220,67 @@ describe("ACP automation sqlite lifecycle", () => {
 
     expect(listAcpAutomationsForProject("project-1")).toEqual([]);
     expect(listAcpAutomationsForProject("project-2")).toHaveLength(1);
+  });
+
+  it("lists distinct projects with local automation rows", () => {
+    upsertAcpAutomation({
+      automation_id: "automation-1",
+      project_id: "project-2",
+      path: "/root/a.chat",
+      thread_id: "thread-1",
+      account_id: "account-1",
+      enabled: true,
+      title: "A",
+      prompt: "A",
+      schedule_type: "daily",
+      local_time: "05:00",
+      timezone: "America/Los_Angeles",
+      pause_after_unacknowledged_runs: 7,
+      status: "active",
+      next_run_at: 101,
+      unacknowledged_runs: 0,
+      created_at: 10,
+      updated_at: 20,
+    });
+    upsertAcpAutomation({
+      automation_id: "automation-2",
+      project_id: "project-1",
+      path: "/root/b.chat",
+      thread_id: "thread-2",
+      account_id: "account-1",
+      enabled: true,
+      title: "B",
+      prompt: "B",
+      schedule_type: "daily",
+      local_time: "06:00",
+      timezone: "America/Los_Angeles",
+      pause_after_unacknowledged_runs: 7,
+      status: "active",
+      next_run_at: 202,
+      unacknowledged_runs: 0,
+      created_at: 10,
+      updated_at: 20,
+    });
+    upsertAcpAutomation({
+      automation_id: "automation-3",
+      project_id: "project-2",
+      path: "/root/c.chat",
+      thread_id: "thread-3",
+      account_id: "account-1",
+      enabled: false,
+      title: "C",
+      prompt: "C",
+      schedule_type: "daily",
+      local_time: "07:00",
+      timezone: "America/Los_Angeles",
+      pause_after_unacknowledged_runs: 7,
+      status: "paused",
+      next_run_at: null,
+      unacknowledged_runs: 0,
+      created_at: 10,
+      updated_at: 20,
+    });
+
+    expect(listAcpAutomationProjectIds()).toEqual(["project-1", "project-2"]);
   });
 });

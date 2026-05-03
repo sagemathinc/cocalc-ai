@@ -49,16 +49,19 @@ import { APP_PROXY_EXPOSURE_HEADER } from "@cocalc/backend/auth/app-proxy";
 import { attachProjectProxy } from "@cocalc/project-proxy/proxy";
 import { init as initChangefeeds } from "@cocalc/lite/hub/changefeeds";
 import { hubApi, init as initHubApi } from "@cocalc/lite/hub/api";
+import { listAcpAutomationProjectIds } from "@cocalc/lite/hub/sqlite/acp-automations";
 import { PROJECT_RUNNER_RPC_TIMEOUT_MS, wireProjectsApi } from "./hub/projects";
 import { wireHostsApi } from "./hub/hosts";
 import { wireSystemApi } from "./hub/system";
 import { startMasterRegistration } from "./master";
 import { startReconciler } from "./reconcile";
 import {
+  clearLocalAcpAutomationsForProject,
   rehydrateAcpAutomationsForProject,
   configureAcpDetachedWorkerRunning,
   init as initAcp,
 } from "@cocalc/lite/hub/acp";
+import { partitionAcpStartupProjectIds } from "./acp-startup-rehydrate";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { initCodexProjectRunner } from "./codex/codex-project";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
@@ -341,26 +344,47 @@ async function waitForProjectHttpPort(project_id: string): Promise<number> {
 }
 
 async function rehydrateAcpAutomationsOnStartup(): Promise<void> {
-  const projectIds = listProjects()
+  const provisionedProjectIds = listProjects()
     .map((row) => `${row.project_id ?? ""}`.trim())
     .filter(Boolean);
-  if (projectIds.length === 0) {
+  const localAutomationProjectIds = listAcpAutomationProjectIds();
+  const { rehydrateProjectIds, staleProjectIds } =
+    partitionAcpStartupProjectIds({
+      provisionedProjectIds,
+      localAutomationProjectIds,
+    });
+
+  for (const project_id of staleProjectIds) {
+    try {
+      clearLocalAcpAutomationsForProject(project_id);
+    } catch (err) {
+      logger.warn("failed clearing stale local ACP automations on startup", {
+        project_id,
+        err: `${err}`,
+      });
+    }
+  }
+
+  if (rehydrateProjectIds.length === 0) {
     return;
   }
   const concurrency = Math.min(
     ACP_STARTUP_REHYDRATE_CONCURRENCY,
-    projectIds.length,
+    rehydrateProjectIds.length,
   );
   let index = 0;
   let restored = 0;
   let failed = 0;
   logger.info("starting ACP automation rehydrate after startup", {
-    projects: projectIds.length,
+    provisioned_projects: provisionedProjectIds.length,
+    local_automation_projects: localAutomationProjectIds.length,
+    stale_local_projects: staleProjectIds.length,
+    projects: rehydrateProjectIds.length,
     concurrency,
   });
   const worker = async () => {
     while (true) {
-      const project_id = projectIds[index++];
+      const project_id = rehydrateProjectIds[index++];
       if (!project_id) return;
       try {
         restored += await rehydrateAcpAutomationsForProject(project_id);
@@ -377,7 +401,10 @@ async function rehydrateAcpAutomationsOnStartup(): Promise<void> {
     Array.from({ length: concurrency }, async () => await worker()),
   );
   logger.info("completed ACP automation rehydrate after startup", {
-    projects: projectIds.length,
+    provisioned_projects: provisionedProjectIds.length,
+    local_automation_projects: localAutomationProjectIds.length,
+    stale_local_projects: staleProjectIds.length,
+    projects: rehydrateProjectIds.length,
     restored,
     failed,
     concurrency,
