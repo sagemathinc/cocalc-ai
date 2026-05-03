@@ -1523,11 +1523,13 @@ if [ -n "$RUNTIME_UID" ]; then
 fi
 ids="$(sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman ps -a --filter "label=role=project" -q 2>/dev/null || true)"
 if [ -n "$ids" ]; then
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 30s sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
-  else
-    sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 $ids || true
-  fi
+  for id in $ids; do
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 30s sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 "$id" || true
+    else
+      sudo -n -u "$RUNTIME_USER" -H env XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" podman rm -f -t 0 "$id" || true
+    fi
+  done
 fi
 # Only kill runtime user's node processes, so we do not kill the connector process
 # that may be invoking this script.
