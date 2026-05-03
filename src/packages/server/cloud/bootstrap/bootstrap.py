@@ -949,6 +949,11 @@ ALGIF_AEAD_DISABLE_CONF = (
     'install algif_aead /bin/false\n'
 )
 
+KERNEL_KEYS_LIMITS_CONF = """[kernel]
+keys.maxkeys = 20000
+keys.maxbytes = 25000000
+"""
+
 
 def configure_kernel_module_hardening(
     cfg: BootstrapConfig,
@@ -960,6 +965,19 @@ def configure_kernel_module_hardening(
     conf = modprobe_dir / "disable-algif-aead.conf"
     conf.write_text(ALGIF_AEAD_DISABLE_CONF, encoding="utf-8")
     run_best_effort(cfg, ["rmmod", "algif_aead"], "unload algif_aead")
+
+
+def configure_kernel_key_limits(
+    cfg: BootstrapConfig,
+    *,
+    sysctl_dir: Path = Path("/etc/sysctl.d"),
+) -> None:
+    log_line(cfg, "bootstrap: configuring kernel key quotas for rootless containers")
+    sysctl_dir.mkdir(parents=True, exist_ok=True)
+    conf = sysctl_dir / "60-cocalc-project-host-keyring.conf"
+    conf.write_text(KERNEL_KEYS_LIMITS_CONF, encoding="utf-8")
+    run_best_effort(cfg, ["sysctl", "-w", "kernel.keys.maxkeys=20000"], "sysctl kernel.keys.maxkeys")
+    run_best_effort(cfg, ["sysctl", "-w", "kernel.keys.maxbytes=25000000"], "sysctl kernel.keys.maxbytes")
 
 
 def detect_public_ip(cfg: BootstrapConfig) -> str | None:
@@ -4099,6 +4117,7 @@ def run_provision(cfg: BootstrapConfig) -> int:
         report_bootstrap_status(cfg, "running", "Installing Ubuntu packages")
         apt_update_install(cfg)
         configure_kernel_module_hardening(cfg)
+        configure_kernel_key_limits(cfg)
         report_bootstrap_status(cfg, "running", "Configuring storage and containers")
         install_gpu_support(cfg)
         configure_chrony(cfg)
@@ -4124,6 +4143,7 @@ def run_reconcile(cfg: BootstrapConfig) -> int:
         ensure_runtime_user(cfg)
         ensure_bootstrap_paths(cfg)
         configure_kernel_module_hardening(cfg)
+        configure_kernel_key_limits(cfg)
         configure_journald_limits(cfg)
         image_size_gb = compute_image_size(cfg)
         install_btrfs_helper(cfg)

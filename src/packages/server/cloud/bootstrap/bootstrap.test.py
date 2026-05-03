@@ -166,6 +166,44 @@ class BootstrapKernelModuleHardeningTest(unittest.TestCase):
                 [(["rmmod", "algif_aead"], "unload algif_aead")],
             )
 
+
+class BootstrapKernelKeyLimitsTest(unittest.TestCase):
+    def test_configures_kernel_key_quotas_for_rootless_containers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            calls: list[tuple[list[str], str]] = []
+
+            original = bootstrap.run_best_effort
+            bootstrap.run_best_effort = (
+                lambda _cfg, args, desc: calls.append((args, desc))
+            )
+            try:
+                bootstrap.configure_kernel_key_limits(
+                    cfg, sysctl_dir=Path(tmpdir) / "sysctl.d"
+                )
+            finally:
+                bootstrap.run_best_effort = original
+
+            conf = Path(tmpdir) / "sysctl.d" / "60-cocalc-project-host-keyring.conf"
+            self.assertEqual(
+                conf.read_text(encoding="utf-8"),
+                "[kernel]\nkeys.maxkeys = 20000\nkeys.maxbytes = 25000000\n",
+            )
+            self.assertEqual(
+                calls,
+                [
+                    (
+                        ["sysctl", "-w", "kernel.keys.maxkeys=20000"],
+                        "sysctl kernel.keys.maxkeys",
+                    ),
+                    (
+                        ["sysctl", "-w", "kernel.keys.maxbytes=25000000"],
+                        "sysctl kernel.keys.maxbytes",
+                    ),
+                ],
+            )
+
+
 class BootstrapSubidAllocationTest(unittest.TestCase):
     def test_rewrites_user_subid_ranges_to_the_exact_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
