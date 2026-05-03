@@ -170,6 +170,16 @@ function runCliJson(context, args) {
   }
 }
 
+function isAgentAuthSessionListUnavailable(err) {
+  const message =
+    `${err instanceof Error ? err.message : (err ?? "")}`.toLowerCase();
+  return (
+    message.includes("browser session list is unavailable under agent auth") ||
+    (message.includes("browser session list") &&
+      message.includes("known browser id via cocalc_browser_id"))
+  );
+}
+
 function captureStep(summary, name, fn) {
   try {
     const value = fn();
@@ -207,16 +217,31 @@ function main(argv = process.argv.slice(2)) {
   writeJson(contextOut, context);
   summary.files.context = contextOut;
 
-  const sessionList = captureStep(summary, "browser_session_list", () =>
-    runCliJson(context, [
+  let sessionList;
+  try {
+    sessionList = runCliJson(context, [
       "browser",
       "session",
       "list",
       "--include-stale",
       "--project-id",
       context.project_id || context.exports?.COCALC_PROJECT_ID || "",
-    ]),
-  );
+    ]);
+    summary.steps.browser_session_list = { ok: true };
+  } catch (err) {
+    if (isAgentAuthSessionListUnavailable(err)) {
+      summary.steps.browser_session_list = {
+        ok: false,
+        skipped: true,
+        error:
+          "browser session list is unavailable under agent auth; skipping live session capture",
+      };
+    } else {
+      const message = err instanceof Error ? err.message : `${err}`;
+      summary.steps.browser_session_list = { ok: false, error: message };
+      summary.errors.push({ step: "browser_session_list", error: message });
+    }
+  }
   if (sessionList !== undefined) {
     const file = path.join(artifactDir, "browser-session-list.json");
     writeJson(file, sessionList);
@@ -338,6 +363,7 @@ function main(argv = process.argv.slice(2)) {
 module.exports = {
   createArtifactDirName,
   createCliEnv,
+  isAgentAuthSessionListUnavailable,
   parseArgs,
   runCliJson,
   sanitizeSegment,

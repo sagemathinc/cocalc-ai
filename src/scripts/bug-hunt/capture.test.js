@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   createArtifactDirName,
+  isAgentAuthSessionListUnavailable,
   parseArgs,
   sanitizeSegment,
 } = require("./capture.js");
@@ -41,4 +42,19 @@ test("parseArgs accepts optional ledger note flags", () => {
   assert.equal(options.note.area, "chat");
   assert.equal(options.note.result, "bug_fixed");
   assert.deepEqual(options.note.evidence, ["reproduced"]);
+});
+
+test("detects agent-auth browser session list unavailability", () => {
+  assert.equal(
+    isAgentAuthSessionListUnavailable(
+      new Error(
+        "cocalc browser session list failed: browser session list is unavailable under agent auth; use a known browser id via COCALC_BROWSER_ID instead",
+      ),
+    ),
+    true,
+  );
+  assert.equal(
+    isAgentAuthSessionListUnavailable(new Error("permission denied")),
+    false,
+  );
 });
