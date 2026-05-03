@@ -13,6 +13,7 @@ let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let assertBayAcceptsProjectOwnershipMock: jest.Mock;
 let getMembershipUsageStatusForAccountMock: jest.Mock;
+let peekCachedMembershipUsageStatusForAccountMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
@@ -99,6 +100,8 @@ jest.mock("@cocalc/server/membership/usage-status", () => ({
   __esModule: true,
   getMembershipUsageStatusForAccount: (...args: any[]) =>
     getMembershipUsageStatusForAccountMock(...args),
+  peekCachedMembershipUsageStatusForAccount: (...args: any[]) =>
+    peekCachedMembershipUsageStatusForAccountMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
@@ -132,6 +135,9 @@ describe("projects.createProject clone routing", () => {
       entitlements: {},
     }));
     getMembershipUsageStatusForAccountMock = jest.fn(async () => ({
+      total_storage_bytes: 0,
+    }));
+    peekCachedMembershipUsageStatusForAccountMock = jest.fn(() => ({
       total_storage_bytes: 0,
     }));
     computePlacementPermissionMock = jest.fn(() => ({ can_place: true }));
@@ -336,6 +342,9 @@ describe("projects.createProject clone routing", () => {
     getMembershipUsageStatusForAccountMock = jest.fn(async () => ({
       total_storage_bytes: 100,
     }));
+    peekCachedMembershipUsageStatusForAccountMock = jest.fn(() => ({
+      total_storage_bytes: 100,
+    }));
     resolveMembershipForAccountMock = jest.fn(async () => ({
       entitlements: { usage_limits: { total_storage_hard_bytes: 100 } },
     }));
@@ -353,6 +362,9 @@ describe("projects.createProject clone routing", () => {
 
   it("blocks project creation when the owner already reached the soft total storage cap", async () => {
     getMembershipUsageStatusForAccountMock = jest.fn(async () => ({
+      total_storage_bytes: 100,
+    }));
+    peekCachedMembershipUsageStatusForAccountMock = jest.fn(() => ({
       total_storage_bytes: 100,
     }));
     resolveMembershipForAccountMock = jest.fn(async () => ({
