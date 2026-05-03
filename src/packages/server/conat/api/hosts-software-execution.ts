@@ -212,6 +212,29 @@ function observedRunningProjectHostVersion(
   return versions.length === 1 ? versions[0] : undefined;
 }
 
+async function resolveDesiredProjectHostVersion({
+  row,
+  loadEffectiveRuntimeDeployments,
+}: {
+  row: any;
+  loadEffectiveRuntimeDeployments: (opts: {
+    host_id: string;
+  }) => Promise<
+    Array<{ target_type: string; target: string; desired_version?: string }>
+  >;
+}): Promise<string | undefined> {
+  const effective = await loadEffectiveRuntimeDeployments({ host_id: row.id });
+  const desiredFromRuntimeDeployments = effective.find(
+    (record) =>
+      record.target_type === "artifact" && record.target === "project-host",
+  )?.desired_version;
+  return (
+    (normalizeObservedVersion(desiredFromRuntimeDeployments) ??
+      `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim()) ||
+    undefined
+  );
+}
+
 async function enrichManagedComponentRolloutError({
   err,
   client,
@@ -484,6 +507,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   runtimeDeploymentsForComponentRollout,
   requestedByForRuntimeDeployments,
   setProjectHostRuntimeDeployments,
+  loadEffectiveRuntimeDeployments,
 }: {
   account_id?: string;
   id: string;
@@ -543,6 +567,11 @@ export async function rolloutHostManagedComponentsInternalHelper({
     deployments: any[];
     replace: false;
   }) => Promise<any>;
+  loadEffectiveRuntimeDeployments: (opts: {
+    host_id: string;
+  }) => Promise<
+    Array<{ target_type: string; target: string; desired_version?: string }>
+  >;
 }): Promise<HostManagedComponentRolloutResponse> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
@@ -571,9 +600,12 @@ export async function rolloutHostManagedComponentsInternalHelper({
     await waitForHostHeartbeatAfter({ host_id: id, since });
     refreshedRow = await loadHostForStartStop(id, account_id);
   }
-  const desiredVersion =
-    `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
-    undefined;
+  const desiredVersion = requestedProjectHostRollout
+    ? await resolveDesiredProjectHostVersion({
+        row,
+        loadEffectiveRuntimeDeployments,
+      })
+    : undefined;
   let observedProjectHostVersion =
     observedInstalledProjectHostVersionFromRow(refreshedRow);
   if (requestedProjectHostRollout) {

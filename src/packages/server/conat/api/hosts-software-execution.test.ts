@@ -436,6 +436,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         runtimeDeploymentsForComponentRollout: () => [],
         requestedByForRuntimeDeployments: () => "account-1",
         setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [],
       }),
     ).rejects.toMatchObject({
       code: "PROJECT_HOST_LOCAL_ROLLBACK",
@@ -496,9 +497,124 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         runtimeDeploymentsForComponentRollout: () => [],
         requestedByForRuntimeDeployments: () => "account-1",
         setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [],
       }),
     ).rejects.toThrow(
       /Recent host diagnostics:[\s\S]*\[supervision-events\][\s\S]*\[conat-router\]/,
+    );
+  });
+
+  it("uses the effective runtime deployment target as the desired project-host version", async () => {
+    const runtimeDeploymentsForComponentRollout = jest.fn(() => []);
+    const recordProjectHostLocalRollbackInternal = jest.fn(async () => ({
+      host_id: "host-1",
+      rollback_version: "ph-v1",
+      source: "host-agent" as const,
+    }));
+    const setLastKnownGoodArtifactVersionInternal = jest.fn(
+      async () => undefined,
+    );
+
+    await expect(
+      rolloutHostManagedComponentsInternalHelper({
+        account_id: "account-1",
+        id: "host-1",
+        components: ["project-host"],
+        reason: "host_software_upgrade",
+        loadHostForStartStop: jest
+          .fn()
+          .mockResolvedValueOnce({
+            id: "host-1",
+            status: "running",
+            version: "ph-v1",
+            last_seen: "2026-04-25T05:00:00.000Z",
+            metadata: {
+              owner: "account-1",
+              software: {
+                project_host: "ph-v1",
+              },
+            },
+          })
+          .mockResolvedValueOnce({
+            id: "host-1",
+            status: "running",
+            version: "ph-v1",
+            last_seen: "2026-04-25T05:00:05.000Z",
+            metadata: {
+              owner: "account-1",
+              software: {
+                project_host: "ph-v1",
+              },
+            },
+          }),
+        assertHostRunningForUpgrade: () => undefined,
+        hostControlClient: async () => ({
+          getRuntimeLog: async () => ({
+            source: "project-host",
+            lines: 25,
+            text: "",
+          }),
+          rolloutManagedComponents: async () => ({
+            results: [
+              {
+                component: "project-host",
+                action: "restart_scheduled",
+              },
+            ],
+          }),
+          getManagedComponentStatus: async () => [
+            {
+              component: "project-host",
+              artifact: "project-host",
+              upgrade_policy: "restart_now",
+              enabled: true,
+              managed: true,
+              desired_version: "ph-v2",
+              runtime_state: "running",
+              version_state: "aligned",
+              running_versions: ["ph-v2"],
+              running_pids: [123],
+            },
+          ],
+        }),
+        waitForHostHeartbeatAfter: async () => undefined,
+        installedProjectHostArtifactVersion: () => "ph-v1",
+        recordProjectHostLocalRollbackInternal,
+        project_host_local_rollback_error_code: "project_host_local_rollback",
+        setLastKnownGoodArtifactVersionInternal,
+        runtimeDeploymentsForComponentRollout,
+        requestedByForRuntimeDeployments: () => "account-1",
+        setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [
+          {
+            target_type: "artifact",
+            target: "project-host",
+            desired_version: "ph-v2",
+          },
+        ],
+      }),
+    ).resolves.toEqual({
+      results: [
+        {
+          component: "project-host",
+          action: "restart_scheduled",
+        },
+      ],
+    });
+
+    expect(recordProjectHostLocalRollbackInternal).not.toHaveBeenCalled();
+    expect(setLastKnownGoodArtifactVersionInternal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host_id: "host-1",
+        version: "ph-v2",
+      }),
+    );
+    expect(runtimeDeploymentsForComponentRollout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        components: ["project-host"],
+        desired_version: "ph-v2",
+        reason: "host_software_upgrade",
+      }),
     );
   });
 
@@ -545,6 +661,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         runtimeDeploymentsForComponentRollout: () => [],
         requestedByForRuntimeDeployments: () => "account-1",
         setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [],
       }),
     ).rejects.toThrow(
       /Recent host diagnostics:[\s\S]*\[supervision-events\][\s\S]*\[acp-worker\]/,
@@ -633,6 +750,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         runtimeDeploymentsForComponentRollout: () => [],
         requestedByForRuntimeDeployments: () => "account-1",
         setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [],
       }),
     ).resolves.toEqual({
       results: [
@@ -731,6 +849,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         runtimeDeploymentsForComponentRollout: () => [],
         requestedByForRuntimeDeployments: () => "account-1",
         setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [],
       }),
     ).resolves.toEqual({
       results: [
@@ -842,6 +961,7 @@ describe("rolloutHostManagedComponentsInternalHelper", () => {
         runtimeDeploymentsForComponentRollout: () => [],
         requestedByForRuntimeDeployments: () => "account-1",
         setProjectHostRuntimeDeployments: async () => undefined,
+        loadEffectiveRuntimeDeployments: async () => [],
       }),
     ).resolves.toEqual({
       results: [

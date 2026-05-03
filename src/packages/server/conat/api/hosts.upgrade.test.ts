@@ -15,6 +15,7 @@ let getHostOwnerBaySshIdentityMock: jest.Mock;
 let getRoutedHostControlClientMock: jest.Mock;
 let getProviderContextMock: jest.Mock;
 let ensureSshAccessMock: jest.Mock;
+let loadEffectiveProjectHostRuntimeDeploymentsMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -62,6 +63,12 @@ jest.mock("@cocalc/server/project-host/client", () => ({
   __esModule: true,
   getRoutedHostControlClient: (...args: any[]) =>
     getRoutedHostControlClientMock(...args),
+}));
+
+jest.mock("@cocalc/database/postgres/project-host-runtime-deployments", () => ({
+  __esModule: true,
+  loadEffectiveProjectHostRuntimeDeployments: (...args: any[]) =>
+    loadEffectiveProjectHostRuntimeDeploymentsMock(...args),
 }));
 
 jest.mock("@cocalc/server/cloud/provider-context", () => ({
@@ -212,6 +219,7 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       creds: {},
     }));
     delayMock = jest.fn(async () => undefined);
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => []);
     upgradeHostSoftwareInternalHelperMock = jest.fn(async () => ({
       results: [],
     }));
@@ -541,6 +549,67 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
       }),
     );
     expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("uses the effective runtime deployment artifact target during software reconcile", async () => {
+    const initialRow = makeHostRow({
+      version: "1776405602543",
+      desiredProjectHostVersion: "1776405602543",
+      lifecycleStatus: "drifted",
+    });
+    const reconciledRow = makeHostRow({
+      version: "1776486535462",
+      desiredProjectHostVersion: "1776486535462",
+      lifecycleStatus: "in_sync",
+    });
+    loadEffectiveProjectHostRuntimeDeploymentsMock = jest.fn(async () => [
+      {
+        scope_type: "host",
+        scope_id: HOST_ID,
+        host_id: HOST_ID,
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "1776486535462",
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+      },
+    ]);
+
+    let loadCount = 0;
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        loadCount += 1;
+        return { rows: [loadCount === 1 ? initialRow : reconciledRow] };
+      }
+      if (sql.includes("SELECT deleted, last_seen FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              deleted: null,
+              last_seen: new Date(Date.now() + 60_000).toISOString(),
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { reconcileHostSoftwareInternal } = await import("./hosts");
+    await expect(
+      reconcileHostSoftwareInternal({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(upgradeHostSoftwareInternalHelperMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        targets: [{ artifact: "project-host", version: "1776486535462" }],
+      }),
+    );
   });
 
   it("falls back to ssh after a runtime reconcile failure", async () => {

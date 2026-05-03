@@ -116,6 +116,7 @@ import {
   clearProjectHostRuntimeDeployments,
   ensureProjectHostRuntimeDeploymentsSchema,
   listProjectHostRuntimeDeployments,
+  loadEffectiveProjectHostRuntimeDeployments,
   setProjectHostRuntimeDeployments,
 } from "@cocalc/database/postgres/project-host-runtime-deployments";
 import {
@@ -4065,6 +4066,7 @@ function bootstrapLifecycleSummaryStatus(row: any): string | undefined {
 
 function desiredSoftwareTargetsForReconcile(
   row: any,
+  desiredArtifacts?: HostRuntimeDesiredArtifactsSummary,
 ): HostSoftwareUpgradeTarget[] {
   const software = row?.metadata?.software ?? {};
   const observed = new Map(
@@ -4087,14 +4089,20 @@ function desiredSoftwareTargetsForReconcile(
   maybePush(
     "project-host",
     "project-host",
-    `${software.project_host ?? row?.version ?? ""}`.trim() || undefined,
+    `${desiredArtifacts?.project_host ?? software.project_host ?? row?.version ?? ""}`.trim() ||
+      undefined,
   );
   maybePush(
     "project",
     "project-bundle",
-    `${software.project_bundle ?? ""}`.trim() || undefined,
+    `${desiredArtifacts?.project_bundle ?? software.project_bundle ?? ""}`.trim() ||
+      undefined,
   );
-  maybePush("tools", "tools", `${software.tools ?? ""}`.trim() || undefined);
+  maybePush(
+    "tools",
+    "tools",
+    `${desiredArtifacts?.tools ?? software.tools ?? ""}`.trim() || undefined,
+  );
   return targets;
 }
 
@@ -4489,7 +4497,28 @@ export async function reconcileHostSoftwareInternal({
 
   if (availability.online) {
     try {
-      const targets = desiredSoftwareTargetsForReconcile(row);
+      const effective = await loadEffectiveProjectHostRuntimeDeployments({
+        host_id: row.id,
+      });
+      const desiredArtifacts: HostRuntimeDesiredArtifactsSummary = {};
+      for (const record of effective) {
+        if (record.target_type !== "artifact") continue;
+        switch (`${record.target ?? ""}`.trim()) {
+          case "project-host":
+            desiredArtifacts.project_host =
+              `${record.desired_version ?? ""}`.trim() || undefined;
+            break;
+          case "project-bundle":
+            desiredArtifacts.project_bundle =
+              `${record.desired_version ?? ""}`.trim() || undefined;
+            break;
+          case "tools":
+            desiredArtifacts.tools =
+              `${record.desired_version ?? ""}`.trim() || undefined;
+            break;
+        }
+      }
+      const targets = desiredSoftwareTargetsForReconcile(row, desiredArtifacts);
       const shouldRollManagedComponents = targets.some(
         (target) => target.artifact === "project-host",
       );
@@ -4812,6 +4841,7 @@ export async function rolloutHostManagedComponentsInternal({
     runtimeDeploymentsForComponentRollout,
     requestedByForRuntimeDeployments,
     setProjectHostRuntimeDeployments,
+    loadEffectiveRuntimeDeployments: loadEffectiveProjectHostRuntimeDeployments,
   });
 }
 
