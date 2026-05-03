@@ -429,10 +429,53 @@ function summarizePhaseTimings(entries, field = "phase_timings_ms") {
   return summary;
 }
 
+function summarizeNumericFields(entries, fields) {
+  const summary = {};
+  let hasValues = false;
+  for (const field of fields) {
+    const values = [];
+    for (const entry of entries ?? []) {
+      const numeric = Number(entry?.[field]);
+      if (Number.isFinite(numeric) && numeric >= 0) {
+        values.push(numeric);
+      }
+    }
+    if (!values.length) {
+      continue;
+    }
+    hasValues = true;
+    values.sort((a, b) => a - b);
+    const total = values.reduce((sum, value) => sum + value, 0);
+    const percentile = (p) => {
+      const index = Math.max(
+        0,
+        Math.min(values.length - 1, Math.ceil((p / 100) * values.length) - 1),
+      );
+      return values[index];
+    };
+    summary[field] = {
+      count: values.length,
+      total_ms: total,
+      avg_ms: total / values.length,
+      min_ms: values[0],
+      p50_ms: percentile(50),
+      p95_ms: percentile(95),
+      max_ms: values[values.length - 1],
+    };
+  }
+  return hasValues ? summary : undefined;
+}
+
 function formatPhaseStat(phaseSummary, phase) {
   const stats = phaseSummary?.phases?.[phase];
   if (!stats) return null;
   return `${phase}=avg:${formatDurationMs(stats.avg_ms)} p95:${formatDurationMs(stats.p95_ms)} max:${formatDurationMs(stats.max_ms)}`;
+}
+
+function formatNumericStat(summary, field, label = field) {
+  const stats = summary?.[field];
+  if (!stats) return null;
+  return `${label}=avg:${formatDurationMs(stats.avg_ms)} p95:${formatDurationMs(stats.p95_ms)} max:${formatDurationMs(stats.max_ms)}`;
 }
 
 function formatPhaseStatEither(primary, primaryPhase, fallback, fallbackPhase) {
@@ -510,6 +553,7 @@ function printTierSummary({
   tier,
   timing,
   sample,
+  startTimingSummary,
   phaseSummary,
   runnerPhaseSummary,
 }) {
@@ -533,6 +577,18 @@ function printTierSummary({
       `mem_available=${memAvail}`,
     ].join(" "),
   );
+  const startTimingParts = [
+    formatNumericStat(startTimingSummary, "queue_duration_ms", "queue"),
+    formatNumericStat(startTimingSummary, "wait_duration_ms", "wait"),
+    formatNumericStat(startTimingSummary, "duration_ms", "total_start"),
+  ].filter(Boolean);
+  if (startTimingParts.length > 0) {
+    console.error(
+      [`[host-density] tier ${tier} orchestration`, ...startTimingParts].join(
+        " ",
+      ),
+    );
+  }
   const phaseParts = [
     formatPhaseStat(phaseSummary, "prepare_config"),
     formatPhaseStat(phaseSummary, "cache_rootfs"),
@@ -1355,6 +1411,11 @@ async function main() {
         activeTerminal: options.activeTerminal,
       });
       const phaseTimingSummary = summarizePhaseTimings(startedThisTier);
+      const startTimingSummary = summarizeNumericFields(startedThisTier, [
+        "queue_duration_ms",
+        "wait_duration_ms",
+        "duration_ms",
+      ]);
       const runnerPhaseTimingSummary = summarizePhaseTimings(
         startedThisTier,
         "runner_phase_timings_ms",
@@ -1364,6 +1425,13 @@ async function main() {
           .slice(0, tier)
           .map((project) => startedProjectResults.get(project.project_id))
           .filter(Boolean),
+      );
+      const cumulativeStartTimingSummary = summarizeNumericFields(
+        createdProjects
+          .slice(0, tier)
+          .map((project) => startedProjectResults.get(project.project_id))
+          .filter(Boolean),
+        ["queue_duration_ms", "wait_duration_ms", "duration_ms"],
       );
       const cumulativeRunnerPhaseTimingSummary = summarizePhaseTimings(
         createdProjects
@@ -1379,8 +1447,10 @@ async function main() {
         started_count: startedProjectIds.size,
         created_this_tier: createdThisTier,
         started_this_tier: startedThisTier,
+        start_timing_summary: startTimingSummary,
         phase_timing_summary: phaseTimingSummary,
         runner_phase_timing_summary: runnerPhaseTimingSummary,
+        cumulative_start_timing_summary: cumulativeStartTimingSummary,
         cumulative_phase_timing_summary: cumulativePhaseTimingSummary,
         cumulative_runner_phase_timing_summary:
           cumulativeRunnerPhaseTimingSummary,
@@ -1393,6 +1463,7 @@ async function main() {
         tier,
         timing,
         sample,
+        startTimingSummary,
         phaseSummary: phaseTimingSummary,
         runnerPhaseSummary: runnerPhaseTimingSummary,
       });
