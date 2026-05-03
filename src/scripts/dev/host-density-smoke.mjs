@@ -368,6 +368,73 @@ function formatGiBFromKb(value) {
   return `${(value / (1024 * 1024)).toFixed(1)}GiB`;
 }
 
+function normalizePhaseTimings(value) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric >= 0) {
+      out[key] = numeric;
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function summarizePhaseTimings(entries) {
+  const phases = new Map();
+  let projectCount = 0;
+  for (const entry of entries ?? []) {
+    const timings = normalizePhaseTimings(entry?.phase_timings_ms);
+    if (!timings) {
+      continue;
+    }
+    projectCount += 1;
+    for (const [phase, value] of Object.entries(timings)) {
+      if (!phases.has(phase)) {
+        phases.set(phase, []);
+      }
+      phases.get(phase).push(value);
+    }
+  }
+  if (!projectCount || !phases.size) {
+    return undefined;
+  }
+  const summary = {
+    project_count: projectCount,
+    phases: {},
+  };
+  for (const [phase, valuesRaw] of phases.entries()) {
+    const values = [...valuesRaw].sort((a, b) => a - b);
+    const total = values.reduce((sum, value) => sum + value, 0);
+    const percentile = (p) => {
+      if (!values.length) return null;
+      const index = Math.max(
+        0,
+        Math.min(values.length - 1, Math.ceil((p / 100) * values.length) - 1),
+      );
+      return values[index];
+    };
+    summary.phases[phase] = {
+      count: values.length,
+      total_ms: total,
+      avg_ms: total / values.length,
+      min_ms: values[0],
+      p50_ms: percentile(50),
+      p95_ms: percentile(95),
+      max_ms: values[values.length - 1],
+    };
+  }
+  return summary;
+}
+
+function formatPhaseStat(phaseSummary, phase) {
+  const stats = phaseSummary?.phases?.[phase];
+  if (!stats) return null;
+  return `${phase}=avg:${formatDurationMs(stats.avg_ms)} p95:${formatDurationMs(stats.p95_ms)} max:${formatDurationMs(stats.max_ms)}`;
+}
+
 function findStepByName(steps, name) {
   return steps.find((step) => step?.name === name);
 }
@@ -432,7 +499,7 @@ function resolveTierTiming({ tier, steps, activeTerminal }) {
   };
 }
 
-function printTierSummary({ tier, timing, sample }) {
+function printTierSummary({ tier, timing, sample, phaseSummary }) {
   const remote = sample?.remote ?? {};
   const loadavg = Array.isArray(remote?.loadavg)
     ? remote.loadavg.map((value) => Number(value).toFixed(2)).join(", ")
@@ -453,6 +520,18 @@ function printTierSummary({ tier, timing, sample }) {
       `mem_available=${memAvail}`,
     ].join(" "),
   );
+  const phaseParts = [
+    formatPhaseStat(phaseSummary, "prepare_config"),
+    formatPhaseStat(phaseSummary, "cache_rootfs"),
+    formatPhaseStat(phaseSummary, "runner_start"),
+    formatPhaseStat(phaseSummary, "refresh_authorized_keys"),
+    formatPhaseStat(phaseSummary, "total"),
+  ].filter(Boolean);
+  if (phaseParts.length > 0) {
+    console.error(
+      [`[host-density] tier ${tier} phases`, ...phaseParts].join(" "),
+    );
+  }
 }
 
 function projectTitle(prefix, runId, index) {
@@ -724,20 +803,38 @@ async function createProject({
 
 async function startProject({ projectId, globalArgs }) {
   const startedAt = Date.now();
-  const result = await runCocalcJson([
+  const queued = await runCocalcJson([
     ...globalArgs,
     "project",
     "start",
     "-w",
     projectId,
-    "--wait",
   ]);
-  const data = getData(result);
+  const queueFinishedAt = Date.now();
+  const queuedData = getData(queued);
+  const opId = `${queuedData?.op_id ?? ""}`.trim();
+  ensure(opId, `missing start op_id for ${projectId}`);
+  const waited = await runCocalcJson([...globalArgs, "op", "wait", opId]);
+  const waitedData = getData(waited);
+  const status = `${waitedData?.status ?? ""}`.trim();
+  if (status !== "succeeded") {
+    throw new Error(
+      `project start op ${opId} for ${projectId} finished with status=${status} error=${waitedData?.error ?? "unknown"}`,
+    );
+  }
+  const resultSummary = waitedData?.result;
+  const progressSummary = waitedData?.progress_summary;
+  const phaseTimings =
+    normalizePhaseTimings(resultSummary?.phase_timings_ms) ??
+    normalizePhaseTimings(progressSummary?.phase_timings_ms);
   return {
     project_id: projectId,
-    status: `${data?.status ?? ""}`.trim(),
-    op_id: `${data?.op_id ?? ""}`.trim(),
+    status,
+    op_id: opId,
+    queue_duration_ms: queueFinishedAt - startedAt,
+    wait_duration_ms: Date.now() - queueFinishedAt,
     duration_ms: Date.now() - startedAt,
+    phase_timings_ms: phaseTimings,
   };
 }
 
@@ -888,6 +985,7 @@ async function main() {
   const runId = compactTimestamp();
   const createdProjects = [];
   const startedProjectIds = new Set();
+  const startedProjectResults = new Map();
   const activeTerminals = new Map();
   const preprovision = {
     requested_count: options.provisionCount,
@@ -1053,6 +1151,7 @@ async function main() {
                   globalArgs,
                 });
                 startedProjectIds.add(project.project_id);
+                startedProjectResults.set(project.project_id, started);
                 return started;
               },
             );
@@ -1165,6 +1264,13 @@ async function main() {
         steps,
         activeTerminal: options.activeTerminal,
       });
+      const phaseTimingSummary = summarizePhaseTimings(startedThisTier);
+      const cumulativePhaseTimingSummary = summarizePhaseTimings(
+        createdProjects
+          .slice(0, tier)
+          .map((project) => startedProjectResults.get(project.project_id))
+          .filter(Boolean),
+      );
 
       tierResults.push({
         tier,
@@ -1172,12 +1278,19 @@ async function main() {
         started_count: startedProjectIds.size,
         created_this_tier: createdThisTier,
         started_this_tier: startedThisTier,
+        phase_timing_summary: phaseTimingSummary,
+        cumulative_phase_timing_summary: cumulativePhaseTimingSummary,
         active_terminal: activeTerminalResults,
         sample,
         exec_smoke: execResults,
         timing,
       });
-      printTierSummary({ tier, timing, sample });
+      printTierSummary({
+        tier,
+        timing,
+        sample,
+        phaseSummary: phaseTimingSummary,
+      });
     }
   } catch (err) {
     failure = `${err?.stack ?? err}`;
