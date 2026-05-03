@@ -11,6 +11,7 @@ const PROJECT_A = "00000000-1000-4000-8000-0000000000aa";
 const PROJECT_B = "00000000-1000-4000-8000-0000000000bb";
 const ORIGINAL_COCALC_CLI_AGENT_MODE = process.env.COCALC_CLI_AGENT_MODE;
 const ORIGINAL_COCALC_AGENT_MODE = process.env.COCALC_AGENT_MODE;
+const ORIGINAL_COCALC_PROJECT_ID = process.env.COCALC_PROJECT_ID;
 
 function makeProgram({
   openFiles,
@@ -102,6 +103,110 @@ test("browser files filters open files by --project-id", async () => {
     [
       {
         browser_id: "browser-1",
+        kind: "file",
+        project_id: PROJECT_A,
+        title: "A",
+        path: "/home/user/a.md",
+        target_api_url: "http://localhost:7003",
+        target_browser_id: "browser-1",
+        target_session_url: `http://localhost:7003/projects/${PROJECT_A}/files`,
+        target_project_id: PROJECT_A,
+      },
+    ],
+  ]);
+});
+
+test("browser files reports an open project tab when no files are open", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const { program, results } = makeProgram({
+    openFiles: [],
+    listBrowserSessions: async () => [
+      {
+        browser_id: "browser-1",
+        active_project_id: PROJECT_A,
+        open_projects: [{ project_id: PROJECT_A, title: "Project A" }],
+        stale: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        url: `http://localhost:7003/projects/${PROJECT_A}/files`,
+      },
+    ],
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "files",
+    "--browser",
+    "browser-1",
+    "--project-id",
+    PROJECT_A,
+  ]);
+
+  assert.deepEqual(results, [
+    [
+      {
+        browser_id: "browser-1",
+        kind: "project",
+        project_id: PROJECT_A,
+        title: "Project A",
+        target_api_url: "http://localhost:7003",
+        target_browser_id: "browser-1",
+        target_session_url: `http://localhost:7003/projects/${PROJECT_A}/files`,
+        target_project_id: PROJECT_A,
+      },
+    ],
+  ]);
+});
+
+test("browser files keeps project-only tabs alongside file rows", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  delete process.env.COCALC_PROJECT_ID;
+  const { program, results } = makeProgram({
+    openFiles: [{ project_id: PROJECT_A, title: "A", path: "/home/user/a.md" }],
+    listBrowserSessions: async () => [
+      {
+        browser_id: "browser-1",
+        active_project_id: PROJECT_A,
+        open_projects: [
+          { project_id: PROJECT_A, title: "Project A" },
+          { project_id: PROJECT_B, title: "Project B" },
+        ],
+        stale: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        url: `http://localhost:7003/projects/${PROJECT_A}/files`,
+      },
+    ],
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "files",
+    "--browser",
+    "browser-1",
+  ]);
+
+  assert.deepEqual(results, [
+    [
+      {
+        browser_id: "browser-1",
+        kind: "project",
+        project_id: PROJECT_B,
+        title: "Project B",
+        target_api_url: "http://localhost:7003",
+        target_browser_id: "browser-1",
+        target_session_url: `http://localhost:7003/projects/${PROJECT_A}/files`,
+        target_project_id: PROJECT_B,
+      },
+      {
+        browser_id: "browser-1",
+        kind: "file",
         project_id: PROJECT_A,
         title: "A",
         path: "/home/user/a.md",
@@ -134,6 +239,7 @@ test("browser tabs is an alias for browser files", async () => {
 
   assert.equal((results[0] as unknown[]).length, 1);
   assert.equal((results[0] as { path: string }[])[0]?.path, "/home/user/a.md");
+  assert.equal((results[0] as { kind: string }[])[0]?.kind, "file");
 });
 
 test("browser session list fails fast with a clear message under agent auth", async () => {
@@ -270,5 +376,10 @@ test.after(() => {
     delete process.env.COCALC_AGENT_MODE;
   } else {
     process.env.COCALC_AGENT_MODE = ORIGINAL_COCALC_AGENT_MODE;
+  }
+  if (ORIGINAL_COCALC_PROJECT_ID == null) {
+    delete process.env.COCALC_PROJECT_ID;
+  } else {
+    process.env.COCALC_PROJECT_ID = ORIGINAL_COCALC_PROJECT_ID;
   }
 });
