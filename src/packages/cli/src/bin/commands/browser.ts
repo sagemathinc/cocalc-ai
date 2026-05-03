@@ -422,7 +422,7 @@ export function registerBrowserCommand(
     .description("list files/tabs currently open in a browser session")
     .option(
       "--project-id <id>",
-      "filter to this project id; defaults to COCALC_PROJECT_ID when set",
+      "filter to this project id; when omitted, show all open project tabs/files in the chosen browser session",
     )
     .option(
       "--browser <id>",
@@ -445,8 +445,10 @@ export function registerBrowserCommand(
       ) => {
         await deps.withContext(command, "browser files", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
-          const projectId =
-            `${opts.projectId ?? ""}`.trim() ||
+          const projectId = `${opts.projectId ?? ""}`.trim() || undefined;
+          const sessionProjectId =
+            `${opts.sessionProjectId ?? ""}`.trim() ||
+            projectId ||
             `${process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
             undefined;
           const sessionInfo = await chooseBrowserSession({
@@ -454,8 +456,7 @@ export function registerBrowserCommand(
             browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
             requireDiscovery: true,
-            sessionProjectId:
-              `${opts.sessionProjectId ?? ""}`.trim() || projectId || undefined,
+            sessionProjectId,
             activeOnly: !!opts.activeOnly,
           });
           const browserClient = deps.createBrowserSessionClient({

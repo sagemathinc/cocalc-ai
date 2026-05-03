@@ -219,6 +219,64 @@ test("browser files keeps project-only tabs alongside file rows", async () => {
   ]);
 });
 
+test("browser files does not implicitly filter rows by COCALC_PROJECT_ID", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  process.env.COCALC_PROJECT_ID = PROJECT_A;
+  const { program, results } = makeProgram({
+    openFiles: [{ project_id: PROJECT_A, title: "A", path: "/home/user/a.md" }],
+    listBrowserSessions: async () => [
+      {
+        browser_id: "browser-1",
+        active_project_id: PROJECT_B,
+        open_projects: [
+          { project_id: PROJECT_A, title: "Project A" },
+          { project_id: PROJECT_B, title: "Project B" },
+        ],
+        stale: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        url: `http://localhost:7003/projects/${PROJECT_B}/files`,
+      },
+    ],
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "files",
+    "--browser",
+    "browser-1",
+  ]);
+
+  assert.deepEqual(results, [
+    [
+      {
+        browser_id: "browser-1",
+        kind: "project",
+        project_id: PROJECT_B,
+        title: "Project B",
+        target_api_url: "http://localhost:7003",
+        target_browser_id: "browser-1",
+        target_session_url: `http://localhost:7003/projects/${PROJECT_B}/files`,
+        target_project_id: PROJECT_B,
+      },
+      {
+        browser_id: "browser-1",
+        kind: "file",
+        project_id: PROJECT_A,
+        title: "A",
+        path: "/home/user/a.md",
+        target_api_url: "http://localhost:7003",
+        target_browser_id: "browser-1",
+        target_session_url: `http://localhost:7003/projects/${PROJECT_B}/files`,
+        target_project_id: PROJECT_A,
+      },
+    ],
+  ]);
+});
+
 test("browser tabs is an alias for browser files", async () => {
   delete process.env.COCALC_CLI_AGENT_MODE;
   delete process.env.COCALC_AGENT_MODE;
