@@ -3,7 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import {
   ACTIVITY_BAR_COLLAPSED,
@@ -18,8 +19,6 @@ import {
   normalizeHiddenFixedTabs,
 } from "./activity-bar-preferences";
 import type { FixedTab } from "./file-tab";
-
-const ACTIVITY_BAR_STORAGE_EVENT = "cocalc:activity-bar-storage";
 
 const STORAGE_KEYS = {
   collapsed: new LS.CustomKey(ACTIVITY_BAR_COLLAPSED),
@@ -37,24 +36,6 @@ export interface ActivityBarPreferences {
   hidden: FixedTab[];
 }
 
-function emitActivityBarStorageChanged(): void {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(new Event(ACTIVITY_BAR_STORAGE_EVENT));
-}
-
-function subscribe(listener: () => void): () => void {
-  if (typeof window === "undefined") {
-    return () => {};
-  }
-  const handle = () => listener();
-  window.addEventListener(ACTIVITY_BAR_STORAGE_EVENT, handle);
-  window.addEventListener("storage", handle);
-  return () => {
-    window.removeEventListener(ACTIVITY_BAR_STORAGE_EVENT, handle);
-    window.removeEventListener("storage", handle);
-  };
-}
-
 function getStoredValue<T>(key: ActivityBarStorageKey): T | undefined {
   return LS.get<T>(STORAGE_KEYS[key]);
 }
@@ -64,6 +45,17 @@ function normalizeBoolean(value: any, fallback: boolean): boolean {
   if (value === "true") return true;
   if (value === "false") return false;
   return fallback;
+}
+
+function setPagePreferenceState(
+  patch: Partial<{
+    activity_bar_collapsed: boolean;
+    activity_bar_labels: boolean;
+    activity_bar_order: FixedTab[];
+    activity_bar_hidden: FixedTab[];
+  }>,
+): void {
+  redux.getStore("page")?.setState(patch);
 }
 
 export function readActivityBarPreferences(opts?: {
@@ -87,51 +79,68 @@ export function readActivityBarPreferences(opts?: {
 }
 
 export function getActivityBarCollapsed(): boolean {
+  const pageValue = redux.getStore("page")?.get("activity_bar_collapsed");
+  if (typeof pageValue === "boolean") {
+    return pageValue;
+  }
   return readActivityBarPreferences().collapsed;
 }
 
 export function setActivityBarCollapsed(value: boolean): void {
-  LS.set(STORAGE_KEYS.collapsed, !!value);
-  emitActivityBarStorageChanged();
+  const next = !!value;
+  LS.set(STORAGE_KEYS.collapsed, next);
+  setPagePreferenceState({ activity_bar_collapsed: next });
 }
 
 export function setActivityBarLabels(value: boolean): void {
-  LS.set(STORAGE_KEYS.labels, !!value);
-  emitActivityBarStorageChanged();
+  const next = !!value;
+  LS.set(STORAGE_KEYS.labels, next);
+  setPagePreferenceState({ activity_bar_labels: next });
 }
 
 export function setActivityBarTabOrder(
   value: readonly FixedTab[],
   opts?: { liteMode?: boolean },
 ): void {
-  LS.set(
-    STORAGE_KEYS.order,
-    normalizeFixedTabOrder(value, { liteMode: opts?.liteMode === true }),
-  );
-  emitActivityBarStorageChanged();
+  const next = normalizeFixedTabOrder(value, {
+    liteMode: opts?.liteMode === true,
+  });
+  LS.set(STORAGE_KEYS.order, next);
+  setPagePreferenceState({ activity_bar_order: next });
 }
 
 export function setActivityBarHiddenTabs(
   value: readonly FixedTab[],
   opts?: { liteMode?: boolean },
 ): void {
-  LS.set(
-    STORAGE_KEYS.hidden,
-    normalizeHiddenFixedTabs(value, { liteMode: opts?.liteMode === true }),
-  );
-  emitActivityBarStorageChanged();
+  const next = normalizeHiddenFixedTabs(value, {
+    liteMode: opts?.liteMode === true,
+  });
+  LS.set(STORAGE_KEYS.hidden, next);
+  setPagePreferenceState({ activity_bar_hidden: next });
 }
 
 export function useActivityBarPreferences(opts?: {
   liteMode?: boolean;
 }): ActivityBarPreferences {
-  const [version, setVersion] = useState(0);
   const liteMode = opts?.liteMode === true;
+  const collapsedSource = useTypedRedux("page", "activity_bar_collapsed");
+  const labelsSource = useTypedRedux("page", "activity_bar_labels");
+  const orderSource = useTypedRedux("page", "activity_bar_order");
+  const hiddenSource = useTypedRedux("page", "activity_bar_hidden");
 
-  useEffect(() => subscribe(() => setVersion((current) => current + 1)), []);
-
-  return useMemo(
-    () => readActivityBarPreferences({ liteMode }),
-    [liteMode, version],
-  );
+  return useMemo(() => {
+    const persisted = readActivityBarPreferences({ liteMode });
+    return {
+      collapsed: normalizeBoolean(collapsedSource, persisted.collapsed),
+      labels: normalizeBoolean(labelsSource, persisted.labels),
+      order: normalizeFixedTabOrder(orderSource ?? persisted.order, {
+        liteMode,
+      }),
+      hidden:
+        hiddenSource == null
+          ? persisted.hidden
+          : normalizeHiddenFixedTabs(hiddenSource, { liteMode }),
+    };
+  }, [collapsedSource, hiddenSource, labelsSource, liteMode, orderSource]);
 }

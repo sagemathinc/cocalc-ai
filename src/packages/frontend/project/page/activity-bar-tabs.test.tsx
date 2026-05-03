@@ -9,6 +9,14 @@ const mockToggleActionButtons = jest.fn();
 const mockSetOtherSettings = jest.fn();
 let mockAccountStoreReady = true;
 let mockLite = true;
+let mockPageState: Record<string, any> = {};
+
+const mockPageStore = {
+  get: (key: string) => mockPageState[key],
+  setState: (patch: Record<string, any>) => {
+    mockPageState = { ...mockPageState, ...patch };
+  },
+};
 
 function flattenMenuItems(items: any[] = []): any[] {
   return items.flatMap((item) => {
@@ -85,6 +93,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       };
     }
     return undefined;
+  },
+  redux: {
+    getStore: (name: string) => (name === "page" ? mockPageStore : undefined),
   },
   CSS: {},
 }));
@@ -183,6 +194,7 @@ describe("VerticalFixedTabs overflow actions", () => {
     mockSetOtherSettings.mockReset();
     mockAccountStoreReady = true;
     mockLite = true;
+    mockPageState = {};
     window.localStorage.clear();
     (global as any).ResizeObserver = class {
       observe() {}
@@ -224,6 +236,7 @@ describe("VerticalFixedTabs overflow actions", () => {
 describe("ProjectTabs settings affordance", () => {
   beforeEach(() => {
     mockLite = false;
+    mockPageState = {};
   });
 
   afterEach(() => {
@@ -244,6 +257,7 @@ describe("HiddenActivityBarLauncher", () => {
     mockToggleActionButtons.mockReset();
     mockSetOtherSettings.mockReset();
     mockAccountStoreReady = true;
+    mockPageState = {};
   });
 
   it("opens a flyout from the hidden launcher on ordinary click", () => {

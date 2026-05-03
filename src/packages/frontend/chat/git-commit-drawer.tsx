@@ -313,6 +313,30 @@ export function filterGitReviewLogEntries({
   return entries.filter((entry) => reviewedByCommit[entry.hash] !== true);
 }
 
+export function resolveGitCommitSearchChange({
+  currentSearch,
+  nextSearch,
+  preserveSearchOnAutoClear,
+}: {
+  currentSearch: string;
+  nextSearch: string;
+  preserveSearchOnAutoClear: boolean;
+}): {
+  search: string;
+  preserveSearchOnAutoClear: boolean;
+} {
+  if (preserveSearchOnAutoClear && nextSearch === "") {
+    return {
+      search: currentSearch,
+      preserveSearchOnAutoClear: false,
+    };
+  }
+  return {
+    search: nextSearch,
+    preserveSearchOnAutoClear: false,
+  };
+}
+
 interface GitCommitDrawerProps {
   projectId?: string;
   sourcePath?: string;
@@ -1537,6 +1561,7 @@ export function GitCommitDrawer({
   const noteDirty = reviewNoteDraft !== reviewNote;
   const reviewLoadTokenRef = useRef(0);
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
+  const preserveCommitSearchOnAutoClearRef = useRef(false);
   const reviewImportInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileSectionRefs = useRef(new Map<string, HTMLDivElement | null>());
@@ -1565,7 +1590,26 @@ export function GitCommitDrawer({
 
   useEffect(() => {
     setCommitSearch("");
+    preserveCommitSearchOnAutoClearRef.current = false;
   }, [open]);
+
+  const handleCommitChange = useCallback((value: string) => {
+    preserveCommitSearchOnAutoClearRef.current = true;
+    setSelectedCommit(value);
+  }, []);
+
+  const handleCommitSearch = useCallback((nextSearch: string) => {
+    setCommitSearch((currentSearch) => {
+      const resolved = resolveGitCommitSearchChange({
+        currentSearch,
+        nextSearch,
+        preserveSearchOnAutoClear: preserveCommitSearchOnAutoClearRef.current,
+      });
+      preserveCommitSearchOnAutoClearRef.current =
+        resolved.preserveSearchOnAutoClear;
+      return resolved.search;
+    });
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -2946,8 +2990,8 @@ export function GitCommitDrawer({
                 value={commit}
                 searchValue={commitSearch}
                 options={logOptions}
-                onChange={(value) => setSelectedCommit(value)}
-                onSearch={setCommitSearch}
+                onChange={handleCommitChange}
+                onSearch={handleCommitSearch}
                 placeholder="git log"
                 style={{ minWidth: 280, flex: "1 1 360px", maxWidth: 620 }}
                 optionFilterProp="search"

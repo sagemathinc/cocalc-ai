@@ -59,6 +59,11 @@ export interface PageState {
   supportModalOptions?: SupportOpenOptions;
   supportModalHidden?: boolean;
   conat?: TypedMap<ConatConnectionStatus>;
+  activity_bar_collapsed?: boolean;
+  activity_bar_labels?: boolean;
+  activity_bar_order?: string[];
+  activity_bar_hidden?: string[];
+  agent_chat_font_size?: number;
 }
 
 export class PageStore extends Store<PageState> {}
