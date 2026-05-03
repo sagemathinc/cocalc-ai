@@ -122,6 +122,22 @@ const STOP_POLICY_DELTA_BATCH_LIMIT = Math.max(
   ),
 );
 
+async function awaitReadyForControl(
+  op: string,
+  waitUntilReady?: () => Promise<void>,
+): Promise<void> {
+  if (!waitUntilReady) return;
+  const started = Date.now();
+  await waitUntilReady();
+  const waited_ms = Date.now() - started;
+  if (waited_ms >= 1000) {
+    logger.info("host control request waited for startup readiness", {
+      op,
+      waited_ms,
+    });
+  }
+}
+
 function readHostBootId(): string | undefined {
   try {
     const value = readFileSync(
@@ -609,6 +625,7 @@ export async function startMasterRegistration({
   host,
   port,
   masterConatToken,
+  waitUntilReady,
   stopProjectForPressure,
 }: {
   hostId?: string;
@@ -616,6 +633,7 @@ export async function startMasterRegistration({
   host: string;
   port: number;
   masterConatToken?: string;
+  waitUntilReady?: () => Promise<void>;
   stopProjectForPressure?: (opts: {
     project_id: string;
     force?: boolean;
@@ -731,6 +749,7 @@ export async function startMasterRegistration({
           host,
           port,
           masterConatToken: next,
+          waitUntilReady,
         });
       } catch (err) {
         logger.warn(
@@ -790,6 +809,7 @@ export async function startMasterRegistration({
     client,
     impl: {
       async createProject(opts) {
+        await awaitReadyForControl("createProject", waitUntilReady);
         if (!hubApi.projects?.createProject) {
           throw Error("createProject not available");
         }
@@ -807,6 +827,7 @@ export async function startMasterRegistration({
         restore,
         lro_op_id,
       }) {
+        await awaitReadyForControl("startProject", waitUntilReady);
         if (!hubApi.projects?.start) {
           throw Error("start not available");
         }
@@ -826,6 +847,7 @@ export async function startMasterRegistration({
         };
       },
       async stopProject({ project_id }) {
+        await awaitReadyForControl("stopProject", waitUntilReady);
         if (!hubApi.projects?.stop) {
           throw Error("stop not available");
         }
@@ -845,10 +867,12 @@ export async function startMasterRegistration({
         });
       },
       async applyPendingCopies({ project_id, limit }) {
+        await awaitReadyForControl("applyPendingCopies", waitUntilReady);
         const claimed = await applyPendingCopies({ project_id, limit });
         return { claimed };
       },
       async deleteProjectData({ project_id }) {
+        await awaitReadyForControl("deleteProjectData", waitUntilReady);
         await deleteVolume(project_id);
         clearLocalAcpAutomationsForProject(project_id);
         deleteProjectLocal(project_id);

@@ -29,6 +29,7 @@ const deleteChatStoreData = jest.fn();
 const vacuumChatStore = jest.fn();
 const upsertProjectStopState = jest.fn();
 const assertManagedRawNetworkStartAllowedBestEffortMock = jest.fn();
+const acquireProjectPortLease = jest.fn();
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
 jest.mock("@cocalc/backend/data", () => ({
@@ -116,6 +117,9 @@ jest.mock("../raw-network-egress", () => ({
   assertManagedRawNetworkStartAllowedBestEffort: (...args: any[]) =>
     assertManagedRawNetworkStartAllowedBestEffortMock(...args),
 }));
+jest.mock("../sqlite/port-leases", () => ({
+  acquireProjectPortLease: (...args: any[]) => acquireProjectPortLease(...args),
+}));
 jest.mock("@cocalc/conat/files/file-server", () => ({
   __esModule: true,
   client: jest.fn(() => ({
@@ -169,6 +173,18 @@ describe("project host start ACP rehydrate ordering", () => {
     assertManagedRawNetworkStartAllowedBestEffortMock.mockResolvedValue(
       undefined,
     );
+    acquireProjectPortLease.mockReset();
+    acquireProjectPortLease
+      .mockReturnValueOnce({
+        project_id,
+        ssh_port: 30123,
+        http_port: 45123,
+      })
+      .mockReturnValue({
+        project_id,
+        ssh_port: 30123,
+        http_port: 45123,
+      });
   });
 
   it("does not rehydrate ACP automations before runner start on start()", async () => {
@@ -393,8 +409,112 @@ describe("project host start ACP rehydrate ordering", () => {
 
     expect(runnerApi.start).toHaveBeenCalledWith({
       project_id,
-      config: expect.objectContaining({ image: customImage }),
+      config: expect.objectContaining({
+        image: customImage,
+        ssh_port: 30123,
+        http_port: 45123,
+      }),
     });
+  });
+
+  it("retries start with rotated ports when pasta reports a bind collision", async () => {
+    const runnerApi = {
+      start: jest
+        .fn()
+        .mockRejectedValueOnce({
+          error: {
+            message:
+              "pasta failed with exit code 1: Failed to bind port 30123 (Address already in use)",
+          },
+        })
+        .mockResolvedValueOnce({
+          state: "running",
+          http_port: 45124,
+          ssh_port: 30124,
+        }),
+      stop: jest.fn(),
+    } as any;
+    acquireProjectPortLease.mockReset();
+    acquireProjectPortLease
+      .mockReturnValueOnce({
+        project_id,
+        ssh_port: 30123,
+        http_port: 45123,
+      })
+      .mockReturnValueOnce({
+        project_id,
+        ssh_port: 30124,
+        http_port: 45124,
+      });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(acquireProjectPortLease).toHaveBeenNthCalledWith(1, project_id, {
+      rotate: undefined,
+    });
+    expect(acquireProjectPortLease).toHaveBeenNthCalledWith(2, project_id, {
+      rotate: true,
+    });
+    expect(runnerApi.start).toHaveBeenNthCalledWith(1, {
+      project_id,
+      config: expect.objectContaining({
+        ssh_port: 30123,
+        http_port: 45123,
+      }),
+    });
+    expect(runnerApi.start).toHaveBeenNthCalledWith(2, {
+      project_id,
+      config: expect.objectContaining({
+        ssh_port: 30124,
+        http_port: 45124,
+      }),
+    });
+  });
+
+  it("retries start when the bind error is nested inside an Error object", async () => {
+    const runnerApi = {
+      start: jest
+        .fn()
+        .mockRejectedValueOnce({
+          error: new Error(
+            "pasta failed with exit code 1: Failed to bind port 30123 (Address already in use)",
+          ),
+        })
+        .mockResolvedValueOnce({
+          state: "running",
+          http_port: 45124,
+          ssh_port: 30124,
+        }),
+      stop: jest.fn(),
+    } as any;
+    acquireProjectPortLease.mockReset();
+    acquireProjectPortLease
+      .mockReturnValueOnce({
+        project_id,
+        ssh_port: 30123,
+        http_port: 45123,
+      })
+      .mockReturnValueOnce({
+        project_id,
+        ssh_port: 30124,
+        http_port: 45124,
+      });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(acquireProjectPortLease).toHaveBeenNthCalledWith(1, project_id, {
+      rotate: undefined,
+    });
+    expect(acquireProjectPortLease).toHaveBeenNthCalledWith(2, project_id, {
+      rotate: true,
+    });
+    expect(runnerApi.start).toHaveBeenCalledTimes(2);
   });
 
   it("hydrates missing image from master metadata on local start()", async () => {

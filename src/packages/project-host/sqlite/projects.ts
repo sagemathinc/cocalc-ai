@@ -7,6 +7,7 @@ import {
 } from "@cocalc/lite/hub/sqlite/database";
 import { account_id } from "@cocalc/backend/data";
 import { randomBytes } from "crypto";
+import { releaseProjectPortLease } from "./port-leases";
 
 function parseRunQuota(run_quota?: any): any | undefined {
   if (run_quota == null) return undefined;
@@ -361,6 +362,7 @@ export function deleteProjectLocal(project_id: string) {
   const db = getDatabase();
   db.prepare("DELETE FROM projects WHERE project_id=?").run(project_id);
   deleteRow("projects", JSON.stringify({ project_id }));
+  releaseProjectPortLease(project_id);
 }
 
 export function getProjectPorts(project_id: string): {

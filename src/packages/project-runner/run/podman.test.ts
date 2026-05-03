@@ -91,7 +91,8 @@ jest.mock("./conat-client", () => ({
   getConatClient: jest.fn(),
 }));
 
-import { getAll, state, stop } from "./podman";
+import getPort from "@cocalc/backend/get-port";
+import { getAll, start, state, stop } from "./podman";
 
 describe("project-runner podman orphan fallback", () => {
   const project1 = "11111111-1111-4111-8111-111111111111";
@@ -399,5 +400,36 @@ describe("project-runner podman orphan fallback", () => {
       }),
     );
     expect(mockUnmountAll).toHaveBeenCalledWith(project1);
+  });
+
+  it("uses caller-provided host ports when starting a project", async () => {
+    mockPodman.mockResolvedValue({ stdout: "" });
+
+    const status = await start({
+      project_id: project1,
+      localPath: async () => ({
+        home: `/tmp/project-${project1}`,
+      }),
+      config: {
+        image: "docker.io/library/ubuntu:latest",
+        ssh_port: 30123,
+        http_port: 45123,
+      },
+    });
+
+    expect(getPort).not.toHaveBeenCalled();
+    expect(mockPodman).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "-p",
+        "127.0.0.1:30123:22",
+        "-p",
+        "127.0.0.1:45123:9000",
+      ]),
+    );
+    expect(status).toMatchObject({
+      state: "running",
+      ssh_port: 30123,
+      http_port: 45123,
+    });
   });
 });

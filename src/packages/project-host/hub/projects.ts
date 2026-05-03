@@ -93,6 +93,7 @@ import {
 import { withOciPullReservationIfNeeded } from "../storage-reservations";
 import { getLocalHostId } from "../sqlite/hosts";
 import { assertManagedRawNetworkStartAllowedBestEffort } from "../raw-network-egress";
+import { acquireProjectPortLease } from "../sqlite/port-leases";
 
 const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
@@ -103,6 +104,7 @@ const PROJECT_OWNER_LIMITS_CACHE_TTL_MS = 5 * 60_000;
 const LRO_PUBLISH_RETRY_ATTEMPTS = 20;
 const LRO_PUBLISH_RETRY_DELAY_MS = 500;
 const LRO_PUBLISH_ATTEMPT_TIMEOUT_MS = 3000;
+const RUNNER_START_PORT_RETRY_LIMIT = 3;
 const projectOwnerLimitsCache = new TTL<string, MembershipEffectiveLimits>({
   ttl: PROJECT_OWNER_LIMITS_CACHE_TTL_MS,
 });
@@ -555,20 +557,16 @@ export function ensureProjectRow({
 
 async function getRunnerConfig(
   project_id: string,
-  opts?: CreateProjectOptions & {
-    users?: any;
-    authorized_keys?: string;
-    run_quota?: any;
+  resolved: Pick<
+    StartMetadata,
+    "image" | "authorized_keys" | "run_quota" | "env"
+  >,
+  opts?: {
     restore?: "none" | "auto" | "required";
     lro_op_id?: string;
+    rotate_ports?: boolean;
   },
 ) {
-  const resolved = await resolveStartMetadata({
-    project_id,
-    authorized_keys: (opts as any)?.authorized_keys,
-    run_quota: (opts as any)?.run_quota,
-    image: opts?.image,
-  });
   const run_quota = normalizeRunQuota(resolved.run_quota);
   const limits = runnerConfigFromQuota(run_quota);
   const existing = getProject(project_id);
@@ -576,8 +574,13 @@ async function getRunnerConfig(
   const scratch = limits.scratch ?? existing?.scratch;
   const ssh_proxy_public_key = await getSshProxyPublicKey();
   const secret = getOrCreateProjectLocalSecretToken(project_id);
+  const ports = acquireProjectPortLease(project_id, {
+    rotate: opts?.rotate_ports,
+  });
   return {
     image: resolved.image,
+    ssh_port: ports.ssh_port,
+    http_port: ports.http_port,
     secret,
     authorized_keys: resolved.authorized_keys,
     ssh_proxy_public_key,
@@ -681,6 +684,114 @@ function scaleStartCacheProgress(progress?: number): number {
   return 25 + Math.round((clamped * 55) / 100);
 }
 
+function safeStringifyErrorValue(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return `${value ?? ""}`;
+  }
+}
+
+function collectErrorText(
+  value: unknown,
+  parts: string[],
+  seen: Set<unknown>,
+): void {
+  if (value == null || seen.has(value)) return;
+  if (typeof value === "string") {
+    parts.push(value);
+    return;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    parts.push(String(value));
+    return;
+  }
+  if (value instanceof Error) {
+    parts.push(value.message, value.stack ?? "");
+    seen.add(value);
+    const record = value as unknown as Record<string, unknown>;
+    for (const nested of Object.values(record)) {
+      collectErrorText(nested, parts, seen);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    seen.add(value);
+    for (const nested of value) {
+      collectErrorText(nested, parts, seen);
+    }
+    return;
+  }
+  if (typeof value === "object") {
+    seen.add(value);
+    parts.push(safeStringifyErrorValue(value));
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      collectErrorText(nested, parts, seen);
+    }
+    return;
+  }
+  parts.push(`${value ?? ""}`);
+}
+
+function errorSearchText(err: unknown): string {
+  const parts: string[] = [];
+  collectErrorText(err, parts, new Set<unknown>());
+  return parts.join("\n").toLowerCase();
+}
+
+function isRetryableRunnerPortBindError(err: unknown): boolean {
+  const text = errorSearchText(err);
+  return (
+    text.includes("address already in use") ||
+    text.includes("failed to bind port") ||
+    text.includes("port is already allocated")
+  );
+}
+
+async function startRunnerWithPortRetry({
+  project_id,
+  initialConfig,
+  buildRetryConfig,
+  startRunner,
+}: {
+  project_id: string;
+  initialConfig: Configuration;
+  buildRetryConfig: () => Promise<Configuration>;
+  startRunner: (config: Configuration) => Promise<any>;
+}): Promise<{ config: Configuration; status: any }> {
+  let config = initialConfig;
+  for (
+    let attempt = 1;
+    attempt <= RUNNER_START_PORT_RETRY_LIMIT;
+    attempt += 1
+  ) {
+    try {
+      const status = await startRunner(config);
+      return { config, status };
+    } catch (err) {
+      if (
+        !isRetryableRunnerPortBindError(err) ||
+        attempt >= RUNNER_START_PORT_RETRY_LIMIT
+      ) {
+        throw err;
+      }
+      logger.warn(
+        "runner start hit retryable port bind error; rotating host ports",
+        {
+          project_id,
+          attempt,
+          ssh_port: config.ssh_port,
+          http_port: config.http_port,
+          err: `${err}`,
+        },
+      );
+      config = await buildRetryConfig();
+      await delay(100 * attempt);
+    }
+  }
+  throw new Error(`runner start retries exhausted for project ${project_id}`);
+}
+
 export function wireProjectsApi(runnerApi: RunnerApi) {
   async function rehydrateAcpAutomations(
     project_id: string,
@@ -718,6 +829,12 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     await ensureVolume(project_id);
 
     if (opts.start) {
+      const resolved = await resolveStartMetadata({
+        project_id,
+        authorized_keys: (opts as any)?.authorized_keys,
+        run_quota: (opts as any)?.run_quota,
+        image: opts?.image,
+      });
       upsertProjectStopState({
         project_id,
         last_started_ms: Date.now(),
@@ -729,17 +846,29 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         state: "starting",
         authorized_keys: (opts as any).authorized_keys,
       });
-      const config = await getRunnerConfig(project_id, opts);
-      await ensureManagedRootfsCached(config);
-      const status = await startRunnerWithStorageReservation({
+      const initialConfig = await getRunnerConfig(project_id, resolved);
+      const buildRetryConfig = async () =>
+        await getRunnerConfig(project_id, resolved, {
+          rotate_ports: true,
+        });
+      const startRunner = async (config: Configuration) =>
+        await startRunnerWithStorageReservation({
+          project_id,
+          image: getImage(config),
+          fn: async () =>
+            await runnerApi.start({
+              project_id,
+              config,
+            }),
+        });
+      await ensureManagedRootfsCached(initialConfig);
+      const started = await startRunnerWithPortRetry({
         project_id,
-        image: getImage(config),
-        fn: async () =>
-          await runnerApi.start({
-            project_id,
-            config,
-          }),
+        initialConfig,
+        buildRetryConfig,
+        startRunner,
       });
+      const status = started.status;
       ensureProjectRow({
         project_id,
         opts,
@@ -826,13 +955,19 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         message: "preparing project runtime",
       });
       const config = await timings.measure("prepare_config", async () => {
-        return await getRunnerConfig(project_id, {
-          authorized_keys: resolved.authorized_keys,
-          run_quota: resolved.run_quota,
-          image: resolved.image,
-          restore,
-          lro_op_id: op_id,
-        });
+        return await getRunnerConfig(
+          project_id,
+          {
+            image: resolved.image,
+            authorized_keys: resolved.authorized_keys,
+            run_quota: resolved.run_quota,
+            env: resolved.env,
+          },
+          {
+            restore,
+            lro_op_id: op_id,
+          },
+        );
       });
       publishStartProgress({
         project_id,
@@ -862,27 +997,48 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         progress: 85,
         message: "starting project runtime",
       });
-      const status = await timings.measure("runner_start", async () => {
-        return await startRunnerWithStorageReservation({
+      const started = await timings.measure("runner_start", async () => {
+        return await startRunnerWithPortRetry({
           project_id,
-          image: getImage(config),
-          op_id,
-          onProgress: ({ message, detail }) =>
-            publishStartProgress({
+          initialConfig: config,
+          buildRetryConfig: async () =>
+            await getRunnerConfig(
               project_id,
+              {
+                image: resolved.image,
+                authorized_keys: resolved.authorized_keys,
+                run_quota: resolved.run_quota,
+                env: resolved.env,
+              },
+              {
+                restore,
+                lro_op_id: op_id,
+                rotate_ports: true,
+              },
+            ),
+          startRunner: async (runnerConfig: Configuration) =>
+            await startRunnerWithStorageReservation({
+              project_id,
+              image: getImage(runnerConfig),
               op_id,
-              phase: "runner_start",
-              progress: 86,
-              message,
-              detail,
-            }),
-          fn: async () =>
-            await runnerApi.start({
-              project_id,
-              config,
+              onProgress: ({ message, detail }) =>
+                publishStartProgress({
+                  project_id,
+                  op_id,
+                  phase: "runner_start",
+                  progress: 86,
+                  message,
+                  detail,
+                }),
+              fn: async () =>
+                await runnerApi.start({
+                  project_id,
+                  config: runnerConfig,
+                }),
             }),
         });
       });
+      const status = started.status;
       ensureProjectRow({
         project_id,
         opts: {

@@ -371,6 +371,10 @@ export async function main(
   const stopEventLoopStallMonitor = startProjectHostEventLoopStallMonitor();
   const hostId = resolveProjectHostId(_config.hostId);
   const healthState = { ready: false };
+  let resolveStartupReady!: () => void;
+  const startupReady = new Promise<void>((resolve) => {
+    resolveStartupReady = resolve;
+  });
 
   // 1) HTTP + conat server
   const { app, httpServer } = await startHttpServer(port, host, tls);
@@ -1212,6 +1216,10 @@ export async function main(
     host,
     port,
     masterConatToken,
+    waitUntilReady: async () => {
+      if (healthState.ready) return;
+      await startupReady;
+    },
     stopProjectForPressure: async ({
       project_id,
       force,
@@ -1261,6 +1269,7 @@ export async function main(
   });
 
   healthState.ready = true;
+  resolveStartupReady();
   logger.info("project-host ready");
 
   let closed = false;

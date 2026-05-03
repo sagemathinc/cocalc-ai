@@ -1030,10 +1030,18 @@ export async function start({
       progress: 80,
       desc: "configured quotas",
     });
-    const ssh_port = await getPort();
-    let http_port = await getPort();
-    // avoid rare collision with ssh_port
-    if (http_port === ssh_port) {
+    const configuredSshPort =
+      Number.isInteger(config?.ssh_port) && (config?.ssh_port ?? 0) > 0
+        ? Number(config?.ssh_port)
+        : undefined;
+    const configuredHttpPort =
+      Number.isInteger(config?.http_port) && (config?.http_port ?? 0) > 0
+        ? Number(config?.http_port)
+        : undefined;
+    const ssh_port = configuredSshPort ?? (await getPort());
+    let http_port = configuredHttpPort ?? (await getPort());
+    // avoid rare collision with ssh_port when ports are probed locally
+    if (configuredHttpPort == null && http_port === ssh_port) {
       http_port = await getPort();
     }
 

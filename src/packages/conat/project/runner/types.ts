@@ -24,6 +24,12 @@ export type SshServersFunction = (opts: {
 export interface Configuration {
   // optional Docker image
   image?: string;
+  // optional host-side SSH port chosen by the caller; if omitted the runner
+  // falls back to probing a free port locally.
+  ssh_port?: number;
+  // optional host-side HTTP proxy port chosen by the caller; if omitted the
+  // runner falls back to probing a free port locally.
+  http_port?: number;
   // SSH public key used by sshpiperd to reach the project container.
   ssh_proxy_public_key?: string;
   // shared secret between project and hubs to enhance security (via defense in depth)
