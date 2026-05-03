@@ -3034,10 +3034,15 @@ export async function runScheduledBackupMaintenance({
   counts: Partial<SnapshotCounts>;
   limit?: number;
 }): Promise<void> {
-  await updateBackups({
+  await withBackupParallelLimit({
     project_id,
-    counts,
-    limit,
+    op: "runScheduledBackupMaintenance",
+    run: async () =>
+      await updateBackups({
+        project_id,
+        counts,
+        limit,
+      }),
   });
 }
 

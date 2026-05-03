@@ -17,6 +17,7 @@ const logger = getLogger("project-host:snapshot-backup-maintenance");
 const DEFAULT_ACTIVE_DAYS = 2;
 const DEFAULT_SWEEP_MS = 15 * 60 * 1000;
 const DEFAULT_PARALLELISM = 4;
+const DEFAULT_INITIAL_DELAY_MS = DEFAULT_SWEEP_MS;
 
 const inFlightProjects = new Set<string>();
 
@@ -28,6 +29,11 @@ function parsePositiveInteger(value: string | undefined, fallback: number) {
 function parseNonNegativeInteger(value: string | undefined, fallback: number) {
   const parsed = Math.floor(Number(value));
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function parseBoolean(value: string | undefined): boolean {
+  const normalized = `${value ?? ""}`.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
 }
 
 function mergeSchedule(
@@ -149,9 +155,17 @@ export function startProjectSnapshotBackupMaintenance({
 }: {
   hostId: string;
 }) {
+  if (parseBoolean(process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_DISABLE)) {
+    logger.info("snapshot/backup maintenance disabled by env", { hostId });
+    return () => {};
+  }
   const sweepMs = parsePositiveInteger(
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS,
     DEFAULT_SWEEP_MS,
+  );
+  const initialDelayMs = parseNonNegativeInteger(
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS,
+    DEFAULT_INITIAL_DELAY_MS,
   );
   let closed = false;
   const runSweep = async () => {
@@ -167,13 +181,33 @@ export function startProjectSnapshotBackupMaintenance({
       });
     }
   };
-  void runSweep();
-  const timer = setInterval(() => {
+  logger.info("snapshot/backup maintenance scheduled", {
+    hostId,
+    initial_delay_ms: initialDelayMs,
+    sweep_ms: sweepMs,
+  });
+  const startRepeatingSweep = () => {
+    if (closed) return;
+    const timer = setInterval(() => {
+      void runSweep();
+    }, sweepMs);
+    timer.unref();
+    return timer;
+  };
+  const initialTimer = setTimeout(() => {
+    if (closed) {
+      return;
+    }
     void runSweep();
-  }, sweepMs);
-  timer.unref();
+    repeatingTimer = startRepeatingSweep();
+  }, initialDelayMs);
+  initialTimer.unref();
+  let repeatingTimer: ReturnType<typeof setInterval> | undefined;
   return () => {
     closed = true;
-    clearInterval(timer);
+    clearTimeout(initialTimer);
+    if (repeatingTimer) {
+      clearInterval(repeatingTimer);
+    }
   };
 }

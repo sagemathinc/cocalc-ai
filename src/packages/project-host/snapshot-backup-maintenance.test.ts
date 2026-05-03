@@ -109,13 +109,53 @@ describe("snapshot-backup-maintenance", () => {
   it("starts a repeating timer and can be stopped", () => {
     jest.useFakeTimers();
     process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS = "60000";
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
     const {
       startProjectSnapshotBackupMaintenance,
     } = require("./snapshot-backup-maintenance");
     const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+    jest.runOnlyPendingTimers();
     jest.advanceTimersByTime(60_000);
     stop();
     jest.advanceTimersByTime(60_000);
     expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalled();
+  });
+
+  it("defers the first sweep until the configured delay", () => {
+    jest.useFakeTimers();
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "30000";
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_SWEEP_MS = "60000";
+    const {
+      startProjectSnapshotBackupMaintenance,
+    } = require("./snapshot-backup-maintenance");
+
+    const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+    expect(listProjectMaintenanceSchedulesMock).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(29_999);
+    expect(listProjectMaintenanceSchedulesMock).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1);
+    expect(listProjectMaintenanceSchedulesMock).toHaveBeenCalledTimes(1);
+
+    stop();
+  });
+
+  it("can disable maintenance entirely", () => {
+    jest.useFakeTimers();
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_DISABLE = "true";
+    process.env.COCALC_PROJECT_HOST_SNAPSHOT_BACKUP_INITIAL_DELAY_MS = "0";
+    const {
+      startProjectSnapshotBackupMaintenance,
+    } = require("./snapshot-backup-maintenance");
+
+    const stop = startProjectSnapshotBackupMaintenance({ hostId: "host-1" });
+    jest.runOnlyPendingTimers();
+    jest.advanceTimersByTime(5 * 60_000);
+    stop();
+
+    expect(listProjectMaintenanceSchedulesMock).not.toHaveBeenCalled();
+    expect(runScheduledSnapshotMaintenanceMock).not.toHaveBeenCalled();
+    expect(runScheduledBackupMaintenanceMock).not.toHaveBeenCalled();
   });
 });
