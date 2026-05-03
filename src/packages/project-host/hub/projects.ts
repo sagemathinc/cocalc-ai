@@ -1,6 +1,7 @@
 import { hubApi } from "@cocalc/lite/hub/api";
 import TTL from "@isaacs/ttlcache";
 import { account_id } from "@cocalc/backend/data";
+import { executeCode } from "@cocalc/backend/execute-code";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
 import {
   deleteChatStoreData,
@@ -93,7 +94,17 @@ import {
 import { withOciPullReservationIfNeeded } from "../storage-reservations";
 import { getLocalHostId } from "../sqlite/hosts";
 import { assertManagedRawNetworkStartAllowedBestEffort } from "../raw-network-egress";
-import { acquireProjectPortLease } from "../sqlite/port-leases";
+import {
+  acquireProjectPortLease,
+  coolDownProjectPortOffset,
+  getCoolingProjectPortOffsets,
+  getProjectPortLease,
+  getProjectPortLeaseByHttpPort,
+  getProjectPortLeaseBySshPort,
+  PROJECT_PORT_BIND_FAILURE_COOLDOWN_MS,
+  projectPortOffsetFromHttpPort,
+  projectPortOffsetFromSshPort,
+} from "../sqlite/port-leases";
 
 const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
@@ -105,6 +116,9 @@ const LRO_PUBLISH_RETRY_ATTEMPTS = 20;
 const LRO_PUBLISH_RETRY_DELAY_MS = 500;
 const LRO_PUBLISH_ATTEMPT_TIMEOUT_MS = 3000;
 const RUNNER_START_PORT_RETRY_LIMIT = 3;
+const LISTENING_PROJECT_PORT_CACHE_TTL_MS = 250;
+const RECENT_FAILED_PROJECT_PORT_OFFSET_TTL_MS =
+  PROJECT_PORT_BIND_FAILURE_COOLDOWN_MS;
 const projectOwnerLimitsCache = new TTL<string, MembershipEffectiveLimits>({
   ttl: PROJECT_OWNER_LIMITS_CACHE_TTL_MS,
 });
@@ -112,9 +126,189 @@ const projectOwnerLimitsInflight = new Map<
   string,
   Promise<MembershipEffectiveLimits>
 >();
+let listeningProjectPortOffsetsCache:
+  | {
+      value: Set<number>;
+      expiresAt: number;
+    }
+  | undefined;
+let listeningProjectPortOffsetsInflight: Promise<Set<number>> | undefined;
+const recentFailedProjectPortOffsets = new Map<number, number>();
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function listeningProjectPortOffset(port?: number | null): number | undefined {
+  return (
+    projectPortOffsetFromSshPort(port) ?? projectPortOffsetFromHttpPort(port)
+  );
+}
+
+function parseListeningPortOffsetsFromProcNet(raw: string): Set<number> {
+  const offsets = new Set<number>();
+  for (const line of raw.split("\n").slice(1)) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 4) continue;
+    const state = fields[3];
+    if (state !== "0A") continue;
+    const localAddress = fields[1] ?? "";
+    const portHex = localAddress.split(":")[1];
+    if (!portHex) continue;
+    const port = Number.parseInt(portHex, 16);
+    if (!Number.isFinite(port)) continue;
+    const offset = listeningProjectPortOffset(port);
+    if (offset != null) {
+      offsets.add(offset);
+    }
+  }
+  return offsets;
+}
+
+async function loadListeningProjectPortOffsetsUncached(): Promise<Set<number>> {
+  const offsets = new Set<number>();
+  for (const procPath of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+    try {
+      const raw = await readFile(procPath, "utf8");
+      for (const offset of parseListeningPortOffsetsFromProcNet(raw)) {
+        offsets.add(offset);
+      }
+    } catch (err) {
+      logger.debug("unable to inspect listening TCP ports", {
+        procPath,
+        err: `${err}`,
+      });
+    }
+  }
+  return offsets;
+}
+
+async function getListeningProjectPortOffsets(): Promise<Set<number>> {
+  const now = Date.now();
+  const cached = listeningProjectPortOffsetsCache;
+  if (cached && cached.expiresAt > now) {
+    return new Set(cached.value);
+  }
+  if (listeningProjectPortOffsetsInflight) {
+    return new Set(await listeningProjectPortOffsetsInflight);
+  }
+  listeningProjectPortOffsetsInflight = (async () => {
+    const value = await loadListeningProjectPortOffsetsUncached();
+    listeningProjectPortOffsetsCache = {
+      value,
+      expiresAt: Date.now() + LISTENING_PROJECT_PORT_CACHE_TTL_MS,
+    };
+    return value;
+  })().finally(() => {
+    listeningProjectPortOffsetsInflight = undefined;
+  });
+  return new Set(await listeningProjectPortOffsetsInflight);
+}
+
+function rememberRecentFailedProjectPortOffset(port?: number): void {
+  const offset = listeningProjectPortOffset(port ?? undefined);
+  if (offset == null) return;
+  recentFailedProjectPortOffsets.set(
+    offset,
+    Date.now() + RECENT_FAILED_PROJECT_PORT_OFFSET_TTL_MS,
+  );
+}
+
+function getRecentFailedProjectPortOffsets(): Set<number> {
+  const now = Date.now();
+  const offsets = new Set<number>();
+  for (const [offset, expiresAt] of recentFailedProjectPortOffsets) {
+    if (expiresAt <= now) {
+      recentFailedProjectPortOffsets.delete(offset);
+      continue;
+    }
+    offsets.add(offset);
+  }
+  return offsets;
+}
+
+export function resetPortBindStateForTesting(): void {
+  recentFailedProjectPortOffsets.clear();
+  listeningProjectPortOffsetsCache = undefined;
+  listeningProjectPortOffsetsInflight = undefined;
+}
+
+async function collectPortBindDiagnostics({
+  project_id,
+  ssh_port,
+  http_port,
+}: {
+  project_id: string;
+  ssh_port?: number;
+  http_port?: number;
+}): Promise<Record<string, unknown>> {
+  const diagnostics: Record<string, unknown> = {
+    lease: getProjectPortLease(project_id),
+    conflicting_ssh_lease:
+      Number.isInteger(ssh_port) && ssh_port
+        ? getProjectPortLeaseBySshPort(Number(ssh_port))
+        : undefined,
+    conflicting_http_lease:
+      Number.isInteger(http_port) && http_port
+        ? getProjectPortLeaseByHttpPort(Number(http_port))
+        : undefined,
+  };
+  try {
+    const coolingOffsets = getCoolingProjectPortOffsets();
+    diagnostics.cooling_offset_count = coolingOffsets.size;
+    diagnostics.ssh_port_cooling =
+      Number.isInteger(ssh_port) &&
+      ssh_port &&
+      coolingOffsets.has(listeningProjectPortOffset(Number(ssh_port)) ?? -1);
+    diagnostics.http_port_cooling =
+      Number.isInteger(http_port) &&
+      http_port &&
+      coolingOffsets.has(listeningProjectPortOffset(Number(http_port)) ?? -1);
+  } catch (err) {
+    diagnostics.cooling_offsets_error = `${err}`;
+  }
+  try {
+    const listeningOffsets = await getListeningProjectPortOffsets();
+    diagnostics.listening_offset_count = listeningOffsets.size;
+    diagnostics.ssh_port_listening =
+      Number.isInteger(ssh_port) &&
+      ssh_port &&
+      listeningOffsets.has(listeningProjectPortOffset(Number(ssh_port)) ?? -1);
+    diagnostics.http_port_listening =
+      Number.isInteger(http_port) &&
+      http_port &&
+      listeningOffsets.has(listeningProjectPortOffset(Number(http_port)) ?? -1);
+  } catch (err) {
+    diagnostics.listening_offsets_error = `${err}`;
+  }
+  try {
+    const ports = [ssh_port, http_port].filter(
+      (value): value is number =>
+        typeof value === "number" && Number.isInteger(value) && value > 0,
+    );
+    if (ports.length) {
+      const { stdout, stderr, exit_code } = await executeCode({
+        command: "ss",
+        args: ["-ltn"],
+        err_on_exit: false,
+        verbose: false,
+        timeout: 5,
+      });
+      const lines = `${stdout ?? ""}`
+        .split("\n")
+        .filter((line) =>
+          ports.some((port) => line.includes(`:${port.toString()}`)),
+        );
+      diagnostics.socket_snapshot = {
+        exit_code,
+        stdout: lines.join("\n"),
+        stderr: `${stderr ?? ""}`.trim(),
+      };
+    }
+  } catch (err) {
+    diagnostics.socket_snapshot_error = `${err}`;
+  }
+  return diagnostics;
 }
 
 async function withTimeout<T>(
@@ -565,6 +759,7 @@ async function getRunnerConfig(
     restore?: "none" | "auto" | "required";
     lro_op_id?: string;
     rotate_ports?: boolean;
+    avoid_port_offsets?: Iterable<number>;
   },
 ) {
   const run_quota = normalizeRunQuota(resolved.run_quota);
@@ -574,8 +769,18 @@ async function getRunnerConfig(
   const scratch = limits.scratch ?? existing?.scratch;
   const ssh_proxy_public_key = await getSshProxyPublicKey();
   const secret = getOrCreateProjectLocalSecretToken(project_id);
+  const avoidOffsets = await getListeningProjectPortOffsets();
+  for (const offset of getRecentFailedProjectPortOffsets()) {
+    avoidOffsets.add(offset);
+  }
+  for (const offset of opts?.avoid_port_offsets ?? []) {
+    if (Number.isInteger(offset)) {
+      avoidOffsets.add(Number(offset));
+    }
+  }
   const ports = acquireProjectPortLease(project_id, {
     rotate: opts?.rotate_ports,
+    avoidOffsets,
   });
   return {
     image: resolved.image,
@@ -756,10 +961,13 @@ async function startRunnerWithPortRetry({
 }: {
   project_id: string;
   initialConfig: Configuration;
-  buildRetryConfig: () => Promise<Configuration>;
+  buildRetryConfig: (opts: {
+    avoid_port_offsets: Iterable<number>;
+  }) => Promise<Configuration>;
   startRunner: (config: Configuration) => Promise<any>;
 }): Promise<{ config: Configuration; status: any }> {
   let config = initialConfig;
+  const failedOffsets = new Set<number>();
   for (
     let attempt = 1;
     attempt <= RUNNER_START_PORT_RETRY_LIMIT;
@@ -769,10 +977,27 @@ async function startRunnerWithPortRetry({
       const status = await startRunner(config);
       return { config, status };
     } catch (err) {
-      if (
-        !isRetryableRunnerPortBindError(err) ||
-        attempt >= RUNNER_START_PORT_RETRY_LIMIT
-      ) {
+      const retryable = isRetryableRunnerPortBindError(err);
+      const diagnostics =
+        retryable ||
+        Number.isInteger(config.ssh_port) ||
+        Number.isInteger(config.http_port)
+          ? await collectPortBindDiagnostics({
+              project_id,
+              ssh_port: config.ssh_port,
+              http_port: config.http_port,
+            })
+          : undefined;
+      if (!retryable || attempt >= RUNNER_START_PORT_RETRY_LIMIT) {
+        logger.warn("runner start failed", {
+          project_id,
+          attempt,
+          retryable,
+          ssh_port: config.ssh_port,
+          http_port: config.http_port,
+          diagnostics,
+          err: `${err}`,
+        });
         throw err;
       }
       logger.warn(
@@ -782,10 +1007,25 @@ async function startRunnerWithPortRetry({
           attempt,
           ssh_port: config.ssh_port,
           http_port: config.http_port,
+          diagnostics,
           err: `${err}`,
         },
       );
-      config = await buildRetryConfig();
+      const sshOffset = listeningProjectPortOffset(config.ssh_port);
+      if (sshOffset != null) {
+        failedOffsets.add(sshOffset);
+        coolDownProjectPortOffset(sshOffset);
+      }
+      const httpOffset = listeningProjectPortOffset(config.http_port);
+      if (httpOffset != null) {
+        failedOffsets.add(httpOffset);
+        coolDownProjectPortOffset(httpOffset);
+      }
+      rememberRecentFailedProjectPortOffset(config.ssh_port);
+      rememberRecentFailedProjectPortOffset(config.http_port);
+      config = await buildRetryConfig({
+        avoid_port_offsets: failedOffsets,
+      });
       await delay(100 * attempt);
     }
   }
@@ -847,9 +1087,12 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         authorized_keys: (opts as any).authorized_keys,
       });
       const initialConfig = await getRunnerConfig(project_id, resolved);
-      const buildRetryConfig = async () =>
+      const buildRetryConfig = async (retryOpts: {
+        avoid_port_offsets: Iterable<number>;
+      }) =>
         await getRunnerConfig(project_id, resolved, {
           rotate_ports: true,
+          avoid_port_offsets: retryOpts.avoid_port_offsets,
         });
       const startRunner = async (config: Configuration) =>
         await startRunnerWithStorageReservation({
@@ -1003,7 +1246,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         return await startRunnerWithPortRetry({
           project_id,
           initialConfig: config,
-          buildRetryConfig: async () =>
+          buildRetryConfig: async (retryOpts) =>
             await getRunnerConfig(
               project_id,
               {
@@ -1016,6 +1259,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
                 restore,
                 lro_op_id: op_id,
                 rotate_ports: true,
+                avoid_port_offsets: retryOpts.avoid_port_offsets,
               },
             ),
           startRunner: async (runnerConfig: Configuration) =>

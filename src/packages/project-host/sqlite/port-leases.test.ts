@@ -6,6 +6,8 @@
 import { closeDatabase } from "@cocalc/lite/hub/sqlite/database";
 import {
   acquireProjectPortLease,
+  coolDownProjectPortOffset,
+  getCoolingProjectPortOffsets,
   getProjectPortLease,
   HTTP_PORT_LEASE_START,
   releaseProjectPortLease,
@@ -68,6 +70,40 @@ describe("project port lease sqlite", () => {
 
     expect(rotated.ssh_port).not.toBe(first.ssh_port);
     expect(rotated.http_port).not.toBe(first.http_port);
+  });
+
+  it("skips explicitly avoided offsets", () => {
+    upsertProject({ project_id: projectA, state: "opened" });
+
+    const lease = acquireProjectPortLease(projectA, {
+      avoidOffsets: [0, 1, 2],
+    });
+
+    expect(lease.ssh_port).toBe(SSH_PORT_LEASE_START + 3);
+    expect(lease.http_port).toBe(HTTP_PORT_LEASE_START + 3);
+  });
+
+  it("skips cooled-down offsets", () => {
+    upsertProject({ project_id: projectA, state: "opened" });
+    coolDownProjectPortOffset(0);
+    coolDownProjectPortOffset(1);
+
+    const lease = acquireProjectPortLease(projectA);
+
+    expect(getCoolingProjectPortOffsets()).toEqual(new Set([0, 1]));
+    expect(lease.ssh_port).toBe(SSH_PORT_LEASE_START + 2);
+    expect(lease.http_port).toBe(HTTP_PORT_LEASE_START + 2);
+  });
+
+  it("drops expired cooled-down offsets", () => {
+    upsertProject({ project_id: projectA, state: "opened" });
+    coolDownProjectPortOffset(0, { ttlMs: -1 });
+
+    const lease = acquireProjectPortLease(projectA);
+
+    expect(getCoolingProjectPortOffsets()).toEqual(new Set());
+    expect(lease.ssh_port).toBe(SSH_PORT_LEASE_START);
+    expect(lease.http_port).toBe(HTTP_PORT_LEASE_START);
   });
 
   it("releases the lease when the local project row is deleted", () => {

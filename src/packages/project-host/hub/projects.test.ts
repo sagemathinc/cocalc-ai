@@ -1,6 +1,11 @@
 import { hubApi } from "@cocalc/lite/hub/api";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 
+const executeCode = jest.fn(async () => ({
+  stdout: "",
+  stderr: "",
+  exit_code: 0,
+}));
 const rehydrateAcpAutomationsForProject = jest.fn();
 const applyPendingCopies = jest.fn();
 const upsertProject = jest.fn();
@@ -30,11 +35,21 @@ const vacuumChatStore = jest.fn();
 const upsertProjectStopState = jest.fn();
 const assertManagedRawNetworkStartAllowedBestEffortMock = jest.fn();
 const acquireProjectPortLease = jest.fn();
+const coolDownProjectPortOffset = jest.fn();
+const getCoolingProjectPortOffsets = jest.fn(() => new Set());
+const getProjectPortLease = jest.fn();
+const getProjectPortLeaseBySshPort = jest.fn();
+const getProjectPortLeaseByHttpPort = jest.fn();
+const projectPortOffsetFromSshPort = jest.fn();
+const projectPortOffsetFromHttpPort = jest.fn();
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
 jest.mock("@cocalc/backend/data", () => ({
   account_id: "test-account-id",
   data: "/tmp",
+}));
+jest.mock("@cocalc/backend/execute-code", () => ({
+  executeCode: (...args: any[]) => executeCode(...args),
 }));
 jest.mock("@cocalc/backend/logger", () => {
   const factory = () => ({
@@ -119,6 +134,20 @@ jest.mock("../raw-network-egress", () => ({
 }));
 jest.mock("../sqlite/port-leases", () => ({
   acquireProjectPortLease: (...args: any[]) => acquireProjectPortLease(...args),
+  coolDownProjectPortOffset: (...args: any[]) =>
+    coolDownProjectPortOffset(...args),
+  getCoolingProjectPortOffsets: (...args: any[]) =>
+    getCoolingProjectPortOffsets(...args),
+  getProjectPortLease: (...args: any[]) => getProjectPortLease(...args),
+  getProjectPortLeaseBySshPort: (...args: any[]) =>
+    getProjectPortLeaseBySshPort(...args),
+  getProjectPortLeaseByHttpPort: (...args: any[]) =>
+    getProjectPortLeaseByHttpPort(...args),
+  PROJECT_PORT_BIND_FAILURE_COOLDOWN_MS: 10 * 60_000,
+  projectPortOffsetFromSshPort: (...args: any[]) =>
+    projectPortOffsetFromSshPort(...args),
+  projectPortOffsetFromHttpPort: (...args: any[]) =>
+    projectPortOffsetFromHttpPort(...args),
 }));
 jest.mock("@cocalc/conat/files/file-server", () => ({
   __esModule: true,
@@ -145,8 +174,10 @@ describe("project host start ACP rehydrate ordering", () => {
     await Promise.resolve();
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.clearAllMocks();
+    const { resetPortBindStateForTesting } = await import("./projects");
+    resetPortBindStateForTesting();
     (hubApi.projects as any) = {};
     getProject.mockReturnValue({ image: "ubuntu2404", run_quota: undefined });
     getOrCreateProjectLocalSecretToken.mockReturnValue("secret");
@@ -174,6 +205,24 @@ describe("project host start ACP rehydrate ordering", () => {
       undefined,
     );
     acquireProjectPortLease.mockReset();
+    getProjectPortLease.mockReset();
+    getProjectPortLeaseBySshPort.mockReset();
+    getProjectPortLeaseByHttpPort.mockReset();
+    coolDownProjectPortOffset.mockReset();
+    getCoolingProjectPortOffsets.mockReset();
+    getCoolingProjectPortOffsets.mockReturnValue(new Set());
+    projectPortOffsetFromSshPort.mockReset();
+    projectPortOffsetFromHttpPort.mockReset();
+    projectPortOffsetFromSshPort.mockImplementation((port?: number | null) => {
+      if (!Number.isInteger(port)) return undefined;
+      const offset = Number(port) - 30000;
+      return offset >= 0 && offset < 15000 ? offset : undefined;
+    });
+    projectPortOffsetFromHttpPort.mockImplementation((port?: number | null) => {
+      if (!Number.isInteger(port)) return undefined;
+      const offset = Number(port) - 45000;
+      return offset >= 0 && offset < 15000 ? offset : undefined;
+    });
     acquireProjectPortLease
       .mockReturnValueOnce({
         project_id,
@@ -453,9 +502,11 @@ describe("project host start ACP rehydrate ordering", () => {
     await hubApi.projects.start({ project_id });
 
     expect(acquireProjectPortLease).toHaveBeenNthCalledWith(1, project_id, {
+      avoidOffsets: new Set(),
       rotate: undefined,
     });
     expect(acquireProjectPortLease).toHaveBeenNthCalledWith(2, project_id, {
+      avoidOffsets: new Set([123]),
       rotate: true,
     });
     expect(runnerApi.start).toHaveBeenNthCalledWith(1, {
@@ -509,12 +560,81 @@ describe("project host start ACP rehydrate ordering", () => {
     await hubApi.projects.start({ project_id });
 
     expect(acquireProjectPortLease).toHaveBeenNthCalledWith(1, project_id, {
+      avoidOffsets: new Set(),
       rotate: undefined,
     });
     expect(acquireProjectPortLease).toHaveBeenNthCalledWith(2, project_id, {
+      avoidOffsets: new Set([123]),
       rotate: true,
     });
     expect(runnerApi.start).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not recycle an earlier failed port pair within the same retry loop", async () => {
+    const runnerApi = {
+      start: jest
+        .fn()
+        .mockRejectedValueOnce({
+          error: {
+            message:
+              "pasta failed with exit code 1: Failed to bind port 30123 (Address already in use)",
+          },
+        })
+        .mockRejectedValueOnce({
+          error: {
+            message:
+              "pasta failed with exit code 1: Failed to bind port 30124 (Address already in use)",
+          },
+        })
+        .mockResolvedValueOnce({
+          state: "running",
+          http_port: 45125,
+          ssh_port: 30125,
+        }),
+      stop: jest.fn(),
+    } as any;
+    acquireProjectPortLease.mockReset();
+    acquireProjectPortLease
+      .mockReturnValueOnce({
+        project_id,
+        ssh_port: 30123,
+        http_port: 45123,
+      })
+      .mockReturnValueOnce({
+        project_id,
+        ssh_port: 30124,
+        http_port: 45124,
+      })
+      .mockReturnValueOnce({
+        project_id,
+        ssh_port: 30125,
+        http_port: 45125,
+      });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(acquireProjectPortLease).toHaveBeenNthCalledWith(1, project_id, {
+      avoidOffsets: new Set(),
+      rotate: undefined,
+    });
+    expect(acquireProjectPortLease).toHaveBeenNthCalledWith(2, project_id, {
+      avoidOffsets: new Set([123]),
+      rotate: true,
+    });
+    expect(acquireProjectPortLease).toHaveBeenNthCalledWith(3, project_id, {
+      avoidOffsets: new Set([123, 124]),
+      rotate: true,
+    });
+    expect(runnerApi.start).toHaveBeenNthCalledWith(3, {
+      project_id,
+      config: expect.objectContaining({
+        ssh_port: 30125,
+        http_port: 45125,
+      }),
+    });
   });
 
   it("hydrates missing image from master metadata on local start()", async () => {
