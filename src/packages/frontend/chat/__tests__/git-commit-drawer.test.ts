@@ -14,6 +14,7 @@ import {
   formatMergeCommitBodyMarkdown,
   isMergeCommitSummary,
   matchGitDrawerScrollCommand,
+  resolveGitCommitSearchChange,
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
 } from "../git-commit-drawer";
@@ -292,6 +293,41 @@ describe("git commit drawer merge commit formatting", () => {
       { hash: "bbb2222", subject: "Unreviewed commit" },
       { hash: "ccc3333", subject: "Unknown review state" },
     ]);
+  });
+
+  it("preserves the current commit search across antd auto-clear after selection", () => {
+    expect(
+      resolveGitCommitSearchChange({
+        currentSearch: "slate",
+        nextSearch: "",
+        preserveSearchOnAutoClear: true,
+      }),
+    ).toEqual({
+      search: "slate",
+      preserveSearchOnAutoClear: false,
+    });
+
+    expect(
+      resolveGitCommitSearchChange({
+        currentSearch: "slate",
+        nextSearch: "",
+        preserveSearchOnAutoClear: false,
+      }),
+    ).toEqual({
+      search: "",
+      preserveSearchOnAutoClear: false,
+    });
+
+    expect(
+      resolveGitCommitSearchChange({
+        currentSearch: "slate",
+        nextSearch: "codex",
+        preserveSearchOnAutoClear: true,
+      }),
+    ).toEqual({
+      search: "codex",
+      preserveSearchOnAutoClear: false,
+    });
   });
 
   it("matches git review scroll keys without modifiers", () => {
