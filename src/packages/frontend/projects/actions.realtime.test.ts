@@ -97,11 +97,13 @@ async function flush(): Promise<void> {
 
 describe("ProjectsActions realtime feed", () => {
   let projectMap = ImmutableMap<string, any>();
+  let openProjects = List<string>();
 
   beforeEach(() => {
     jest.clearAllMocks();
     refreshProjectsTableMock.mockResolvedValue(undefined);
     projectMap = ImmutableMap<string, any>();
+    openProjects = List<string>();
     mockedWebappClient.is_signed_in.mockReturnValue(true);
     getSharedAccountDStreamMock.mockResolvedValue(new MockFeed());
     mockedStore.get.mockImplementation((key: string) => {
@@ -109,7 +111,7 @@ describe("ProjectsActions realtime feed", () => {
         case "project_map":
           return projectMap;
         case "open_projects":
-          return List();
+          return openProjects;
         default:
           return undefined;
       }
@@ -198,12 +200,13 @@ describe("ProjectsActions realtime feed", () => {
         }),
       ],
     ]);
+    openProjects = List([projectId]);
     mockedStore.get.mockImplementation((key: string) => {
       switch (key) {
         case "project_map":
           return projectMap;
         case "open_projects":
-          return List([projectId]);
+          return openProjects;
         default:
           return undefined;
       }
@@ -270,6 +273,66 @@ describe("ProjectsActions realtime feed", () => {
     });
     expect(resetProjectHostRuntime).toHaveBeenCalled();
     expect(mockedWebappClient.conat_client.reconnect).not.toHaveBeenCalled();
+  });
+
+  it("does not close an open project when a transient remove lands during an active move", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000002";
+    projectMap = ImmutableMap<string, any>([
+      [
+        projectId,
+        ImmutableMap({
+          host_id: "host-old",
+          title: "Moving Project",
+        }),
+      ],
+    ]);
+    openProjects = List([projectId]);
+    const projectStore = ImmutableMap({
+      move_lro: ImmutableMap({
+        op_id: "move-op-1",
+        summary: { status: "running" },
+      }),
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      getProjectStore: jest.fn(() => projectStore),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+        if (state.projects.open_projects != null) {
+          openProjects = state.projects.open_projects;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+    const setProjectClosedSpy = jest.spyOn(actions, "set_project_closed");
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.remove",
+      ts: Date.now(),
+      account_id: "acct-1",
+      project_id: projectId,
+    });
+    await flush();
+
+    expect(projectMap.has(projectId)).toBe(true);
+    expect(openProjects.includes(projectId)).toBe(true);
+    expect(setProjectClosedSpy).not.toHaveBeenCalled();
   });
 
   it("bootstraps remote shared projects from account_project_index on init", async () => {

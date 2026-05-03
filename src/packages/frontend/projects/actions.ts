@@ -49,6 +49,7 @@ import {
   parseOfflineMoveConfirmationError,
 } from "./offline-move-confirmation";
 import type { DStream } from "@cocalc/conat/sync/dstream";
+import { isTerminal } from "@cocalc/frontend/lro/utils";
 
 import type {
   CourseInfo,
@@ -507,6 +508,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (project_map == null || !project_map.has(project_id)) {
       return;
     }
+    if (
+      this.isProjectOpen(project_id) &&
+      this.isProjectMoveInProgress(project_id)
+    ) {
+      return;
+    }
     this.setState({
       project_map: project_map.delete(project_id),
     } as ProjectsState);
@@ -537,6 +544,23 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private isProjectOpen = (project_id: string): boolean => {
     return store.get("open_projects").indexOf(project_id) != -1;
   };
+
+  private isProjectMoveInProgress(project_id: string): boolean {
+    const projectStore = this.redux.getProjectStore?.(project_id);
+    const moveLro = projectStore?.get?.("move_lro");
+    if (!moveLro) {
+      return false;
+    }
+    const summary = moveLro.get?.("summary");
+    const status =
+      moveLro.getIn?.(["summary", "status"]) ??
+      summary?.status ??
+      summary?.get?.("status");
+    if (status == null) {
+      return true;
+    }
+    return !isTerminal(status);
+  }
 
   private setProjectOpen = (project_id: string): void => {
     const x = store.get("open_projects");
