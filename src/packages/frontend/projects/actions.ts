@@ -120,11 +120,28 @@ type ProjectBackupBootstrapRow = {
   last_backup?: string | Date | null;
 };
 
+type DirectProjectBootstrapRow = {
+  project_id: string;
+  title?: string | null;
+  description?: string | null;
+  name?: string | null;
+  theme?: Record<string, any> | null;
+  host_id?: string | null;
+  owning_bay_id?: string | null;
+  users?: Record<string, any> | null;
+  state?: Record<string, any> | null;
+  last_active?: Record<string, any> | null;
+  last_edited?: string | Date | null;
+  last_backup?: string | Date | null;
+  deleted?: boolean | null;
+};
+
 // Define projects actions
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
   private static ARCHIVE_RPC_TIMEOUT_MS = 30_000;
   private static REALTIME_FEED_BATCH_MS = 50;
+  private static CREATE_PROJECT_FEED_WAIT_TIMEOUT_S = 5;
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
@@ -551,6 +568,73 @@ export class ProjectsActions extends Actions<ProjectsState> {
     for (const project_id of projectsToClose) {
       this.set_project_closed(project_id);
     }
+  }
+
+  private upsertProjectMapFromRow(row: AccountFeedProjectRow): void {
+    const project_map = (store.get("project_map") ?? Map<string, any>()).set(
+      row.project_id,
+      (
+        store.get("project_map")?.get(row.project_id) ?? Map<string, any>()
+      ).mergeDeep(buildProjectRecordFromFeedRow(row)),
+    );
+    this.setState({ project_map } as ProjectsState);
+  }
+
+  private async bootstrapCreatedProjectDirectly(
+    project_id: string,
+  ): Promise<boolean> {
+    let resp: any;
+    try {
+      resp = await webapp_client.async_query({
+        query: {
+          projects: [
+            {
+              project_id,
+              title: null,
+              description: null,
+              name: null,
+              theme: null,
+              host_id: null,
+              owning_bay_id: null,
+              users: null,
+              state: null,
+              last_active: null,
+              last_edited: null,
+              last_backup: null,
+              deleted: null,
+            },
+          ],
+        },
+      });
+    } catch (err) {
+      console.warn("bootstrapCreatedProjectDirectly failed", {
+        project_id,
+        err: `${err}`,
+      });
+      return false;
+    }
+    const row = resp?.query?.projects?.[0] as
+      | DirectProjectBootstrapRow
+      | undefined;
+    if (!row?.project_id) {
+      return false;
+    }
+    this.upsertProjectMapFromRow({
+      project_id: row.project_id,
+      title: row.title ?? "",
+      description: row.description ?? "",
+      name: row.name ?? null,
+      theme: row.theme ?? null,
+      host_id: row.host_id ?? null,
+      owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
+      users: row.users ?? {},
+      state: row.state ?? {},
+      last_active: row.last_active ?? {},
+      last_edited: dateOrNull(row.last_edited)?.toISOString() ?? null,
+      last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
+      deleted: !!row.deleted,
+    });
+    return true;
   }
 
   private handleOpenProjectHostChange({
@@ -1039,10 +1123,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
     // At this point we know the project_id and that the project exists.
     // However, various code (e.g., setting the title) depends on the
     // project_map also having the project in it, which requires some
-    // changefeeds to fire off and get handled.  So we wait for that.
-    await store.async_wait({
-      until: () => store.getIn(["project_map", project_id]) != null,
-    });
+    // changefeeds to fire off and get handled. Under heavy account churn that
+    // local feed processing can lag even though create already succeeded, so
+    // fall back to a targeted direct row bootstrap instead of timing out.
+    try {
+      await store.async_wait({
+        until: () => store.getIn(["project_map", project_id]) != null,
+        timeout: ProjectsActions.CREATE_PROJECT_FEED_WAIT_TIMEOUT_S,
+      });
+    } catch (err) {
+      if (
+        `${err}` !== "timeout" ||
+        !(await this.bootstrapCreatedProjectDirectly(project_id))
+      ) {
+        throw err;
+      }
+    }
     return project_id;
   }
 
