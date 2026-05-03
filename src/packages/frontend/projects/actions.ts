@@ -280,7 +280,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     switch (event.type) {
       case "project.upsert":
-        this.applyProjectFeedUpsert(event.project);
+        this.applyProjectFeedUpsert(event.project, event.ts);
         break;
       case "project.remove":
         this.applyProjectFeedRemove(event.project_id);
@@ -436,14 +436,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (
           typeof currentHostId === "string" &&
           currentHostId &&
-          this.shouldPreserveLocalHostIdFromProjectedBootstrap({
+          this.shouldPreserveLocalHostIdAfterMove({
             project_id: row.project_id,
             current_host_id: currentHostId,
-            projected_host_id:
+            incoming_host_id:
               typeof row.host_id === "string" && row.host_id
                 ? row.host_id
                 : undefined,
-            projected_updated_at: row.updated_at ?? row.sort_key,
+            incoming_updated_at: row.updated_at ?? row.sort_key,
           })
         ) {
           nextProject = nextProject.set("host_id", currentHostId);
@@ -481,21 +481,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
-  private shouldPreserveLocalHostIdFromProjectedBootstrap({
+  private shouldPreserveLocalHostIdAfterMove({
     project_id,
     current_host_id,
-    projected_host_id,
-    projected_updated_at,
+    incoming_host_id,
+    incoming_updated_at,
   }: {
     project_id: string;
     current_host_id?: string;
-    projected_host_id?: string;
-    projected_updated_at?: string | Date | null;
+    incoming_host_id?: string;
+    incoming_updated_at?: number | string | Date | null;
   }): boolean {
     if (
       !current_host_id ||
-      !projected_host_id ||
-      current_host_id === projected_host_id
+      !incoming_host_id ||
+      current_host_id === incoming_host_id
     ) {
       return false;
     }
@@ -517,32 +517,50 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (!Number.isFinite(moveMs)) {
       return false;
     }
-    const projectedMs = new Date(`${projected_updated_at ?? ""}`).getTime();
-    if (!Number.isFinite(projectedMs)) {
+    const incomingMs =
+      typeof incoming_updated_at === "number"
+        ? incoming_updated_at
+        : new Date(`${incoming_updated_at ?? ""}`).getTime();
+    if (!Number.isFinite(incomingMs)) {
       return true;
     }
-    return projectedMs < moveMs;
+    return incomingMs < moveMs;
   }
 
-  private applyProjectFeedUpsert(row: AccountFeedProjectRow): void {
+  private applyProjectFeedUpsert(
+    row: AccountFeedProjectRow,
+    updatedAt?: number,
+  ): void {
     const project_map = store.get("project_map") ?? Map<string, any>();
     const previous = project_map.get(row.project_id);
     const previous_host_id =
       (previous?.get("host_id") as string | undefined) ?? undefined;
     const next_host_id =
       typeof row.host_id === "string" && row.host_id ? row.host_id : undefined;
+    let nextProject = (
+      project_map.get(row.project_id) ?? Map<string, any>()
+    ).mergeDeep(buildProjectRecordFromFeedRow(row));
+    if (
+      typeof previous_host_id === "string" &&
+      previous_host_id &&
+      this.shouldPreserveLocalHostIdAfterMove({
+        project_id: row.project_id,
+        current_host_id: previous_host_id,
+        incoming_host_id: next_host_id,
+        incoming_updated_at: updatedAt,
+      })
+    ) {
+      nextProject = nextProject.set("host_id", previous_host_id);
+    }
     this.setState({
-      project_map: project_map.set(
-        row.project_id,
-        (project_map.get(row.project_id) ?? Map<string, any>()).mergeDeep(
-          buildProjectRecordFromFeedRow(row),
-        ),
-      ),
+      project_map: project_map.set(row.project_id, nextProject),
     } as ProjectsState);
+    const applied_host_id =
+      (nextProject.get("host_id") as string | undefined) ?? undefined;
     this.handleOpenProjectHostChange({
       project_id: row.project_id,
       source_host_id: previous_host_id,
-      dest_host_id: next_host_id,
+      dest_host_id: applied_host_id,
     });
   }
 
