@@ -168,6 +168,12 @@ const PROJECT_HTTP_PORT_POLL_MS = Math.max(
   100,
   Number(process.env.COCALC_PROJECT_HTTP_PORT_POLL_MS ?? 500),
 );
+const ACP_STARTUP_REHYDRATE_CONCURRENCY = Math.max(
+  1,
+  Number(
+    process.env.COCALC_PROJECT_HOST_ACP_STARTUP_REHYDRATE_CONCURRENCY ?? 4,
+  ) || 4,
+);
 const PUBLIC_APP_ROUTE_CACHE_MS = Math.max(
   1000,
   Number(process.env.COCALC_PROJECT_HOST_PUBLIC_APP_ROUTE_CACHE_MS ?? 30_000),
@@ -334,6 +340,50 @@ async function waitForProjectHttpPort(project_id: string): Promise<number> {
   }
 }
 
+async function rehydrateAcpAutomationsOnStartup(): Promise<void> {
+  const projectIds = listProjects()
+    .map((row) => `${row.project_id ?? ""}`.trim())
+    .filter(Boolean);
+  if (projectIds.length === 0) {
+    return;
+  }
+  const concurrency = Math.min(
+    ACP_STARTUP_REHYDRATE_CONCURRENCY,
+    projectIds.length,
+  );
+  let index = 0;
+  let restored = 0;
+  let failed = 0;
+  logger.info("starting ACP automation rehydrate after startup", {
+    projects: projectIds.length,
+    concurrency,
+  });
+  const worker = async () => {
+    while (true) {
+      const project_id = projectIds[index++];
+      if (!project_id) return;
+      try {
+        restored += await rehydrateAcpAutomationsForProject(project_id);
+      } catch (err) {
+        failed += 1;
+        logger.warn("failed to rehydrate project ACP automations on startup", {
+          project_id,
+          err: `${err}`,
+        });
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: concurrency }, async () => await worker()),
+  );
+  logger.info("completed ACP automation rehydrate after startup", {
+    projects: projectIds.length,
+    restored,
+    failed,
+    concurrency,
+  });
+}
+
 export async function main(
   _config: ProjectHostConfig = {},
 ): Promise<ProjectHostContext> {
@@ -446,16 +496,6 @@ export async function main(
     ensureProjectHostAcpWorkerRunning(),
   );
   await initAcp(conatClient, { manageDetachedWorker: false });
-  for (const row of listProjects()) {
-    const project_id = `${row.project_id ?? ""}`.trim();
-    if (!project_id) continue;
-    void rehydrateAcpAutomationsForProject(project_id).catch((err) => {
-      logger.warn("failed to rehydrate project ACP automations on startup", {
-        project_id,
-        err: `${err}`,
-      });
-    });
-  }
 
   logger.info("Proxy HTTP/WS traffic to running project containers.");
   const httpProxyAuth = createProjectHostHttpProxyAuth({ host_id: hostId });
@@ -1271,6 +1311,11 @@ export async function main(
   healthState.ready = true;
   resolveStartupReady();
   logger.info("project-host ready");
+  void rehydrateAcpAutomationsOnStartup().catch((err) => {
+    logger.warn("startup ACP automation rehydrate failed", {
+      err: `${err}`,
+    });
+  });
 
   let closed = false;
   let shutdownInProgress = false;
