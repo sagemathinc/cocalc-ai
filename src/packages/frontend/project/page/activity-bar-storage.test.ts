@@ -2,12 +2,19 @@
 
 import {
   getActivityBarCollapsed,
+  isRelevantActivityBarStorageEvent,
   readActivityBarPreferences,
   setActivityBarCollapsed,
   setActivityBarHiddenTabs,
   setActivityBarLabels,
   setActivityBarTabOrder,
 } from "./activity-bar-storage";
+import {
+  ACTIVITY_BAR_COLLAPSED,
+  ACTIVITY_BAR_HIDDEN_TABS,
+  ACTIVITY_BAR_LABELS,
+  ACTIVITY_BAR_TAB_ORDER,
+} from "./activity-bar-consts";
 
 describe("activity-bar storage", () => {
   beforeEach(() => {
@@ -68,5 +75,50 @@ describe("activity-bar storage", () => {
       ],
       hidden: ["active", "log", "servers", "info"],
     });
+  });
+
+  it("ignores unrelated cross-tab storage events", () => {
+    expect(
+      isRelevantActivityBarStorageEvent({
+        key: ACTIVITY_BAR_COLLAPSED,
+        storageArea: window.localStorage,
+      }),
+    ).toBe(true);
+    expect(
+      isRelevantActivityBarStorageEvent({
+        key: ACTIVITY_BAR_LABELS,
+        storageArea: window.localStorage,
+      }),
+    ).toBe(true);
+    expect(
+      isRelevantActivityBarStorageEvent({
+        key: ACTIVITY_BAR_TAB_ORDER,
+        storageArea: window.localStorage,
+      }),
+    ).toBe(true);
+    expect(
+      isRelevantActivityBarStorageEvent({
+        key: ACTIVITY_BAR_HIDDEN_TABS,
+        storageArea: window.localStorage,
+      }),
+    ).toBe(true);
+    expect(
+      isRelevantActivityBarStorageEvent({
+        key: "cocalc:unrelated",
+        storageArea: window.localStorage,
+      }),
+    ).toBe(false);
+    expect(
+      isRelevantActivityBarStorageEvent({
+        key: ACTIVITY_BAR_LABELS,
+        storageArea: window.sessionStorage,
+      }),
+    ).toBe(false);
+    expect(
+      isRelevantActivityBarStorageEvent({
+        key: null,
+        storageArea: window.localStorage,
+      }),
+    ).toBe(true);
   });
 });

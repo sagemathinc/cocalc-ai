@@ -27,6 +27,9 @@ const STORAGE_KEYS = {
   order: new LS.CustomKey(ACTIVITY_BAR_TAB_ORDER),
   hidden: new LS.CustomKey(ACTIVITY_BAR_HIDDEN_TABS),
 } as const;
+const STORAGE_KEY_NAMES = new Set(
+  Object.values(STORAGE_KEYS).map((key) => key.getKey()),
+);
 
 type ActivityBarStorageKey = keyof typeof STORAGE_KEYS;
 
@@ -42,16 +45,35 @@ function emitActivityBarStorageChanged(): void {
   window.dispatchEvent(new Event(ACTIVITY_BAR_STORAGE_EVENT));
 }
 
+export function isRelevantActivityBarStorageEvent(
+  event: Pick<StorageEvent, "key" | "storageArea">,
+): boolean {
+  if (typeof window === "undefined") return false;
+  if (event.storageArea != null && event.storageArea !== window.localStorage) {
+    return false;
+  }
+  if (event.key == null) {
+    return true;
+  }
+  return STORAGE_KEY_NAMES.has(event.key);
+}
+
 function subscribe(listener: () => void): () => void {
   if (typeof window === "undefined") {
     return () => {};
   }
   const handle = () => listener();
+  const handleStorage = (event: StorageEvent) => {
+    if (!isRelevantActivityBarStorageEvent(event)) {
+      return;
+    }
+    listener();
+  };
   window.addEventListener(ACTIVITY_BAR_STORAGE_EVENT, handle);
-  window.addEventListener("storage", handle);
+  window.addEventListener("storage", handleStorage);
   return () => {
     window.removeEventListener(ACTIVITY_BAR_STORAGE_EVENT, handle);
-    window.removeEventListener("storage", handle);
+    window.removeEventListener("storage", handleStorage);
   };
 }
 
