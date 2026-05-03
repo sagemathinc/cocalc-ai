@@ -23,6 +23,9 @@ interface CustomizePayload {
   };
 }
 
+const CUSTOMIZE_RETRY_START_DELAY_MS = 500;
+const CUSTOMIZE_RETRY_MAX_DELAY_MS = 5000;
+
 async function fetchJsonWithTimeout<T>(
   path: string,
   timeoutMs: number,
@@ -41,8 +44,23 @@ async function fetchJsonWithTimeout<T>(
   }
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function loadCustomize(): Promise<CustomizePayload | undefined> {
-  return await fetchJsonWithTimeout<CustomizePayload>("customize", 3000);
+  let retryDelayMs = CUSTOMIZE_RETRY_START_DELAY_MS;
+  while (true) {
+    const payload = await fetchJsonWithTimeout<CustomizePayload>(
+      "customize",
+      3000,
+    );
+    if (payload != null) {
+      return payload;
+    }
+    await delay(retryDelayMs);
+    retryDelayMs = Math.min(retryDelayMs * 2, CUSTOMIZE_RETRY_MAX_DELAY_MS);
+  }
 }
 
 async function loadNews(): Promise<NewsItem[] | undefined> {

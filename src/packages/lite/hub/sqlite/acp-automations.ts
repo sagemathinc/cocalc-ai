@@ -365,6 +365,20 @@ export function listAcpAutomationsForProject(
     .filter(Boolean);
 }
 
+export function listAcpAutomationProjectIds(): string[] {
+  ensureInit();
+  const db = getAcpDatabase();
+  return db
+    .prepare(
+      `SELECT DISTINCT project_id FROM ${TABLE}
+       WHERE project_id IS NOT NULL AND project_id != ''
+       ORDER BY project_id ASC`,
+    )
+    .all()
+    .map((row: any) => `${row?.project_id ?? ""}`.trim())
+    .filter(Boolean);
+}
+
 export function deleteAcpAutomationsForProject(project_id: string): void {
   ensureInit();
   getAcpDatabase()
