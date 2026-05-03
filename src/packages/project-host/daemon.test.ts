@@ -18,6 +18,11 @@ const {
   startHostAgent,
   stopDaemon,
 } = require("./daemon");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const {
+  projectHostActivityFilePath,
+  resetProjectHostActivityStateForTesting,
+} = require("./health-progress");
 
 type ProcessRuntimeSpawn = typeof __test__.processRuntime.spawn;
 
@@ -35,6 +40,7 @@ describe("project-host daemon stop", () => {
     process.env = { ...originalEnv };
     process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_ROUTER = "0";
     __test__.resetHealthFailureStreaks();
+    resetProjectHostActivityStateForTesting();
     runtimeDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "cocalc-project-host-runtime-"),
     );
@@ -1710,6 +1716,103 @@ describe("project-host daemon stop", () => {
         ok: false,
         url: "http://127.0.0.1:9003/healthz",
       }),
+    );
+  });
+
+  it("does not restart an unhealthy daemon during active start or stop work", () => {
+    const dataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "cocalc-project-host-daemon-"),
+    );
+    const pidPath = path.join(dataDir, "daemon.pid");
+    const routerPidPath = path.join(dataDir, "conat-router.pid");
+    fs.writeFileSync(pidPath, "8686");
+    fs.writeFileSync(routerPidPath, "8383");
+    const old = new Date(Date.now() - 120_000);
+    fs.utimesSync(pidPath, old, old);
+    process.env.COCALC_DATA = dataDir;
+    process.env.PORT = "9002";
+    process.env.COCALC_PROJECT_HOST_EXTERNAL_CONAT_PERSIST = "0";
+    process.env.COCALC_PROJECT_HOST_DAEMON_HEALTH_FAILS_BEFORE_RESTART = "1";
+
+    fs.writeFileSync(
+      projectHostActivityFilePath(dataDir),
+      JSON.stringify({
+        pid: 8686,
+        active_operations: 9,
+        active_starts: 9,
+        active_stops: 0,
+        last_activity_ms: Date.now(),
+        updated_at: new Date().toISOString(),
+      }),
+    );
+
+    const killSpy = jest.spyOn(process, "kill").mockImplementation(((
+      pid: number,
+      signal?: NodeJS.Signals | number,
+    ) => {
+      expect([8383, 8686]).toContain(pid);
+      if (signal === 0 || signal === undefined) {
+        return true;
+      }
+      throw new Error(`unexpected signal ${signal}`);
+    }) as typeof process.kill);
+    jest.spyOn(__test__.processRuntime, "spawnSync").mockImplementation(((
+      _command: string,
+      args: string[],
+    ) => {
+      const url = args[2];
+      const ok = url === "http://127.0.0.1:9102/healthz";
+      return {
+        status: ok ? 0 : 1,
+        stdout: JSON.stringify({ url, ok }),
+        stderr: "",
+      } as any;
+    }) as typeof __test__.processRuntime.spawnSync);
+    const spawnSpy = mockSpawn().mockReturnValue({
+      pid: 9696,
+      unref: () => {},
+    } as any);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    ensureDaemon(0);
+
+    expect(killSpy).not.toHaveBeenCalledWith(8686, "SIGTERM");
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      "project-host pid 8686 health check failed during active start/stop workload; deferring restart.",
+      expect.objectContaining({
+        selected_version: undefined,
+        running_version: undefined,
+        health: expect.objectContaining({
+          ok: false,
+          url: "http://127.0.0.1:9003/healthz",
+        }),
+        activity: expect.objectContaining({
+          active_operations: 9,
+          active_starts: 9,
+          active_stops: 0,
+        }),
+      }),
+    );
+    const events = fs
+      .readFileSync(path.join(dataDir, "supervision-events.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component: "project-host",
+          action: "health_check_failed",
+          pid: 8686,
+          metadata: expect.objectContaining({
+            deferred_for_active_operations: true,
+            active_operations: 9,
+            active_starts: 9,
+            active_stops: 0,
+          }),
+        }),
+      ]),
     );
   });
 

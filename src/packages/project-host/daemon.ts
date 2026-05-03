@@ -7,6 +7,7 @@ import {
   type HealthCheckDiagnostic,
   type SupervisionEvent,
 } from "./supervision-events";
+import { readProjectHostActivitySnapshot } from "./health-progress";
 import { getProjectHostProcessTitle } from "./process-role";
 
 type DaemonAction = "start" | "stop" | "ensure" | "restart-project-host";
@@ -218,8 +219,36 @@ function rootctlPath(): string {
 function healthFailureThreshold(): number {
   return getPositiveIntEnv(
     "COCALC_PROJECT_HOST_DAEMON_HEALTH_FAILS_BEFORE_RESTART",
-    3,
+    6,
   );
+}
+
+function activeProgressGraceMs(): number {
+  return getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_ACTIVE_PROGRESS_GRACE_MS",
+    60_000,
+  );
+}
+
+function recentActivitySnapshotForPid(
+  dataDir: string,
+  pid: number,
+): Record<string, unknown> | undefined {
+  const snapshot = readProjectHostActivitySnapshot(dataDir);
+  if (!snapshot) return;
+  if (snapshot.pid !== pid) return;
+  if (snapshot.active_operations <= 0) return;
+  const ageMs = Math.max(0, Date.now() - snapshot.last_activity_ms);
+  const graceMs = activeProgressGraceMs();
+  if (ageMs > graceMs) return;
+  return {
+    active_operations: snapshot.active_operations,
+    active_starts: snapshot.active_starts,
+    active_stops: snapshot.active_stops,
+    activity_pid: snapshot.pid,
+    activity_last_ms_ago: ageMs,
+    activity_grace_ms: graceMs,
+  };
 }
 
 function healthFailureKey(
@@ -1067,8 +1096,14 @@ function conatRouterHealthCheckUrl(
 }
 
 function inspectHealthUrlSync(url: string): HealthCheckDiagnostic {
-  const timeoutSeconds = String(
-    getPositiveIntEnv("COCALC_PROJECT_HOST_DAEMON_HEALTH_TIMEOUT_SEC", 7),
+  const timeoutSecondsValue = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_HEALTH_TIMEOUT_SEC",
+    15,
+  );
+  const timeoutSeconds = String(timeoutSecondsValue);
+  const probeTimeoutMs = getPositiveIntEnv(
+    "COCALC_PROJECT_HOST_DAEMON_HEALTH_PROBE_TIMEOUT_MS",
+    timeoutSecondsValue * 1000 + 3000,
   );
   const script = [
     "import json, sys, urllib.request, urllib.error",
@@ -1092,10 +1127,7 @@ function inspectHealthUrlSync(url: string): HealthCheckDiagnostic {
     "raise SystemExit(0 if result['ok'] else 1)",
   ].join("\n");
   const result = spawnSyncText("python3", ["-c", script, url, timeoutSeconds], {
-    timeout: getPositiveIntEnv(
-      "COCALC_PROJECT_HOST_DAEMON_HEALTH_PROBE_TIMEOUT_MS",
-      10_000,
-    ),
+    timeout: probeTimeoutMs,
   });
   try {
     const parsed = JSON.parse(
@@ -2306,7 +2338,7 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
     }
     const warmupMs = getPositiveIntEnv(
       "COCALC_PROJECT_HOST_DAEMON_STARTUP_GRACE_MS",
-      30_000,
+      60_000,
     );
     const ageMs = pidFileAgeMs(pidPath);
     if (ageMs != null && ageMs < warmupMs) {
@@ -2326,6 +2358,34 @@ function ensureDaemonWithOptions(index = 0, options?: EnsureOptions): void {
         metadata: {
           pid_file_age_ms: ageMs,
           warmup_ms: warmupMs,
+        },
+      });
+      return;
+    }
+    const activeActivity = recentActivitySnapshotForPid(dataDir, pid);
+    if (activeActivity) {
+      resetHealthFailureStreak(dataDir, "project-host");
+      console.warn(
+        `project-host pid ${pid} health check failed during active start/stop workload; deferring restart.`,
+        {
+          selected_version: selectedVersion,
+          running_version: runningVersion,
+          health: diagnostic,
+          activity: activeActivity,
+        },
+      );
+      recordDaemonEvent(dataDir, {
+        component: "project-host",
+        action: "health_check_failed",
+        message:
+          "project-host health check failed during active start/stop workload",
+        pid,
+        selected_version: selectedVersion,
+        running_version: runningVersion,
+        health: diagnostic,
+        metadata: {
+          deferred_for_active_operations: true,
+          ...activeActivity,
         },
       });
       return;

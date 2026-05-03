@@ -109,6 +109,7 @@ import { initProjectStorageInfoService } from "./storage-info-service";
 import { initProjectDocumentActivityService } from "./document-activity-service";
 import { initProjectArchiveInfoService } from "./archive-info-service";
 import { startProjectHostEventLoopStallMonitor } from "./event-loop-stalls";
+import { getProjectHostActivitySnapshot } from "./health-progress";
 import {
   attachProjectHostConatRouterProxy,
   resolveProjectHostConatRouterUrl,
@@ -429,7 +430,12 @@ export async function main(
   // 1) HTTP + conat server
   const { app, httpServer } = await startHttpServer(port, host, tls);
   app.get("/healthz", (_req, res) =>
-    res.json({ ok: true, ready: healthState.ready }),
+    res.json({
+      ok: true,
+      ready: healthState.ready,
+      pid: process.pid,
+      activity: getProjectHostActivitySnapshot(),
+    }),
   );
   const conatRouterUrl = resolveProjectHostConatRouterUrl();
   attachProjectHostConatRouterProxy({

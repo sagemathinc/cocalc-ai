@@ -105,6 +105,11 @@ import {
   projectPortOffsetFromHttpPort,
   projectPortOffsetFromSshPort,
 } from "../sqlite/port-leases";
+import {
+  beginProjectHostActivity,
+  endProjectHostActivity,
+  noteProjectHostActivityProgress,
+} from "../health-progress";
 
 const logger = getLogger("project-host:hub:projects");
 export const PROJECT_RUNNER_RPC_TIMEOUT_MS = 60 * 60 * 1000;
@@ -852,6 +857,7 @@ async function startRunnerWithStorageReservation<T>({
 }
 
 function publishStartProgress({
+  activity_id,
   project_id,
   op_id,
   phase,
@@ -859,6 +865,7 @@ function publishStartProgress({
   message,
   detail,
 }: {
+  activity_id?: string;
   project_id: string;
   op_id: string;
   phase: string;
@@ -866,6 +873,9 @@ function publishStartProgress({
   message: string;
   detail?: any;
 }): void {
+  if (activity_id) {
+    noteProjectHostActivityProgress(activity_id);
+  }
   void publishLroEvent({
     scope_type: "project",
     scope_id: project_id,
@@ -1069,6 +1079,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     await ensureVolume(project_id);
 
     if (opts.start) {
+      const activity_id = `create-start:${project_id}`;
       const resolved = await resolveStartMetadata({
         project_id,
         authorized_keys: (opts as any)?.authorized_keys,
@@ -1086,42 +1097,49 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         state: "starting",
         authorized_keys: (opts as any).authorized_keys,
       });
-      const initialConfig = await getRunnerConfig(project_id, resolved);
-      const buildRetryConfig = async (retryOpts: {
-        avoid_port_offsets: Iterable<number>;
-      }) =>
-        await getRunnerConfig(project_id, resolved, {
-          rotate_ports: true,
-          avoid_port_offsets: retryOpts.avoid_port_offsets,
-        });
-      const startRunner = async (config: Configuration) =>
-        await startRunnerWithStorageReservation({
+      beginProjectHostActivity(activity_id, "start");
+      try {
+        const initialConfig = await getRunnerConfig(project_id, resolved);
+        noteProjectHostActivityProgress(activity_id);
+        const buildRetryConfig = async (retryOpts: {
+          avoid_port_offsets: Iterable<number>;
+        }) =>
+          await getRunnerConfig(project_id, resolved, {
+            rotate_ports: true,
+            avoid_port_offsets: retryOpts.avoid_port_offsets,
+          });
+        const startRunner = async (config: Configuration) =>
+          await startRunnerWithStorageReservation({
+            project_id,
+            image: getImage(config),
+            fn: async () =>
+              await runnerApi.start({
+                project_id,
+                config,
+              }),
+          });
+        await ensureManagedRootfsCached(initialConfig);
+        noteProjectHostActivityProgress(activity_id);
+        const started = await startRunnerWithPortRetry({
           project_id,
-          image: getImage(config),
-          fn: async () =>
-            await runnerApi.start({
-              project_id,
-              config,
-            }),
+          initialConfig,
+          buildRetryConfig,
+          startRunner,
         });
-      await ensureManagedRootfsCached(initialConfig);
-      const started = await startRunnerWithPortRetry({
-        project_id,
-        initialConfig,
-        buildRetryConfig,
-        startRunner,
-      });
-      const status = started.status;
-      ensureProjectRow({
-        project_id,
-        opts,
-        state: status?.state ?? "running",
-        http_port: (status as any)?.http_port,
-        ssh_port: (status as any)?.ssh_port,
-        project_bundle_version: (status as any)?.project_bundle_version,
-        tools_version: (status as any)?.tools_version,
-      });
-      kickOffAcpRehydrate(project_id, "createProject: post-start");
+        const status = started.status;
+        ensureProjectRow({
+          project_id,
+          opts,
+          state: status?.state ?? "running",
+          http_port: (status as any)?.http_port,
+          ssh_port: (status as any)?.ssh_port,
+          project_bundle_version: (status as any)?.project_bundle_version,
+          tools_version: (status as any)?.tools_version,
+        });
+        kickOffAcpRehydrate(project_id, "createProject: post-start");
+      } finally {
+        endProjectHostActivity(activity_id);
+      }
     }
 
     return project_id;
@@ -1153,46 +1171,52 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     runner_phase_timings_ms?: Record<string, number>;
   }> {
     const op_id = lro_op_id ?? uuid();
+    const activity_id = `start:${op_id}`;
     const timings = createPhaseTimingRecorder();
     let runnerPhaseTimings: Record<string, number> | undefined;
-    await assertManagedRawNetworkStartAllowedBestEffort({
-      project_id,
-      managed_egress_override,
-    });
-    const resolved = await resolveStartMetadata({
-      project_id,
-      authorized_keys,
-      run_quota,
-      image,
-    });
-    upsertProjectStopState({
-      project_id,
-      last_started_ms: Date.now(),
-    });
-    // Mark as starting immediately so hub/clients see progress even if image pulls are slow.
-    ensureProjectRow({
-      project_id,
-      opts: {
-        title: resolved.title,
-        users: resolved.users,
-        authorized_keys: resolved.authorized_keys,
-        run_quota: resolved.run_quota,
-        image: resolved.image,
-      },
-      state: "starting",
-    });
-    publishStartProgress({
-      project_id,
-      op_id,
-      phase: "apply_pending_copies",
-      progress: 5,
-      message: "preparing project state",
-    });
+    beginProjectHostActivity(activity_id, "start");
+    let resolved: StartMetadata | undefined;
     try {
+      await assertManagedRawNetworkStartAllowedBestEffort({
+        project_id,
+        managed_egress_override,
+      });
+      resolved = await resolveStartMetadata({
+        project_id,
+        authorized_keys,
+        run_quota,
+        image,
+      });
+      const startMetadata = resolved;
+      upsertProjectStopState({
+        project_id,
+        last_started_ms: Date.now(),
+      });
+      // Mark as starting immediately so hub/clients see progress even if image pulls are slow.
+      ensureProjectRow({
+        project_id,
+        opts: {
+          title: startMetadata.title,
+          users: startMetadata.users,
+          authorized_keys: startMetadata.authorized_keys,
+          run_quota: startMetadata.run_quota,
+          image: startMetadata.image,
+        },
+        state: "starting",
+      });
+      publishStartProgress({
+        activity_id,
+        project_id,
+        op_id,
+        phase: "apply_pending_copies",
+        progress: 5,
+        message: "preparing project state",
+      });
       await timings.measure("apply_pending_copies", async () => {
         await applyPendingCopies({ project_id });
       });
       publishStartProgress({
+        activity_id,
         project_id,
         op_id,
         phase: "prepare_config",
@@ -1203,10 +1227,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         return await getRunnerConfig(
           project_id,
           {
-            image: resolved.image,
-            authorized_keys: resolved.authorized_keys,
-            run_quota: resolved.run_quota,
-            env: resolved.env,
+            image: startMetadata.image,
+            authorized_keys: startMetadata.authorized_keys,
+            run_quota: startMetadata.run_quota,
+            env: startMetadata.env,
           },
           {
             restore,
@@ -1215,6 +1239,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         );
       });
       publishStartProgress({
+        activity_id,
         project_id,
         op_id,
         phase: "cache_rootfs",
@@ -1226,6 +1251,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       await timings.measure("cache_rootfs", async () => {
         await ensureManagedRootfsCached(config, (update) => {
           publishStartProgress({
+            activity_id,
             project_id,
             op_id,
             phase: "cache_rootfs",
@@ -1236,6 +1262,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         });
       });
       publishStartProgress({
+        activity_id,
         project_id,
         op_id,
         phase: "runner_start",
@@ -1250,10 +1277,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
             await getRunnerConfig(
               project_id,
               {
-                image: resolved.image,
-                authorized_keys: resolved.authorized_keys,
-                run_quota: resolved.run_quota,
-                env: resolved.env,
+                image: startMetadata.image,
+                authorized_keys: startMetadata.authorized_keys,
+                run_quota: startMetadata.run_quota,
+                env: startMetadata.env,
               },
               {
                 restore,
@@ -1269,6 +1296,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
               op_id,
               onProgress: ({ message, detail }) =>
                 publishStartProgress({
+                  activity_id,
                   project_id,
                   op_id,
                   phase: "runner_start",
@@ -1289,10 +1317,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       ensureProjectRow({
         project_id,
         opts: {
-          title: resolved.title,
-          users: resolved.users,
-          authorized_keys: resolved.authorized_keys,
-          run_quota: resolved.run_quota,
+          title: startMetadata.title,
+          users: startMetadata.users,
+          authorized_keys: startMetadata.authorized_keys,
+          run_quota: startMetadata.run_quota,
           image: getImage(config),
         },
         state: status?.state ?? "running",
@@ -1305,6 +1333,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       // runnerApi.start has created or restored it, so ACP rehydrate must wait.
       kickOffAcpRehydrate(project_id, "start: post-start");
       publishStartProgress({
+        activity_id,
         project_id,
         op_id,
         phase: "refresh_authorized_keys",
@@ -1323,6 +1352,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         .filter(([phase]) => !phase.startsWith("runner_start."))
         .reduce((sum, [_phase, value]) => sum + value, 0);
       publishStartProgress({
+        activity_id,
         project_id,
         op_id,
         phase: "done",
@@ -1338,15 +1368,16 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       ensureProjectRow({
         project_id,
         opts: {
-          title: resolved.title,
-          users: resolved.users,
-          authorized_keys: resolved.authorized_keys,
-          run_quota: resolved.run_quota,
-          image: resolved.image,
+          title: resolved?.title,
+          users: resolved?.users,
+          authorized_keys: resolved?.authorized_keys,
+          run_quota: resolved?.run_quota,
+          image: resolved?.image,
         },
         state: "opened",
       });
       publishStartProgress({
+        activity_id,
         project_id,
         op_id,
         phase: "failed",
@@ -1355,6 +1386,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         detail: { error: `${err}` },
       });
       throw err;
+    } finally {
+      endProjectHostActivity(activity_id);
     }
     return {
       op_id,
@@ -1374,49 +1407,60 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     project_id: string;
     force?: boolean;
   }): Promise<void> {
+    const activity_id = `stop:${project_id}:${Date.now()}`;
+    beginProjectHostActivity(activity_id, "stop");
     logger.debug("stop: project-host request received", { project_id, force });
-    const status = await runnerApi.stop({ project_id, force });
-    let finalState = status?.state ?? "opened";
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const verified = await runnerApi.status({ project_id });
-      finalState = verified?.state ?? finalState;
-      if (finalState === "opened") {
-        break;
-      }
-      await delay(250 * (attempt + 1));
-    }
-    logger.debug("stop: runner stop completed", {
-      project_id,
-      force,
-      state: finalState,
-    });
-    ensureProjectRow({
-      project_id,
-      state: finalState,
-      http_port: undefined,
-      ssh_port: undefined,
-    });
-    if (finalState !== "opened") {
-      throw new Error(
-        `project stop did not converge; runner still reports state='${finalState}'`,
-      );
-    }
     try {
-      const base = getMountPoint();
-      const projectPath = join(base, `project-${project_id}`);
-      const generation = await getGeneration(projectPath);
-      await touchProjectLastEditedRunning(project_id, generation, "stop", {
-        force: true,
-      });
-    } catch (err) {
-      logger.debug("stop last_edited check failed", {
+      const status = await runnerApi.stop({ project_id, force });
+      noteProjectHostActivityProgress(activity_id);
+      let finalState = status?.state ?? "opened";
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const verified = await runnerApi.status({ project_id });
+        finalState = verified?.state ?? finalState;
+        if (finalState === "opened") {
+          break;
+        }
+        await delay(250 * (attempt + 1));
+        noteProjectHostActivityProgress(activity_id);
+      }
+      logger.debug("stop: runner stop completed", {
         project_id,
-        err: `${err}`,
+        force,
+        state: finalState,
+      });
+      ensureProjectRow({
+        project_id,
+        state: finalState,
+        http_port: undefined,
+        ssh_port: undefined,
+      });
+      if (finalState !== "opened") {
+        throw new Error(
+          `project stop did not converge; runner still reports state='${finalState}'`,
+        );
+      }
+      try {
+        const base = getMountPoint();
+        const projectPath = join(base, `project-${project_id}`);
+        const generation = await getGeneration(projectPath);
+        await touchProjectLastEditedRunning(project_id, generation, "stop", {
+          force: true,
+        });
+      } catch (err) {
+        logger.debug("stop last_edited check failed", {
+          project_id,
+          err: `${err}`,
+        });
+      } finally {
+        resetProjectLastEditedRunning(project_id);
+      }
+      logger.debug("stop: project-host request finished", {
+        project_id,
+        force,
       });
     } finally {
-      resetProjectLastEditedRunning(project_id);
+      endProjectHostActivity(activity_id);
     }
-    logger.debug("stop: project-host request finished", { project_id, force });
   }
 
   async function restoreSnapshot({
