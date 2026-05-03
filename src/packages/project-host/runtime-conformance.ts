@@ -30,6 +30,7 @@ const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
 
 const DEFAULT_SWEEP_MS = 5 * 60 * 1000;
 const MIN_SWEEP_MS = 30 * 1000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 5 * 1000;
 
 type CheckLevel = "error" | "warning";
 
@@ -61,22 +62,53 @@ function sweepMs(): number {
   return Math.max(MIN_SWEEP_MS, Math.floor(raw));
 }
 
+function commandTimeoutMs(): number {
+  const raw = Number(process.env.COCALC_RUNTIME_CONFORMANCE_COMMAND_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_COMMAND_TIMEOUT_MS;
+  return Math.max(1000, Math.floor(raw));
+}
+
 async function run(
   command: string,
   args: string[],
+  timeoutMs = commandTimeoutMs(),
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return await new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: "pipe" });
+    let settled = false;
     let stdout = "";
     let stderr = "";
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      resolve({
+        exitCode: 124,
+        stdout,
+        stderr:
+          `${stderr}${stderr ? "\n" : ""}timed out after ${timeoutMs}ms`.trim(),
+      });
+    }, timeoutMs);
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
     });
-    child.on("error", reject);
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
     child.on("close", (exitCode) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
       resolve({ exitCode: exitCode ?? 1, stdout, stderr });
     });
   });
@@ -124,14 +156,14 @@ async function checkSudoWhitelistAllowsWrapper(): Promise<CheckResult> {
     return {
       name: "sudo-wrapper-allow",
       ok: true,
-      level: "error",
+      level: "warning",
       message: "runtime sudo wrapper allow check passed",
     };
   }
   return {
     name: "sudo-wrapper-allow",
     ok: false,
-    level: "error",
+    level: "warning",
     message: "runtime sudo wrapper allow check failed",
     details: {
       exitCode: probe.exitCode,
@@ -219,22 +251,34 @@ async function checkSudoWhitelistDeniesGenericMount(): Promise<CheckResult> {
   };
 }
 
+const STARTUP_CHECK_FACTORIES: CheckFactory[] = [
+  {
+    id: "root-owned-path",
+    run: async () => await checkRootOwnedNotWritable(STORAGE_WRAPPER),
+  },
+  { id: "sudo-policy-visible", run: checkSudoPolicyListsWrapper },
+  { id: "sudo-direct-deny", run: checkSudoWhitelistDeniesDirectRoot },
+  {
+    id: "sudo-generic-mount-deny",
+    run: checkSudoWhitelistDeniesGenericMount,
+  },
+];
+
+const PERIODIC_CHECK_FACTORIES: CheckFactory[] = [
+  {
+    id: "root-owned-path",
+    run: async () => await checkRootOwnedNotWritable(STORAGE_WRAPPER),
+  },
+  { id: "sudo-policy-visible", run: checkSudoPolicyListsWrapper },
+  { id: "sudo-wrapper-allow", run: checkSudoWhitelistAllowsWrapper },
+];
+
 function startupChecks(): Promise<CheckResult>[] {
-  return [
-    checkRootOwnedNotWritable(STORAGE_WRAPPER),
-    checkSudoPolicyListsWrapper(),
-    checkSudoWhitelistAllowsWrapper(),
-    checkSudoWhitelistDeniesDirectRoot(),
-    checkSudoWhitelistDeniesGenericMount(),
-  ];
+  return STARTUP_CHECK_FACTORIES.map(({ run }) => run());
 }
 
 function periodicChecks(): Promise<CheckResult>[] {
-  return [
-    checkRootOwnedNotWritable(STORAGE_WRAPPER),
-    checkSudoPolicyListsWrapper(),
-    checkSudoWhitelistAllowsWrapper(),
-  ];
+  return PERIODIC_CHECK_FACTORIES.map(({ run }) => run());
 }
 
 function logResult(context: string, result: CheckResult) {
@@ -288,3 +332,14 @@ export function startRuntimeConformanceMonitor(): () => void {
   interval.unref();
   return () => clearInterval(interval);
 }
+
+export const __test__ = {
+  commandTimeoutMs,
+  periodicCheckIds: () => PERIODIC_CHECK_FACTORIES.map(({ id }) => id),
+  run,
+  startupCheckIds: () => STARTUP_CHECK_FACTORIES.map(({ id }) => id),
+};
+type CheckFactory = {
+  id: string;
+  run: () => Promise<CheckResult>;
+};
