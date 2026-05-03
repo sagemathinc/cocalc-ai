@@ -382,11 +382,11 @@ function normalizePhaseTimings(value) {
   return Object.keys(out).length ? out : undefined;
 }
 
-function summarizePhaseTimings(entries) {
+function summarizePhaseTimings(entries, field = "phase_timings_ms") {
   const phases = new Map();
   let projectCount = 0;
   for (const entry of entries ?? []) {
-    const timings = normalizePhaseTimings(entry?.phase_timings_ms);
+    const timings = normalizePhaseTimings(entry?.[field]);
     if (!timings) {
       continue;
     }
@@ -433,6 +433,13 @@ function formatPhaseStat(phaseSummary, phase) {
   const stats = phaseSummary?.phases?.[phase];
   if (!stats) return null;
   return `${phase}=avg:${formatDurationMs(stats.avg_ms)} p95:${formatDurationMs(stats.p95_ms)} max:${formatDurationMs(stats.max_ms)}`;
+}
+
+function formatPhaseStatEither(primary, primaryPhase, fallback, fallbackPhase) {
+  return (
+    formatPhaseStat(primary, primaryPhase) ??
+    formatPhaseStat(fallback, fallbackPhase)
+  );
 }
 
 function findStepByName(steps, name) {
@@ -499,7 +506,13 @@ function resolveTierTiming({ tier, steps, activeTerminal }) {
   };
 }
 
-function printTierSummary({ tier, timing, sample, phaseSummary }) {
+function printTierSummary({
+  tier,
+  timing,
+  sample,
+  phaseSummary,
+  runnerPhaseSummary,
+}) {
   const remote = sample?.remote ?? {};
   const loadavg = Array.isArray(remote?.loadavg)
     ? remote.loadavg.map((value) => Number(value).toFixed(2)).join(", ")
@@ -530,6 +543,79 @@ function printTierSummary({ tier, timing, sample, phaseSummary }) {
   if (phaseParts.length > 0) {
     console.error(
       [`[host-density] tier ${tier} phases`, ...phaseParts].join(" "),
+    );
+  }
+  const runnerPhaseParts = [
+    formatPhaseStatEither(
+      phaseSummary,
+      "runner_start.resolve_initial_paths",
+      runnerPhaseSummary,
+      "resolve_initial_paths",
+    ),
+    formatPhaseStatEither(
+      phaseSummary,
+      "runner_start.restore_backup",
+      runnerPhaseSummary,
+      "restore_backup",
+    ),
+    formatPhaseStatEither(
+      phaseSummary,
+      "runner_start.ensure_local_path",
+      runnerPhaseSummary,
+      "ensure_local_path",
+    ),
+    formatPhaseStatEither(
+      phaseSummary,
+      "runner_start.mount_rootfs",
+      runnerPhaseSummary,
+      "mount_rootfs",
+    ),
+    formatPhaseStatEither(
+      phaseSummary,
+      "runner_start.resolve_project_script",
+      runnerPhaseSummary,
+      "resolve_project_script",
+    ),
+    formatPhaseStatEither(
+      phaseSummary,
+      "runner_start.build_environment",
+      runnerPhaseSummary,
+      "build_environment",
+    ),
+    formatPhaseStatEither(
+      phaseSummary,
+      "runner_start.prepare_home",
+      runnerPhaseSummary,
+      "prepare_home",
+    ),
+    formatPhaseStatEither(
+      phaseSummary,
+      "runner_start.set_quota",
+      runnerPhaseSummary,
+      "set_quota",
+    ),
+    formatPhaseStatEither(
+      phaseSummary,
+      "runner_start.podman_run",
+      runnerPhaseSummary,
+      "podman_run",
+    ),
+    formatPhaseStatEither(
+      phaseSummary,
+      "runner_start.init_ssh_server",
+      runnerPhaseSummary,
+      "init_ssh_server",
+    ),
+    formatPhaseStatEither(
+      phaseSummary,
+      "runner_start.total",
+      runnerPhaseSummary,
+      "total",
+    ),
+  ].filter(Boolean);
+  if (runnerPhaseParts.length > 0) {
+    console.error(
+      [`[host-density] tier ${tier} runner`, ...runnerPhaseParts].join(" "),
     );
   }
 }
@@ -827,6 +913,9 @@ async function startProject({ projectId, globalArgs }) {
   const phaseTimings =
     normalizePhaseTimings(resultSummary?.phase_timings_ms) ??
     normalizePhaseTimings(progressSummary?.phase_timings_ms);
+  const runnerPhaseTimings =
+    normalizePhaseTimings(resultSummary?.runner_phase_timings_ms) ??
+    normalizePhaseTimings(progressSummary?.runner_phase_timings_ms);
   return {
     project_id: projectId,
     status,
@@ -835,6 +924,7 @@ async function startProject({ projectId, globalArgs }) {
     wait_duration_ms: Date.now() - queueFinishedAt,
     duration_ms: Date.now() - startedAt,
     phase_timings_ms: phaseTimings,
+    runner_phase_timings_ms: runnerPhaseTimings,
   };
 }
 
@@ -1265,11 +1355,22 @@ async function main() {
         activeTerminal: options.activeTerminal,
       });
       const phaseTimingSummary = summarizePhaseTimings(startedThisTier);
+      const runnerPhaseTimingSummary = summarizePhaseTimings(
+        startedThisTier,
+        "runner_phase_timings_ms",
+      );
       const cumulativePhaseTimingSummary = summarizePhaseTimings(
         createdProjects
           .slice(0, tier)
           .map((project) => startedProjectResults.get(project.project_id))
           .filter(Boolean),
+      );
+      const cumulativeRunnerPhaseTimingSummary = summarizePhaseTimings(
+        createdProjects
+          .slice(0, tier)
+          .map((project) => startedProjectResults.get(project.project_id))
+          .filter(Boolean),
+        "runner_phase_timings_ms",
       );
 
       tierResults.push({
@@ -1279,7 +1380,10 @@ async function main() {
         created_this_tier: createdThisTier,
         started_this_tier: startedThisTier,
         phase_timing_summary: phaseTimingSummary,
+        runner_phase_timing_summary: runnerPhaseTimingSummary,
         cumulative_phase_timing_summary: cumulativePhaseTimingSummary,
+        cumulative_runner_phase_timing_summary:
+          cumulativeRunnerPhaseTimingSummary,
         active_terminal: activeTerminalResults,
         sample,
         exec_smoke: execResults,
@@ -1290,6 +1394,7 @@ async function main() {
         timing,
         sample,
         phaseSummary: phaseTimingSummary,
+        runnerPhaseSummary: runnerPhaseTimingSummary,
       });
     }
   } catch (err) {

@@ -152,6 +152,7 @@ export async function server(options: Options) {
         http_port: (resp as any)?.http_port,
         project_bundle_version: (resp as any)?.project_bundle_version,
         tools_version: (resp as any)?.tools_version,
+        phase_timings_ms: (resp as any)?.phase_timings_ms,
       } as const;
       projects.set(opts.project_id, s);
       return s;

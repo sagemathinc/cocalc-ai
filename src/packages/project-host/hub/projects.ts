@@ -907,9 +907,11 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     service: string;
     stream_name: string;
     phase_timings_ms?: Record<string, number>;
+    runner_phase_timings_ms?: Record<string, number>;
   }> {
     const op_id = lro_op_id ?? uuid();
     const timings = createPhaseTimingRecorder();
+    let runnerPhaseTimings: Record<string, number> | undefined;
     await assertManagedRawNetworkStartAllowedBestEffort({
       project_id,
       managed_egress_override,
@@ -1039,6 +1041,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         });
       });
       const status = started.status;
+      runnerPhaseTimings = (status as any)?.phase_timings_ms;
       ensureProjectRow({
         project_id,
         opts: {
@@ -1067,16 +1070,24 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       await timings.measure("refresh_authorized_keys", async () => {
         await refreshAuthorizedKeys(project_id, authorized_keys);
       });
-      timings.phase_timings_ms.total = Object.values(
-        timings.phase_timings_ms,
-      ).reduce((sum, value) => sum + value, 0);
+      if (runnerPhaseTimings) {
+        for (const [phase, value] of Object.entries(runnerPhaseTimings)) {
+          timings.phase_timings_ms[`runner_start.${phase}`] = value;
+        }
+      }
+      timings.phase_timings_ms.total = Object.entries(timings.phase_timings_ms)
+        .filter(([phase]) => !phase.startsWith("runner_start."))
+        .reduce((sum, [_phase, value]) => sum + value, 0);
       publishStartProgress({
         project_id,
         op_id,
         phase: "done",
         progress: 100,
         message: "project ready",
-        detail: { phase_timings_ms: timings.phase_timings_ms },
+        detail: {
+          phase_timings_ms: timings.phase_timings_ms,
+          runner_phase_timings_ms: runnerPhaseTimings,
+        },
       });
     } catch (err) {
       // Fall back to stopped if startup fails so UI reflects failure.
@@ -1108,6 +1119,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       service: PERSIST_SERVICE,
       stream_name: lroStreamName(op_id),
       phase_timings_ms: timings.phase_timings_ms,
+      runner_phase_timings_ms: runnerPhaseTimings,
     };
   }
 

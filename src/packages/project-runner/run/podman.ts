@@ -144,6 +144,21 @@ function formatKeys(keys?: string): string | undefined {
   return trimmed.endsWith("\n") ? trimmed : `${trimmed}\n`;
 }
 
+function createPhaseTimingRecorder() {
+  const phase_timings_ms: Record<string, number> = {};
+  return {
+    phase_timings_ms,
+    async measure<T>(phase: string, fn: () => Promise<T>): Promise<T> {
+      const started = Date.now();
+      try {
+        return await fn();
+      } finally {
+        phase_timings_ms[phase] = Date.now() - started;
+      }
+    },
+  };
+}
+
 async function maybeRestoreFromBackup({
   project_id,
   home,
@@ -837,6 +852,7 @@ export async function start({
   http_port: number;
   project_bundle_version?: string;
   tools_version?: string;
+  phase_timings_ms?: Record<string, number>;
 }> {
   if (!isValidUUID(project_id)) {
     throw Error("start: project_id must be valid");
@@ -851,6 +867,8 @@ export async function start({
   const lro_op_id = config?.lro_op_id;
   const report = (event: ProgressEvent) =>
     reportProgress({ project_id, op_id: lro_op_id, event });
+  const timings = createPhaseTimingRecorder();
+  const totalStarted = Date.now();
   try {
     starting.add(project_id);
     report({ type: "start-project", progress: 0 });
@@ -873,12 +891,16 @@ export async function start({
       });
     }
 
-    let { home, scratch } = await localPath({
-      project_id,
-      disk: config?.disk,
-      scratch: config?.scratch,
-      ensure: false,
-    });
+    let { home, scratch } = await timings.measure(
+      "resolve_initial_paths",
+      async () =>
+        await localPath({
+          project_id,
+          disk: config?.disk,
+          scratch: config?.scratch,
+          ensure: false,
+        }),
+    );
     logger.debug("start: resolved home and scratch", {
       project_id,
       home,
@@ -890,19 +912,25 @@ export async function start({
       desc: "resolved home and scratch paths",
     });
 
-    await maybeRestoreFromBackup({
-      project_id,
-      home,
-      restore: config?.restore,
-      lro_op_id,
+    await timings.measure("restore_backup", async () => {
+      await maybeRestoreFromBackup({
+        project_id,
+        home,
+        restore: config?.restore,
+        lro_op_id,
+      });
     });
 
-    ({ home, scratch } = await localPath({
-      project_id,
-      disk: config?.disk,
-      scratch: config?.scratch,
-      ensure: true,
-    }));
+    ({ home, scratch } = await timings.measure(
+      "ensure_local_path",
+      async () =>
+        await localPath({
+          project_id,
+          disk: config?.disk,
+          scratch: config?.scratch,
+          ensure: true,
+        }),
+    ));
 
     const image = getImage(config);
     report({
@@ -911,7 +939,10 @@ export async function start({
       desc: "mounting rootfs...",
     });
 
-    const rootfs = await mountRootFs({ project_id, home, config });
+    const rootfs = await timings.measure(
+      "mount_rootfs",
+      async () => await mountRootFs({ project_id, home, config }),
+    );
     report({
       type: "start-project",
       progress: 40,
@@ -924,7 +955,10 @@ export async function start({
       bundleMount,
       bundlesMount,
       bundleVersion,
-    } = await resolveProjectScript();
+    } = await timings.measure(
+      "resolve_project_script",
+      async () => await resolveProjectScript(),
+    );
 
     const mounts = getCoCalcMounts();
     if (bundleMount != null) {
@@ -952,13 +986,19 @@ export async function start({
       project_id,
       script: projectScript,
     });
-    const env = await getEnvironment({
-      project_id,
-      env: config?.env,
-      HOME: DEFAULT_PROJECT_RUNTIME_HOME,
-      image,
-    });
-    const toolsVersion = await resolveToolsVersion(env);
+    const { env, toolsVersion } = await timings.measure(
+      "build_environment",
+      async () => {
+        const env = await getEnvironment({
+          project_id,
+          env: config?.env,
+          HOME: DEFAULT_PROJECT_RUNTIME_HOME,
+          image,
+        });
+        const toolsVersion = await resolveToolsVersion(env);
+        return { env, toolsVersion };
+      },
+    );
 
     if (bundleMount != null) {
       env.PATH = env.PATH
@@ -972,57 +1012,62 @@ export async function start({
       desc: "got env variables",
     });
 
-    await mkdir(home, { recursive: true });
-    logger.debug("start: created home", { project_id });
-    report({
-      type: "start-project",
-      progress: 48,
-      desc: "created HOME",
+    await timings.measure("prepare_home", async () => {
+      await mkdir(home, { recursive: true });
+      logger.debug("start: created home", { project_id });
+      report({
+        type: "start-project",
+        progress: 48,
+        desc: "created HOME",
+      });
+
+      await ensureConfFilesExists(home);
+      report({
+        type: "start-project",
+        progress: 50,
+        desc: "created conf files",
+      });
+      logger.debug("start: created conf files", { project_id });
+
+      await writeStartupScripts(home);
+      logger.debug("start: wrote startup scripts", { project_id });
+
+      report({
+        type: "start-project",
+        progress: 52,
+        desc: "wrote startup scripts",
+      });
+
+      await writeSshAuthorizedKeys({
+        home,
+        sshProxyPublicKey: config?.ssh_proxy_public_key,
+        authorizedKeys: config?.authorized_keys,
+      });
+      logger.debug("start: wrote ssh authorized_keys", { project_id });
+
+      await setupDataPath(home);
+
+      report({
+        type: "start-project",
+        progress: 55,
+        desc: "setup project directories",
+      });
+
+      logger.debug("start: setup data path", { project_id });
+      if (config.secret) {
+        await writeSecretToken(home, config.secret!);
+        logger.debug("start: wrote secret", { project_id });
+      }
     });
-
-    await ensureConfFilesExists(home);
-    report({
-      type: "start-project",
-      progress: 50,
-      desc: "created conf files",
-    });
-    logger.debug("start: created conf files", { project_id });
-
-    await writeStartupScripts(home);
-    logger.debug("start: wrote startup scripts", { project_id });
-
-    report({
-      type: "start-project",
-      progress: 52,
-      desc: "wrote startup scripts",
-    });
-
-    await writeSshAuthorizedKeys({
-      home,
-      sshProxyPublicKey: config?.ssh_proxy_public_key,
-      authorizedKeys: config?.authorized_keys,
-    });
-    logger.debug("start: wrote ssh authorized_keys", { project_id });
-
-    await setupDataPath(home);
-
-    report({
-      type: "start-project",
-      progress: 55,
-      desc: "setup project directories",
-    });
-
-    logger.debug("start: setup data path", { project_id });
-    if (config.secret) {
-      await writeSecretToken(home, config.secret!);
-      logger.debug("start: wrote secret", { project_id });
-    }
 
     if (config.disk) {
       // TODO: maybe this should be done in parallel with other things
       // to make startup time slightly faster (?) -- could also be incorporated
       // into mount.
-      await setQuota(project_id, config.disk!);
+      await timings.measure(
+        "set_quota",
+        async () => await setQuota(project_id, config.disk!),
+      );
       logger.debug("start: set disk quota", { project_id });
     }
     report({
@@ -1197,7 +1242,7 @@ export async function start({
     args.push(projectScript, "--init", "project_init.sh");
 
     logger.debug("start: launching container - ", name);
-    await podman(args);
+    await timings.measure("podman_run", async () => await podman(args));
 
     report({
       type: "start-project",
@@ -1205,12 +1250,16 @@ export async function start({
       desc: "launched project container",
     });
 
-    await initSshServer(name);
+    await timings.measure(
+      "init_ssh_server",
+      async () => await initSshServer(name),
+    );
     report({
       type: "start-project",
       progress: 100,
       desc: "started",
     });
+    timings.phase_timings_ms.total = Date.now() - totalStarted;
 
     return {
       state: "running",
@@ -1218,6 +1267,7 @@ export async function start({
       http_port,
       project_bundle_version: bundleVersion,
       tools_version: toolsVersion,
+      phase_timings_ms: timings.phase_timings_ms,
     };
   } catch (err) {
     report({ type: "start-project", error: err });
