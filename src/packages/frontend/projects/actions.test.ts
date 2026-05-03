@@ -9,6 +9,7 @@ jest.mock("./store", () => ({
     get: jest.fn(),
     getIn: jest.fn(),
     get_state: jest.fn(),
+    async_wait: jest.fn(),
   },
 }));
 
@@ -27,6 +28,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
           updateSshKeys: jest.fn(async () => undefined),
         },
       })),
+    },
+    project_client: {
+      create: jest.fn(async () => "project-created"),
     },
     async_query: jest.fn(async () => undefined),
   },
@@ -71,6 +75,7 @@ describe("ProjectsActions project metadata updates", () => {
       }
       return baseProjectMap.getIn(path.slice(1) as any);
     });
+    mockedStore.async_wait.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -230,5 +235,94 @@ describe("ProjectsActions project metadata updates", () => {
         "fp-1",
       ]),
     ).toBeUndefined();
+  });
+
+  it("returns the created project once the local feed catches up", async () => {
+    const { actions } = makeActions();
+    mockedWebappClient.project_client.create.mockResolvedValueOnce(
+      "project-created-1",
+    );
+
+    await expect(
+      actions.create_project({ title: "New project", start: true }),
+    ).resolves.toBe("project-created-1");
+
+    expect(mockedWebappClient.project_client.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "New project",
+        start: true,
+      }),
+    );
+    expect(mockedStore.async_wait).toHaveBeenCalled();
+    expect(mockedWebappClient.async_query).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a direct project query when feed wait times out", async () => {
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map" ? undefined : undefined,
+    );
+    mockedStore.getIn.mockReturnValue(undefined);
+    mockedStore.async_wait.mockRejectedValueOnce("timeout");
+    mockedWebappClient.project_client.create.mockResolvedValueOnce(
+      "project-created-2",
+    );
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        projects: [
+          {
+            project_id: "project-created-2",
+            title: "Recovered project",
+            description: "Recovered description",
+            name: null,
+            theme: null,
+            host_id: "host-1",
+            owning_bay_id: "bay-0",
+            users: { "acct-1": { group: "owner" } },
+            state: { state: "opened" },
+            last_active: {},
+            last_edited: "2026-05-03T00:00:00.000Z",
+            last_backup: null,
+            deleted: false,
+          },
+        ],
+      },
+    });
+    const { actions, redux } = makeActions();
+
+    await expect(
+      actions.create_project({ title: "Recovered project", start: true }),
+    ).resolves.toBe("project-created-2");
+
+    expect(mockedWebappClient.async_query).toHaveBeenCalledWith({
+      query: {
+        projects: [
+          expect.objectContaining({
+            project_id: "project-created-2",
+          }),
+        ],
+      },
+    });
+    expect(redux._set_state).toHaveBeenCalled();
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.getIn([
+        "project-created-2",
+        "title",
+      ]),
+    ).toBe("Recovered project");
+  });
+
+  it("still fails when feed wait times out and direct bootstrap finds nothing", async () => {
+    mockedStore.async_wait.mockRejectedValueOnce("timeout");
+    mockedWebappClient.project_client.create.mockResolvedValueOnce(
+      "project-created-3",
+    );
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: { projects: [] },
+    });
+    const { actions } = makeActions();
+
+    await expect(
+      actions.create_project({ title: "Missing project", start: true }),
+    ).rejects.toBe("timeout");
   });
 });

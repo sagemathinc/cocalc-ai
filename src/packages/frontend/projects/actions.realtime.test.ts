@@ -91,6 +91,7 @@ class MockFeed extends EventEmitter {
 }
 
 async function flush(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 60));
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -189,6 +190,75 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-1", "last_edited"])).toBeInstanceOf(Date);
   });
 
+  it("batches multiple project upserts into one state update", async () => {
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+    redux._set_state.mockClear();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.now(),
+      account_id: "acct-1",
+      project: {
+        project_id: "project-1",
+        title: "First",
+        description: "",
+        name: null,
+        theme: null,
+        host_id: null,
+        owning_bay_id: "bay-0",
+        users: {},
+        state: { state: "opened" },
+        last_active: {},
+        last_edited: "2026-04-05T03:00:00.000Z",
+        deleted: false,
+      },
+    });
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.now(),
+      account_id: "acct-1",
+      project: {
+        project_id: "project-2",
+        title: "Second",
+        description: "",
+        name: null,
+        theme: null,
+        host_id: null,
+        owning_bay_id: "bay-0",
+        users: {},
+        state: { state: "running" },
+        last_active: {},
+        last_edited: "2026-04-05T03:00:01.000Z",
+        deleted: false,
+      },
+    });
+    await flush();
+
+    expect(redux._set_state).toHaveBeenCalledTimes(1);
+    expect(projectMap.getIn(["project-1", "title"])).toBe("First");
+    expect(projectMap.getIn(["project-2", "state", "state"])).toBe("running");
+  });
+
   it("resets routing for an open project when the feed reports a host change", async () => {
     const projectId = "00000000-0000-4000-8000-000000000001";
     projectMap = ImmutableMap<string, any>([
@@ -273,6 +343,86 @@ describe("ProjectsActions realtime feed", () => {
     });
     expect(resetProjectHostRuntime).toHaveBeenCalled();
     expect(mockedWebappClient.conat_client.reconnect).not.toHaveBeenCalled();
+  });
+
+  it("keeps a newer local moved host when realtime upserts are older", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000004";
+    projectMap = ImmutableMap<string, any>([
+      [
+        projectId,
+        ImmutableMap({
+          host_id: "host-new",
+          title: "Moved Project",
+        }),
+      ],
+    ]);
+    openProjects = List([projectId]);
+    const projectStore = ImmutableMap({
+      move_lro: ImmutableMap({
+        summary: {
+          status: "succeeded",
+          updated_at: "2026-04-05T03:05:00.000Z",
+        },
+      }),
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      getProjectStore: jest.fn(() => projectStore),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.parse("2026-04-05T03:00:00.000Z"),
+      account_id: "acct-1",
+      project: {
+        project_id: projectId,
+        title: "Moved Project",
+        description: "stale realtime row",
+        name: null,
+        theme: null,
+        host_id: "host-old",
+        owning_bay_id: "bay-0",
+        users: {
+          "acct-1": { group: "owner" },
+        },
+        state: { state: "running" },
+        last_active: { "acct-1": "2026-04-05T03:00:00.000Z" },
+        last_edited: "2026-04-05T03:00:00.000Z",
+        deleted: false,
+      },
+    });
+    await flush();
+
+    expect(projectMap.getIn([projectId, "host_id"])).toBe("host-new");
+    expect(projectMap.getIn([projectId, "description"])).toBe(
+      "stale realtime row",
+    );
+    expect(
+      mockedWebappClient.conat_client.releaseProjectHostRouting,
+    ).not.toHaveBeenCalled();
+    expect(
+      mockedWebappClient.conat_client.refreshProjectHostRouting,
+    ).not.toHaveBeenCalled();
   });
 
   it("does not close an open project when a transient remove lands during an active move", async () => {

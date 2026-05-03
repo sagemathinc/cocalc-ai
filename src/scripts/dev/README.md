@@ -271,6 +271,7 @@ pnpm --dir src smoke:host-density -- \
   --host host1 \
   --ssh-target host \
   --tiers 5,10,25 \
+  --create-batch-size 10 \
   --batch-size 5
 ```
 
@@ -280,6 +281,7 @@ host behaves as more projects are placed and started on it.
 What it does:
 
 1. Creates disposable projects pinned to one requested host.
+   Parallel create throughput is controlled separately from start/stop/delete.
 2. Starts them in batches up to each requested tier.
 3. Samples host state over SSH after each tier:
    - CPU/load average
@@ -295,10 +297,17 @@ What it does:
    when `--exec-smoke` is enabled.
 6. Stops and soft-deletes the created projects by default, then records a final
    post-cleanup sample.
+7. Prints per-tier timing summaries for:
+   - create wall-clock time
+   - start wall-clock time
+   - time until the tier is actually ready
+   - time until the tier sample is captured
 
 Useful options:
 
 - `--tier <n>` or `--tiers <a,b,c>` to control the density steps.
+- `--provision-count <n>` to precreate that many inactive projects before any start tier runs.
+- `--create-batch-size <n>` to control concurrent creates per batch.
 - `--batch-size <n>` to control concurrent starts/stops/deletes.
 - `--network-sample-seconds <n>` to lengthen or shorten the per-tier traffic sample.
 - `--settle-seconds <n>` to wait after each tier before sampling.
@@ -317,10 +326,24 @@ pnpm --dir src smoke:host-density -- \
   --host host1 \
   --ssh-target host \
   --tiers 5,10 \
+  --create-batch-size 10 \
   --batch-size 5 \
   --active-terminal \
   --terminal-hold-seconds 900 \
   --rootfs-image buildpack-deps:noble-scm
+```
+
+For a “many provisioned, few active” host benchmark:
+
+```bash
+pnpm --dir src smoke:host-density -- \
+  --host host1 \
+  --ssh-target host \
+  --provision-count 10000 \
+  --tiers 1,10,25 \
+  --create-batch-size 50 \
+  --batch-size 5 \
+  --active-terminal
 ```
 
 For a quick local sanity check without much churn:
@@ -330,6 +353,7 @@ pnpm --dir src smoke:host-density -- \
   --host host1 \
   --ssh-target host \
   --tiers 1,2 \
+  --create-batch-size 2 \
   --batch-size 1 \
   --network-sample-seconds 5 \
   --settle-seconds 3

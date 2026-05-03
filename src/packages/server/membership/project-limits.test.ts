@@ -6,6 +6,7 @@
 const queryMock = jest.fn();
 const resolveMembershipForAccountMock = jest.fn();
 const getMembershipUsageStatusForAccountMock = jest.fn();
+const peekCachedMembershipUsageStatusForAccountMock = jest.fn();
 const getStorageHistoryMock = jest.fn();
 const getBackupsMock = jest.fn();
 const conatWithProjectRoutingForAccountMock = jest.fn();
@@ -27,6 +28,8 @@ jest.mock("./usage-status", () => ({
   __esModule: true,
   getMembershipUsageStatusForAccount: (...args: any[]) =>
     getMembershipUsageStatusForAccountMock(...args),
+  peekCachedMembershipUsageStatusForAccount: (...args: any[]) =>
+    peekCachedMembershipUsageStatusForAccountMock(...args),
 }));
 
 jest.mock("@cocalc/conat/project/storage-info", () => ({
@@ -56,6 +59,7 @@ describe("project membership limits", () => {
     getMembershipUsageStatusForAccountMock.mockResolvedValue({
       total_storage_bytes: 0,
     });
+    peekCachedMembershipUsageStatusForAccountMock.mockReturnValue(undefined);
   });
 
   it("returns the owned project count", async () => {
@@ -199,6 +203,46 @@ describe("project membership limits", () => {
         },
       }),
     ).rejects.toThrow("total account storage hard cap reached");
+  });
+
+  it("skips expensive storage sampling in cache-only mode when no cached usage exists", async () => {
+    const { assertCanIncreaseAccountStorage } =
+      await import("./project-limits");
+    await expect(
+      assertCanIncreaseAccountStorage({
+        account_id: "account-1",
+        resolution: {
+          class: "pro",
+          source: "subscription",
+          entitlements: { usage_limits: { total_storage_soft_bytes: 100 } },
+        },
+        cache_only: true,
+      }),
+    ).resolves.toBeUndefined();
+    expect(peekCachedMembershipUsageStatusForAccountMock).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(getMembershipUsageStatusForAccountMock).not.toHaveBeenCalled();
+  });
+
+  it("still blocks in cache-only mode when recent cached usage is already over cap", async () => {
+    peekCachedMembershipUsageStatusForAccountMock.mockReturnValue({
+      total_storage_bytes: 100,
+    });
+    const { assertCanIncreaseAccountStorage } =
+      await import("./project-limits");
+    await expect(
+      assertCanIncreaseAccountStorage({
+        account_id: "account-1",
+        resolution: {
+          class: "pro",
+          source: "subscription",
+          entitlements: { usage_limits: { total_storage_soft_bytes: 100 } },
+        },
+        cache_only: true,
+      }),
+    ).rejects.toThrow("total account storage soft cap reached");
+    expect(getMembershipUsageStatusForAccountMock).not.toHaveBeenCalled();
   });
 
   it("estimates restore size from the latest quota-used history sample", async () => {

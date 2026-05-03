@@ -8,6 +8,8 @@ const SRC_ROOT = path.resolve(
   path.dirname(new URL(import.meta.url).pathname),
   "../..",
 );
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function usageAndExit(message, code = 1) {
   if (message) {
@@ -22,6 +24,8 @@ function usageAndExit(message, code = 1) {
       "  --ssh-target <target>         SSH target for host sampling (default: same as --host)",
       "  --tier <n>                    Target started-project count tier (repeatable)",
       "  --tiers <a,b,c>               Comma-separated target tiers",
+      "  --provision-count <n>         Precreate this many inactive projects before starting tiers",
+      "  --create-batch-size <n>       Concurrent creates per batch (default: 1)",
       "  --batch-size <n>              Concurrent starts/stops/deletes per batch (default: 1)",
       "  --timeout <ms>                Root CLI/RPC timeout in milliseconds (default: 120000)",
       "  --network-sample-seconds <n>  Per-sample network interval in seconds (default: 20)",
@@ -45,7 +49,9 @@ function usageAndExit(message, code = 1) {
       "  pnpm --dir src smoke:host-density -- \\",
       "    --host host1 \\",
       "    --ssh-target host \\",
+      "    --provision-count 1000 \\",
       "    --tiers 5,10,25 \\",
+      "    --create-batch-size 10 \\",
       "    --batch-size 5",
     ].join("\n"),
   );
@@ -65,6 +71,8 @@ function parseArgs(argv) {
     hostName: "host1",
     sshTarget: "",
     tiers: [],
+    provisionCount: 0,
+    createBatchSize: 1,
     batchSize: 1,
     timeoutMs: 120_000,
     networkSampleSeconds: 20,
@@ -103,6 +111,12 @@ function parseArgs(argv) {
           pushTier(part.trim());
         }
       }
+      i += 1;
+    } else if (arg === "--provision-count" && next) {
+      options.provisionCount = parsePositiveInt(next, "--provision-count");
+      i += 1;
+    } else if (arg === "--create-batch-size" && next) {
+      options.createBatchSize = parsePositiveInt(next, "--create-batch-size");
       i += 1;
     } else if (arg === "--batch-size" && next) {
       options.batchSize = parsePositiveInt(next, "--batch-size");
@@ -168,6 +182,10 @@ function shellQuote(value) {
   return `'${`${value ?? ""}`.replace(/'/g, `'\\''`)}'`;
 }
 
+function isUuid(value) {
+  return UUID_RE.test(`${value ?? ""}`.trim());
+}
+
 function spawnCapture(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -193,7 +211,7 @@ async function runCocalcJson(cocalcArgs) {
     "cd",
     shellQuote(SRC_ROOT),
     "&&",
-    'eval "$(pnpm -s dev:hub:env)"',
+    'eval "$(node ./scripts/dev/dev-env.js hub --no-start --shell)"',
     "&&",
     "cocalc",
     ...cocalcArgs.map(shellQuote),
@@ -222,6 +240,50 @@ async function runCocalcJson(cocalcArgs) {
     throw new Error(JSON.stringify(parsed, null, 2));
   }
   return parsed;
+}
+
+function sqlLiteral(value) {
+  return `'${`${value ?? ""}`.replace(/'/g, "''")}'`;
+}
+
+async function resolveHostIdentifier(hostName) {
+  const trimmed = `${hostName ?? ""}`.trim();
+  if (!trimmed || isUuid(trimmed)) {
+    return trimmed;
+  }
+  const sql =
+    "select id from project_hosts where name = " +
+    sqlLiteral(trimmed) +
+    " order by case when status = 'running' then 0 else 1 end, id limit 1;";
+  const cmd = [
+    "cd",
+    shellQuote(SRC_ROOT),
+    "&&",
+    'eval "$(node ./scripts/dev/dev-env.js hub --no-start --shell)"',
+    "&&",
+    "psql -Atqc",
+    shellQuote(sql),
+  ].join(" ");
+  const result = await spawnCapture("bash", ["-lc", cmd]);
+  if (result.code !== 0) {
+    throw new Error(
+      [
+        `host id lookup exited with code ${result.code}`,
+        result.stderr.trim(),
+        result.stdout.trim(),
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+  const id = `${result.stdout ?? ""}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => isUuid(line));
+  if (!id) {
+    throw new Error(`unable to resolve host id for ${trimmed}`);
+  }
+  return id;
 }
 
 async function runSshCapture(sshTarget, remoteScript) {
@@ -273,6 +335,124 @@ function compactTimestamp(date = new Date()) {
     .toISOString()
     .replace(/[-:.TZ]/g, "")
     .slice(0, 14);
+}
+
+function parseTimestampMs(raw) {
+  const value = Date.parse(`${raw ?? ""}`);
+  return Number.isFinite(value) ? value : null;
+}
+
+function stepDurationMs(step) {
+  const started = parseTimestampMs(step?.started_at);
+  const finished = parseTimestampMs(step?.finished_at);
+  if (started == null || finished == null) {
+    return null;
+  }
+  return finished - started;
+}
+
+function formatDurationMs(value) {
+  if (!Number.isFinite(value) || value == null) {
+    return "n/a";
+  }
+  if (value < 1000) {
+    return `${Math.round(value)}ms`;
+  }
+  return `${(value / 1000).toFixed(1)}s`;
+}
+
+function formatGiBFromKb(value) {
+  if (!Number.isFinite(value) || value == null) {
+    return "n/a";
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)}GiB`;
+}
+
+function findStepByName(steps, name) {
+  return steps.find((step) => step?.name === name);
+}
+
+function findTierStep(steps, prefix, tier) {
+  return (
+    findStepByName(steps, `${prefix}:tier_${tier}`) ??
+    findStepByName(steps, `${prefix}:${tier}`)
+  );
+}
+
+function resolveTierTiming({ tier, steps, activeTerminal }) {
+  const createStep = findTierStep(steps, "project_create", tier);
+  const startStep = findTierStep(steps, "project_start", tier);
+  const terminalSpawnStep = findTierStep(steps, "project_terminal_spawn", tier);
+  const terminalStateStep = findTierStep(steps, "project_terminal_state", tier);
+  const settleStep = findTierStep(steps, "settle", tier);
+  const sampleStep = findTierStep(steps, "sample", tier);
+
+  const tierStartMs = [
+    createStep,
+    startStep,
+    terminalSpawnStep,
+    terminalStateStep,
+    settleStep,
+    sampleStep,
+  ]
+    .map((step) => parseTimestampMs(step?.started_at))
+    .find((value) => value != null);
+
+  const readyStep = activeTerminal
+    ? (terminalStateStep ?? terminalSpawnStep ?? startStep)
+    : startStep;
+  const readyFinishedMs = parseTimestampMs(readyStep?.finished_at);
+  const createdFinishedMs = parseTimestampMs(createStep?.finished_at);
+  const startedFinishedMs = parseTimestampMs(startStep?.finished_at);
+  const sampleFinishedMs = parseTimestampMs(sampleStep?.finished_at);
+
+  return {
+    create_duration_ms: stepDurationMs(createStep),
+    start_duration_ms: stepDurationMs(startStep),
+    terminal_spawn_duration_ms: stepDurationMs(terminalSpawnStep),
+    terminal_state_duration_ms: stepDurationMs(terminalStateStep),
+    settle_duration_ms: stepDurationMs(settleStep),
+    sample_duration_ms: stepDurationMs(sampleStep),
+    time_to_created_ms:
+      tierStartMs != null && createdFinishedMs != null
+        ? createdFinishedMs - tierStartMs
+        : null,
+    time_to_started_ms:
+      tierStartMs != null && startedFinishedMs != null
+        ? startedFinishedMs - tierStartMs
+        : null,
+    time_to_ready_ms:
+      tierStartMs != null && readyFinishedMs != null
+        ? readyFinishedMs - tierStartMs
+        : null,
+    time_to_sample_ms:
+      tierStartMs != null && sampleFinishedMs != null
+        ? sampleFinishedMs - tierStartMs
+        : null,
+  };
+}
+
+function printTierSummary({ tier, timing, sample }) {
+  const remote = sample?.remote ?? {};
+  const loadavg = Array.isArray(remote?.loadavg)
+    ? remote.loadavg.map((value) => Number(value).toFixed(2)).join(", ")
+    : "n/a";
+  const memUsed = formatGiBFromKb(remote?.mem_used_kb);
+  const memAvail = formatGiBFromKb(remote?.mem_available_kb);
+  const running = remote?.podman_running_project_count ?? "n/a";
+  console.error(
+    [
+      `[host-density] tier ${tier} summary`,
+      `create=${formatDurationMs(timing?.create_duration_ms)}`,
+      `start=${formatDurationMs(timing?.start_duration_ms)}`,
+      `ready=${formatDurationMs(timing?.time_to_ready_ms)}`,
+      `sample=${formatDurationMs(timing?.time_to_sample_ms)}`,
+      `running=${running}`,
+      `load=${loadavg}`,
+      `mem_used=${memUsed}`,
+      `mem_available=${memAvail}`,
+    ].join(" "),
+  );
 }
 
 function projectTitle(prefix, runId, index) {
@@ -475,21 +655,39 @@ PY
 }
 
 async function sampleHostState({
-  hostName,
+  hostIdentifier,
   sshTarget,
   globalArgs,
   sampleSeconds,
 }) {
-  const [hostGetResult, remoteResult] = await Promise.all([
-    runCocalcJson([...globalArgs, "host", "get", hostName]),
+  const [hostGetResult, remoteResult] = await Promise.allSettled([
+    runCocalcJson([
+      "--json",
+      "--timeout",
+      "10s",
+      "--rpc-timeout",
+      "10s",
+      "host",
+      "get",
+      hostIdentifier,
+    ]),
     runRemoteJson({
       sshTarget,
       script: remoteHostSampleScript({ sampleSeconds }),
     }),
   ]);
+  if (remoteResult.status !== "fulfilled") {
+    throw remoteResult.reason;
+  }
   return {
-    host_get: summarizeHostGet(getData(hostGetResult)),
-    remote: remoteResult,
+    host_get:
+      hostGetResult.status === "fulfilled"
+        ? summarizeHostGet(getData(hostGetResult.value))
+        : {
+            error: `${hostGetResult.reason?.stack ?? hostGetResult.reason}`,
+            host_identifier: hostIdentifier,
+          },
+    remote: remoteResult.value,
   };
 }
 
@@ -515,6 +713,7 @@ async function createProject({
   const result = await runCocalcJson(args);
   const data = getData(result);
   return {
+    index,
     project_id: `${data?.project_id ?? ""}`.trim(),
     title: `${data?.title ?? title}`.trim(),
     host_id: `${data?.host_id ?? ""}`.trim(),
@@ -674,6 +873,10 @@ async function runInBatches(items, batchSize, worker) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const hostIdentifier = await resolveHostIdentifier(options.hostName);
+  const maxTier = Math.max(...options.tiers);
+  const targetProvisionCount =
+    options.provisionCount > 0 ? Math.max(options.provisionCount, maxTier) : 0;
   const timeoutSeconds = Math.ceil(options.timeoutMs / 1000);
   const globalArgs = [
     "--json",
@@ -686,6 +889,13 @@ async function main() {
   const createdProjects = [];
   const startedProjectIds = new Set();
   const activeTerminals = new Map();
+  const preprovision = {
+    requested_count: options.provisionCount,
+    effective_count: targetProvisionCount,
+    created: [],
+    sample: null,
+    timing: null,
+  };
   const tierResults = [];
   const steps = [];
   let baselineSample = null;
@@ -725,34 +935,108 @@ async function main() {
   try {
     baselineSample = await runStep("sample:baseline", async () => {
       return await sampleHostState({
-        hostName: options.hostName,
+        hostIdentifier,
         sshTarget: options.sshTarget,
         globalArgs,
         sampleSeconds: options.networkSampleSeconds,
       });
     });
 
-    for (const tier of options.tiers) {
-      const createdThisTier = [];
-      while (createdProjects.length < tier) {
-        const nextIndex = createdProjects.length + 1;
-        const created = await runStep(
-          `project_create:${nextIndex}`,
+    if (targetProvisionCount > 0) {
+      const createSpecs = [];
+      for (
+        let nextIndex = 1;
+        nextIndex <= targetProvisionCount;
+        nextIndex += 1
+      ) {
+        createSpecs.push(nextIndex);
+      }
+      preprovision.created = await runStep(
+        `project_create:provisioned_${targetProvisionCount}`,
+        async () => {
+          return await runInBatches(
+            createSpecs,
+            options.createBatchSize,
+            async (index) => {
+              return await createProject({
+                index,
+                runId,
+                hostName: hostIdentifier,
+                prefix: options.prefix,
+                rootfsImage: options.rootfsImage,
+                rootfsImageId: options.rootfsImageId,
+                globalArgs,
+              });
+            },
+          );
+        },
+      );
+      createdProjects.push(...preprovision.created);
+      preprovision.timing = resolveTierTiming({
+        tier: `provisioned_${targetProvisionCount}`,
+        steps,
+        activeTerminal: false,
+      });
+      console.error(
+        [
+          `[host-density] provisioned ${targetProvisionCount} summary`,
+          `create=${formatDurationMs(preprovision.timing?.create_duration_ms)}`,
+          `ready=${formatDurationMs(preprovision.timing?.time_to_created_ms)}`,
+        ].join(" "),
+      );
+
+      if (options.settleSeconds > 0) {
+        await runStep(
+          `settle:provisioned_${targetProvisionCount}`,
           async () => {
-            return await createProject({
-              index: nextIndex,
-              runId,
-              hostName: options.hostName,
-              prefix: options.prefix,
-              rootfsImage: options.rootfsImage,
-              rootfsImageId: options.rootfsImageId,
-              globalArgs,
-            });
+            await sleep(options.settleSeconds * 1000);
+            return { settle_seconds: options.settleSeconds };
           },
         );
-        createdProjects.push(created);
-        createdThisTier.push(created);
       }
+
+      preprovision.sample = await runStep(
+        `sample:provisioned_${targetProvisionCount}`,
+        async () => {
+          return await sampleHostState({
+            hostIdentifier,
+            sshTarget: options.sshTarget,
+            globalArgs,
+            sampleSeconds: options.networkSampleSeconds,
+          });
+        },
+      );
+    }
+
+    for (const tier of options.tiers) {
+      const createSpecs = [];
+      for (
+        let nextIndex = createdProjects.length + 1;
+        nextIndex <= tier;
+        nextIndex += 1
+      ) {
+        createSpecs.push(nextIndex);
+      }
+      const createdThisTier = createSpecs.length
+        ? await runStep(`project_create:tier_${tier}`, async () => {
+            return await runInBatches(
+              createSpecs,
+              options.createBatchSize,
+              async (index) => {
+                return await createProject({
+                  index,
+                  runId,
+                  hostName: hostIdentifier,
+                  prefix: options.prefix,
+                  rootfsImage: options.rootfsImage,
+                  rootfsImageId: options.rootfsImageId,
+                  globalArgs,
+                });
+              },
+            );
+          })
+        : [];
+      createdProjects.push(...createdThisTier);
 
       const toStart = createdProjects
         .slice(0, tier)
@@ -848,7 +1132,7 @@ async function main() {
 
       const sample = await runStep(`sample:tier_${tier}`, async () => {
         return await sampleHostState({
-          hostName: options.hostName,
+          hostIdentifier,
           sshTarget: options.sshTarget,
           globalArgs,
           sampleSeconds: options.networkSampleSeconds,
@@ -876,6 +1160,12 @@ async function main() {
         }
       }
 
+      const timing = resolveTierTiming({
+        tier,
+        steps,
+        activeTerminal: options.activeTerminal,
+      });
+
       tierResults.push({
         tier,
         created_count: createdProjects.length,
@@ -885,7 +1175,9 @@ async function main() {
         active_terminal: activeTerminalResults,
         sample,
         exec_smoke: execResults,
+        timing,
       });
+      printTierSummary({ tier, timing, sample });
     }
   } catch (err) {
     failure = `${err?.stack ?? err}`;
@@ -958,7 +1250,7 @@ async function main() {
         await sleep(options.settleSeconds * 1000);
       }
       postCleanupSample = await sampleHostState({
-        hostName: options.hostName,
+        hostIdentifier,
         sshTarget: options.sshTarget,
         globalArgs,
         sampleSeconds: options.networkSampleSeconds,
@@ -973,8 +1265,11 @@ async function main() {
     error: failure,
     run_id: runId,
     host_name: options.hostName,
+    host_identifier: hostIdentifier,
     ssh_target: options.sshTarget,
     tiers: options.tiers,
+    provision_count: options.provisionCount,
+    create_batch_size: options.createBatchSize,
     batch_size: options.batchSize,
     timeout_ms: options.timeoutMs,
     network_sample_seconds: options.networkSampleSeconds,
@@ -987,6 +1282,7 @@ async function main() {
     terminal_hold_seconds: options.terminalHoldSeconds,
     exec_smoke: options.execSmoke,
     baseline_sample: baselineSample,
+    preprovision,
     tier_results: tierResults,
     created_projects: createdProjects,
     cleanup,
