@@ -198,7 +198,7 @@ describe("git commit drawer merge commit formatting", () => {
     }
   });
 
-  it("keeps inline draft typing local to the small editor", () => {
+  it("keeps diff-line hover from re-rendering the whole diff block", () => {
     const renders: number[] = [];
     const originalType = (DiffBlock as any).type;
     (DiffBlock as any).type = function WrappedDiffBlock(props: any) {
@@ -229,19 +229,19 @@ describe("git commit drawer merge commit formatting", () => {
       act(() => {
         fireEvent.mouseEnter(line!);
       });
-      expect(renders).toHaveLength(2);
+      expect(renders).toHaveLength(1);
 
       act(() => {
-        rendered.getByTitle("Add inline comment").click();
+        rendered.getAllByTitle("Add inline comment")[0].click();
       });
-      expect(renders).toHaveLength(3);
+      expect(renders).toHaveLength(2);
       expect(latestMarkdownInputProps).toBeTruthy();
 
       act(() => {
         latestMarkdownInputProps.onChange("draft text");
       });
 
-      expect(renders).toHaveLength(3);
+      expect(renders).toHaveLength(2);
     } finally {
       (DiffBlock as any).type = originalType;
     }

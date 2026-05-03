@@ -37,6 +37,7 @@ type PgBinaries = {
 
 let running: LocalPostgresInfo | null = null;
 let stopping = false;
+const DEFAULT_LOCAL_PG_ARCHIVE_TIMEOUT = "1h";
 
 type PgReadyState = "accepting" | "rejecting" | "missing";
 type PostmasterState = {
@@ -129,6 +130,11 @@ function resolveBackupRoot(): string {
 function resolveBayId(): string {
   const bayId = `${process.env.COCALC_BAY_ID ?? ""}`.trim();
   return bayId || "bay-0";
+}
+
+export function resolveLocalPostgresArchiveTimeout(): string {
+  const raw = `${process.env.COCALC_LOCAL_PG_ARCHIVE_TIMEOUT ?? ""}`.trim();
+  return raw || DEFAULT_LOCAL_PG_ARCHIVE_TIMEOUT;
 }
 
 function writeEnvFile({
@@ -271,7 +277,9 @@ function ensureConfig(dataDir: string, socketDir: string): void {
       "max_connections = 1000",
       "wal_level = replica",
       "archive_mode = on",
-      `archive_timeout = ${postgresConfQuote("60s")}`,
+      // Keep WAL archival bounded for PITR, but avoid forcing a mostly-empty
+      // 16MB WAL segment every minute in local hub/dev environments.
+      `archive_timeout = ${postgresConfQuote(resolveLocalPostgresArchiveTimeout())}`,
       `archive_command = ${postgresConfQuote(archiveCommand)}`,
       "",
     ].join("\n"),
