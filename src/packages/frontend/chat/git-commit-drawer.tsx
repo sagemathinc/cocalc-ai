@@ -58,6 +58,7 @@ import {
   isDiffContentLine,
   languageHintFromPath,
 } from "./diff-prism";
+import "./git-commit-drawer.css";
 
 const MAX_GIT_SHOW_LINES = 10_000;
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
@@ -1143,9 +1144,6 @@ export const DiffBlock = memo(function DiffBlock({
   );
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
   const [pendingKey, setPendingKey] = useState<string>("");
-  const [hoveredLineIdx, setHoveredLineIdx] = useState<number | undefined>(
-    undefined,
-  );
   const draftAnchorId =
     draftAnchor == null ? "" : commentAnchorKey(draftAnchor);
   const commentButtonSlotStyle = {
@@ -1245,6 +1243,7 @@ export const DiffBlock = memo(function DiffBlock({
         return (
           <div key={idx}>
             <div
+              className="cocalc-git-diff-line"
               style={{
                 background,
                 padding: "2px 8px",
@@ -1256,12 +1255,6 @@ export const DiffBlock = memo(function DiffBlock({
               }}
               data-git-anchor-id={anchorId || undefined}
               data-git-hunk-hash={meta.hunkHash || undefined}
-              onMouseEnter={() => setHoveredLineIdx(idx)}
-              onMouseLeave={() =>
-                setHoveredLineIdx((current) =>
-                  current === idx ? undefined : current,
-                )
-              }
             >
               <div
                 style={{
@@ -1292,45 +1285,48 @@ export const DiffBlock = memo(function DiffBlock({
                 {meta.newLineNumber ?? ""}
               </div>
               {anchor ? (
-                <span style={commentButtonSlotStyle}>
-                  {hoveredLineIdx === idx ? (
-                    <Button
-                      size="small"
-                      type="primary"
-                      style={{
-                        padding: 0,
-                        minWidth: 22,
-                        width: 22,
-                        height: 22,
-                      }}
-                      onClick={() => {
-                        if (!commentEnabled) {
-                          alert_message({
-                            type: "info",
-                            message:
-                              commentDisabledMessage ??
-                              "Please commit first, then comment.",
-                            timeout: 4,
-                          });
-                          return;
-                        }
-                        setDraftAnchor(anchor);
-                      }}
-                      title={
-                        commentEnabled
-                          ? "Add inline comment"
-                          : (commentDisabledMessage ??
-                            "Please commit first, then comment.")
+                <span
+                  style={commentButtonSlotStyle}
+                  className="cocalc-git-diff-line-comment-slot"
+                >
+                  <Button
+                    size="small"
+                    type="primary"
+                    className="cocalc-git-diff-line-comment-button"
+                    style={{
+                      padding: 0,
+                      minWidth: 22,
+                      width: 22,
+                      height: 22,
+                    }}
+                    onClick={() => {
+                      if (!commentEnabled) {
+                        alert_message({
+                          type: "info",
+                          message:
+                            commentDisabledMessage ??
+                            "Please commit first, then comment.",
+                          timeout: 4,
+                        });
+                        return;
                       }
-                    >
-                      +
-                    </Button>
-                  ) : null}
+                      setDraftAnchor(anchor);
+                    }}
+                    title={
+                      commentEnabled
+                        ? "Add inline comment"
+                        : (commentDisabledMessage ??
+                          "Please commit first, then comment.")
+                    }
+                  >
+                    +
+                  </Button>
                 </span>
               ) : (
                 <span style={commentButtonSlotStyle} />
               )}
               <div
+                className="cocalc-git-diff-line-text"
                 style={{ flex: 1 }}
                 dangerouslySetInnerHTML={{ __html: html }}
               />
