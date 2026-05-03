@@ -3,7 +3,7 @@ import { Router, type Request, type Response } from "express";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import { join, basename, delimiter, resolve } from "node:path";
+import { join, basename, delimiter, dirname, resolve } from "node:path";
 import { getLogger } from "../../logger";
 
 type BundleArtifact = "project-host" | "project" | "tools";
@@ -26,8 +26,14 @@ type SoftwareManifest = {
 
 const logger = getLogger("hub:software-endpoint");
 const fileMetaCache = new Map<string, FileMeta>();
+const buildIdentityCache = new Map<string, BundleBuildIdentity | null>();
 const normalizedBasePath = basePath === "/" ? "" : basePath;
 const SAFE_PLATFORM_TOKEN = /^[A-Za-z0-9._-]{1,64}$/;
+
+type BundleBuildIdentity = {
+  build_id?: string;
+  built_at?: string;
+};
 
 function softwareBaseFromReq(req: Request): string {
   return `${req.protocol}://${req.get("host")}${normalizedBasePath}/software`;
@@ -132,6 +138,59 @@ function versionFromMeta(meta: FileMeta): string {
   return String(Math.floor(meta.mtimeMs));
 }
 
+function buildIdentityPathForBundle(
+  bundlePath: string,
+  artifact: BundleArtifact,
+): string | undefined {
+  if (artifact !== "project-host") return undefined;
+  const file = join(dirname(bundlePath), "bundle", "build-identity.json");
+  return existsSync(file) ? file : undefined;
+}
+
+async function readBundleBuildIdentity(
+  bundlePath: string,
+  artifact: BundleArtifact,
+): Promise<BundleBuildIdentity | null> {
+  const file = buildIdentityPathForBundle(bundlePath, artifact);
+  if (!file) return null;
+  const cached = buildIdentityCache.get(file);
+  if (cached !== undefined) return cached;
+  try {
+    const parsed = JSON.parse(
+      await readFile(file, "utf8"),
+    ) as BundleBuildIdentity;
+    buildIdentityCache.set(file, parsed);
+    return parsed;
+  } catch (err) {
+    logger.warn("failed reading local bundle build identity", {
+      artifact,
+      bundlePath,
+      err: String(err),
+    });
+    buildIdentityCache.set(file, null);
+    return null;
+  }
+}
+
+export async function getBundleVersionInfo(
+  bundlePath: string,
+  artifact: BundleArtifact,
+): Promise<{
+  meta: FileMeta;
+  version: string;
+  builtAt: string;
+}> {
+  const meta = await getFileMeta(bundlePath);
+  const identity = await readBundleBuildIdentity(bundlePath, artifact);
+  const buildId = `${identity?.build_id ?? ""}`.trim();
+  const builtAt = `${identity?.built_at ?? ""}`.trim();
+  return {
+    meta,
+    version: buildId || versionFromMeta(meta),
+    builtAt: builtAt || new Date(meta.mtimeMs).toISOString(),
+  };
+}
+
 function sendNotFound(res: Response, message: string): void {
   res.status(404).json({ error: message });
 }
@@ -189,15 +248,15 @@ async function buildLatestBundleManifest(
       }) under ${packagesRoot}`,
     );
   }
-  const meta = await getFileMeta(bundlePath);
-  const version = versionFromMeta(meta);
+  const info = await getBundleVersionInfo(bundlePath, opts.artifact);
+  const version = info.version;
   const filename = basename(bundlePath);
   const url = `${softwareBaseFromReq(req)}/${opts.artifact}/${version}/${filename}`;
   const manifest: SoftwareManifest = {
     url,
-    sha256: meta.sha256,
-    size_bytes: meta.sizeBytes,
-    built_at: new Date(meta.mtimeMs).toISOString(),
+    sha256: info.meta.sha256,
+    size_bytes: info.meta.sizeBytes,
+    built_at: info.builtAt,
     version,
     os: opts.os,
   };
@@ -283,8 +342,10 @@ async function sendBundleFile(
     );
     return;
   }
-  const meta = await getFileMeta(bundlePath);
-  const expectedVersion = versionFromMeta(meta);
+  const { version: expectedVersion } = await getBundleVersionInfo(
+    bundlePath,
+    opts.artifact,
+  );
   if (opts.version !== expectedVersion) {
     sendNotFound(
       res,
@@ -329,8 +390,10 @@ async function sendBundleSha(
     );
     return;
   }
-  const meta = await getFileMeta(bundlePath);
-  const expectedVersion = versionFromMeta(meta);
+  const { meta, version: expectedVersion } = await getBundleVersionInfo(
+    bundlePath,
+    opts.artifact,
+  );
   if (opts.version !== expectedVersion) {
     sendNotFound(
       res,
