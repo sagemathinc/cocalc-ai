@@ -33,6 +33,7 @@ function usageAndExit(message, code = 1) {
       "  --prefix <name>               Project title prefix (default: density-canary)",
       "  --rootfs-image <image>        Runtime RootFS image to assign to created projects",
       "  --rootfs-image-id <id>        Managed RootFS catalog entry id to record",
+      "  --cleanup-existing            Stop + delete existing prefix-matching host projects, then exit",
       "  --keep-projects               Leave created projects in place on success/failure",
       "  --active-terminal             Keep one terminal session alive per started project",
       "  --no-active-terminal          Disable active terminal sessions",
@@ -80,6 +81,7 @@ function parseArgs(argv) {
     prefix: "density-canary",
     rootfsImage: "",
     rootfsImageId: "",
+    cleanupExisting: false,
     keepProjects: false,
     activeTerminal: false,
     terminalHoldSeconds: 1800,
@@ -142,6 +144,8 @@ function parseArgs(argv) {
     } else if (arg === "--rootfs-image-id" && next) {
       options.rootfsImageId = next;
       i += 1;
+    } else if (arg === "--cleanup-existing") {
+      options.cleanupExisting = true;
     } else if (arg === "--keep-projects") {
       options.keepProjects = true;
     } else if (arg === "--active-terminal") {
@@ -167,6 +171,9 @@ function parseArgs(argv) {
 
   if (!options.prefix.trim()) {
     usageAndExit("--prefix must not be empty");
+  }
+  if (options.cleanupExisting && options.keepProjects) {
+    usageAndExit("--cleanup-existing cannot be combined with --keep-projects");
   }
   if (!options.tiers.length) {
     options.tiers = [5, 10];
@@ -943,6 +950,35 @@ async function createProject({
   };
 }
 
+async function listHostProjects({ hostIdentifier, globalArgs }) {
+  const result = await runCocalcJson([
+    ...globalArgs,
+    "host",
+    "projects",
+    hostIdentifier,
+    "--all",
+  ]);
+  return Array.isArray(result?.data?.rows) ? result.data.rows : [];
+}
+
+async function listExistingCleanupProjects({
+  hostIdentifier,
+  prefix,
+  globalArgs,
+}) {
+  const trimmedPrefix = `${prefix ?? ""}`.trim();
+  const rows = await listHostProjects({ hostIdentifier, globalArgs });
+  return rows
+    .filter((row) => `${row?.title ?? ""}`.startsWith(trimmedPrefix))
+    .map((row) => ({
+      project_id: `${row?.project_id ?? ""}`.trim(),
+      title: `${row?.title ?? ""}`.trim(),
+      state: `${row?.state ?? ""}`.trim(),
+      host_id: `${row?.host_id ?? hostIdentifier}`.trim(),
+    }))
+    .filter((row) => row.project_id);
+}
+
 async function startProject({ projectId, globalArgs }) {
   const startedAt = Date.now();
   const queued = await runCocalcJson([
@@ -1186,7 +1222,32 @@ async function main() {
       });
     });
 
-    if (targetProvisionCount > 0) {
+    if (options.cleanupExisting) {
+      const existingProjects = await runStep(
+        "project_list:cleanup_existing",
+        async () => {
+          return await listExistingCleanupProjects({
+            hostIdentifier,
+            prefix: options.prefix,
+            globalArgs,
+          });
+        },
+      );
+      createdProjects.push(...existingProjects);
+      for (const project of existingProjects) {
+        if (project.state === "running" || project.state === "starting") {
+          startedProjectIds.add(project.project_id);
+        }
+      }
+      console.error(
+        [
+          "[host-density] cleanup-existing summary",
+          `matched=${existingProjects.length}`,
+          `running=${startedProjectIds.size}`,
+          `opened=${existingProjects.length - startedProjectIds.size}`,
+        ].join(" "),
+      );
+    } else if (targetProvisionCount > 0) {
       const createSpecs = [];
       for (
         let nextIndex = 1;
@@ -1252,7 +1313,7 @@ async function main() {
       );
     }
 
-    for (const tier of options.tiers) {
+    for (const tier of options.cleanupExisting ? [] : options.tiers) {
       const createSpecs = [];
       for (
         let nextIndex = createdProjects.length + 1;
@@ -1566,6 +1627,7 @@ async function main() {
     prefix: options.prefix,
     rootfs_image: options.rootfsImage || null,
     rootfs_image_id: options.rootfsImageId || null,
+    cleanup_existing: options.cleanupExisting,
     keep_projects: options.keepProjects,
     active_terminal: options.activeTerminal,
     terminal_hold_seconds: options.terminalHoldSeconds,
