@@ -1,4 +1,7 @@
-import { shouldShowWrongAccountListingError } from "./listing-error";
+import {
+  getUserFacingListingError,
+  shouldShowWrongAccountListingError,
+} from "./listing-error";
 
 describe("shouldShowWrongAccountListingError", () => {
   it("returns true for 403 permission errors", () => {
@@ -44,5 +47,35 @@ describe("shouldShowWrongAccountListingError", () => {
 
   it("returns false when no listing error is present", () => {
     expect(shouldShowWrongAccountListingError(undefined)).toBe(false);
+  });
+});
+
+describe("getUserFacingListingError", () => {
+  it("rewrites retry-window auth failures into a clear message", () => {
+    expect(
+      getUserFacingListingError({
+        code: "403",
+        message:
+          "failed to sign in - Error: too many authentication failures from ip:1.2.3.4; retry in about 51s",
+      }),
+    ).toBe(
+      "The project host is temporarily retrying authentication. Please wait about 51s and refresh.",
+    );
+  });
+
+  it("rewrites internal bootstrap failures into a clear message", () => {
+    expect(
+      getUserFacingListingError({
+        code: "403",
+        message: 'once: "inbox" not emitted before "closed"',
+      }),
+    ).toBe(
+      "The project connection closed while the file listing was loading. Please wait a moment and refresh.",
+    );
+  });
+
+  it("preserves ordinary errors", () => {
+    const err = new Error("plain failure");
+    expect(getUserFacingListingError(err)).toBe(err);
   });
 });

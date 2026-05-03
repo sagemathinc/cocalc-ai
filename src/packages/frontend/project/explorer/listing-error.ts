@@ -12,6 +12,21 @@ export function shouldShowWrongAccountListingError(error: unknown): boolean {
   );
 }
 
+export function getUserFacingListingError(error: unknown): unknown {
+  const message = `${(error as any)?.message ?? (error as any)?.error ?? error ?? ""}`;
+  if (!message.trim()) {
+    return error;
+  }
+  const retrySeconds = parseRetryInAboutSeconds(message);
+  if (retrySeconds != null) {
+    return `The project host is temporarily retrying authentication. Please wait about ${retrySeconds}s and refresh.`;
+  }
+  if (isTransientProjectHostAuthError(error)) {
+    return "The project connection closed while the file listing was loading. Please wait a moment and refresh.";
+  }
+  return error;
+}
+
 function isTransientProjectHostAuthError(error: unknown): boolean {
   const message = `${(error as any)?.message ?? (error as any)?.error ?? error ?? ""}`;
   if (!message.trim()) {
