@@ -37,6 +37,7 @@ jest.mock("./managed-egress", () => ({
 
 describe("getMembershipUsageStatusForAccount", () => {
   beforeEach(() => {
+    jest.resetModules();
     jest.clearAllMocks();
     getManagedEgressUsageForAccountMock.mockResolvedValue({
       managed_egress_5h_bytes: 0,
@@ -268,6 +269,69 @@ describe("getMembershipUsageStatusForAccount", () => {
     expect(result.total_storage_hard_bytes).toBe(500);
     expect(result.max_projects).toBe(7);
     expect(getManagedEgressUsageForAccountMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+      limit5h: 1000,
+      limit7d: 2000,
+    });
+  });
+
+  it("does not reuse cached usage when the effective limits change", async () => {
+    queryMock.mockResolvedValue({
+      rows: [],
+    });
+    getManagedEgressUsageForAccountMock
+      .mockResolvedValueOnce({
+        managed_egress_5h_bytes: 0,
+        managed_egress_7d_bytes: 0,
+        managed_egress_categories_5h_bytes: {},
+        managed_egress_categories_7d_bytes: {},
+      })
+      .mockResolvedValueOnce({
+        managed_egress_5h_bytes: 123,
+        managed_egress_7d_bytes: 456,
+        managed_egress_categories_5h_bytes: {},
+        managed_egress_categories_7d_bytes: {},
+      });
+
+    const { getMembershipUsageStatusForAccount } =
+      await import("./usage-status");
+
+    const first = await getMembershipUsageStatusForAccount({
+      account_id: "account-1",
+      resolution: {
+        class: "pro",
+        source: "subscription",
+        entitlements: {
+          usage_limits: {
+            total_storage_soft_bytes: 300,
+          },
+        },
+      },
+    });
+
+    const second = await getMembershipUsageStatusForAccount({
+      account_id: "account-1",
+      resolution: {
+        class: "pro",
+        source: "subscription",
+        entitlements: {
+          usage_limits: {
+            egress_5h_bytes: 1000,
+            egress_7d_bytes: 2000,
+          },
+        },
+      },
+    });
+
+    expect(first.managed_egress_5h_bytes).toBe(0);
+    expect(second.managed_egress_5h_bytes).toBe(123);
+    expect(getManagedEgressUsageForAccountMock).toHaveBeenCalledTimes(2);
+    expect(getManagedEgressUsageForAccountMock).toHaveBeenNthCalledWith(1, {
+      account_id: "account-1",
+      limit5h: undefined,
+      limit7d: undefined,
+    });
+    expect(getManagedEgressUsageForAccountMock).toHaveBeenNthCalledWith(2, {
       account_id: "account-1",
       limit5h: 1000,
       limit7d: 2000,
