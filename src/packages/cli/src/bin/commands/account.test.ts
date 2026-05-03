@@ -223,6 +223,7 @@ test("account membership resolves an explicit account identifier", async () => {
   assert.equal(resolvedIdentifier, "qa@example.com");
   assert.deepEqual(capturedArgs, {
     user_account_id: "22222222-2222-2222-2222-222222222222",
+    refresh_usage_status: true,
   });
 });
 

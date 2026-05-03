@@ -35,7 +35,7 @@ describe("resolveMembershipDetailsForAccount usage-status cache", () => {
     });
   });
 
-  it("reuses recent usage-status results for the same account and limits", async () => {
+  it("does not compute usage-status unless refresh is requested", async () => {
     queryMock.mockResolvedValue({ rows: [] });
     getMembershipTierMapMock.mockResolvedValue({
       free: {
@@ -47,6 +47,27 @@ describe("resolveMembershipDetailsForAccount usage-status cache", () => {
 
     const { resolveMembershipDetailsForAccount } = await import("./resolve");
     const first = await resolveMembershipDetailsForAccount("account-1");
+    const second = await resolveMembershipDetailsForAccount("account-1");
+
+    expect(first.usage_status).toBeUndefined();
+    expect(second.usage_status).toBeUndefined();
+    expect(getMembershipUsageStatusForAccountMock).not.toHaveBeenCalled();
+  });
+
+  it("reuses recent usage-status results for the same account and limits when refresh is requested", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
+    getMembershipTierMapMock.mockResolvedValue({
+      free: {
+        id: "free",
+        priority: 0,
+        usage_limits: {},
+      },
+    });
+
+    const { resolveMembershipDetailsForAccount } = await import("./resolve");
+    const first = await resolveMembershipDetailsForAccount("account-1", {
+      refresh_usage_status: true,
+    });
     const second = await resolveMembershipDetailsForAccount("account-1");
 
     expect(first.usage_status?.total_storage_bytes).toBe(123);
@@ -85,8 +106,12 @@ describe("resolveMembershipDetailsForAccount usage-status cache", () => {
     });
 
     const { resolveMembershipDetailsForAccount } = await import("./resolve");
-    const first = await resolveMembershipDetailsForAccount("account-1");
-    const second = await resolveMembershipDetailsForAccount("account-1");
+    const first = await resolveMembershipDetailsForAccount("account-1", {
+      refresh_usage_status: true,
+    });
+    const second = await resolveMembershipDetailsForAccount("account-1", {
+      refresh_usage_status: true,
+    });
 
     expect(first.selected.class).toBe("free");
     expect(second.selected.class).toBe("pro");

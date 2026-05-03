@@ -221,6 +221,7 @@ export interface Purchases {
   getMembershipDetails: (opts?: {
     account_id?: string;
     user_account_id?: string;
+    refresh_usage_status?: boolean;
   }) => Promise<MembershipDetails>;
   getAIUsage: (opts?: { account_id?: string }) => Promise<AIUsageStatus>;
   getManagedEgressHistory: (

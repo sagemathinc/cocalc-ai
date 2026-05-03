@@ -8,6 +8,7 @@ const getManagedEgressAdminHistoryMock = jest.fn();
 const getManagedEgressAdminOverviewMock = jest.fn();
 const getProjectOwnerAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
+const resolveMembershipDetailsForAccountMock = jest.fn();
 
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
   __esModule: true,
@@ -31,7 +32,8 @@ jest.mock("@cocalc/server/membership/managed-egress", () => ({
 }));
 
 jest.mock("@cocalc/server/membership/resolve", () => ({
-  resolveMembershipDetailsForAccount: jest.fn(),
+  resolveMembershipDetailsForAccount: (...args: any[]) =>
+    resolveMembershipDetailsForAccountMock(...args),
   resolveMembershipForAccount: jest.fn(),
 }));
 
@@ -140,6 +142,49 @@ describe("purchases.getManagedEgressHistory", () => {
       recent_event_limit: 5,
       top_project_limit: 3,
     });
+  });
+});
+
+describe("purchases.getMembershipDetails", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("defaults to cached usage-status for the signed-in account", async () => {
+    resolveMembershipDetailsForAccountMock.mockResolvedValue({
+      selected: { class: "free", source: "free", entitlements: {} },
+      candidates: [],
+      usage_status: undefined,
+    });
+
+    const { getMembershipDetails } = await import("./purchases");
+    await getMembershipDetails({
+      account_id: "account-1",
+    });
+
+    expect(resolveMembershipDetailsForAccountMock).toHaveBeenCalledWith(
+      "account-1",
+      { refresh_usage_status: undefined },
+    );
+  });
+
+  it("forwards refresh_usage_status when explicitly requested", async () => {
+    resolveMembershipDetailsForAccountMock.mockResolvedValue({
+      selected: { class: "free", source: "free", entitlements: {} },
+      candidates: [],
+      usage_status: undefined,
+    });
+
+    const { getMembershipDetails } = await import("./purchases");
+    await getMembershipDetails({
+      account_id: "account-1",
+      refresh_usage_status: true,
+    });
+
+    expect(resolveMembershipDetailsForAccountMock).toHaveBeenCalledWith(
+      "account-1",
+      { refresh_usage_status: true },
+    );
   });
 });
 

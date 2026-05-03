@@ -31,9 +31,11 @@ export async function getMembership({ account_id }) {
 export async function getMembershipDetails({
   account_id,
   user_account_id,
+  refresh_usage_status,
 }: {
   account_id?: string;
   user_account_id?: string;
+  refresh_usage_status?: boolean;
 }) {
   const targetId = user_account_id ?? account_id;
   if (!targetId) {
@@ -44,7 +46,9 @@ export async function getMembershipDetails({
       throw Error("must be an admin");
     }
   }
-  return await resolveMembershipDetailsForAccount(targetId);
+  return await resolveMembershipDetailsForAccount(targetId, {
+    refresh_usage_status,
+  });
 }
 
 export async function getAIUsage({ account_id }) {

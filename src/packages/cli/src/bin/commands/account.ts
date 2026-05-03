@@ -196,6 +196,7 @@ export function registerAccountCommand(
         }
         const details = await ctx.hub.purchases.getMembershipDetails({
           user_account_id: account_id,
+          refresh_usage_status: true,
         });
         return serializeMembershipDetails(details, account_id, toIso);
       });

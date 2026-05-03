@@ -173,12 +173,14 @@ function usageStatusCacheKey({
   });
 }
 
-async function getCachedMembershipUsageStatus({
+async function getMembershipDetailsUsageStatus({
   account_id,
   resolution,
+  refresh,
 }: {
   account_id: string;
   resolution: MembershipResolution;
+  refresh?: boolean;
 }): Promise<MembershipDetails["usage_status"]> {
   const cacheKey = usageStatusCacheKey({ account_id, resolution });
   const cached = membershipUsageStatusCache.get(cacheKey);
@@ -188,6 +190,9 @@ async function getCachedMembershipUsageStatus({
   const inflight = membershipUsageStatusInflight.get(cacheKey);
   if (inflight) {
     return await inflight;
+  }
+  if (!refresh) {
+    return undefined;
   }
   const load = (async () => {
     let usage_status: MembershipDetails["usage_status"] = undefined;
@@ -217,12 +222,16 @@ async function getCachedMembershipUsageStatus({
 
 export async function resolveMembershipDetailsForAccount(
   account_id: string,
+  opts?: {
+    refresh_usage_status?: boolean;
+  },
 ): Promise<MembershipDetails> {
   const { candidates, selected } =
     await buildMembershipResolutionForAccount(account_id);
-  const usage_status = await getCachedMembershipUsageStatus({
+  const usage_status = await getMembershipDetailsUsageStatus({
     account_id,
     resolution: selected,
+    refresh: !!opts?.refresh_usage_status,
   });
   return {
     selected,
