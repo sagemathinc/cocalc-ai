@@ -3,11 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { get_local_storage, set_local_storage } from "@cocalc/frontend/misc";
 
 const STORAGE_KEY = "agent-chat-font-size-v1";
-const CHANGE_EVENT = "cocalc:agent-chat-font-size";
 
 export const AGENT_CHAT_FONT_MIN = 11;
 export const AGENT_CHAT_FONT_MAX = 24;
@@ -31,6 +31,12 @@ function parseFontSize(value: unknown): number | undefined {
   return undefined;
 }
 
+function setPageFontSize(value: number): void {
+  redux.getStore("page")?.setState({
+    agent_chat_font_size: value,
+  });
+}
+
 export function readAgentChatFontSize(fallback = 13): number {
   const stored = parseFontSize(get_local_storage(STORAGE_KEY));
   return stored ?? clampFontSize(fallback);
@@ -39,49 +45,17 @@ export function readAgentChatFontSize(fallback = 13): number {
 export function writeAgentChatFontSize(value: number): number {
   const next = clampFontSize(value);
   set_local_storage(STORAGE_KEY, String(next));
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(
-      new CustomEvent(CHANGE_EVENT, { detail: { fontSize: next } }),
-    );
-  }
+  setPageFontSize(next);
   return next;
 }
 
 export function useAgentChatFontSize(fallback = 13) {
-  const [fontSize, setFontSizeState] = useState<number>(() =>
-    readAgentChatFontSize(fallback),
-  );
-
-  useEffect(() => {
-    setFontSizeState(readAgentChatFontSize(fallback));
-  }, [fallback]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onStorage = (evt: StorageEvent) => {
-      if (evt.key && evt.key !== STORAGE_KEY) return;
-      setFontSizeState(readAgentChatFontSize(fallback));
-    };
-    const onChange = (evt: Event) => {
-      const detail = (evt as CustomEvent<{ fontSize?: number }>).detail;
-      const next = parseFontSize(detail?.fontSize);
-      if (next != null) {
-        setFontSizeState(next);
-        return;
-      }
-      setFontSizeState(readAgentChatFontSize(fallback));
-    };
-    window.addEventListener("storage", onStorage);
-    window.addEventListener(CHANGE_EVENT, onChange as EventListener);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener(CHANGE_EVENT, onChange as EventListener);
-    };
-  }, [fallback]);
+  const pageFontSize = useTypedRedux("page", "agent_chat_font_size");
+  const fontSize =
+    parseFontSize(pageFontSize) ?? readAgentChatFontSize(fallback);
 
   const setFontSize = useCallback((value: number) => {
-    const next = writeAgentChatFontSize(value);
-    setFontSizeState(next);
+    return writeAgentChatFontSize(value);
   }, []);
 
   const increaseFontSize = useCallback(() => {
