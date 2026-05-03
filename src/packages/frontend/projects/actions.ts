@@ -124,6 +124,7 @@ type ProjectBackupBootstrapRow = {
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
   private static ARCHIVE_RPC_TIMEOUT_MS = 30_000;
+  private static REALTIME_FEED_BATCH_MS = 50;
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
@@ -136,6 +137,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
   };
   private realtimeFeed?: DStream<AccountFeedEvent>;
   private realtimeFeedAccountId?: string;
+  private realtimeFeedFlushTimer?: ReturnType<typeof setTimeout>;
+  private pendingProjectFeedUpserts: Record<
+    string,
+    {
+      row: AccountFeedProjectRow;
+      source_host_id?: string;
+    }
+  > = Object.create(null);
+  private pendingProjectFeedRemovals = new globalThis.Set<string>();
 
   _init() {
     this.signedInListener = () => {
@@ -243,6 +253,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }
 
   private closeRealtimeFeed(): void {
+    this.flushPendingProjectFeedChanges();
     if (this.realtimeFeed != null) {
       this.realtimeFeed.removeListener("change", this.handleRealtimeFeedChange);
       this.realtimeFeed.removeListener(
@@ -260,10 +271,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     switch (event.type) {
       case "project.upsert":
-        this.applyProjectFeedUpsert(event.project);
+        this.queueProjectFeedUpsert(event.project);
         break;
       case "project.remove":
-        this.applyProjectFeedRemove(event.project_id);
+        this.queueProjectFeedRemove(event.project_id);
         break;
       case "project.detail.invalidate":
         if (event.fields.includes("course")) {
@@ -280,6 +291,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   };
 
   private handleRealtimeFeedHistoryGap = (): void => {
+    this.flushPendingProjectFeedChanges();
     void refresh_projects_table();
     void this.loadProjectedProjectsForCurrentAccount(this.getAccountId());
   };
@@ -448,26 +460,97 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
-  private applyProjectFeedUpsert(row: AccountFeedProjectRow): void {
-    const project_map = store.get("project_map") ?? Map<string, any>();
-    const previous = project_map.get(row.project_id);
-    const previous_host_id =
-      (previous?.get("host_id") as string | undefined) ?? undefined;
-    const next_host_id =
-      typeof row.host_id === "string" && row.host_id ? row.host_id : undefined;
-    this.setState({
-      project_map: project_map.set(
+  private queueProjectFeedUpsert(row: AccountFeedProjectRow): void {
+    const existing = this.pendingProjectFeedUpserts[row.project_id];
+    this.pendingProjectFeedUpserts[row.project_id] = {
+      row,
+      source_host_id:
+        existing?.source_host_id ??
+        (store.get("project_map")?.get(row.project_id)?.get("host_id") as
+          | string
+          | undefined) ??
+        undefined,
+    };
+    this.pendingProjectFeedRemovals.delete(row.project_id);
+    this.scheduleProjectFeedFlush();
+  }
+
+  private queueProjectFeedRemove(project_id: string): void {
+    delete this.pendingProjectFeedUpserts[project_id];
+    this.pendingProjectFeedRemovals.add(project_id);
+    this.scheduleProjectFeedFlush();
+  }
+
+  private scheduleProjectFeedFlush(): void {
+    if (this.realtimeFeedFlushTimer != null) {
+      return;
+    }
+    this.realtimeFeedFlushTimer = setTimeout(() => {
+      this.realtimeFeedFlushTimer = undefined;
+      this.flushPendingProjectFeedChanges();
+    }, ProjectsActions.REALTIME_FEED_BATCH_MS);
+  }
+
+  private flushPendingProjectFeedChanges(): void {
+    if (this.realtimeFeedFlushTimer != null) {
+      clearTimeout(this.realtimeFeedFlushTimer);
+      this.realtimeFeedFlushTimer = undefined;
+    }
+    const pendingUpserts = Object.values(this.pendingProjectFeedUpserts);
+    const pendingRemovals = Array.from(this.pendingProjectFeedRemovals);
+    this.pendingProjectFeedUpserts = Object.create(null);
+    this.pendingProjectFeedRemovals.clear();
+    if (pendingUpserts.length === 0 && pendingRemovals.length === 0) {
+      return;
+    }
+
+    let project_map = store.get("project_map") ?? Map<string, any>();
+    let changed = false;
+    const hostChanges: Array<{
+      project_id: string;
+      source_host_id?: string;
+      dest_host_id?: string;
+    }> = [];
+    const projectsToClose: string[] = [];
+
+    for (const { row, source_host_id } of pendingUpserts) {
+      project_map = project_map.set(
         row.project_id,
         (project_map.get(row.project_id) ?? Map<string, any>()).mergeDeep(
           buildProjectRecordFromFeedRow(row),
         ),
-      ),
-    } as ProjectsState);
-    this.handleOpenProjectHostChange({
-      project_id: row.project_id,
-      source_host_id: previous_host_id,
-      dest_host_id: next_host_id,
-    });
+      );
+      changed = true;
+      hostChanges.push({
+        project_id: row.project_id,
+        source_host_id,
+        dest_host_id:
+          typeof row.host_id === "string" && row.host_id
+            ? row.host_id
+            : undefined,
+      });
+    }
+
+    for (const project_id of pendingRemovals) {
+      if (!project_map.has(project_id)) {
+        continue;
+      }
+      project_map = project_map.delete(project_id);
+      changed = true;
+      if (this.isProjectOpen(project_id)) {
+        projectsToClose.push(project_id);
+      }
+    }
+
+    if (changed) {
+      this.setState({ project_map } as ProjectsState);
+    }
+    for (const change of hostChanges) {
+      this.handleOpenProjectHostChange(change);
+    }
+    for (const project_id of projectsToClose) {
+      this.set_project_closed(project_id);
+    }
   }
 
   private handleOpenProjectHostChange({
@@ -495,19 +578,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
     redux.getProjectActions(project_id)?.resetProjectHostRuntime?.();
     webapp_client.conat_client.reconnect();
-  }
-
-  private applyProjectFeedRemove(project_id: string): void {
-    const project_map = store.get("project_map");
-    if (project_map == null || !project_map.has(project_id)) {
-      return;
-    }
-    this.setState({
-      project_map: project_map.delete(project_id),
-    } as ProjectsState);
-    if (this.isProjectOpen(project_id)) {
-      this.set_project_closed(project_id);
-    }
   }
 
   private projects_table_set = async (
