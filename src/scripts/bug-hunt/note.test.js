@@ -1,10 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const cp = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const { main, parseArgs } = require("./note.js");
+const { main, parseArgs, wantsJson } = require("./note.js");
 
 test("parseArgs records repeated evidence and validation flags", () => {
   const options = parseArgs([
@@ -23,6 +24,11 @@ test("parseArgs records repeated evidence and validation flags", () => {
   ]);
   assert.deepEqual(options.evidence, ["one", "two"]);
   assert.deepEqual(options.validation, ["jest"]);
+});
+
+test("wantsJson ignores a leading pnpm separator", () => {
+  assert.equal(wantsJson(["--", "--task-id", "task-1", "--json"]), true);
+  assert.equal(wantsJson(["--task-id", "task-1"]), false);
 });
 
 test("main writes a ledger entry and returns a task note", () => {
@@ -62,4 +68,36 @@ test("main writes a ledger entry and returns a task note", () => {
   assert.match(payload.task_note, /reviewed current test/);
   assert.ok(fs.existsSync(payload.ledger_json));
   assert.ok(fs.existsSync(payload.ledger_markdown));
+});
+
+test("cli keeps --json failures machine-readable", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-bug-hunt-note-"));
+  const badContextFile = path.join(tmp, "context.json");
+  fs.writeFileSync(badContextFile, "{bad json\n");
+  const script = path.join(__dirname, "note.js");
+  const result = cp.spawnSync(
+    process.execPath,
+    [
+      script,
+      "--task-id",
+      "task-1",
+      "--area",
+      "chat",
+      "--result",
+      "bug_fixed",
+      "--context-file",
+      badContextFile,
+      "--json",
+    ],
+    {
+      cwd: path.resolve(__dirname, "..", ".."),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.equal(`${result.stderr ?? ""}`.trim(), "");
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.ok, false);
+  assert.match(parsed.error.message, /failed to read .*context\.json/);
 });

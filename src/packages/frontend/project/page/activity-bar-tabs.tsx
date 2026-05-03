@@ -623,7 +623,7 @@ interface CustomizeRailButtonsModalProps {
   hiddenTabs: FixedTab[];
 }
 
-function CustomizeRailButtonsModal({
+export function CustomizeRailButtonsModal({
   open,
   onClose,
   onSave,
@@ -634,9 +634,12 @@ function CustomizeRailButtonsModal({
   const [draftOrder, setDraftOrder] = useState<FixedTab[]>(order);
   const [draftHidden, setDraftHidden] = useState<FixedTab[]>(hiddenTabs);
   const hiddenSet = useMemo(() => new Set(draftHidden), [draftHidden]);
+  const wasOpenRef = useRef(open);
 
   useEffect(() => {
-    if (!open) return;
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = open;
+    if (!open || wasOpen) return;
     setDraftOrder(order);
     setDraftHidden(hiddenTabs);
   }, [hiddenTabs, open, order]);
@@ -689,7 +692,7 @@ function CustomizeRailButtonsModal({
       ]}
     >
       <p style={{ color: COLORS.GRAY }}>
-        Drag to reorder buttons. Uncheck a button to move it into the More menu.
+        Check a button to show it on the left rail. Drag to reorder buttons.
         These preferences are stored in this browser only.
       </p>
       <SortableList
@@ -708,7 +711,6 @@ function CustomizeRailButtonsModal({
                   alignItems: "center",
                   gap: "10px",
                   padding: "8px 0",
-                  opacity: visible ? 1 : 0.6,
                   borderBottom: `1px solid ${COLORS.GRAY_LLL}`,
                 }}
               >
@@ -717,18 +719,27 @@ function CustomizeRailButtonsModal({
                   onChange={(e) => setTabVisible(name, e.target.checked)}
                 />
                 <Icon name={FIXED_PROJECT_TABS[name].icon} />
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   {renderFixedTabLabel(name, intl)}
-                  <div
-                    style={{
-                      color: COLORS.GRAY,
-                      fontSize: "12px",
-                      marginTop: "2px",
-                    }}
-                  >
-                    {visible ? "Pinned to rail" : "Shown in More"}
-                  </div>
                 </div>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    borderRadius: "999px",
+                    padding: "1px 8px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    letterSpacing: "0.01em",
+                    background: visible ? COLORS.BS_GREEN_LL : COLORS.BLUE_LLLL,
+                    color: visible
+                      ? COLORS.ANTD_GREEN_D
+                      : COLORS.ANTD_LINK_BLUE_DARK,
+                    marginRight: "4px",
+                  }}
+                >
+                  {visible ? "Rail" : "More"}
+                </span>
                 <DragHandle id={name} />
               </div>
             </SortableItem>

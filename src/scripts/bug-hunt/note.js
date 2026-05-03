@@ -105,6 +105,14 @@ function parseArgs(argv) {
   return options;
 }
 
+function wantsJson(argv) {
+  const normalizedArgv = [...argv];
+  while (normalizedArgv[0] === "--") {
+    normalizedArgv.shift();
+  }
+  return normalizedArgv.includes("--json");
+}
+
 function main(argv = process.argv.slice(2), now = new Date()) {
   const options = parseArgs(argv);
   const context = readJsonIfExists(options.contextFile);
@@ -137,13 +145,29 @@ function main(argv = process.argv.slice(2), now = new Date()) {
 module.exports = {
   main,
   parseArgs,
+  wantsJson,
 };
 
 if (require.main === module) {
   try {
     main();
   } catch (err) {
-    console.error(`bug-hunt note error: ${err?.message ?? err}`);
+    if (wantsJson(process.argv.slice(2))) {
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            ok: false,
+            error: {
+              message: `${err?.message ?? err}`,
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    } else {
+      console.error(`bug-hunt note error: ${err?.message ?? err}`);
+    }
     process.exit(1);
   }
 }

@@ -116,6 +116,7 @@ import {
 } from "@cocalc/frontend/project/workspaces/selection-runtime";
 import { openProjectWorkspaceStore } from "@cocalc/frontend/project/workspaces/store";
 import { getBrowserTimeTravelProviders } from "./timetravel-providers";
+import { createBrowserExecFsApi } from "./fs-api";
 
 const SESSION_SYNC_DEBOUNCE_MS = 250;
 const HEARTBEAT_RETRY_MS = 4_000;
@@ -284,29 +285,13 @@ export function createBrowserSessionAutomation({
     project_id: string,
     isCanceled?: () => boolean,
   ): { api: BrowserExecApi; cleanup: () => Promise<void> } => {
-    let fsApiPromise: Promise<any> | undefined;
-    const getFsApi = async () => {
-      fsApiPromise ??= client.conat_client.projectFs({
-        project_id,
-        caller: "browser-session.exec",
-      });
-      return await fsApiPromise;
-    };
-    const fsApi = new Proxy(
-      {},
-      {
-        get: (_target, prop) => {
-          return async (...args) => {
-            const fs = await getFsApi();
-            const value = (fs as any)[prop];
-            if (typeof value !== "function") {
-              return value;
-            }
-            return await value.apply(fs, args);
-          };
-        },
-      },
-    ) as BrowserExecApi["fs"];
+    const fsApi = createBrowserExecFsApi({
+      loadFsClient: () =>
+        client.conat_client.projectFs({
+          project_id,
+          caller: "browser-session.exec",
+        }),
+    });
     const heldSyncDocs = new Map<
       string,
       { syncdoc: any; release: () => Promise<void> }

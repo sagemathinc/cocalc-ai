@@ -321,6 +321,50 @@ export function hasActiveAcpTurnForComposer({
   return false;
 }
 
+export function resolveImmediateAcpParentMessageId({
+  selectedThreadId,
+  selectedThreadMessages,
+  acpState,
+}: {
+  selectedThreadId?: string | null;
+  selectedThreadMessages: readonly ChatMessage[];
+  acpState?: immutable.Map<string, string>;
+}): string | undefined {
+  if (!selectedThreadMessages.length) return undefined;
+  const normalizedThreadId = normalizeThreadKey(selectedThreadId);
+  const threadState =
+    normalizedThreadId != null
+      ? acpState?.get?.(`thread:${normalizedThreadId}`)
+      : undefined;
+  for (let i = selectedThreadMessages.length - 1; i >= 0; i -= 1) {
+    const msg = selectedThreadMessages[i];
+    if (!field<string>(msg, "acp_account_id")) continue;
+    const messageId = normalizeThreadKey(field<string>(msg, "message_id"));
+    if (!messageId) continue;
+    if (threadState === "running") {
+      return messageId;
+    }
+    const messageDate = dateValue(msg);
+    const messageState =
+      acpState?.get?.(`message:${messageId}`) ??
+      (messageDate != null
+        ? acpState?.get?.(`${messageDate.valueOf()}`)
+        : undefined);
+    const rowState = `${field<string>(msg, "acp_state") ?? ""}`
+      .trim()
+      .toLowerCase();
+    if (
+      (typeof messageState === "string" &&
+        ACP_ACTIVE_STATES.has(messageState)) ||
+      (typeof rowState === "string" && ACP_ACTIVE_STATES.has(rowState)) ||
+      field<boolean>(msg, "generating") === true
+    ) {
+      return messageId;
+    }
+  }
+  return undefined;
+}
+
 export function resolveAgentSessionRecordStatus({
   thread,
   threadId,
@@ -1441,7 +1485,7 @@ export function ChatPanel({
     [actions, clearInput],
   );
 
-  function resolveReplyTarget(): {
+  function resolveReplyTarget(immediate = false): {
     thread_id?: string;
     parent_message_id?: string;
     lookup?: string;
@@ -1458,13 +1502,20 @@ export function ChatPanel({
       const threadMessages = thread_id
         ? (actions.getMessagesInThread(thread_id) ?? [])
         : [];
+      const immediateParentMessageId = immediate
+        ? resolveImmediateAcpParentMessageId({
+            selectedThreadId: thread_id,
+            selectedThreadMessages: threadMessages,
+            acpState,
+          })
+        : undefined;
       const latestMessageId =
         `${(threadMessages[threadMessages.length - 1] as any)?.message_id ?? ""}`.trim() ||
         undefined;
       const lookup = thread_id;
       return {
         thread_id,
-        parent_message_id: latestMessageId,
+        parent_message_id: immediateParentMessageId ?? latestMessageId,
         lookup,
       };
     };
@@ -1478,7 +1529,7 @@ export function ChatPanel({
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
-    const target = resolveReplyTarget();
+    const target = resolveReplyTarget(opts?.immediate === true);
     const reply_thread_id = target.thread_id;
     const parent_message_id = target.parent_message_id;
     const existingThreadMetadata =

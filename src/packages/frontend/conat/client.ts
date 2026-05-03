@@ -66,6 +66,7 @@ import {
 } from "@cocalc/frontend/misc/remember-me";
 import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
+import { parseRetryInAboutSeconds } from "@cocalc/conat/auth/retry-window";
 import {
   get as getLroStream,
   waitForCompletion as waitForLroCompletion,
@@ -996,6 +997,45 @@ export class ConatClient extends EventEmitter {
     return err;
   };
 
+  private throwIfProjectHostAuthCooldownActive(host_id: string): void {
+    const state = this.projectHostTokens[host_id];
+    if (!state?.retryAfter) {
+      return;
+    }
+    if (Date.now() < state.retryAfter) {
+      throw this.getProjectHostTokenCooldownError(state);
+    }
+  }
+
+  private projectHostAuthRetryDelayMs = (err: unknown): number | undefined => {
+    const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+    const seconds = parseRetryInAboutSeconds(message);
+    if (!seconds) return;
+    return seconds * 1000;
+  };
+
+  private noteProjectHostAuthBackoff = (
+    host_id: string,
+    err: unknown,
+  ): void => {
+    const delayMs = this.projectHostAuthRetryDelayMs(err);
+    if (!delayMs) {
+      return;
+    }
+    let state = this.projectHostTokens[host_id];
+    if (!state) {
+      state = {};
+      this.projectHostTokens[host_id] = state;
+    }
+    state.failureCount = Math.max(state.failureCount ?? 0, 1);
+    state.retryAfter = Math.max(state.retryAfter ?? 0, Date.now() + delayMs);
+    state.lastError = err;
+  };
+
+  private shouldRetainProjectHostAuthState = (err: unknown): boolean => {
+    return this.projectHostAuthRetryDelayMs(err) != null;
+  };
+
   private invalidateProjectHostToken = (
     host_id: string,
     { resetFailureState = false }: { resetFailureState?: boolean } = {},
@@ -1348,9 +1388,11 @@ export class ConatClient extends EventEmitter {
         this.invalidateProjectHostToken(host_id);
         this.invalidateProjectHostBrowserSession(host_id);
         const message = await response.text().catch(() => "");
-        throw new Error(
+        const err = new Error(
           `project-host browser session bootstrap failed: status=${response.status}${message ? ` body=${message}` : ""}`,
         );
+        this.noteProjectHostAuthBackoff(host_id, err);
+        throw err;
       }
       state!.address = address;
       state!.establishedAt = Date.now();
@@ -1406,6 +1448,7 @@ export class ConatClient extends EventEmitter {
         project_id,
       );
       try {
+        this.throwIfProjectHostAuthCooldownActive(host_id);
         await this.ensureProjectHostBrowserSession({
           host_id,
           address: state.address,
@@ -1784,8 +1827,11 @@ export class ConatClient extends EventEmitter {
         host_session_id: state.host_session_id,
         error,
       });
-      this.invalidateProjectHostBrowserSession(host_id);
-      this.invalidateProjectHostToken(host_id);
+      this.noteProjectHostAuthBackoff(host_id, error);
+      if (!this.shouldRetainProjectHostAuthState(error)) {
+        this.invalidateProjectHostBrowserSession(host_id);
+        this.invalidateProjectHostToken(host_id);
+      }
     });
     state.client.on("disconnected", () => {
       reconnectDebugWarn(`routed host disconnected ${host_id}`, {
@@ -1803,10 +1849,11 @@ export class ConatClient extends EventEmitter {
         err,
       });
       if (this.isProjectHostAuthError(err)) {
-        this.invalidateProjectHostBrowserSession(host_id);
-      }
-      if (this.isProjectHostAuthError(err)) {
-        this.invalidateProjectHostToken(host_id);
+        this.noteProjectHostAuthBackoff(host_id, err);
+        if (!this.shouldRetainProjectHostAuthState(err)) {
+          this.invalidateProjectHostBrowserSession(host_id);
+          this.invalidateProjectHostToken(host_id);
+        }
       }
       this.scheduleRoutedHostReconnect({ host_id, state, project_id });
     });
@@ -2586,7 +2633,11 @@ export class ConatClient extends EventEmitter {
     project_id: string;
     caller?: string;
   }): Promise<FilesystemClient> => {
-    const client = await this.projectConat({ project_id, caller });
+    const client = await this.projectConat({
+      project_id,
+      caller,
+      requireRouting: true,
+    });
     return client.fs({ project_id });
   };
 

@@ -17,7 +17,7 @@ import { notifyCollabInvitesChanged } from "@cocalc/frontend/collaborators/invit
 import type { FragmentId } from "@cocalc/frontend/misc/fragment-id";
 import { allow_project_to_run } from "@cocalc/frontend/project/client-side-throttle";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { once } from "@cocalc/util/async-utils";
+import { once, withTimeout } from "@cocalc/util/async-utils";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { HostConnectionInfo } from "@cocalc/conat/hub/api/hosts";
@@ -49,6 +49,7 @@ import {
   parseOfflineMoveConfirmationError,
 } from "./offline-move-confirmation";
 import type { DStream } from "@cocalc/conat/sync/dstream";
+import { isTerminal } from "@cocalc/frontend/lro/utils";
 
 import type {
   CourseInfo,
@@ -120,6 +121,22 @@ type ProjectBackupBootstrapRow = {
   last_backup?: string | Date | null;
 };
 
+function readMaybeImmutable(value: any, key: string): any {
+  return value?.get?.(key) ?? value?.[key];
+}
+
+function readMaybeImmutableIn(value: any, path: string[]): any {
+  if (value?.getIn) {
+    return value.getIn(path);
+  }
+  let current = value;
+  for (const key of path) {
+    current = readMaybeImmutable(current, key);
+    if (current == null) return current;
+  }
+  return current;
+}
+
 type DirectProjectBootstrapRow = {
   project_id: string;
   title?: string | null;
@@ -139,6 +156,7 @@ type DirectProjectBootstrapRow = {
 // Define projects actions
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
+  private static HOST_INFO_RPC_TIMEOUT_MS = 5_000;
   private static ARCHIVE_RPC_TIMEOUT_MS = 30_000;
   private static REALTIME_FEED_BATCH_MS = 50;
   private static CREATE_PROJECT_FEED_WAIT_TIMEOUT_S = 5;
@@ -160,6 +178,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     {
       row: AccountFeedProjectRow;
       source_host_id?: string;
+      updated_at?: number;
     }
   > = Object.create(null);
   private pendingProjectFeedRemovals = new globalThis.Set<string>();
@@ -233,10 +252,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
     }
     try {
-      const info: HostConnectionInfo =
-        await webapp_client.conat_client.hub.hosts.resolveHostConnection({
+      const info: HostConnectionInfo = await withTimeout(
+        webapp_client.conat_client.hub.hosts.resolveHostConnection({
           host_id,
-        });
+        }),
+        ProjectsActions.HOST_INFO_RPC_TIMEOUT_MS,
+      );
       const next = (hostInfo ?? Map<string, any>()).set(
         host_id,
         fromJS({ ...info, updated_at: now }),
@@ -288,7 +309,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     switch (event.type) {
       case "project.upsert":
-        this.queueProjectFeedUpsert(event.project);
+        this.queueProjectFeedUpsert(event.project, event.ts);
         break;
       case "project.remove":
         this.queueProjectFeedRemove(event.project_id);
@@ -420,31 +441,44 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (row?.is_hidden === true || !row?.project_id) {
           continue;
         }
-        project_map = project_map.set(
-          row.project_id,
-          (project_map.get(row.project_id) ?? Map<string, any>()).mergeDeep(
-            buildProjectRecordFromFeedRow({
-              project_id: row.project_id,
-              title: row.title ?? "",
-              description: row.description ?? "",
-              name: null,
-              theme: row.theme ?? null,
-              host_id: row.host_id ?? null,
-              owning_bay_id:
-                `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
-              users: row.users_summary ?? {},
-              state: row.state_summary ?? {},
-              last_active:
-                row.last_activity_at == null
-                  ? {}
-                  : { [account_id]: row.last_activity_at },
-              last_edited:
-                dateOrNull(row.sort_key ?? row.updated_at)?.toISOString() ??
-                null,
-              deleted: false,
-            }),
-          ),
-        );
+        const currentProject =
+          project_map.get(row.project_id) ?? Map<string, any>();
+        const currentHostId = currentProject.get("host_id");
+        const projectedRecord = buildProjectRecordFromFeedRow({
+          project_id: row.project_id,
+          title: row.title ?? "",
+          description: row.description ?? "",
+          name: null,
+          theme: row.theme ?? null,
+          host_id: row.host_id ?? null,
+          owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
+          users: row.users_summary ?? {},
+          state: row.state_summary ?? {},
+          last_active:
+            row.last_activity_at == null
+              ? {}
+              : { [account_id]: row.last_activity_at },
+          last_edited:
+            dateOrNull(row.sort_key ?? row.updated_at)?.toISOString() ?? null,
+          deleted: false,
+        });
+        let nextProject = currentProject.mergeDeep(projectedRecord);
+        if (
+          typeof currentHostId === "string" &&
+          currentHostId &&
+          this.shouldPreserveLocalHostIdAfterMove({
+            project_id: row.project_id,
+            current_host_id: currentHostId,
+            incoming_host_id:
+              typeof row.host_id === "string" && row.host_id
+                ? row.host_id
+                : undefined,
+            incoming_updated_at: row.updated_at ?? row.sort_key,
+          })
+        ) {
+          nextProject = nextProject.set("host_id", currentHostId);
+        }
+        project_map = project_map.set(row.project_id, nextProject);
       }
       try {
         const backupResp = await webapp_client.async_query({
@@ -477,7 +511,56 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
-  private queueProjectFeedUpsert(row: AccountFeedProjectRow): void {
+  private shouldPreserveLocalHostIdAfterMove({
+    project_id,
+    current_host_id,
+    incoming_host_id,
+    incoming_updated_at,
+  }: {
+    project_id: string;
+    current_host_id?: string;
+    incoming_host_id?: string;
+    incoming_updated_at?: number | string | Date | null;
+  }): boolean {
+    if (
+      !current_host_id ||
+      !incoming_host_id ||
+      current_host_id === incoming_host_id
+    ) {
+      return false;
+    }
+    const projectStore = this.redux.getProjectStore?.(project_id);
+    const moveLro = projectStore?.get?.("move_lro");
+    if (!moveLro) {
+      return false;
+    }
+    const moveTimestamp =
+      readMaybeImmutableIn(moveLro, ["summary", "updated_at"]) ??
+      readMaybeImmutableIn(moveLro, ["summary", "started_at"]) ??
+      readMaybeImmutableIn(moveLro, ["summary", "created_at"]) ??
+      readMaybeImmutable(moveLro, "updated_at") ??
+      readMaybeImmutableIn(moveLro, ["last_event", "ts"]);
+    const moveMs =
+      typeof moveTimestamp === "number"
+        ? moveTimestamp
+        : new Date(`${moveTimestamp ?? ""}`).getTime();
+    if (!Number.isFinite(moveMs)) {
+      return false;
+    }
+    const incomingMs =
+      typeof incoming_updated_at === "number"
+        ? incoming_updated_at
+        : new Date(`${incoming_updated_at ?? ""}`).getTime();
+    if (!Number.isFinite(incomingMs)) {
+      return true;
+    }
+    return incomingMs < moveMs;
+  }
+
+  private queueProjectFeedUpsert(
+    row: AccountFeedProjectRow,
+    updated_at?: number,
+  ): void {
     const existing = this.pendingProjectFeedUpserts[row.project_id];
     this.pendingProjectFeedUpserts[row.project_id] = {
       row,
@@ -487,6 +570,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           | string
           | undefined) ??
         undefined,
+      updated_at,
     };
     this.pendingProjectFeedRemovals.delete(row.project_id);
     this.scheduleProjectFeedFlush();
@@ -530,26 +614,44 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }> = [];
     const projectsToClose: string[] = [];
 
-    for (const { row, source_host_id } of pendingUpserts) {
-      project_map = project_map.set(
-        row.project_id,
-        (project_map.get(row.project_id) ?? Map<string, any>()).mergeDeep(
-          buildProjectRecordFromFeedRow(row),
-        ),
-      );
+    for (const { row, source_host_id, updated_at } of pendingUpserts) {
+      const incoming_host_id =
+        typeof row.host_id === "string" && row.host_id
+          ? row.host_id
+          : undefined;
+      let nextProject = (
+        project_map.get(row.project_id) ?? Map<string, any>()
+      ).mergeDeep(buildProjectRecordFromFeedRow(row));
+      if (
+        typeof source_host_id === "string" &&
+        source_host_id &&
+        this.shouldPreserveLocalHostIdAfterMove({
+          project_id: row.project_id,
+          current_host_id: source_host_id,
+          incoming_host_id,
+          incoming_updated_at: updated_at,
+        })
+      ) {
+        nextProject = nextProject.set("host_id", source_host_id);
+      }
+      project_map = project_map.set(row.project_id, nextProject);
       changed = true;
       hostChanges.push({
         project_id: row.project_id,
         source_host_id,
         dest_host_id:
-          typeof row.host_id === "string" && row.host_id
-            ? row.host_id
-            : undefined,
+          (nextProject.get("host_id") as string | undefined) ?? undefined,
       });
     }
 
     for (const project_id of pendingRemovals) {
       if (!project_map.has(project_id)) {
+        continue;
+      }
+      if (
+        this.isProjectOpen(project_id) &&
+        this.isProjectMoveInProgress(project_id)
+      ) {
         continue;
       }
       project_map = project_map.delete(project_id);
@@ -661,7 +763,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       dest_host_id,
     });
     redux.getProjectActions(project_id)?.resetProjectHostRuntime?.();
-    webapp_client.conat_client.reconnect();
+    // Do not force a global reconnect here. A move can succeed before the
+    // projected account feed catches up, and reconnecting eagerly risks
+    // rehydrating stale host placement into project_map.
   }
 
   private projects_table_set = async (
@@ -686,6 +790,23 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private isProjectOpen = (project_id: string): boolean => {
     return store.get("open_projects").indexOf(project_id) != -1;
   };
+
+  private isProjectMoveInProgress(project_id: string): boolean {
+    const projectStore = this.redux.getProjectStore?.(project_id);
+    const moveLro = projectStore?.get?.("move_lro");
+    if (!moveLro) {
+      return false;
+    }
+    const summary = moveLro.get?.("summary");
+    const status =
+      moveLro.getIn?.(["summary", "status"]) ??
+      summary?.status ??
+      summary?.get?.("status");
+    if (status == null) {
+      return true;
+    }
+    return !isTerminal(status);
+  }
 
   private setProjectOpen = (project_id: string): void => {
     const x = store.get("open_projects");
@@ -1667,7 +1788,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
         }
         void this.ensure_host_info(logInfo.dest_host_id, true);
       }
-      void refresh_projects_table();
+      // Do not eagerly recreate the synced projects table after a move
+      // succeeds. The move path already patches the destination host and region
+      // locally, and a lagging table refresh can rehydrate stale placement back
+      // into project_map before the projection catches up.
       this.handleOpenProjectHostChange({
         project_id: logInfo.project_id,
         source_host_id: previous_host_id,

@@ -13,6 +13,7 @@ const {
   parseArgs,
   resolveApiUrl,
   summarizeRun,
+  withMachineReadableLogging,
 } = require("./launchpad-canary.js");
 
 test("parseArgs accepts repeated providers, scenarios, and runner controls", () => {
@@ -71,6 +72,40 @@ test("resolveApiUrl prefers an explicit CLI value", () => {
       delete process.env.COCALC_API_URL;
     } else {
       process.env.COCALC_API_URL = original;
+    }
+  }
+});
+
+test("withMachineReadableLogging disables debug transports and restores them", async () => {
+  const previous = {
+    DEBUG: process.env.DEBUG,
+    DEBUG_CONSOLE: process.env.DEBUG_CONSOLE,
+    DEBUG_FILE: process.env.DEBUG_FILE,
+  };
+  process.env.DEBUG = "cocalc:*";
+  process.env.DEBUG_CONSOLE = "yes";
+  process.env.DEBUG_FILE = "/tmp/cocalc-debug.log";
+  try {
+    const inside = await withMachineReadableLogging(true, async () => ({
+      DEBUG: process.env.DEBUG,
+      DEBUG_CONSOLE: process.env.DEBUG_CONSOLE,
+      DEBUG_FILE: process.env.DEBUG_FILE,
+    }));
+    assert.deepEqual(inside, {
+      DEBUG: "",
+      DEBUG_CONSOLE: "no",
+      DEBUG_FILE: "",
+    });
+    assert.equal(process.env.DEBUG, "cocalc:*");
+    assert.equal(process.env.DEBUG_CONSOLE, "yes");
+    assert.equal(process.env.DEBUG_FILE, "/tmp/cocalc-debug.log");
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
   }
 });

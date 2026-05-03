@@ -73,12 +73,13 @@ function usageStatusCacheKey({
   account_id: string;
   resolution: MembershipResolution;
 }): string {
+  const effectiveLimits = getEffectiveMembershipUsageLimits(resolution);
   return JSON.stringify({
     account_id,
     class: resolution.class,
     source: resolution.source,
     expires: resolution.expires ?? null,
-    effective_limits: resolution.effective_limits ?? {},
+    effective_limits: effectiveLimits,
   });
 }
 

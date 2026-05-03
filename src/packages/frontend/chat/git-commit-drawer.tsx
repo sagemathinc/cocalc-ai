@@ -1504,6 +1504,7 @@ export function GitCommitDrawer({
   const [selectedCommit, setSelectedCommit] = useState<string | undefined>(
     incomingCommit,
   );
+  const [commitSearch, setCommitSearch] = useState("");
   const [showOnlyUnreviewedCommits, setShowOnlyUnreviewedCommits] =
     useState(false);
   const commit = selectedCommit;
@@ -1561,6 +1562,10 @@ export function GitCommitDrawer({
     if (!open) return;
     setSelectedCommit(incomingCommit);
   }, [incomingCommit, open]);
+
+  useEffect(() => {
+    setCommitSearch("");
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -2939,8 +2944,10 @@ export function GitCommitDrawer({
                 showSearch
                 size="small"
                 value={commit}
+                searchValue={commitSearch}
                 options={logOptions}
                 onChange={(value) => setSelectedCommit(value)}
+                onSearch={setCommitSearch}
                 placeholder="git log"
                 style={{ minWidth: 280, flex: "1 1 360px", maxWidth: 620 }}
                 optionFilterProp="search"

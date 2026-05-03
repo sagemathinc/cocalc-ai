@@ -12,14 +12,27 @@ import { asStringArray, toAbsolutePath } from "./common-utils";
 const SPAWN_MARKER_QUERY_PARAM = "_cocalc_browser_spawn";
 const SPAWN_MARKER_STORAGE_KEY = "cocalc-browser-spawn-marker";
 
-export function getActiveProjectIdFallback(
-  openProjectIds: string[],
-): string | undefined {
+export function getActiveProjectIdFallback(opts: {
+  openProjectIds: string[];
+  url?: string;
+}): string | undefined {
+  const rawUrl = `${opts.url ?? ""}`.trim();
+  const urlProjectId = getProjectIdFromUrl(rawUrl);
+  if (urlProjectId) {
+    return urlProjectId;
+  }
+  if (rawUrl) {
+    return undefined;
+  }
   const activeTopTab = `${redux.getStore("page")?.get("active_top_tab") ?? ""}`;
   if (isValidUUID(activeTopTab)) {
     return activeTopTab;
   }
-  return openProjectIds[0];
+  const openProjectId = opts.openProjectIds[0];
+  if (isValidUUID(openProjectId)) {
+    return openProjectId;
+  }
+  return undefined;
 }
 
 export function collectOpenProjects({
@@ -85,14 +98,15 @@ export function buildSessionSnapshot(
     maxOpenProjects: opts?.maxOpenProjects,
     maxOpenFilesPerProject: opts?.maxOpenFilesPerProject,
   });
-  const active_project_id = getActiveProjectIdFallback(
-    open_projects.map((x) => x.project_id),
-  );
   const session_name =
     typeof document !== "undefined"
       ? document.title?.trim() || undefined
       : undefined;
   const url = typeof location !== "undefined" ? location.href : undefined;
+  const active_project_id = getActiveProjectIdFallback({
+    openProjectIds: open_projects.map((x) => x.project_id),
+    url,
+  });
   const spawn_marker = resolveBrowserSpawnMarker();
   return {
     browser_id: client.browser_id,
@@ -102,6 +116,19 @@ export function buildSessionSnapshot(
     ...(active_project_id ? { active_project_id } : {}),
     open_projects,
   };
+}
+
+export function getProjectIdFromUrl(value: unknown): string | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return undefined;
+  try {
+    const { pathname } = new URL(raw, "http://localhost");
+    const match = pathname.match(/\/projects\/([0-9a-f-]{36})(?:\/|$)/i);
+    const projectId = `${match?.[1] ?? ""}`.trim();
+    return isValidUUID(projectId) ? projectId : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveBrowserSpawnMarker(): string | undefined {

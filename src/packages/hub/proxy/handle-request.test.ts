@@ -10,6 +10,7 @@ const mockHasAccess = jest.fn();
 const mockResolveAuthenticatedAccountId = jest.fn();
 const mockIsPublicAppSubdomainRequest = jest.fn();
 const mockGetProjectHostRedirectUrl = jest.fn();
+const mockSetProjectHostProxyAccountId = jest.fn();
 
 jest.mock("./version", () => ({
   versionCheckFails: (...args) => mockVersionCheckFails(...args),
@@ -39,6 +40,8 @@ jest.mock("./public-app-subdomain", () => ({
 jest.mock("./project-host", () => ({
   getProjectHostRedirectUrl: (...args) =>
     mockGetProjectHostRedirectUrl(...args),
+  setProjectHostProxyAccountId: (...args) =>
+    mockSetProjectHostProxyAccountId(...args),
 }));
 
 describe("hub proxy file downloads", () => {
@@ -61,6 +64,7 @@ describe("hub proxy file downloads", () => {
       .mockResolvedValue("account-1");
     mockIsPublicAppSubdomainRequest.mockReset().mockReturnValue(false);
     mockGetProjectHostRedirectUrl.mockReset();
+    mockSetProjectHostProxyAccountId.mockReset();
   });
 
   it("redirects authenticated file downloads to the project-host", async () => {
@@ -105,6 +109,10 @@ describe("hub proxy file downloads", () => {
       path: "/457f20dd-59d1-45c4-b5b1-a245d0e0a629/files/home/user/a.txt?download",
       account_id: "account-1",
     });
+    expect(mockSetProjectHostProxyAccountId).toHaveBeenCalledWith(
+      req,
+      "account-1",
+    );
     expect(res.statusCode).toBe(307);
     expect(res.setHeader).toHaveBeenCalledWith(
       "Location",
@@ -139,6 +147,10 @@ describe("hub proxy file downloads", () => {
 
     await handler(req, res);
 
+    expect(mockSetProjectHostProxyAccountId).toHaveBeenCalledWith(
+      req,
+      "account-1",
+    );
     expect(proxyHandlers.handleRequest).toHaveBeenCalledWith(req, res);
   });
 });

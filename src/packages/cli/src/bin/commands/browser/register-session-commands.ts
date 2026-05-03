@@ -3,6 +3,7 @@ Register `cocalc browser session ...` subcommands.
 */
 
 import { Command } from "commander";
+import { dirname } from "node:path";
 import { URL } from "node:url";
 import { PROJECT_HOST_BROWSER_SESSION_BOOTSTRAP_PATH } from "@cocalc/conat/auth/project-host-browser-session";
 import { PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME } from "@cocalc/conat/auth/project-host-browser-session";
@@ -16,6 +17,22 @@ import type {
 import type { BrowserSessionInfo } from "@cocalc/conat/hub/api/system";
 
 const DEFAULT_SIGN_IN_COOKIE_MAX_AGE_MS = 12 * 3600 * 1000;
+
+function normalizeBoolean(value: unknown): boolean {
+  const normalized = `${value ?? ""}`.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+function isCliAgentMode(): boolean {
+  return (
+    normalizeBoolean(process.env.COCALC_CLI_AGENT_MODE) ||
+    normalizeBoolean(process.env.COCALC_AGENT_MODE)
+  );
+}
+
+function isLikelyExactBrowserId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{8,}$/.test(value);
+}
 
 function extractCookieValue(
   cookieHeaders: string[],
@@ -104,6 +121,58 @@ function firstSetCookiePart(header: string): { name: string; value: string } {
   };
 }
 
+export function resolveBrowserSessionDaemonScriptPath({
+  moduleDir,
+  cliBinPath,
+  argvPath,
+  resolvePath,
+  existsSync,
+}: {
+  moduleDir?: string;
+  cliBinPath?: string;
+  argvPath?: string;
+  resolvePath: (...parts: string[]) => string;
+  existsSync: (path: string) => boolean;
+}): string | undefined {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const addCandidate = (path: string | undefined) => {
+    const normalized = `${path ?? ""}`.trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+  addCandidate(
+    resolvePath(
+      moduleDir ?? __dirname,
+      "..",
+      "..",
+      "core",
+      "browser-session-playwright-daemon.js",
+    ),
+  );
+  for (const binPath of [cliBinPath, argvPath]) {
+    const trimmed = `${binPath ?? ""}`.trim();
+    if (!trimmed) continue;
+    addCandidate(
+      resolvePath(
+        dirname(trimmed),
+        "..",
+        "core",
+        "browser-session-playwright-daemon.js",
+      ),
+    );
+    addCandidate(
+      resolvePath(
+        dirname(trimmed),
+        "core",
+        "browser-session-playwright-daemon.js",
+      ),
+    );
+  }
+  return candidates.find((path) => existsSync(path));
+}
+
 async function resolveProjectHostBrowserSessionCookies({
   ctx,
   deps,
@@ -189,6 +258,7 @@ export function registerBrowserSessionCommands({
     spawnStateFile,
     readSpawnState,
     isProcessRunning,
+    resolveSpawnedBrowserProcessInfo,
     resolveSpawnTargetUrl,
     withSpawnMarker,
     resolveChromiumExecutablePath,
@@ -203,7 +273,9 @@ export function registerBrowserSessionCommands({
     nowIso,
     terminateSpawnedProcess,
     reapSpawnStates,
+    reapSpawnStatesWithMissingRemoteSessions,
     listSpawnStates,
+    spawnStateHasActiveRemoteSession,
     resolveSpawnStateById,
     isSeaMode,
     sessionMatchesProject,
@@ -247,6 +319,11 @@ export function registerBrowserSessionCommands({
         command: Command,
       ) => {
         await deps.withContext(command, "browser session list", async (ctx) => {
+          if (isCliAgentMode()) {
+            throw new Error(
+              "browser session list is unavailable under agent auth; use a known browser id via COCALC_BROWSER_ID or 'cocalc browser files --browser <id> ...' instead",
+            );
+          }
           const maxAgeMs = Number(opts.maxAgeMs ?? "120000");
           if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
             throw new Error("--max-age-ms must be a positive number");
@@ -294,6 +371,27 @@ export function registerBrowserSessionCommands({
         command: Command,
       ) => {
         await deps.withContext(command, "browser session use", async (ctx) => {
+          if (isCliAgentMode()) {
+            if (!isLikelyExactBrowserId(browserHint)) {
+              throw new Error(
+                "browser session discovery is unavailable under agent auth; pass the exact browser id to 'browser session use <browser>'",
+              );
+            }
+            const scopedApiUrl =
+              `${opts.apiUrl ?? ctx.apiBaseUrl ?? ""}`.trim() || undefined;
+            const saved = saveProfileBrowserId({
+              deps,
+              command,
+              browser_id: browserHint,
+              apiBaseUrl: scopedApiUrl,
+            });
+            return {
+              profile: saved.profile,
+              browser_id: browserHint,
+              stale: false,
+              api_scope: scopedApiUrl ?? null,
+            };
+          }
           const sessions = (await ctx.hub.system.listBrowserSessions({
             include_stale: true,
           })) as BrowserSessionInfo[];
@@ -409,6 +507,11 @@ export function registerBrowserSessionCommands({
             "browser session spawn is unsupported in standalone SEA binary; use JS CLI (e.g. node ./packages/cli/dist/bin/cocalc.js ...).",
           );
         }
+        if (isCliAgentMode()) {
+          throw new Error(
+            "browser session spawn is unavailable under agent auth; use a signed-in CLI context to spawn a dedicated browser session, or reuse an existing COCALC_BROWSER_ID",
+          );
+        }
         await deps.withContext(
           command,
           "browser session spawn",
@@ -430,6 +533,11 @@ export function registerBrowserSessionCommands({
             await reapSpawnStates({
               timeoutMs: 1_500,
               stopRunning: false,
+              removeStateFiles: true,
+            });
+            await reapSpawnStatesWithMissingRemoteSessions({
+              ctx,
+              timeoutMs: 1_500,
               removeStateFiles: true,
             });
             const projectHint =
@@ -501,16 +609,15 @@ export function registerBrowserSessionCommands({
               SPAWN_STATE_DIR,
               `${spawnId}.config-${process.pid}-${Date.now()}.json`,
             );
-            const daemonScript = resolvePath(
-              __dirname,
-              "..",
-              "..",
-              "core",
-              "browser-session-playwright-daemon.js",
-            );
-            if (!existsSync(daemonScript)) {
+            const daemonScript = resolveBrowserSessionDaemonScriptPath({
+              resolvePath,
+              existsSync,
+              cliBinPath: process.env.COCALC_CLI_BIN,
+              argvPath: process.argv[1],
+            });
+            if (!daemonScript) {
               throw new Error(
-                `missing daemon script '${daemonScript}' (build @cocalc/cli first)`,
+                "missing browser-session-playwright-daemon.js (build @cocalc/cli first or set COCALC_CLI_BIN to a built CLI dist)",
               );
             }
             if (opts.headless && opts.headed) {
@@ -623,21 +730,41 @@ export function registerBrowserSessionCommands({
     .command("spawned")
     .description("list locally managed Playwright-spawned browser sessions")
     .action(async (_opts: unknown, command: Command) => {
-      await deps.withContext(command, "browser session spawned", async () => {
-        return listSpawnStates().map(({ file, state }) => ({
-          spawn_id: state.spawn_id,
-          pid: state.pid,
-          browser_pid: Number(state.browser_pid ?? 0) || undefined,
-          running: isProcessRunning(Number(state.pid)),
-          browser_running: isProcessRunning(Number(state.browser_pid ?? 0)),
-          status: state.status,
-          browser_id: `${state.browser_id ?? ""}`.trim(),
-          session_url: `${state.session_url ?? state.page_url ?? ""}`.trim(),
-          target_url: state.target_url,
-          updated_at: state.updated_at,
-          state_file: file,
-        }));
-      });
+      await deps.withContext(
+        command,
+        "browser session spawned",
+        async (ctx) => {
+          await reapSpawnStates({
+            timeoutMs: 1_500,
+            stopRunning: false,
+            removeStateFiles: true,
+          });
+          await reapSpawnStatesWithMissingRemoteSessions({
+            ctx,
+            timeoutMs: 1_500,
+            removeStateFiles: true,
+          });
+          const sessions = (await ctx.hub.system.listBrowserSessions({
+            include_stale: true,
+          })) as BrowserSessionInfo[];
+          return listSpawnStates().map(({ file, state }) => ({
+            ...resolveSpawnedBrowserProcessInfo(state.browser_pid),
+            spawn_id: state.spawn_id,
+            pid: state.pid,
+            running: isProcessRunning(Number(state.pid)),
+            remote_session_active: spawnStateHasActiveRemoteSession({
+              state,
+              sessions,
+            }),
+            status: state.status,
+            browser_id: `${state.browser_id ?? ""}`.trim(),
+            session_url: `${state.session_url ?? state.page_url ?? ""}`.trim(),
+            target_url: state.target_url,
+            updated_at: state.updated_at,
+            state_file: file,
+          }));
+        },
+      );
     });
 
   session

@@ -18,6 +18,7 @@ import {
   readStoredWorkspaceRecords,
 } from "@cocalc/conat/workspaces";
 import { isValidUUID } from "@cocalc/util/misc";
+import { parseRetryInAboutSeconds } from "@cocalc/conat/auth/retry-window";
 import { durationToMs } from "../../core/utils";
 import {
   formatNetworkTraceLine,
@@ -59,12 +60,15 @@ import {
   nowIso,
   parseDiscoveryTimeout,
   reapSpawnStates,
+  reapSpawnStatesWithMissingRemoteSessions,
   randomSpawnId,
   readSpawnState,
+  resolveSpawnedBrowserProcessInfo,
   resolveChromiumExecutablePath,
   resolveSecret,
   resolveSpawnStateById,
   resolveSpawnTargetUrl,
+  spawnStateHasActiveRemoteSession,
   spawnStateFile,
   terminateSpawnedProcess,
   waitForSpawnStateReady,
@@ -106,6 +110,64 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isTransientWorkspaceStateBrowserError(err: unknown): boolean {
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  if (!message.trim()) return false;
+  return (
+    parseRetryInAboutSeconds(message) != null ||
+    message.includes("failed to sign in") ||
+    message.includes("missing project-host bearer token") ||
+    message.includes('once: "ready" not emitted before "closed"') ||
+    message.includes('once: "inbox" not emitted before "closed"')
+  );
+}
+
+function workspaceStateFallbackWarning(err: unknown): string | undefined {
+  const message = `${(err as any)?.message ?? err ?? ""}`;
+  const retrySeconds = parseRetryInAboutSeconds(message);
+  if (retrySeconds != null) {
+    return `workspace selection unavailable while project-host auth is retrying; showing partial open-file summary (retry in about ${retrySeconds}s)`;
+  }
+  if (isTransientWorkspaceStateBrowserError(err)) {
+    return "workspace selection unavailable due to a transient project-host auth/bootstrap failure; showing partial open-file summary";
+  }
+  return undefined;
+}
+
+function listOpenBrowserFilesOrTabs(opts: {
+  sessionInfo: { open_projects: { project_id: string; title?: string }[] };
+  files: { project_id: string; title?: string; path: string }[];
+  projectId?: string;
+}): Array<{
+  kind: "project" | "file";
+  project_id: string;
+  title: string;
+  path?: string;
+}> {
+  const files = opts.files
+    .filter(
+      (row) => opts.projectId == null || row.project_id === opts.projectId,
+    )
+    .map((row) => ({
+      kind: "file" as const,
+      project_id: row.project_id,
+      title: row.title ?? "",
+      path: row.path,
+    }));
+  const projectIdsWithFiles = new Set(files.map((row) => row.project_id));
+  const projectTabs = opts.sessionInfo.open_projects
+    .filter(
+      (row) => opts.projectId == null || row.project_id === opts.projectId,
+    )
+    .filter((row) => !projectIdsWithFiles.has(row.project_id))
+    .map((row) => ({
+      kind: "project" as const,
+      project_id: row.project_id,
+      title: row.title ?? "",
+    }));
+  return [...projectTabs, ...files];
+}
+
 export function registerBrowserCommand(
   program: Command,
   deps: BrowserCommandDeps,
@@ -122,6 +184,7 @@ export function registerBrowserCommand(
     spawnStateFile,
     readSpawnState,
     isProcessRunning,
+    resolveSpawnedBrowserProcessInfo,
     resolveSpawnTargetUrl,
     withSpawnMarker,
     resolveChromiumExecutablePath,
@@ -136,7 +199,9 @@ export function registerBrowserCommand(
     nowIso,
     terminateSpawnedProcess,
     reapSpawnStates,
+    reapSpawnStatesWithMissingRemoteSessions,
     listSpawnStates,
+    spawnStateHasActiveRemoteSession,
     resolveSpawnStateById,
     isSeaMode,
     sessionMatchesProject,
@@ -382,7 +447,7 @@ export function registerBrowserCommand(
     .description("list files/tabs currently open in a browser session")
     .option(
       "--project-id <id>",
-      "filter to this project id; defaults to COCALC_PROJECT_ID when set",
+      "filter to this project id; when omitted, show all open project tabs/files in the chosen browser session",
     )
     .option(
       "--browser <id>",
@@ -405,16 +470,18 @@ export function registerBrowserCommand(
       ) => {
         await deps.withContext(command, "browser files", async (ctx) => {
           const profileSelection = loadProfileSelection(deps, command);
-          const projectId =
-            `${opts.projectId ?? ""}`.trim() ||
+          const projectId = `${opts.projectId ?? ""}`.trim() || undefined;
+          const sessionProjectId =
+            `${opts.sessionProjectId ?? ""}`.trim() ||
+            projectId ||
             `${process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
             undefined;
           const sessionInfo = await chooseBrowserSession({
             ctx,
             browserHint: browserHintFromOption(opts.browser),
             fallbackBrowserId: profileSelection.browser_id,
-            sessionProjectId:
-              `${opts.sessionProjectId ?? ""}`.trim() || projectId || undefined,
+            requireDiscovery: true,
+            sessionProjectId,
             activeOnly: !!opts.activeOnly,
           });
           const browserClient = deps.createBrowserSessionClient({
@@ -423,15 +490,18 @@ export function registerBrowserCommand(
             client: ctx.remote.client,
           });
           const files = await browserClient.listOpenFiles();
-          return files
-            .filter((row) => projectId == null || row.project_id === projectId)
-            .map((row) => ({
-              browser_id: sessionInfo.browser_id,
-              project_id: row.project_id,
-              title: row.title ?? "",
-              path: row.path,
-              ...sessionTargetContext(ctx, sessionInfo, row.project_id),
-            }));
+          return listOpenBrowserFilesOrTabs({
+            sessionInfo,
+            files,
+            projectId,
+          }).map((row) => ({
+            browser_id: sessionInfo.browser_id,
+            kind: row.kind,
+            project_id: row.project_id,
+            title: row.title,
+            ...(row.path ? { path: row.path } : {}),
+            ...sessionTargetContext(ctx, sessionInfo, row.project_id),
+          }));
         });
       },
     );
@@ -484,6 +554,7 @@ export function registerBrowserCommand(
               ctx,
               browserHint,
               fallbackBrowserId: profileSelection.browser_id,
+              requireDiscovery: true,
               sessionProjectId:
                 `${opts.sessionProjectId ?? opts.projectId ?? project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
                 undefined,
@@ -501,35 +572,54 @@ export function registerBrowserCommand(
               browser_id: sessionInfo.browser_id,
               client: ctx.remote.client,
             });
-            const selection = coerceWorkspaceSelection(
-              await browserClient.getWorkspaceSelection({ project_id }),
-            );
             const files = (await browserClient.listOpenFiles()).filter(
               (row) => row.project_id === project_id,
             );
-            const { client } = await deps.resolveProjectConatClient(
-              ctx,
-              project_id,
-            );
-            const store = await openWorkspaceStore({
-              client: client as any,
-              project_id,
-              account_id: ctx.accountId,
-            });
             try {
-              const records = readStoredWorkspaceRecords(store);
+              const selection = coerceWorkspaceSelection(
+                await browserClient.getWorkspaceSelection({ project_id }),
+              );
+              const { client } = await deps.resolveProjectConatClient(
+                ctx,
+                project_id,
+              );
+              const store = await openWorkspaceStore({
+                client: client as any,
+                project_id,
+                account_id: ctx.accountId,
+              });
+              try {
+                const records = readStoredWorkspaceRecords(store);
+                return {
+                  browser_id: sessionInfo.browser_id,
+                  project_id,
+                  ...summarizeBrowserWorkspaceState({
+                    records,
+                    selection,
+                    openFiles: files,
+                  }),
+                  ...sessionTargetContext(ctx, sessionInfo, project_id),
+                };
+              } finally {
+                store.close();
+              }
+            } catch (err) {
+              const warning = workspaceStateFallbackWarning(err);
+              if (!warning) {
+                throw err;
+              }
               return {
                 browser_id: sessionInfo.browser_id,
                 project_id,
                 ...summarizeBrowserWorkspaceState({
-                  records,
-                  selection,
+                  records: [],
+                  selection: { kind: "all" },
                   openFiles: files,
                 }),
+                workspace_state_partial: true,
+                workspace_state_warning: warning,
                 ...sessionTargetContext(ctx, sessionInfo, project_id),
               };
-            } finally {
-              store.close();
             }
           },
         );

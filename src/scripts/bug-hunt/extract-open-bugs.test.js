@@ -7,6 +7,7 @@ const {
   groupCandidatesByArea,
   inferSeverity,
   inferStatusHint,
+  parseArgs,
 } = require("./extract-open-bugs.js");
 
 test("extractTags finds hashtags and lowercases them", () => {
@@ -55,6 +56,22 @@ test("filterCandidates keeps fresh blockers ahead of stale reports", () => {
   );
   assert.equal(candidates[0].area, "chat");
   assert.equal(candidates[0].status_hint, "fresh");
+});
+
+test("parseArgs accepts the pnpm standalone separator", () => {
+  assert.deepEqual(parseArgs(["--", "--fresh", "--json"]), {
+    tasksFile: "/home/wstein/cocalc.com/work/wstein.tasks",
+    freshOnly: true,
+    json: true,
+    limit: 25,
+    includeNonBugs: false,
+    excludeStaleDays: 14,
+    areas: [],
+    environments: [],
+    minSeverity: "",
+    groupByArea: false,
+    perArea: 0,
+  });
 });
 
 test("inferSeverity distinguishes blocker, high, and medium bugs", () => {

@@ -40,9 +40,10 @@ type FilesystemClientLike = {
 type ConatErrorLike = Error & { code?: string | number; data?: unknown };
 
 const DEFAULT_THROTTLE_FILE_UPDATE = 500;
-const INITIAL_LISTING_TIMEOUT_MS = 2000;
+const INITIAL_LISTING_TIMEOUT_MS = 10000;
 const INITIAL_LISTING_RETRY_DELAY_MS = 250;
 const INITIAL_LISTING_MAX_ATTEMPTS = 3;
+const LISTING_WATCHER_RETRY_DELAYS_MS = [1000, 2000, 5000] as const;
 
 // max number of subdirs to cache right after computing the listing for a dir
 // This makes it so clicking on a subdir for a listing is MUCH faster.
@@ -165,22 +166,38 @@ export default function useFiles({
         setErrorState((cur) =>
           cur.path === path && cur.error == null ? cur : { path, error: null },
         );
-        const snapshot = await getListingSnapshot({ fs, path });
-        if (requestId.current !== id) return;
-        const snapshotFiles = snapshot.files ?? {};
-        if (cacheId != null) {
-          cache.set(key(cacheId, path), snapshotFiles);
-          notifyCacheListeners();
-          cacheNeighbors({ fs, cacheId, path, files: snapshotFiles });
+        try {
+          const snapshot = await getListingSnapshot({ fs, path });
+          if (requestId.current !== id) return;
+          const snapshotFiles = snapshot.files ?? {};
+          if (cacheId != null) {
+            cache.set(key(cacheId, path), snapshotFiles);
+            notifyCacheListeners();
+            cacheNeighbors({ fs, cacheId, path, files: snapshotFiles });
+          }
+          setFilesState((cur) =>
+            cur.path === path && sameFiles(cur.files, snapshotFiles)
+              ? cur
+              : { path, files: { ...snapshotFiles } },
+          );
+          setErrorState((cur) =>
+            cur.path === path && cur.error == null
+              ? cur
+              : { path, error: null },
+          );
+        } catch (err) {
+          if (requestId.current !== id) return;
+          setErrorState((cur) =>
+            cur.path === path && cur.error === err
+              ? cur
+              : { path, error: err as ConatErrorLike },
+          );
+          setFilesState((cur) =>
+            cur.path === path && cur.files == null
+              ? cur
+              : { path, files: null },
+          );
         }
-        setFilesState((cur) =>
-          cur.path === path && sameFiles(cur.files, snapshotFiles)
-            ? cur
-            : { path, files: { ...snapshotFiles } },
-        );
-        setErrorState((cur) =>
-          cur.path === path && cur.error == null ? cur : { path, error: null },
-        );
       } catch (err) {
         if (requestId.current !== id) return;
         setErrorState((cur) =>
@@ -191,11 +208,10 @@ export default function useFiles({
         setFilesState((cur) =>
           cur.path === path && cur.files == null ? cur : { path, files: null },
         );
-        return;
       }
-      void fs
-        .listing(path)
-        .then((listing) => {
+      const attachListing = async (attempt = 0): Promise<void> => {
+        try {
+          const listing = await fs.listing(path);
           if (requestId.current !== id) {
             listing.close?.();
             return;
@@ -213,6 +229,11 @@ export default function useFiles({
                 ? cur
                 : { path, files: { ...(listing.files ?? {}) } },
             );
+            setErrorState((cur) =>
+              cur.path === path && cur.error == null
+                ? cur
+                : { path, error: null },
+            );
           };
           update();
           const throttledUpdate = throttle(update, throttleUpdate, {
@@ -221,11 +242,22 @@ export default function useFiles({
           });
           throttledUpdateRef.current = throttledUpdate;
           listing.on("change", throttledUpdate);
-        })
-        .catch((err) => {
+        } catch (err) {
           if (requestId.current !== id) return;
           console.warn("listing watcher bootstrap failed", { path, err });
-        });
+          if (!isRetryableListingWatcherError(err)) {
+            return;
+          }
+          const delayMs =
+            LISTING_WATCHER_RETRY_DELAYS_MS[
+              Math.min(attempt, LISTING_WATCHER_RETRY_DELAYS_MS.length - 1)
+            ];
+          await sleep(delayMs);
+          if (requestId.current !== id) return;
+          await attachListing(attempt + 1);
+        }
+      };
+      void attachListing();
     },
     () => {
       throttledUpdateRef.current?.cancel?.();
@@ -248,6 +280,26 @@ function key(cacheId: JSONValue, path: string) {
 
 function isListingTimeoutError(err: unknown): boolean {
   return `${(err as any)?.message ?? err ?? ""}`.includes("timeout");
+}
+
+function isRetryableListingWatcherError(err: unknown): boolean {
+  const code = `${(err as any)?.code ?? ""}`.trim();
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  if (code === "408" || code === "429") {
+    return true;
+  }
+  return (
+    message.includes("timeout") ||
+    message.includes("timed out") ||
+    message.includes("retry in about") ||
+    message.includes("failed to sign in") ||
+    message.includes("missing project-host bearer token") ||
+    message.includes('once: "ready" not emitted before "closed"') ||
+    message.includes('once: "inbox" not emitted before "closed"') ||
+    message.includes("no subscribers matching") ||
+    message.includes("unable to route") ||
+    message.includes("project actions unavailable")
+  );
 }
 
 async function getListingSnapshot({

@@ -951,7 +951,18 @@ export class Client extends EventEmitter {
       if (this.isClosed()) {
         throw Error("closed");
       }
-      await once(this, "inbox");
+      try {
+        await once(this, "inbox");
+      } catch (err) {
+        const message = `${err?.message ?? err ?? ""}`;
+        if (
+          this.isClosed() ||
+          message.includes(`not emitted before "closed"`)
+        ) {
+          throw new ConatError("closed", { code: 408 });
+        }
+        throw err;
+      }
     }
     if (this.inbox == null) {
       throw Error("bug");

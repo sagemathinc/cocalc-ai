@@ -7,9 +7,13 @@ import { isPublicAppSubdomainRequest } from "./public-app-subdomain";
 import { PROJECT_HOST_HTTP_AUTH_QUERY_PARAM } from "@cocalc/conat/auth/project-host-http";
 import { issueProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { getProjectHostAuthTokenPrivateKey } from "@cocalc/backend/data";
+import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("proxy:project-host");
 const PUBLIC_APP_HOST_HEADER = "x-cocalc-public-app-host";
+const PROJECT_HOST_PROXY_ACCOUNT_ID_KEY = Symbol.for(
+  "@cocalc/hub/proxy/project-host-account-id",
+);
 const HUB_PUBLIC_AUTH_TOKEN_LEEWAY_MS = 60_000;
 
 type HostRow = {
@@ -18,6 +22,24 @@ type HostRow = {
   public_url?: string;
   metadata?: any;
 };
+
+export function setProjectHostProxyAccountId(
+  req: Record<string | symbol, any>,
+  account_id: string | undefined,
+): void {
+  if (isValidUUID(account_id)) {
+    req[PROJECT_HOST_PROXY_ACCOUNT_ID_KEY] = account_id;
+  } else {
+    delete req[PROJECT_HOST_PROXY_ACCOUNT_ID_KEY];
+  }
+}
+
+function getProjectHostProxyAccountId(
+  req: Record<string | symbol, any>,
+): string | undefined {
+  const value = `${req?.[PROJECT_HOST_PROXY_ACCOUNT_ID_KEY] ?? ""}`.trim();
+  return isValidUUID(value) ? value : undefined;
+}
 
 const cache = new LRU<string, HostRow>({ max: 10000, ttl: 60_000 });
 const hostCache = new LRU<string, HostRow>({ max: 10000, ttl: 60_000 });
@@ -211,6 +233,31 @@ export async function createProjectHostProxyHandlers() {
     return base.replace(/\/+$/, "");
   }
 
+  function setProjectHostAuthorizationHeader({
+    req,
+    host_id,
+  }: {
+    req: Record<string, any>;
+    host_id?: string;
+  }): void {
+    if (!isValidUUID(host_id)) {
+      return;
+    }
+    const cleanHostId = host_id as string;
+    const account_id = getProjectHostProxyAccountId(req);
+    if (!account_id) {
+      return;
+    }
+    const issued = issueProjectHostAuthToken({
+      host_id: cleanHostId,
+      actor: "account",
+      account_id,
+      ttl_seconds: 5 * 60,
+      private_key: getProjectHostAuthTokenPrivateKey(),
+    });
+    req.headers.authorization = `Bearer ${issued.token}`;
+  }
+
   async function targetForConatRoute(routeId: string): Promise<string> {
     try {
       return await targetForConatHost(routeId);
@@ -238,6 +285,8 @@ export async function createProjectHostProxyHandlers() {
         if (host?.host_id) {
           req.headers.authorization = `Bearer ${getPublicAppHubAuthToken(host.host_id)}`;
         }
+      } else if (parsed.type !== "conat") {
+        setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
       }
       const target =
         parsed.type === "conat"
@@ -274,6 +323,8 @@ export async function createProjectHostProxyHandlers() {
         if (host?.host_id) {
           req.headers.authorization = `Bearer ${getPublicAppHubAuthToken(host.host_id)}`;
         }
+      } else if (parsed.type !== "conat") {
+        setProjectHostAuthorizationHeader({ req, host_id: host?.host_id });
       }
       const target =
         parsed.type === "conat"
