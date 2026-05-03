@@ -27,6 +27,25 @@ function normalizeHost(value?: string | string[]): string {
   return host.split(":")[0] ?? "";
 }
 
+function isIpv4Hostname(hostname: string): boolean {
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname);
+}
+
+function isIpv6Hostname(hostname: string): boolean {
+  return hostname.includes(":");
+}
+
+export function shouldSkipPublicAppRouteLookup(hostnameRaw: string): boolean {
+  const hostname = normalizeHost(hostnameRaw);
+  if (!hostname) return true;
+  if (hostname === "localhost") return true;
+  if (hostname === "127.0.0.1") return true;
+  if (hostname === "::1") return true;
+  if (isIpv4Hostname(hostname)) return true;
+  if (isIpv6Hostname(hostname)) return true;
+  return false;
+}
+
 function withBasePath(pathname: string): string {
   if (basePath.length <= 1) return pathname;
   const prefix = basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
@@ -47,6 +66,7 @@ export async function maybeRewritePublicAppSubdomainRequest(
   }
   const hostname = normalizeHost(req.headers.host);
   if (!hostname) return false;
+  if (shouldSkipPublicAppRouteLookup(hostname)) return false;
   const target = await getPublicAppRouteByHostname(hostname);
   if (!target) return false;
 

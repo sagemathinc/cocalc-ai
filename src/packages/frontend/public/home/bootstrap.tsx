@@ -23,23 +23,31 @@ interface CustomizePayload {
   };
 }
 
-async function loadCustomize(): Promise<CustomizePayload | undefined> {
+async function fetchJsonWithTimeout<T>(
+  path: string,
+  timeoutMs: number,
+): Promise<T | undefined> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const resp = await fetch(joinUrlPath(appBasePath, "customize"));
-    return await resp.json();
+    const resp = await fetch(joinUrlPath(appBasePath, path), {
+      signal: controller.signal,
+    });
+    return (await resp.json()) as T;
   } catch {
     return undefined;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
+async function loadCustomize(): Promise<CustomizePayload | undefined> {
+  return await fetchJsonWithTimeout<CustomizePayload>("customize", 3000);
+}
+
 async function loadNews(): Promise<NewsItem[] | undefined> {
-  try {
-    const resp = await fetch(joinUrlPath(appBasePath, "api/v2/news/list"));
-    const payload = await resp.json();
-    return Array.isArray(payload) ? payload : undefined;
-  } catch {
-    return undefined;
-  }
+  const payload = await fetchJsonWithTimeout<unknown>("api/v2/news/list", 1000);
+  return Array.isArray(payload) ? (payload as NewsItem[]) : undefined;
 }
 
 export async function init(): Promise<void> {

@@ -46,26 +46,31 @@ export function initMetricsEndpoint(router: Router) {
   log.info("initMetricsEndpoint at ", endpoint);
 
   router.get(endpoint, async (req, res) => {
-    res.header("Content-Type", "text/plain");
-    res.header("Cache-Control", "no-cache, no-store");
-    const settings = await getServerSettings();
-    if (!settings.prometheus_metrics) {
-      res.status(403).json({
-        error:
-          "Sharing of metrics at /metrics is disabled. Metrics can be enabled in the site administration page.",
-      });
-      return;
-    }
-    const allowlist = parseAllowlist(settings.prometheus_metrics_allowlist);
-    if (!isIpAllowed(req.ip, allowlist)) {
-      res.status(403).json({ error: "Metrics access denied." });
-      return;
-    }
-    const metricsRecorder = get();
-    if (metricsRecorder != null) {
-      res.send(await metricsRecorder.metrics());
-    } else {
-      res.json({ error: "Metrics recorder not initialized." });
+    try {
+      res.header("Content-Type", "text/plain");
+      res.header("Cache-Control", "no-cache, no-store");
+      const settings = await getServerSettings();
+      if (!settings.prometheus_metrics) {
+        res.status(403).json({
+          error:
+            "Sharing of metrics at /metrics is disabled. Metrics can be enabled in the site administration page.",
+        });
+        return;
+      }
+      const allowlist = parseAllowlist(settings.prometheus_metrics_allowlist);
+      if (!isIpAllowed(req.ip, allowlist)) {
+        res.status(403).json({ error: "Metrics access denied." });
+        return;
+      }
+      const metricsRecorder = get();
+      if (metricsRecorder != null) {
+        res.send(await metricsRecorder.metrics());
+      } else {
+        res.json({ error: "Metrics recorder not initialized." });
+      }
+    } catch (err) {
+      log.warn("metrics endpoint failed", { err: `${err}` });
+      res.status(500).json({ error: "internal error" });
     }
   });
 }
