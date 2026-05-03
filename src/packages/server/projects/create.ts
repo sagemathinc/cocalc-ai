@@ -145,7 +145,10 @@ export default async function createProject(opts: CreateProjectOptions) {
   } = opts;
   if (account_id) {
     await assertCanOwnAdditionalProject({ account_id });
-    await assertCanIncreaseAccountStorage({ account_id });
+    // Creating an empty project should not block on a fresh full-account
+    // storage sweep across every provisioned project. If we already have a
+    // recent cached over-cap measurement, still honor it here.
+    await assertCanIncreaseAccountStorage({ account_id, cache_only: true });
   }
   let project_id;
   if (opts.project_id) {
