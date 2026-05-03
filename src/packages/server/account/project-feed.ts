@@ -324,23 +324,13 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
             db: client,
             event: latestEvent,
           });
-    const latestRows = await client.query<
-      Pick<ProjectOutboxEventRow, "event_id">
-    >(
-      `SELECT event_id
-         FROM project_events_outbox
-        WHERE project_id = $1
-        ORDER BY created_at DESC, event_id DESC
-        LIMIT 1`,
-      [opts.project_id],
-    );
     const collaboratorEvent = await loadLatestCollaboratorProjectionEvent({
       db: client,
       project_id: opts.project_id,
     });
     if (
       collaboratorEvent != null &&
-      collaboratorEvent.event_id === latestRows.rows[0]?.event_id
+      collaboratorEvent.event_id === latestEvent?.event_id
     ) {
       const collaborator = await applyProjectEventToAccountCollaboratorIndex({
         db: client,
