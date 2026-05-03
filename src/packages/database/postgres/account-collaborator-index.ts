@@ -372,7 +372,16 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
       ORDER BY
         shared.common_project_count DESC,
         name ASC,
-        shared.collaborator_account_id ASC`,
+        shared.collaborator_account_id ASC
+      ON CONFLICT (account_id, collaborator_account_id)
+      DO UPDATE SET
+        common_project_count = EXCLUDED.common_project_count,
+        first_name = EXCLUDED.first_name,
+        last_name = EXCLUDED.last_name,
+        name = EXCLUDED.name,
+        last_active = EXCLUDED.last_active,
+        profile = EXCLUDED.profile,
+        updated_at = EXCLUDED.updated_at`,
     [
       account_id,
       deletedUser.first_name,
