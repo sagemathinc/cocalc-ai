@@ -610,141 +610,168 @@ async function loadPresets(smokeRunner, providers) {
   return byProvider;
 }
 
-async function executeLaunchpadCanary(options, now = Date.now(), deps = {}) {
-  if (!options.skipLocalPostgresEnv) {
-    applyLocalPostgresEnv();
+async function withMachineReadableLogging(enabled, fn) {
+  if (!enabled) {
+    return await fn();
   }
-  const smokeRunner = deps.smokeRunner || resolveSmokeRunner();
-  const cliRunner = deps.runCliJson || runCliJson;
-  const apiUrl = resolveApiUrl(options);
-  if (!options.skipApiCheck) {
-    const apiCheck = deps.checkApiReachable || checkApiReachable;
-    await apiCheck(apiUrl);
-  }
-  const presetsByProvider = await loadPresets(smokeRunner, options.providers);
-
-  if (options.listPresets) {
-    return {
-      api_url: apiUrl,
-      providers: options.providers.map((provider) => ({
-        provider,
-        presets: presetsByProvider[provider] ?? [],
-      })),
-    };
-  }
-
-  const runDir = createRunDir(now, options.runRoot);
-  fs.mkdirSync(runDir, { recursive: true });
-  const startedAt = new Date(now).toISOString();
-  const matrix = buildRunMatrix(options, presetsByProvider);
-  const result = {
-    started_at: startedAt,
-    finished_at: startedAt,
-    api_url: apiUrl,
-    run_dir: runDir,
-    dry_run: options.dryRun,
-    failure_policy: options.failurePolicy,
-    execution_mode: options.executionMode,
-    cleanup_on_success: options.cleanupOnSuccess,
-    verify_backup: options.verifyBackup,
-    verify_terminal: options.verifyTerminal,
-    verify_proxy: options.verifyProxy,
-    verify_provider_status: options.verifyProviderStatus,
-    account_id: options.accountId || undefined,
-    stopped_early: false,
-    stop_reason: "",
-    runs: [],
+  const previous = {
+    DEBUG: process.env.DEBUG,
+    DEBUG_CONSOLE: process.env.DEBUG_CONSOLE,
+    DEBUG_FILE: process.env.DEBUG_FILE,
   };
+  process.env.DEBUG = "";
+  process.env.DEBUG_CONSOLE = "no";
+  process.env.DEBUG_FILE = "";
+  try {
+    return await fn();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
 
-  for (const [index, planned] of matrix.entries()) {
-    const runTag = `${path.basename(runDir)}-${planned.provider}-${planned.scenario}`;
-    const artifactFile = path.join(
-      runDir,
-      `${String(index + 1).padStart(2, "0")}-${sanitizeSegment(planned.provider)}-${sanitizeSegment(planned.scenario)}.json`,
-    );
-    const entry = {
-      provider: planned.provider,
-      scenario: planned.scenario,
-      preset: planned.preset,
-      run_tag: runTag,
-      budget: planned.budget,
-      ok: undefined,
-      artifact_file: artifactFile,
+async function executeLaunchpadCanary(options, now = Date.now(), deps = {}) {
+  return await withMachineReadableLogging(options.json, async () => {
+    if (!options.skipLocalPostgresEnv) {
+      applyLocalPostgresEnv();
+    }
+    const smokeRunner = deps.smokeRunner || resolveSmokeRunner();
+    const cliRunner = deps.runCliJson || runCliJson;
+    const apiUrl = resolveApiUrl(options);
+    if (!options.skipApiCheck) {
+      const apiCheck = deps.checkApiReachable || checkApiReachable;
+      await apiCheck(apiUrl);
+    }
+    const presetsByProvider = await loadPresets(smokeRunner, options.providers);
+
+    if (options.listPresets) {
+      return {
+        api_url: apiUrl,
+        providers: options.providers.map((provider) => ({
+          provider,
+          presets: presetsByProvider[provider] ?? [],
+        })),
+      };
+    }
+
+    const runDir = createRunDir(now, options.runRoot);
+    fs.mkdirSync(runDir, { recursive: true });
+    const startedAt = new Date(now).toISOString();
+    const matrix = buildRunMatrix(options, presetsByProvider);
+    const result = {
+      started_at: startedAt,
+      finished_at: startedAt,
+      api_url: apiUrl,
+      run_dir: runDir,
       dry_run: options.dryRun,
+      failure_policy: options.failurePolicy,
+      execution_mode: options.executionMode,
+      cleanup_on_success: options.cleanupOnSuccess,
+      verify_backup: options.verifyBackup,
+      verify_terminal: options.verifyTerminal,
+      verify_proxy: options.verifyProxy,
+      verify_provider_status: options.verifyProviderStatus,
+      account_id: options.accountId || undefined,
+      stopped_early: false,
+      stop_reason: "",
+      runs: [],
     };
 
-    if (planned.plan_error) {
-      entry.ok = false;
-      entry.status = "failed";
-      entry.error = planned.plan_error;
+    for (const [index, planned] of matrix.entries()) {
+      const runTag = `${path.basename(runDir)}-${planned.provider}-${planned.scenario}`;
+      const artifactFile = path.join(
+        runDir,
+        `${String(index + 1).padStart(2, "0")}-${sanitizeSegment(planned.provider)}-${sanitizeSegment(planned.scenario)}.json`,
+      );
+      const entry = {
+        provider: planned.provider,
+        scenario: planned.scenario,
+        preset: planned.preset,
+        run_tag: runTag,
+        budget: planned.budget,
+        ok: undefined,
+        artifact_file: artifactFile,
+        dry_run: options.dryRun,
+      };
+
+      if (planned.plan_error) {
+        entry.ok = false;
+        entry.status = "failed";
+        entry.error = planned.plan_error;
+        result.runs.push(entry);
+        writeJson(artifactFile, entry);
+        if (options.failurePolicy === "stop") {
+          result.stopped_early = true;
+          result.stop_reason = planned.plan_error;
+          break;
+        }
+        continue;
+      }
+
+      if (options.dryRun) {
+        entry.ok = true;
+        entry.status = "planned";
+        result.runs.push(entry);
+        writeJson(artifactFile, entry);
+        continue;
+      }
+
+      try {
+        const smokeResult = await withSmokeEnv(apiUrl, () =>
+          smokeRunner.runProjectHostPersistenceSmokePreset({
+            account_id: options.accountId || undefined,
+            provider: planned.provider,
+            scenario: planned.scenario,
+            preset: planned.preset,
+            run_tag: runTag,
+            cleanup_on_success: options.cleanupOnSuccess,
+            verify_backup: options.verifyBackup,
+            verify_terminal: options.verifyTerminal,
+            verify_proxy: options.verifyProxy,
+            verify_provider_status: options.verifyProviderStatus,
+            execution_mode: options.executionMode,
+            print_debug_hints: options.printDebugHints,
+            wait: planned.budget.wait,
+          }),
+        );
+        entry.ok = !!smokeResult.ok;
+        entry.status = smokeResult.ok ? "ok" : "failed";
+        entry.result = smokeResult;
+        if (!smokeResult.ok && options.cleanupOnSuccess) {
+          entry.failure_cleanup = await cleanupFailedSmokeRun({
+            smokeResult,
+            apiUrl,
+            accountId: options.accountId || undefined,
+            cliRunner,
+          });
+        }
+      } catch (err) {
+        entry.ok = false;
+        entry.status = "failed";
+        entry.error = err instanceof Error ? err.message : `${err}`;
+      }
+
       result.runs.push(entry);
       writeJson(artifactFile, entry);
-      if (options.failurePolicy === "stop") {
+      if (entry.ok === false && options.failurePolicy === "stop") {
         result.stopped_early = true;
-        result.stop_reason = planned.plan_error;
+        result.stop_reason = `${planned.provider}/${planned.scenario} failed`;
         break;
       }
-      continue;
     }
 
-    if (options.dryRun) {
-      entry.ok = true;
-      entry.status = "planned";
-      result.runs.push(entry);
-      writeJson(artifactFile, entry);
-      continue;
-    }
-
-    try {
-      const smokeResult = await withSmokeEnv(apiUrl, () =>
-        smokeRunner.runProjectHostPersistenceSmokePreset({
-          account_id: options.accountId || undefined,
-          provider: planned.provider,
-          scenario: planned.scenario,
-          preset: planned.preset,
-          run_tag: runTag,
-          cleanup_on_success: options.cleanupOnSuccess,
-          verify_backup: options.verifyBackup,
-          verify_terminal: options.verifyTerminal,
-          verify_proxy: options.verifyProxy,
-          verify_provider_status: options.verifyProviderStatus,
-          execution_mode: options.executionMode,
-          print_debug_hints: options.printDebugHints,
-          wait: planned.budget.wait,
-        }),
-      );
-      entry.ok = !!smokeResult.ok;
-      entry.status = smokeResult.ok ? "ok" : "failed";
-      entry.result = smokeResult;
-      if (!smokeResult.ok && options.cleanupOnSuccess) {
-        entry.failure_cleanup = await cleanupFailedSmokeRun({
-          smokeResult,
-          apiUrl,
-          accountId: options.accountId || undefined,
-          cliRunner,
-        });
-      }
-    } catch (err) {
-      entry.ok = false;
-      entry.status = "failed";
-      entry.error = err instanceof Error ? err.message : `${err}`;
-    }
-
-    result.runs.push(entry);
-    writeJson(artifactFile, entry);
-    if (entry.ok === false && options.failurePolicy === "stop") {
-      result.stopped_early = true;
-      result.stop_reason = `${planned.provider}/${planned.scenario} failed`;
-      break;
-    }
-  }
-
-  result.finished_at = new Date().toISOString();
-  result.summary_file = path.join(runDir, "run-summary.json");
-  result.ledger_file = path.join(runDir, "run-ledger.json");
-  writeJson(result.summary_file, result);
-  writeJson(result.ledger_file, summarizeRun(result));
-  return result;
+    result.finished_at = new Date().toISOString();
+    result.summary_file = path.join(runDir, "run-summary.json");
+    result.ledger_file = path.join(runDir, "run-ledger.json");
+    writeJson(result.summary_file, result);
+    writeJson(result.ledger_file, summarizeRun(result));
+    return result;
+  });
 }
 
 function formatHumanResult(payload) {
@@ -801,6 +828,7 @@ module.exports = {
   readShellEnvFile,
   resolveApiUrl,
   summarizeRun,
+  withMachineReadableLogging,
 };
 
 if (require.main === module) {
