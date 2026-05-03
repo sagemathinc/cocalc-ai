@@ -23,6 +23,7 @@ export interface ProjectStatus {
   ssh_port?: number;
   project_bundle_version?: string;
   tools_version?: string;
+  phase_timings_ms?: Record<string, number>;
 }
 
 export default async function state({ client }) {

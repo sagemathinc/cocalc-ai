@@ -2647,13 +2647,12 @@ def configure_podman(cfg: BootstrapConfig) -> None:
             cfg,
             [
                 "chown",
-                "-R",
                 f"{cfg.ssh_user}:{cfg.ssh_user}",
                 str(rootless_root),
                 str(rootless_storage),
                 str(rootless_run),
             ],
-            "chown rootless podman paths",
+            "chown rootless podman path roots",
         )
         (user_config / "storage.conf").write_text(
             '[storage]\n'
