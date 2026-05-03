@@ -324,6 +324,31 @@ test("resolveHost accepts an explicit host UUID even when no hosts are visible",
   });
 });
 
+test("resolveHost accepts an explicit host UUID when host listing fails", async () => {
+  const host = await resolveHost(
+    {
+      projectCache: new Map(),
+      hub: {
+        db: {},
+        system: {},
+        hosts: {
+          listHosts: async () => {
+            throw new Error(
+              "timeout waiting for hub response: hosts.listHosts",
+            );
+          },
+        },
+      },
+    } as any,
+    "99999999-9999-4999-8999-999999999999",
+  );
+
+  assert.deepEqual(host, {
+    id: "99999999-9999-4999-8999-999999999999",
+    name: "99999999-9999-4999-8999-999999999999",
+  });
+});
+
 test("resolveHost still requires visible hosts for name lookup", async () => {
   await assert.rejects(
     () =>

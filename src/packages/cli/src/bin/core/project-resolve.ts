@@ -466,13 +466,15 @@ export async function resolveHost<H extends HostLike = HostLike>(
   };
 
   if (isValidUUID(identifier)) {
-    const hosts = await loadHosts();
-    if (Array.isArray(hosts)) {
-      const match = hosts.find((x) => x.id === identifier);
-      if (match) {
-        return match;
+    try {
+      const hosts = await loadHosts();
+      if (Array.isArray(hosts)) {
+        const match = hosts.find((x) => x.id === identifier);
+        if (match) {
+          return match;
+        }
       }
-    }
+    } catch {}
     return {
       id: identifier,
       name: identifier,
