@@ -17,10 +17,12 @@ function makeProgram({
   openFiles,
   listBrowserSessions,
   generateUserAuthToken,
+  getWorkspaceSelection,
 }: {
   openFiles: { project_id: string; title?: string; path: string }[];
   listBrowserSessions?: () => Promise<any[]>;
   generateUserAuthToken?: () => Promise<string>;
+  getWorkspaceSelection?: (opts: { project_id: string }) => Promise<any>;
 }): { program: Command; results: unknown[] } {
   const results: unknown[] = [];
   const program = new Command();
@@ -68,11 +70,16 @@ function makeProgram({
     globalsFrom: () => ({}),
     resolveProject: async (_ctx, project) => ({ project_id: project }),
     resolveProjectConatClient: async () => {
-      throw new Error("not used");
+      throw new Error("resolveProjectConatClient should not be called");
     },
     createBrowserSessionClient: () =>
       ({
         listOpenFiles: async () => openFiles,
+        getWorkspaceSelection:
+          getWorkspaceSelection ??
+          (async () => {
+            throw new Error("getWorkspaceSelection should not be called");
+          }),
       }) as any,
   } as any);
   return { program, results };
@@ -298,6 +305,60 @@ test("browser tabs is an alias for browser files", async () => {
   assert.equal((results[0] as unknown[]).length, 1);
   assert.equal((results[0] as { path: string }[])[0]?.path, "/home/user/a.md");
   assert.equal((results[0] as { kind: string }[])[0]?.kind, "file");
+});
+
+test("browser workspace-state falls back to a partial summary on transient browser auth failures", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  delete process.env.COCALC_PROJECT_ID;
+  const { program, results } = makeProgram({
+    openFiles: [{ project_id: PROJECT_A, title: "A", path: "/home/user/a.md" }],
+    getWorkspaceSelection: async () => {
+      throw new Error(
+        "failed to sign in - Error: too many authentication failures from ip:1.2.3.4; retry in about 51s",
+      );
+    },
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "workspace-state",
+    "--browser",
+    "browser-1",
+  ]);
+
+  assert.deepEqual(results, [
+    {
+      browser_id: "browser-1",
+      project_id: PROJECT_A,
+      selection: { kind: "all" },
+      selection_label: "All tabs",
+      selected_workspace: null,
+      open_file_count: 1,
+      visible_file_count: 1,
+      unscoped_open_file_count: 1,
+      workspaces: [],
+      open_files: [
+        {
+          title: "A",
+          path: "/home/user/a.md",
+          kind: "unscoped",
+          workspace_id: null,
+          workspace_title: null,
+          in_selected_scope: true,
+        },
+      ],
+      workspace_state_partial: true,
+      workspace_state_warning:
+        "workspace selection unavailable while project-host auth is retrying; showing partial open-file summary (retry in about 51s)",
+      target_api_url: "http://localhost:7003",
+      target_browser_id: "browser-1",
+      target_session_url: `http://localhost:7003/projects/${PROJECT_A}/files`,
+      target_project_id: PROJECT_A,
+    },
+  ]);
 });
 
 test("browser session list fails fast with a clear message under agent auth", async () => {

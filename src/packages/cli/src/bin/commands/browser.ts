@@ -18,6 +18,7 @@ import {
   readStoredWorkspaceRecords,
 } from "@cocalc/conat/workspaces";
 import { isValidUUID } from "@cocalc/util/misc";
+import { parseRetryInAboutSeconds } from "@cocalc/conat/auth/retry-window";
 import { durationToMs } from "../../core/utils";
 import {
   formatNetworkTraceLine,
@@ -107,6 +108,30 @@ export type { BrowserCommandDeps } from "./browser/types";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientWorkspaceStateBrowserError(err: unknown): boolean {
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  if (!message.trim()) return false;
+  return (
+    parseRetryInAboutSeconds(message) != null ||
+    message.includes("failed to sign in") ||
+    message.includes("missing project-host bearer token") ||
+    message.includes('once: "ready" not emitted before "closed"') ||
+    message.includes('once: "inbox" not emitted before "closed"')
+  );
+}
+
+function workspaceStateFallbackWarning(err: unknown): string | undefined {
+  const message = `${(err as any)?.message ?? err ?? ""}`;
+  const retrySeconds = parseRetryInAboutSeconds(message);
+  if (retrySeconds != null) {
+    return `workspace selection unavailable while project-host auth is retrying; showing partial open-file summary (retry in about ${retrySeconds}s)`;
+  }
+  if (isTransientWorkspaceStateBrowserError(err)) {
+    return "workspace selection unavailable due to a transient project-host auth/bootstrap failure; showing partial open-file summary";
+  }
+  return undefined;
 }
 
 function listOpenBrowserFilesOrTabs(opts: {
@@ -529,6 +554,7 @@ export function registerBrowserCommand(
               ctx,
               browserHint,
               fallbackBrowserId: profileSelection.browser_id,
+              requireDiscovery: true,
               sessionProjectId:
                 `${opts.sessionProjectId ?? opts.projectId ?? project ?? process.env.COCALC_PROJECT_ID ?? ""}`.trim() ||
                 undefined,
@@ -546,35 +572,54 @@ export function registerBrowserCommand(
               browser_id: sessionInfo.browser_id,
               client: ctx.remote.client,
             });
-            const selection = coerceWorkspaceSelection(
-              await browserClient.getWorkspaceSelection({ project_id }),
-            );
             const files = (await browserClient.listOpenFiles()).filter(
               (row) => row.project_id === project_id,
             );
-            const { client } = await deps.resolveProjectConatClient(
-              ctx,
-              project_id,
-            );
-            const store = await openWorkspaceStore({
-              client: client as any,
-              project_id,
-              account_id: ctx.accountId,
-            });
             try {
-              const records = readStoredWorkspaceRecords(store);
+              const selection = coerceWorkspaceSelection(
+                await browserClient.getWorkspaceSelection({ project_id }),
+              );
+              const { client } = await deps.resolveProjectConatClient(
+                ctx,
+                project_id,
+              );
+              const store = await openWorkspaceStore({
+                client: client as any,
+                project_id,
+                account_id: ctx.accountId,
+              });
+              try {
+                const records = readStoredWorkspaceRecords(store);
+                return {
+                  browser_id: sessionInfo.browser_id,
+                  project_id,
+                  ...summarizeBrowserWorkspaceState({
+                    records,
+                    selection,
+                    openFiles: files,
+                  }),
+                  ...sessionTargetContext(ctx, sessionInfo, project_id),
+                };
+              } finally {
+                store.close();
+              }
+            } catch (err) {
+              const warning = workspaceStateFallbackWarning(err);
+              if (!warning) {
+                throw err;
+              }
               return {
                 browser_id: sessionInfo.browser_id,
                 project_id,
                 ...summarizeBrowserWorkspaceState({
-                  records,
-                  selection,
+                  records: [],
+                  selection: { kind: "all" },
                   openFiles: files,
                 }),
+                workspace_state_partial: true,
+                workspace_state_warning: warning,
                 ...sessionTargetContext(ctx, sessionInfo, project_id),
               };
-            } finally {
-              store.close();
             }
           },
         );
