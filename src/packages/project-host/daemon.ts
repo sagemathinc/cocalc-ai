@@ -938,15 +938,16 @@ function waitForHealthCheckSync(
     pollMs: number;
     pid?: number;
     label: string;
+    allowPidReplacement?: boolean;
   },
 ): void {
-  const { timeoutMs, pollMs, pid, label } = opts;
+  const { timeoutMs, pollMs, pid, label, allowPidReplacement = false } = opts;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (check()) {
       return;
     }
-    if (pid != null && !isRunning(pid)) {
+    if (pid != null && !isRunning(pid) && !allowPidReplacement) {
       throw new Error(`${label} exited before becoming healthy`);
     }
     sleepMs(pollMs);
@@ -1515,7 +1516,7 @@ function startManagedConatRouter(opts: {
     waitForHealthCheckSync(() => checkConatRouterHealthSync(env, routerPort), {
       timeoutMs: getPositiveIntEnv(
         "COCALC_PROJECT_HOST_CONAT_ROUTER_STARTUP_TIMEOUT_MS",
-        30_000,
+        60_000,
       ),
       pollMs: getPositiveIntEnv(
         "COCALC_PROJECT_HOST_CONAT_ROUTER_STARTUP_POLL_MS",
@@ -1523,6 +1524,7 @@ function startManagedConatRouter(opts: {
       ),
       pid: child.pid,
       label: "project-host conat router",
+      allowPidReplacement: true,
     });
   } catch (err) {
     fs.rmSync(routerPidPath, { force: true });
@@ -1833,7 +1835,7 @@ function startManagedConatPersist(opts: {
       {
         timeoutMs: getPositiveIntEnv(
           "COCALC_PROJECT_HOST_CONAT_PERSIST_STARTUP_TIMEOUT_MS",
-          30_000,
+          60_000,
         ),
         pollMs: getPositiveIntEnv(
           "COCALC_PROJECT_HOST_CONAT_PERSIST_STARTUP_POLL_MS",
@@ -1841,6 +1843,7 @@ function startManagedConatPersist(opts: {
         ),
         pid: child.pid,
         label: "project-host conat persist",
+        allowPidReplacement: true,
       },
     );
   } catch (err) {
