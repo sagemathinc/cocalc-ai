@@ -169,4 +169,61 @@ describe("bay-public-origin", () => {
       } as any),
     ).resolves.toBe("cocalc.ai");
   });
+
+  it("falls back to the request-derived site origin when configured settings lookup hangs", async () => {
+    getServerSettingsMock = jest.fn(() => new Promise(() => {}));
+    process.env.COCALC_BAY_ID = "bay-2";
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    const { getSitePublicOriginForRequest } =
+      await import("./bay-public-origin");
+    await expect(
+      getSitePublicOriginForRequest({
+        headers: {
+          host: "bay-2-lite4b.cocalc.ai",
+          "x-forwarded-proto": "https",
+        },
+        protocol: "https",
+        secure: true,
+      } as any),
+    ).resolves.toBe("https://lite4b.cocalc.ai");
+  });
+
+  it("falls back to the request-derived cookie domain when configured settings lookup hangs", async () => {
+    getServerSettingsMock = jest.fn(() => new Promise(() => {}));
+    process.env.COCALC_BAY_ID = "bay-2";
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    const { getBrowserCookieDomainForRequest } =
+      await import("./bay-public-origin");
+    await expect(
+      getBrowserCookieDomainForRequest({
+        headers: {
+          host: "bay-2-lite4b.cocalc.ai",
+          "x-forwarded-proto": "https",
+        },
+        protocol: "https",
+        secure: true,
+      } as any),
+    ).resolves.toBe("cocalc.ai");
+  });
+
+  it("falls back to the request-derived bay origin when configured lookup hangs", async () => {
+    getServerSettingsMock = jest.fn(() => new Promise(() => {}));
+    process.env.COCALC_BAY_ID = "bay-1";
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    const { getBayPublicOriginForRequest } =
+      await import("./bay-public-origin");
+    await expect(
+      getBayPublicOriginForRequest(
+        {
+          headers: {
+            host: "bay-1-lite4b.cocalc.ai",
+            "x-forwarded-proto": "https",
+          },
+          protocol: "https",
+          secure: true,
+        } as any,
+        "bay-2",
+      ),
+    ).resolves.toBe("https://bay-2-lite4b.cocalc.ai");
+  });
 });

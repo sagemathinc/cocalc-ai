@@ -137,11 +137,29 @@ function readMaybeImmutableIn(value: any, path: string[]): any {
   return current;
 }
 
+type DirectProjectBootstrapRow = {
+  project_id: string;
+  title?: string | null;
+  description?: string | null;
+  name?: string | null;
+  theme?: Record<string, any> | null;
+  host_id?: string | null;
+  owning_bay_id?: string | null;
+  users?: Record<string, any> | null;
+  state?: Record<string, any> | null;
+  last_active?: Record<string, any> | null;
+  last_edited?: string | Date | null;
+  last_backup?: string | Date | null;
+  deleted?: boolean | null;
+};
+
 // Define projects actions
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
   private static HOST_INFO_RPC_TIMEOUT_MS = 5_000;
   private static ARCHIVE_RPC_TIMEOUT_MS = 30_000;
+  private static REALTIME_FEED_BATCH_MS = 50;
+  private static CREATE_PROJECT_FEED_WAIT_TIMEOUT_S = 5;
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
@@ -154,6 +172,16 @@ export class ProjectsActions extends Actions<ProjectsState> {
   };
   private realtimeFeed?: DStream<AccountFeedEvent>;
   private realtimeFeedAccountId?: string;
+  private realtimeFeedFlushTimer?: ReturnType<typeof setTimeout>;
+  private pendingProjectFeedUpserts: Record<
+    string,
+    {
+      row: AccountFeedProjectRow;
+      source_host_id?: string;
+      updated_at?: number;
+    }
+  > = Object.create(null);
+  private pendingProjectFeedRemovals = new globalThis.Set<string>();
 
   _init() {
     this.signedInListener = () => {
@@ -263,6 +291,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }
 
   private closeRealtimeFeed(): void {
+    this.flushPendingProjectFeedChanges();
     if (this.realtimeFeed != null) {
       this.realtimeFeed.removeListener("change", this.handleRealtimeFeedChange);
       this.realtimeFeed.removeListener(
@@ -280,10 +309,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     switch (event.type) {
       case "project.upsert":
-        this.applyProjectFeedUpsert(event.project, event.ts);
+        this.queueProjectFeedUpsert(event.project, event.ts);
         break;
       case "project.remove":
-        this.applyProjectFeedRemove(event.project_id);
+        this.queueProjectFeedRemove(event.project_id);
         break;
       case "project.detail.invalidate":
         if (event.fields.includes("course")) {
@@ -300,6 +329,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   };
 
   private handleRealtimeFeedHistoryGap = (): void => {
+    this.flushPendingProjectFeedChanges();
     void refresh_projects_table();
     void this.loadProjectedProjectsForCurrentAccount(this.getAccountId());
   };
@@ -527,41 +557,186 @@ export class ProjectsActions extends Actions<ProjectsState> {
     return incomingMs < moveMs;
   }
 
-  private applyProjectFeedUpsert(
+  private queueProjectFeedUpsert(
     row: AccountFeedProjectRow,
-    updatedAt?: number,
+    updated_at?: number,
   ): void {
-    const project_map = store.get("project_map") ?? Map<string, any>();
-    const previous = project_map.get(row.project_id);
-    const previous_host_id =
-      (previous?.get("host_id") as string | undefined) ?? undefined;
-    const next_host_id =
-      typeof row.host_id === "string" && row.host_id ? row.host_id : undefined;
-    let nextProject = (
-      project_map.get(row.project_id) ?? Map<string, any>()
-    ).mergeDeep(buildProjectRecordFromFeedRow(row));
-    if (
-      typeof previous_host_id === "string" &&
-      previous_host_id &&
-      this.shouldPreserveLocalHostIdAfterMove({
-        project_id: row.project_id,
-        current_host_id: previous_host_id,
-        incoming_host_id: next_host_id,
-        incoming_updated_at: updatedAt,
-      })
-    ) {
-      nextProject = nextProject.set("host_id", previous_host_id);
+    const existing = this.pendingProjectFeedUpserts[row.project_id];
+    this.pendingProjectFeedUpserts[row.project_id] = {
+      row,
+      source_host_id:
+        existing?.source_host_id ??
+        (store.get("project_map")?.get(row.project_id)?.get("host_id") as
+          | string
+          | undefined) ??
+        undefined,
+      updated_at,
+    };
+    this.pendingProjectFeedRemovals.delete(row.project_id);
+    this.scheduleProjectFeedFlush();
+  }
+
+  private queueProjectFeedRemove(project_id: string): void {
+    delete this.pendingProjectFeedUpserts[project_id];
+    this.pendingProjectFeedRemovals.add(project_id);
+    this.scheduleProjectFeedFlush();
+  }
+
+  private scheduleProjectFeedFlush(): void {
+    if (this.realtimeFeedFlushTimer != null) {
+      return;
     }
-    this.setState({
-      project_map: project_map.set(row.project_id, nextProject),
-    } as ProjectsState);
-    const applied_host_id =
-      (nextProject.get("host_id") as string | undefined) ?? undefined;
-    this.handleOpenProjectHostChange({
+    this.realtimeFeedFlushTimer = setTimeout(() => {
+      this.realtimeFeedFlushTimer = undefined;
+      this.flushPendingProjectFeedChanges();
+    }, ProjectsActions.REALTIME_FEED_BATCH_MS);
+  }
+
+  private flushPendingProjectFeedChanges(): void {
+    if (this.realtimeFeedFlushTimer != null) {
+      clearTimeout(this.realtimeFeedFlushTimer);
+      this.realtimeFeedFlushTimer = undefined;
+    }
+    const pendingUpserts = Object.values(this.pendingProjectFeedUpserts);
+    const pendingRemovals = Array.from(this.pendingProjectFeedRemovals);
+    this.pendingProjectFeedUpserts = Object.create(null);
+    this.pendingProjectFeedRemovals.clear();
+    if (pendingUpserts.length === 0 && pendingRemovals.length === 0) {
+      return;
+    }
+
+    let project_map = store.get("project_map") ?? Map<string, any>();
+    let changed = false;
+    const hostChanges: Array<{
+      project_id: string;
+      source_host_id?: string;
+      dest_host_id?: string;
+    }> = [];
+    const projectsToClose: string[] = [];
+
+    for (const { row, source_host_id, updated_at } of pendingUpserts) {
+      const incoming_host_id =
+        typeof row.host_id === "string" && row.host_id
+          ? row.host_id
+          : undefined;
+      let nextProject = (
+        project_map.get(row.project_id) ?? Map<string, any>()
+      ).mergeDeep(buildProjectRecordFromFeedRow(row));
+      if (
+        typeof source_host_id === "string" &&
+        source_host_id &&
+        this.shouldPreserveLocalHostIdAfterMove({
+          project_id: row.project_id,
+          current_host_id: source_host_id,
+          incoming_host_id,
+          incoming_updated_at: updated_at,
+        })
+      ) {
+        nextProject = nextProject.set("host_id", source_host_id);
+      }
+      project_map = project_map.set(row.project_id, nextProject);
+      changed = true;
+      hostChanges.push({
+        project_id: row.project_id,
+        source_host_id,
+        dest_host_id:
+          (nextProject.get("host_id") as string | undefined) ?? undefined,
+      });
+    }
+
+    for (const project_id of pendingRemovals) {
+      if (!project_map.has(project_id)) {
+        continue;
+      }
+      if (
+        this.isProjectOpen(project_id) &&
+        this.isProjectMoveInProgress(project_id)
+      ) {
+        continue;
+      }
+      project_map = project_map.delete(project_id);
+      changed = true;
+      if (this.isProjectOpen(project_id)) {
+        projectsToClose.push(project_id);
+      }
+    }
+
+    if (changed) {
+      this.setState({ project_map } as ProjectsState);
+    }
+    for (const change of hostChanges) {
+      this.handleOpenProjectHostChange(change);
+    }
+    for (const project_id of projectsToClose) {
+      this.set_project_closed(project_id);
+    }
+  }
+
+  private upsertProjectMapFromRow(row: AccountFeedProjectRow): void {
+    const project_map = (store.get("project_map") ?? Map<string, any>()).set(
+      row.project_id,
+      (
+        store.get("project_map")?.get(row.project_id) ?? Map<string, any>()
+      ).mergeDeep(buildProjectRecordFromFeedRow(row)),
+    );
+    this.setState({ project_map } as ProjectsState);
+  }
+
+  private async bootstrapCreatedProjectDirectly(
+    project_id: string,
+  ): Promise<boolean> {
+    let resp: any;
+    try {
+      resp = await webapp_client.async_query({
+        query: {
+          projects: [
+            {
+              project_id,
+              title: null,
+              description: null,
+              name: null,
+              theme: null,
+              host_id: null,
+              owning_bay_id: null,
+              users: null,
+              state: null,
+              last_active: null,
+              last_edited: null,
+              last_backup: null,
+              deleted: null,
+            },
+          ],
+        },
+      });
+    } catch (err) {
+      console.warn("bootstrapCreatedProjectDirectly failed", {
+        project_id,
+        err: `${err}`,
+      });
+      return false;
+    }
+    const row = resp?.query?.projects?.[0] as
+      | DirectProjectBootstrapRow
+      | undefined;
+    if (!row?.project_id) {
+      return false;
+    }
+    this.upsertProjectMapFromRow({
       project_id: row.project_id,
-      source_host_id: previous_host_id,
-      dest_host_id: applied_host_id,
+      title: row.title ?? "",
+      description: row.description ?? "",
+      name: row.name ?? null,
+      theme: row.theme ?? null,
+      host_id: row.host_id ?? null,
+      owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
+      users: row.users ?? {},
+      state: row.state ?? {},
+      last_active: row.last_active ?? {},
+      last_edited: dateOrNull(row.last_edited)?.toISOString() ?? null,
+      last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
+      deleted: !!row.deleted,
     });
+    return true;
   }
 
   private handleOpenProjectHostChange({
@@ -591,25 +766,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
     // Do not force a global reconnect here. A move can succeed before the
     // projected account feed catches up, and reconnecting eagerly risks
     // rehydrating stale host placement into project_map.
-  }
-
-  private applyProjectFeedRemove(project_id: string): void {
-    const project_map = store.get("project_map");
-    if (project_map == null || !project_map.has(project_id)) {
-      return;
-    }
-    if (
-      this.isProjectOpen(project_id) &&
-      this.isProjectMoveInProgress(project_id)
-    ) {
-      return;
-    }
-    this.setState({
-      project_map: project_map.delete(project_id),
-    } as ProjectsState);
-    if (this.isProjectOpen(project_id)) {
-      this.set_project_closed(project_id);
-    }
   }
 
   private projects_table_set = async (
@@ -1088,10 +1244,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
     // At this point we know the project_id and that the project exists.
     // However, various code (e.g., setting the title) depends on the
     // project_map also having the project in it, which requires some
-    // changefeeds to fire off and get handled.  So we wait for that.
-    await store.async_wait({
-      until: () => store.getIn(["project_map", project_id]) != null,
-    });
+    // changefeeds to fire off and get handled. Under heavy account churn that
+    // local feed processing can lag even though create already succeeded, so
+    // fall back to a targeted direct row bootstrap instead of timing out.
+    try {
+      await store.async_wait({
+        until: () => store.getIn(["project_map", project_id]) != null,
+        timeout: ProjectsActions.CREATE_PROJECT_FEED_WAIT_TIMEOUT_S,
+      });
+    } catch (err) {
+      if (
+        `${err}` !== "timeout" ||
+        !(await this.bootstrapCreatedProjectDirectly(project_id))
+      ) {
+        throw err;
+      }
+    }
     return project_id;
   }
 

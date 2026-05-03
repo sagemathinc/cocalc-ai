@@ -18,7 +18,10 @@ import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-cl
 import { humanSize } from "@cocalc/util/misc";
 import { getEffectiveMembershipUsageLimits } from "./effective-limits";
 import { resolveMembershipForAccount } from "./resolve";
-import { getMembershipUsageStatusForAccount } from "./usage-status";
+import {
+  getMembershipUsageStatusForAccount,
+  peekCachedMembershipUsageStatusForAccount,
+} from "./usage-status";
 
 const log = getLogger("server:membership:project-limits");
 
@@ -322,9 +325,11 @@ function getAccountStorageBlockState({
 export async function assertCanIncreaseAccountStorage({
   account_id,
   resolution,
+  cache_only = false,
 }: {
   account_id: string;
   resolution?: MembershipResolution;
+  cache_only?: boolean;
 }): Promise<void> {
   const effectiveResolution =
     resolution ?? (await resolveMembershipForAccount(account_id));
@@ -335,10 +340,18 @@ export async function assertCanIncreaseAccountStorage({
   if (total_storage_soft_bytes == null && total_storage_hard_bytes == null) {
     return;
   }
-  const usage = await getMembershipUsageStatusForAccount({
-    account_id,
-    resolution: effectiveResolution,
-  });
+  const usage = cache_only
+    ? peekCachedMembershipUsageStatusForAccount({
+        account_id,
+        resolution: effectiveResolution,
+      })
+    : await getMembershipUsageStatusForAccount({
+        account_id,
+        resolution: effectiveResolution,
+      });
+  if (usage == null) {
+    return;
+  }
   const state = getAccountStorageBlockState({
     total_storage_bytes: usage.total_storage_bytes,
     resolution: effectiveResolution,

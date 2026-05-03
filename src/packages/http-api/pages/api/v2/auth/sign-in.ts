@@ -36,9 +36,19 @@ import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 export default async function signIn(req: Request, res: Response) {
   let { email, password, retry_token } = getParams(req);
 
-  email = email.toLowerCase().trim();
+  email = `${email ?? ""}`.toLowerCase().trim();
+  password = `${password ?? ""}`;
   retry_token = `${retry_token ?? ""}`.trim();
   const requiresToken = await getRequiresToken();
+
+  if (!email || !password) {
+    res.json({
+      error: requiresToken
+        ? "Invalid email address or password."
+        : "Problem signing into account.",
+    });
+    return;
+  }
 
   const check: string | undefined = await signInCheck(email, req.ip);
   if (check) {

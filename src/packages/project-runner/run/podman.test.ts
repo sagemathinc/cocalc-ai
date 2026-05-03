@@ -274,6 +274,70 @@ describe("project-runner podman orphan fallback", () => {
     expect(mockUnmountAll).toHaveBeenCalledWith(project1);
   });
 
+  it("force-kills a live project when podman rm times out and the retry still leaves conmon alive", async () => {
+    mockPodman
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined);
+    mockGetConmonContainerProcesses.mockResolvedValue(
+      new Map([
+        [
+          `project-${project1}`,
+          {
+            name: `project-${project1}`,
+            project_id: project1,
+            conmon_pid: 500,
+            child_pids: [501],
+          },
+        ],
+      ]),
+    );
+    mockGetConmonContainerProcessLists.mockResolvedValue(
+      new Map([
+        [
+          `project-${project1}`,
+          [
+            {
+              name: `project-${project1}`,
+              project_id: project1,
+              conmon_pid: 500,
+              child_pids: [501],
+            },
+          ],
+        ],
+      ]),
+    );
+
+    await stop({ project_id: project1 });
+
+    expect(mockPodman).toHaveBeenNthCalledWith(1, [
+      "container",
+      "exists",
+      `project-${project1}`,
+    ]);
+    expect(mockPodman).toHaveBeenNthCalledWith(
+      2,
+      ["rm", "-f", "-t", "5", `project-${project1}`],
+      { timeout: 10 },
+    );
+    expect(mockPodman).toHaveBeenNthCalledWith(
+      3,
+      ["rm", "-f", "-t", "5", `project-${project1}`],
+      { timeout: 10 },
+    );
+    expect(mockPodman).toHaveBeenNthCalledWith(
+      4,
+      ["rm", "-f", "-t", "5", `project-${project1}`],
+      { timeout: 10 },
+    );
+    expect(processKillSpy).toHaveBeenCalledWith(500, "SIGKILL");
+    expect(processKillSpy).toHaveBeenCalledWith(-500, "SIGKILL");
+    expect(processKillSpy).toHaveBeenCalledWith(501, "SIGKILL");
+    expect(processKillSpy).toHaveBeenCalledWith(-501, "SIGKILL");
+    expect(mockUnmountAll).toHaveBeenCalledWith(project1);
+  });
+
   it("force-kills every duplicate main conmon tree for one project", async () => {
     mockPodman
       .mockRejectedValueOnce(new Error("no such container"))
