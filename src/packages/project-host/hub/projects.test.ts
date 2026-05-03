@@ -570,6 +570,50 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(runnerApi.start).toHaveBeenCalledTimes(2);
   });
 
+  it("retries start when the bind error is only present in a non-enumerable Error cause", async () => {
+    const nested = new Error(
+      "pasta failed with exit code 1: Failed to bind port 30123 (Address already in use)",
+    );
+    const wrapped = new Error("calling remote function 'startProject' failed", {
+      cause: nested,
+    });
+    const runnerApi = {
+      start: jest.fn().mockRejectedValueOnce(wrapped).mockResolvedValueOnce({
+        state: "running",
+        http_port: 45124,
+        ssh_port: 30124,
+      }),
+      stop: jest.fn(),
+    } as any;
+    acquireProjectPortLease.mockReset();
+    acquireProjectPortLease
+      .mockReturnValueOnce({
+        project_id,
+        ssh_port: 30123,
+        http_port: 45123,
+      })
+      .mockReturnValueOnce({
+        project_id,
+        ssh_port: 30124,
+        http_port: 45124,
+      });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(acquireProjectPortLease).toHaveBeenNthCalledWith(1, project_id, {
+      avoidOffsets: new Set(),
+      rotate: undefined,
+    });
+    expect(acquireProjectPortLease).toHaveBeenNthCalledWith(2, project_id, {
+      avoidOffsets: new Set([123]),
+      rotate: true,
+    });
+    expect(runnerApi.start).toHaveBeenCalledTimes(2);
+  });
+
   it("does not recycle an earlier failed port pair within the same retry loop", async () => {
     const runnerApi = {
       start: jest

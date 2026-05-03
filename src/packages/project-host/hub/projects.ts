@@ -120,7 +120,8 @@ const PROJECT_OWNER_LIMITS_CACHE_TTL_MS = 5 * 60_000;
 const LRO_PUBLISH_RETRY_ATTEMPTS = 20;
 const LRO_PUBLISH_RETRY_DELAY_MS = 500;
 const LRO_PUBLISH_ATTEMPT_TIMEOUT_MS = 3000;
-const RUNNER_START_PORT_RETRY_LIMIT = 3;
+const RUNNER_START_PORT_RETRY_LIMIT = 5;
+const RUNNER_START_PORT_RETRY_BASE_DELAY_MS = 250;
 const LISTENING_PROJECT_PORT_CACHE_TTL_MS = 250;
 const RECENT_FAILED_PROJECT_PORT_OFFSET_TTL_MS =
   PROJECT_PORT_BIND_FAILURE_COOLDOWN_MS;
@@ -922,11 +923,20 @@ function collectErrorText(
     return;
   }
   if (value instanceof Error) {
-    parts.push(value.message, value.stack ?? "");
+    const rendered = `${value}`.trim();
+    if (rendered) {
+      parts.push(rendered);
+    }
+    if (value.message) {
+      parts.push(value.message);
+    }
+    if (value.stack) {
+      parts.push(value.stack);
+    }
     seen.add(value);
     const record = value as unknown as Record<string, unknown>;
-    for (const nested of Object.values(record)) {
-      collectErrorText(nested, parts, seen);
+    for (const key of Object.getOwnPropertyNames(record)) {
+      collectErrorText(record[key], parts, seen);
     }
     return;
   }
@@ -1036,7 +1046,7 @@ async function startRunnerWithPortRetry({
       config = await buildRetryConfig({
         avoid_port_offsets: failedOffsets,
       });
-      await delay(100 * attempt);
+      await delay(RUNNER_START_PORT_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
     }
   }
   throw new Error(`runner start retries exhausted for project ${project_id}`);
