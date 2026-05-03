@@ -121,6 +121,22 @@ type ProjectBackupBootstrapRow = {
   last_backup?: string | Date | null;
 };
 
+function readMaybeImmutable(value: any, key: string): any {
+  return value?.get?.(key) ?? value?.[key];
+}
+
+function readMaybeImmutableIn(value: any, path: string[]): any {
+  if (value?.getIn) {
+    return value.getIn(path);
+  }
+  let current = value;
+  for (const key of path) {
+    current = readMaybeImmutable(current, key);
+    if (current == null) return current;
+  }
+  return current;
+}
+
 // Define projects actions
 export class ProjectsActions extends Actions<ProjectsState> {
   private static HOST_INFO_TTL_MS = 60_000;
@@ -395,31 +411,44 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (row?.is_hidden === true || !row?.project_id) {
           continue;
         }
-        project_map = project_map.set(
-          row.project_id,
-          (project_map.get(row.project_id) ?? Map<string, any>()).mergeDeep(
-            buildProjectRecordFromFeedRow({
-              project_id: row.project_id,
-              title: row.title ?? "",
-              description: row.description ?? "",
-              name: null,
-              theme: row.theme ?? null,
-              host_id: row.host_id ?? null,
-              owning_bay_id:
-                `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
-              users: row.users_summary ?? {},
-              state: row.state_summary ?? {},
-              last_active:
-                row.last_activity_at == null
-                  ? {}
-                  : { [account_id]: row.last_activity_at },
-              last_edited:
-                dateOrNull(row.sort_key ?? row.updated_at)?.toISOString() ??
-                null,
-              deleted: false,
-            }),
-          ),
-        );
+        const currentProject =
+          project_map.get(row.project_id) ?? Map<string, any>();
+        const currentHostId = currentProject.get("host_id");
+        const projectedRecord = buildProjectRecordFromFeedRow({
+          project_id: row.project_id,
+          title: row.title ?? "",
+          description: row.description ?? "",
+          name: null,
+          theme: row.theme ?? null,
+          host_id: row.host_id ?? null,
+          owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
+          users: row.users_summary ?? {},
+          state: row.state_summary ?? {},
+          last_active:
+            row.last_activity_at == null
+              ? {}
+              : { [account_id]: row.last_activity_at },
+          last_edited:
+            dateOrNull(row.sort_key ?? row.updated_at)?.toISOString() ?? null,
+          deleted: false,
+        });
+        let nextProject = currentProject.mergeDeep(projectedRecord);
+        if (
+          typeof currentHostId === "string" &&
+          currentHostId &&
+          this.shouldPreserveLocalHostIdFromProjectedBootstrap({
+            project_id: row.project_id,
+            current_host_id: currentHostId,
+            projected_host_id:
+              typeof row.host_id === "string" && row.host_id
+                ? row.host_id
+                : undefined,
+            projected_updated_at: row.updated_at ?? row.sort_key,
+          })
+        ) {
+          nextProject = nextProject.set("host_id", currentHostId);
+        }
+        project_map = project_map.set(row.project_id, nextProject);
       }
       try {
         const backupResp = await webapp_client.async_query({
@@ -451,6 +480,49 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.setState({ project_map } as ProjectsState);
     },
   );
+
+  private shouldPreserveLocalHostIdFromProjectedBootstrap({
+    project_id,
+    current_host_id,
+    projected_host_id,
+    projected_updated_at,
+  }: {
+    project_id: string;
+    current_host_id?: string;
+    projected_host_id?: string;
+    projected_updated_at?: string | Date | null;
+  }): boolean {
+    if (
+      !current_host_id ||
+      !projected_host_id ||
+      current_host_id === projected_host_id
+    ) {
+      return false;
+    }
+    const projectStore = this.redux.getProjectStore?.(project_id);
+    const moveLro = projectStore?.get?.("move_lro");
+    if (!moveLro) {
+      return false;
+    }
+    const moveTimestamp =
+      readMaybeImmutableIn(moveLro, ["summary", "updated_at"]) ??
+      readMaybeImmutableIn(moveLro, ["summary", "started_at"]) ??
+      readMaybeImmutableIn(moveLro, ["summary", "created_at"]) ??
+      readMaybeImmutable(moveLro, "updated_at") ??
+      readMaybeImmutableIn(moveLro, ["last_event", "ts"]);
+    const moveMs =
+      typeof moveTimestamp === "number"
+        ? moveTimestamp
+        : new Date(`${moveTimestamp ?? ""}`).getTime();
+    if (!Number.isFinite(moveMs)) {
+      return false;
+    }
+    const projectedMs = new Date(`${projected_updated_at ?? ""}`).getTime();
+    if (!Number.isFinite(projectedMs)) {
+      return true;
+    }
+    return projectedMs < moveMs;
+  }
 
   private applyProjectFeedUpsert(row: AccountFeedProjectRow): void {
     const project_map = store.get("project_map") ?? Map<string, any>();

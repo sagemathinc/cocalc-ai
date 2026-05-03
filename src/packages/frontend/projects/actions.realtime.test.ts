@@ -399,6 +399,79 @@ describe("ProjectsActions realtime feed", () => {
     );
   });
 
+  it("keeps a newer local moved host when projected bootstrap rows are older", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000003";
+    projectMap = ImmutableMap<string, any>([
+      [
+        projectId,
+        ImmutableMap({
+          host_id: "host-new",
+          title: "Moved Project",
+        }),
+      ],
+    ]);
+    openProjects = List([projectId]);
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id: projectId,
+            owning_bay_id: "bay-0",
+            host_id: "host-old",
+            title: "Moved Project",
+            description: "stale projection",
+            theme: null,
+            users_summary: {
+              "acct-1": { group: "owner" },
+            },
+            state_summary: { state: "running" },
+            last_activity_at: "2026-04-05T03:00:00.000Z",
+            sort_key: "2026-04-05T03:00:00.000Z",
+            updated_at: "2026-04-05T03:00:01.000Z",
+            is_hidden: false,
+          },
+        ],
+      },
+    });
+    const projectStore = ImmutableMap({
+      move_lro: ImmutableMap({
+        summary: {
+          status: "succeeded",
+          updated_at: "2026-04-05T03:05:00.000Z",
+        },
+      }),
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      getProjectStore: jest.fn(() => projectStore),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    expect(projectMap.getIn([projectId, "host_id"])).toBe("host-new");
+    expect(projectMap.getIn([projectId, "description"])).toBe(
+      "stale projection",
+    );
+  });
+
   it("refreshes the current projects table on history-gap without forcing all projects", async () => {
     const redux = {
       getStore: jest.fn((name: string) => {
