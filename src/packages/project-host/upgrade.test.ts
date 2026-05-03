@@ -59,6 +59,16 @@ afterEach(() => {
 });
 
 describe("project host upgrade installer", () => {
+  it("reconciles through the host-agent so supervisor and app switch bundles together", () => {
+    expect(
+      __test__.scheduledProjectHostReconcileCommand(
+        "/opt/cocalc/project-host/current/cocalc-project-host",
+      ),
+    ).toBe(
+      "sleep 3; /opt/cocalc/project-host/current/cocalc-project-host daemon ensure || true",
+    );
+  });
+
   it("prepares the current-link parent separately from the bundle root", async () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-upgrade-test-"));
     const archivePath = createArchive(base);

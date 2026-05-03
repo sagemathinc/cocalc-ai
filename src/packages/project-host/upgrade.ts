@@ -723,13 +723,17 @@ export async function scheduleProjectHostRestart() {
     : fs.existsSync(candidate)
       ? candidate
       : path.join(PROJECT_HOST_ROOT, "cocalc-project-host");
-  const cmd = `sleep 3; ${bin} daemon restart-project-host || true`;
+  const cmd = scheduledProjectHostReconcileCommand(bin);
   const child = spawn("bash", ["-c", cmd], {
     detached: true,
     stdio: "ignore",
   });
   child.unref();
-  logger.info("upgrade: scheduled project-host restart");
+  logger.info("upgrade: scheduled project-host reconcile");
+}
+
+function scheduledProjectHostReconcileCommand(bin: string): string {
+  return `sleep 3; ${bin} daemon ensure || true`;
 }
 
 export async function activateInstalledProjectHostVersion(
@@ -819,4 +823,5 @@ export async function upgradeSoftware(
 export const __test__ = {
   downloadAndInstall,
   pruneVersionDirs,
+  scheduledProjectHostReconcileCommand,
 };
