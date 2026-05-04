@@ -155,4 +155,35 @@ describe("BaseEditorActions reconnect coordination", () => {
     });
     expect(syncdoc.wait_until_live_connected).toHaveBeenCalled();
   });
+
+  it("rebootstraps the open file runtime when a syncstring closes unexpectedly", () => {
+    const actions = new BaseEditorActions("test-recover", makeRedux()) as any;
+    const recover = jest.fn();
+    actions.path = "/home/user/a.chat";
+    actions.syncAdapter = { dispose: jest.fn() };
+    actions.isClosed = jest.fn(() => false);
+    actions._get_project_actions = () => ({
+      recoverOpenFileRuntimeAfterUnexpectedSyncdocClose: recover,
+    });
+    actions.close = jest.fn();
+
+    actions.handleSyncstringClosed();
+
+    expect(actions.syncAdapter.dispose).toHaveBeenCalled();
+    expect(recover).toHaveBeenCalledWith("/home/user/a.chat");
+    expect(actions.close).not.toHaveBeenCalled();
+  });
+
+  it("falls back to closing when no runtime recovery hook is available", () => {
+    const actions = new BaseEditorActions("test-close", makeRedux()) as any;
+    actions.path = "/home/user/a.chat";
+    actions.syncAdapter = { dispose: jest.fn() };
+    actions.isClosed = jest.fn(() => false);
+    actions._get_project_actions = () => undefined;
+    actions.close = jest.fn();
+
+    actions.handleSyncstringClosed();
+
+    expect(actions.close).toHaveBeenCalled();
+  });
 });

@@ -233,6 +233,28 @@ export async function resetOpenFileRuntimeAfterHostReset({
   }
 }
 
+function selectOpenFilesForSyncPath({
+  openFiles,
+  targetSyncPath,
+  getSyncPath,
+}: {
+  openFiles?: Map<string, any>;
+  targetSyncPath: string;
+  getSyncPath: (path: string) => string;
+}): Map<string, any> {
+  if (openFiles == null || openFiles.size === 0) {
+    return Map<string, any>();
+  }
+  let matches = Map<string, any>();
+  openFiles.forEach((value, path) => {
+    if (getSyncPath(path) !== targetSyncPath) {
+      return;
+    }
+    matches = matches.set(path, value);
+  });
+  return matches;
+}
+
 export async function callFilesystemClientWithRecovery({
   getClient,
   clearClient,
@@ -2887,6 +2909,36 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       this.initProjectStatus();
     }
   };
+
+  recoverOpenFileRuntimeAfterUnexpectedSyncdocClose = reuseInFlight(
+    async (syncPath: string): Promise<boolean> => {
+      const store = this.get_store();
+      const canonicalSyncPathValue = this.get_sync_path(syncPath);
+      const matchingOpenFiles = selectOpenFilesForSyncPath({
+        openFiles: store?.get("open_files"),
+        targetSyncPath: canonicalSyncPathValue,
+        getSyncPath: (path) => this.get_sync_path(path),
+      });
+      if (matchingOpenFiles.size === 0) {
+        return false;
+      }
+      await resetOpenFileRuntimeAfterHostReset({
+        openFiles: matchingOpenFiles,
+        activeProjectTab: store?.get("active_project_tab"),
+        getSyncPath: (path) => this.get_sync_path(path),
+        getComponent: (path) => this.open_files?.get(path, "component"),
+        setComponent: (path, component) =>
+          this.open_files?.set(path, "component", component),
+        removeRuntime: async (path) => {
+          await project_file.remove(path, this.redux, this.project_id);
+        },
+        rebootstrapPath: async (path) => {
+          this.ensureOpenFileComponent(path);
+        },
+      });
+      return true;
+    },
+  );
 
   private getFilesystemClient = async (
     forceRefresh: boolean = false,
