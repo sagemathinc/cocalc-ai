@@ -98,6 +98,30 @@ function ChatButton({ project_id, path, chatState }) {
   }, [project_id, path]);
 
   useEffect(() => {
+    if (!chatActions || isChatPath(path)) {
+      return;
+    }
+    const syncdb = (chatActions as any)?.syncdb;
+    let cancelled = false;
+    const reconnect = () => {
+      if (cancelled) return;
+      setChatActions(ensureSideChatActions(project_id, path));
+    };
+    if (syncdb?.get_state?.() === "closed") {
+      reconnect();
+      return;
+    }
+    const onClose = () => {
+      reconnect();
+    };
+    syncdb?.once?.("close", onClose);
+    return () => {
+      cancelled = true;
+      syncdb?.removeListener?.("close", onClose);
+    };
+  }, [chatActions, path, project_id]);
+
+  useEffect(() => {
     if (!chatActions?.store) {
       return;
     }
