@@ -125,6 +125,26 @@ export function rewriteShadow(
   return `${lines.join("\n")}\n`;
 }
 
+function normalizedUbuntuMirror(raw?: string): string | undefined {
+  const value = `${raw ?? ""}`.trim();
+  if (!value) return;
+  return value.endsWith("/") ? value : `${value}/`;
+}
+
+export function rewriteUbuntuAptSources(
+  current: string,
+  mirror?: string,
+): string {
+  const normalizedMirror = normalizedUbuntuMirror(mirror);
+  if (!normalizedMirror) {
+    return current;
+  }
+  return current
+    .replaceAll("http://archive.ubuntu.com/ubuntu/", normalizedMirror)
+    .replaceAll("http://security.ubuntu.com/ubuntu/", normalizedMirror)
+    .replaceAll("https://security.ubuntu.com/ubuntu/", normalizedMirror);
+}
+
 async function rewriteIfChanged(
   path: string,
   rewrite: (current: string) => string,
@@ -146,6 +166,40 @@ async function rewriteIfChanged(
     return;
   }
   await writeFile(path, next, mode == null ? undefined : { mode });
+}
+
+async function rewriteTextFileIfChanged(
+  path: string,
+  rewrite: (current: string) => string,
+  mode = 0o644,
+): Promise<boolean> {
+  const current = await readFile(path, "utf8").catch((err) => {
+    const message = `${err}`;
+    if (
+      message.includes("ENOENT") ||
+      message.includes("no such file") ||
+      message.includes("No such file")
+    ) {
+      return undefined;
+    }
+    throw err;
+  });
+  if (current == null) {
+    return false;
+  }
+  const next = rewrite(current);
+  if (next === current) {
+    return false;
+  }
+  await writeFile(path, next, { mode });
+  await chmod(path, mode).catch(() => {});
+  await chown(path, 0, 0).catch((err) => {
+    logger.warn("unable to restore root ownership for rewritten runtime file", {
+      path,
+      err: `${err}`,
+    });
+  });
+  return true;
 }
 
 async function commandExists(path: string): Promise<boolean> {
@@ -272,6 +326,27 @@ async function repairRuntimeWritableState(): Promise<void> {
   await resetOwnedDirectory("/var/cache/apt/archives/partial", {
     mode: 0o700,
   });
+}
+
+async function applyUbuntuAptMirrorPolicy(): Promise<void> {
+  const mirror = normalizedUbuntuMirror(process.env.COCALC_APT_UBUNTU_MIRROR);
+  if (!mirror) {
+    return;
+  }
+  for (const path of [
+    "/etc/apt/sources.list.d/ubuntu.sources",
+    "/etc/apt/sources.list",
+  ]) {
+    const changed = await rewriteTextFileIfChanged(path, (current) =>
+      rewriteUbuntuAptSources(current, mirror),
+    );
+    if (changed) {
+      logger.info("runtime bootstrap: rewrote ubuntu apt sources", {
+        path,
+        mirror,
+      });
+    }
+  }
 }
 
 async function detectMissingRuntimePackages(): Promise<MissingRuntimePackages> {
@@ -510,6 +585,7 @@ export async function maybeActivateRuntimeUser(): Promise<void> {
   // image already has sudo and CA certs installed, _apt still needs a sane
   // 1777 /tmp and root-owned apt state to verify repository metadata later.
   await repairRuntimeWritableState();
+  await applyUbuntuAptMirrorPolicy();
   await installMissingRuntimePackages();
   await ensureRuntimeFiles(runtime);
   process.env.HOME = runtime.home;
