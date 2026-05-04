@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -14,7 +14,7 @@ import {
   LinkButton,
 } from "./page-components";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 export default function JuliaFeaturePage({
   helpEmail,
@@ -23,13 +23,10 @@ export default function JuliaFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Text strong type="secondary">
-                JULIA
-              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 Use Julia in notebooks, terminals, and project workflows
               </Title>
@@ -59,11 +56,11 @@ export default function JuliaFeaturePage({
             />
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Multiple ways to work with Julia
             </Title>
@@ -79,10 +76,10 @@ export default function JuliaFeaturePage({
               The right interface depends on the task, and CoCalc gives you that
               flexibility without moving to a different platform.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Benefits of working online
             </Title>
@@ -95,11 +92,11 @@ export default function JuliaFeaturePage({
               This is particularly helpful in courses or research groups where a
               common, reusable Julia environment saves time.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -137,11 +134,11 @@ export default function JuliaFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="Teaching Julia with nbgrader"
               src="/public/features/julia-nbgrader.png"
@@ -154,10 +151,10 @@ export default function JuliaFeaturePage({
               apply to Julia notebooks, which makes Julia viable in structured
               course settings rather than just in personal research projects.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="Collaborative Julia code editing"
               src="/public/features/julia-code.png"
@@ -172,11 +169,11 @@ export default function JuliaFeaturePage({
             <Paragraph style={{ margin: 0 }}>
               That is useful for pair work, support, and research collaboration.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={3} style={{ margin: 0 }}>
           Why use Julia on CoCalc
         </Title>
@@ -195,7 +192,7 @@ export default function JuliaFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
     </Flex>
   );
 }

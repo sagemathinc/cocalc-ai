@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -14,7 +14,7 @@ import {
   LinkButton,
 } from "./page-components";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 export default function RStatisticalSoftwareFeaturePage({
   helpEmail,
@@ -23,13 +23,10 @@ export default function RStatisticalSoftwareFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Text strong type="secondary">
-                R STATISTICAL SOFTWARE
-              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 Use R in notebooks, terminals, and reproducible document
                 workflows
@@ -59,11 +56,11 @@ export default function RStatisticalSoftwareFeaturePage({
             />
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Zero-setup R for teaching and analysis
             </Title>
@@ -79,10 +76,10 @@ export default function RStatisticalSoftwareFeaturePage({
               CoCalc reduces the operational overhead so people can focus on the
               statistical or data-analysis work itself.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Full workflow, not just a notebook
             </Title>
@@ -95,11 +92,11 @@ export default function RStatisticalSoftwareFeaturePage({
               CoCalc is useful here because it keeps those pieces in one
               project.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -134,11 +131,11 @@ export default function RStatisticalSoftwareFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="R and LaTeX integration in CoCalc"
               src="/public/features/cocalc-r-latex.png"
@@ -158,10 +155,10 @@ export default function RStatisticalSoftwareFeaturePage({
             <LinkButton href={appPath("features/latex-editor")}>
               LaTeX editor
             </LinkButton>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="R environment in CoCalc"
               src="/public/features/cocalc-r-environment.png"
@@ -178,11 +175,11 @@ export default function RStatisticalSoftwareFeaturePage({
               That is the difference between an online R demo and a usable
               shared workspace.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={3} style={{ margin: 0 }}>
           Why use R on CoCalc
         </Title>
@@ -201,7 +198,7 @@ export default function RStatisticalSoftwareFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
     </Flex>
   );
 }

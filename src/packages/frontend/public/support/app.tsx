@@ -7,16 +7,18 @@ import type { ReactNode } from "react";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
 import { Button, Flex, Typography } from "antd";
+import type { HistoricCounts, Stats } from "@cocalc/util/db-schema/stats";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { EmptyCard, fetchJson, LoadingCard } from "../common";
 import {
-  PublicHero,
-  PublicPageRoot,
-  PublicSectionCard,
-} from "@cocalc/frontend/public/ui/shell";
-import { getPolicyPagesMode } from "@cocalc/frontend/public/ui/policy-pages";
-import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+  PublicCard,
+  PublicGrid,
+  PublicPage,
+} from "@cocalc/frontend/public/layout/shell";
+import { navigatePublic } from "../navigation";
 import { COLORS, HELP_EMAIL, SITE_NAME } from "@cocalc/util/theme";
+import { formatDateTime } from "../news/utils";
 
 const { Paragraph } = Typography;
 
@@ -24,13 +26,16 @@ const CommunityView = lazy(() => import("./community-view"));
 const SupportNew = lazy(() => import("./new-view"));
 const SupportTickets = lazy(() => import("./tickets-view"));
 
-type SupportView = "index" | "new" | "tickets" | "community";
+export type SupportView = "index" | "new" | "tickets" | "community" | "status";
+export interface PublicSupportRoute {
+  view: SupportView;
+}
 
 interface SupportConfig {
   help_email?: string;
   is_authenticated?: boolean;
+  logo_square?: string;
   on_cocalc_com?: boolean;
-  policy_pages?: string;
   show_policies?: boolean;
   site_name?: string;
   support?: string;
@@ -40,7 +45,11 @@ interface SupportConfig {
 
 interface PublicSupportAppProps {
   config?: SupportConfig;
-  initialView: SupportView;
+  initialRoute: PublicSupportRoute;
+}
+
+interface StatsPayload extends Partial<Stats> {
+  error?: string;
 }
 
 function supportPath(view: SupportView): string {
@@ -52,12 +61,17 @@ function supportPath(view: SupportView): string {
       return `${base}/support/tickets`;
     case "community":
       return `${base}/support/community`;
+    case "status":
+      return `${base}/support/status`;
     default:
       return `${base}/support`;
   }
 }
 
 export function getSupportViewFromPath(pathname: string): SupportView {
+  if (pathname.includes("/support/status")) {
+    return "status";
+  }
   if (pathname.includes("/support/community")) {
     return "community";
   }
@@ -73,13 +87,15 @@ export function getSupportViewFromPath(pathname: string): SupportView {
 function titleForView(view: SupportView, siteName: string): string {
   switch (view) {
     case "new":
-      return `Create a ${siteName} support ticket`;
+      return `Create a ${siteName} Support Ticket`;
     case "tickets":
-      return `${siteName} support tickets`;
+      return `${siteName} Support Tickets`;
     case "community":
-      return `${siteName} community support`;
+      return `${siteName} Community Support`;
+    case "status":
+      return `${siteName} Status`;
     default:
-      return `${siteName} support`;
+      return `${siteName} Support`;
   }
 }
 
@@ -93,11 +109,11 @@ function SupportCard({
   title: string;
 }) {
   return (
-    <PublicSectionCard>
+    <PublicCard>
       <div style={{ fontWeight: 700, fontSize: "18px" }}>{title}</div>
       <div style={{ color: COLORS.GRAY }}>{description}</div>
       <div>{children}</div>
-    </PublicSectionCard>
+    </PublicCard>
   );
 }
 
@@ -143,13 +159,7 @@ function SupportIndex({
         We provide direct support, documentation, and contact options. Use the
         links below to open a ticket, review ticket status, or contact us.
       </Paragraph>
-      <div
-        style={{
-          display: "grid",
-          gap: 16,
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-        }}
-      >
+      <PublicGrid columns={3}>
         {hasZendesk ? (
           <SupportCard
             description="Create a new support ticket."
@@ -190,6 +200,12 @@ function SupportIndex({
           </Button>
         </SupportCard>
         <SupportCard
+          description="See current activity and high-level public usage metrics."
+          title="System status"
+        >
+          <Button onClick={() => onNavigate("status")}>Open status</Button>
+        </SupportCard>
+        <SupportCard
           description="Browse user and admin documentation."
           title="Documentation"
         >
@@ -205,20 +221,125 @@ function SupportIndex({
             {helpEmail}
           </a>
         </SupportCard>
+      </PublicGrid>
+    </div>
+  );
+}
+
+function historicCount(
+  counts: HistoricCounts | undefined,
+  key: keyof HistoricCounts,
+): number {
+  const value = counts?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function StatusMetricCard({
+  detail,
+  title,
+  value,
+}: {
+  detail: string;
+  title: string;
+  value: string;
+}) {
+  return (
+    <PublicCard>
+      <div style={{ color: COLORS.GRAY, fontSize: "13px", fontWeight: 700 }}>
+        {title}
       </div>
+      <div style={{ fontSize: "2rem", fontWeight: 700, lineHeight: 1.1 }}>
+        {value}
+      </div>
+      <Paragraph style={{ margin: 0 }}>{detail}</Paragraph>
+    </PublicCard>
+  );
+}
+
+function SupportStatusPage({ siteName }: { siteName: string }) {
+  const [loading, setLoading] = useState(true);
+  const [payload, setPayload] = useState<StatsPayload>({});
+
+  useEffect(() => {
+    let canceled = false;
+    void fetchJson<StatsPayload>(`${appBasePath}/stats`)
+      .then((value) => {
+        if (!canceled) setPayload(value ?? {});
+      })
+      .finally(() => {
+        if (!canceled) setLoading(false);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  if (loading) {
+    return <LoadingCard label="Loading system status…" />;
+  }
+
+  if (payload.error) {
+    return <EmptyCard label={`Status unavailable: ${payload.error}`} />;
+  }
+
+  const connectedClients = (payload.hub_servers ?? []).reduce(
+    (sum, server) => sum + (server.clients ?? 0),
+    0,
+  );
+
+  return (
+    <div style={{ display: "grid", gap: 24 }}>
+      <PublicCard>
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          Live activity snapshot
+        </Typography.Title>
+        <Paragraph style={{ margin: 0 }}>
+          This is the current high-level activity view for {siteName}. It is
+          intended as a public system monitor rather than a full admin console.
+        </Paragraph>
+        <Paragraph style={{ margin: 0 }}>
+          Last updated: {formatDateTime(payload.time)}
+        </Paragraph>
+      </PublicCard>
+      <PublicGrid columns={3}>
+        <StatusMetricCard
+          detail={`Active in 5 minutes: ${historicCount(payload.accounts_active, "5min")} · Active in 1 day: ${historicCount(payload.accounts_active, "1d")}`}
+          title="Accounts"
+          value={`${payload.accounts ?? 0}`}
+        />
+        <StatusMetricCard
+          detail={`Edited in 5 minutes: ${historicCount(payload.projects_edited, "5min")} · Edited in 1 day: ${historicCount(payload.projects_edited, "1d")}`}
+          title="Projects"
+          value={`${payload.projects ?? 0}`}
+        />
+        <StatusMetricCard
+          detail={`Free: ${payload.running_projects?.free ?? 0} · Member: ${payload.running_projects?.member ?? 0}`}
+          title="Running projects"
+          value={`${(payload.running_projects?.free ?? 0) + (payload.running_projects?.member ?? 0)}`}
+        />
+        <StatusMetricCard
+          detail={`Connected browser sessions: ${connectedClients}`}
+          title="Hub servers"
+          value={`${payload.hub_servers?.length ?? 0}`}
+        />
+      </PublicGrid>
     </div>
   );
 }
 
 export default function PublicSupportApp({
   config = {},
-  initialView,
+  initialRoute,
 }: PublicSupportAppProps) {
-  const [view, setView] = useState(initialView);
+  const [view, setView] = useState(initialRoute.view);
   const title = useMemo(
     () => titleForView(view, config.site_name ?? SITE_NAME),
     [config.site_name, view],
   );
+
+  useEffect(() => {
+    setView(initialRoute.view);
+  }, [initialRoute]);
 
   useEffect(() => {
     document.title = title;
@@ -226,84 +347,69 @@ export default function PublicSupportApp({
 
   function navigate(next: SupportView) {
     setView(next);
-    window.history.pushState({}, "", supportPath(next));
+    navigatePublic(supportPath(next));
   }
 
   return (
-    <PublicPageRoot>
-      <PublicTopNav
-        active="support"
-        isAuthenticated={!!config?.is_authenticated}
-        showPolicies={getPolicyPagesMode(config) !== "none"}
-        siteName={config?.site_name}
-      />
-      <PublicHero
-        eyebrow="SUPPORT"
-        title={title}
-        subtitle="Direct support, Zendesk-backed tickets, and public help resources."
-        actions={
-          <Flex wrap gap={8}>
+    <PublicPage active="support" config={config} title={title}>
+      {view !== "index" ? (
+        <Flex wrap gap={8}>
+          <Button onClick={() => navigate("index")}>Support</Button>
+          {config.zendesk ? (
             <Button
-              type={view === "index" ? "primary" : "default"}
-              onClick={() => navigate("index")}
+              type={view === "new" ? "primary" : "default"}
+              onClick={() => navigate("new")}
             >
-              Support
+              New ticket
             </Button>
-            {config.zendesk ? (
-              <Button
-                type={view === "new" ? "primary" : "default"}
-                onClick={() => navigate("new")}
-              >
-                New ticket
-              </Button>
-            ) : null}
-            {config.zendesk ? (
-              <Button
-                type={view === "tickets" ? "primary" : "default"}
-                onClick={() => navigate("tickets")}
-              >
-                My tickets
-              </Button>
-            ) : null}
+          ) : null}
+          {config.zendesk ? (
             <Button
-              type={view === "community" ? "primary" : "default"}
-              onClick={() => navigate("community")}
+              type={view === "tickets" ? "primary" : "default"}
+              onClick={() => navigate("tickets")}
             >
-              Community
+              My tickets
             </Button>
-          </Flex>
-        }
-      />
+          ) : null}
+          <Button
+            type={view === "community" ? "primary" : "default"}
+            onClick={() => navigate("community")}
+          >
+            Community
+          </Button>
+          <Button
+            type={view === "status" ? "primary" : "default"}
+            onClick={() => navigate("status")}
+          >
+            Status
+          </Button>
+        </Flex>
+      ) : null}
       <div style={{ marginTop: 24 }}>
         {view === "index" ? (
           <SupportIndex config={config} onNavigate={navigate} />
         ) : null}
         {view === "new" ? (
-          <Suspense
-            fallback={
-              <PublicSectionCard>Loading support form…</PublicSectionCard>
-            }
-          >
+          <Suspense fallback={<PublicCard>Loading support form…</PublicCard>}>
             <SupportNew config={config} onNavigate={navigate} />
           </Suspense>
         ) : null}
         {view === "tickets" ? (
-          <Suspense
-            fallback={<PublicSectionCard>Loading tickets…</PublicSectionCard>}
-          >
+          <Suspense fallback={<PublicCard>Loading tickets…</PublicCard>}>
             <SupportTickets config={config} />
           </Suspense>
         ) : null}
         {view === "community" ? (
           <Suspense
-            fallback={
-              <PublicSectionCard>Loading community links…</PublicSectionCard>
-            }
+            fallback={<PublicCard>Loading community links…</PublicCard>}
           >
             <CommunityView />
           </Suspense>
         ) : null}
+        {view === "status" ? (
+          <SupportStatusPage siteName={config.site_name ?? SITE_NAME} />
+        ) : null}
       </div>
-    </PublicPageRoot>
+    </PublicPage>
   );
 }

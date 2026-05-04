@@ -50,34 +50,9 @@ const budgets = [
     maxGzipBytes: 650 * KiB,
   },
   {
-    html: "public-home.html",
-    maxRawBytes: 850 * KiB,
-    maxGzipBytes: 280 * KiB,
-  },
-  {
-    html: "public-auth.html",
-    maxRawBytes: 1300 * KiB,
-    maxGzipBytes: 430 * KiB,
-  },
-  {
-    html: "public-support.html",
-    maxRawBytes: 850 * KiB,
-    maxGzipBytes: 280 * KiB,
-  },
-  {
-    html: "public-content.html",
-    maxRawBytes: 3200 * KiB,
-    maxGzipBytes: 1000 * KiB,
-  },
-  {
-    html: "public-lang.html",
-    maxRawBytes: 1800 * KiB,
-    maxGzipBytes: 600 * KiB,
-  },
-  {
-    html: "public-features.html",
-    maxRawBytes: 1300 * KiB,
-    maxGzipBytes: 430 * KiB,
+    html: "public.html",
+    maxRawBytes: 1200 * KiB,
+    maxGzipBytes: 380 * KiB,
   },
 ];
 

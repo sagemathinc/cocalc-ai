@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -14,7 +14,7 @@ import {
   LinkButton,
 } from "./page-components";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 export default function TerminalFeaturePage({
   helpEmail,
@@ -23,13 +23,10 @@ export default function TerminalFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Text strong type="secondary">
-                ONLINE LINUX TERMINAL
-              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 A real Linux shell inside every project
               </Title>
@@ -61,11 +58,11 @@ export default function TerminalFeaturePage({
             />
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Realtime collaboration in the shell
             </Title>
@@ -81,10 +78,10 @@ export default function TerminalFeaturePage({
               sessions, where someone else can drop into the exact shell you are
               using instead of trying to reconstruct it from screenshots.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="Two users collaborating in a shared terminal"
               src="/public/features/cocalc-terminal-collab.gif"
@@ -97,11 +94,11 @@ export default function TerminalFeaturePage({
               notebooks, environment, and running services are immediately
               available to everyone with access.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -137,11 +134,11 @@ export default function TerminalFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="Popular software available in CoCalc terminals"
               src="/public/features/terminal-software.png"
@@ -160,10 +157,10 @@ export default function TerminalFeaturePage({
               workflow now increasingly supports installing and reusing custom
               environments instead of treating the server image as fixed.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Practical reasons teams use it
             </Title>
@@ -175,11 +172,11 @@ export default function TerminalFeaturePage({
                 "Avoid local setup drift across a team.",
               ]}
             />
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={3} style={{ margin: 0 }}>
           Terminal workflows connect to the rest of CoCalc
         </Title>
@@ -198,7 +195,7 @@ export default function TerminalFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
     </Flex>
   );
 }

@@ -31,6 +31,6 @@ export default function initPublicSupport(router: Router): void {
     } else {
       url.searchParams.set("target", targetPath);
     }
-    res.redirect(join(basePath, "static/public-support.html") + url.search);
+    res.redirect(join(basePath, "static/public.html") + url.search);
   });
 }

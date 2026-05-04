@@ -41,13 +41,19 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Launchpad features" }),
+      screen.getByRole("heading", { name: "Launchpad Features" }),
     ).not.toBeNull();
     expect(
       screen.getByText("The new direction is increasingly agent-first"),
     ).not.toBeNull();
     expect(screen.getByText("Jupyter Notebooks")).not.toBeNull();
     expect(screen.getByText("Linux Terminal")).not.toBeNull();
+    expect(screen.queryByText("Open page")).toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: /Jupyter Notebooks/i })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
   });
 
   it("shows Projects but not Settings in the shared nav when authenticated", () => {

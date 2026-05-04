@@ -34,7 +34,7 @@ function getTargetSearch(req: Request): string {
 
 function redirectToStatic(req: Request, res: Response): void {
   res.redirect(
-    joinUrlPath(basePath, "static/public-content.html") + getTargetSearch(req),
+    joinUrlPath(basePath, "static/public.html") + getTargetSearch(req),
   );
 }
 
@@ -177,9 +177,9 @@ export default function initPublicContent(router: Router): void {
   router.get(["/info/doc", "/info/doc/"], redirectCompatibility("support"));
   router.get(
     ["/info/status", "/info/status/"],
-    redirectCompatibility("about/status"),
+    redirectCompatibility("support/status"),
   );
-  router.get(["/info/run", "/info/run/"], redirectCompatibility("software"));
+  router.get(["/info/run", "/info/run/"], redirectCompatibility("products"));
   router.get(
     ["/news/edit", "/news/edit/"],
     redirectCompatibilityPreserveSearch("admin/news"),
@@ -242,12 +242,14 @@ export default function initPublicContent(router: Router): void {
     "/news/:slug/",
     "/news/:slug/:timestamp",
     "/news/:slug/:timestamp/",
-    "/software",
-    "/software/",
-    "/software/cocalc-launchpad",
-    "/software/cocalc-launchpad/",
-    "/software/cocalc-plus",
-    "/software/cocalc-plus/",
+    "/products",
+    "/products/",
+    "/products/cocalc-launchpad",
+    "/products/cocalc-launchpad/",
+    "/products/cocalc-plus",
+    "/products/cocalc-plus/",
+    "/products/cocalc-rocket",
+    "/products/cocalc-rocket/",
   ];
 
   router.get(contentPaths, redirectToStatic);
