@@ -111,14 +111,38 @@ import {
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
 import {
+  deleteHost,
+  deleteHostRootfsImage,
+  drainHost,
+  forceDeprovisionHost,
+  gcDeletedHostRootfsImages,
   getBackupConfigLocal,
+  getHostLog,
+  getHostManagedComponentStatus,
+  getHostMetricsHistory,
+  getHostRuntimeDeploymentStatus,
+  getHostRuntimeLog,
   getProjectOwnerEffectiveLimitsLocal,
   getProjectStartMetadataLocal,
+  reconcileHostRuntimeDeployments,
+  reconcileHostSoftware,
+  refreshHostCloudState,
+  removeSelfHostConnector,
+  restartHost,
+  rollbackHostRuntimeDeployments,
+  rolloutHostManagedComponents,
+  startHost,
+  stopHost,
+  upgradeHostSoftware,
+  listHostRootfsImages,
   listHostProjects,
+  listHostRuntimeDeployments,
+  pullHostRootfsImage,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
   recordProjectBackupLocal,
   resolveHostConnectionLocal,
+  setHostRuntimeDeployments,
 } from "@cocalc/server/conat/api/hosts";
 import { getSeedProjectBackupConfig } from "@cocalc/server/project-backup";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -571,6 +595,198 @@ async function startHostConnectionService(): Promise<void> {
         // The source bay has already authenticated and authorized the user
         // before issuing this cluster-internal request.
         trusted_admin_view: true,
+      }),
+    getHostLog: async ({ account_id, id, limit }) =>
+      await getHostLog({
+        account_id,
+        id,
+        limit,
+      }),
+    getHostRuntimeLog: async ({ account_id, id, lines, source }) =>
+      await getHostRuntimeLog({
+        account_id,
+        id,
+        lines,
+        source,
+      }),
+    getHostMetricsHistory: async ({
+      account_id,
+      id,
+      window_minutes,
+      max_points,
+    }) =>
+      await getHostMetricsHistory({
+        account_id,
+        id,
+        window_minutes,
+        max_points,
+      }),
+    getHostRuntimeDeploymentStatus: async ({ account_id, id }) =>
+      await getHostRuntimeDeploymentStatus({
+        account_id,
+        id,
+      }),
+    startHost: async ({ account_id, id }) =>
+      await startHost({
+        account_id,
+        id,
+      }),
+    stopHost: async ({ account_id, id, skip_backups }) =>
+      await stopHost({
+        account_id,
+        id,
+        skip_backups,
+      }),
+    restartHost: async ({ account_id, id, mode }) =>
+      await restartHost({
+        account_id,
+        id,
+        mode,
+      }),
+    drainHost: async ({
+      account_id,
+      id,
+      dest_host_id,
+      force,
+      allow_offline,
+      parallel,
+    }) =>
+      await drainHost({
+        account_id,
+        id,
+        dest_host_id,
+        force,
+        allow_offline,
+        parallel,
+      }),
+    refreshHostCloudState: async ({ account_id, id }) =>
+      await refreshHostCloudState({
+        account_id,
+        id,
+      }),
+    upgradeHostSoftware: async ({
+      account_id,
+      id,
+      targets,
+      base_url,
+      align_runtime_stack,
+    }) =>
+      await upgradeHostSoftware({
+        account_id,
+        id,
+        targets,
+        base_url,
+        align_runtime_stack,
+      }),
+    reconcileHostSoftware: async ({ account_id, id }) =>
+      await reconcileHostSoftware({
+        account_id,
+        id,
+      }),
+    reconcileHostRuntimeDeployments: async ({
+      account_id,
+      id,
+      components,
+      reason,
+    }) =>
+      await reconcileHostRuntimeDeployments({
+        account_id,
+        id,
+        components,
+        reason,
+      }),
+    rollbackHostRuntimeDeployments: async ({
+      account_id,
+      id,
+      target_type,
+      target,
+      version,
+      last_known_good,
+      reason,
+    }) =>
+      await rollbackHostRuntimeDeployments({
+        account_id,
+        id,
+        target_type,
+        target,
+        version,
+        last_known_good,
+        reason,
+      }),
+    rolloutHostManagedComponents: async ({
+      account_id,
+      id,
+      components,
+      reason,
+    }) =>
+      await rolloutHostManagedComponents({
+        account_id,
+        id,
+        components,
+        reason,
+      }),
+    deleteHost: async ({ account_id, id, skip_backups }) =>
+      await deleteHost({
+        account_id,
+        id,
+        skip_backups,
+      }),
+    forceDeprovisionHost: async ({ account_id, id }) =>
+      await forceDeprovisionHost({
+        account_id,
+        id,
+      }),
+    removeSelfHostConnector: async ({ account_id, id }) =>
+      await removeSelfHostConnector({
+        account_id,
+        id,
+      }),
+    listHostRootfsImages: async ({ account_id, id }) =>
+      await listHostRootfsImages({
+        account_id,
+        id,
+      }),
+    pullHostRootfsImage: async ({ account_id, id, image }) =>
+      await pullHostRootfsImage({
+        account_id,
+        id,
+        image,
+      }),
+    deleteHostRootfsImage: async ({ account_id, id, image }) =>
+      await deleteHostRootfsImage({
+        account_id,
+        id,
+        image,
+      }),
+    gcDeletedHostRootfsImages: async ({ account_id, id }) =>
+      await gcDeletedHostRootfsImages({
+        account_id,
+        id,
+      }),
+    listHostRuntimeDeployments: async ({ account_id, scope_type, id }) =>
+      await listHostRuntimeDeployments({
+        account_id,
+        scope_type,
+        id,
+      }),
+    setHostRuntimeDeployments: async ({
+      account_id,
+      scope_type,
+      id,
+      deployments,
+      replace,
+    }) =>
+      await setHostRuntimeDeployments({
+        account_id,
+        scope_type,
+        id,
+        deployments,
+        replace,
+      }),
+    getHostManagedComponentStatus: async ({ account_id, id }) =>
+      await getHostManagedComponentStatus({
+        account_id,
+        id,
       }),
     getProjectStartMetadata: async ({ host_id, project_id }) => {
       const metadata = await getProjectStartMetadataLocal({

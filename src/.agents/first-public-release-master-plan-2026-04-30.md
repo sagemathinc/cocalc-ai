@@ -237,12 +237,15 @@ Goal: make the current multibay architecture trustworthy under churn.
       identical.
 - [ ] Confirm cross-bay project lookup, start, stop, and browser reconnect
       paths are stable after recent routing work.
-- [ ] Implement and validate move between regions as a first-class
+- [x] Implement and validate move between regions as a first-class
       supported path:
   - restore from the old-region backup repo
   - take exactly one fresh backup in the destination region
   - flip the official backup region to the destination
   - purge the old-region snapshots after cutover
+- [ ] Fix the temporary browser/frontend inconsistency after a completed region
+      move so the project state and page UX stop looking broken during the
+      post-move settle window.
 - [ ] Verify the accessibility case where a project's current backup region has
       no active hosts, and moving it to a region with hosts restores normal
       access.
@@ -277,7 +280,7 @@ coherent release story.
   - placement reaction
 - [ ] Keep the remaining limit model surfaces coherent:
   - admin override controls
-  - dedicated-host egress policy wiring
+  - dedicated-host egress policy semantics/documentation
   - override explanation/audit visibility
 - [ ] Ensure dedicated hosts use the same local host-protection model as
       shared hosts.
@@ -541,6 +544,9 @@ This list should stay aggressively pruned and explicit.
       `/mnt/cocalc/data/logs/acp-worker.log`.
 - [ ] Duplicate/stale `project_hosts` rows and stale host search/inspection
       state can remain in the registry and harm operator trust.
+- [ ] Project move between regions still has a confusing temporary browser/UI
+      state after the move finishes, even though the backend move itself now
+      works if the user waits for convergence.
 - [ ] `cocalc project log` CLI handling for stopped projects is not reliable
       enough; the log stream itself works, but the operator-facing path is
       confusing.
@@ -673,9 +679,8 @@ If we want the shortest path to release from today, do these next:
   - `lite4b` bootstrap/package issues
   - stale host state/operator-trust issues
   - runtime cleanup / leaked-state recovery after failed high-density runs
+  - project-move frontend confusion during the post-move settle window
 - [ ] finish central admin override controls
-- [ ] finish dedicated-host egress policy wiring
-- [ ] finish project move between regions
 - [ ] implement student pay
 - [ ] implement minimal site/domain license
 - [ ] finish packaging/deploy/rollback path

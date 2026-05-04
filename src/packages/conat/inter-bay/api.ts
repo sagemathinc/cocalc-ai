@@ -610,6 +610,30 @@ export type ProjectDetailsMethod = "get";
 export type HostConnectionMethod =
   | "get"
   | "list"
+  | "get-host-log"
+  | "get-host-runtime-log"
+  | "get-host-metrics-history"
+  | "get-host-runtime-deployment-status"
+  | "start-host"
+  | "stop-host"
+  | "restart-host"
+  | "drain-host"
+  | "refresh-host-cloud-state"
+  | "upgrade-host-software"
+  | "reconcile-host-software"
+  | "reconcile-host-runtime-deployments"
+  | "rollback-host-runtime-deployments"
+  | "rollout-host-managed-components"
+  | "delete-host"
+  | "force-deprovision-host"
+  | "remove-self-host-connector"
+  | "list-host-rootfs-images"
+  | "pull-host-rootfs-image"
+  | "delete-host-rootfs-image"
+  | "gc-deleted-host-rootfs-images"
+  | "list-host-runtime-deployments"
+  | "set-host-runtime-deployments"
+  | "get-host-managed-component-status"
   | "get-project-start-metadata"
   | "get-backup-config"
   | "get-project-owner-effective-limits"
@@ -733,6 +757,78 @@ export interface InterBayProjectDetailsApi {
 export interface InterBayHostConnectionApi {
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
+  getHostLog: (
+    opts: Parameters<Hosts["getHostLog"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostLog"]>>>;
+  getHostRuntimeLog: (
+    opts: Parameters<Hosts["getHostRuntimeLog"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeLog"]>>>;
+  getHostMetricsHistory: (
+    opts: Parameters<Hosts["getHostMetricsHistory"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostMetricsHistory"]>>>;
+  getHostRuntimeDeploymentStatus: (
+    opts: Parameters<Hosts["getHostRuntimeDeploymentStatus"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeDeploymentStatus"]>>>;
+  startHost: (
+    opts: Parameters<Hosts["startHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["startHost"]>>>;
+  stopHost: (
+    opts: Parameters<Hosts["stopHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["stopHost"]>>>;
+  restartHost: (
+    opts: Parameters<Hosts["restartHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["restartHost"]>>>;
+  drainHost: (
+    opts: Parameters<Hosts["drainHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["drainHost"]>>>;
+  refreshHostCloudState: (
+    opts: Parameters<Hosts["refreshHostCloudState"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["refreshHostCloudState"]>>>;
+  upgradeHostSoftware: (
+    opts: Parameters<Hosts["upgradeHostSoftware"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["upgradeHostSoftware"]>>>;
+  reconcileHostSoftware: (
+    opts: Parameters<Hosts["reconcileHostSoftware"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["reconcileHostSoftware"]>>>;
+  reconcileHostRuntimeDeployments: (
+    opts: Parameters<Hosts["reconcileHostRuntimeDeployments"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["reconcileHostRuntimeDeployments"]>>>;
+  rollbackHostRuntimeDeployments: (
+    opts: Parameters<Hosts["rollbackHostRuntimeDeployments"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["rollbackHostRuntimeDeployments"]>>>;
+  rolloutHostManagedComponents: (
+    opts: Parameters<Hosts["rolloutHostManagedComponents"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["rolloutHostManagedComponents"]>>>;
+  deleteHost: (
+    opts: Parameters<Hosts["deleteHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["deleteHost"]>>>;
+  forceDeprovisionHost: (
+    opts: Parameters<Hosts["forceDeprovisionHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["forceDeprovisionHost"]>>>;
+  removeSelfHostConnector: (
+    opts: Parameters<Hosts["removeSelfHostConnector"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["removeSelfHostConnector"]>>>;
+  listHostRootfsImages: (
+    opts: Parameters<Hosts["listHostRootfsImages"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["listHostRootfsImages"]>>>;
+  pullHostRootfsImage: (
+    opts: Parameters<Hosts["pullHostRootfsImage"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["pullHostRootfsImage"]>>>;
+  deleteHostRootfsImage: (
+    opts: Parameters<Hosts["deleteHostRootfsImage"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["deleteHostRootfsImage"]>>>;
+  gcDeletedHostRootfsImages: (
+    opts: Parameters<Hosts["gcDeletedHostRootfsImages"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["gcDeletedHostRootfsImages"]>>>;
+  listHostRuntimeDeployments: (
+    opts: Parameters<Hosts["listHostRuntimeDeployments"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["listHostRuntimeDeployments"]>>>;
+  setHostRuntimeDeployments: (
+    opts: Parameters<Hosts["setHostRuntimeDeployments"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["setHostRuntimeDeployments"]>>>;
+  getHostManagedComponentStatus: (
+    opts: Parameters<Hosts["getHostManagedComponentStatus"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostManagedComponentStatus"]>>>;
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
@@ -783,6 +879,54 @@ export interface InterBayHostConnectionApi {
 const HOST_CONNECTION_METHOD_SPECS = [
   { name: "get", method: "get" },
   { name: "list", method: "list" },
+  { name: "getHostLog", method: "get-host-log" },
+  { name: "getHostRuntimeLog", method: "get-host-runtime-log" },
+  { name: "getHostMetricsHistory", method: "get-host-metrics-history" },
+  {
+    name: "getHostRuntimeDeploymentStatus",
+    method: "get-host-runtime-deployment-status",
+  },
+  { name: "startHost", method: "start-host" },
+  { name: "stopHost", method: "stop-host" },
+  { name: "restartHost", method: "restart-host" },
+  { name: "drainHost", method: "drain-host" },
+  { name: "refreshHostCloudState", method: "refresh-host-cloud-state" },
+  { name: "upgradeHostSoftware", method: "upgrade-host-software" },
+  { name: "reconcileHostSoftware", method: "reconcile-host-software" },
+  {
+    name: "reconcileHostRuntimeDeployments",
+    method: "reconcile-host-runtime-deployments",
+  },
+  {
+    name: "rollbackHostRuntimeDeployments",
+    method: "rollback-host-runtime-deployments",
+  },
+  {
+    name: "rolloutHostManagedComponents",
+    method: "rollout-host-managed-components",
+  },
+  { name: "deleteHost", method: "delete-host" },
+  { name: "forceDeprovisionHost", method: "force-deprovision-host" },
+  { name: "removeSelfHostConnector", method: "remove-self-host-connector" },
+  { name: "listHostRootfsImages", method: "list-host-rootfs-images" },
+  { name: "pullHostRootfsImage", method: "pull-host-rootfs-image" },
+  { name: "deleteHostRootfsImage", method: "delete-host-rootfs-image" },
+  {
+    name: "gcDeletedHostRootfsImages",
+    method: "gc-deleted-host-rootfs-images",
+  },
+  {
+    name: "listHostRuntimeDeployments",
+    method: "list-host-runtime-deployments",
+  },
+  {
+    name: "setHostRuntimeDeployments",
+    method: "set-host-runtime-deployments",
+  },
+  {
+    name: "getHostManagedComponentStatus",
+    method: "get-host-managed-component-status",
+  },
   {
     name: "getProjectStartMetadata",
     method: "get-project-start-metadata",

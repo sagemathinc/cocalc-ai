@@ -19,6 +19,30 @@ let resolveProjectBayMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
 let hostConnectionListMock: jest.Mock;
+let hostConnectionGetHostLogMock: jest.Mock;
+let hostConnectionGetHostRuntimeLogMock: jest.Mock;
+let hostConnectionGetHostMetricsHistoryMock: jest.Mock;
+let hostConnectionGetHostRuntimeDeploymentStatusMock: jest.Mock;
+let hostConnectionStartHostMock: jest.Mock;
+let hostConnectionStopHostMock: jest.Mock;
+let hostConnectionRestartHostMock: jest.Mock;
+let hostConnectionDrainHostMock: jest.Mock;
+let hostConnectionRefreshHostCloudStateMock: jest.Mock;
+let hostConnectionUpgradeHostSoftwareMock: jest.Mock;
+let hostConnectionReconcileHostSoftwareMock: jest.Mock;
+let hostConnectionReconcileHostRuntimeDeploymentsMock: jest.Mock;
+let hostConnectionRollbackHostRuntimeDeploymentsMock: jest.Mock;
+let hostConnectionRolloutHostManagedComponentsMock: jest.Mock;
+let hostConnectionDeleteHostMock: jest.Mock;
+let hostConnectionForceDeprovisionHostMock: jest.Mock;
+let hostConnectionRemoveSelfHostConnectorMock: jest.Mock;
+let hostConnectionListHostRootfsImagesMock: jest.Mock;
+let hostConnectionPullHostRootfsImageMock: jest.Mock;
+let hostConnectionDeleteHostRootfsImageMock: jest.Mock;
+let hostConnectionGcDeletedHostRootfsImagesMock: jest.Mock;
+let hostConnectionListHostRuntimeDeploymentsMock: jest.Mock;
+let hostConnectionSetHostRuntimeDeploymentsMock: jest.Mock;
+let hostConnectionGetHostManagedComponentStatusMock: jest.Mock;
 let hostConnectionGetProjectStartMetadataMock: jest.Mock;
 let hostConnectionGetBackupConfigMock: jest.Mock;
 let hostConnectionGetProjectOwnerEffectiveLimitsMock: jest.Mock;
@@ -239,6 +263,48 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
     hostConnection: jest.fn(() => ({
       get: (...args: any[]) => hostConnectionGetMock(...args),
       list: (...args: any[]) => hostConnectionListMock(...args),
+      getHostLog: (...args: any[]) => hostConnectionGetHostLogMock(...args),
+      getHostRuntimeLog: (...args: any[]) =>
+        hostConnectionGetHostRuntimeLogMock(...args),
+      getHostMetricsHistory: (...args: any[]) =>
+        hostConnectionGetHostMetricsHistoryMock(...args),
+      getHostRuntimeDeploymentStatus: (...args: any[]) =>
+        hostConnectionGetHostRuntimeDeploymentStatusMock(...args),
+      startHost: (...args: any[]) => hostConnectionStartHostMock(...args),
+      stopHost: (...args: any[]) => hostConnectionStopHostMock(...args),
+      restartHost: (...args: any[]) => hostConnectionRestartHostMock(...args),
+      drainHost: (...args: any[]) => hostConnectionDrainHostMock(...args),
+      refreshHostCloudState: (...args: any[]) =>
+        hostConnectionRefreshHostCloudStateMock(...args),
+      upgradeHostSoftware: (...args: any[]) =>
+        hostConnectionUpgradeHostSoftwareMock(...args),
+      reconcileHostSoftware: (...args: any[]) =>
+        hostConnectionReconcileHostSoftwareMock(...args),
+      reconcileHostRuntimeDeployments: (...args: any[]) =>
+        hostConnectionReconcileHostRuntimeDeploymentsMock(...args),
+      rollbackHostRuntimeDeployments: (...args: any[]) =>
+        hostConnectionRollbackHostRuntimeDeploymentsMock(...args),
+      rolloutHostManagedComponents: (...args: any[]) =>
+        hostConnectionRolloutHostManagedComponentsMock(...args),
+      deleteHost: (...args: any[]) => hostConnectionDeleteHostMock(...args),
+      forceDeprovisionHost: (...args: any[]) =>
+        hostConnectionForceDeprovisionHostMock(...args),
+      removeSelfHostConnector: (...args: any[]) =>
+        hostConnectionRemoveSelfHostConnectorMock(...args),
+      listHostRootfsImages: (...args: any[]) =>
+        hostConnectionListHostRootfsImagesMock(...args),
+      pullHostRootfsImage: (...args: any[]) =>
+        hostConnectionPullHostRootfsImageMock(...args),
+      deleteHostRootfsImage: (...args: any[]) =>
+        hostConnectionDeleteHostRootfsImageMock(...args),
+      gcDeletedHostRootfsImages: (...args: any[]) =>
+        hostConnectionGcDeletedHostRootfsImagesMock(...args),
+      listHostRuntimeDeployments: (...args: any[]) =>
+        hostConnectionListHostRuntimeDeploymentsMock(...args),
+      setHostRuntimeDeployments: (...args: any[]) =>
+        hostConnectionSetHostRuntimeDeploymentsMock(...args),
+      getHostManagedComponentStatus: (...args: any[]) =>
+        hostConnectionGetHostManagedComponentStatusMock(...args),
       getProjectStartMetadata: (...args: any[]) =>
         hostConnectionGetProjectStartMetadataMock(...args),
       getBackupConfig: (...args: any[]) =>
@@ -322,6 +388,151 @@ beforeEach(() => {
   global.fetch = fetchMock as any;
   hostConnectionGetMock = jest.fn();
   hostConnectionListMock = jest.fn(async () => []);
+  hostConnectionGetHostLogMock = jest.fn(async () => []);
+  hostConnectionGetHostRuntimeLogMock = jest.fn(async () => ({
+    host_id: HOST_ID,
+    source: "project-host",
+    lines: 200,
+    text: "",
+  }));
+  hostConnectionGetHostMetricsHistoryMock = jest.fn(async () => ({
+    window_minutes: 60,
+    point_count: 0,
+    points: [],
+  }));
+  hostConnectionGetHostRuntimeDeploymentStatusMock = jest.fn(async () => ({
+    effective: [],
+    observed_targets: [],
+    observed_components: [],
+    observed_artifacts: [],
+    rollback_targets: [],
+  }));
+  hostConnectionStartHostMock = jest.fn(async () => ({
+    op_id: "remote-start-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-start-op",
+    kind: "host-start",
+  }));
+  hostConnectionStopHostMock = jest.fn(async () => ({
+    op_id: "remote-stop-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-stop-op",
+    kind: "host-stop",
+  }));
+  hostConnectionRestartHostMock = jest.fn(async () => ({
+    op_id: "remote-restart-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-restart-op",
+    kind: "host-restart",
+  }));
+  hostConnectionDrainHostMock = jest.fn(async () => ({
+    op_id: "remote-drain-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-drain-op",
+    kind: "host-drain",
+  }));
+  hostConnectionRefreshHostCloudStateMock = jest.fn(async () => ({
+    host_id: HOST_ID,
+    provider: "gcp",
+    scope: "provider",
+    refreshed_at: "2026-01-01T00:00:00.000Z",
+    ran: true,
+  }));
+  hostConnectionUpgradeHostSoftwareMock = jest.fn(async () => ({
+    op_id: "remote-upgrade-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-upgrade-op",
+    kind: "host-upgrade-software",
+  }));
+  hostConnectionReconcileHostSoftwareMock = jest.fn(async () => ({
+    op_id: "remote-reconcile-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-reconcile-op",
+    kind: "host-reconcile-software",
+  }));
+  hostConnectionReconcileHostRuntimeDeploymentsMock = jest.fn(async () => ({
+    op_id: "remote-runtime-reconcile-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-runtime-reconcile-op",
+    kind: "host-reconcile-runtime-deployments",
+  }));
+  hostConnectionRollbackHostRuntimeDeploymentsMock = jest.fn(async () => ({
+    op_id: "remote-runtime-rollback-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-runtime-rollback-op",
+    kind: "host-rollback-runtime-deployments",
+  }));
+  hostConnectionRolloutHostManagedComponentsMock = jest.fn(async () => ({
+    op_id: "remote-rollout-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-rollout-op",
+    kind: "host-rollout-managed-components",
+  }));
+  hostConnectionDeleteHostMock = jest.fn(async () => ({
+    op_id: "remote-delete-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-delete-op",
+    kind: "host-deprovision",
+  }));
+  hostConnectionForceDeprovisionHostMock = jest.fn(async () => ({
+    op_id: "remote-force-deprovision-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-force-deprovision-op",
+    kind: "host-force-deprovision",
+  }));
+  hostConnectionRemoveSelfHostConnectorMock = jest.fn(async () => ({
+    op_id: "remote-remove-connector-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-remove-connector-op",
+    kind: "host-remove-connector",
+  }));
+  hostConnectionListHostRootfsImagesMock = jest.fn(async () => []);
+  hostConnectionPullHostRootfsImageMock = jest.fn(async ({ image }: any) => ({
+    image,
+    display_name: image,
+    state: "ready",
+    backend: "release",
+    local_bytes: 0,
+    deleted: false,
+    last_used_at: null,
+    last_released_at: null,
+    remote_cache: null,
+  }));
+  hostConnectionDeleteHostRootfsImageMock = jest.fn(async () => ({
+    removed: true,
+  }));
+  hostConnectionGcDeletedHostRootfsImagesMock = jest.fn(async () => ({
+    items: [],
+    removed_count: 0,
+    removed_bytes_total: 0,
+  }));
+  hostConnectionListHostRuntimeDeploymentsMock = jest.fn(async () => []);
+  hostConnectionSetHostRuntimeDeploymentsMock = jest.fn(async () => []);
+  hostConnectionGetHostManagedComponentStatusMock = jest.fn(async () => []);
   hostConnectionGetProjectStartMetadataMock = jest.fn();
   hostConnectionGetBackupConfigMock = jest.fn();
   hostConnectionGetProjectOwnerEffectiveLimitsMock = jest.fn();
@@ -554,6 +765,75 @@ describe("hosts.listHostProjects", () => {
       provisioned_up_to_date: 0,
       provisioned_needs_backup: 1,
     });
+  });
+
+  it("prefers authoritative remote ownership over a stale local host row", async () => {
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-1",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              metadata: { owner: ACCOUNT_ID },
+              last_seen: new Date("2026-01-05T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("LEFT(COALESCE(title") ||
+        sql.includes("COUNT(*) AS total")
+      ) {
+        throw new Error(
+          "should not query local host projects for remote-owned host",
+        );
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    hostConnectionListHostProjectsMock.mockResolvedValueOnce({
+      rows: [
+        {
+          project_id: "proj-authoritative-remote",
+          title: "Remote",
+          state: "running",
+          provisioned: true,
+          last_edited: "2026-01-04T00:00:00.000Z",
+          last_backup: "2026-01-03T00:00:00.000Z",
+          needs_backup: false,
+          collab_count: 1,
+        },
+      ],
+      summary: {
+        total: 1,
+        provisioned: 1,
+        running: 1,
+        provisioned_up_to_date: 1,
+        provisioned_needs_backup: 0,
+      },
+    });
+
+    const { listHostProjects } = await import("./hosts");
+    const result = await listHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      limit: 10,
+    });
+
+    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
+    expect(hostConnectionListHostProjectsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        limit: 10,
+      }),
+    );
+    expect(result.rows.map((row) => row.project_id)).toEqual([
+      "proj-authoritative-remote",
+    ]);
   });
 
   it("adds the risk filter when requested", async () => {
@@ -1137,6 +1417,285 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     expect(status.observation_error).toBeUndefined();
   });
 
+  it("routes runtime deployment status to the authoritative remote bay", async () => {
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-1",
+      epoch: 2,
+    }));
+    hostConnectionGetHostRuntimeDeploymentStatusMock.mockResolvedValueOnce({
+      effective: [
+        {
+          scope_type: "host",
+          scope_id: HOST_ID,
+          host_id: HOST_ID,
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "ph-remote",
+          requested_by: ACCOUNT_ID,
+          requested_at: "2026-04-15T00:00:00.000Z",
+          updated_at: "2026-04-15T00:00:00.000Z",
+        },
+      ],
+      observed_targets: [],
+      observed_components: [],
+      observed_artifacts: [],
+      rollback_targets: [],
+    });
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              metadata: { owner: ACCOUNT_ID },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected local query: ${sql}`);
+    });
+
+    const { getHostRuntimeDeploymentStatus } = await import("./hosts");
+    const status = await getHostRuntimeDeploymentStatus({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+
+    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
+    expect(
+      hostConnectionGetHostRuntimeDeploymentStatusMock,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(status.effective).toEqual([
+      expect.objectContaining({
+        target: "project-host",
+        desired_version: "ph-remote",
+      }),
+    ]);
+  });
+
+  it("routes host-scoped runtime deployment listing to the authoritative remote bay", async () => {
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-1",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async () => {
+      throw new Error("should not query local host rows for remote-owned host");
+    });
+    listProjectHostRuntimeDeploymentsMock = jest.fn(async () => {
+      throw new Error(
+        "should not list local runtime deployments for remote-owned host",
+      );
+    });
+    hostConnectionListHostRuntimeDeploymentsMock.mockResolvedValueOnce([
+      {
+        scope_type: "host",
+        scope_id: HOST_ID,
+        host_id: HOST_ID,
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "ph-remote",
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+      },
+    ]);
+
+    const { listHostRuntimeDeployments } = await import("./hosts");
+    const deployments = await listHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      scope_type: "host",
+      id: HOST_ID,
+    });
+
+    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
+    expect(hostConnectionListHostRuntimeDeploymentsMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      scope_type: "host",
+      id: HOST_ID,
+    });
+    expect(deployments).toEqual([
+      expect.objectContaining({
+        target: "project-host",
+        desired_version: "ph-remote",
+      }),
+    ]);
+  });
+
+  it("routes host-scoped runtime deployment updates to the authoritative remote bay", async () => {
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-1",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async () => {
+      throw new Error("should not query local host rows for remote-owned host");
+    });
+    setProjectHostRuntimeDeploymentsMock = jest.fn(async () => {
+      throw new Error(
+        "should not update local runtime deployments for remote-owned host",
+      );
+    });
+    hostConnectionSetHostRuntimeDeploymentsMock.mockResolvedValueOnce([
+      {
+        scope_type: "host",
+        scope_id: HOST_ID,
+        host_id: HOST_ID,
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "ph-remote",
+        requested_by: ACCOUNT_ID,
+        requested_at: "2026-04-15T00:00:00.000Z",
+        updated_at: "2026-04-15T00:00:00.000Z",
+      },
+    ]);
+
+    const { setHostRuntimeDeployments } = await import("./hosts");
+    const deployments = await setHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      scope_type: "host",
+      id: HOST_ID,
+      deployments: [
+        {
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "ph-remote",
+        },
+      ],
+      replace: true,
+    });
+
+    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
+    expect(hostConnectionSetHostRuntimeDeploymentsMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      scope_type: "host",
+      id: HOST_ID,
+      deployments: [
+        {
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "ph-remote",
+        },
+      ],
+      replace: true,
+    });
+    expect(deployments).toEqual([
+      expect.objectContaining({
+        target: "project-host",
+        desired_version: "ph-remote",
+      }),
+    ]);
+  });
+
+  it("routes rootfs listing to the authoritative remote bay", async () => {
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-1",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async () => {
+      throw new Error("should not query local host rows for remote-owned host");
+    });
+    hostConnectionListHostRootfsImagesMock.mockResolvedValueOnce([
+      {
+        image: "ghcr.io/cocalc/project:remote",
+        display_name: "remote",
+        state: "ready",
+        backend: "release",
+        local_bytes: 123,
+        deleted: false,
+        last_used_at: null,
+        last_released_at: null,
+        remote_cache: null,
+      },
+    ]);
+
+    const { listHostRootfsImages } = await import("./hosts");
+    const images = await listHostRootfsImages({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+
+    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
+    expect(hostConnectionListHostRootfsImagesMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(images).toEqual([
+      expect.objectContaining({
+        image: "ghcr.io/cocalc/project:remote",
+      }),
+    ]);
+  });
+
+  it("routes rootfs pull and managed component status to the authoritative remote bay", async () => {
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-1",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async () => {
+      throw new Error("should not query local host rows for remote-owned host");
+    });
+    hostConnectionPullHostRootfsImageMock.mockResolvedValueOnce({
+      image: "ghcr.io/cocalc/project:remote",
+      display_name: "remote",
+      state: "ready",
+      backend: "release",
+      local_bytes: 123,
+      deleted: false,
+      last_used_at: null,
+      last_released_at: null,
+      remote_cache: null,
+    });
+    hostConnectionGetHostManagedComponentStatusMock.mockResolvedValueOnce([
+      {
+        component: "conat-router",
+        artifact: "project-host",
+        enabled: true,
+        managed: true,
+        runtime_state: "running",
+        version_state: "aligned",
+        running_versions: ["ph-remote"],
+        running_pids: [1234],
+      },
+    ]);
+
+    const { pullHostRootfsImage, getHostManagedComponentStatus } =
+      await import("./hosts");
+    const pulled = await pullHostRootfsImage({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      image: "ghcr.io/cocalc/project:remote",
+    });
+    const status = await getHostManagedComponentStatus({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+
+    expect(hostConnectionPullHostRootfsImageMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      image: "ghcr.io/cocalc/project:remote",
+    });
+    expect(
+      hostConnectionGetHostManagedComponentStatusMock,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(pulled).toEqual(
+      expect.objectContaining({
+        image: "ghcr.io/cocalc/project:remote",
+      }),
+    );
+    expect(status).toEqual([
+      expect.objectContaining({
+        component: "conat-router",
+      }),
+    ]);
+  });
+
   it("ignores missing host-agent status support on older hosts", async () => {
     routedHostControlClientMock.mockImplementationOnce(async () => ({
       upgradeSoftware: async () => ({ results: [] }),
@@ -1230,6 +1789,198 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     expect(result.reconcile_result).toMatchObject({
       host_id: HOST_ID,
     });
+  });
+});
+
+describe("hosts.authoritative remote host actions", () => {
+  beforeEach(() => {
+    process.env.LOGS = os.tmpdir();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
+    isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-1",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async () => {
+      throw new Error(
+        "should not query local host rows for authoritative remote host actions",
+      );
+    });
+  });
+
+  it("routes lro-backed host actions to the authoritative remote bay", async () => {
+    const {
+      startHost,
+      stopHost,
+      restartHost,
+      drainHost,
+      upgradeHostSoftware,
+      reconcileHostSoftware,
+      reconcileHostRuntimeDeployments,
+      rollbackHostRuntimeDeployments,
+      rolloutHostManagedComponents,
+      deleteHost,
+      forceDeprovisionHost,
+      removeSelfHostConnector,
+    } = await import("./hosts");
+
+    await startHost({ account_id: ACCOUNT_ID, id: HOST_ID });
+    await stopHost({ account_id: ACCOUNT_ID, id: HOST_ID, skip_backups: true });
+    await restartHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      mode: "hard",
+    });
+    await drainHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      dest_host_id: "dest-host",
+      force: true,
+      allow_offline: true,
+      parallel: 3,
+    });
+    await upgradeHostSoftware({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      targets: [{ artifact: "project-host", version: "ph-remote" }],
+      base_url: "https://artifacts.example.test",
+      align_runtime_stack: true,
+    });
+    await reconcileHostSoftware({ account_id: ACCOUNT_ID, id: HOST_ID });
+    await reconcileHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      components: ["project-host"],
+      reason: "test",
+    });
+    await rollbackHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      target_type: "artifact",
+      target: "project-host",
+      version: "ph-prev",
+      reason: "rollback",
+    });
+    await rolloutHostManagedComponents({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      components: ["project-host"],
+      reason: "test rollout",
+    });
+    await deleteHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      skip_backups: true,
+    });
+    await forceDeprovisionHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    await removeSelfHostConnector({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+
+    expect(hostConnectionStartHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(hostConnectionStopHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      skip_backups: true,
+    });
+    expect(hostConnectionRestartHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      mode: "hard",
+    });
+    expect(hostConnectionDrainHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      dest_host_id: "dest-host",
+      force: true,
+      allow_offline: true,
+      parallel: 3,
+    });
+    expect(hostConnectionUpgradeHostSoftwareMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      targets: [{ artifact: "project-host", version: "ph-remote" }],
+      base_url: "https://artifacts.example.test",
+      align_runtime_stack: true,
+    });
+    expect(hostConnectionReconcileHostSoftwareMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(
+      hostConnectionReconcileHostRuntimeDeploymentsMock,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      components: ["project-host"],
+      reason: "test",
+    });
+    expect(
+      hostConnectionRollbackHostRuntimeDeploymentsMock,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      target_type: "artifact",
+      target: "project-host",
+      version: "ph-prev",
+      reason: "rollback",
+      last_known_good: undefined,
+    });
+    expect(hostConnectionRolloutHostManagedComponentsMock).toHaveBeenCalledWith(
+      {
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        components: ["project-host"],
+        reason: "test rollout",
+      },
+    );
+    expect(hostConnectionDeleteHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      skip_backups: true,
+    });
+    expect(hostConnectionForceDeprovisionHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(hostConnectionRemoveSelfHostConnectorMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+  });
+
+  it("routes cloud refresh to the authoritative remote bay", async () => {
+    const { refreshHostCloudState } = await import("./hosts");
+    const result = await refreshHostCloudState({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+
+    expect(hostConnectionRefreshHostCloudStateMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        host_id: HOST_ID,
+        provider: "gcp",
+      }),
+    );
+  });
+
+  afterEach(() => {
+    delete process.env.LOGS;
+    delete process.env.COCALC_BAY_ID;
+    delete process.env.COCALC_CLUSTER_BAY_IDS;
   });
 });
 
@@ -3037,6 +3788,10 @@ describe("hosts.listHosts bootstrap normalization", () => {
 describe("hosts.refreshHostCloudState", () => {
   beforeEach(() => {
     isAdminMock = jest.fn(async () => true);
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.includes("SELECT id, deleted, metadata")) {
         return {
