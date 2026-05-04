@@ -1613,8 +1613,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.project_log(project_id, {
         event: "project_start_requested",
       });
-
-      webapp_client.project_client.touch_project(project_id);
       const actions = redux.getProjectActions(project_id);
       try {
         const resp = await webapp_client.conat_client.hub.projects.start({

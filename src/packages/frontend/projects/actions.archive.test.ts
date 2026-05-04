@@ -320,6 +320,9 @@ describe("ProjectsActions archive flow", () => {
       project_id,
       wait: false,
     });
+    expect(
+      mockedWebappClient.project_client.touch_project,
+    ).not.toHaveBeenCalled();
     expect(trackStartOp).toHaveBeenCalledWith(
       expect.objectContaining({ op_id: "start-op-1" }),
     );
