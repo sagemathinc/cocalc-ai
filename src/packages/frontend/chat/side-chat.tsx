@@ -9,6 +9,17 @@ import { Loading } from "@cocalc/frontend/components";
 import { isChatActions } from "./register";
 import type { ChatInputControl } from "./input";
 
+function isLiveChatActions(actions: unknown): actions is ChatActions {
+  return Boolean(
+    actions &&
+    isChatActions(actions) &&
+    !(
+      typeof (actions as any).isClosed === "function" &&
+      (actions as any).isClosed()
+    ),
+  );
+}
+
 interface Props {
   project_id: string;
   path: string;
@@ -38,10 +49,11 @@ export default function SideChat({
   onComposerReady,
 }: Props) {
   const actionsViaContext = redux.getEditorActions(project_id, path);
-  const candidateActions = actions0 ?? actionsViaContext;
-  const actions: ChatActions | undefined = isChatActions(candidateActions)
-    ? candidateActions
+  const propActions = isLiveChatActions(actions0) ? actions0 : undefined;
+  const contextActions = isLiveChatActions(actionsViaContext)
+    ? actionsViaContext
     : undefined;
+  const actions: ChatActions | undefined = propActions ?? contextActions;
   const useEditor = useEditorRedux<ChatState>({ project_id, path });
   // subscribe to syncdbReady to force re-render when sync attaches
   useEditor("syncdbReady");

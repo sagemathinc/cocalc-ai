@@ -4,6 +4,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import SideChat from "../side-chat";
 
 const mockEraseActiveKeyHandler = jest.fn();
+const mockGetEditorActions = jest.fn();
+const mockChatPanel = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   CSS: {},
@@ -12,7 +14,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       name === "page"
         ? { erase_active_key_handler: mockEraseActiveKeyHandler }
         : undefined,
-    getEditorActions: jest.fn(),
+    getEditorActions: (...args: any[]) => mockGetEditorActions(...args),
   },
   useEditorRedux: () => () => undefined,
 }));
@@ -22,7 +24,10 @@ jest.mock("@cocalc/frontend/components", () => ({
 }));
 
 jest.mock("../chatroom", () => ({
-  ChatPanel: () => <input data-testid="side-chat-composer" />,
+  ChatPanel: (props: any) => {
+    mockChatPanel(props);
+    return <input data-testid="side-chat-composer" />;
+  },
 }));
 
 jest.mock("../doc-context", () => ({
@@ -41,6 +46,8 @@ jest.mock("../register", () => ({
 describe("SideChat keyboard boundary", () => {
   beforeEach(() => {
     mockEraseActiveKeyHandler.mockClear();
+    mockGetEditorActions.mockReset();
+    mockChatPanel.mockReset();
   });
 
   it("marks side chat as a keyboard boundary and clears page shortcuts on focus", () => {
@@ -59,5 +66,32 @@ describe("SideChat keyboard boundary", () => {
     fireEvent.focus(screen.getByTestId("side-chat-composer"));
 
     expect(mockEraseActiveKeyHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores closed prop actions and falls back to live context actions", () => {
+    const liveActions = {
+      messageCache: {},
+      isClosed: () => false,
+    } as any;
+    mockGetEditorActions.mockReturnValue(liveActions);
+
+    render(
+      <SideChat
+        project_id="project-1"
+        path="test.chat"
+        actions={
+          {
+            messageCache: {},
+            isClosed: () => true,
+          } as any
+        }
+      />,
+    );
+
+    expect(mockChatPanel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actions: liveActions,
+      }),
+    );
   });
 });
