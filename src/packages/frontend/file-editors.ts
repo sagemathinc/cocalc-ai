@@ -18,6 +18,11 @@ import {
 import { React } from "@cocalc/frontend/app-framework";
 
 import { alert_message } from "./alerts";
+import {
+  getFileEditorRegistryState,
+  markEditorExtensionRegistered,
+  wasEditorExtensionRegistered,
+} from "./file-editor-registry";
 import { EditorLoadError } from "./file-editors-error";
 
 declare let DEBUG: boolean;
@@ -62,8 +67,7 @@ interface FileEditorSpec {
   save?: (path: string, redux: any, project_id: string) => void;
 }
 
-// Map of extensions to the appropriate structures below
-const file_editors: { [ext: string]: FileEditorSpec } = {};
+const { file_editors, altExt } = getFileEditorRegistryState();
 
 export function icon(ext: string): string | undefined {
   // Return the icon name for the given extension, if it is defined here,
@@ -112,6 +116,7 @@ export function register_file_editor(opts: FileEditorInfo): void {
       remove: opts.remove,
       save: opts.save,
     };
+    markEditorExtensionRegistered(ext);
   }
 }
 
@@ -131,6 +136,12 @@ export function has_file_editor(ext: string): boolean {
  * This helps with debugging why an editor failed to load.
  */
 function logFallback(ext: string | undefined, path: string): void {
+  if (ext != null && wasEditorExtensionRegistered(ext)) {
+    console.warn(
+      `Editor fallback triggered: extension '${ext}' for path '${path}' was previously registered, but lookup fell through to the unknown editor`,
+    );
+    return;
+  }
   console.warn(
     `Editor fallback triggered: No editor found for ext '${
       ext ?? "unknown"
@@ -220,7 +231,6 @@ export function initialize(
 // This makes it so we don't have to explicitly specify ext
 // for other functions like initialize and remove.
 const key = (project_id, path) => `${project_id}-${path}`;
-const altExt: { [project_id_path: string]: string | undefined } = {};
 // Returns an editor instance for the path
 export async function generateAsync(
   path: string,
