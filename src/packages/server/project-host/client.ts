@@ -44,6 +44,8 @@ export async function getRoutedHostControlClient({
       startProject: async (start) =>
         await bridge.startProject({ host_id, start }),
       stopProject: async (stop) => await bridge.stopProject({ host_id, stop }),
+      getProjectStatus: async (get) =>
+        await bridge.getProjectStatus({ host_id, get }),
       updateAuthorizedKeys: async (update) =>
         await bridge.updateAuthorizedKeys({ host_id, update }),
       updateProjectUsers: async (update) =>

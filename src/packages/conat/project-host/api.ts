@@ -27,6 +27,16 @@ export interface HostCreateProjectResponse {
   phase_timings_ms?: Record<string, number>;
 }
 
+export interface HostProjectStateResponse {
+  project_id: string;
+  state?: ProjectState | string;
+  http_port?: number;
+  ssh_port?: number;
+  project_bundle_version?: string;
+  tools_version?: string;
+  phase_timings_ms?: Record<string, number>;
+}
+
 export interface HostRuntimeLogResponse {
   source: string;
   lines: number;
@@ -264,6 +274,9 @@ export interface HostControlApi {
   stopProject: (opts: {
     project_id: string;
   }) => Promise<HostCreateProjectResponse>;
+  getProjectStatus: (opts: {
+    project_id: string;
+  }) => Promise<HostProjectStateResponse>;
   updateAuthorizedKeys: (opts: {
     project_id: string;
     authorized_keys?: string;

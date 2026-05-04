@@ -918,6 +918,14 @@ export interface Projects {
     stream_name: string;
   }>;
   stop: (opts: { account_id?: string; project_id: string }) => Promise<void>;
+  status?: (opts: { account_id?: string; project_id: string }) => Promise<{
+    state?: string;
+    http_port?: number;
+    ssh_port?: number;
+    project_bundle_version?: string;
+    tools_version?: string;
+    phase_timings_ms?: Record<string, number>;
+  }>;
   restart: (opts: {
     account_id?: string;
     project_id: string;

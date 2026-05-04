@@ -908,6 +908,8 @@ async function startHostControlService(): Promise<void> {
       await (await getHostClient(host_id, 60 * 60 * 1000)).startProject(start),
     stopProject: async ({ host_id, stop }) =>
       await (await getHostClient(host_id, 30_000)).stopProject(stop),
+    getProjectStatus: async ({ host_id, get }) =>
+      await (await getHostClient(host_id, 30_000)).getProjectStatus(get),
     updateAuthorizedKeys: async ({ host_id, update }) =>
       await (await getHostClient(host_id, 30_000)).updateAuthorizedKeys(update),
     updateProjectUsers: async ({ host_id, update }) =>

@@ -20,6 +20,7 @@ beforeAll(before);
 
 describe("create runner and load balancer with getConfig function", () => {
   let client1, client2;
+  let transientOpenedProjectId: string | undefined;
   it("create two clients", () => {
     client1 = connect();
     client2 = connect();
@@ -45,6 +46,13 @@ describe("create runner and load balancer with getConfig function", () => {
         }
       },
       status: async ({ project_id }) => {
+        if (
+          transientOpenedProjectId != null &&
+          transientOpenedProjectId === project_id
+        ) {
+          transientOpenedProjectId = undefined;
+          return { state: "opened" };
+        }
         return running[project_id] != null
           ? { state: "running" }
           : { state: "opened" };
@@ -96,6 +104,22 @@ describe("create runner and load balancer with getConfig function", () => {
       server: "0",
       state: "opened",
     });
+  });
+
+  it("does not persist a single transient opened result for a running project", async () => {
+    const project_id = uuid();
+    const lbc = lbClient({
+      subject: `project.${project_id}.run`,
+      client: client2,
+    });
+    await lbc.start();
+    transientOpenedProjectId = project_id;
+
+    await expect(lbc.status()).resolves.toEqual({
+      server: "0",
+      state: "running",
+    });
+    expect(projectState[project_id]).toBe("running");
   });
 });
 

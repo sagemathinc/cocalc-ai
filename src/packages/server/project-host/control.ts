@@ -557,6 +557,34 @@ export async function startProjectOnHost(
     }
 
     const placement = await ensurePlacement(project_id);
+    const client = await getRoutedHostControlClient({
+      host_id: placement.host_id,
+      timeout: START_PROJECT_TIMEOUT_MS,
+    });
+    try {
+      if (typeof client.getProjectStatus === "function") {
+        const live = await client.getProjectStatus({ project_id });
+        if (live?.state === "running" || live?.state === "starting") {
+          log.warn(
+            "startProjectOnHost found project already active on assigned host; skipping restart",
+            {
+              project_id,
+              host_id: placement.host_id,
+              snapshot_state: snapshot.state,
+              live_state: live.state,
+            },
+          );
+          await saveProjectStateSnapshot(project_id, live.state);
+          return;
+        }
+      }
+    } catch (err) {
+      log.debug("startProjectOnHost live status probe failed", {
+        project_id,
+        host_id: placement.host_id,
+        err: `${err}`,
+      });
+    }
     const meta = await loadProject(project_id);
     const run_quota = await applyHostGpuToRunQuota(
       meta.run_quota,
@@ -572,10 +600,6 @@ export async function startProjectOnHost(
       await assertCanRestoreProvisionedProjectStorage({ project_id });
     }
     const restore = rows[0]?.backup_repo_id ? "auto" : "none";
-    const client = await getRoutedHostControlClient({
-      host_id: placement.host_id,
-      timeout: START_PROJECT_TIMEOUT_MS,
-    });
     try {
       const response = await client.startProject({
         project_id,

@@ -650,6 +650,7 @@ export type HostControlMethod =
   | "create-project"
   | "start-project"
   | "stop-project"
+  | "get-project-status"
   | "update-authorized-keys"
   | "update-project-users"
   | "apply-pending-copies"
@@ -998,6 +999,10 @@ export interface InterBayHostControlApi {
     host_id: string;
     stop: HostControlArg<"stopProject">;
   }) => Promise<HostCreateProjectResponse>;
+  getProjectStatus: (opts: {
+    host_id: string;
+    get: HostControlArg<"getProjectStatus">;
+  }) => Promise<Awaited<ReturnType<HostControlApi["getProjectStatus"]>>>;
   updateAuthorizedKeys: (opts: {
     host_id: string;
     update: HostControlArg<"updateAuthorizedKeys">;
@@ -1259,6 +1264,7 @@ const HOST_CONTROL_METHOD_SPECS = [
   { name: "createProject", method: "create-project" },
   { name: "startProject", method: "start-project" },
   { name: "stopProject", method: "stop-project" },
+  { name: "getProjectStatus", method: "get-project-status" },
   { name: "updateAuthorizedKeys", method: "update-authorized-keys" },
   { name: "updateProjectUsers", method: "update-project-users" },
   { name: "applyPendingCopies", method: "apply-pending-copies" },
