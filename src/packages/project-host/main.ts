@@ -151,6 +151,7 @@ import {
   MANAGED_RAW_NETWORK_EGRESS_CATEGORY,
   startManagedRawNetworkEgressLoop,
 } from "./raw-network-egress";
+import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 export { runPrivilegedRmHelper } from "./privileged-rm-helper";
 
 const logger = getLogger("project-host:main");
@@ -578,6 +579,30 @@ export async function main(
     } catch {
       return false;
     }
+  };
+  const getProjectIdFromRequest = (
+    req: IncomingMessage,
+  ): string | undefined => {
+    const project_id = req.url?.split("/")[1];
+    return project_id ? `${project_id}`.trim() || undefined : undefined;
+  };
+  const noteManagedBoundaryClassifiedBytes = ({
+    req,
+    category,
+    bytes,
+  }: {
+    req: IncomingMessage;
+    category: "http-proxy" | "ws-proxy";
+    bytes: number;
+  }) => {
+    const project_id = getProjectIdFromRequest(req);
+    if (!project_id || !(bytes > 0)) return;
+    if (!isManagedProjectHttpEgressRequest(req, project_id)) return;
+    managedProjectEgressResidualTracker.noteBoundaryClassifiedBytes({
+      project_id,
+      category,
+      bytes,
+    });
   };
   const getManagedProxyServicePort = (
     req: IncomingMessage,
@@ -1053,6 +1078,20 @@ export async function main(
     httpServer,
     app,
     rewriteRequest: maybeRewritePublicHostnameRequest,
+    noteUpstreamHttpBytes: ({ req, bytes }) => {
+      noteManagedBoundaryClassifiedBytes({
+        req,
+        category: "http-proxy",
+        bytes,
+      });
+    },
+    noteUpstreamWsBytes: ({ req, bytes }) => {
+      noteManagedBoundaryClassifiedBytes({
+        req,
+        category: "ws-proxy",
+        bytes,
+      });
+    },
     onUpgradeAuthorized: (req, socket) => {
       httpProxyAuth.trackUpgradedSocket(req, socket);
       attachManagedWsEgressRecorder({

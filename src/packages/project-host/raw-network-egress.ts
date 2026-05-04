@@ -19,6 +19,10 @@ import {
   getProjectHostManagedEgressMode,
   isProjectHostManagedEgressEnforced,
 } from "./managed-egress-runtime";
+import {
+  managedProjectEgressResidualTracker,
+  type ManagedProjectEgressResidualTracker,
+} from "./managed-egress-residual";
 
 const logger = getLogger("project-host:raw-network-egress");
 
@@ -398,20 +402,29 @@ export function startManagedRawNetworkEgressLoop({
     DEFAULT_INTERVAL_MS,
   ),
   sample = collectRunningProjectNetworkSamples,
+  residualTracker = managedProjectEgressResidualTracker,
 }: {
   runnerApi: Pick<ProjectRunnerApi, "stop">;
   intervalMs?: number;
   sample?: typeof collectRunningProjectNetworkSamples;
+  residualTracker?: ManagedProjectEgressResidualTracker;
 }): () => void {
   let previous = new Map<string, ProjectNetworkSample>();
+  let previousSampleAt: number | undefined;
   let running = false;
   const stopping = new Set<string>();
+
+  residualTracker.configure({
+    bucketMs: intervalMs,
+    graceMs: Math.max(intervalMs * 3, intervalMs),
+  });
 
   const runOnce = async () => {
     if (running) return;
     running = true;
     try {
       const mode = getProjectHostManagedEgressMode();
+      const sampledAt = Date.now();
       const currentSamples = await sample();
       const current = new Map(
         currentSamples.map((entry) => [entry.project_id, entry] as const),
@@ -421,38 +434,65 @@ export function startManagedRawNetworkEgressLoop({
         current,
       });
       previous = current;
+      const boundaryAt =
+        previousSampleAt == null
+          ? sampledAt
+          : Math.floor((previousSampleAt + sampledAt) / 2);
+      previousSampleAt = sampledAt;
+
+      for (const delta of deltas) {
+        residualTracker.noteBoundaryBytes({
+          project_id: delta.project_id,
+          bytes: delta.bytes,
+          at: boundaryAt,
+          metadata: {
+            interface_name: delta.interface_name,
+            pid: delta.pid,
+          },
+        });
+      }
+      const residuals = residualTracker.flush({ now: sampledAt });
 
       if (mode === "off") {
         return;
       }
 
-      if (deltas.length > 0) {
+      if (residuals.length > 0) {
         logger.info("managed raw network egress sample", {
           mode,
-          projects: deltas.map((delta) => ({
-            project_id: delta.project_id,
-            bytes: delta.bytes,
-            pid: delta.pid,
-            interface_name: delta.interface_name,
+          projects: residuals.map((residual) => ({
+            project_id: residual.project_id,
+            bytes: residual.bytes,
+            boundary_bytes: residual.boundary_bytes,
+            classified_boundary_bytes: residual.classified_boundary_bytes,
+            classified_categories: residual.classified_categories,
+            pid: residual.metadata?.pid,
+            interface_name: residual.metadata?.interface_name,
           })),
         });
       }
 
-      for (const delta of deltas) {
+      for (const residual of residuals) {
         try {
           await hubApi.system.recordManagedProjectEgress({
-            project_id: delta.project_id,
+            project_id: residual.project_id,
             category: CATEGORY,
-            bytes: delta.bytes,
+            bytes: residual.bytes,
             metadata: {
-              interface_name: delta.interface_name,
-              pid: delta.pid,
+              interface_name: residual.metadata?.interface_name,
+              pid: residual.metadata?.pid,
+              boundary_bytes: residual.boundary_bytes,
+              classified_boundary_bytes: residual.classified_boundary_bytes,
+              classified_categories: residual.classified_categories,
+              bucket_start: residual.bucket_start,
+              bucket_ms: residual.bucket_ms,
+              mode: "residual-v1",
             },
           });
         } catch (err) {
           logger.warn("unable to record raw network egress", {
-            project_id: delta.project_id,
-            bytes: delta.bytes,
+            project_id: residual.project_id,
+            bytes: residual.bytes,
             err: `${err}`,
           });
           continue;
@@ -461,35 +501,35 @@ export function startManagedRawNetworkEgressLoop({
         if (mode !== "enforce") continue;
         try {
           const policy = (await hubApi.system.getManagedProjectEgressPolicy({
-            project_id: delta.project_id,
+            project_id: residual.project_id,
             category: CATEGORY,
           })) as ManagedEgressPolicy;
-          if (policy.allowed || stopping.has(delta.project_id)) {
+          if (policy.allowed || stopping.has(residual.project_id)) {
             continue;
           }
-          stopping.add(delta.project_id);
+          stopping.add(residual.project_id);
           logger.info("stopping project due to raw network egress policy", {
-            project_id: delta.project_id,
+            project_id: residual.project_id,
             blocked_by: policy.blocked_by,
-            bytes: delta.bytes,
+            bytes: residual.bytes,
           });
           void runnerApi
             .stop({
-              project_id: delta.project_id,
+              project_id: residual.project_id,
               force: true,
             })
             .catch((err) => {
               logger.warn("unable to stop over-limit raw network project", {
-                project_id: delta.project_id,
+                project_id: residual.project_id,
                 err: `${err}`,
               });
             })
             .finally(() => {
-              stopping.delete(delta.project_id);
+              stopping.delete(residual.project_id);
             });
         } catch (err) {
           logger.warn("unable to evaluate raw network egress policy", {
-            project_id: delta.project_id,
+            project_id: residual.project_id,
             err: `${err}`,
           });
         }

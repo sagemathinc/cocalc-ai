@@ -150,6 +150,7 @@ export async function init({
   authorizePublicKey,
   checkManagedSshAllowed,
   recordManagedSshEgress,
+  noteManagedSshBoundaryBytes,
   port = sshServer.port,
   proxyHandlers,
   exitOnFail = true,
@@ -176,6 +177,12 @@ export async function init({
     bytes: number;
     partial: boolean;
   }) => Promise<void> | void;
+  noteManagedSshBoundaryBytes?: (opts: {
+    project_id: string;
+    account_id?: string;
+    remote_addr: string;
+    bytes: number;
+  }) => void;
   port?: number;
   proxyHandlers?: boolean;
   exitOnFail?: boolean;
@@ -308,6 +315,16 @@ export async function init({
           partial,
         });
       },
+      noteUpstreamBytes: noteManagedSshBoundaryBytes
+        ? ({ project_id, account_id, remote_addr, bytes }) => {
+            noteManagedSshBoundaryBytes({
+              project_id,
+              account_id,
+              remote_addr,
+              bytes,
+            });
+          }
+        : undefined,
     });
   } catch (err) {
     removeChild(child);

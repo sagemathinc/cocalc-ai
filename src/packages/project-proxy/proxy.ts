@@ -30,6 +30,11 @@ type ResolveFn = (
   res?: http.ServerResponse,
 ) => Promise<ResolveResult> | ResolveResult;
 
+type NoteProxyBoundaryBytesFn = (opts: {
+  req: http.IncomingMessage;
+  bytes: number;
+}) => void;
+
 interface StartOptions {
   port?: number; // default 8080
   host?: string; // default 127.0.0.1
@@ -39,6 +44,8 @@ interface StartOptions {
     socket: Socket | Duplex,
   ) => void;
   rewriteRequest?: (req: http.IncomingMessage) => Promise<void> | void;
+  noteUpstreamHttpBytes?: NoteProxyBoundaryBytesFn;
+  noteUpstreamWsBytes?: NoteProxyBoundaryBytesFn;
 }
 
 export function stripProjectHostProxyAuthCookies(
@@ -79,6 +86,17 @@ function parseProjectId(url: string | undefined): string | null {
   return first;
 }
 
+function getChunkByteLength(chunk: unknown): number {
+  if (chunk == null) return 0;
+  if (typeof chunk === "string") {
+    return Buffer.byteLength(chunk);
+  }
+  if (Buffer.isBuffer(chunk)) return chunk.length;
+  if (chunk instanceof ArrayBuffer) return chunk.byteLength;
+  if (ArrayBuffer.isView(chunk)) return chunk.byteLength;
+  return 0;
+}
+
 async function defaultResolveTarget(
   req: http.IncomingMessage,
 ): Promise<ResolveResult> {
@@ -104,12 +122,16 @@ export async function startProxyServer({
   host = "127.0.0.1",
   resolveTarget = defaultResolveTarget,
   onUpgradeAuthorized,
+  noteUpstreamHttpBytes,
+  noteUpstreamWsBytes,
 }: StartOptions = {}) {
   logger.debug("startProxyServer", { port, host });
 
   const { handleRequest, handleUpgrade } = createProxyHandlers({
     resolveTarget,
     onUpgradeAuthorized,
+    noteUpstreamHttpBytes,
+    noteUpstreamWsBytes,
   });
 
   const proxyServer = http.createServer(handleRequest);
@@ -130,6 +152,8 @@ export function createProxyHandlers({
   onUpgradeAuthorized,
   rewriteRequest,
   preserveCookieNames,
+  noteUpstreamHttpBytes,
+  noteUpstreamWsBytes,
 }: {
   resolveTarget?: ResolveFn;
   onUpgradeAuthorized?: (
@@ -138,6 +162,8 @@ export function createProxyHandlers({
   ) => void;
   rewriteRequest?: (req: http.IncomingMessage) => Promise<void> | void;
   preserveCookieNames?: string[];
+  noteUpstreamHttpBytes?: NoteProxyBoundaryBytesFn;
+  noteUpstreamWsBytes?: NoteProxyBoundaryBytesFn;
 } = {}) {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
@@ -175,7 +201,28 @@ export function createProxyHandlers({
       host: req.headers?.host,
       origin: req.headers?.origin,
     });
+    if (noteUpstreamWsBytes) {
+      proxyReq.once("upgrade", (_proxyRes, proxySocket) => {
+        proxySocket.on("data", (chunk) => {
+          const bytes = getChunkByteLength(chunk);
+          if (bytes > 0) {
+            noteUpstreamWsBytes({ req, bytes });
+          }
+        });
+      });
+    }
   });
+
+  if (noteUpstreamHttpBytes) {
+    proxy.on("proxyRes", (proxyRes, req) => {
+      proxyRes.on("data", (chunk) => {
+        const bytes = getChunkByteLength(chunk);
+        if (bytes > 0) {
+          noteUpstreamHttpBytes({ req, bytes });
+        }
+      });
+    });
+  }
 
   const handleRequest = async (
     req: http.IncomingMessage,
@@ -240,6 +287,8 @@ export function attachProjectProxy({
   resolveTarget = defaultResolveTarget,
   onUpgradeAuthorized,
   rewriteRequest,
+  noteUpstreamHttpBytes,
+  noteUpstreamWsBytes,
 }: {
   httpServer: http.Server;
   app: express.Application;
@@ -249,6 +298,8 @@ export function attachProjectProxy({
     socket: Socket | Duplex,
   ) => void;
   rewriteRequest?: (req: http.IncomingMessage) => Promise<void> | void;
+  noteUpstreamHttpBytes?: NoteProxyBoundaryBytesFn;
+  noteUpstreamWsBytes?: NoteProxyBoundaryBytesFn;
 }) {
   const proxy = httpProxy.createProxyServer({
     xfwd: true,
@@ -281,7 +332,28 @@ export function attachProjectProxy({
       host: req.headers?.host,
       origin: req.headers?.origin,
     });
+    if (noteUpstreamWsBytes) {
+      _proxyReq.once("upgrade", (_proxyRes, proxySocket) => {
+        proxySocket.on("data", (chunk) => {
+          const bytes = getChunkByteLength(chunk);
+          if (bytes > 0) {
+            noteUpstreamWsBytes({ req, bytes });
+          }
+        });
+      });
+    }
   });
+
+  if (noteUpstreamHttpBytes) {
+    proxy.on("proxyRes", (proxyRes, req) => {
+      proxyRes.on("data", (chunk) => {
+        const bytes = getChunkByteLength(chunk);
+        if (bytes > 0) {
+          noteUpstreamHttpBytes({ req, bytes });
+        }
+      });
+    });
+  }
 
   app.use(async (req, res, next) => {
     await rewriteRequest?.(req);

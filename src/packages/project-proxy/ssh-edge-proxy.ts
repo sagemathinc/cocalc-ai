@@ -62,6 +62,7 @@ export async function startManagedSshEdgeProxy({
   clearIdentity,
   checkAllowed,
   record,
+  noteUpstreamBytes,
 }: {
   port: number;
   host?: string;
@@ -83,6 +84,12 @@ export async function startManagedSshEdgeProxy({
     bytes: number;
     partial: boolean;
   }) => Promise<void> | void;
+  noteUpstreamBytes?: (opts: {
+    remote_addr: string;
+    project_id: string;
+    account_id?: string;
+    bytes: number;
+  }) => void;
 }): Promise<Server> {
   const server = createServer((client) => {
     let remote_addr: string;
@@ -177,6 +184,25 @@ export async function startManagedSshEdgeProxy({
       client.pipe(upstream);
       upstream.pipe(client);
     });
+    if (noteUpstreamBytes) {
+      upstream.on("data", (chunk: Buffer | string) => {
+        const identity = getIdentity(remote_addr);
+        if (!identity) return;
+        let bytes = 0;
+        if (typeof chunk === "string") {
+          bytes = Buffer.byteLength(chunk);
+        } else if (Buffer.isBuffer(chunk)) {
+          bytes = chunk.length;
+        }
+        if (bytes > 0) {
+          noteUpstreamBytes({
+            ...identity,
+            remote_addr,
+            bytes,
+          });
+        }
+      });
+    }
     upstream.on("error", (err) => {
       logger.debug("ssh upstream proxy error", { remote_addr, err: `${err}` });
       client.destroy();
