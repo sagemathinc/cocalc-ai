@@ -270,4 +270,42 @@ describe("parseRow bootstrap lifecycle normalization", () => {
       installed: "1777650485714",
     });
   });
+
+  it("exposes desired and effective pricing separately during standard fallback", () => {
+    const host = parseRow({
+      id: "host-spot",
+      name: "host-spot",
+      status: "running",
+      region: "us-west1",
+      metadata: {
+        owner: "acct-1",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "on_demand",
+        interruption_restore_policy: "immediate",
+        spot_recovery_policy: {
+          standard_fallback_enabled: true,
+          standard_fallback_min_minutes: 20,
+        },
+        spot_recovery_state: {
+          phase: "running_standard_fallback",
+          outage_started_at: "2026-05-03T20:00:00.000Z",
+          fallback_started_at: "2026-05-03T20:10:00.000Z",
+        },
+      },
+    });
+
+    expect(host.pricing_model).toBe("spot");
+    expect(host.desired_pricing_model).toBe("spot");
+    expect(host.effective_pricing_model).toBe("on_demand");
+    expect(host.recovery_phase).toBe("running_standard_fallback");
+    expect(host.spot_recovery_policy).toMatchObject({
+      standard_fallback_enabled: true,
+      standard_fallback_min_minutes: 20,
+    });
+    expect(host.spot_recovery_state).toMatchObject({
+      phase: "running_standard_fallback",
+      fallback_started_at: "2026-05-03T20:10:00.000Z",
+    });
+  });
 });

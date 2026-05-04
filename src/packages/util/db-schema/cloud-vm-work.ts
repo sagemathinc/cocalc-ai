@@ -28,6 +28,10 @@ Table({
       type: "string",
       desc: "Work state (queued/in_progress/done/failed).",
     },
+    not_before: {
+      type: "timestamp",
+      desc: "Optional time before which this work item should not be claimed.",
+    },
     attempt: {
       type: "number",
       desc: "Attempt counter.",
@@ -55,7 +59,7 @@ Table({
   },
   rules: {
     primary_key: "id",
-    pg_indexes: ["vm_id", "state", "created_at"],
+    pg_indexes: ["vm_id", "state", "not_before", "created_at"],
     durability: "soft",
   },
 });

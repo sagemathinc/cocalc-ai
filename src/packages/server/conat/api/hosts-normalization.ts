@@ -30,14 +30,16 @@ import type {
   HostBootstrapLifecycleItem,
   HostBootstrapStatus,
   HostCurrentMetrics,
+  HostMachine,
   HostPressureState,
-  HostRuntimeExceptionSummary,
   HostInterruptionRestorePolicy,
   HostMetricsHistory,
   HostPricingModel,
   HostPressureZone,
+  HostRuntimeExceptionSummary,
+  HostSpotRecoveryPolicy,
+  HostSpotRecoveryState,
   HostStatus,
-  HostMachine,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostManagedComponentStatus,
@@ -46,7 +48,14 @@ import type {
   ManagedComponentUpgradePolicy,
   ManagedComponentVersionState,
 } from "@cocalc/conat/project-host/api";
-import { desiredHostState } from "@cocalc/server/cloud/spot-restore";
+import {
+  defaultInterruptionRestorePolicy as defaultSpotInterruptionRestorePolicy,
+  desiredHostState,
+  desiredPricingModel as desiredPricingModelFromHost,
+  effectivePricingModel as effectivePricingModelFromHost,
+  spotRecoveryPolicy as spotRecoveryPolicyFromHost,
+  spotRecoveryState as spotRecoveryStateFromHost,
+} from "@cocalc/server/cloud/spot-restore";
 import { observedHostAgentFromMetadata } from "./hosts-runtime-observation";
 
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
@@ -175,7 +184,7 @@ export function normalizeHostInterruptionRestorePolicy(
 export function defaultInterruptionRestorePolicy(
   pricingModel?: HostPricingModel,
 ): HostInterruptionRestorePolicy {
-  return pricingModel === "spot" ? "immediate" : "none";
+  return defaultSpotInterruptionRestorePolicy(pricingModel);
 }
 
 function parseTimestampMs(value?: string): number | undefined {
@@ -969,10 +978,26 @@ export function parseRow(
   );
   const pricingModel =
     normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
+  const desiredPricingModel = desiredPricingModelFromHost({
+    status: normalizedStatus,
+    metadata,
+  });
+  const effectivePricingModel = effectivePricingModelFromHost({
+    status: normalizedStatus,
+    metadata,
+  });
   const interruptionRestorePolicy =
     normalizeHostInterruptionRestorePolicy(
       metadata.interruption_restore_policy,
-    ) ?? defaultInterruptionRestorePolicy(pricingModel);
+    ) ?? defaultInterruptionRestorePolicy(desiredPricingModel);
+  const spotRecoveryPolicy = spotRecoveryPolicyFromHost({
+    status: normalizedStatus,
+    metadata,
+  });
+  const spotRecoveryState = spotRecoveryStateFromHost({
+    status: normalizedStatus,
+    metadata,
+  });
   const desiredState = desiredHostState({
     status: normalizedStatus,
     metadata,
@@ -1024,7 +1049,14 @@ export function parseRow(
     reason_unavailable: opts.reason_unavailable,
     starred: opts.starred,
     pricing_model: pricingModel,
+    desired_pricing_model: desiredPricingModel,
+    effective_pricing_model: effectivePricingModel,
     interruption_restore_policy: interruptionRestorePolicy,
+    spot_recovery_policy: spotRecoveryPolicy as
+      | HostSpotRecoveryPolicy
+      | undefined,
+    spot_recovery_state: spotRecoveryState as HostSpotRecoveryState | undefined,
+    recovery_phase: spotRecoveryState?.phase,
     desired_state: desiredState,
     last_action: metadata.last_action,
     last_action_at: metadata.last_action_at,

@@ -4,6 +4,7 @@ import {
   InstancesClient,
   ZoneOperationsClient,
 } from "@google-cloud/compute";
+import { randomUUID } from "crypto";
 import logger from "./logger";
 import { gcpInternalHostname } from "./gcp-internal";
 import type {
@@ -150,6 +151,25 @@ function dataDiskUriFromInstance(instance: any): string | undefined {
     disks.find((disk) => !disk.boot && disk.type !== "SCRATCH") ??
     disks.find((disk) => !disk.boot);
   return dataDisk?.source ?? undefined;
+}
+
+function spotScheduling() {
+  return {
+    onHostMaintenance: "TERMINATE",
+    automaticRestart: false,
+    preemptible: true,
+    provisioningModel: "SPOT",
+    instanceTerminationAction: "STOP",
+  } as const;
+}
+
+function onDemandScheduling(opts: { gpu?: boolean }) {
+  return {
+    onHostMaintenance: opts.gpu ? "TERMINATE" : "MIGRATE",
+    automaticRestart: true,
+    preemptible: false,
+    provisioningModel: "STANDARD",
+  } as const;
 }
 
 function diskTypeFor(spec: HostSpec): string {
@@ -497,16 +517,8 @@ export class GcpProvider implements CloudProvider {
       : [];
     const scheduling =
       spec.pricing_model === "spot"
-        ? {
-            onHostMaintenance: "TERMINATE",
-            automaticRestart: false,
-            preemptible: true,
-            provisioningModel: "SPOT",
-            instanceTerminationAction: "STOP",
-          }
-        : spec.gpu
-          ? { onHostMaintenance: "TERMINATE", automaticRestart: true }
-          : undefined;
+        ? spotScheduling()
+        : onDemandScheduling({ gpu: !!spec.gpu });
 
     const instanceResource = {
       name: spec.name,
@@ -538,6 +550,7 @@ export class GcpProvider implements CloudProvider {
         metadata: {
           gcp_project_id: credentials.projectId,
           machine_type: machineType,
+          gpu_count: spec.gpu?.count ?? 0,
           disk_type: diskType,
           boot_disk_gb: bootDiskGb,
           data_disk_gb: spec.disk_gb,
@@ -690,6 +703,158 @@ export class GcpProvider implements CloudProvider {
       zone: runtime.zone,
       credentials,
     });
+  }
+
+  async setPricingModel(
+    runtime: HostRuntime,
+    pricingModel: NonNullable<HostSpec["pricing_model"]>,
+    creds: any,
+  ): Promise<void> {
+    logger.info("gcp.setPricingModel", {
+      instance_id: runtime.instance_id,
+      zone: runtime.zone,
+      pricing_model: pricingModel,
+    });
+    const credentials = parseCredentials(creds ?? {});
+    if (!runtime.zone) {
+      throw new Error("gcp.setPricingModel requires zone");
+    }
+    const client = new InstancesClient(credentials);
+    const [response] = await client.setScheduling({
+      project: credentials.projectId,
+      zone: runtime.zone,
+      instance: runtime.instance_id,
+      schedulingResource:
+        pricingModel === "spot"
+          ? spotScheduling()
+          : onDemandScheduling({
+              gpu:
+                Number(
+                  (runtime.metadata as { gpu_count?: number } | undefined)
+                    ?.gpu_count,
+                ) > 0,
+            }),
+    });
+    await waitUntilOperationComplete({
+      response,
+      zone: runtime.zone,
+      credentials,
+    });
+  }
+
+  async probeSpotAvailability(spec: HostSpec, creds: any): Promise<boolean> {
+    logger.info("gcp.probeSpotAvailability", {
+      region: spec.region,
+      zone: spec.zone,
+      machine_type: spec.metadata?.machine_type ?? machineTypeFor(spec),
+      gpu: spec.gpu?.type ?? "none",
+    });
+    const credentials = parseCredentials(creds ?? {});
+    const client = new InstancesClient(credentials);
+    const zone = zoneFor(spec);
+    const machineType = `zones/${zone}/machineTypes/${machineTypeFor(spec)}`;
+    const diskType = `projects/${credentials.projectId}/zones/${zone}/diskTypes/${diskTypeFor(
+      spec,
+    )}`;
+    const sourceImage = await resolveSourceImage({ spec, credentials });
+    const name = [
+      "cocalc-spot-probe",
+      randomUUID().replace(/-/g, "").slice(0, 20),
+    ]
+      .join("-")
+      .toLowerCase();
+    const bootDiskGb =
+      spec.metadata?.boot_disk_gb ??
+      spec.metadata?.bootDiskGb ??
+      (spec.gpu ? 20 : 10);
+    const networkInterfaces = [
+      {
+        accessConfigs: [
+          {
+            name: "External NAT",
+            networkTier: "PREMIUM",
+          },
+        ],
+        stackType: "IPV4_ONLY",
+        subnetwork: `projects/${credentials.projectId}/regions/${spec.region}/subnetworks/default`,
+      },
+    ];
+    const guestAccelerators = spec.gpu
+      ? [
+          {
+            acceleratorCount: Math.max(1, spec.gpu.count ?? 1),
+            acceleratorType: `projects/${credentials.projectId}/zones/${zone}/acceleratorTypes/${spec.gpu.type}`,
+          },
+        ]
+      : [];
+    try {
+      const [response] = await client.insert({
+        project: credentials.projectId,
+        zone,
+        instanceResource: {
+          name,
+          machineType,
+          disks: [
+            {
+              autoDelete: true,
+              boot: true,
+              initializeParams: {
+                diskSizeGb: `${bootDiskGb}`,
+                diskType,
+                sourceImage,
+              },
+            },
+          ],
+          networkInterfaces,
+          guestAccelerators,
+          tags: spec.tags ? { items: spec.tags } : undefined,
+          scheduling: spotScheduling(),
+        },
+      });
+      await waitUntilOperationComplete({
+        response,
+        zone,
+        credentials,
+      });
+      const [deleteResponse] = await client.delete({
+        project: credentials.projectId,
+        zone,
+        instance: name,
+      });
+      await waitUntilOperationComplete({
+        response: deleteResponse,
+        zone,
+        credentials,
+      });
+      return true;
+    } catch (err) {
+      try {
+        const [deleteResponse] = await client.delete({
+          project: credentials.projectId,
+          zone,
+          instance: name,
+        });
+        await waitUntilOperationComplete({
+          response: deleteResponse,
+          zone,
+          credentials,
+        });
+      } catch (cleanupErr) {
+        if (!isNotFoundError(cleanupErr)) {
+          logger.warn("gcp.probeSpotAvailability cleanup failed", {
+            name,
+            zone,
+            cleanupErr: String(cleanupErr),
+          });
+        }
+      }
+      logger.warn("gcp.probeSpotAvailability failed", {
+        name,
+        zone,
+        err: String(err),
+      });
+      return false;
+    }
   }
 
   async hardRestartHost(runtime: HostRuntime, creds: any): Promise<void> {

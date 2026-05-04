@@ -25,6 +25,7 @@ export type CloudVmWorkRow = {
   action: string;
   payload: Record<string, any>;
   state: string;
+  not_before?: Date;
   attempt: number;
   locked_by?: string;
   locked_at?: Date;
@@ -32,6 +33,15 @@ export type CloudVmWorkRow = {
   created_at?: Date;
   updated_at?: Date;
 };
+
+function normalizeNotBefore(value?: Date | string): Date | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`invalid not_before '${value}'`);
+  }
+  return parsed;
+}
 
 export async function logCloudVmEvent(event: CloudVmLogEvent): Promise<void> {
   const id = randomUUID();
@@ -97,14 +107,16 @@ export async function enqueueCloudVmWork(row: {
   vm_id: string;
   action: string;
   payload?: Record<string, any>;
+  not_before?: Date | string;
 }): Promise<string> {
   const id = randomUUID();
+  const notBefore = normalizeNotBefore(row.not_before);
   await pool().query(
     `
-      INSERT INTO cloud_vm_work (id, vm_id, action, payload, state)
-      VALUES ($1,$2,$3,$4,'queued')
+      INSERT INTO cloud_vm_work (id, vm_id, action, payload, state, not_before)
+      VALUES ($1,$2,$3,$4,'queued',$5)
     `,
-    [id, row.vm_id, row.action, row.payload ?? {}],
+    [id, row.vm_id, row.action, row.payload ?? {}, notBefore],
   );
   return id;
 }
@@ -113,12 +125,14 @@ export async function enqueueCloudVmWorkOnce(row: {
   vm_id: string;
   action: string;
   payload?: Record<string, any>;
+  not_before?: Date | string;
 }): Promise<string | undefined> {
   const id = randomUUID();
+  const notBefore = normalizeNotBefore(row.not_before);
   const { rowCount } = await pool().query(
     `
-      INSERT INTO cloud_vm_work (id, vm_id, action, payload, state)
-      SELECT $1,$2,$3,$4,'queued'
+      INSERT INTO cloud_vm_work (id, vm_id, action, payload, state, not_before)
+      SELECT $1,$2,$3,$4,'queued',$5
       WHERE NOT EXISTS (
         SELECT 1
         FROM cloud_vm_work
@@ -127,8 +141,21 @@ export async function enqueueCloudVmWorkOnce(row: {
           AND state IN ('queued','in_progress')
       )
     `,
-    [id, row.vm_id, row.action, row.payload ?? {}],
+    [id, row.vm_id, row.action, row.payload ?? {}, notBefore],
   );
+  if (!rowCount && notBefore) {
+    await pool().query(
+      `
+        UPDATE cloud_vm_work
+        SET not_before = LEAST(COALESCE(not_before, $3), $3),
+            updated_at = NOW()
+        WHERE vm_id=$1
+          AND action=$2
+          AND state='queued'
+      `,
+      [row.vm_id, row.action, notBefore],
+    );
+  }
   return rowCount ? id : undefined;
 }
 
@@ -144,7 +171,8 @@ export async function claimCloudVmWork(opts: {
         SELECT *
         FROM cloud_vm_work
         WHERE state='queued'
-        ORDER BY created_at
+          AND (not_before IS NULL OR not_before <= NOW())
+        ORDER BY COALESCE(not_before, created_at), created_at
         LIMIT $1
         FOR UPDATE SKIP LOCKED
       `,

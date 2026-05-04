@@ -33,6 +33,36 @@ export type HostStatus =
 
 export type HostPricingModel = "on_demand" | "spot";
 export type HostInterruptionRestorePolicy = "none" | "immediate";
+export type HostSpotRecoveryPhase =
+  | "idle"
+  | "retrying_spot"
+  | "running_standard_fallback"
+  | "probing_spot"
+  | "returning_to_spot";
+
+export interface HostSpotRecoveryPolicy {
+  spot_restore_retry_window_minutes?: number;
+  spot_restore_backoff_seconds?: number;
+  standard_fallback_enabled?: boolean;
+  standard_fallback_min_minutes?: number;
+  spot_probe_interval_minutes?: number;
+  spot_return_requires_probe?: boolean;
+  max_restore_attempts_before_fallback?: number;
+  max_standard_runtime_minutes?: number;
+}
+
+export interface HostSpotRecoveryState {
+  phase: HostSpotRecoveryPhase;
+  outage_started_at?: string;
+  attempt?: number;
+  next_retry_at?: string;
+  fallback_started_at?: string;
+  last_probe_at?: string;
+  last_probe_result?: "success" | "failure";
+  last_probe_error?: string;
+  verification_started_at?: string;
+  verification_deadline_at?: string;
+}
 
 export const HOST_LRO_KINDS = [
   "host-start",
@@ -518,7 +548,12 @@ export interface Host {
   reason_unavailable?: string;
   starred?: boolean;
   pricing_model?: HostPricingModel;
+  desired_pricing_model?: HostPricingModel;
+  effective_pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
+  spot_recovery_policy?: HostSpotRecoveryPolicy;
+  spot_recovery_state?: HostSpotRecoveryState;
+  recovery_phase?: HostSpotRecoveryPhase;
   desired_state?: "running" | "stopped";
   last_action?: string;
   last_action_at?: string;

@@ -7,6 +7,7 @@ const diskGetMock = jest.fn();
 const startMock = jest.fn();
 const stopMock = jest.fn();
 const deleteMock = jest.fn();
+const setSchedulingMock = jest.fn();
 const waitMock = jest.fn();
 
 jest.mock("@google-cloud/compute", () => {
@@ -25,6 +26,7 @@ jest.mock("@google-cloud/compute", () => {
     start = startMock;
     stop = stopMock;
     delete = deleteMock;
+    setScheduling = setSchedulingMock;
     constructor(_opts?: any) {}
   }
   class ZoneOperationsClient {
@@ -54,6 +56,7 @@ describe("GcpProvider", () => {
     startMock.mockReset();
     stopMock.mockReset();
     deleteMock.mockReset();
+    setSchedulingMock.mockReset();
     waitMock.mockReset();
   });
 
@@ -274,6 +277,80 @@ describe("GcpProvider", () => {
       zone: "us-west1-b",
       instance: "ph-test",
     });
+  });
+
+  it("changes scheduling when switching pricing models", async () => {
+    setSchedulingMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-scheduling", status: "DONE" } },
+    ]);
+    waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
+
+    const provider = new GcpProvider();
+    await provider.setPricingModel?.(
+      {
+        provider: "gcp",
+        instance_id: "ph-test",
+        zone: "us-west1-a",
+        ssh_user: "ubuntu",
+        metadata: { gpu_count: 0 },
+      },
+      "on_demand",
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+    );
+
+    expect(setSchedulingMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: "proj-1",
+        zone: "us-west1-a",
+        instance: "ph-test",
+        schedulingResource: expect.objectContaining({
+          provisioningModel: "STANDARD",
+          automaticRestart: true,
+        }),
+      }),
+    );
+  });
+
+  it("probes same-shape spot availability with a temporary instance", async () => {
+    insertMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-probe-create", status: "DONE" } },
+    ]);
+    deleteMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-probe-delete", status: "DONE" } },
+    ]);
+    waitMock
+      .mockResolvedValueOnce([{ status: "DONE" }])
+      .mockResolvedValueOnce([{ status: "DONE" }]);
+
+    const provider = new GcpProvider();
+    const available = await provider.probeSpotAvailability?.(
+      buildSpec({
+        zone: "us-west1-a",
+        pricing_model: "spot",
+      }),
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+    );
+
+    expect(available).toBe(true);
+    expect(insertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        zone: "us-west1-a",
+        instanceResource: expect.objectContaining({
+          scheduling: expect.objectContaining({
+            provisioningModel: "SPOT",
+          }),
+        }),
+      }),
+    );
+    expect(deleteMock).toHaveBeenCalled();
   });
 
   it("throws when start operation completes with an error", async () => {
