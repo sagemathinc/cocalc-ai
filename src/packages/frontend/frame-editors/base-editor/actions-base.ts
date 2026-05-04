@@ -271,12 +271,27 @@ export class BaseEditorActions<
   private _suppress_remote_once: boolean = false;
   protected mergeCoordinator?: MergeCoordinator;
   protected syncAdapter?: SyncAdapter;
+  private readonly recoverAfterUnexpectedSyncdocClose = () => {
+    const projectActions = this._get_project_actions();
+    if (
+      this.isClosed() ||
+      projectActions == null ||
+      typeof projectActions.recoverOpenFileRuntimeAfterUnexpectedSyncdocClose !==
+        "function"
+    ) {
+      this.close();
+      return;
+    }
+    void projectActions.recoverOpenFileRuntimeAfterUnexpectedSyncdocClose(
+      this.path,
+    );
+  };
   private readonly handleSyncstringClosed = () => {
     this.syncAdapter?.dispose();
-    this.close();
+    this.recoverAfterUnexpectedSyncdocClose();
   };
   private readonly handleSyncdbClosed = () => {
-    this.close();
+    this.recoverAfterUnexpectedSyncdocClose();
   };
   private readonly handleSyncdocDisconnected = () => {
     if (this.tracksLiveSyncdocStatus()) {
