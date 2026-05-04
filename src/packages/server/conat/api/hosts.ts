@@ -3153,6 +3153,13 @@ export async function startHost({
   account_id?: string;
   id: string;
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge().hostConnection(remoteBay).startHost({
+      account_id,
+      id,
+    });
+  }
   const row = await loadHostForStartStop(id, account_id);
   return await createHostLro({
     kind: HOST_START_LRO_KIND,
@@ -3189,6 +3196,14 @@ export async function stopHost({
   id: string;
   skip_backups?: boolean;
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge().hostConnection(remoteBay).stopHost({
+      account_id,
+      id,
+      skip_backups,
+    });
+  }
   const row = await loadHostForStartStop(id, account_id);
   return await createHostLro({
     kind: HOST_STOP_LRO_KIND,
@@ -3225,6 +3240,14 @@ export async function restartHost({
   id: string;
   mode?: "reboot" | "hard";
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge().hostConnection(remoteBay).restartHost({
+      account_id,
+      id,
+      mode,
+    });
+  }
   const row = await loadHostForStartStop(id, account_id);
   return await createHostLro({
     kind: HOST_RESTART_LRO_KIND,
@@ -3270,6 +3293,17 @@ export async function drainHost({
   allow_offline?: boolean;
   parallel?: number;
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge().hostConnection(remoteBay).drainHost({
+      account_id,
+      id,
+      dest_host_id,
+      force,
+      allow_offline,
+      parallel,
+    });
+  }
   const owner = requireAccount(account_id);
   const row = await loadHostForDrainInternal({ id, owner });
   const destination = `${dest_host_id ?? ""}`.trim() || undefined;
@@ -3430,6 +3464,15 @@ export async function refreshHostCloudState({
   account_id?: string;
   id: string;
 }): Promise<HostCloudRefreshResult> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .refreshHostCloudState({
+        account_id,
+        id,
+      });
+  }
   const owner = requireAccount(account_id);
   if (!(await isAdmin(owner))) {
     throw new Error("not authorized");
@@ -4167,6 +4210,18 @@ export async function upgradeHostSoftware({
   base_url?: string;
   align_runtime_stack?: boolean;
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .upgradeHostSoftware({
+        account_id,
+        id,
+        targets,
+        base_url,
+        align_runtime_stack,
+      });
+  }
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -4190,6 +4245,15 @@ export async function reconcileHostSoftware({
   account_id?: string;
   id: string;
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .reconcileHostSoftware({
+        account_id,
+        id,
+      });
+  }
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -4368,6 +4432,17 @@ export async function reconcileHostRuntimeDeployments({
   components?: ManagedComponentKind[];
   reason?: string;
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .reconcileHostRuntimeDeployments({
+        account_id,
+        id,
+        components,
+        reason,
+      });
+  }
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -4561,6 +4636,20 @@ export async function rollbackHostRuntimeDeployments({
   last_known_good?: boolean;
   reason?: string;
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .rollbackHostRuntimeDeployments({
+        account_id,
+        id,
+        target_type,
+        target,
+        version,
+        last_known_good,
+        reason,
+      });
+  }
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
   const normalizedTarget =
@@ -4631,6 +4720,17 @@ export async function rolloutHostManagedComponents({
   components: ManagedComponentKind[];
   reason?: string;
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .rolloutHostManagedComponents({
+        account_id,
+        id,
+        components,
+        reason,
+      });
+  }
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
@@ -5038,6 +5138,14 @@ export async function deleteHost({
   id: string;
   skip_backups?: boolean;
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge().hostConnection(remoteBay).deleteHost({
+      account_id,
+      id,
+      skip_backups,
+    });
+  }
   const row = await loadOwnedHost(id, account_id);
   const kind =
     row.status === "deprovisioned"

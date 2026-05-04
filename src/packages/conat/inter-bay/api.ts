@@ -614,6 +614,17 @@ export type HostConnectionMethod =
   | "get-host-runtime-log"
   | "get-host-metrics-history"
   | "get-host-runtime-deployment-status"
+  | "start-host"
+  | "stop-host"
+  | "restart-host"
+  | "drain-host"
+  | "refresh-host-cloud-state"
+  | "upgrade-host-software"
+  | "reconcile-host-software"
+  | "reconcile-host-runtime-deployments"
+  | "rollback-host-runtime-deployments"
+  | "rollout-host-managed-components"
+  | "delete-host"
   | "list-host-rootfs-images"
   | "pull-host-rootfs-image"
   | "delete-host-rootfs-image"
@@ -756,6 +767,39 @@ export interface InterBayHostConnectionApi {
   getHostRuntimeDeploymentStatus: (
     opts: Parameters<Hosts["getHostRuntimeDeploymentStatus"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeDeploymentStatus"]>>>;
+  startHost: (
+    opts: Parameters<Hosts["startHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["startHost"]>>>;
+  stopHost: (
+    opts: Parameters<Hosts["stopHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["stopHost"]>>>;
+  restartHost: (
+    opts: Parameters<Hosts["restartHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["restartHost"]>>>;
+  drainHost: (
+    opts: Parameters<Hosts["drainHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["drainHost"]>>>;
+  refreshHostCloudState: (
+    opts: Parameters<Hosts["refreshHostCloudState"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["refreshHostCloudState"]>>>;
+  upgradeHostSoftware: (
+    opts: Parameters<Hosts["upgradeHostSoftware"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["upgradeHostSoftware"]>>>;
+  reconcileHostSoftware: (
+    opts: Parameters<Hosts["reconcileHostSoftware"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["reconcileHostSoftware"]>>>;
+  reconcileHostRuntimeDeployments: (
+    opts: Parameters<Hosts["reconcileHostRuntimeDeployments"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["reconcileHostRuntimeDeployments"]>>>;
+  rollbackHostRuntimeDeployments: (
+    opts: Parameters<Hosts["rollbackHostRuntimeDeployments"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["rollbackHostRuntimeDeployments"]>>>;
+  rolloutHostManagedComponents: (
+    opts: Parameters<Hosts["rolloutHostManagedComponents"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["rolloutHostManagedComponents"]>>>;
+  deleteHost: (
+    opts: Parameters<Hosts["deleteHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["deleteHost"]>>>;
   listHostRootfsImages: (
     opts: Parameters<Hosts["listHostRootfsImages"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["listHostRootfsImages"]>>>;
@@ -834,6 +878,26 @@ const HOST_CONNECTION_METHOD_SPECS = [
     name: "getHostRuntimeDeploymentStatus",
     method: "get-host-runtime-deployment-status",
   },
+  { name: "startHost", method: "start-host" },
+  { name: "stopHost", method: "stop-host" },
+  { name: "restartHost", method: "restart-host" },
+  { name: "drainHost", method: "drain-host" },
+  { name: "refreshHostCloudState", method: "refresh-host-cloud-state" },
+  { name: "upgradeHostSoftware", method: "upgrade-host-software" },
+  { name: "reconcileHostSoftware", method: "reconcile-host-software" },
+  {
+    name: "reconcileHostRuntimeDeployments",
+    method: "reconcile-host-runtime-deployments",
+  },
+  {
+    name: "rollbackHostRuntimeDeployments",
+    method: "rollback-host-runtime-deployments",
+  },
+  {
+    name: "rolloutHostManagedComponents",
+    method: "rollout-host-managed-components",
+  },
+  { name: "deleteHost", method: "delete-host" },
   { name: "listHostRootfsImages", method: "list-host-rootfs-images" },
   { name: "pullHostRootfsImage", method: "pull-host-rootfs-image" },
   { name: "deleteHostRootfsImage", method: "delete-host-rootfs-image" },

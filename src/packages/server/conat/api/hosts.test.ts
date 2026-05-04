@@ -23,6 +23,17 @@ let hostConnectionGetHostLogMock: jest.Mock;
 let hostConnectionGetHostRuntimeLogMock: jest.Mock;
 let hostConnectionGetHostMetricsHistoryMock: jest.Mock;
 let hostConnectionGetHostRuntimeDeploymentStatusMock: jest.Mock;
+let hostConnectionStartHostMock: jest.Mock;
+let hostConnectionStopHostMock: jest.Mock;
+let hostConnectionRestartHostMock: jest.Mock;
+let hostConnectionDrainHostMock: jest.Mock;
+let hostConnectionRefreshHostCloudStateMock: jest.Mock;
+let hostConnectionUpgradeHostSoftwareMock: jest.Mock;
+let hostConnectionReconcileHostSoftwareMock: jest.Mock;
+let hostConnectionReconcileHostRuntimeDeploymentsMock: jest.Mock;
+let hostConnectionRollbackHostRuntimeDeploymentsMock: jest.Mock;
+let hostConnectionRolloutHostManagedComponentsMock: jest.Mock;
+let hostConnectionDeleteHostMock: jest.Mock;
 let hostConnectionListHostRootfsImagesMock: jest.Mock;
 let hostConnectionPullHostRootfsImageMock: jest.Mock;
 let hostConnectionDeleteHostRootfsImageMock: jest.Mock;
@@ -257,6 +268,23 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         hostConnectionGetHostMetricsHistoryMock(...args),
       getHostRuntimeDeploymentStatus: (...args: any[]) =>
         hostConnectionGetHostRuntimeDeploymentStatusMock(...args),
+      startHost: (...args: any[]) => hostConnectionStartHostMock(...args),
+      stopHost: (...args: any[]) => hostConnectionStopHostMock(...args),
+      restartHost: (...args: any[]) => hostConnectionRestartHostMock(...args),
+      drainHost: (...args: any[]) => hostConnectionDrainHostMock(...args),
+      refreshHostCloudState: (...args: any[]) =>
+        hostConnectionRefreshHostCloudStateMock(...args),
+      upgradeHostSoftware: (...args: any[]) =>
+        hostConnectionUpgradeHostSoftwareMock(...args),
+      reconcileHostSoftware: (...args: any[]) =>
+        hostConnectionReconcileHostSoftwareMock(...args),
+      reconcileHostRuntimeDeployments: (...args: any[]) =>
+        hostConnectionReconcileHostRuntimeDeploymentsMock(...args),
+      rollbackHostRuntimeDeployments: (...args: any[]) =>
+        hostConnectionRollbackHostRuntimeDeploymentsMock(...args),
+      rolloutHostManagedComponents: (...args: any[]) =>
+        hostConnectionRolloutHostManagedComponentsMock(...args),
+      deleteHost: (...args: any[]) => hostConnectionDeleteHostMock(...args),
       listHostRootfsImages: (...args: any[]) =>
         hostConnectionListHostRootfsImagesMock(...args),
       pullHostRootfsImage: (...args: any[]) =>
@@ -372,6 +400,93 @@ beforeEach(() => {
     observed_components: [],
     observed_artifacts: [],
     rollback_targets: [],
+  }));
+  hostConnectionStartHostMock = jest.fn(async () => ({
+    op_id: "remote-start-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-start-op",
+    kind: "host-start",
+  }));
+  hostConnectionStopHostMock = jest.fn(async () => ({
+    op_id: "remote-stop-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-stop-op",
+    kind: "host-stop",
+  }));
+  hostConnectionRestartHostMock = jest.fn(async () => ({
+    op_id: "remote-restart-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-restart-op",
+    kind: "host-restart",
+  }));
+  hostConnectionDrainHostMock = jest.fn(async () => ({
+    op_id: "remote-drain-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-drain-op",
+    kind: "host-drain",
+  }));
+  hostConnectionRefreshHostCloudStateMock = jest.fn(async () => ({
+    host_id: HOST_ID,
+    provider: "gcp",
+    scope: "provider",
+    refreshed_at: "2026-01-01T00:00:00.000Z",
+    ran: true,
+  }));
+  hostConnectionUpgradeHostSoftwareMock = jest.fn(async () => ({
+    op_id: "remote-upgrade-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-upgrade-op",
+    kind: "host-upgrade-software",
+  }));
+  hostConnectionReconcileHostSoftwareMock = jest.fn(async () => ({
+    op_id: "remote-reconcile-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-reconcile-op",
+    kind: "host-reconcile-software",
+  }));
+  hostConnectionReconcileHostRuntimeDeploymentsMock = jest.fn(async () => ({
+    op_id: "remote-runtime-reconcile-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-runtime-reconcile-op",
+    kind: "host-reconcile-runtime-deployments",
+  }));
+  hostConnectionRollbackHostRuntimeDeploymentsMock = jest.fn(async () => ({
+    op_id: "remote-runtime-rollback-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-runtime-rollback-op",
+    kind: "host-rollback-runtime-deployments",
+  }));
+  hostConnectionRolloutHostManagedComponentsMock = jest.fn(async () => ({
+    op_id: "remote-rollout-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-rollout-op",
+    kind: "host-rollout-managed-components",
+  }));
+  hostConnectionDeleteHostMock = jest.fn(async () => ({
+    op_id: "remote-delete-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-delete-op",
+    kind: "host-deprovision",
   }));
   hostConnectionListHostRootfsImagesMock = jest.fn(async () => []);
   hostConnectionPullHostRootfsImageMock = jest.fn(async ({ image }: any) => ({
@@ -1652,6 +1767,180 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     expect(result.reconcile_result).toMatchObject({
       host_id: HOST_ID,
     });
+  });
+});
+
+describe("hosts.authoritative remote host actions", () => {
+  beforeEach(() => {
+    process.env.LOGS = os.tmpdir();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
+    isAdminMock = jest.fn(async () => true);
+    isBannedMock = jest.fn(async () => false);
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-1",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async () => {
+      throw new Error(
+        "should not query local host rows for authoritative remote host actions",
+      );
+    });
+  });
+
+  it("routes lro-backed host actions to the authoritative remote bay", async () => {
+    const {
+      startHost,
+      stopHost,
+      restartHost,
+      drainHost,
+      upgradeHostSoftware,
+      reconcileHostSoftware,
+      reconcileHostRuntimeDeployments,
+      rollbackHostRuntimeDeployments,
+      rolloutHostManagedComponents,
+      deleteHost,
+    } = await import("./hosts");
+
+    await startHost({ account_id: ACCOUNT_ID, id: HOST_ID });
+    await stopHost({ account_id: ACCOUNT_ID, id: HOST_ID, skip_backups: true });
+    await restartHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      mode: "hard",
+    });
+    await drainHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      dest_host_id: "dest-host",
+      force: true,
+      allow_offline: true,
+      parallel: 3,
+    });
+    await upgradeHostSoftware({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      targets: [{ artifact: "project-host", version: "ph-remote" }],
+      base_url: "https://artifacts.example.test",
+      align_runtime_stack: true,
+    });
+    await reconcileHostSoftware({ account_id: ACCOUNT_ID, id: HOST_ID });
+    await reconcileHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      components: ["project-host"],
+      reason: "test",
+    });
+    await rollbackHostRuntimeDeployments({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      target_type: "artifact",
+      target: "project-host",
+      version: "ph-prev",
+      reason: "rollback",
+    });
+    await rolloutHostManagedComponents({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      components: ["project-host"],
+      reason: "test rollout",
+    });
+    await deleteHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      skip_backups: true,
+    });
+
+    expect(hostConnectionStartHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(hostConnectionStopHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      skip_backups: true,
+    });
+    expect(hostConnectionRestartHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      mode: "hard",
+    });
+    expect(hostConnectionDrainHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      dest_host_id: "dest-host",
+      force: true,
+      allow_offline: true,
+      parallel: 3,
+    });
+    expect(hostConnectionUpgradeHostSoftwareMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      targets: [{ artifact: "project-host", version: "ph-remote" }],
+      base_url: "https://artifacts.example.test",
+      align_runtime_stack: true,
+    });
+    expect(hostConnectionReconcileHostSoftwareMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(
+      hostConnectionReconcileHostRuntimeDeploymentsMock,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      components: ["project-host"],
+      reason: "test",
+    });
+    expect(
+      hostConnectionRollbackHostRuntimeDeploymentsMock,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      target_type: "artifact",
+      target: "project-host",
+      version: "ph-prev",
+      reason: "rollback",
+      last_known_good: undefined,
+    });
+    expect(hostConnectionRolloutHostManagedComponentsMock).toHaveBeenCalledWith(
+      {
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        components: ["project-host"],
+        reason: "test rollout",
+      },
+    );
+    expect(hostConnectionDeleteHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      skip_backups: true,
+    });
+  });
+
+  it("routes cloud refresh to the authoritative remote bay", async () => {
+    const { refreshHostCloudState } = await import("./hosts");
+    const result = await refreshHostCloudState({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+
+    expect(hostConnectionRefreshHostCloudStateMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        host_id: HOST_ID,
+        provider: "gcp",
+      }),
+    );
+  });
+
+  afterEach(() => {
+    delete process.env.LOGS;
+    delete process.env.COCALC_BAY_ID;
+    delete process.env.COCALC_CLUSTER_BAY_IDS;
   });
 });
 
@@ -3459,6 +3748,10 @@ describe("hosts.listHosts bootstrap normalization", () => {
 describe("hosts.refreshHostCloudState", () => {
   beforeEach(() => {
     isAdminMock = jest.fn(async () => true);
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.includes("SELECT id, deleted, metadata")) {
         return {
