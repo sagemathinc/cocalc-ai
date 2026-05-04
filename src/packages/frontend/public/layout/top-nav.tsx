@@ -5,11 +5,10 @@
 
 import { useState } from "react";
 
+import { CloseOutlined, MenuOutlined } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 
 import { Button, Flex, Grid, Menu } from "antd";
-
-import { Icon } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   getLogoSquare,
@@ -136,7 +135,7 @@ export default function PublicTopNav({
               }
               aria-expanded={mobileMenuOpen}
               aria-haspopup="menu"
-              icon={<Icon name={mobileMenuOpen ? "remove" : "bars"} />}
+              icon={mobileMenuOpen ? <CloseOutlined /> : <MenuOutlined />}
               onClick={() => setMobileMenuOpen((open) => !open)}
             />
           </Flex>
