@@ -544,6 +544,11 @@ export class ChatActions extends Actions<ChatState> {
     return state == null || state === "ready";
   };
 
+  isClosed = (): boolean => {
+    if (this.syncdb == null) return true;
+    return this.syncdb.get_state?.() === "closed";
+  };
+
   reserveChatSendIdentity = ({
     reply_thread_id,
   }: {
