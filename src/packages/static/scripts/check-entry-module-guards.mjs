@@ -38,6 +38,8 @@ const publicViewerForbidden = [
   "@uiw/react-textarea-code-editor/",
 ];
 
+const publicSiteForbidden = ["frontend/components/iconfont.cn/"];
+
 const publicSlateForbidden = [
   "frontend/editors/slate/static-markdown.tsx",
   "frontend/editors/slate/elements/init-ssr.ts",
@@ -58,7 +60,7 @@ const rules = [
     forbidden: loadAndAppForbidden,
   },
   {
-    label: "public viewer and public content chunks",
+    label: "public viewer and public site chunks",
     chunks: [
       "load",
       "public-viewer",
@@ -67,9 +69,14 @@ const rules = [
       "public-viewer-board",
       "public-viewer-slides",
       "public-viewer-chat",
-      "public-content",
+      "public",
     ],
     forbidden: publicViewerForbidden,
+  },
+  {
+    label: "public site chunk",
+    chunks: ["load", "public"],
+    forbidden: publicSiteForbidden,
   },
   {
     label: "viewer-only Slate chunks",
@@ -80,7 +87,7 @@ const rules = [
       "public-viewer-board",
       "public-viewer-slides",
       "public-viewer-chat",
-      "public-content",
+      "public",
     ],
     forbidden: publicSlateForbidden,
   },
