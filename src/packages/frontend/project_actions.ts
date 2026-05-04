@@ -2101,6 +2101,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       removed_sync_paths.add(sync_path);
       project_file.remove(sync_path, this.redux, this.project_id);
+      removeChatRuntime(
+        misc.meta_file(sync_path, "chat"),
+        this.redux,
+        this.project_id,
+      );
     });
 
     this.open_files?.close_all();
@@ -2123,6 +2128,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.open_files?.delete(path);
     if (!this.has_display_path_for_sync_path(sync_path, path)) {
       project_file.remove(sync_path, this.redux, this.project_id);
+      removeChatRuntime(
+        misc.meta_file(sync_path, "chat"),
+        this.redux,
+        this.project_id,
+      );
     }
     this.save_session();
   };
