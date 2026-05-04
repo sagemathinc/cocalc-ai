@@ -91,6 +91,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
+import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 import { getLocalHostId } from "./sqlite/hosts";
 import { setContainerFileIO } from "@cocalc/lite/hub/acp/executor/container";
 import {
@@ -3584,6 +3585,14 @@ export async function initFileServer({
       authorizePublicKey,
       checkManagedSshAllowed,
       recordManagedSshEgress,
+      noteManagedSshBoundaryBytes: ({ project_id, bytes }) => {
+        if (!(bytes > 0)) return;
+        managedProjectEgressResidualTracker.noteBoundaryClassifiedBytes({
+          project_id,
+          category: "ssh",
+          bytes,
+        });
+      },
       hostKeyPath,
     });
   }

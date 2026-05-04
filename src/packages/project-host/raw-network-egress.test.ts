@@ -18,6 +18,7 @@ import {
   collectRunningProjectNetworkSamples,
   startManagedRawNetworkEgressLoop,
 } from "./raw-network-egress";
+import { ManagedProjectEgressResidualTracker } from "./managed-egress-residual";
 
 describe("project-host raw network egress", () => {
   const originalMode = process.env.COCALC_PROJECT_HOST_MANAGED_EGRESS_MODE;
@@ -255,6 +256,10 @@ ens4\t0100B40A\t00000000\t0005
       allowed: false,
       blocked_by: "5h",
     });
+    const residualTracker = new ManagedProjectEgressResidualTracker({
+      bucketMs: 10,
+      graceMs: 10,
+    });
     const sample = jest
       .fn()
       .mockResolvedValueOnce([
@@ -286,8 +291,9 @@ ens4\t0100B40A\t00000000\t0005
       runnerApi: { stop: stopMock } as any,
       intervalMs: 10,
       sample: sample as any,
+      residualTracker,
     });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 90));
     stop();
 
     expect(recordManagedProjectEgressMock).toHaveBeenCalledWith(

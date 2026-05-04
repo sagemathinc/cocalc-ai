@@ -33,6 +33,7 @@ describe("managed ssh edge proxy", () => {
 
     const identities = new Map<string, any>();
     const record = jest.fn().mockResolvedValue(undefined);
+    const noteUpstreamBytes = jest.fn();
     const checkAllowed = jest.fn().mockResolvedValue({ allowed: true });
     const clearIdentity = jest.fn((remote_addr: string) => {
       identities.delete(remote_addr);
@@ -47,6 +48,7 @@ describe("managed ssh edge proxy", () => {
       clearIdentity,
       checkAllowed,
       record,
+      noteUpstreamBytes,
     });
     const proxyPort = (proxy.address() as AddressInfo).port;
     const client = connect({ host: "127.0.0.1", port: proxyPort });
@@ -75,6 +77,12 @@ describe("managed ssh edge proxy", () => {
       account_id: "22222222-2222-4222-8222-222222222222",
       bytes: payload.length,
       partial: true,
+    });
+    expect(noteUpstreamBytes).toHaveBeenCalledWith({
+      remote_addr,
+      project_id: "11111111-1111-4111-8111-111111111111",
+      account_id: "22222222-2222-4222-8222-222222222222",
+      bytes: payload.length,
     });
     expect(checkAllowed).toHaveBeenCalled();
     expect(clearIdentity).toHaveBeenCalledWith(remote_addr);
