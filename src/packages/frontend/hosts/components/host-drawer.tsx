@@ -3068,21 +3068,19 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                             <Typography.Text type="secondary">
                               {!modeDetails.summary ? (
                                 <>
-                                  desired artifact{" "}
-                                  <code>{desiredVersion ?? "n/a"}</code> |
-                                  current artifact{" "}
+                                  desired <code>{desiredVersion ?? "n/a"}</code>{" "}
+                                  | current{" "}
                                   <code>{currentArtifactVersion ?? "n/a"}</code>{" "}
-                                  | latest artifact{" "}
+                                  | latest{" "}
                                   <code>
                                     {configured?.version ?? "unknown"}
                                   </code>
                                 </>
                               ) : (
                                 <>
-                                  desired artifact{" "}
-                                  <code>{desiredVersion ?? "n/a"}</code> |
-                                  current <code>{modeDetails.summary}</code> |
-                                  latest artifact{" "}
+                                  desired <code>{desiredVersion ?? "n/a"}</code>{" "}
+                                  | current <code>{modeDetails.summary}</code> |
+                                  latest{" "}
                                   <code>
                                     {configured?.version ?? "unknown"}
                                   </code>
