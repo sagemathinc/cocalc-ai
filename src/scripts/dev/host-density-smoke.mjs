@@ -951,14 +951,19 @@ async function createProject({
 }
 
 async function listHostProjects({ hostIdentifier, globalArgs }) {
-  const result = await runCocalcJson([
-    ...globalArgs,
-    "host",
-    "projects",
-    hostIdentifier,
-    "--all",
-  ]);
-  return Array.isArray(result?.data?.rows) ? result.data.rows : [];
+  const rows = [];
+  let cursor;
+  do {
+    const args = [...globalArgs, "host", "projects", hostIdentifier, "--all"];
+    if (cursor) {
+      args.push("--cursor", cursor);
+    }
+    const result = await runCocalcJson(args);
+    const pageRows = Array.isArray(result?.data?.rows) ? result.data.rows : [];
+    rows.push(...pageRows);
+    cursor = `${result?.data?.next_cursor ?? ""}`.trim() || undefined;
+  } while (cursor);
+  return rows;
 }
 
 async function listExistingCleanupProjects({
