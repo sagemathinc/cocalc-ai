@@ -18,8 +18,8 @@ import type { PublicPoliciesRoute } from "./policies/routes";
 import { getPoliciesRouteFromPath } from "./policies/routes";
 import type { PublicProductsRoute } from "./products/routes";
 import { getProductsRouteFromPath } from "./products/routes";
-import type { PublicSupportRoute } from "./support/app";
-import { getSupportViewFromPath } from "./support/app";
+import type { PublicSupportRoute } from "./support/routes";
+import { getSupportViewFromPath } from "./support/routes";
 
 export type PublicRoute =
   | { section: "home" }

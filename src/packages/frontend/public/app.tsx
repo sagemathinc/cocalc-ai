@@ -9,13 +9,13 @@ import { Button, Typography } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getSiteName, type PublicConfig, PublicSectionShell } from "./common";
 import type { PublicRoute } from "./routes";
-import PublicHomeApp from "./home/app";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { publicPath } from "./routes";
 
 const PublicAboutApp = lazy(() => import("./about/app"));
 const PublicAuthApp = lazy(() => import("./auth/app"));
 const PublicFeaturesApp = lazy(() => import("./features/app"));
+const PublicHomeApp = lazy(() => import("./home/app"));
 const PublicLangApp = lazy(() => import("./lang/app"));
 const PublicNewsApp = lazy(() => import("./news/app"));
 const PublicPoliciesApp = lazy(() => import("./policies/app"));

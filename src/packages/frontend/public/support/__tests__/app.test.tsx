@@ -2,7 +2,8 @@
 
 import { render, screen } from "@testing-library/react";
 
-import PublicSupportApp, { getSupportViewFromPath } from "../app";
+import PublicSupportApp from "../app";
+import { getSupportViewFromPath } from "../routes";
 
 describe("getSupportViewFromPath", () => {
   it("supports support routes under a base path", () => {

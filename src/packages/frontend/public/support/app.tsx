@@ -17,6 +17,7 @@ import {
   PublicPage,
 } from "@cocalc/frontend/public/layout/shell";
 import { navigatePublic } from "../navigation";
+import type { PublicSupportRoute, SupportView } from "./routes";
 import { COLORS, HELP_EMAIL, SITE_NAME } from "@cocalc/util/theme";
 import { formatDateTime } from "../news/utils";
 
@@ -25,11 +26,6 @@ const { Paragraph } = Typography;
 const CommunityView = lazy(() => import("./community-view"));
 const SupportNew = lazy(() => import("./new-view"));
 const SupportTickets = lazy(() => import("./tickets-view"));
-
-export type SupportView = "index" | "new" | "tickets" | "community" | "status";
-export interface PublicSupportRoute {
-  view: SupportView;
-}
 
 interface SupportConfig {
   help_email?: string;
@@ -66,22 +62,6 @@ function supportPath(view: SupportView): string {
     default:
       return `${base}/support`;
   }
-}
-
-export function getSupportViewFromPath(pathname: string): SupportView {
-  if (pathname.includes("/support/status")) {
-    return "status";
-  }
-  if (pathname.includes("/support/community")) {
-    return "community";
-  }
-  if (pathname.includes("/support/new")) {
-    return "new";
-  }
-  if (pathname.includes("/support/tickets")) {
-    return "tickets";
-  }
-  return "index";
 }
 
 function titleForView(view: SupportView, siteName: string): string {
