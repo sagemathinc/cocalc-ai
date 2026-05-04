@@ -3381,6 +3381,15 @@ export async function forceDeprovisionHost({
   account_id?: string;
   id: string;
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .forceDeprovisionHost({
+        account_id,
+        id,
+      });
+  }
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
   if (machineCloud !== "self-host") {
@@ -3532,6 +3541,15 @@ export async function removeSelfHostConnector({
   account_id?: string;
   id: string;
 }): Promise<HostLroResponse> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .removeSelfHostConnector({
+        account_id,
+        id,
+      });
+  }
   const row = await loadOwnedHost(id, account_id);
   const machineCloud = normalizeProviderId(row.metadata?.machine?.cloud);
   if (machineCloud !== "self-host") {

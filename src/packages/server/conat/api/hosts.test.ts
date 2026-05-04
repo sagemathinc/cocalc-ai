@@ -34,6 +34,8 @@ let hostConnectionReconcileHostRuntimeDeploymentsMock: jest.Mock;
 let hostConnectionRollbackHostRuntimeDeploymentsMock: jest.Mock;
 let hostConnectionRolloutHostManagedComponentsMock: jest.Mock;
 let hostConnectionDeleteHostMock: jest.Mock;
+let hostConnectionForceDeprovisionHostMock: jest.Mock;
+let hostConnectionRemoveSelfHostConnectorMock: jest.Mock;
 let hostConnectionListHostRootfsImagesMock: jest.Mock;
 let hostConnectionPullHostRootfsImageMock: jest.Mock;
 let hostConnectionDeleteHostRootfsImageMock: jest.Mock;
@@ -285,6 +287,10 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
       rolloutHostManagedComponents: (...args: any[]) =>
         hostConnectionRolloutHostManagedComponentsMock(...args),
       deleteHost: (...args: any[]) => hostConnectionDeleteHostMock(...args),
+      forceDeprovisionHost: (...args: any[]) =>
+        hostConnectionForceDeprovisionHostMock(...args),
+      removeSelfHostConnector: (...args: any[]) =>
+        hostConnectionRemoveSelfHostConnectorMock(...args),
       listHostRootfsImages: (...args: any[]) =>
         hostConnectionListHostRootfsImagesMock(...args),
       pullHostRootfsImage: (...args: any[]) =>
@@ -487,6 +493,22 @@ beforeEach(() => {
     service: "persist",
     stream_name: "lro:remote-delete-op",
     kind: "host-deprovision",
+  }));
+  hostConnectionForceDeprovisionHostMock = jest.fn(async () => ({
+    op_id: "remote-force-deprovision-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-force-deprovision-op",
+    kind: "host-force-deprovision",
+  }));
+  hostConnectionRemoveSelfHostConnectorMock = jest.fn(async () => ({
+    op_id: "remote-remove-connector-op",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    service: "persist",
+    stream_name: "lro:remote-remove-connector-op",
+    kind: "host-remove-connector",
   }));
   hostConnectionListHostRootfsImagesMock = jest.fn(async () => []);
   hostConnectionPullHostRootfsImageMock = jest.fn(async ({ image }: any) => ({
@@ -1800,6 +1822,8 @@ describe("hosts.authoritative remote host actions", () => {
       rollbackHostRuntimeDeployments,
       rolloutHostManagedComponents,
       deleteHost,
+      forceDeprovisionHost,
+      removeSelfHostConnector,
     } = await import("./hosts");
 
     await startHost({ account_id: ACCOUNT_ID, id: HOST_ID });
@@ -1849,6 +1873,14 @@ describe("hosts.authoritative remote host actions", () => {
       account_id: ACCOUNT_ID,
       id: HOST_ID,
       skip_backups: true,
+    });
+    await forceDeprovisionHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    await removeSelfHostConnector({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
     });
 
     expect(hostConnectionStartHostMock).toHaveBeenCalledWith({
@@ -1915,6 +1947,14 @@ describe("hosts.authoritative remote host actions", () => {
       account_id: ACCOUNT_ID,
       id: HOST_ID,
       skip_backups: true,
+    });
+    expect(hostConnectionForceDeprovisionHostMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(hostConnectionRemoveSelfHostConnectorMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
     });
   });
 

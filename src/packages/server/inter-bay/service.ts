@@ -114,6 +114,7 @@ import {
   deleteHost,
   deleteHostRootfsImage,
   drainHost,
+  forceDeprovisionHost,
   gcDeletedHostRootfsImages,
   getBackupConfigLocal,
   getHostLog,
@@ -126,6 +127,7 @@ import {
   reconcileHostRuntimeDeployments,
   reconcileHostSoftware,
   refreshHostCloudState,
+  removeSelfHostConnector,
   restartHost,
   rollbackHostRuntimeDeployments,
   rolloutHostManagedComponents,
@@ -728,6 +730,16 @@ async function startHostConnectionService(): Promise<void> {
         account_id,
         id,
         skip_backups,
+      }),
+    forceDeprovisionHost: async ({ account_id, id }) =>
+      await forceDeprovisionHost({
+        account_id,
+        id,
+      }),
+    removeSelfHostConnector: async ({ account_id, id }) =>
+      await removeSelfHostConnector({
+        account_id,
+        id,
       }),
     listHostRootfsImages: async ({ account_id, id }) =>
       await listHostRootfsImages({

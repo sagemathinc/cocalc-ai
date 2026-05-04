@@ -625,6 +625,8 @@ export type HostConnectionMethod =
   | "rollback-host-runtime-deployments"
   | "rollout-host-managed-components"
   | "delete-host"
+  | "force-deprovision-host"
+  | "remove-self-host-connector"
   | "list-host-rootfs-images"
   | "pull-host-rootfs-image"
   | "delete-host-rootfs-image"
@@ -800,6 +802,12 @@ export interface InterBayHostConnectionApi {
   deleteHost: (
     opts: Parameters<Hosts["deleteHost"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["deleteHost"]>>>;
+  forceDeprovisionHost: (
+    opts: Parameters<Hosts["forceDeprovisionHost"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["forceDeprovisionHost"]>>>;
+  removeSelfHostConnector: (
+    opts: Parameters<Hosts["removeSelfHostConnector"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["removeSelfHostConnector"]>>>;
   listHostRootfsImages: (
     opts: Parameters<Hosts["listHostRootfsImages"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["listHostRootfsImages"]>>>;
@@ -898,6 +906,8 @@ const HOST_CONNECTION_METHOD_SPECS = [
     method: "rollout-host-managed-components",
   },
   { name: "deleteHost", method: "delete-host" },
+  { name: "forceDeprovisionHost", method: "force-deprovision-host" },
+  { name: "removeSelfHostConnector", method: "remove-self-host-connector" },
   { name: "listHostRootfsImages", method: "list-host-rootfs-images" },
   { name: "pullHostRootfsImage", method: "pull-host-rootfs-image" },
   { name: "deleteHostRootfsImage", method: "delete-host-rootfs-image" },
