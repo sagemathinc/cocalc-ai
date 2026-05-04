@@ -15,10 +15,12 @@ import type {
   HostCatalog,
   HostInterruptionRestorePolicy,
   HostPricingModel,
+  HostSpotRecoveryPolicy,
 } from "@cocalc/conat/hub/api/hosts";
 import type { HostProvider } from "../types";
 import { getDiskTypeOptions } from "../constants";
 import { HostCreateForm } from "./host-create-form";
+import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
 import { useHostForm } from "../hooks/use-host-form";
 import { useHostFormValues } from "../hooks/use-host-form-values";
 import {
@@ -29,15 +31,13 @@ import {
   isNebiusSpotSupported,
 } from "../providers/registry";
 import type { HostFieldId, ProviderSelection } from "../providers/registry";
+import {
+  activeSpotRecoveryPolicy,
+  defaultRestorePolicy,
+} from "../utils/spot-recovery-policy";
 import { SshTargetLabel } from "./ssh-target-help";
 
 const NEBIUS_IO_M3_GB = 93;
-
-function defaultRestorePolicy(
-  pricingModel: "on_demand" | "spot" | undefined,
-): "none" | "immediate" {
-  return pricingModel === "spot" ? "immediate" : "none";
-}
 
 type HostEditModalProps = {
   open: boolean;
@@ -68,6 +68,7 @@ type HostEditModalProps = {
       auto_grow_min_grow_interval_minutes?: number;
       pricing_model?: HostPricingModel;
       interruption_restore_policy?: HostInterruptionRestorePolicy;
+      spot_recovery_policy?: HostSpotRecoveryPolicy;
     },
   ) => Promise<void> | void;
   onProviderChange?: (provider: HostProvider) => void;
@@ -378,6 +379,13 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       interruption_restore_policy:
         host.interruption_restore_policy ??
         defaultRestorePolicy(host.pricing_model),
+      spot_recovery_policy: activeSpotRecoveryPolicy({
+        pricingModel: host.pricing_model ?? "on_demand",
+        interruptionRestorePolicy:
+          host.interruption_restore_policy ??
+          defaultRestorePolicy(host.pricing_model),
+        spotRecoveryPolicy: host.spot_recovery_policy,
+      }),
       self_host_ssh_target: host.machine?.metadata?.self_host_ssh_target,
       auto_grow_enabled: currentAutoGrow.enabled,
       auto_grow_max_disk_gb:
@@ -610,6 +618,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                     ]}
                   />
                 </Form.Item>
+                <HostSpotRecoveryFields visible={showSpotFields} />
               </>
             )}
             {canEditMachine &&

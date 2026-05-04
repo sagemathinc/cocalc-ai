@@ -3,6 +3,7 @@ import { React } from "@cocalc/frontend/app-framework";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { getDiskTypeOptions } from "../constants";
 import type { HostFieldId } from "../providers/registry";
+import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
 
 type HostCreateAdvancedFieldsProps = {
   provider: HostCreateViewModel["provider"];
@@ -108,6 +109,7 @@ export const HostCreateAdvancedFields: React.FC<
               />
             </Form.Item>
           </Col>
+          <HostSpotRecoveryFields visible={showSpotFields} />
         </>
       )}
       {schema.advanced.map(renderField)}

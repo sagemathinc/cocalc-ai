@@ -39,6 +39,9 @@ describe("buildCreateHostPayload", () => {
         size: "n2-standard-4",
         pricing_model: "spot",
         interruption_restore_policy: "none",
+        spot_recovery_policy: {
+          spot_restore_retry_window_minutes: 5,
+        },
       },
       {
         fieldOptions: {
@@ -50,6 +53,35 @@ describe("buildCreateHostPayload", () => {
 
     expect(payload.pricing_model).toBe("spot");
     expect(payload.interruption_restore_policy).toBe("none");
+    expect(payload.spot_recovery_policy).toBeUndefined();
+  });
+
+  it("includes the spot recovery policy for spot auto-restore hosts", () => {
+    const payload = buildCreateHostPayload(
+      {
+        provider: "gcp",
+        name: "Spot Host",
+        region: "us-west1",
+        size: "n2-standard-4",
+        pricing_model: "spot",
+        interruption_restore_policy: "immediate",
+        spot_recovery_policy: {
+          spot_restore_retry_window_minutes: 5,
+          standard_fallback_enabled: false,
+        },
+      },
+      {
+        fieldOptions: {
+          region: [{ value: "us-west1", label: "US West 1" }],
+          size: [{ value: "n2-standard-4", label: "n2-standard-4" }],
+        },
+      },
+    );
+
+    expect(payload.spot_recovery_policy).toMatchObject({
+      spot_restore_retry_window_minutes: 5,
+      standard_fallback_enabled: false,
+    });
   });
 });
 

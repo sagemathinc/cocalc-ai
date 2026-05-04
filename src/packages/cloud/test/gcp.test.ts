@@ -8,6 +8,7 @@ const startMock = jest.fn();
 const stopMock = jest.fn();
 const deleteMock = jest.fn();
 const setSchedulingMock = jest.fn();
+const authRequestMock = jest.fn();
 const waitMock = jest.fn();
 
 jest.mock("@google-cloud/compute", () => {
@@ -27,6 +28,11 @@ jest.mock("@google-cloud/compute", () => {
     stop = stopMock;
     delete = deleteMock;
     setScheduling = setSchedulingMock;
+    auth = {
+      getClient: async () => ({
+        request: authRequestMock,
+      }),
+    };
     constructor(_opts?: any) {}
   }
   class ZoneOperationsClient {
@@ -57,6 +63,7 @@ describe("GcpProvider", () => {
     stopMock.mockReset();
     deleteMock.mockReset();
     setSchedulingMock.mockReset();
+    authRequestMock.mockReset();
     waitMock.mockReset();
   });
 
@@ -280,9 +287,9 @@ describe("GcpProvider", () => {
   });
 
   it("changes scheduling when switching pricing models", async () => {
-    setSchedulingMock.mockResolvedValueOnce([
-      { latestResponse: { name: "op-scheduling", status: "DONE" } },
-    ]);
+    authRequestMock.mockResolvedValueOnce({
+      data: { name: "op-scheduling", status: "DONE" },
+    });
     waitMock.mockResolvedValueOnce([{ status: "DONE" }]);
 
     const provider = new GcpProvider();
@@ -302,17 +309,20 @@ describe("GcpProvider", () => {
       },
     );
 
-    expect(setSchedulingMock).toHaveBeenCalledWith(
+    expect(authRequestMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        project: "proj-1",
-        zone: "us-west1-a",
-        instance: "ph-test",
-        schedulingResource: expect.objectContaining({
+        method: "POST",
+        url: expect.stringContaining(
+          "/projects/proj-1/zones/us-west1-a/instances/ph-test/setScheduling",
+        ),
+        data: expect.objectContaining({
           provisioningModel: "STANDARD",
           automaticRestart: true,
+          instanceTerminationAction: null,
         }),
       }),
     );
+    expect(setSchedulingMock).not.toHaveBeenCalled();
   });
 
   it("probes same-shape spot availability with a temporary instance", async () => {

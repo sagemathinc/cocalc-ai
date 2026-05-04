@@ -310,4 +310,227 @@ describe("cloud host start failures", () => {
       reason: "provider-status:TERMINATED",
     });
   });
+
+  it("passes queued refresh_runtime payload through to force observation", async () => {
+    const hostId = "d8d2ca6f-563d-473d-a01d-2b4a7e8bdd89";
+    const getInstance = jest.fn(async () => ({
+      instance_id: `cocalc-host-${hostId}`,
+      name: `cocalc-host-${hostId}`,
+      status: "TERMINATED",
+      public_ip: null,
+      private_ip: "10.180.0.23",
+      internal_hostname: `cocalc-host-${hostId}.internal`,
+    }));
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          getInstance,
+          mapStatus: (status?: string) =>
+            status === "TERMINATED" ? "off" : undefined,
+        },
+      },
+      creds: {},
+    });
+
+    await upsertProjectHost({
+      id: hostId,
+      name: "Forced refresh host",
+      region: "us-west3",
+      status: "running",
+      public_url: "https://host.example.test",
+      internal_url: "http://cocalc-host.internal:9002",
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_state: "running",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west3-b",
+          machine_type: "t2d-standard-4",
+          disk_gb: 50,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "gcp",
+          zone: "us-west3-b",
+          instance_id: `cocalc-host-${hostId}`,
+          public_ip: "34.106.236.179",
+          private_ip: "10.180.0.23",
+          internal_hostname: `cocalc-host-${hostId}.internal`,
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.refresh_runtime({
+      id: "work-refresh-2",
+      vm_id: hostId,
+      action: "refresh_runtime",
+      payload: { provider: "gcp", force: true, attempt: 7 },
+    } as any);
+
+    expect(getInstance).toHaveBeenCalled();
+    const hostRows = await getPool().query(
+      "SELECT status, last_seen, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].status).toBe("off");
+    expect(hostRows.rows[0].last_seen).toBeNull();
+    expect(hostRows.rows[0].metadata.runtime.provider_status).toBe(
+      "TERMINATED",
+    );
+  });
+
+  it("reschedules verify_host_ready while the current check is in progress", async () => {
+    const hostId = "d848a2ca-5f63-4473-b01d-2b4a7e8bdd90";
+    await upsertProjectHost({
+      id: hostId,
+      name: "Verify retry host",
+      region: "us-west3",
+      status: "starting",
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "spot",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west3-b",
+          machine_type: "t2d-standard-4",
+          disk_gb: 50,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        spot_recovery_state: {
+          phase: "returning_to_spot",
+          outage_started_at: "2026-05-04T03:00:00.000Z",
+          verification_started_at: "2026-05-04T03:20:00.000Z",
+          verification_deadline_at: "2026-05-04T03:30:00.000Z",
+        },
+      },
+    });
+    await getPool().query(
+      `
+        INSERT INTO cloud_vm_work (id, vm_id, action, payload, state)
+        VALUES ($1, $2, 'verify_host_ready', $3, 'in_progress')
+      `,
+      [
+        "1f96f8b2-1a69-4e88-95a8-69c1d8f5e3b7",
+        hostId,
+        {
+          provider: "gcp",
+          started_at: "2026-05-04T03:20:00.000Z",
+          deadline_at: "2026-05-04T03:30:00.000Z",
+        },
+      ],
+    );
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.verify_host_ready({
+      id: "1f96f8b2-1a69-4e88-95a8-69c1d8f5e3b7",
+      vm_id: hostId,
+      action: "verify_host_ready",
+      payload: {
+        provider: "gcp",
+        started_at: "2026-05-04T03:20:00.000Z",
+        deadline_at: "2026-05-04T03:30:00.000Z",
+      },
+    } as any);
+
+    const workRows = await getPool().query(
+      `
+        SELECT state, action
+        FROM cloud_vm_work
+        WHERE vm_id=$1
+        ORDER BY created_at, id
+      `,
+      [hostId],
+    );
+    expect(workRows.rows.map((row) => row.state)).toEqual([
+      "in_progress",
+      "queued",
+    ]);
+    expect(workRows.rows.map((row) => row.action)).toEqual([
+      "verify_host_ready",
+      "verify_host_ready",
+    ]);
+  });
+
+  it("clears stale last_error when spot recovery completes", async () => {
+    const hostId = "c7ddc9e3-65bb-4ab2-89f6-70625cdd3819";
+    const lastSeen = "2026-05-04T03:21:23.782Z";
+    await upsertProjectHost({
+      id: hostId,
+      name: "Spot recovery success host",
+      region: "us-west3",
+      status: "running",
+      last_seen: lastSeen as any,
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "spot",
+        interruption_restore_policy: "immediate",
+        last_error: "old failure",
+        last_error_at: "2026-05-04T03:13:00.000Z",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west3-b",
+          machine_type: "t2d-standard-4",
+          disk_gb: 50,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        spot_recovery_state: {
+          phase: "returning_to_spot",
+          outage_started_at: "2026-05-04T03:02:20.004Z",
+          last_probe_at: "2026-05-04T03:19:02.285Z",
+          last_probe_result: "success",
+          verification_started_at: "2026-05-04T03:20:02.872Z",
+          verification_deadline_at: "2026-05-04T03:30:02.872Z",
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.verify_host_ready({
+      id: "verify-success-1",
+      vm_id: hostId,
+      action: "verify_host_ready",
+      payload: {
+        provider: "gcp",
+        started_at: "2026-05-04T03:20:02.872Z",
+        deadline_at: "2026-05-04T03:30:02.872Z",
+      },
+    } as any);
+
+    const hostRows = await getPool().query(
+      "SELECT metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].metadata.last_error).toBeUndefined();
+    expect(hostRows.rows[0].metadata.last_error_at).toBeUndefined();
+    expect(hostRows.rows[0].metadata.spot_recovery_state).toEqual({
+      phase: "idle",
+      last_probe_at: "2026-05-04T03:19:02.285Z",
+      last_probe_result: "success",
+    });
+
+    const logRows = await getPool().query(
+      `
+        SELECT action, status
+        FROM cloud_vm_log
+        WHERE vm_id=$1
+        ORDER BY ts DESC
+      `,
+      [hostId],
+    );
+    expect(logRows.rows[0]).toMatchObject({
+      action: "spot_return_succeeded",
+      status: "success",
+    });
+  });
 });

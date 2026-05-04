@@ -363,6 +363,29 @@ async function waitUntilOperationComplete({
   }
 }
 
+async function setStandardSchedulingViaRest(opts: {
+  client: InstancesClient;
+  credentials: any;
+  runtime: HostRuntime;
+  gpu: boolean;
+}) {
+  const authClient = await opts.client.auth.getClient();
+  const response = await authClient.request({
+    url: `https://compute.googleapis.com/compute/v1/projects/${opts.credentials.projectId}/zones/${opts.runtime.zone}/instances/${opts.runtime.instance_id}/setScheduling`,
+    method: "POST",
+    data: {
+      ...onDemandScheduling({ gpu: opts.gpu }),
+      // Clearing the Spot-only termination action requires an explicit null.
+      instanceTerminationAction: null,
+    },
+  });
+  await waitUntilOperationComplete({
+    response: response.data,
+    zone: opts.runtime.zone!,
+    credentials: opts.credentials,
+  });
+}
+
 export class GcpProvider implements CloudProvider {
   mapStatus(status?: string): string | undefined {
     if (!status) return undefined;
@@ -720,20 +743,24 @@ export class GcpProvider implements CloudProvider {
       throw new Error("gcp.setPricingModel requires zone");
     }
     const client = new InstancesClient(credentials);
+    const gpu =
+      Number(
+        (runtime.metadata as { gpu_count?: number } | undefined)?.gpu_count,
+      ) > 0;
+    if (pricingModel === "on_demand") {
+      await setStandardSchedulingViaRest({
+        client,
+        credentials,
+        runtime,
+        gpu,
+      });
+      return;
+    }
     const [response] = await client.setScheduling({
       project: credentials.projectId,
       zone: runtime.zone,
       instance: runtime.instance_id,
-      schedulingResource:
-        pricingModel === "spot"
-          ? spotScheduling()
-          : onDemandScheduling({
-              gpu:
-                Number(
-                  (runtime.metadata as { gpu_count?: number } | undefined)
-                    ?.gpu_count,
-                ) > 0,
-            }),
+      schedulingResource: spotScheduling(),
     });
     await waitUntilOperationComplete({
       response,
