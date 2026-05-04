@@ -29,6 +29,10 @@ import {
   getProviderOptions,
   getSelfHostConnectors,
 } from "../providers/registry";
+import {
+  activeSpotRecoveryPolicy,
+  equalSpotRecoveryPolicies,
+} from "../utils/spot-recovery-policy";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import type {
   HostListViewMode,
@@ -40,6 +44,7 @@ import type {
   Host,
   HostInterruptionRestorePolicy,
   HostPricingModel,
+  HostSpotRecoveryPolicy,
   HostRuntimeArtifact,
   HostSoftwareArtifact,
 } from "@cocalc/conat/hub/api/hosts";
@@ -1674,6 +1679,7 @@ export const useHostsPageViewModel = () => {
         auto_grow_min_grow_interval_minutes?: number;
         pricing_model?: HostPricingModel;
         interruption_restore_policy?: HostInterruptionRestorePolicy;
+        spot_recovery_policy?: HostSpotRecoveryPolicy;
       },
     ) => {
       setSavingEdit(true);
@@ -1709,6 +1715,11 @@ export const useHostsPageViewModel = () => {
         const currentInterruptionRestorePolicy =
           editingHost.interruption_restore_policy ??
           (currentPricingModel === "spot" ? "immediate" : "none");
+        const currentSpotRecoveryPolicy = activeSpotRecoveryPolicy({
+          pricingModel: currentPricingModel,
+          interruptionRestorePolicy: currentInterruptionRestorePolicy,
+          spotRecoveryPolicy: editingHost.spot_recovery_policy,
+        });
         if (isDeprovisioned) {
           const provider = (values.provider ??
             (editingHost.machine?.cloud as HostProvider | undefined) ??
@@ -1764,6 +1775,22 @@ export const useHostsPageViewModel = () => {
           ) {
             update.interruption_restore_policy =
               payload.interruption_restore_policy;
+          }
+          const nextSpotRecoveryPolicy = activeSpotRecoveryPolicy({
+            pricingModel: payload.pricing_model ?? currentPricingModel,
+            interruptionRestorePolicy:
+              payload.interruption_restore_policy ??
+              currentInterruptionRestorePolicy,
+            spotRecoveryPolicy: payload.spot_recovery_policy,
+          });
+          if (
+            !equalSpotRecoveryPolicies(
+              currentSpotRecoveryPolicy,
+              nextSpotRecoveryPolicy,
+            ) &&
+            nextSpotRecoveryPolicy
+          ) {
+            update.spot_recovery_policy = nextSpotRecoveryPolicy;
           }
           if (supportsAutoGrowConfig) {
             if (
@@ -1841,6 +1868,22 @@ export const useHostsPageViewModel = () => {
         ) {
           update.interruption_restore_policy =
             values.interruption_restore_policy;
+        }
+        const nextSpotRecoveryPolicy = activeSpotRecoveryPolicy({
+          pricingModel: values.pricing_model ?? currentPricingModel,
+          interruptionRestorePolicy:
+            values.interruption_restore_policy ??
+            currentInterruptionRestorePolicy,
+          spotRecoveryPolicy: values.spot_recovery_policy,
+        });
+        if (
+          !equalSpotRecoveryPolicies(
+            currentSpotRecoveryPolicy,
+            nextSpotRecoveryPolicy,
+          ) &&
+          nextSpotRecoveryPolicy
+        ) {
+          update.spot_recovery_policy = nextSpotRecoveryPolicy;
         }
 
         if (canEditMachine) {

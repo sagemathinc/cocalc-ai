@@ -3,15 +3,10 @@ import { React } from "@cocalc/frontend/app-framework";
 import type { FormInstance } from "antd/es/form";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { isNebiusSpotSupported } from "../providers/registry";
+import { defaultRestorePolicy } from "../utils/spot-recovery-policy";
 import { HostCreateAdvancedFields } from "./host-create-advanced-fields";
 import { HostCreateProviderFields } from "./host-create-provider-fields";
 import { SshTargetLabel } from "./ssh-target-help";
-
-function defaultRestorePolicy(
-  pricingModel: "on_demand" | "spot" | undefined,
-): "none" | "immediate" {
-  return pricingModel === "spot" ? "immediate" : "none";
-}
 
 type HostCreateFormProps = {
   form: FormInstance;

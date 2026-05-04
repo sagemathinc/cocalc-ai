@@ -12,6 +12,7 @@ import {
   formatRegionLabel,
   formatRegionsLabel,
 } from "../utils/format";
+import { activeSpotRecoveryPolicy } from "../utils/spot-recovery-policy";
 import type { HostProvider } from "../types";
 import { GPU_TYPES, SIZES } from "../constants";
 
@@ -227,6 +228,14 @@ const buildBasePayload = (
 ) => {
   const machine_type = vals.machine_type || undefined;
   const storage_mode = vals.storage_mode || "persistent";
+  const pricing_model = vals.pricing_model === "spot" ? "spot" : "on_demand";
+  const interruption_restore_policy =
+    vals.interruption_restore_policy === "none" ? "none" : "immediate";
+  const spot_recovery_policy = activeSpotRecoveryPolicy({
+    pricingModel: pricing_model,
+    interruptionRestorePolicy: interruption_restore_policy,
+    spotRecoveryPolicy: vals.spot_recovery_policy,
+  });
   const baseMetadata = {
     shared: vals.shared,
     bucket: vals.bucket,
@@ -243,9 +252,9 @@ const buildBasePayload = (
     region: getDefaultRegion(vals, options),
     size: machine_type ?? vals.size ?? SIZES[0].value,
     gpu: wantsGpu,
-    pricing_model: vals.pricing_model === "spot" ? "spot" : "on_demand",
-    interruption_restore_policy:
-      vals.interruption_restore_policy === "none" ? "none" : "immediate",
+    pricing_model,
+    interruption_restore_policy,
+    ...(spot_recovery_policy ? { spot_recovery_policy } : {}),
     machine: {
       cloud:
         vals.provider !== "none" ? (vals.provider as HostProvider) : undefined,

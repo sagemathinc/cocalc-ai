@@ -3,8 +3,13 @@ import type {
   HostAutoGrowConfig,
   HostInterruptionRestorePolicy,
   HostPricingModel,
+  HostSpotRecoveryPolicy,
 } from "@cocalc/conat/hub/api/hosts";
 import type { HostProvider } from "../types";
+import {
+  activeSpotRecoveryPolicy,
+  defaultRestorePolicy,
+} from "./spot-recovery-policy";
 
 type CreateSimilarHostFormValues = {
   name: string;
@@ -22,6 +27,7 @@ type CreateSimilarHostFormValues = {
   disk_type?: string;
   pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
+  spot_recovery_policy?: HostSpotRecoveryPolicy;
   self_host_ssh_target?: string;
   auto_grow_enabled?: boolean;
   auto_grow_max_disk_gb?: number;
@@ -34,11 +40,6 @@ const readPositive = (value: unknown): number | undefined => {
   if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
   return Math.floor(parsed);
 };
-
-const defaultRestorePolicy = (
-  pricingModel: HostPricingModel | undefined,
-): HostInterruptionRestorePolicy =>
-  pricingModel === "spot" ? "immediate" : "none";
 
 const similarName = (name: string | undefined): string => {
   const base = (name ?? "My host").trim() || "My host";
@@ -95,6 +96,13 @@ export function buildCreateSimilarHostFormValues(
     interruption_restore_policy:
       host.interruption_restore_policy ??
       defaultRestorePolicy(host.pricing_model),
+    spot_recovery_policy: activeSpotRecoveryPolicy({
+      pricingModel: host.pricing_model ?? "on_demand",
+      interruptionRestorePolicy:
+        host.interruption_restore_policy ??
+        defaultRestorePolicy(host.pricing_model),
+      spotRecoveryPolicy: host.spot_recovery_policy,
+    }),
     self_host_ssh_target:
       host.machine?.metadata?.self_host_ssh_target ?? undefined,
     auto_grow_enabled: autoGrow.enabled,
