@@ -28,6 +28,13 @@ export function isChatActions(actions: any): actions is ChatActions {
   );
 }
 
+function isStaleChatActions(actions: any): actions is ChatActions {
+  if (!isChatActions(actions)) return false;
+  const syncdb = actions.syncdb;
+  if (syncdb == null) return true;
+  return syncdb.get_state?.() === "closed";
+}
+
 function startOptimisticChatPreview(
   project_id: string,
   path: string,
@@ -80,6 +87,10 @@ export function getChatActions(
     instanceKey: opts?.instanceKey,
   });
   const actions = redux.getActions(name);
+  if (isStaleChatActions(actions)) {
+    removeByName(name, redux);
+    return undefined;
+  }
   return isChatActions(actions) ? actions : undefined;
 }
 
@@ -95,7 +106,9 @@ export function initChat(
     instanceKey: opts?.instanceKey,
   });
   const existing = redux.getActions(name);
-  if (isChatActions(existing)) {
+  if (isStaleChatActions(existing)) {
+    removeByName(name, redux);
+  } else if (isChatActions(existing)) {
     return existing; // already initialized
   }
 
