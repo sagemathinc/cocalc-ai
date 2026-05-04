@@ -4,9 +4,8 @@
  */
 
 import { useEffect, useState } from "react";
-import { redux } from "@cocalc/frontend/app-framework";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
-import { initChat } from "@cocalc/frontend/chat/register";
+import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
 import SideChat from "@cocalc/frontend/chat/side-chat";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { labels } from "@cocalc/frontend/i18n";
@@ -24,14 +23,51 @@ function Chat({ font_size, desc }: EditorComponentProps) {
   const [sideChatActions, setSideChatActions] = useState<ChatActions | null>(
     null,
   );
+
   useEffect(() => {
-    (async () => {
-      const sideChatActions = initChat(project_id, path);
-      sideChatActions.frameTreeActions = actions;
-      sideChatActions.frameId = frameId;
-      setSideChatActions(sideChatActions);
-    })();
-  }, []);
+    let cancelled = false;
+    const attachChatActions = (): ChatActions => {
+      const nextActions =
+        getChatActions(project_id, path) ?? initChat(project_id, path);
+      nextActions.frameTreeActions = actions;
+      nextActions.frameId = frameId;
+      if (!cancelled) {
+        setSideChatActions(nextActions);
+      }
+      return nextActions;
+    };
+    attachChatActions();
+    return () => {
+      cancelled = true;
+    };
+  }, [actions, frameId, path, project_id]);
+
+  useEffect(() => {
+    if (!sideChatActions) return;
+    const syncdb = (sideChatActions as any)?.syncdb;
+    let cancelled = false;
+    const reconnect = () => {
+      if (cancelled) return;
+      const nextActions = initChat(project_id, path);
+      nextActions.frameTreeActions = actions;
+      nextActions.frameId = frameId;
+      setSideChatActions((current) =>
+        current === sideChatActions ? nextActions : current,
+      );
+    };
+    if (syncdb?.get_state?.() === "closed") {
+      reconnect();
+      return;
+    }
+    const onClose = () => {
+      reconnect();
+    };
+    syncdb?.once?.("close", onClose);
+    return () => {
+      cancelled = true;
+      syncdb?.removeListener?.("close", onClose);
+    };
+  }, [actions, frameId, path, project_id, sideChatActions]);
 
   if (sideChatActions == null) {
     return null;
@@ -70,11 +106,7 @@ export function getSideChatActions({
   project_id: string;
   path: string;
 }): ChatActions | null {
-  const actions = redux.getEditorActions(project_id, chatFile(path));
-  if (actions == null) {
-    return null;
-  }
-  return actions as ChatActions;
+  return getChatActions(project_id, chatFile(path)) ?? null;
 }
 
 // TODO: this is an ugly special case for now to make the title bar buttons work.
