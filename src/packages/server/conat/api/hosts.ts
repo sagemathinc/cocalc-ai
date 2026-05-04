@@ -29,6 +29,7 @@ import type {
   HostRootfsImage,
   HostPricingModel,
   HostInterruptionRestorePolicy,
+  HostSpotRecoveryPolicy,
   HostMetricsHistory,
   HostManagedComponentRolloutRequest,
   HostRehomeOperationSummary,
@@ -236,6 +237,7 @@ import {
   normalizeHostTier,
   parseRow,
 } from "./hosts-normalization";
+import { normalizeSpotRecoveryPolicy } from "@cocalc/server/cloud/spot-restore";
 import {
   enrichHostRootfsImages,
   getManagedRootfsReleaseArtifactInternal,
@@ -2971,6 +2973,7 @@ export async function createHost({
   gpu = false,
   pricing_model,
   interruption_restore_policy,
+  spot_recovery_policy,
   machine,
 }: {
   account_id?: string;
@@ -2980,6 +2983,7 @@ export async function createHost({
   gpu?: boolean;
   pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
+  spot_recovery_policy?: HostSpotRecoveryPolicy;
   machine?: Host["machine"];
 }): Promise<Host> {
   const owner = requireAccount(account_id);
@@ -2993,6 +2997,7 @@ export async function createHost({
     gpu,
     pricing_model,
     interruption_restore_policy,
+    spot_recovery_policy,
     machine,
     normalizeHostPricingModel,
     normalizeHostInterruptionRestorePolicy,
@@ -3526,6 +3531,7 @@ export async function updateHostMachine({
   auto_grow_min_grow_interval_minutes,
   pricing_model,
   interruption_restore_policy,
+  spot_recovery_policy,
 }: {
   account_id?: string;
   id: string;
@@ -3547,6 +3553,7 @@ export async function updateHostMachine({
   auto_grow_min_grow_interval_minutes?: number;
   pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
+  spot_recovery_policy?: HostSpotRecoveryPolicy;
 }): Promise<Host> {
   const row = await loadOwnedHost(id, account_id);
   const metadata = row.metadata ?? {};
@@ -3636,7 +3643,12 @@ export async function updateHostMachine({
     "auto_grow_min_grow_interval_minutes",
   );
   const currentPricingModel =
-    normalizeHostPricingModel(metadata.pricing_model) ?? "on_demand";
+    normalizeHostPricingModel(
+      metadata.desired_pricing_model ?? metadata.pricing_model,
+    ) ?? "on_demand";
+  const currentEffectivePricingModel =
+    normalizeHostPricingModel(metadata.effective_pricing_model) ??
+    currentPricingModel;
   const requestedPricingModel = normalizeHostPricingModel(pricing_model);
   if (pricing_model != null && !requestedPricingModel) {
     throw new Error(`invalid pricing_model '${pricing_model}'`);
@@ -3661,6 +3673,32 @@ export async function updateHostMachine({
     (requestedPricingModel
       ? defaultInterruptionRestorePolicy(nextPricingModel)
       : currentInterruptionRestorePolicy);
+  const currentSpotRecoveryPolicy =
+    normalizeSpotRecoveryPolicy(metadata.spot_recovery_policy) ??
+    (currentPricingModel === "spot" &&
+    currentInterruptionRestorePolicy === "immediate"
+      ? normalizeSpotRecoveryPolicy({})
+      : undefined);
+  const requestedSpotRecoveryPolicy =
+    spot_recovery_policy == null
+      ? undefined
+      : normalizeSpotRecoveryPolicy({
+          ...(currentSpotRecoveryPolicy ?? {}),
+          ...(spot_recovery_policy ?? {}),
+        });
+  let nextEffectivePricingModel =
+    currentEffectivePricingModel === currentPricingModel
+      ? nextPricingModel
+      : currentEffectivePricingModel;
+  if (nextPricingModel !== "spot") {
+    nextEffectivePricingModel = nextPricingModel;
+  }
+  const nextSpotRecoveryPolicy =
+    requestedSpotRecoveryPolicy ??
+    (nextPricingModel === "spot" &&
+    nextInterruptionRestorePolicy === "immediate"
+      ? (currentSpotRecoveryPolicy ?? normalizeSpotRecoveryPolicy({}))
+      : undefined);
 
   if (cloudChanged) {
     if (!isDeprovisioned) {
@@ -3820,12 +3858,29 @@ export async function updateHostMachine({
     changed = true;
   }
 
-  if (nextPricingModel !== currentPricingModel) {
+  if (
+    nextPricingModel !== currentPricingModel ||
+    nextEffectivePricingModel !== currentEffectivePricingModel
+  ) {
     metadata.pricing_model = nextPricingModel;
+    metadata.desired_pricing_model = nextPricingModel;
+    metadata.effective_pricing_model = nextEffectivePricingModel;
     changed = true;
   }
   if (nextInterruptionRestorePolicy !== currentInterruptionRestorePolicy) {
     metadata.interruption_restore_policy = nextInterruptionRestorePolicy;
+    changed = true;
+  }
+  if (
+    JSON.stringify(nextSpotRecoveryPolicy ?? null) !==
+    JSON.stringify(currentSpotRecoveryPolicy ?? null)
+  ) {
+    if (nextSpotRecoveryPolicy) {
+      metadata.spot_recovery_policy = nextSpotRecoveryPolicy;
+    } else {
+      delete metadata.spot_recovery_policy;
+      delete metadata.spot_recovery_state;
+    }
     changed = true;
   }
 

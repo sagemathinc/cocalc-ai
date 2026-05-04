@@ -28,6 +28,7 @@ import type {
   Host,
   HostInterruptionRestorePolicy,
   HostPricingModel,
+  HostSpotRecoveryPolicy,
 } from "@cocalc/conat/hub/api/hosts";
 import { randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
@@ -49,6 +50,7 @@ import {
 } from "@cocalc/server/cloud/host-gpu";
 import { hasCloudflareTunnel } from "@cocalc/server/cloud/cloudflare-tunnel";
 import { enqueueCloudVmWork } from "@cocalc/server/cloud";
+import { normalizeSpotRecoveryPolicy } from "@cocalc/server/cloud/spot-restore";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 function pool() {
@@ -63,6 +65,7 @@ export async function createHostInternalHelper({
   gpu,
   pricing_model,
   interruption_restore_policy,
+  spot_recovery_policy,
   machine,
   normalizeHostPricingModel,
   normalizeHostInterruptionRestorePolicy,
@@ -76,6 +79,7 @@ export async function createHostInternalHelper({
   gpu: boolean;
   pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
+  spot_recovery_policy?: HostSpotRecoveryPolicy;
   machine?: Host["machine"];
   normalizeHostPricingModel: (value: unknown) => HostPricingModel | undefined;
   normalizeHostInterruptionRestorePolicy: (
@@ -107,6 +111,11 @@ export async function createHostInternalHelper({
   const pricingModel = normalizedPricingModel ?? "on_demand";
   const interruptionRestorePolicy =
     normalizedRestorePolicy ?? defaultInterruptionRestorePolicy(pricingModel);
+  const normalizedSpotRecoveryPolicy =
+    normalizeSpotRecoveryPolicy(spot_recovery_policy) ??
+    (pricingModel === "spot" && interruptionRestorePolicy === "immediate"
+      ? normalizeSpotRecoveryPolicy({})
+      : undefined);
   const initialStatus = machineCloud && !isSelfHost ? "starting" : "off";
   const initialDesiredState: "running" | "stopped" =
     machineCloud && !isSelfHost ? "running" : "stopped";
@@ -187,7 +196,12 @@ export async function createHostInternalHelper({
         size,
         gpu: gpuEnabled,
         pricing_model: pricingModel,
+        desired_pricing_model: pricingModel,
+        effective_pricing_model: pricingModel,
         interruption_restore_policy: interruptionRestorePolicy,
+        ...(normalizedSpotRecoveryPolicy
+          ? { spot_recovery_policy: normalizedSpotRecoveryPolicy }
+          : {}),
         desired_state: initialDesiredState,
         machine: normalizedMachine,
         ...(machineCloud && !isSelfHost

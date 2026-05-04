@@ -6,6 +6,7 @@ import {
   normalizeProviderId,
 } from "@cocalc/cloud";
 import getLogger from "@cocalc/backend/logger";
+import { effectivePricingModel } from "./spot-restore";
 import { getHostSshPublicKeys } from "./ssh-key";
 import { getProviderContext, getProviderPrefix } from "./provider-context";
 import {
@@ -249,6 +250,7 @@ const pickNebiusImageFamily = (
 
 export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
   const metadata = row.metadata ?? {};
+  const activePricingModel = effectivePricingModel(row);
   const machine: HostMachine = metadata.machine ?? {};
   const size = metadata.size ?? (row as any).size ?? "small";
   let { cpu, ram_gb } = sizeToResources(size);
@@ -340,7 +342,7 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
   }
   if (
     providerId === "nebius" &&
-    metadata.pricing_model === "spot" &&
+    activePricingModel === "spot" &&
     nebiusInstanceType &&
     !nebiusInstanceType.allowed_for_preemptibles
   ) {
@@ -419,7 +421,7 @@ export async function buildHostSpec(row: HostRow): Promise<HostSpec> {
     name: providerName,
     region: row.region ?? "us-west1",
     zone: machine.zone,
-    pricing_model: metadata.pricing_model === "spot" ? "spot" : "on_demand",
+    pricing_model: activePricingModel,
     interruption_restore_policy:
       metadata.interruption_restore_policy === "immediate"
         ? "immediate"

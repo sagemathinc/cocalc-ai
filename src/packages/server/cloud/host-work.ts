@@ -12,15 +12,31 @@ import {
   enqueueCloudVmWorkOnce,
   logCloudVmEvent,
 } from "./db";
-import { provisionIfNeeded } from "./host-util";
+import { buildHostSpec, provisionIfNeeded } from "./host-util";
 import type { CloudVmWorkHandlers } from "./worker";
-import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostMachine,
+  HostPricingModel,
+  HostSpotRecoveryPolicy,
+  HostSpotRecoveryState,
+} from "@cocalc/conat/hub/api/hosts";
 import { buildCloudInitStartupScript, handleBootstrap } from "./bootstrap-host";
 import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 import { bumpReconcile, DEFAULT_INTERVALS } from "./reconcile";
 import { normalizeProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "./provider-context";
-import { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
+import {
+  computeSpotRetryDelayMs,
+  desiredPricingModel,
+  effectivePricingModel,
+  isSpotRecoveryManagedHost,
+  shouldAutoRestoreInterruptedSpotHost,
+  spotProbeIntervalMs,
+  spotRecoveryPolicy,
+  standardFallbackMinMs,
+  spotRecoveryState,
+  spotRetryWindowMs,
+} from "./spot-restore";
 import { resolveGcpManagedHostInternalUrl } from "./internal-network";
 import {
   createProjectHostBootstrapToken,
@@ -32,6 +48,8 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 const logger = getLogger("server:cloud:host-work");
 const pool = () => getPool();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const HOST_READY_VERIFY_DELAY_MS = 10_000;
+const HOST_READY_VERIFY_DEADLINE_MS = 10 * 60 * 1000;
 
 async function waitForProviderStatus(opts: {
   entry: Awaited<ReturnType<typeof getProviderContext>>["entry"];
@@ -229,6 +247,169 @@ function setRuntimeObservedAt(metadata: any, at: Date): any {
       observed_at: at.toISOString(),
     },
   };
+}
+
+function clearVerificationFields(
+  state: HostSpotRecoveryState | undefined,
+): HostSpotRecoveryState | undefined {
+  if (!state) return state;
+  const next = { ...state };
+  delete next.verification_started_at;
+  delete next.verification_deadline_at;
+  return next;
+}
+
+function hostLastSeenMs(row: any): number {
+  if (!row?.last_seen) return 0;
+  const ms = new Date(row.last_seen as any).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function hostIsOperationalSince(row: any, sinceIso?: string): boolean {
+  const status = `${row?.status ?? ""}`.trim().toLowerCase();
+  if (status !== "running" && status !== "active") return false;
+  const sinceMs = sinceIso ? new Date(sinceIso).getTime() : 0;
+  const lastSeenMs = hostLastSeenMs(row);
+  return lastSeenMs > 0 && lastSeenMs >= sinceMs;
+}
+
+function withPricingAndRecoveryMetadata(
+  metadata: any,
+  opts: {
+    desired_pricing_model?: HostPricingModel;
+    effective_pricing_model?: HostPricingModel;
+    spot_recovery_state?: HostSpotRecoveryState | null;
+  },
+) {
+  const next = { ...(metadata ?? {}) };
+  const desired =
+    opts.desired_pricing_model ?? desiredPricingModel({ metadata });
+  next.pricing_model = desired;
+  next.desired_pricing_model = desired;
+  next.effective_pricing_model =
+    opts.effective_pricing_model ?? effectivePricingModel({ metadata });
+  if (opts.spot_recovery_state === null) {
+    delete next.spot_recovery_state;
+  } else if (opts.spot_recovery_state) {
+    next.spot_recovery_state = opts.spot_recovery_state;
+  }
+  return next;
+}
+
+async function scheduleHostReadyVerification(opts: {
+  row: any;
+  provider?: string;
+  started_at: Date;
+  deadline_at?: Date;
+}) {
+  const deadlineAt =
+    opts.deadline_at ??
+    new Date(opts.started_at.getTime() + HOST_READY_VERIFY_DEADLINE_MS);
+  await enqueueCloudVmWork({
+    vm_id: opts.row.id,
+    action: "verify_host_ready",
+    not_before: new Date(
+      opts.started_at.getTime() + HOST_READY_VERIFY_DELAY_MS,
+    ),
+    payload: {
+      provider: opts.provider,
+      started_at: opts.started_at.toISOString(),
+      deadline_at: deadlineAt.toISOString(),
+    },
+  });
+}
+
+async function scheduleSpotProbe(opts: {
+  row: any;
+  provider?: string;
+  not_before: Date;
+}) {
+  await enqueueCloudVmWorkOnce({
+    vm_id: opts.row.id,
+    action: "probe_spot",
+    not_before: opts.not_before,
+    payload: {
+      provider: opts.provider,
+    },
+  });
+}
+
+function shouldFallbackToStandard(opts: {
+  state: HostSpotRecoveryState | undefined;
+  policy: Required<HostSpotRecoveryPolicy>;
+  now: Date;
+}): boolean {
+  if (!opts.policy.standard_fallback_enabled) return false;
+  const outageStartedAt = opts.state?.outage_started_at
+    ? new Date(opts.state.outage_started_at)
+    : undefined;
+  const attempts = Number(opts.state?.attempt ?? 0);
+  if (
+    opts.policy.max_restore_attempts_before_fallback > 0 &&
+    attempts >= opts.policy.max_restore_attempts_before_fallback
+  ) {
+    return true;
+  }
+  if (!outageStartedAt || Number.isNaN(outageStartedAt.getTime())) return false;
+  return (
+    opts.now.getTime() - outageStartedAt.getTime() >=
+    spotRetryWindowMs(opts.policy)
+  );
+}
+
+async function scheduleSpotRetry(opts: {
+  row: any;
+  provider?: string;
+  policy: Required<HostSpotRecoveryPolicy>;
+  state?: HostSpotRecoveryState;
+  reason: string;
+  now?: Date;
+}) {
+  const now = opts.now ?? new Date();
+  const attempt = Math.max(1, Number(opts.state?.attempt ?? 0));
+  const delayMs = computeSpotRetryDelayMs({
+    attempt,
+    policy: opts.policy,
+  });
+  const nextRetryAt = new Date(now.getTime() + delayMs);
+  const nextState: HostSpotRecoveryState = {
+    ...(opts.state ?? { phase: "retrying_spot" }),
+    phase: "retrying_spot",
+    outage_started_at: opts.state?.outage_started_at ?? now.toISOString(),
+    attempt,
+    next_retry_at: nextRetryAt.toISOString(),
+  };
+  const nextMetadata = withPricingAndRecoveryMetadata(opts.row.metadata, {
+    desired_pricing_model: desiredPricingModel(opts.row),
+    effective_pricing_model: effectivePricingModel(opts.row),
+    spot_recovery_state: clearVerificationFields(nextState),
+  });
+  await updateHostRow(opts.row.id, {
+    status: "starting",
+    metadata: nextMetadata,
+    last_seen: null,
+  });
+  await enqueueCloudVmWorkOnce({
+    vm_id: opts.row.id,
+    action: "start",
+    not_before: nextRetryAt,
+    payload: {
+      provider: opts.provider,
+      source: "spot_recovery_retry",
+      reason: opts.reason,
+    },
+  });
+  await logCloudVmEvent({
+    vm_id: opts.row.id,
+    action: "spot_restore_retry_scheduled",
+    status: "success",
+    provider: opts.provider,
+    runtime: {
+      next_retry_at: nextRetryAt.toISOString(),
+      attempt,
+      reason: opts.reason,
+    },
+  });
 }
 
 function shouldUseCloudflareTunnel(row: any): boolean {
@@ -563,19 +744,32 @@ async function handleProvision(row: any) {
     : (resolveInternalUrlForHost(provisioned) ??
       provisioned.internal_url ??
       (runtime?.public_ip ? `http://${runtime.public_ip}` : undefined));
+  const startedAt = new Date();
+  const statusForRecord =
+    providerId && providerId !== "self-host" && providerId !== "local"
+      ? "starting"
+      : nextStatus;
   await updateHostRow(provisioned.id, {
     metadata: nextMetadata,
-    status: nextStatus,
+    status: statusForRecord,
     public_url: publicUrl,
     internal_url: internalUrl,
   });
   await ensureDnsForHost({
     ...provisioned,
     metadata: nextMetadata,
+    status: statusForRecord,
     public_url: publicUrl,
     internal_url: internalUrl,
   });
   await scheduleRuntimeRefresh({ ...provisioned, metadata: nextMetadata });
+  if (providerId) {
+    await scheduleHostReadyVerification({
+      row: { ...provisioned, metadata: nextMetadata },
+      provider: providerId,
+      started_at: startedAt,
+    });
+  }
   await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
   await logCloudVmEvent({
     vm_id: row.id,
@@ -592,6 +786,11 @@ async function handleStart(row: any) {
   const runtime = row.metadata?.runtime;
   const reprovisionRequired = !!row.metadata?.reprovision_required;
   const providerId = normalizeProviderId(machine.cloud);
+  const desiredPricing = desiredPricingModel(row);
+  const currentEffectivePricing = effectivePricingModel(row);
+  const managedSpotRecovery = isSpotRecoveryManagedHost(row);
+  const recoveryPolicy = spotRecoveryPolicy(row);
+  const currentRecoveryState = spotRecoveryState(row);
   logger.debug("handleStart: begin", {
     host_id: row.id,
     provider: providerId ?? machine.cloud,
@@ -697,16 +896,108 @@ async function handleStart(row: any) {
       });
       return;
     }
-    const observedAt = new Date();
-    const nextMetadata = setRuntimeObservedAt(row.metadata ?? {}, observedAt);
-    await updateHostRow(row.id, {
-      status: "starting",
-      last_seen: null,
-      metadata: nextMetadata,
-    });
     const { entry, creds } = await getProviderContext(providerId, {
       region: row.region,
     });
+    const startMode =
+      managedSpotRecovery && currentRecoveryState?.phase === "returning_to_spot"
+        ? "return_to_spot"
+        : managedSpotRecovery && currentEffectivePricing === "on_demand"
+          ? "standard"
+          : managedSpotRecovery
+            ? "spot"
+            : "normal";
+    let nextRecoveryState = currentRecoveryState
+      ? clearVerificationFields(currentRecoveryState)
+      : undefined;
+    if (managedSpotRecovery && startMode === "spot") {
+      nextRecoveryState = {
+        ...(nextRecoveryState ?? { phase: "retrying_spot" }),
+        phase: "retrying_spot",
+        outage_started_at:
+          nextRecoveryState?.outage_started_at ?? new Date().toISOString(),
+        attempt: Number(nextRecoveryState?.attempt ?? 0) + 1,
+      };
+    } else if (managedSpotRecovery && startMode === "standard") {
+      nextRecoveryState = {
+        ...(nextRecoveryState ?? { phase: "running_standard_fallback" }),
+        phase: "running_standard_fallback",
+        outage_started_at:
+          nextRecoveryState?.outage_started_at ?? new Date().toISOString(),
+        fallback_started_at:
+          nextRecoveryState?.fallback_started_at ?? new Date().toISOString(),
+      };
+    } else if (managedSpotRecovery && startMode === "return_to_spot") {
+      nextRecoveryState = {
+        ...(nextRecoveryState ?? { phase: "returning_to_spot" }),
+        phase: "returning_to_spot",
+        outage_started_at:
+          nextRecoveryState?.outage_started_at ?? new Date().toISOString(),
+      };
+      await logCloudVmEvent({
+        vm_id: row.id,
+        action: "spot_return_started",
+        status: "success",
+        provider: providerId,
+      });
+    }
+    let effectivePricingForStart = currentEffectivePricing;
+    const updateRecoveryRecord = async (state: HostSpotRecoveryState) => {
+      const observedAt = new Date();
+      const nextMetadata = withPricingAndRecoveryMetadata(
+        setRuntimeObservedAt(row.metadata ?? {}, observedAt),
+        {
+          desired_pricing_model: desiredPricing,
+          effective_pricing_model: effectivePricingForStart,
+          spot_recovery_state: state,
+        },
+      );
+      await updateHostRow(row.id, {
+        status: "starting",
+        last_seen: null,
+        metadata: nextMetadata,
+      });
+      row.metadata = nextMetadata;
+      return nextMetadata;
+    };
+    const promoteToStandardFallback = async (reason: string) => {
+      if (!entry.provider.setPricingModel || !recoveryPolicy) {
+        throw new Error(
+          `standard fallback is not supported for provider '${providerId}'`,
+        );
+      }
+      await entry.provider.setPricingModel(runtime, "on_demand", creds);
+      effectivePricingForStart = "on_demand";
+      const fallbackState: HostSpotRecoveryState = {
+        ...(nextRecoveryState ?? { phase: "running_standard_fallback" }),
+        phase: "running_standard_fallback",
+        outage_started_at:
+          nextRecoveryState?.outage_started_at ?? new Date().toISOString(),
+        fallback_started_at: new Date().toISOString(),
+      };
+      nextRecoveryState =
+        clearVerificationFields(fallbackState) ?? fallbackState;
+      await updateRecoveryRecord(nextRecoveryState);
+      await logCloudVmEvent({
+        vm_id: row.id,
+        action: "spot_restore_fallback_standard",
+        status: "success",
+        provider: providerId,
+        runtime: { reason },
+      });
+    };
+    if (managedSpotRecovery && nextRecoveryState) {
+      await updateRecoveryRecord(nextRecoveryState);
+    } else {
+      const observedAt = new Date();
+      const nextMetadata = setRuntimeObservedAt(row.metadata ?? {}, observedAt);
+      await updateHostRow(row.id, {
+        status: "starting",
+        last_seen: null,
+        metadata: nextMetadata,
+      });
+      row.metadata = nextMetadata;
+    }
     let runtimeForStart = runtime;
     try {
       const { baseUrl } = await resolveLaunchpadBootstrapUrl({
@@ -734,7 +1025,99 @@ async function handleStart(row: any) {
         err,
       });
     }
-    await entry.provider.startHost(runtimeForStart, creds);
+    try {
+      if (managedSpotRecovery && startMode === "return_to_spot") {
+        if (!entry.provider.setPricingModel) {
+          throw new Error(
+            `spot return is not supported for provider '${providerId}'`,
+          );
+        }
+        await entry.provider.stopHost(runtimeForStart, creds);
+        if (
+          providerId === "gcp" ||
+          providerId === "nebius" ||
+          providerId === "hyperstack"
+        ) {
+          await waitForProviderStatus({
+            entry,
+            creds,
+            runtime,
+            desired: ["off", "stopped"],
+          });
+        }
+        await entry.provider.setPricingModel(runtimeForStart, "spot", creds);
+        effectivePricingForStart = "spot";
+        nextRecoveryState = {
+          ...(nextRecoveryState ?? { phase: "returning_to_spot" }),
+          phase: "returning_to_spot",
+          outage_started_at:
+            nextRecoveryState?.outage_started_at ?? new Date().toISOString(),
+        };
+        await updateRecoveryRecord(nextRecoveryState);
+      } else if (
+        managedSpotRecovery &&
+        startMode === "spot" &&
+        recoveryPolicy &&
+        shouldFallbackToStandard({
+          state: nextRecoveryState,
+          policy: recoveryPolicy,
+          now: new Date(),
+        })
+      ) {
+        await promoteToStandardFallback("retry-window-exhausted");
+      }
+
+      await entry.provider.startHost(runtimeForStart, creds);
+    } catch (err) {
+      if (managedSpotRecovery && recoveryPolicy) {
+        if (startMode === "return_to_spot") {
+          await logCloudVmEvent({
+            vm_id: row.id,
+            action: "spot_return_failed",
+            status: "failure",
+            provider: providerId,
+            error: `${err}`,
+          });
+          await promoteToStandardFallback(`spot-return-failed:${err}`);
+          await entry.provider.startHost(runtimeForStart, creds);
+        } else if (
+          shouldFallbackToStandard({
+            state: nextRecoveryState,
+            policy: recoveryPolicy,
+            now: new Date(),
+          })
+        ) {
+          await logCloudVmEvent({
+            vm_id: row.id,
+            action: "spot_restore_retry_failed",
+            status: "failure",
+            provider: providerId,
+            error: `${err}`,
+          });
+          await promoteToStandardFallback(`spot-start-failed:${err}`);
+          await entry.provider.startHost(runtimeForStart, creds);
+        } else {
+          await logCloudVmEvent({
+            vm_id: row.id,
+            action: "spot_restore_retry_failed",
+            status: "failure",
+            provider: providerId,
+            error: `${err}`,
+          });
+          await scheduleSpotRetry({
+            row,
+            provider: providerId,
+            policy: recoveryPolicy,
+            state: nextRecoveryState,
+            reason: `${err}`,
+          });
+          await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
+          return;
+        }
+      } else {
+        throw err;
+      }
+    }
     let statusAfterStart:
       | "running"
       | "starting"
@@ -755,22 +1138,104 @@ async function handleStart(row: any) {
       });
       const normalizedStatus =
         statusAfterStart === "stopped" ? "off" : statusAfterStart;
-      const observedAtDone = new Date();
-      const nextMetadataAfter = setRuntimeObservedAt(
-        row.metadata ?? {},
-        observedAtDone,
-      );
-      await updateHostRow(row.id, {
-        status: normalizedStatus ?? "starting",
-        metadata: nextMetadataAfter,
-        last_seen: null,
-      });
-      row.metadata = nextMetadataAfter;
       if (normalizedStatus !== "running") {
+        if (managedSpotRecovery && recoveryPolicy) {
+          if (
+            shouldFallbackToStandard({
+              state: nextRecoveryState,
+              policy: recoveryPolicy,
+              now: new Date(),
+            })
+          ) {
+            await promoteToStandardFallback(
+              `provider-status:${normalizedStatus ?? "unknown"}`,
+            );
+          } else {
+            await scheduleSpotRetry({
+              row,
+              provider: providerId,
+              policy: recoveryPolicy,
+              state: nextRecoveryState,
+              reason: `provider-status:${normalizedStatus ?? "unknown"}`,
+            });
+            await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
+            return;
+          }
+        }
+        const observedAtDone = new Date();
+        const nextMetadataAfter = setRuntimeObservedAt(
+          row.metadata ?? {},
+          observedAtDone,
+        );
+        await updateHostRow(row.id, {
+          status: normalizedStatus ?? "starting",
+          metadata: nextMetadataAfter,
+          last_seen: null,
+        });
+        row.metadata = nextMetadataAfter;
         await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
         return;
       }
     }
+    const startedAt = new Date();
+    const verificationState: HostSpotRecoveryState | undefined =
+      managedSpotRecovery
+        ? {
+            ...(nextRecoveryState ?? { phase: "idle" }),
+            phase:
+              effectivePricingForStart === "on_demand"
+                ? "running_standard_fallback"
+                : startMode === "return_to_spot"
+                  ? "returning_to_spot"
+                  : "retrying_spot",
+            verification_started_at: startedAt.toISOString(),
+            verification_deadline_at: new Date(
+              startedAt.getTime() + HOST_READY_VERIFY_DEADLINE_MS,
+            ).toISOString(),
+            ...(effectivePricingForStart === "on_demand"
+              ? {
+                  fallback_started_at:
+                    nextRecoveryState?.fallback_started_at ??
+                    new Date().toISOString(),
+                }
+              : {}),
+          }
+        : undefined;
+    const observedAt = new Date();
+    const nextMetadata = withPricingAndRecoveryMetadata(
+      setRuntimeObservedAt(row.metadata ?? {}, observedAt),
+      {
+        desired_pricing_model: desiredPricing,
+        effective_pricing_model: effectivePricingForStart,
+        spot_recovery_state: verificationState ?? null,
+      },
+    );
+    await updateHostRow(row.id, {
+      status: "starting",
+      metadata: nextMetadata,
+      last_seen: null,
+    });
+    const nextRow = { ...row, status: "starting", metadata: nextMetadata };
+    await ensureDnsForHost(nextRow);
+    await scheduleRuntimeRefresh(nextRow, { force: providerId === "gcp" });
+    await scheduleHostReadyVerification({
+      row: nextRow,
+      provider: providerId,
+      started_at: startedAt,
+      deadline_at: new Date(
+        startedAt.getTime() + HOST_READY_VERIFY_DEADLINE_MS,
+      ),
+    });
+    await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
+    await logCloudVmEvent({
+      vm_id: row.id,
+      action: "start",
+      status: "success",
+      provider: providerId ?? machine.cloud,
+      spec: machine,
+      runtime,
+    });
+    return;
   }
   const observedAt = new Date();
   const nextMetadata = setRuntimeObservedAt(row.metadata ?? {}, observedAt);
@@ -1116,18 +1581,15 @@ async function handleRefreshRuntime(row: any) {
       attempt,
     });
     if (attempt < 12) {
-      setTimeout(() => {
-        enqueueCloudVmWorkOnce({
-          vm_id: host.id,
-          action: "refresh_runtime",
-          payload: {
-            provider: providerId ?? host.metadata?.machine?.cloud,
-            attempt: attempt + 1,
-          },
-        }).catch((err) => {
-          logger.warn("refresh_runtime enqueue failed", { err });
-        });
-      }, 10000);
+      await enqueueCloudVmWorkOnce({
+        vm_id: host.id,
+        action: "refresh_runtime",
+        not_before: new Date(Date.now() + 10_000),
+        payload: {
+          provider: providerId ?? host.metadata?.machine?.cloud,
+          attempt: attempt + 1,
+        },
+      });
     }
     return;
   }
@@ -1226,7 +1688,7 @@ async function handleRefreshRuntime(row: any) {
       : undefined) ??
     host.internal_url ??
     (network?.public_ip ? `http://${network.public_ip}` : undefined);
-  const nextStatus = host.status === "starting" ? "running" : host.status;
+  const nextStatus = host.status;
   await updateHostRow(host.id, {
     metadata: nextMetadata,
     public_url: publicUrl,
@@ -1247,6 +1709,217 @@ async function handleRefreshRuntime(row: any) {
     status: "success",
     provider: providerId ?? host.metadata?.machine?.cloud,
     runtime: { ...runtime, ...network },
+  });
+}
+
+async function handleVerifyHostReady(row: any) {
+  const host = await loadHostRow(row.vm_id);
+  if (!host) return;
+  const providerId = normalizeProviderId(host.metadata?.machine?.cloud);
+  const startedAtIso = `${row.payload?.started_at ?? ""}`.trim();
+  const deadlineAtIso = `${row.payload?.deadline_at ?? ""}`.trim();
+  if (hostIsOperationalSince(host, startedAtIso)) {
+    if (isSpotRecoveryManagedHost(host)) {
+      const policy = spotRecoveryPolicy(host);
+      const state = spotRecoveryState(host);
+      const effective = effectivePricingModel(host);
+      const desired = desiredPricingModel(host);
+      if (effective === "on_demand") {
+        const fallbackState: HostSpotRecoveryState = clearVerificationFields({
+          ...(state ?? { phase: "running_standard_fallback" }),
+          phase: "running_standard_fallback",
+          fallback_started_at:
+            state?.fallback_started_at ?? new Date().toISOString(),
+        }) ?? { phase: "running_standard_fallback" };
+        const nextMetadata = withPricingAndRecoveryMetadata(host.metadata, {
+          desired_pricing_model: desired,
+          effective_pricing_model: effective,
+          spot_recovery_state: fallbackState,
+        });
+        await updateHostRow(host.id, { metadata: nextMetadata });
+        if (policy) {
+          const fallbackStartedAt = fallbackState.fallback_started_at
+            ? new Date(fallbackState.fallback_started_at)
+            : new Date();
+          await scheduleSpotProbe({
+            row: { ...host, metadata: nextMetadata },
+            provider: providerId ?? host.metadata?.machine?.cloud,
+            not_before: new Date(
+              Math.max(
+                Date.now(),
+                fallbackStartedAt.getTime() + standardFallbackMinMs(policy),
+              ),
+            ),
+          });
+        }
+      } else {
+        const idleState: HostSpotRecoveryState = {
+          phase: "idle",
+          ...(state?.last_probe_at
+            ? { last_probe_at: state.last_probe_at }
+            : {}),
+          ...(state?.last_probe_result
+            ? { last_probe_result: state.last_probe_result }
+            : {}),
+          ...(state?.last_probe_error
+            ? { last_probe_error: state.last_probe_error }
+            : {}),
+        };
+        const nextMetadata = withPricingAndRecoveryMetadata(host.metadata, {
+          desired_pricing_model: desired,
+          effective_pricing_model: effective,
+          spot_recovery_state: idleState,
+        });
+        await updateHostRow(host.id, { metadata: nextMetadata });
+        if (state?.phase === "returning_to_spot") {
+          await logCloudVmEvent({
+            vm_id: host.id,
+            action: "spot_return_succeeded",
+            status: "success",
+            provider: providerId ?? host.metadata?.machine?.cloud,
+          });
+        }
+      }
+    }
+    return;
+  }
+
+  const deadlineAt = deadlineAtIso ? new Date(deadlineAtIso) : undefined;
+  if (
+    deadlineAt &&
+    Number.isFinite(deadlineAt.getTime()) &&
+    Date.now() >= deadlineAt.getTime()
+  ) {
+    logger.warn("verify host ready timed out", {
+      host_id: host.id,
+      provider: providerId ?? host.metadata?.machine?.cloud,
+      started_at: startedAtIso || undefined,
+      deadline_at: deadlineAtIso || undefined,
+      status: host.status,
+      last_seen: host.last_seen,
+    });
+    if (isSpotRecoveryManagedHost(host)) {
+      const policy = spotRecoveryPolicy(host);
+      const state = spotRecoveryState(host);
+      if (
+        policy &&
+        effectivePricingModel(host) === "on_demand" &&
+        state?.phase === "running_standard_fallback"
+      ) {
+        await scheduleSpotProbe({
+          row: host,
+          provider: providerId ?? host.metadata?.machine?.cloud,
+          not_before: new Date(Date.now() + spotProbeIntervalMs(policy)),
+        });
+      }
+    }
+  }
+
+  await enqueueCloudVmWorkOnce({
+    vm_id: host.id,
+    action: "verify_host_ready",
+    not_before: new Date(Date.now() + HOST_READY_VERIFY_DELAY_MS),
+    payload: {
+      ...row.payload,
+      provider: providerId ?? host.metadata?.machine?.cloud,
+    },
+  });
+}
+
+async function handleProbeSpot(row: any) {
+  const host = await loadHostRow(row.vm_id);
+  if (!host) return;
+  if (!isSpotRecoveryManagedHost(host)) return;
+  if (effectivePricingModel(host) !== "on_demand") return;
+  const policy = spotRecoveryPolicy(host);
+  const state = spotRecoveryState(host);
+  const providerId = normalizeProviderId(host.metadata?.machine?.cloud);
+  if (!providerId || !policy) return;
+  const { entry, creds } = await getProviderContext(providerId, {
+    region: host.region,
+  });
+  if (!entry.provider.probeSpotAvailability) return;
+  const probingState: HostSpotRecoveryState = {
+    ...(state ?? { phase: "probing_spot" }),
+    phase: "probing_spot",
+    last_probe_at: new Date().toISOString(),
+  };
+  const probingMetadata = withPricingAndRecoveryMetadata(host.metadata, {
+    desired_pricing_model: desiredPricingModel(host),
+    effective_pricing_model: "on_demand",
+    spot_recovery_state: probingState,
+  });
+  await updateHostRow(host.id, { metadata: probingMetadata });
+  await logCloudVmEvent({
+    vm_id: host.id,
+    action: "spot_probe_started",
+    status: "success",
+    provider: providerId,
+  });
+  const spec = {
+    ...(await buildHostSpec({ ...host, metadata: probingMetadata })),
+    pricing_model: "spot" as const,
+  };
+  const available = await entry.provider.probeSpotAvailability(spec, creds);
+  if (!available) {
+    const failedState: HostSpotRecoveryState = {
+      ...(probingState ?? { phase: "running_standard_fallback" }),
+      phase: "running_standard_fallback",
+      last_probe_at: new Date().toISOString(),
+      last_probe_result: "failure",
+      last_probe_error: "spot probe failed",
+    };
+    const failedMetadata = withPricingAndRecoveryMetadata(host.metadata, {
+      desired_pricing_model: desiredPricingModel(host),
+      effective_pricing_model: "on_demand",
+      spot_recovery_state: failedState,
+    });
+    await updateHostRow(host.id, { metadata: failedMetadata });
+    await logCloudVmEvent({
+      vm_id: host.id,
+      action: "spot_probe_failed",
+      status: "failure",
+      provider: providerId,
+      error: "spot probe failed",
+    });
+    await scheduleSpotProbe({
+      row: { ...host, metadata: failedMetadata },
+      provider: providerId,
+      not_before: new Date(Date.now() + spotProbeIntervalMs(policy)),
+    });
+    return;
+  }
+  const successState: HostSpotRecoveryState = {
+    ...(probingState ?? { phase: "returning_to_spot" }),
+    phase: "returning_to_spot",
+    last_probe_at: new Date().toISOString(),
+    last_probe_result: "success",
+  };
+  delete successState.last_probe_error;
+  const successMetadata = withPricingAndRecoveryMetadata(host.metadata, {
+    desired_pricing_model: desiredPricingModel(host),
+    effective_pricing_model: "on_demand",
+    spot_recovery_state: successState,
+  });
+  await updateHostRow(host.id, {
+    metadata: successMetadata,
+    status: "starting",
+    last_seen: null,
+  });
+  await logCloudVmEvent({
+    vm_id: host.id,
+    action: "spot_probe_succeeded",
+    status: "success",
+    provider: providerId,
+  });
+  await enqueueCloudVmWorkOnce({
+    vm_id: host.id,
+    action: "start",
+    payload: {
+      provider: providerId,
+      source: "spot_probe_success",
+      reason: "spot_probe_succeeded",
+    },
   });
 }
 
@@ -1360,6 +2033,28 @@ export const cloudHostHandlers: CloudVmWorkHandlers = {
       await handleRefreshRuntime(host);
     } catch (err) {
       await markHostError(host, err);
+      throw err;
+    }
+  },
+  verify_host_ready: async (row) => {
+    try {
+      await handleVerifyHostReady(row);
+    } catch (err) {
+      const host = await loadHostRow(row.vm_id);
+      if (host) {
+        await markHostError(host, err);
+      }
+      throw err;
+    }
+  },
+  probe_spot: async (row) => {
+    try {
+      await handleProbeSpot(row);
+    } catch (err) {
+      const host = await loadHostRow(row.vm_id);
+      if (host) {
+        await markHostError(host, err);
+      }
       throw err;
     }
   },

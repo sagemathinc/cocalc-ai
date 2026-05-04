@@ -74,4 +74,32 @@ describe("cloud vm work queue", () => {
       { id: id2, state: "failed", error: "boom" },
     ]);
   });
+
+  it("does not claim work before not_before", async () => {
+    const future = new Date(Date.now() + 60_000);
+    await enqueueCloudVmWork({
+      vm_id: "vm-future",
+      action: "start",
+      not_before: future,
+    });
+    await enqueueCloudVmWork({
+      vm_id: "vm-now",
+      action: "start",
+    });
+
+    const batch = await claimCloudVmWork({
+      worker_id: "worker-a",
+      limit: 5,
+    });
+
+    expect(batch).toHaveLength(1);
+    expect(batch[0].vm_id).toBe("vm-now");
+    const { rows } = await getPool().query(
+      "SELECT vm_id, state FROM cloud_vm_work ORDER BY vm_id",
+    );
+    expect(rows).toEqual([
+      { vm_id: "vm-future", state: "queued" },
+      { vm_id: "vm-now", state: "in_progress" },
+    ]);
+  });
 });
