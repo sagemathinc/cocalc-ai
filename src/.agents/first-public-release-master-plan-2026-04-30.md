@@ -1,6 +1,7 @@
 # First Public Release Master Plan
 
-Status: master release planning and execution tracker as of 2026-04-30.
+Status: master release planning and execution tracker, refreshed on 2026-05-04
+after host-density, project-host, and spot-recovery canary work.
 
 This document is the single planning / todo document for the first public
 release of `cocalc-ai`.
@@ -131,6 +132,33 @@ The following scope is **not** in:
 5. “Almost done” does not count; each release workstream needs explicit exit
    criteria.
 
+## Notable Progress Since 2026-04-30
+
+- host-local stopping / eviction was live-validated and remains one of the
+  stronger parts of the release story
+- project-host startup density is materially better than feared:
+  - a warm-cache `t2d-standard-32` can now start `1000` simultaneous projects
+  - the earlier mid-`400` / mid-`600` cliffs were traced to concrete issues,
+    not a mysterious hard hardware ceiling
+- host-side startup no longer appears blocked by the original Btrfs-quota
+  suspicion; the more important fixed issues were:
+  - rootfs cold-fill serialization on fresh hosts
+  - port-bind retry detection and rotation
+  - project-host health restart aggressiveness during load
+  - eager backup/rustic maintenance interfering with startup
+- managed spot-host recovery is now implemented and live-validated end to end:
+  - retry spot
+  - temporary standard fallback
+  - probe for matching spot capacity
+  - return to spot
+  - automatic finalization back to `idle`
+- the spot recovery policy now has real UI/configuration surfaces instead of
+  being hidden metadata only
+
+These are meaningful release advances, but they do **not** by themselves mean
+the release is ready. They mainly reduce uncertainty around host/runtime
+correctness and capacity.
+
 ## Current Read
 
 ### What already looks good
@@ -140,10 +168,20 @@ The following scope is **not** in:
 - hot-path control-plane throughput is promising
 - membership/storage/egress/project-count policy work is mostly done
 - host-local stopping/eviction is now implemented and live-validated
+- project-host startup density is now backed by real evidence instead of
+  optimism:
+  - one warm-cache `t2d-standard-32` host successfully reached `1000`
+    simultaneously started projects
+  - the host still had meaningful CPU headroom at that point
+- managed spot interruption recovery is now a real system, not a sketch:
+  - fallback to standard and return-to-spot both passed live canaries
 
 ### What still looks risky
 
 - correctness under churn
+- cleanup throughput / runtime garbage-collection after failed high-density
+  runs
+- stale/deleted host convergence and operator-facing freshness across bays
 - region-move correctness and backup cutover semantics
 - deployment / upgrade / rollback reproducibility
 - operator workflows that remain too environment-sensitive
@@ -243,6 +281,11 @@ coherent release story.
   - override explanation/audit visibility
 - [ ] Ensure dedicated hosts use the same local host-protection model as
       shared hosts.
+- [x] Implement and live-validate managed spot recovery for spot-backed hosts:
+  - retry the interrupted spot VM
+  - temporarily fall back to standard
+  - probe for same-shape spot capacity
+  - switch back to spot automatically
 - [ ] Keep `always_running` and `idle_timeout` removed as product/runtime
       concepts, except for inert compatibility if needed internally.
 - [ ] Decide whether managed-egress leased budgets are actually required before
@@ -282,6 +325,12 @@ This workstream is in scope, but it must stay narrow.
       and Nebius.
   - must include spot instances on both GCP and Nebius
   - pricing semantics must account for dynamic spot pricing on GCP
+- [x] Implement and live-validate the first spot-host recovery strategy for
+      managed hosts.
+  - GCP path now supports retry, standard fallback, probing, and return to
+    spot
+  - UI/editing surfaces exist
+  - live deterministic canary passed end to end
 - [ ] Make the dedicated-host configuration dialog clearly show monthly
       pricing before the user commits.
 - [ ] Implement monthly billing / renewal / charge logic for rented dedicated
@@ -305,6 +354,8 @@ This workstream is in scope, but it must stay narrow.
 ### Exit Criteria
 
 - one supported dedicated-host path works end to end on supported providers
+- spot-backed managed hosts recover predictably enough that operators do not
+  have to babysit interruptions
 - pricing is visible and understandable before host creation
 - monthly billing / renewal is trustworthy
 - host-owner access control works
@@ -462,6 +513,10 @@ Goal: replace hope with measured confidence.
   - domain-license entitlement behavior
 - [ ] Fix every correctness bug found during soak before release.
 - [ ] Rerun synthetic/loadgen benchmarks with the now-current architecture.
+  - current evidence already shows a warm-cache `t2d-standard-32` host can
+    start `1000` simultaneous projects
+  - the remaining runtime weakness is cleanup / leaked-state recovery, not raw
+    startup throughput
 - [ ] Sample real user traffic and compare it to synthetic benchmark capacity.
 - [ ] Write a conservative bay-sizing story for release.
 - [ ] Capture a short “known operational hazards” list from soak.
@@ -484,11 +539,14 @@ This list should stay aggressively pruned and explicit.
       cannot locate `sudo`.
 - [ ] ACP worker supervisor still emits `EACCES` on
       `/mnt/cocalc/data/logs/acp-worker.log`.
-- [ ] Duplicate/stale `project_hosts` rows can remain in the registry and harm
-      operator trust.
+- [ ] Duplicate/stale `project_hosts` rows and stale host search/inspection
+      state can remain in the registry and harm operator trust.
 - [ ] `cocalc project log` CLI handling for stopped projects is not reliable
       enough; the log stream itself works, but the operator-facing path is
       confusing.
+- [ ] Project-host cleanup after failed high-density runs is not strong enough
+      yet; leaked rootless podman metadata/processes can require operator
+      cleanup or stronger runtime GC.
 - [ ] Any remaining stale host / stale bundle reconcile bugs discovered during
       canaries or soak.
 - [ ] Any project region-move / backup-cutover bugs discovered during real
@@ -583,6 +641,7 @@ true:
 - [ ] project move between regions works end to end with the intended backup
       cutover semantics
 - [ ] dedicated-host MVP path works end to end on supported providers
+- [ ] managed spot recovery is trustworthy on supported spot-backed hosts
 - [ ] student pay works end to end with the intended four-month duration
 - [ ] minimal domain-license entitlement works end to end for verified-domain
       users
@@ -610,16 +669,21 @@ true:
 
 If we want the shortest path to release from today, do these next:
 
-- [ ] fix the current known live bugs from the `lite4b` canary
+- [ ] fix the current known live bugs from recent canaries, especially:
+  - `lite4b` bootstrap/package issues
+  - stale host state/operator-trust issues
+  - runtime cleanup / leaked-state recovery after failed high-density runs
 - [ ] finish central admin override controls
 - [ ] finish dedicated-host egress policy wiring
 - [ ] finish project move between regions
 - [ ] implement student pay
 - [ ] implement minimal site/domain license
 - [ ] finish packaging/deploy/rollback path
-- [ ] validate one supported rented dedicated-host path end to end
+- [ ] validate one supported rented dedicated-host path end to end, including
+      billing/access-control polish rather than only host lifecycle
 - [ ] run a real 3-bay soak and fix what it finds
-- [ ] rerun capacity benchmarks and write the conservative sizing note
+- [ ] turn the current benchmark evidence into a conservative sizing note and a
+      cleanup / runtime-repair playbook
 
 That is the highest-value path to a real first public release without
 expanding scope.
