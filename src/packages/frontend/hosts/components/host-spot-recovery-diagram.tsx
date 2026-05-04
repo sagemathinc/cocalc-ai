@@ -21,9 +21,7 @@ type HostSpotRecoveryDiagramProps = {
 
 type DiagramNodeId =
   | "running_spot"
-  | "interrupted"
   | "retrying_spot"
-  | "verify_ready"
   | "running_standard_fallback"
   | "probing_spot"
   | "returning_to_spot";
@@ -44,6 +42,7 @@ const TEXT_COLOR = COLORS.GRAY_D;
 const MUTED_TEXT_COLOR = COLORS.GRAY_M;
 const GRID_BORDER = COLORS.GRAY_L0;
 const ACTIVE_GLOW = COLORS.BLUE_LLLL;
+const NOTE_FILL = COLORS.GRAY_LLL;
 
 function phaseLabel(phase: HostSpotRecoveryPhase | undefined): string {
   switch (phase) {
@@ -152,6 +151,48 @@ function renderArrowLabel(
   );
 }
 
+function renderNoteChip(
+  text: string,
+  x: number,
+  y: number,
+  {
+    fill = NOTE_FILL,
+    stroke = GRID_BORDER,
+    textColor = MUTED_TEXT_COLOR,
+    width = 112,
+  }: {
+    fill?: string;
+    stroke?: string;
+    textColor?: string;
+    width?: number;
+  } = {},
+) {
+  return (
+    <g>
+      <rect
+        x={x - width / 2}
+        y={y - 12}
+        width={width}
+        height={24}
+        rx={12}
+        fill={fill}
+        stroke={stroke}
+      />
+      <text
+        x={x}
+        y={y + 4}
+        textAnchor="middle"
+        fontSize={11}
+        fill={textColor}
+        fontFamily="system-ui, sans-serif"
+        fontWeight={600}
+      >
+        {text}
+      </text>
+    </g>
+  );
+}
+
 export const HostSpotRecoveryDiagram: React.FC<
   HostSpotRecoveryDiagramProps
 > = ({ policyActive, policy, host }) => {
@@ -161,6 +202,7 @@ export const HostSpotRecoveryDiagram: React.FC<
   const probeRequired = policy.spot_return_requires_probe !== false;
   const retryWindow = policy.spot_restore_retry_window_minutes;
   const retryBackoff = policy.spot_restore_backoff_seconds;
+  const maxRestoreAttempts = policy.max_restore_attempts_before_fallback;
   const fallbackMin = policy.standard_fallback_min_minutes;
   const probeInterval = policy.spot_probe_interval_minutes;
   const liveState = host?.spot_recovery_state;
@@ -168,87 +210,53 @@ export const HostSpotRecoveryDiagram: React.FC<
   const nodes: DiagramNode[] = [
     {
       id: "running_spot",
-      x: 30,
-      y: 30,
-      width: 166,
+      x: 36,
+      y: 34,
+      width: 174,
       height: 58,
       accent: COLORS.BS_GREEN,
       lines: ["Running on Spot"],
     },
     {
-      id: "interrupted",
-      x: 226,
-      y: 30,
-      width: 172,
-      height: 58,
-      accent: COLORS.BG_WARNING,
-      lines: ["Spot Interrupted", "VM Off"],
-    },
-    {
       id: "retrying_spot",
-      x: 432,
-      y: 20,
-      width: 214,
-      height: 90,
+      x: 300,
+      y: 34,
+      width: 184,
+      height: 58,
       accent: COLORS.BLUE,
-      lines: [
-        "Retrying Spot Start",
-        `${retryBackoff}s base backoff`,
-        `${retryWindow} min window`,
-      ],
-    },
-    {
-      id: "verify_ready",
-      x: 432,
-      y: 132,
-      width: 214,
-      height: 96,
-      accent: COLORS.BLUE_LL,
-      lines: [
-        "Verify Host Ready",
-        "provider + runtime OK",
-        "heartbeat + daemon OK",
-      ],
+      lines: ["Retry Spot"],
     },
     {
       id: "running_standard_fallback",
-      x: 24,
-      y: 270,
-      width: 220,
-      height: 84,
+      x: 616,
+      y: 34,
+      width: 188,
+      height: 58,
       accent: COLORS.COCALC_ORANGE,
       enabled: standardFallbackEnabled,
       lines: standardFallbackEnabled
-        ? ["Running on Standard", "Fallback", `minimum ${fallbackMin} min`]
-        : ["Standard Fallback", "Disabled"],
+        ? ["Standard Fallback"]
+        : ["Fallback Disabled"],
     },
     {
       id: "probing_spot",
-      x: 286,
-      y: 278,
-      width: 176,
-      height: 76,
+      x: 560,
+      y: 176,
+      width: 168,
+      height: 58,
       accent: COLORS.BLUE_D,
       enabled: standardFallbackEnabled,
-      lines: standardFallbackEnabled
-        ? [
-            "Probe Spot Availability",
-            `every ${probeInterval} min`,
-            probeRequired ? "probe required" : "probe optional",
-          ]
-        : ["Spot Probe", "Inactive"],
+      lines: standardFallbackEnabled ? ["Probe Spot"] : ["Probe Inactive"],
     },
     {
       id: "returning_to_spot",
-      x: 500,
-      y: 270,
-      width: 232,
-      height: 84,
+      x: 272,
+      y: 176,
+      width: 192,
+      height: 58,
       accent: COLORS.ANTD_GREEN_D,
       enabled: standardFallbackEnabled,
-      lines: standardFallbackEnabled
-        ? ["Return to Spot", "flip VM back", "start and verify"]
-        : ["Return to Spot", "Inactive"],
+      lines: standardFallbackEnabled ? ["Return to Spot"] : ["Return Inactive"],
     },
   ];
 
@@ -256,34 +264,26 @@ export const HostSpotRecoveryDiagram: React.FC<
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
       <Space wrap size={[8, 8]}>
         <Tag style={statusTagStyle(COLORS.BLUE_D)}>
-          Retry window {retryWindow} min
-        </Tag>
-        <Tag style={statusTagStyle(COLORS.BLUE)}>
-          Backoff base {retryBackoff}s
+          Retry {retryWindow} min / {retryBackoff}s base
         </Tag>
         <Tag
           style={statusTagStyle(
             standardFallbackEnabled ? COLORS.COCALC_ORANGE : COLORS.GRAY,
           )}
         >
-          Standard fallback {standardFallbackEnabled ? "enabled" : "disabled"}
+          {standardFallbackEnabled
+            ? `Fallback to standard after ${
+                maxRestoreAttempts > 0
+                  ? `${maxRestoreAttempts} attempts or `
+                  : ""
+              }retry window`
+            : "Standard fallback disabled"}
         </Tag>
         {standardFallbackEnabled && (
-          <>
-            <Tag style={statusTagStyle(COLORS.COCALC_ORANGE)}>
-              Minimum fallback {fallbackMin} min
-            </Tag>
-            <Tag style={statusTagStyle(COLORS.BLUE_D)}>
-              Probe every {probeInterval} min
-            </Tag>
-            <Tag
-              style={statusTagStyle(
-                probeRequired ? COLORS.ANTD_GREEN_D : COLORS.GRAY_M,
-              )}
-            >
-              {probeRequired ? "Probe required" : "Probe optional"}
-            </Tag>
-          </>
+          <Tag style={statusTagStyle(COLORS.ANTD_GREEN_D)}>
+            Return check every {probeInterval} min{" "}
+            {probeRequired ? "(probe required)" : "(direct return allowed)"}
+          </Tag>
         )}
       </Space>
 
@@ -336,7 +336,7 @@ export const HostSpotRecoveryDiagram: React.FC<
         }}
       >
         <svg
-          viewBox="0 0 760 390"
+          viewBox="0 0 840 276"
           width="100%"
           role="img"
           aria-label="Spot instance recovery state machine"
@@ -358,8 +358,8 @@ export const HostSpotRecoveryDiagram: React.FC<
           <rect
             x={0}
             y={0}
-            width={760}
-            height={390}
+            width={840}
+            height={276}
             rx={16}
             fill={policyActive ? "white" : COLORS.GRAY_LLL}
           />
@@ -407,77 +407,45 @@ export const HostSpotRecoveryDiagram: React.FC<
           })}
 
           <path
-            d="M196 59 H226"
+            d="M210 60 C236 28, 274 28, 300 60"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
           />
-          {renderArrowLabel("preemption", 210, 48)}
+          {renderArrowLabel("interrupted", 255, 24)}
 
           <path
-            d="M398 59 H432"
+            d="M300 68 C268 112, 238 112, 210 76"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
           />
-          {renderArrowLabel("retry", 414, 48)}
+          {renderArrowLabel("spot restored", 252, 118)}
 
           <path
-            d="M539 110 V132"
+            d="M484 62 H616"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
           />
-          {renderArrowLabel("start attempt", 555, 126, { anchor: "start" })}
+          {renderArrowLabel("retry limit reached", 550, 48)}
 
           <path
-            d="M432 180 H198 V88"
+            d="M710 92 V176"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
           />
-          {renderArrowLabel("verified", 310, 168)}
-
-          <path
-            d="M646 180 H686 V60 H646"
-            stroke={COLORS.GRAY}
-            strokeWidth={2}
-            fill="none"
-            markerEnd="url(#spot-recovery-arrow)"
-          />
-          {renderArrowLabel("not ready", 692, 122, { anchor: "start" })}
-
-          <path
-            d="M432 78 H408 V314 H244"
-            stroke={COLORS.GRAY}
-            strokeWidth={2}
-            fill="none"
-            markerEnd="url(#spot-recovery-arrow)"
-            opacity={standardFallbackEnabled ? 1 : 0.35}
-          />
-          {renderArrowLabel("retry window expired", 250, 258, {
+          {renderArrowLabel(`after ${fallbackMin} min`, 722, 138, {
             anchor: "start",
-            color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
           })}
 
           <path
-            d="M244 312 H286"
-            stroke={COLORS.GRAY}
-            strokeWidth={2}
-            fill="none"
-            markerEnd="url(#spot-recovery-arrow)"
-            opacity={standardFallbackEnabled ? 1 : 0.35}
-          />
-          {renderArrowLabel(`after ${fallbackMin} min`, 264, 300, {
-            color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
-          })}
-
-          <path
-            d="M462 316 H500"
+            d="M560 206 H464"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
@@ -485,80 +453,72 @@ export const HostSpotRecoveryDiagram: React.FC<
             opacity={standardFallbackEnabled ? 1 : 0.35}
           />
           {renderArrowLabel(
-            probeRequired ? "probe ok" : "probe ok / optional",
-            481,
-            303,
+            probeRequired ? "probe succeeded" : "probe or direct return",
+            512,
+            194,
             {
-              anchor: "middle",
               color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
             },
           )}
 
           <path
-            d="M616 270 V228"
+            d="M272 206 C182 206, 110 180, 110 92"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
-            opacity={standardFallbackEnabled ? 1 : 0.35}
           />
-          {renderArrowLabel("start spot host", 628, 250, {
-            anchor: "start",
-            color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
-          })}
+          {renderArrowLabel("back on spot", 148, 176)}
 
-          <path
-            d="M374 278 C374 252, 374 238, 374 238"
-            stroke={COLORS.GRAY}
-            strokeWidth={2}
-            fill="none"
-            markerEnd="url(#spot-recovery-arrow)"
-            opacity={standardFallbackEnabled ? 1 : 0.35}
-          />
-          {renderArrowLabel(
-            `probe failed; wait ${probeInterval} min`,
-            374,
-            262,
-            {
-              anchor: "middle",
-              color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
-            },
-          )}
-
-          {!probeRequired && standardFallbackEnabled && (
+          {standardFallbackEnabled && (
             <>
               <path
-                d="M244 344 C320 372, 430 372, 500 344"
+                d="M644 176 C628 146, 628 132, 646 110"
                 stroke={COLORS.GRAY}
                 strokeWidth={2}
-                strokeDasharray="5 5"
                 fill="none"
                 markerEnd="url(#spot-recovery-arrow)"
               />
-              {renderArrowLabel("direct return allowed", 372, 376)}
+              {renderArrowLabel(`wait ${probeInterval} min`, 618, 148, {
+                anchor: "end",
+              })}
             </>
           )}
 
-          <path
-            d="M732 312 H748 V172 H646"
-            stroke={COLORS.GRAY}
-            strokeWidth={2}
-            fill="none"
-            markerEnd="url(#spot-recovery-arrow)"
-            opacity={standardFallbackEnabled ? 1 : 0.35}
-          />
-          {renderArrowLabel("switchback failed", 678, 250, {
-            anchor: "middle",
-            color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
+          {renderNoteChip(`retry up to ${retryWindow} min`, 392, 112, {
+            width: 132,
           })}
+
+          {standardFallbackEnabled &&
+            renderNoteChip(`probe every ${probeInterval} min`, 644, 252, {
+              width: 134,
+            })}
+
+          {standardFallbackEnabled &&
+            renderNoteChip(
+              probeRequired ? "probe required" : "direct return allowed",
+              368,
+              252,
+              {
+                width: 142,
+                fill: probeRequired ? NOTE_FILL : COLORS.BLUE_LLL,
+                stroke: probeRequired ? GRID_BORDER : COLORS.BLUE_LL,
+              },
+            )}
         </svg>
       </div>
 
-      <Typography.Text type="secondary">
-        Recovery work is durable and survives hub restarts. CoCalc only counts a
-        restore as successful after provider state, runtime refresh, heartbeat,
-        and project-host health all converge.
-      </Typography.Text>
+      <Space direction="vertical" size={2}>
+        <Typography.Text type="secondary">
+          CoCalc retries the interrupted spot VM first. If that does not recover
+          within the configured window, it can switch the same host to standard
+          temporarily.
+        </Typography.Text>
+        <Typography.Text type="secondary">
+          Return to spot only completes after provider state, runtime refresh,
+          heartbeat, and project-host health all converge.
+        </Typography.Text>
+      </Space>
     </Space>
   );
 };
