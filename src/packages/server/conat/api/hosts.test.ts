@@ -19,6 +19,10 @@ let resolveProjectBayMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
 let hostConnectionListMock: jest.Mock;
+let hostConnectionGetHostLogMock: jest.Mock;
+let hostConnectionGetHostRuntimeLogMock: jest.Mock;
+let hostConnectionGetHostMetricsHistoryMock: jest.Mock;
+let hostConnectionGetHostRuntimeDeploymentStatusMock: jest.Mock;
 let hostConnectionGetProjectStartMetadataMock: jest.Mock;
 let hostConnectionGetBackupConfigMock: jest.Mock;
 let hostConnectionGetProjectOwnerEffectiveLimitsMock: jest.Mock;
@@ -239,6 +243,13 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
     hostConnection: jest.fn(() => ({
       get: (...args: any[]) => hostConnectionGetMock(...args),
       list: (...args: any[]) => hostConnectionListMock(...args),
+      getHostLog: (...args: any[]) => hostConnectionGetHostLogMock(...args),
+      getHostRuntimeLog: (...args: any[]) =>
+        hostConnectionGetHostRuntimeLogMock(...args),
+      getHostMetricsHistory: (...args: any[]) =>
+        hostConnectionGetHostMetricsHistoryMock(...args),
+      getHostRuntimeDeploymentStatus: (...args: any[]) =>
+        hostConnectionGetHostRuntimeDeploymentStatusMock(...args),
       getProjectStartMetadata: (...args: any[]) =>
         hostConnectionGetProjectStartMetadataMock(...args),
       getBackupConfig: (...args: any[]) =>
@@ -322,6 +333,25 @@ beforeEach(() => {
   global.fetch = fetchMock as any;
   hostConnectionGetMock = jest.fn();
   hostConnectionListMock = jest.fn(async () => []);
+  hostConnectionGetHostLogMock = jest.fn(async () => []);
+  hostConnectionGetHostRuntimeLogMock = jest.fn(async () => ({
+    host_id: HOST_ID,
+    source: "project-host",
+    lines: 200,
+    text: "",
+  }));
+  hostConnectionGetHostMetricsHistoryMock = jest.fn(async () => ({
+    window_minutes: 60,
+    point_count: 0,
+    points: [],
+  }));
+  hostConnectionGetHostRuntimeDeploymentStatusMock = jest.fn(async () => ({
+    effective: [],
+    observed_targets: [],
+    observed_components: [],
+    observed_artifacts: [],
+    rollback_targets: [],
+  }));
   hostConnectionGetProjectStartMetadataMock = jest.fn();
   hostConnectionGetBackupConfigMock = jest.fn();
   hostConnectionGetProjectOwnerEffectiveLimitsMock = jest.fn();
@@ -554,6 +584,75 @@ describe("hosts.listHostProjects", () => {
       provisioned_up_to_date: 0,
       provisioned_needs_backup: 1,
     });
+  });
+
+  it("prefers authoritative remote ownership over a stale local host row", async () => {
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-1",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              metadata: { owner: ACCOUNT_ID },
+              last_seen: new Date("2026-01-05T00:00:00Z"),
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("LEFT(COALESCE(title") ||
+        sql.includes("COUNT(*) AS total")
+      ) {
+        throw new Error(
+          "should not query local host projects for remote-owned host",
+        );
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    hostConnectionListHostProjectsMock.mockResolvedValueOnce({
+      rows: [
+        {
+          project_id: "proj-authoritative-remote",
+          title: "Remote",
+          state: "running",
+          provisioned: true,
+          last_edited: "2026-01-04T00:00:00.000Z",
+          last_backup: "2026-01-03T00:00:00.000Z",
+          needs_backup: false,
+          collab_count: 1,
+        },
+      ],
+      summary: {
+        total: 1,
+        provisioned: 1,
+        running: 1,
+        provisioned_up_to_date: 1,
+        provisioned_needs_backup: 0,
+      },
+    });
+
+    const { listHostProjects } = await import("./hosts");
+    const result = await listHostProjects({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+      limit: 10,
+    });
+
+    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
+    expect(hostConnectionListHostProjectsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        limit: 10,
+      }),
+    );
+    expect(result.rows.map((row) => row.project_id)).toEqual([
+      "proj-authoritative-remote",
+    ]);
   });
 
   it("adds the risk filter when requested", async () => {
@@ -1135,6 +1234,66 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       },
     ]);
     expect(status.observation_error).toBeUndefined();
+  });
+
+  it("routes runtime deployment status to the authoritative remote bay", async () => {
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-1",
+      epoch: 2,
+    }));
+    hostConnectionGetHostRuntimeDeploymentStatusMock.mockResolvedValueOnce({
+      effective: [
+        {
+          scope_type: "host",
+          scope_id: HOST_ID,
+          host_id: HOST_ID,
+          target_type: "artifact",
+          target: "project-host",
+          desired_version: "ph-remote",
+          requested_by: ACCOUNT_ID,
+          requested_at: "2026-04-15T00:00:00.000Z",
+          updated_at: "2026-04-15T00:00:00.000Z",
+        },
+      ],
+      observed_targets: [],
+      observed_components: [],
+      observed_artifacts: [],
+      rollback_targets: [],
+    });
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              metadata: { owner: ACCOUNT_ID },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected local query: ${sql}`);
+    });
+
+    const { getHostRuntimeDeploymentStatus } = await import("./hosts");
+    const status = await getHostRuntimeDeploymentStatus({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+
+    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
+    expect(
+      hostConnectionGetHostRuntimeDeploymentStatusMock,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(status.effective).toEqual([
+      expect.objectContaining({
+        target: "project-host",
+        desired_version: "ph-remote",
+      }),
+    ]);
   });
 
   it("ignores missing host-agent status support on older hosts", async () => {

@@ -112,6 +112,10 @@ import {
 } from "@cocalc/server/inter-bay/project-control";
 import {
   getBackupConfigLocal,
+  getHostLog,
+  getHostMetricsHistory,
+  getHostRuntimeDeploymentStatus,
+  getHostRuntimeLog,
   getProjectOwnerEffectiveLimitsLocal,
   getProjectStartMetadataLocal,
   listHostProjects,
@@ -571,6 +575,36 @@ async function startHostConnectionService(): Promise<void> {
         // The source bay has already authenticated and authorized the user
         // before issuing this cluster-internal request.
         trusted_admin_view: true,
+      }),
+    getHostLog: async ({ account_id, id, limit }) =>
+      await getHostLog({
+        account_id,
+        id,
+        limit,
+      }),
+    getHostRuntimeLog: async ({ account_id, id, lines, source }) =>
+      await getHostRuntimeLog({
+        account_id,
+        id,
+        lines,
+        source,
+      }),
+    getHostMetricsHistory: async ({
+      account_id,
+      id,
+      window_minutes,
+      max_points,
+    }) =>
+      await getHostMetricsHistory({
+        account_id,
+        id,
+        window_minutes,
+        max_points,
+      }),
+    getHostRuntimeDeploymentStatus: async ({ account_id, id }) =>
+      await getHostRuntimeDeploymentStatus({
+        account_id,
+        id,
       }),
     getProjectStartMetadata: async ({ host_id, project_id }) => {
       const metadata = await getProjectStartMetadataLocal({

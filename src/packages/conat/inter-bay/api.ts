@@ -610,6 +610,10 @@ export type ProjectDetailsMethod = "get";
 export type HostConnectionMethod =
   | "get"
   | "list"
+  | "get-host-log"
+  | "get-host-runtime-log"
+  | "get-host-metrics-history"
+  | "get-host-runtime-deployment-status"
   | "get-project-start-metadata"
   | "get-backup-config"
   | "get-project-owner-effective-limits"
@@ -733,6 +737,18 @@ export interface InterBayProjectDetailsApi {
 export interface InterBayHostConnectionApi {
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
+  getHostLog: (
+    opts: Parameters<Hosts["getHostLog"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostLog"]>>>;
+  getHostRuntimeLog: (
+    opts: Parameters<Hosts["getHostRuntimeLog"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeLog"]>>>;
+  getHostMetricsHistory: (
+    opts: Parameters<Hosts["getHostMetricsHistory"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostMetricsHistory"]>>>;
+  getHostRuntimeDeploymentStatus: (
+    opts: Parameters<Hosts["getHostRuntimeDeploymentStatus"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeDeploymentStatus"]>>>;
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
@@ -783,6 +799,13 @@ export interface InterBayHostConnectionApi {
 const HOST_CONNECTION_METHOD_SPECS = [
   { name: "get", method: "get" },
   { name: "list", method: "list" },
+  { name: "getHostLog", method: "get-host-log" },
+  { name: "getHostRuntimeLog", method: "get-host-runtime-log" },
+  { name: "getHostMetricsHistory", method: "get-host-metrics-history" },
+  {
+    name: "getHostRuntimeDeploymentStatus",
+    method: "get-host-runtime-deployment-status",
+  },
   {
     name: "getProjectStartMetadata",
     method: "get-project-start-metadata",

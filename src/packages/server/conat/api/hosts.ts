@@ -670,6 +670,17 @@ function isHostNotFoundError(err: unknown): boolean {
   return err instanceof Error && err.message === "host not found";
 }
 
+async function resolveRemoteHostBayIfAuthoritative(
+  host_id: string,
+): Promise<string | undefined> {
+  const ownership = await resolveHostBay(host_id);
+  const bay_id = `${ownership?.bay_id ?? ""}`.trim();
+  if (!bay_id || bay_id === getConfiguredBayId()) {
+    return;
+  }
+  return bay_id;
+}
+
 async function resolveHostProjectListingTarget({
   id,
   account_id,
@@ -680,6 +691,10 @@ async function resolveHostProjectListingTarget({
   | { kind: "local"; host: Awaited<ReturnType<typeof loadHostForListing>> }
   | { kind: "remote"; bay_id: string }
 > {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return { kind: "remote", bay_id: remoteBay };
+  }
   try {
     const host = await loadHostForListing(id, account_id);
     const bay_id = `${host?.bay_id ?? ""}`.trim();
@@ -2127,6 +2142,12 @@ export async function resolveHostConnection({
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(host_id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .get({ account_id: owner, host_id });
+  }
   const local = await resolveHostConnectionLocal({
     account_id: owner,
     host_id,
@@ -2680,6 +2701,14 @@ export async function getHostLog({
     error?: string | null;
   }[]
 > {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge().hostConnection(remoteBay).getHostLog({
+      account_id,
+      id,
+      limit,
+    });
+  }
   await loadHostForView(id, account_id);
   const entries = await listCloudVmLog({ vm_id: id, limit });
   return entries.map((entry) => ({
@@ -2711,6 +2740,17 @@ export async function getHostRuntimeLog({
   lines?: number;
   source?: HostRuntimeLogSource;
 }): Promise<{ host_id: string; source: string; lines: number; text: string }> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .getHostRuntimeLog({
+        account_id,
+        id,
+        lines,
+        source,
+      });
+  }
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
   const response = await client.getRuntimeLog({
@@ -2736,6 +2776,17 @@ export async function getHostMetricsHistory({
   window_minutes?: number;
   max_points?: number;
 }): Promise<HostMetricsHistory> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .getHostMetricsHistory({
+        account_id,
+        id,
+        window_minutes,
+        max_points,
+      });
+  }
   const host = await loadHostForListing(id, account_id);
   const history = await loadProjectHostMetricsHistory({
     host_ids: [host.id],
@@ -4188,6 +4239,15 @@ export async function getHostRuntimeDeploymentStatus({
   account_id?: string;
   id: string;
 }): Promise<HostRuntimeDeploymentStatus> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .getHostRuntimeDeploymentStatus({
+        account_id,
+        id,
+      });
+  }
   const row = await loadHostForListing(id, account_id);
   return await getHostRuntimeDeploymentStatusInternal({
     id,
