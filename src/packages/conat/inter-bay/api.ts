@@ -614,6 +614,13 @@ export type HostConnectionMethod =
   | "get-host-runtime-log"
   | "get-host-metrics-history"
   | "get-host-runtime-deployment-status"
+  | "list-host-rootfs-images"
+  | "pull-host-rootfs-image"
+  | "delete-host-rootfs-image"
+  | "gc-deleted-host-rootfs-images"
+  | "list-host-runtime-deployments"
+  | "set-host-runtime-deployments"
+  | "get-host-managed-component-status"
   | "get-project-start-metadata"
   | "get-backup-config"
   | "get-project-owner-effective-limits"
@@ -749,6 +756,27 @@ export interface InterBayHostConnectionApi {
   getHostRuntimeDeploymentStatus: (
     opts: Parameters<Hosts["getHostRuntimeDeploymentStatus"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostRuntimeDeploymentStatus"]>>>;
+  listHostRootfsImages: (
+    opts: Parameters<Hosts["listHostRootfsImages"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["listHostRootfsImages"]>>>;
+  pullHostRootfsImage: (
+    opts: Parameters<Hosts["pullHostRootfsImage"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["pullHostRootfsImage"]>>>;
+  deleteHostRootfsImage: (
+    opts: Parameters<Hosts["deleteHostRootfsImage"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["deleteHostRootfsImage"]>>>;
+  gcDeletedHostRootfsImages: (
+    opts: Parameters<Hosts["gcDeletedHostRootfsImages"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["gcDeletedHostRootfsImages"]>>>;
+  listHostRuntimeDeployments: (
+    opts: Parameters<Hosts["listHostRuntimeDeployments"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["listHostRuntimeDeployments"]>>>;
+  setHostRuntimeDeployments: (
+    opts: Parameters<Hosts["setHostRuntimeDeployments"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["setHostRuntimeDeployments"]>>>;
+  getHostManagedComponentStatus: (
+    opts: Parameters<Hosts["getHostManagedComponentStatus"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getHostManagedComponentStatus"]>>>;
   getProjectStartMetadata: (
     opts: Parameters<Hosts["getProjectStartMetadata"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectStartMetadata"]>>>;
@@ -805,6 +833,25 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "getHostRuntimeDeploymentStatus",
     method: "get-host-runtime-deployment-status",
+  },
+  { name: "listHostRootfsImages", method: "list-host-rootfs-images" },
+  { name: "pullHostRootfsImage", method: "pull-host-rootfs-image" },
+  { name: "deleteHostRootfsImage", method: "delete-host-rootfs-image" },
+  {
+    name: "gcDeletedHostRootfsImages",
+    method: "gc-deleted-host-rootfs-images",
+  },
+  {
+    name: "listHostRuntimeDeployments",
+    method: "list-host-runtime-deployments",
+  },
+  {
+    name: "setHostRuntimeDeployments",
+    method: "set-host-runtime-deployments",
+  },
+  {
+    name: "getHostManagedComponentStatus",
+    method: "get-host-managed-component-status",
   },
   {
     name: "getProjectStartMetadata",

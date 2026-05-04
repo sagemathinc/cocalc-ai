@@ -111,18 +111,25 @@ import {
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
 import {
+  deleteHostRootfsImage,
+  gcDeletedHostRootfsImages,
   getBackupConfigLocal,
   getHostLog,
+  getHostManagedComponentStatus,
   getHostMetricsHistory,
   getHostRuntimeDeploymentStatus,
   getHostRuntimeLog,
   getProjectOwnerEffectiveLimitsLocal,
   getProjectStartMetadataLocal,
+  listHostRootfsImages,
   listHostProjects,
+  listHostRuntimeDeployments,
+  pullHostRootfsImage,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
   recordProjectBackupLocal,
   resolveHostConnectionLocal,
+  setHostRuntimeDeployments,
 } from "@cocalc/server/conat/api/hosts";
 import { getSeedProjectBackupConfig } from "@cocalc/server/project-backup";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -603,6 +610,53 @@ async function startHostConnectionService(): Promise<void> {
       }),
     getHostRuntimeDeploymentStatus: async ({ account_id, id }) =>
       await getHostRuntimeDeploymentStatus({
+        account_id,
+        id,
+      }),
+    listHostRootfsImages: async ({ account_id, id }) =>
+      await listHostRootfsImages({
+        account_id,
+        id,
+      }),
+    pullHostRootfsImage: async ({ account_id, id, image }) =>
+      await pullHostRootfsImage({
+        account_id,
+        id,
+        image,
+      }),
+    deleteHostRootfsImage: async ({ account_id, id, image }) =>
+      await deleteHostRootfsImage({
+        account_id,
+        id,
+        image,
+      }),
+    gcDeletedHostRootfsImages: async ({ account_id, id }) =>
+      await gcDeletedHostRootfsImages({
+        account_id,
+        id,
+      }),
+    listHostRuntimeDeployments: async ({ account_id, scope_type, id }) =>
+      await listHostRuntimeDeployments({
+        account_id,
+        scope_type,
+        id,
+      }),
+    setHostRuntimeDeployments: async ({
+      account_id,
+      scope_type,
+      id,
+      deployments,
+      replace,
+    }) =>
+      await setHostRuntimeDeployments({
+        account_id,
+        scope_type,
+        id,
+        deployments,
+        replace,
+      }),
+    getHostManagedComponentStatus: async ({ account_id, id }) =>
+      await getHostManagedComponentStatus({
         account_id,
         id,
       }),
