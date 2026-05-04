@@ -20,6 +20,7 @@ import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap
 import { bumpReconcile, DEFAULT_INTERVALS } from "./reconcile";
 import { normalizeProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "./provider-context";
+import { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
 import { resolveGcpManagedHostInternalUrl } from "./internal-network";
 import {
   createProjectHostBootstrapToken,
@@ -345,10 +346,15 @@ async function refreshRuntimeNetworkInfo(row: any) {
   });
   if (!entry.provider.getInstance) return undefined;
   const instance = await entry.provider.getInstance(runtime, creds);
+  const mappedStatus = instance?.status
+    ? (entry.provider.mapStatus?.(instance.status) ?? instance.status)
+    : undefined;
   const network = {
     public_ip: instance?.public_ip ?? undefined,
     private_ip: instance?.private_ip ?? undefined,
     internal_hostname: instance?.internal_hostname ?? undefined,
+    provider_status: instance?.status ?? undefined,
+    mapped_status: mappedStatus,
   };
   logger.debug("refreshRuntimeNetworkInfo: result", {
     host_id: row.id,
@@ -1131,6 +1137,13 @@ async function handleRefreshRuntime(row: any) {
     instance_id: runtime.instance_id,
     network,
   });
+  const mappedProviderStatus = network?.mapped_status as
+    | "running"
+    | "starting"
+    | "off"
+    | "stopped"
+    | "error"
+    | undefined;
   const nextMetadata = {
     ...(host.metadata ?? {}),
     runtime: {
@@ -1140,8 +1153,62 @@ async function handleRefreshRuntime(row: any) {
       ...(network?.internal_hostname
         ? { internal_hostname: network.internal_hostname }
         : {}),
+      ...(network?.provider_status
+        ? { provider_status: network.provider_status }
+        : {}),
     },
   };
+  if (mappedProviderStatus && mappedProviderStatus !== "running") {
+    const nextStatus =
+      mappedProviderStatus === "stopped" ? "off" : mappedProviderStatus;
+    await updateHostRow(host.id, {
+      metadata: nextMetadata,
+      status: nextStatus,
+      last_seen: null,
+    });
+    const nextHost = {
+      ...host,
+      status: nextStatus,
+      metadata: nextMetadata,
+    };
+    if (
+      providerId &&
+      nextStatus === "off" &&
+      shouldAutoRestoreInterruptedSpotHost(nextHost)
+    ) {
+      await enqueueCloudVmWorkOnce({
+        vm_id: host.id,
+        action: "start",
+        payload: {
+          source: "refresh_runtime",
+          reason: network?.provider_status
+            ? `provider-status:${network.provider_status}`
+            : "provider-offline",
+        },
+      });
+      await bumpReconcile(providerId, 1000);
+    } else if (providerId) {
+      await bumpReconcile(providerId, DEFAULT_INTERVALS.running_ms);
+    }
+    await logCloudVmEvent({
+      vm_id: host.id,
+      action: "refresh_runtime",
+      status: "success",
+      provider: providerId ?? host.metadata?.machine?.cloud,
+      runtime: {
+        ...runtime,
+        ...(network?.public_ip ? { public_ip: network.public_ip } : {}),
+        ...(network?.private_ip ? { private_ip: network.private_ip } : {}),
+        ...(network?.internal_hostname
+          ? { internal_hostname: network.internal_hostname }
+          : {}),
+        ...(network?.provider_status
+          ? { provider_status: network.provider_status }
+          : {}),
+      },
+    });
+    return;
+  }
   const previousIp = `${runtime.public_ip ?? ""}`.trim() || undefined;
   const publicUrl =
     (network?.public_ip

@@ -226,4 +226,88 @@ describe("cloud host start failures", () => {
     expect(rows[0].status).toBe("deprovisioned");
     expect(rows[0].metadata.runtime_deployments).toBeUndefined();
   });
+
+  it("does not mark a spot host running when refresh_runtime sees TERMINATED with stale IP metadata", async () => {
+    const hostId = "0ca1f2bc-43e4-48d1-82e8-2f96a76f8f94";
+    const getInstance = jest.fn(async () => ({
+      instance_id: `cocalc-host-${hostId}`,
+      name: `cocalc-host-${hostId}`,
+      status: "TERMINATED",
+      public_ip: "34.106.236.179",
+      private_ip: "10.180.0.16",
+      internal_hostname: `cocalc-host-${hostId}.internal`,
+    }));
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          getInstance,
+          mapStatus: (status?: string) =>
+            status === "TERMINATED" ? "off" : undefined,
+        },
+      },
+      creds: {},
+    });
+
+    await upsertProjectHost({
+      id: hostId,
+      name: "Spot host",
+      region: "us-west3",
+      status: "starting",
+      public_url: "https://host.example.test",
+      internal_url: "http://10.180.0.16:9002",
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_state: "running",
+        interruption_restore_policy: "immediate",
+        last_action: "start",
+        last_action_status: "success",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west3-b",
+          machine_type: "t2d-standard-16",
+          disk_gb: 200,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "gcp",
+          zone: "us-west3-b",
+          instance_id: `cocalc-host-${hostId}`,
+          public_ip: "34.106.236.179",
+          private_ip: "10.180.0.16",
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.refresh_runtime({
+      id: "work-refresh-1",
+      vm_id: hostId,
+      action: "refresh_runtime",
+      payload: { provider: "gcp", force: true, attempt: 0 },
+    } as any);
+
+    const hostRows = await getPool().query(
+      "SELECT status, last_seen, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].status).toBe("off");
+    expect(hostRows.rows[0].last_seen).toBeNull();
+    expect(hostRows.rows[0].metadata.runtime.provider_status).toBe(
+      "TERMINATED",
+    );
+
+    const workRows = await getPool().query(
+      "SELECT action, state, payload FROM cloud_vm_work WHERE vm_id=$1 ORDER BY created_at",
+      [hostId],
+    );
+    expect(workRows.rows.map((row) => row.action)).toContain("start");
+    expect(
+      workRows.rows.find((row) => row.action === "start")?.payload,
+    ).toMatchObject({
+      source: "refresh_runtime",
+      reason: "provider-status:TERMINATED",
+    });
+  });
 });
