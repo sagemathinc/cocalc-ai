@@ -570,6 +570,18 @@ export function NavigatorShell({
     }
     let mounted = true;
     const syncdb = actions.syncdb;
+    const restartNavigatorChat = () => {
+      if (!mounted || (actions.isSyncdbReady?.() ?? false)) {
+        return;
+      }
+      removeWithInstance(navigatorPath, redux, project_id, {
+        instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
+      });
+      setActions(null);
+      setSyncdbReady(false);
+      setInitRetrying(true);
+      setInitRetryTick((tick) => tick + 1);
+    };
     const updateReady = () => {
       if (mounted) {
         setSyncdbReady(actions.isSyncdbReady?.() ?? false);
@@ -578,20 +590,12 @@ export function NavigatorShell({
     updateReady();
     syncdb?.on?.("ready", updateReady);
     syncdb?.on?.("close", updateReady);
+    syncdb?.once?.("close", restartNavigatorChat);
     const poll = setInterval(updateReady, 500);
     const staleTimer =
       projectState === "running" && !(actions.isSyncdbReady?.() ?? false)
         ? setTimeout(() => {
-            if (!mounted || (actions.isSyncdbReady?.() ?? false)) {
-              return;
-            }
-            removeWithInstance(navigatorPath, redux, project_id, {
-              instanceKey: NAVIGATOR_CHAT_INSTANCE_KEY,
-            });
-            setActions(null);
-            setSyncdbReady(false);
-            setInitRetrying(true);
-            setInitRetryTick((tick) => tick + 1);
+            restartNavigatorChat();
           }, NAVIGATOR_CHAT_READY_STALE_RETRY_MS)
         : undefined;
     return () => {
@@ -602,6 +606,7 @@ export function NavigatorShell({
       }
       syncdb?.removeListener?.("ready", updateReady);
       syncdb?.removeListener?.("close", updateReady);
+      syncdb?.removeListener?.("close", restartNavigatorChat);
     };
   }, [actions, navigatorPath, project_id, projectState]);
 

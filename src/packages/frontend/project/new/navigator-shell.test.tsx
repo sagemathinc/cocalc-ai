@@ -1,28 +1,62 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 
 const mockEraseActiveKeyHandler = jest.fn();
 const mockMessageApi = {
   success: jest.fn(),
   error: jest.fn(),
 };
+const mockGetChatActions = jest.fn();
+const mockInitChat = jest.fn();
+const mockRemoveWithInstance = jest.fn();
 let mockSharedChatReady = true;
-const mockSharedChatActions = {
-  syncdb: {
-    on: jest.fn(),
-    removeListener: jest.fn(),
-  },
-  isSyncdbReady: jest.fn(() => mockSharedChatReady),
-  messageCache: {
-    getThreadIndex: () => new Map(),
-    on: jest.fn(),
-    removeListener: jest.fn(),
-  },
-  getThreadMetadata: jest.fn(() => ({})),
-  setSelectedThread: jest.fn(),
-  scrollToIndex: jest.fn(),
-} as any;
+
+function createMockSharedChatActions(id = "shared") {
+  let closed = false;
+  const onceHandlers = new Map<string, Set<(...args: any[]) => void>>();
+  const onHandlers = new Map<string, Set<(...args: any[]) => void>>();
+  return {
+    __id: id,
+    syncdb: {
+      on: jest.fn((event: string, cb: (...args: any[]) => void) => {
+        const handlers = onHandlers.get(event) ?? new Set();
+        handlers.add(cb);
+        onHandlers.set(event, handlers);
+      }),
+      once: jest.fn((event: string, cb: (...args: any[]) => void) => {
+        const handlers = onceHandlers.get(event) ?? new Set();
+        handlers.add(cb);
+        onceHandlers.set(event, handlers);
+      }),
+      removeListener: jest.fn((event: string, cb: (...args: any[]) => void) => {
+        onHandlers.get(event)?.delete(cb);
+        onceHandlers.get(event)?.delete(cb);
+      }),
+      emitClose: () => {
+        closed = true;
+        for (const cb of Array.from(onHandlers.get("close") ?? [])) {
+          cb();
+        }
+        for (const cb of Array.from(onceHandlers.get("close") ?? [])) {
+          cb();
+        }
+        onceHandlers.get("close")?.clear();
+      },
+    },
+    isSyncdbReady: jest.fn(() => !closed && mockSharedChatReady),
+    messageCache: {
+      getThreadIndex: () => new Map(),
+      on: jest.fn(),
+      removeListener: jest.fn(),
+    },
+    getThreadMetadata: jest.fn(() => ({})),
+    setSelectedThread: jest.fn(),
+    scrollToIndex: jest.fn(),
+  } as any;
+}
+
+let mockSharedChatActions = createMockSharedChatActions();
 
 jest.mock("antd", () => {
   const Div = ({ children }: any) => <div>{children}</div>;
@@ -76,9 +110,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 }));
 
 jest.mock("@cocalc/frontend/chat/register", () => ({
-  getChatActions: () => mockSharedChatActions,
-  initChat: () => mockSharedChatActions,
-  removeWithInstance: jest.fn(),
+  getChatActions: (...args: any[]) => mockGetChatActions(...args),
+  initChat: (...args: any[]) => mockInitChat(...args),
+  removeWithInstance: (...args: any[]) => mockRemoveWithInstance(...args),
 }));
 
 jest.mock("@cocalc/frontend/project/page/agent-chat-font-size", () => ({
@@ -158,8 +192,15 @@ describe("NavigatorShell keyboard suppression", () => {
     mockEraseActiveKeyHandler.mockClear();
     mockMessageApi.success.mockClear();
     mockMessageApi.error.mockClear();
+    mockGetChatActions.mockReset();
+    mockInitChat.mockReset();
+    mockRemoveWithInstance.mockReset();
     mockSharedChatReady = true;
+    mockSharedChatActions = createMockSharedChatActions();
+    mockGetChatActions.mockReturnValue(mockSharedChatActions);
+    mockInitChat.mockReturnValue(mockSharedChatActions);
     mockSharedChatActions.syncdb.on.mockClear();
+    mockSharedChatActions.syncdb.once.mockClear();
     mockSharedChatActions.syncdb.removeListener.mockClear();
     mockSharedChatActions.isSyncdbReady.mockClear();
     mockSharedChatActions.messageCache.on.mockClear();
@@ -199,6 +240,29 @@ describe("NavigatorShell keyboard suppression", () => {
 
     expect(screen.queryByText("Loading...")).toBeNull();
     expect(screen.getByTestId("navigator-composer")).toBeTruthy();
+  });
+
+  it("recreates navigator chat immediately after syncdb close even without running project state", async () => {
+    const firstActions = createMockSharedChatActions("first");
+    const secondActions = createMockSharedChatActions("second");
+    mockGetChatActions.mockReturnValue(firstActions);
+    mockInitChat.mockReturnValue(secondActions);
+
+    render(<NavigatorShell project_id="project-1" />);
+
+    expect(screen.getByTestId("navigator-composer")).toBeTruthy();
+
+    act(() => {
+      fireEvent.focus(screen.getByTestId("navigator-composer"));
+      firstActions.syncdb.emitClose();
+    });
+
+    expect(mockRemoveWithInstance).toHaveBeenCalledWith(
+      "/home/user/.local/share/cocalc/navigator-acct-1.chat",
+      expect.anything(),
+      "project-1",
+      { instanceKey: "navigator-shell" },
+    );
   });
 
   it("prefers latest thread metadata acp_config over stale root-message config", () => {
