@@ -29,6 +29,8 @@ const DEFAULT_BUNDLE_ROOT = "/opt/cocalc/project-bundles";
 const DEFAULT_TOOLS_ROOT = "/opt/cocalc/tools";
 const PROJECT_HOST_ROOT = "/opt/cocalc/project-host";
 const STORAGE_WRAPPER = "/usr/local/sbin/cocalc-runtime-storage";
+const DEFAULT_UPGRADE_FETCH_TIMEOUT_MS = 30_000;
+const DEFAULT_UPGRADE_DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
 
 type CanonicalArtifact = "project-host" | "project" | "tools";
 
@@ -118,32 +120,107 @@ function describeError(err: any): string {
   return parts.join(": ");
 }
 
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = `${process.env[name] ?? ""}`.trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+function fetchTimeoutMs(): number {
+  return parsePositiveIntEnv(
+    "COCALC_PROJECT_HOST_UPGRADE_FETCH_TIMEOUT_MS",
+    DEFAULT_UPGRADE_FETCH_TIMEOUT_MS,
+  );
+}
+
+function downloadTimeoutMs(): number {
+  return parsePositiveIntEnv(
+    "COCALC_PROJECT_HOST_UPGRADE_DOWNLOAD_TIMEOUT_MS",
+    DEFAULT_UPGRADE_DOWNLOAD_TIMEOUT_MS,
+  );
+}
+
+function createTimeoutSignal(timeoutMs: number): {
+  signal: AbortSignal;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  timer.unref?.();
+  return {
+    signal: controller.signal,
+    cleanup: () => clearTimeout(timer),
+  };
+}
+
+function curlTimeoutArgs(timeoutMs: number): string[] {
+  const maxTimeSeconds = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const connectTimeoutSeconds = Math.max(1, Math.min(20, maxTimeSeconds));
+  return [
+    "--connect-timeout",
+    `${connectTimeoutSeconds}`,
+    "--max-time",
+    `${maxTimeSeconds}`,
+  ];
+}
+
 async function runCommandCapture(
   cmd: string,
   args: string[],
+  opts?: {
+    timeoutMs?: number;
+  },
 ): Promise<{ stdout: string; stderr: string }> {
   return await new Promise<{ stdout: string; stderr: string }>(
     (resolve, reject) => {
       const proc = spawn(cmd, args, { stdio: "pipe" });
       let stdout = "";
       let stderr = "";
+      const timeoutMs = opts?.timeoutMs;
+      let settled = false;
+      const timer =
+        timeoutMs == null
+          ? undefined
+          : setTimeout(() => {
+              if (settled) return;
+              proc.kill("SIGKILL");
+              settled = true;
+              reject(new Error(`${cmd} timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+      timer?.unref?.();
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timer) {
+          clearTimeout(timer);
+        }
+        fn();
+      };
       proc.stdout.on("data", (chunk) => {
         stdout += chunk.toString();
       });
       proc.stderr.on("data", (chunk) => {
         stderr += chunk.toString();
       });
-      proc.on("error", reject);
+      proc.on("error", (err) => finish(() => reject(err)));
       proc.on("close", (code) => {
-        if (code === 0) {
-          resolve({ stdout, stderr });
-        } else {
-          reject(
-            new Error(
-              stderr || stdout || `${cmd} failed with code ${code ?? "?"}`,
-            ),
-          );
-        }
+        finish(() => {
+          if (code === 0) {
+            resolve({ stdout, stderr });
+          } else {
+            reject(
+              new Error(
+                stderr || stdout || `${cmd} failed with code ${code ?? "?"}`,
+              ),
+            );
+          }
+        });
       });
     },
   );
@@ -153,8 +230,10 @@ async function fetchText(
   url: string,
   headers?: Record<string, string>,
 ): Promise<string> {
+  const timeoutMs = fetchTimeoutMs();
+  const { signal, cleanup } = createTimeoutSignal(timeoutMs);
   try {
-    const res = await fetch(url, headers ? { headers } : undefined);
+    const res = await fetch(url, headers ? { headers, signal } : { signal });
     if (!res.ok) {
       throw new Error(`fetch ${url} failed (${res.status})`);
     }
@@ -164,13 +243,17 @@ async function fetchText(
       url,
       err: describeError(err),
     });
-    const args = ["-fsSL"];
+    const args = ["-fsSL", ...curlTimeoutArgs(timeoutMs)];
     for (const [key, value] of Object.entries(headers ?? {})) {
       args.push("-H", `${key}: ${value}`);
     }
     args.push(url);
-    const { stdout } = await runCommandCapture("curl", args);
+    const { stdout } = await runCommandCapture("curl", args, {
+      timeoutMs: timeoutMs + 5_000,
+    });
     return stdout;
+  } finally {
+    cleanup();
   }
 }
 
@@ -228,8 +311,10 @@ function resolveProjectHostPaths() {
 }
 
 async function downloadToFile(url: string, dest: string) {
+  const timeoutMs = downloadTimeoutMs();
+  const { signal, cleanup } = createTimeoutSignal(timeoutMs);
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal });
     if (!res.ok || !res.body) {
       throw new Error(`download failed (${res.status})`);
     }
@@ -243,7 +328,13 @@ async function downloadToFile(url: string, dest: string) {
       err: describeError(err),
     });
     await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-    await runCommandCapture("curl", ["-fsSL", "-o", dest, url]);
+    await runCommandCapture(
+      "curl",
+      ["-fsSL", ...curlTimeoutArgs(timeoutMs), "-o", dest, url],
+      { timeoutMs: timeoutMs + 5_000 },
+    );
+  } finally {
+    cleanup();
   }
 }
 
@@ -821,7 +912,9 @@ export async function upgradeSoftware(
 }
 
 export const __test__ = {
+  curlTimeoutArgs,
   downloadAndInstall,
   pruneVersionDirs,
+  runCommandCapture,
   scheduledProjectHostReconcileCommand,
 };

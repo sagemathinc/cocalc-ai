@@ -1,4 +1,7 @@
-import { runtimeDeploymentsForManagedComponentVersion } from "./runtime-deployments";
+import {
+  runtimeDeploymentsForManagedComponentVersion,
+  shouldAlignRuntimeStackForSoftwareArtifacts,
+} from "./runtime-deployments";
 
 describe("runtimeDeploymentsForManagedComponentVersion", () => {
   it("pins the matching project-host artifact alongside the component target", () => {
@@ -31,5 +34,32 @@ describe("runtimeDeploymentsForManagedComponentVersion", () => {
         desired_version: "   ",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("shouldAlignRuntimeStackForSoftwareArtifacts", () => {
+  it("aligns the runtime stack for project-host upgrades", () => {
+    expect(
+      shouldAlignRuntimeStackForSoftwareArtifacts({
+        artifacts: ["project-host", "project", "tools"],
+      }),
+    ).toBe(true);
+  });
+
+  it("does not align the runtime stack for non-project-host upgrades by default", () => {
+    expect(
+      shouldAlignRuntimeStackForSoftwareArtifacts({
+        artifacts: ["project", "tools"],
+      }),
+    ).toBe(false);
+  });
+
+  it("preserves an explicit align request", () => {
+    expect(
+      shouldAlignRuntimeStackForSoftwareArtifacts({
+        artifacts: ["tools"],
+        alignRuntimeStack: true,
+      }),
+    ).toBe(true);
   });
 });

@@ -366,13 +366,46 @@ def bootstrap_lock_path(cfg: BootstrapConfig) -> Path:
     return Path(cfg.bootstrap_dir) / "bootstrap.lock"
 
 
+def bootstrap_lock_timeout_seconds() -> float:
+    raw = os.environ.get("COCALC_BOOTSTRAP_LOCK_TIMEOUT_SECS", "").strip()
+    if not raw:
+        return 300.0
+    try:
+        value = float(raw)
+    except ValueError:
+        return 300.0
+    if value <= 0:
+        return 300.0
+    return value
+
+
 @contextmanager
 def bootstrap_operation_lock(cfg: BootstrapConfig):
     lock_path = bootstrap_lock_path(cfg)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
+    timeout_seconds = bootstrap_lock_timeout_seconds()
+    deadline = time.monotonic() + timeout_seconds
     with lock_path.open("a+", encoding="utf-8") as handle:
         log_line(cfg, f"bootstrap: acquiring lifecycle lock {lock_path}")
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        next_wait_log_at = time.monotonic() + 30.0
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                now = time.monotonic()
+                if now >= deadline:
+                    raise TimeoutError(
+                        f"timed out waiting for lifecycle lock {lock_path} after {int(timeout_seconds)}s"
+                    )
+                if now >= next_wait_log_at:
+                    remaining = max(0, int(deadline - now))
+                    log_line(
+                        cfg,
+                        f"bootstrap: waiting for lifecycle lock {lock_path} remaining={remaining}s",
+                    )
+                    next_wait_log_at = now + 30.0
+                time.sleep(min(1.0, max(0.05, deadline - now)))
         try:
             log_line(cfg, f"bootstrap: acquired lifecycle lock {lock_path}")
             yield

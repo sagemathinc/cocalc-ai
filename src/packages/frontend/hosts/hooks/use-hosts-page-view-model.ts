@@ -29,7 +29,10 @@ import {
   getProviderOptions,
   getSelfHostConnectors,
 } from "../providers/registry";
-import { runtimeDeploymentsForManagedComponentVersion } from "../utils/runtime-deployments";
+import {
+  runtimeDeploymentsForManagedComponentVersion,
+  shouldAlignRuntimeStackForSoftwareArtifacts,
+} from "../utils/runtime-deployments";
 import {
   activeSpotRecoveryPolicy,
   equalSpotRecoveryPolicies,
@@ -122,10 +125,12 @@ function matchesUpgradeRequest({
   summary,
   artifacts,
   base_url,
+  alignRuntimeStack,
 }: {
   summary: { input?: any };
   artifacts: HostSoftwareArtifact[];
   base_url?: string;
+  alignRuntimeStack?: boolean;
 }): boolean {
   const input = summary.input ?? {};
   const summaryTargets = normalizeUpgradeArtifacts(
@@ -135,6 +140,18 @@ function matchesUpgradeRequest({
   );
   if (summaryTargets.length !== artifacts.length) return false;
   if (summaryTargets.join(",") !== artifacts.join(",")) return false;
+  if (
+    shouldAlignRuntimeStackForSoftwareArtifacts({
+      artifacts: summaryTargets,
+      alignRuntimeStack: !!input.align_runtime_stack,
+    }) !==
+    shouldAlignRuntimeStackForSoftwareArtifacts({
+      artifacts,
+      alignRuntimeStack,
+    })
+  ) {
+    return false;
+  }
   return (
     normalizeUpgradeBaseUrl(input.base_url) ===
     normalizeUpgradeBaseUrl(base_url)
@@ -346,10 +363,12 @@ export const useHostsPageViewModel = () => {
       host,
       artifacts,
       base_url,
+      alignRuntimeStack,
     }: {
       host: Host;
       artifacts: HostSoftwareArtifact[];
       base_url?: string;
+      alignRuntimeStack?: boolean;
     }): Promise<boolean> => {
       try {
         const ops = await hub.lro.list({
@@ -364,7 +383,12 @@ export const useHostsPageViewModel = () => {
               summary.kind === "host-upgrade-software" &&
               lroTimestampMs(summary.updated_at ?? summary.created_at) >=
                 cutoff &&
-              matchesUpgradeRequest({ summary, artifacts, base_url }),
+              matchesUpgradeRequest({
+                summary,
+                artifacts,
+                base_url,
+                alignRuntimeStack,
+              }),
           )
           .sort(
             (a, b) =>
@@ -408,6 +432,10 @@ export const useHostsPageViewModel = () => {
       const artifacts = opts?.artifacts?.length
         ? opts.artifacts
         : (["project-host", "project", "tools"] as HostSoftwareArtifact[]);
+      const alignRuntimeStack = shouldAlignRuntimeStackForSoftwareArtifacts({
+        artifacts,
+        alignRuntimeStack: opts?.alignRuntimeStack,
+      });
       try {
         const op = await hub.hosts.upgradeHostSoftware({
           id: host.id,
@@ -416,7 +444,7 @@ export const useHostsPageViewModel = () => {
             channel: "latest",
           })),
           ...(opts?.base_url ? { base_url: opts.base_url } : {}),
-          ...(opts?.alignRuntimeStack ? { align_runtime_stack: true } : {}),
+          ...(alignRuntimeStack ? { align_runtime_stack: true } : {}),
         });
         trackHostOp(host.id, op);
         await refresh();
@@ -425,6 +453,7 @@ export const useHostsPageViewModel = () => {
           host,
           artifacts,
           base_url: opts?.base_url,
+          alignRuntimeStack,
         });
         if (!recovered) {
           alert_message({
@@ -758,6 +787,7 @@ export const useHostsPageViewModel = () => {
             ...(source === "hub" && baseUrl
               ? { base_url: `${baseUrl}/software` }
               : {}),
+            align_runtime_stack: true,
           });
           trackHostOp(host.id, op);
         }

@@ -49,6 +49,8 @@ afterEach(() => {
   delete process.env.COCALC_LITE_SQLITE_FILENAME;
   delete process.env.COCALC_PROJECT_HOST_RETENTION_COUNT;
   delete process.env.COCALC_PROJECT_HOST_RETENTION_MAX_BYTES;
+  delete process.env.COCALC_PROJECT_HOST_UPGRADE_FETCH_TIMEOUT_MS;
+  delete process.env.COCALC_PROJECT_HOST_UPGRADE_DOWNLOAD_TIMEOUT_MS;
   delete process.env.COCALC_PROJECT_RUNTIME_ARTIFACT_RETENTION_COUNT;
   delete process.env.COCALC_PROJECT_RUNTIME_ARTIFACT_RETENTION_MAX_BYTES;
   delete process.env.COCALC_PROJECT_BUNDLE_RETENTION_COUNT;
@@ -67,6 +69,27 @@ describe("project host upgrade installer", () => {
     ).toBe(
       "sleep 3; /opt/cocalc/project-host/current/cocalc-project-host daemon ensure || true",
     );
+  });
+
+  it("caps curl fallback timeouts for host upgrades", () => {
+    expect(__test__.curlTimeoutArgs(500)).toEqual([
+      "--connect-timeout",
+      "1",
+      "--max-time",
+      "1",
+    ]);
+    expect(__test__.curlTimeoutArgs(125_000)).toEqual([
+      "--connect-timeout",
+      "20",
+      "--max-time",
+      "125",
+    ]);
+  });
+
+  it("times out long-running fallback commands", async () => {
+    await expect(
+      __test__.runCommandCapture("bash", ["-lc", "sleep 5"], { timeoutMs: 50 }),
+    ).rejects.toThrow("timed out after 50ms");
   });
 
   it("prepares the current-link parent separately from the bundle root", async () => {

@@ -1264,6 +1264,56 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
 
 
 class BootstrapModesTest(unittest.TestCase):
+    def test_bootstrap_operation_lock_times_out_when_another_process_holds_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            events: list[str] = []
+            original_timeout = os.environ.get("COCALC_BOOTSTRAP_LOCK_TIMEOUT_SECS")
+            originals = {
+                "flock": bootstrap.fcntl.flock,
+                "log_line": bootstrap.log_line,
+                "monotonic": bootstrap.time.monotonic,
+                "sleep": bootstrap.time.sleep,
+            }
+            clock = {"now": 0.0}
+
+            def fake_flock(_fd: int, operation: int) -> None:
+                if operation & bootstrap.fcntl.LOCK_NB:
+                    raise BlockingIOError()
+
+            def fake_monotonic() -> float:
+                return clock["now"]
+
+            def fake_sleep(seconds: float) -> None:
+                clock["now"] += seconds
+
+            os.environ["COCALC_BOOTSTRAP_LOCK_TIMEOUT_SECS"] = "1"
+            bootstrap.fcntl.flock = fake_flock
+            bootstrap.log_line = lambda _cfg, message: events.append(message)
+            bootstrap.time.monotonic = fake_monotonic
+            bootstrap.time.sleep = fake_sleep
+            try:
+                with self.assertRaises(TimeoutError) as ctx:
+                    with bootstrap.bootstrap_operation_lock(cfg):
+                        pass
+            finally:
+                if original_timeout is None:
+                    os.environ.pop("COCALC_BOOTSTRAP_LOCK_TIMEOUT_SECS", None)
+                else:
+                    os.environ["COCALC_BOOTSTRAP_LOCK_TIMEOUT_SECS"] = original_timeout
+                bootstrap.fcntl.flock = originals["flock"]
+                bootstrap.log_line = originals["log_line"]
+                bootstrap.time.monotonic = originals["monotonic"]
+                bootstrap.time.sleep = originals["sleep"]
+
+            self.assertIn("timed out waiting for lifecycle lock", str(ctx.exception))
+            self.assertTrue(
+                any("bootstrap: acquiring lifecycle lock" in event for event in events)
+            )
+            self.assertFalse(
+                any("bootstrap: acquired lifecycle lock" in event for event in events)
+            )
+
     def test_reconcile_mode_runs_under_lifecycle_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
