@@ -21,6 +21,7 @@ const logger = getLogger("conat:project:runner:load-balancer");
 
 const MAX_STATUS_TRIES = 3;
 const TIMEOUT = 30 * 60 * 1000;
+const OPENED_STATUS_CONFIRM_DELAY_MS = 1000;
 
 export interface Options {
   subject?: string;
@@ -210,11 +211,24 @@ export async function server({
       const project_id = getProjectId(this);
       logger.debug("status", project_id);
       const runClient = await getClient(project_id);
+      const priorState = projects.get(project_id)?.state;
       for (let i = 0; i < MAX_STATUS_TRIES; i++) {
         try {
           logger.debug("status", { project_id });
           const s = await runClient.status({ project_id });
           logger.debug("status: got ", s);
+          if (
+            s?.state == "opened" &&
+            (priorState === "running" || priorState === "starting") &&
+            i < MAX_STATUS_TRIES - 1
+          ) {
+            logger.debug(
+              "status: runner reported opened for an active project; retrying to confirm...",
+              { project_id, priorState, attempt: i + 1 },
+            );
+            await delay(OPENED_STATUS_CONFIRM_DELAY_MS);
+            continue;
+          }
           await setState1?.({ project_id, ...s });
           return s;
         } catch (err) {

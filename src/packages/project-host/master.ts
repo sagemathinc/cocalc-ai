@@ -854,6 +854,22 @@ export async function startMasterRegistration({
         const status = await hubApi.projects.stop({ account_id, project_id });
         return { project_id, state: (status as any)?.state };
       },
+      async getProjectStatus({ project_id }) {
+        await awaitReadyForControl("getProjectStatus", waitUntilReady);
+        if (!(hubApi.projects as any)?.status) {
+          throw Error("status not available");
+        }
+        const status = await (hubApi.projects as any).status({ project_id });
+        return {
+          project_id,
+          state: (status as any)?.state,
+          http_port: (status as any)?.http_port,
+          ssh_port: (status as any)?.ssh_port,
+          project_bundle_version: (status as any)?.project_bundle_version,
+          tools_version: (status as any)?.tools_version,
+          phase_timings_ms: (status as any)?.phase_timings_ms,
+        };
+      },
       async updateAuthorizedKeys({ project_id, authorized_keys }) {
         await updateAuthorizedKeys({
           project_id,

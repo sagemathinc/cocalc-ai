@@ -518,6 +518,111 @@ describe("startProjectOnHost placement", () => {
     });
   });
 
+  it("skips restart when the assigned host still reports the project running", async () => {
+    const startProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "running",
+    }));
+    const getProjectStatusMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "running",
+    }));
+    createHostControlClientMock = jest.fn(() => ({
+      startProject: startProjectMock,
+      getProjectStatus: getProjectStatusMock,
+    }));
+
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return {
+          rows: [{ state: { state: "opened", time: "2026-03-29T00:00:00Z" } }],
+        };
+      }
+      if (sql.includes("FROM long_running_operations")) {
+        return { rows: [{ exists: false }] };
+      }
+      if (
+        sql ===
+        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+      ) {
+        expect(params).toEqual(["proj-1"]);
+        return {
+          rows: [
+            {
+              title: "Existing project",
+              users: { owner: { group: "owner" } },
+              image: "sagemathinc/sagemath-x86_64:10.7",
+              host_id: "host-1",
+              region: "wnam",
+              owning_bay_id: "bay-0",
+              run_quota: null,
+            },
+          ],
+        };
+      }
+      if (sql === "SELECT host_id FROM projects WHERE project_id=$1") {
+        expect(params).toEqual(["proj-1"]);
+        return { rows: [{ host_id: "host-1" }] };
+      }
+      if (
+        sql ===
+        "SELECT id, bay_id, name, region, public_url, internal_url, ssh_server, tier, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        expect(params).toEqual(["host-1"]);
+        return {
+          rows: [
+            {
+              id: "host-1",
+              bay_id: "bay-0",
+              name: "Host 1",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: 0,
+              metadata: { machine: {} },
+            },
+          ],
+        };
+      }
+      if (
+        sql ===
+        "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        expect(params).toEqual(["host-1"]);
+        return { rows: [{ metadata: { machine: {} } }] };
+      }
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        expect(params).toEqual(["proj-1"]);
+        return { rows: [{ backup_repo_id: null, provisioned: true }] };
+      }
+      if (sql.includes("SET state=$2::jsonb")) {
+        expect(params[0]).toBe("proj-1");
+        expect(params[1]).toMatchObject({ state: "running" });
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
+
+    const { startProjectOnHost } = await import("./control");
+    await startProjectOnHost("proj-1");
+
+    expect(getProjectStatusMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+    });
+    expect(startProjectMock).not.toHaveBeenCalled();
+  });
+
   it("falls back to the current rootfs binding when projects.rootfs_image is blank", async () => {
     const createProjectMock = jest.fn(async () => ({
       project_id: "proj-1",

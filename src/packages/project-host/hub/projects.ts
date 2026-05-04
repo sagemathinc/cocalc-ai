@@ -755,6 +755,16 @@ export function ensureProjectRow({
   }
 }
 
+export async function getProjectRuntimeStatus({
+  runnerApi,
+  project_id,
+}: {
+  runnerApi: RunnerApi;
+  project_id: string;
+}) {
+  return await runnerApi.status({ project_id });
+}
+
 async function getRunnerConfig(
   project_id: string,
   resolved: Pick<
@@ -1473,6 +1483,10 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     }
   }
 
+  async function status({ project_id }: { project_id: string }) {
+    return await getProjectRuntimeStatus({ runnerApi, project_id });
+  }
+
   async function restoreSnapshot({
     project_id,
     snapshot,
@@ -2071,6 +2085,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.createProject = createProject;
   hubApi.projects.start = start;
   hubApi.projects.stop = stop;
+  hubApi.projects.status = status;
   hubApi.projects.getSshKeys = getSshKeys;
   hubApi.projects.createBackup = createBackup;
   hubApi.projects.deleteBackup = deleteBackup;
