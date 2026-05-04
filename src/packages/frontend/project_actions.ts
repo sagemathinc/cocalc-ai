@@ -22,7 +22,10 @@ import {
   redux_name,
 } from "@cocalc/frontend/app-framework";
 import type { ChatState } from "@cocalc/frontend/chat/chat-indicator";
-import { initChat } from "@cocalc/frontend/chat/register";
+import {
+  initChat,
+  remove as removeChatRuntime,
+} from "@cocalc/frontend/chat/register";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { local_storage } from "@cocalc/frontend/editor-local-storage";
 import { set_url } from "@cocalc/frontend/history";
@@ -2006,6 +2009,11 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       }
       this.set_chat_state(path, "");
     } else {
+      removeChatRuntime(
+        misc.meta_file(sync_path, "chat"),
+        this.redux,
+        this.project_id,
+      );
       this.set_chat_state(path, "");
     }
   }
