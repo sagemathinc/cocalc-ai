@@ -310,4 +310,76 @@ describe("cloud host start failures", () => {
       reason: "provider-status:TERMINATED",
     });
   });
+
+  it("passes queued refresh_runtime payload through to force observation", async () => {
+    const hostId = "d8d2ca6f-563d-473d-a01d-2b4a7e8bdd89";
+    const getInstance = jest.fn(async () => ({
+      instance_id: `cocalc-host-${hostId}`,
+      name: `cocalc-host-${hostId}`,
+      status: "TERMINATED",
+      public_ip: null,
+      private_ip: "10.180.0.23",
+      internal_hostname: `cocalc-host-${hostId}.internal`,
+    }));
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          getInstance,
+          mapStatus: (status?: string) =>
+            status === "TERMINATED" ? "off" : undefined,
+        },
+      },
+      creds: {},
+    });
+
+    await upsertProjectHost({
+      id: hostId,
+      name: "Forced refresh host",
+      region: "us-west3",
+      status: "running",
+      public_url: "https://host.example.test",
+      internal_url: "http://cocalc-host.internal:9002",
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_state: "running",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west3-b",
+          machine_type: "t2d-standard-4",
+          disk_gb: 50,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "gcp",
+          zone: "us-west3-b",
+          instance_id: `cocalc-host-${hostId}`,
+          public_ip: "34.106.236.179",
+          private_ip: "10.180.0.23",
+          internal_hostname: `cocalc-host-${hostId}.internal`,
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.refresh_runtime({
+      id: "work-refresh-2",
+      vm_id: hostId,
+      action: "refresh_runtime",
+      payload: { provider: "gcp", force: true, attempt: 7 },
+    } as any);
+
+    expect(getInstance).toHaveBeenCalled();
+    const hostRows = await getPool().query(
+      "SELECT status, last_seen, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].status).toBe("off");
+    expect(hostRows.rows[0].last_seen).toBeNull();
+    expect(hostRows.rows[0].metadata.runtime.provider_status).toBe(
+      "TERMINATED",
+    );
+  });
 });

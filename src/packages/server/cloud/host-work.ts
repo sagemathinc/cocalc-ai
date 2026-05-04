@@ -2030,7 +2030,10 @@ export const cloudHostHandlers: CloudVmWorkHandlers = {
     const host = await loadHostRow(row.vm_id);
     if (!host) return;
     try {
-      await handleRefreshRuntime(host);
+      await handleRefreshRuntime({
+        ...host,
+        payload: row.payload,
+      });
     } catch (err) {
       await markHostError(host, err);
       throw err;
