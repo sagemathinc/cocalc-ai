@@ -48,19 +48,23 @@ interface StatsPayload extends Partial<Stats> {
   error?: string;
 }
 
-function supportPath(view: SupportView): string {
+function appPath(path: string): string {
   const base = appBasePath === "/" ? "" : appBasePath;
+  return `${base}${path}`;
+}
+
+function supportPath(view: SupportView): string {
   switch (view) {
     case "new":
-      return `${base}/support/new`;
+      return appPath("/support/new");
     case "tickets":
-      return `${base}/support/tickets`;
+      return appPath("/support/tickets");
     case "community":
-      return `${base}/support/community`;
+      return appPath("/support/community");
     case "status":
-      return `${base}/support/status`;
+      return appPath("/support/status");
     default:
-      return `${base}/support`;
+      return appPath("/support");
   }
 }
 
@@ -242,7 +246,7 @@ function SupportStatusPage({ siteName }: { siteName: string }) {
 
   useEffect(() => {
     let canceled = false;
-    void fetchJson<StatsPayload>(`${appBasePath}/stats`)
+    void fetchJson<StatsPayload>(appPath("/stats"))
       .then((value) => {
         if (!canceled) setPayload(value ?? {});
       })

@@ -175,10 +175,6 @@ async function renderJsonFeed(req: Request): Promise<object> {
 export default function initPublicContent(router: Router): void {
   router.get(["/info", "/info/"], redirectCompatibility("about"));
   router.get(["/info/doc", "/info/doc/"], redirectCompatibility("support"));
-  router.get(
-    ["/info/status", "/info/status/"],
-    redirectCompatibility("support/status"),
-  );
   router.get(["/info/run", "/info/run/"], redirectCompatibility("products"));
   router.get(
     ["/news/edit", "/news/edit/"],
@@ -218,8 +214,6 @@ export default function initPublicContent(router: Router): void {
     "/about/",
     "/about/events",
     "/about/events/",
-    "/about/status",
-    "/about/status/",
     "/about/team",
     "/about/team/",
     "/about/team/:slug",
