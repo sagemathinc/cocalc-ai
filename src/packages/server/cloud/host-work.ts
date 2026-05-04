@@ -259,6 +259,13 @@ function clearVerificationFields(
   return next;
 }
 
+function clearHostLastErrorMetadata(metadata: any): any {
+  const next = { ...(metadata ?? {}) };
+  delete next.last_error;
+  delete next.last_error_at;
+  return next;
+}
+
 function hostLastSeenMs(row: any): number {
   if (!row?.last_seen) return 0;
   const ms = new Date(row.last_seen as any).getTime();
@@ -1731,11 +1738,14 @@ async function handleVerifyHostReady(row: any) {
           fallback_started_at:
             state?.fallback_started_at ?? new Date().toISOString(),
         }) ?? { phase: "running_standard_fallback" };
-        const nextMetadata = withPricingAndRecoveryMetadata(host.metadata, {
-          desired_pricing_model: desired,
-          effective_pricing_model: effective,
-          spot_recovery_state: fallbackState,
-        });
+        const nextMetadata = withPricingAndRecoveryMetadata(
+          clearHostLastErrorMetadata(host.metadata),
+          {
+            desired_pricing_model: desired,
+            effective_pricing_model: effective,
+            spot_recovery_state: fallbackState,
+          },
+        );
         await updateHostRow(host.id, { metadata: nextMetadata });
         if (policy) {
           const fallbackStartedAt = fallbackState.fallback_started_at
@@ -1765,11 +1775,14 @@ async function handleVerifyHostReady(row: any) {
             ? { last_probe_error: state.last_probe_error }
             : {}),
         };
-        const nextMetadata = withPricingAndRecoveryMetadata(host.metadata, {
-          desired_pricing_model: desired,
-          effective_pricing_model: effective,
-          spot_recovery_state: idleState,
-        });
+        const nextMetadata = withPricingAndRecoveryMetadata(
+          clearHostLastErrorMetadata(host.metadata),
+          {
+            desired_pricing_model: desired,
+            effective_pricing_model: effective,
+            spot_recovery_state: idleState,
+          },
+        );
         await updateHostRow(host.id, { metadata: nextMetadata });
         if (state?.phase === "returning_to_spot") {
           await logCloudVmEvent({
@@ -1815,7 +1828,7 @@ async function handleVerifyHostReady(row: any) {
     }
   }
 
-  await enqueueCloudVmWorkOnce({
+  await enqueueCloudVmWork({
     vm_id: host.id,
     action: "verify_host_ready",
     not_before: new Date(Date.now() + HOST_READY_VERIFY_DELAY_MS),
