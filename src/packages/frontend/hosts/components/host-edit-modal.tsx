@@ -618,7 +618,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                     ]}
                   />
                 </Form.Item>
-                <HostSpotRecoveryFields visible={showSpotFields} />
+                <HostSpotRecoveryFields visible={showSpotFields} host={host} />
               </>
             )}
             {canEditMachine &&

@@ -17,20 +17,26 @@ import {
 } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import type {
+  Host,
   HostInterruptionRestorePolicy,
+  HostSpotRecoveryPolicy,
   HostPricingModel,
 } from "@cocalc/conat/hub/api/hosts";
 import {
   DEFAULT_SPOT_RECOVERY_POLICY,
   isSpotRecoveryPolicyActive,
+  normalizeSpotRecoveryPolicy,
 } from "../utils/spot-recovery-policy";
+import { HostSpotRecoveryDiagram } from "./host-spot-recovery-diagram";
 
 type HostSpotRecoveryFieldsProps = {
   visible: boolean;
+  host?: Host;
 };
 
 export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
   visible,
+  host,
 }) => {
   const form = Form.useFormInstance();
   const [open, setOpen] = React.useState(false);
@@ -45,10 +51,16 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
     ["spot_recovery_policy", "standard_fallback_enabled"],
     form,
   ) as boolean | undefined;
+  const watchedPolicy = Form.useWatch("spot_recovery_policy", form) as
+    | HostSpotRecoveryPolicy
+    | undefined;
   const policyActive = isSpotRecoveryPolicyActive({
     pricingModel,
     interruptionRestorePolicy,
   });
+  const normalizedPolicy = normalizeSpotRecoveryPolicy(watchedPolicy) ?? {
+    ...DEFAULT_SPOT_RECOVERY_POLICY,
+  };
 
   React.useEffect(() => {
     if (!visible || !policyActive) return;
@@ -89,6 +101,7 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
           </Button>
         }
         destroyOnHidden={false}
+        width={900}
       >
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <Alert
@@ -96,6 +109,11 @@ export const HostSpotRecoveryFields: React.FC<HostSpotRecoveryFieldsProps> = ({
             type="info"
             message="How it works"
             description="CoCalc first retries the interrupted spot VM, can temporarily fall back to a standard VM, then probes and switches back to spot to control cost."
+          />
+          <HostSpotRecoveryDiagram
+            policyActive={policyActive}
+            policy={normalizedPolicy}
+            host={host}
           />
           {!policyActive ? (
             <Alert
