@@ -29,6 +29,7 @@ import {
   getProviderOptions,
   getSelfHostConnectors,
 } from "../providers/registry";
+import { runtimeDeploymentsForManagedComponentVersion } from "../utils/runtime-deployments";
 import {
   activeSpotRecoveryPolicy,
   equalSpotRecoveryPolicies,
@@ -732,6 +733,7 @@ export const useHostsPageViewModel = () => {
         return;
       }
       try {
+        const rollout_reason = `frontend ${source} deploy`;
         await hub.hosts.setHostRuntimeDeployments({
           scope_type: "host",
           id: host.id,
@@ -740,7 +742,7 @@ export const useHostsPageViewModel = () => {
               target_type: "artifact",
               target: artifact,
               desired_version,
-              rollout_reason: `frontend ${source} deploy`,
+              rollout_reason,
             },
           ],
           replace: false,
@@ -753,6 +755,9 @@ export const useHostsPageViewModel = () => {
           const op = await hub.hosts.upgradeHostSoftware({
             id: host.id,
             targets: [{ artifact: "project-host", version: desired_version }],
+            ...(source === "hub" && baseUrl
+              ? { base_url: `${baseUrl}/software` }
+              : {}),
           });
           trackHostOp(host.id, op);
         }
@@ -772,7 +777,7 @@ export const useHostsPageViewModel = () => {
         console.error(err);
       }
     },
-    [hub, refresh, refreshHostOps, runtimeDeployments],
+    [baseUrl, hub, refresh, refreshHostOps, runtimeDeployments, trackHostOp],
   );
   const setRuntimeComponentDeployment = React.useCallback(
     async ({
@@ -790,19 +795,27 @@ export const useHostsPageViewModel = () => {
         return;
       }
       try {
+        const rollout_reason = `frontend ${source} deploy`;
         await hub.hosts.setHostRuntimeDeployments({
           scope_type: "host",
           id: host.id,
-          deployments: [
-            {
-              target_type: "component",
-              target: component,
-              desired_version,
-              rollout_reason: `frontend ${source} deploy`,
-            },
-          ],
+          deployments: runtimeDeploymentsForManagedComponentVersion({
+            component,
+            desired_version,
+            rollout_reason,
+          }),
           replace: false,
         });
+        if (host.status === "running" && hub.hosts.upgradeHostSoftware) {
+          const op = await hub.hosts.upgradeHostSoftware({
+            id: host.id,
+            targets: [{ artifact: "project-host", version: desired_version }],
+            ...(source === "hub" && baseUrl
+              ? { base_url: `${baseUrl}/software` }
+              : {}),
+          });
+          trackHostOp(host.id, op);
+        }
         await Promise.all([
           refresh(),
           runtimeDeployments.refresh(),
@@ -819,7 +832,7 @@ export const useHostsPageViewModel = () => {
         console.error(err);
       }
     },
-    [hub, refresh, refreshHostOps, runtimeDeployments],
+    [baseUrl, hub, refresh, refreshHostOps, runtimeDeployments, trackHostOp],
   );
   const setClusterRuntimeArtifactDeployment = React.useCallback(
     async ({
