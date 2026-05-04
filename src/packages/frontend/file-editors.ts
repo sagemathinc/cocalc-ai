@@ -325,6 +325,12 @@ export function save(path: string, redux, project_id: string): void {
     console.warn("WARNING: save(undefined path)"); // TODO: remove when all typescript
     return;
   }
+  const projectStore = redux?.getProjectStore?.(project_id);
+  if (projectStore?.has_file_been_viewed?.(path) === false) {
+    // Background tabs restored into open_files can exist before their editor
+    // has ever been instantiated. There is nothing meaningful to save yet.
+    return;
+  }
   const save = get_ed(project_id, path).save;
   if (save != null) {
     save(path, redux, project_id);
