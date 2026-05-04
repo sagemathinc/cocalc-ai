@@ -17,6 +17,24 @@ export const COCALC_PROJECT_CACHE = ".cache/cocalc/project";
 const logger = getLogger("project-runner:run:env");
 export const DEFAULT_PROJECT_PROXY_PORT = "18080";
 
+function normalizedCloudProvider(): string | undefined {
+  const value = `${process.env.PROJECT_HOST_CLOUD_PROVIDER ?? ""}`
+    .trim()
+    .toLowerCase();
+  return value || undefined;
+}
+
+function normalizedCloudRegion(): string | undefined {
+  const value = `${process.env.PROJECT_HOST_REGION ?? ""}`.trim().toLowerCase();
+  return value || undefined;
+}
+
+function gceUbuntuMirrorForRegion(region?: string): string | undefined {
+  const normalized = `${region ?? ""}`.trim().toLowerCase();
+  if (!normalized) return;
+  return `http://${normalized}.gce.archive.ubuntu.com/ubuntu/`;
+}
+
 function isLoopbackHostname(hostname: string): boolean {
   return (
     hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
@@ -85,6 +103,10 @@ export async function getEnvironment({
 
   const imageEnv = await getImageEnv(image);
   delete imageEnv.LOGS;
+  const cloudProvider = normalizedCloudProvider();
+  const cloudRegion = normalizedCloudRegion();
+  const aptUbuntuMirror =
+    cloudProvider === "gcp" ? gceUbuntuMirrorForRegion(cloudRegion) : undefined;
 
   const USER = DEFAULT_PROJECT_RUNTIME_USER;
   const DATA = dataPath(HOME);
@@ -134,5 +156,8 @@ export async function getEnvironment({
     DEBIAN_FRONTEND: "noninteractive",
     COCALC_PROXY_HOST: "0.0.0.0",
     COCALC_PROXY_PORT: DEFAULT_PROJECT_PROXY_PORT,
+    ...(cloudProvider ? { COCALC_CLOUD_PROVIDER: cloudProvider } : {}),
+    ...(cloudRegion ? { COCALC_CLOUD_REGION: cloudRegion } : {}),
+    ...(aptUbuntuMirror ? { COCALC_APT_UBUNTU_MIRROR: aptUbuntuMirror } : {}),
   };
 }
