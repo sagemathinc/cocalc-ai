@@ -4,6 +4,7 @@
  */
 
 import {
+  maybeActivateRuntimeUser,
   rewriteGroup,
   rewritePasswd,
   rewriteShadow,
@@ -54,5 +55,83 @@ describe("runtime bootstrap rewrite helpers", () => {
       "",
     ].join("\n");
     expect(rewriteShadow(current, runtime)).toContain("user:$6$cocalcruntime$");
+  });
+});
+
+describe("runtime bootstrap writable state repair", () => {
+  const originalEnv = process.env;
+  const originalGetuid = process.getuid;
+  const originalSetuid = process.setuid;
+  const originalSetgid = process.setgid;
+  const originalSetgroups = process.setgroups;
+  const originalChdir = process.chdir;
+
+  beforeEach(() => {
+    process.env = {
+      ...originalEnv,
+      COCALC_RUNTIME_BOOTSTRAP: "1",
+      COCALC_RUNTIME_USER: "user",
+      COCALC_RUNTIME_UID: "2001",
+      COCALC_RUNTIME_GID: "2001",
+      COCALC_RUNTIME_HOME: "/home/user",
+      SHELL: "/bin/bash",
+    };
+    process.getuid = jest.fn(() => 0);
+    process.setuid = jest.fn();
+    process.setgid = jest.fn();
+    process.setgroups = jest.fn();
+    process.chdir = jest.fn();
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    process.getuid = originalGetuid;
+    process.setuid = originalSetuid;
+    process.setgid = originalSetgid;
+    process.setgroups = originalSetgroups;
+    process.chdir = originalChdir;
+    jest.restoreAllMocks();
+  });
+
+  it("repairs tmp and apt state even when required packages are already present", async () => {
+    const mkdir = jest.spyOn(require("node:fs/promises"), "mkdir");
+    const chmod = jest.spyOn(require("node:fs/promises"), "chmod");
+    const chown = jest.spyOn(require("node:fs/promises"), "chown");
+    const rm = jest.spyOn(require("node:fs/promises"), "rm");
+    const access = jest.spyOn(require("node:fs/promises"), "access");
+    const readFile = jest.spyOn(require("node:fs/promises"), "readFile");
+    const writeFile = jest.spyOn(require("node:fs/promises"), "writeFile");
+
+    access.mockResolvedValue(undefined as never);
+    readFile.mockImplementation(async (path: string) => {
+      if (path === "/etc/passwd") {
+        return "root:x:0:0:root:/root:/bin/bash\n";
+      }
+      if (path === "/etc/group") {
+        return "root:x:0:\n";
+      }
+      if (path === "/etc/shadow") {
+        return "root:*:19993:0:99999:7:::\n";
+      }
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    });
+    mkdir.mockResolvedValue(undefined as never);
+    chmod.mockResolvedValue(undefined as never);
+    chown.mockResolvedValue(undefined as never);
+    rm.mockResolvedValue(undefined as never);
+    writeFile.mockResolvedValue(undefined as never);
+
+    await maybeActivateRuntimeUser();
+
+    expect(mkdir).toHaveBeenCalledWith("/tmp", {
+      recursive: true,
+      mode: 0o1777,
+    });
+    expect(chmod).toHaveBeenCalledWith("/tmp", 0o1777);
+    expect(chown).toHaveBeenCalledWith("/tmp", 0, 0);
+    expect(rm).toHaveBeenCalledWith("/var/lib/apt/lists", {
+      recursive: true,
+      force: true,
+    });
   });
 });

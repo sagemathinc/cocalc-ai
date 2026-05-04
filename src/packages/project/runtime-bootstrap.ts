@@ -247,8 +247,8 @@ async function resetOwnedDirectory(
   });
 }
 
-async function repairAptStateBeforeInstall(): Promise<void> {
-  logger.info("runtime bootstrap: repairing apt state before install");
+async function repairRuntimeWritableState(): Promise<void> {
+  logger.info("runtime bootstrap: repairing writable runtime state");
   await resetOwnedDirectory("/tmp", {
     mode: 0o1777,
   });
@@ -304,7 +304,6 @@ async function installMissingRuntimePackages(): Promise<void> {
       packageManager: "apt-get",
       packages,
     });
-    await repairAptStateBeforeInstall();
     await runCommand(aptGet, ["update"]);
     await runCommand(aptGet, [
       "install",
@@ -506,6 +505,11 @@ export async function maybeActivateRuntimeUser(): Promise<void> {
     gid: runtime.gid,
     home: runtime.home,
   });
+  // Always normalize shared writable state before doing any other runtime
+  // bootstrap work. New project scratch mounts land on /tmp, and even when the
+  // image already has sudo and CA certs installed, _apt still needs a sane
+  // 1777 /tmp and root-owned apt state to verify repository metadata later.
+  await repairRuntimeWritableState();
   await installMissingRuntimePackages();
   await ensureRuntimeFiles(runtime);
   process.env.HOME = runtime.home;
