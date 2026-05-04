@@ -13,16 +13,53 @@ const mockOpenFile = jest.fn();
 const mockCreateFile = jest.fn();
 const mockUpsertAgentSessionRecord = jest.fn();
 const mockOpenFloatingAgentSession = jest.fn();
-const mockChatActions = {
-  setSelectedThread: jest.fn(),
-  scrollToIndex: jest.fn(),
-  resetThread: jest.fn(() => "thread-2"),
-  syncdb: { save: jest.fn().mockResolvedValue(undefined) },
-} as any;
+const mockGetChatActions = jest.fn();
+const mockInitChat = jest.fn();
+const mockRemoveChatWithInstance = jest.fn();
 const mockEnsureWorkspaceChatPath = jest.fn();
 const mockEnsureWorkspaceChatDirectory = jest.fn();
 const mockModalConfirm = jest.fn();
 const mockAntdMessageSuccess = jest.fn();
+
+function createMockSyncdb(initialState = "ready") {
+  let state = initialState;
+  const onceHandlers = new Map<string, Set<(...args: any[]) => void>>();
+  const onHandlers = new Map<string, Set<(...args: any[]) => void>>();
+  return {
+    save: jest.fn().mockResolvedValue(undefined),
+    get_state: jest.fn(() => state),
+    once: jest.fn((event: string, cb: (...args: any[]) => void) => {
+      const handlers = onceHandlers.get(event) ?? new Set();
+      handlers.add(cb);
+      onceHandlers.set(event, handlers);
+    }),
+    removeListener: jest.fn((event: string, cb: (...args: any[]) => void) => {
+      onceHandlers.get(event)?.delete(cb);
+      onHandlers.get(event)?.delete(cb);
+    }),
+    emitClose: () => {
+      state = "closed";
+      for (const cb of Array.from(onceHandlers.get("close") ?? [])) {
+        cb();
+      }
+      onceHandlers.get("close")?.clear();
+      for (const cb of Array.from(onHandlers.get("close") ?? [])) {
+        cb();
+      }
+    },
+  };
+}
+
+function createMockChatActions(initialState = "ready") {
+  return {
+    setSelectedThread: jest.fn(),
+    scrollToIndex: jest.fn(),
+    resetThread: jest.fn(() => "thread-2"),
+    syncdb: createMockSyncdb(initialState),
+  } as any;
+}
+
+let mockChatActions = createMockChatActions();
 
 let mockSessions: any[] = [];
 let mockCurrentPath = "/home/user";
@@ -145,9 +182,9 @@ jest.mock("@cocalc/frontend/chat/agent-session-index", () => ({
 }));
 
 jest.mock("@cocalc/frontend/chat/register", () => ({
-  getChatActions: () => mockChatActions,
-  initChat: () => mockChatActions,
-  removeWithInstance: jest.fn(),
+  getChatActions: (...args: any[]) => mockGetChatActions(...args),
+  initChat: (...args: any[]) => mockInitChat(...args),
+  removeWithInstance: (...args: any[]) => mockRemoveChatWithInstance(...args),
   isChatActions: () => true,
 }));
 
@@ -234,11 +271,17 @@ describe("AgentsPanel session cards", () => {
     mockCreateFile.mockClear();
     mockUpsertAgentSessionRecord.mockClear();
     mockOpenFloatingAgentSession.mockClear();
+    mockGetChatActions.mockReset();
+    mockInitChat.mockReset();
+    mockRemoveChatWithInstance.mockReset();
+    mockChatActions = createMockChatActions();
     mockChatActions.setSelectedThread.mockClear();
     mockChatActions.scrollToIndex.mockClear();
     mockChatActions.resetThread.mockClear();
     mockChatActions.resetThread.mockReturnValue("thread-2");
     mockChatActions.syncdb.save.mockClear();
+    mockGetChatActions.mockReturnValue(mockChatActions);
+    mockInitChat.mockReturnValue(mockChatActions);
     mockModalConfirm.mockClear();
     mockAntdMessageSuccess.mockClear();
     mockEnsureWorkspaceChatPath.mockReset();
@@ -286,6 +329,34 @@ describe("AgentsPanel session cards", () => {
       expect(screen.getByTestId("agents-inline-chat")).toBeTruthy(),
     );
     expect(mockChatActions.setSelectedThread).toHaveBeenCalledWith("thread-1");
+  });
+
+  it("recreates the inline chat after its syncdb closes", async () => {
+    const firstActions = createMockChatActions();
+    const secondActions = createMockChatActions();
+    mockGetChatActions.mockReturnValue(firstActions);
+    mockInitChat.mockReturnValue(secondActions);
+
+    render(<AgentsPanel project_id="project-1" layout="page" />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-session-card-session-1")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("agent-session-card-session-1"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agents-inline-chat")).toBeTruthy(),
+    );
+    expect(firstActions.setSelectedThread).toHaveBeenCalledWith("thread-1");
+
+    act(() => {
+      firstActions.syncdb.emitClose();
+    });
+
+    await waitFor(() => expect(mockInitChat).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(secondActions.setSelectedThread).toHaveBeenCalledWith("thread-1"),
+    );
   });
 
   it("returns to the session list when Back is clicked", async () => {

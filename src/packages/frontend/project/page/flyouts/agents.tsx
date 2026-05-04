@@ -673,6 +673,46 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     return () => clearTimeout(timer);
   }, [inlineActions, inlineSession?.thread_key]);
 
+  useEffect(() => {
+    const chatPath = inlineSession?.chat_path;
+    if (!chatPath || !inlineActions) return;
+    const syncdb = (inlineActions as any)?.syncdb;
+
+    let cancelled = false;
+    const reconnectInlineChat = () => {
+      if (cancelled) return;
+      try {
+        setInlineError("");
+        const freshActions = initChat(project_id, chatPath, {
+          instanceKey: AGENTS_INLINE_CHAT_INSTANCE_KEY,
+        });
+        setInlineActions((current) =>
+          current === inlineActions ? freshActions : current,
+        );
+      } catch (err) {
+        if (cancelled) return;
+        setInlineActions((current) =>
+          current === inlineActions ? null : current,
+        );
+        setInlineError(`${err}`);
+      }
+    };
+
+    if (syncdb?.get_state?.() === "closed") {
+      reconnectInlineChat();
+      return;
+    }
+
+    const onClose = () => {
+      reconnectInlineChat();
+    };
+    syncdb?.once?.("close", onClose);
+    return () => {
+      cancelled = true;
+      syncdb?.removeListener?.("close", onClose);
+    };
+  }, [inlineActions, inlineSession?.chat_path, project_id]);
+
   const inlineDesc = useMemo(() => {
     if (!inlineSession?.thread_key) return undefined;
     return {
