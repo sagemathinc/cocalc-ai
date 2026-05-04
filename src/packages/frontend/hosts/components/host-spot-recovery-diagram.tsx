@@ -104,14 +104,14 @@ function statusTagStyle(color: string) {
 }
 
 function renderTextLines(lines: string[], x: number, y: number) {
-  const lineHeight = 14;
+  const lineHeight = 15;
   const firstBaseline = y - ((lines.length - 1) * lineHeight) / 2;
   return (
     <text
       x={x}
       y={firstBaseline}
       textAnchor="middle"
-      fontSize={12}
+      fontSize={12.5}
       fill={TEXT_COLOR}
       fontFamily="system-ui, sans-serif"
       fontWeight={500}
@@ -168,55 +168,54 @@ export const HostSpotRecoveryDiagram: React.FC<
   const nodes: DiagramNode[] = [
     {
       id: "running_spot",
-      x: 36,
-      y: 42,
-      width: 170,
+      x: 30,
+      y: 30,
+      width: 166,
       height: 58,
       accent: COLORS.BS_GREEN,
       lines: ["Running on Spot"],
     },
     {
       id: "interrupted",
-      x: 250,
-      y: 42,
-      width: 178,
+      x: 226,
+      y: 30,
+      width: 172,
       height: 58,
       accent: COLORS.BG_WARNING,
       lines: ["Spot Interrupted", "VM Off"],
     },
     {
       id: "retrying_spot",
-      x: 474,
-      y: 24,
-      width: 228,
-      height: 96,
+      x: 432,
+      y: 20,
+      width: 214,
+      height: 90,
       accent: COLORS.BLUE,
       lines: [
         "Retrying Spot Start",
-        `backoff ${retryBackoff}s base`,
-        `retry up to ${retryWindow} min`,
+        `${retryBackoff}s base backoff`,
+        `${retryWindow} min window`,
       ],
     },
     {
       id: "verify_ready",
-      x: 474,
-      y: 146,
-      width: 228,
-      height: 108,
+      x: 432,
+      y: 132,
+      width: 214,
+      height: 96,
       accent: COLORS.BLUE_LL,
       lines: [
         "Verify Host Ready",
-        "provider RUNNING",
-        "runtime refresh OK",
+        "provider + runtime OK",
         "heartbeat + daemon OK",
       ],
     },
     {
       id: "running_standard_fallback",
-      x: 32,
-      y: 296,
+      x: 24,
+      y: 270,
       width: 220,
-      height: 92,
+      height: 84,
       accent: COLORS.COCALC_ORANGE,
       enabled: standardFallbackEnabled,
       lines: standardFallbackEnabled
@@ -225,10 +224,10 @@ export const HostSpotRecoveryDiagram: React.FC<
     },
     {
       id: "probing_spot",
-      x: 302,
-      y: 306,
-      width: 190,
-      height: 82,
+      x: 286,
+      y: 278,
+      width: 176,
+      height: 76,
       accent: COLORS.BLUE_D,
       enabled: standardFallbackEnabled,
       lines: standardFallbackEnabled
@@ -241,10 +240,10 @@ export const HostSpotRecoveryDiagram: React.FC<
     },
     {
       id: "returning_to_spot",
-      x: 548,
-      y: 296,
-      width: 230,
-      height: 92,
+      x: 500,
+      y: 270,
+      width: 232,
+      height: 84,
       accent: COLORS.ANTD_GREEN_D,
       enabled: standardFallbackEnabled,
       lines: standardFallbackEnabled
@@ -337,7 +336,7 @@ export const HostSpotRecoveryDiagram: React.FC<
         }}
       >
         <svg
-          viewBox="0 0 820 430"
+          viewBox="0 0 760 390"
           width="100%"
           role="img"
           aria-label="Spot instance recovery state machine"
@@ -359,8 +358,8 @@ export const HostSpotRecoveryDiagram: React.FC<
           <rect
             x={0}
             y={0}
-            width={820}
-            height={430}
+            width={760}
+            height={390}
             rx={16}
             fill={policyActive ? "white" : COLORS.GRAY_LLL}
           />
@@ -408,78 +407,77 @@ export const HostSpotRecoveryDiagram: React.FC<
           })}
 
           <path
-            d="M206 71 H250"
+            d="M196 59 H226"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
           />
-          {renderArrowLabel("preemption", 228, 60)}
+          {renderArrowLabel("preemption", 210, 48)}
 
           <path
-            d="M428 71 H474"
+            d="M398 59 H432"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
           />
+          {renderArrowLabel("retry", 414, 48)}
 
           <path
-            d="M588 120 V146"
+            d="M539 110 V132"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
           />
-          {renderArrowLabel("start attempt", 606, 136, { anchor: "start" })}
+          {renderArrowLabel("start attempt", 555, 126, { anchor: "start" })}
 
           <path
-            d="M474 200 H206 V100"
+            d="M432 180 H198 V88"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
           />
-          {renderArrowLabel("verified", 322, 188)}
+          {renderArrowLabel("verified", 310, 168)}
 
           <path
-            d="M702 200 H736 V72 H702"
+            d="M646 180 H686 V60 H646"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
           />
-          {renderArrowLabel("not ready / retry", 742, 140, {
-            anchor: "start",
-          })}
+          {renderArrowLabel("not ready", 692, 122, { anchor: "start" })}
 
           <path
-            d="M474 86 H442 V312 H252"
-            stroke={COLORS.GRAY}
-            strokeWidth={2}
-            fill="none"
-            markerEnd="url(#spot-recovery-arrow)"
-            opacity={standardFallbackEnabled ? 1 : 0.35}
-          />
-          {renderArrowLabel(`retry window ${retryWindow}m expired`, 286, 300, {
-            anchor: "start",
-            color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
-          })}
-
-          <path
-            d="M252 342 H302"
+            d="M432 78 H408 V314 H244"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
             opacity={standardFallbackEnabled ? 1 : 0.35}
           />
-          {renderArrowLabel(`after ${fallbackMin} min`, 277, 330, {
+          {renderArrowLabel("retry window expired", 250, 258, {
+            anchor: "start",
             color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
           })}
 
           <path
-            d="M492 347 H548"
+            d="M244 312 H286"
+            stroke={COLORS.GRAY}
+            strokeWidth={2}
+            fill="none"
+            markerEnd="url(#spot-recovery-arrow)"
+            opacity={standardFallbackEnabled ? 1 : 0.35}
+          />
+          {renderArrowLabel(`after ${fallbackMin} min`, 264, 300, {
+            color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
+          })}
+
+          <path
+            d="M462 316 H500"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
@@ -487,9 +485,9 @@ export const HostSpotRecoveryDiagram: React.FC<
             opacity={standardFallbackEnabled ? 1 : 0.35}
           />
           {renderArrowLabel(
-            probeRequired ? "probe succeeded" : "probe succeeded / optional",
-            520,
-            334,
+            probeRequired ? "probe ok" : "probe ok / optional",
+            481,
+            303,
             {
               anchor: "middle",
               color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
@@ -497,20 +495,20 @@ export const HostSpotRecoveryDiagram: React.FC<
           )}
 
           <path
-            d="M588 296 V254"
+            d="M616 270 V228"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
             opacity={standardFallbackEnabled ? 1 : 0.35}
           />
-          {renderArrowLabel("start spot host", 606, 276, {
+          {renderArrowLabel("start spot host", 628, 250, {
             anchor: "start",
             color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
           })}
 
           <path
-            d="M398 306 C398 276, 398 258, 398 258"
+            d="M374 278 C374 252, 374 238, 374 238"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
@@ -519,8 +517,8 @@ export const HostSpotRecoveryDiagram: React.FC<
           />
           {renderArrowLabel(
             `probe failed; wait ${probeInterval} min`,
-            396,
-            286,
+            374,
+            262,
             {
               anchor: "middle",
               color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
@@ -530,50 +528,29 @@ export const HostSpotRecoveryDiagram: React.FC<
           {!probeRequired && standardFallbackEnabled && (
             <>
               <path
-                d="M252 376 C328 405, 472 405, 548 376"
+                d="M244 344 C320 372, 430 372, 500 344"
                 stroke={COLORS.GRAY}
                 strokeWidth={2}
                 strokeDasharray="5 5"
                 fill="none"
                 markerEnd="url(#spot-recovery-arrow)"
               />
-              {renderArrowLabel("direct return allowed", 400, 415)}
+              {renderArrowLabel("direct return allowed", 372, 376)}
             </>
           )}
 
           <path
-            d="M780 342 H800 V188 H702"
+            d="M732 312 H748 V172 H646"
             stroke={COLORS.GRAY}
             strokeWidth={2}
             fill="none"
             markerEnd="url(#spot-recovery-arrow)"
             opacity={standardFallbackEnabled ? 1 : 0.35}
           />
-          {renderArrowLabel("switchback failed", 806, 264, {
-            anchor: "start",
+          {renderArrowLabel("switchback failed", 678, 250, {
+            anchor: "middle",
             color: standardFallbackEnabled ? MUTED_TEXT_COLOR : COLORS.GRAY,
           })}
-
-          <text
-            x={18}
-            y={18}
-            fontSize={18}
-            fontFamily="system-ui, sans-serif"
-            fontWeight={700}
-            fill={TEXT_COLOR}
-          >
-            Spot Host Recovery State Machine
-          </text>
-          <text
-            x={18}
-            y={34}
-            fontSize={11}
-            fontFamily="system-ui, sans-serif"
-            fill={MUTED_TEXT_COLOR}
-          >
-            desired_pricing_model = spot; effective_pricing_model may
-            temporarily be standard
-          </text>
         </svg>
       </div>
 
