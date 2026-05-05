@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { Client } from "@cocalc/conat/core/client";
+import { MAX_INTEREST_TIMEOUT, type Client } from "@cocalc/conat/core/client";
 import {
   createServiceClient,
   createServiceHandler,
@@ -1241,11 +1241,18 @@ function serviceClientOptions({
 }: {
   client: Client;
   timeout?: number;
-}): Omit<ServiceCall, "mesg"> {
+}): Omit<ServiceCall, "mesg"> & {
+  transport?: "fast-rpc" | "request";
+} {
   return {
     service: "inter-bay",
     client,
     timeout,
+    // Fast RPC relies on a socket.io ack from the target service handler,
+    // and that ack path is capped by MAX_INTEREST_TIMEOUT. For longer-lived
+    // cross-bay operations, use request/reply transport instead.
+    transport:
+      timeout != null && timeout > MAX_INTEREST_TIMEOUT ? "request" : undefined,
   };
 }
 

@@ -1,4 +1,4 @@
-import type { Client } from "@cocalc/conat/core/client";
+import { MAX_INTEREST_TIMEOUT, type Client } from "@cocalc/conat/core/client";
 import {
   createServiceClient,
   createServiceHandler,
@@ -388,6 +388,10 @@ export function createHostControlClient({
     subject: subjectForHost(host_id),
     client,
     timeout,
+    transport:
+      timeout != null && timeout > MAX_INTEREST_TIMEOUT
+        ? "request"
+        : undefined,
   });
 }
 
