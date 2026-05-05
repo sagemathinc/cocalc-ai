@@ -10,6 +10,7 @@ import {
   getNextRenderedDiffLineLimit,
   getRenderedDiffLineLimit,
   getCommitReviewIndicatorState,
+  isGitDiffFindTargetRendered,
   MarkdownHistoryInput,
   buildGitLogArgs,
   buildGitShowArgs,
@@ -399,6 +400,58 @@ describe("git commit drawer merge commit formatting", () => {
         preview: "+new widget",
       }),
     ]);
+  });
+
+  it("tracks active diff-find render readiness per target file only", () => {
+    const data = {
+      files: [
+        {
+          path: "src/alpha.ts",
+          lines: Array.from({ length: 600 }, (_, idx) => `alpha ${idx}`),
+        },
+        {
+          path: "src/beta.ts",
+          lines: Array.from({ length: 600 }, (_, idx) => `beta ${idx}`),
+        },
+      ],
+    } as any;
+    const activeLineMatch = {
+      id: "line:0:450",
+      kind: "line",
+      fileIndex: 0,
+      lineIndex: 450,
+      preview: "alpha 450",
+    } as const;
+    const alphaSectionId = buildGitReviewFileSectionId("src/alpha.ts", 0);
+    const betaSectionId = buildGitReviewFileSectionId("src/beta.ts", 1);
+
+    expect(
+      isGitDiffFindTargetRendered({
+        data,
+        match: activeLineMatch,
+        visibleDiffLinesByFile: {},
+      }),
+    ).toBe(false);
+
+    expect(
+      isGitDiffFindTargetRendered({
+        data,
+        match: activeLineMatch,
+        visibleDiffLinesByFile: {
+          [betaSectionId]: 520,
+        },
+      }),
+    ).toBe(false);
+
+    expect(
+      isGitDiffFindTargetRendered({
+        data,
+        match: activeLineMatch,
+        visibleDiffLinesByFile: {
+          [alphaSectionId]: 451,
+        },
+      }),
+    ).toBe(true);
   });
 
   it("filters the commit list down to unreviewed commits when requested", () => {

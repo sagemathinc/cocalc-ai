@@ -365,6 +365,28 @@ export function buildGitReviewLineElementId({
   return `git-review-line-${fileIndex}-${lineIndex}-${hashString(filePath).slice(0, 12)}`;
 }
 
+export function isGitDiffFindTargetRendered({
+  data,
+  match,
+  visibleDiffLinesByFile,
+}: {
+  data?: Pick<GitShowParsed, "files">;
+  match?: GitDiffFindMatch;
+  visibleDiffLinesByFile: Record<string, number>;
+}): boolean {
+  if (!data || !match) return false;
+  const file = data.files?.[match.fileIndex];
+  if (!file) return false;
+  if (match.kind === "file" || typeof match.lineIndex !== "number") {
+    return true;
+  }
+  const sectionId = buildGitReviewFileSectionId(file.path, match.fileIndex);
+  const visibleLineLimit = getRenderedDiffLineLimit(
+    visibleDiffLinesByFile[sectionId],
+  );
+  return match.lineIndex < visibleLineLimit;
+}
+
 type GitLogEntry = {
   hash: string;
   subject: string;
@@ -1942,6 +1964,16 @@ export function GitCommitDrawer({
     return { counts, matchedLineIndexes };
   }, [diffFindMatches]);
 
+  const activeDiffFindTargetRendered = useMemo(
+    () =>
+      isGitDiffFindTargetRendered({
+        data,
+        match: activeDiffFindMatch,
+        visibleDiffLinesByFile,
+      }),
+    [data, activeDiffFindMatch, visibleDiffLinesByFile],
+  );
+
   useEffect(() => {
     if (!open) return;
     if (!diffFindQuery.trim()) {
@@ -2914,7 +2946,8 @@ export function GitCommitDrawer({
   }, [diffFindMatches.length]);
 
   useEffect(() => {
-    if (!open || !data || !activeDiffFindMatch) return;
+    if (!open || !data || !activeDiffFindMatch || !activeDiffFindTargetRendered)
+      return;
     const file = data.files[activeDiffFindMatch.fileIndex];
     if (!file) return;
     const sectionId = buildGitReviewFileSectionId(
@@ -2970,7 +3003,7 @@ export function GitCommitDrawer({
         window.cancelAnimationFrame(frame);
       }
     };
-  }, [activeDiffFindMatch, data, open, visibleDiffLinesByFile]);
+  }, [activeDiffFindMatch, activeDiffFindTargetRendered, data, open]);
 
   const sendInlineReviewToAgent = async () => {
     if (!onRequestAgentTurn || !commit || isHeadSelected) return;
