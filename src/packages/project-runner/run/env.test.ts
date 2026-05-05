@@ -55,9 +55,10 @@ describe("project container environment", () => {
     expect(env.LOGS).toBeUndefined();
   });
 
-  it("injects a GCE ubuntu mirror hint from the host region", async () => {
+  it("injects a GCE ubuntu mirror hint from the host zone", async () => {
     process.env.PROJECT_HOST_CLOUD_PROVIDER = "gcp";
     process.env.PROJECT_HOST_REGION = "us-west3";
+    process.env.PROJECT_HOST_ZONE = "us-west3-c";
     const { getEnvironment } = await import("./env");
     const env = await getEnvironment({
       HOME: "/home/user",
@@ -67,8 +68,26 @@ describe("project container environment", () => {
 
     expect(env.COCALC_CLOUD_PROVIDER).toBe("gcp");
     expect(env.COCALC_CLOUD_REGION).toBe("us-west3");
+    expect(env.COCALC_CLOUD_ZONE).toBe("us-west3-c");
     expect(env.COCALC_APT_UBUNTU_MIRROR).toBe(
-      "http://us-west3.gce.archive.ubuntu.com/ubuntu/",
+      "http://us-west3-c.gce.clouds.archive.ubuntu.com/ubuntu/",
     );
+  });
+
+  it("does not inject a GCE ubuntu mirror hint when the host zone is unavailable", async () => {
+    process.env.PROJECT_HOST_CLOUD_PROVIDER = "gcp";
+    process.env.PROJECT_HOST_REGION = "us-south1";
+    delete process.env.PROJECT_HOST_ZONE;
+    const { getEnvironment } = await import("./env");
+    const env = await getEnvironment({
+      HOME: "/home/user",
+      project_id: "00000000-1000-4000-8000-000000000000",
+      image: "test-image",
+    });
+
+    expect(env.COCALC_CLOUD_PROVIDER).toBe("gcp");
+    expect(env.COCALC_CLOUD_REGION).toBe("us-south1");
+    expect(env.COCALC_CLOUD_ZONE).toBeUndefined();
+    expect(env.COCALC_APT_UBUNTU_MIRROR).toBeUndefined();
   });
 });
