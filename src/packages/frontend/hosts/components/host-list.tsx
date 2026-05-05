@@ -78,7 +78,7 @@ import {
   currentProjectHostRolloutPhase,
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
-} from "@cocalc/conat/project-host-rollout";
+} from "@cocalc/conat/project-host/rollout";
 import {
   currentHostRuntimeExceptionSummary,
   hostRuntimeExceptionDescription,

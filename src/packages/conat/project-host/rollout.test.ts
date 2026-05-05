@@ -3,7 +3,7 @@ import {
   currentProjectHostRolloutPhase,
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
-} from "./project-host-rollout";
+} from "./rollout";
 
 describe("project-host-rollout", () => {
   test("currentProjectHostAutomaticRollback only returns a rollback when the host is still on the rollback version", () => {
