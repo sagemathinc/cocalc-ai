@@ -31,6 +31,7 @@ Table({
           theme: null,
           users_summary: {},
           state_summary: {},
+          last_backup: null,
           last_activity_at: null,
           last_opened_at: null,
           is_hidden: false,
@@ -76,6 +77,10 @@ Table({
     state_summary: {
       type: "map",
       desc: "Browser-facing summary of current project runtime state.",
+    },
+    last_backup: {
+      type: "timestamp",
+      desc: "Most recent successful project backup timestamp used by project-list lifecycle views.",
     },
     last_activity_at: {
       type: "timestamp",

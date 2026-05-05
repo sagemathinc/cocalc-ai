@@ -134,15 +134,11 @@ type ProjectIndexBootstrapRow = {
   theme?: Record<string, any> | null;
   users_summary?: Record<string, any> | null;
   state_summary?: Record<string, any> | null;
+  last_backup?: string | Date | null;
   last_activity_at?: string | Date | null;
   sort_key?: string | Date | null;
   updated_at?: string | Date | null;
   is_hidden?: boolean | null;
-};
-
-type ProjectBackupBootstrapRow = {
-  project_id: string;
-  last_backup?: string | Date | null;
 };
 
 function readMaybeImmutable(value: any, key: string): any {
@@ -464,6 +460,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
                 theme: null,
                 users_summary: null,
                 state_summary: null,
+                last_backup: null,
                 last_activity_at: null,
                 sort_key: null,
                 updated_at: null,
@@ -504,6 +501,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
           users: row.users_summary ?? {},
           state: row.state_summary ?? {},
+          last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
           last_active:
             row.last_activity_at == null
               ? {}
@@ -550,7 +548,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (
           this.shouldPreserveNewerLocalLastBackup({
             currentProject,
-            incomingLastBackup: undefined,
+            incomingLastBackup: row.last_backup ?? undefined,
           })
         ) {
           nextProject = nextProject.set(
@@ -592,43 +590,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
           this.set_project_closed(project_id);
         }
         return;
-      }
-      try {
-        const backupResp = await webapp_client.async_query({
-          query: {
-            projects: [
-              {
-                project_id: null,
-                last_backup: null,
-              },
-            ],
-          },
-          options: [{ limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT }],
-        });
-        const backupRows = backupResp?.query?.projects;
-        if (Array.isArray(backupRows)) {
-          for (const row of backupRows as ProjectBackupBootstrapRow[]) {
-            if (!row?.project_id || !project_map.has(row.project_id)) {
-              continue;
-            }
-            const currentProject =
-              project_map.get(row.project_id) ?? Map<string, any>();
-            if (
-              this.shouldPreserveNewerLocalLastBackup({
-                currentProject,
-                incomingLastBackup: row.last_backup,
-              })
-            ) {
-              continue;
-            }
-            project_map = project_map.setIn(
-              [row.project_id, "last_backup"],
-              dateOrNull(row.last_backup),
-            );
-          }
-        }
-      } catch (err) {
-        console.warn("project backup bootstrap failed", err);
       }
       if (changed) {
         this.setState({ project_map } as ProjectsState);

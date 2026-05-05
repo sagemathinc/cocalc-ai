@@ -61,13 +61,14 @@ describe("server/account/project-feed remote home-bay apply", () => {
           [ACCOUNT_ID]: "2026-04-08T23:25:00.000Z",
         },
         last_edited: "2026-04-08T23:20:00.000Z",
+        last_backup: "2026-04-08T23:15:00.000Z",
         deleted: false,
       },
     });
 
     await expect(
       getPool().query(
-        `SELECT project_id, owning_bay_id, host_id, title, description, is_hidden
+        `SELECT project_id, owning_bay_id, host_id, title, description, is_hidden, last_backup
            FROM account_project_index
           WHERE account_id = $1`,
         [ACCOUNT_ID],
@@ -81,6 +82,7 @@ describe("server/account/project-feed remote home-bay apply", () => {
           title: "Shared Project",
           description: "available from another bay",
           is_hidden: false,
+          last_backup: new Date("2026-04-08T23:15:00.000Z"),
         },
       ],
     });

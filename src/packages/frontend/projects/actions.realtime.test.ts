@@ -970,6 +970,7 @@ describe("ProjectsActions realtime feed", () => {
               "acct-1": { group: "collaborator" },
             },
             state_summary: { state: "running" },
+            last_backup: "2026-04-05T02:55:00.000Z",
             last_activity_at: "2026-04-05T03:00:00.000Z",
             sort_key: "2026-04-05T03:00:00.000Z",
             updated_at: "2026-04-05T03:00:01.000Z",
@@ -1016,6 +1017,9 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-remote", "state", "state"])).toBe(
       "running",
     );
+    expect(
+      projectMap.getIn(["project-remote", "last_backup"]).toISOString(),
+    ).toBe("2026-04-05T02:55:00.000Z");
   });
 
   it("keeps bootstrapped remote shared projects through the first full table snapshot", async () => {
@@ -1095,9 +1099,6 @@ describe("ProjectsActions realtime feed", () => {
         },
       })
       .mockResolvedValueOnce({
-        query: { projects: [] },
-      })
-      .mockResolvedValueOnce({
         query: {
           account_project_index: [],
         },
@@ -1139,31 +1140,27 @@ describe("ProjectsActions realtime feed", () => {
         }),
       ],
     ]);
-    mockedWebappClient.async_query
-      .mockResolvedValueOnce({
-        query: {
-          account_project_index: Array.from({ length: 2000 }, (_, n) => ({
-            account_id: "acct-1",
-            project_id: `project-${n}`,
-            owning_bay_id: "bay-0",
-            host_id: "host-1",
-            title: `Shared Project ${n}`,
-            description: "visible from projection",
-            theme: null,
-            users_summary: {
-              "acct-1": { group: "collaborator" },
-            },
-            state_summary: { state: "running" },
-            last_activity_at: "2026-04-05T03:00:00.000Z",
-            sort_key: "2026-04-05T03:00:00.000Z",
-            updated_at: "2026-04-05T03:00:01.000Z",
-            is_hidden: false,
-          })),
-        },
-      })
-      .mockResolvedValueOnce({
-        query: { projects: [] },
-      });
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: Array.from({ length: 2000 }, (_, n) => ({
+          account_id: "acct-1",
+          project_id: `project-${n}`,
+          owning_bay_id: "bay-0",
+          host_id: "host-1",
+          title: `Shared Project ${n}`,
+          description: "visible from projection",
+          theme: null,
+          users_summary: {
+            "acct-1": { group: "collaborator" },
+          },
+          state_summary: { state: "running" },
+          last_activity_at: "2026-04-05T03:00:00.000Z",
+          sort_key: "2026-04-05T03:00:00.000Z",
+          updated_at: "2026-04-05T03:00:01.000Z",
+          is_hidden: false,
+        })),
+      },
+    });
     const redux = {
       getStore: jest.fn((name: string) => {
         if (name === "account") {
@@ -1276,36 +1273,32 @@ describe("ProjectsActions realtime feed", () => {
         }),
       ],
     ]);
-    mockedWebappClient.async_query
-      .mockResolvedValueOnce({
-        query: {
-          account_project_index: [
-            {
-              account_id: "acct-1",
-              project_id: projectId,
-              owning_bay_id: "bay-0",
-              host_id: null,
-              title: "Projected State Project",
-              description: "projected metadata",
-              theme: null,
-              users_summary: {
-                "acct-1": { group: "owner" },
-              },
-              state_summary: {
-                state: "opened",
-                time: "2026-04-05T03:00:00.000Z",
-              },
-              last_activity_at: "2026-04-05T03:00:00.000Z",
-              sort_key: "2026-04-05T03:00:00.000Z",
-              updated_at: "2026-04-05T03:00:01.000Z",
-              is_hidden: false,
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id: projectId,
+            owning_bay_id: "bay-0",
+            host_id: null,
+            title: "Projected State Project",
+            description: "projected metadata",
+            theme: null,
+            users_summary: {
+              "acct-1": { group: "owner" },
             },
-          ],
-        },
-      })
-      .mockResolvedValueOnce({
-        query: { projects: [] },
-      });
+            state_summary: {
+              state: "opened",
+              time: "2026-04-05T03:00:00.000Z",
+            },
+            last_activity_at: "2026-04-05T03:00:00.000Z",
+            sort_key: "2026-04-05T03:00:00.000Z",
+            updated_at: "2026-04-05T03:00:01.000Z",
+            is_hidden: false,
+          },
+        ],
+      },
+    });
     const redux = {
       getStore: jest.fn((name: string) => {
         if (name === "account") {
@@ -1404,7 +1397,7 @@ describe("ProjectsActions realtime feed", () => {
     );
   });
 
-  it("keeps a newer local last_backup when backup bootstrap rows are older", async () => {
+  it("keeps a newer local last_backup when projected bootstrap rows are older", async () => {
     const projectId = "00000000-0000-4000-8000-000000000011";
     projectMap = ImmutableMap<string, any>([
       [
@@ -1415,40 +1408,30 @@ describe("ProjectsActions realtime feed", () => {
         }),
       ],
     ]);
-    mockedWebappClient.async_query
-      .mockResolvedValueOnce({
-        query: {
-          account_project_index: [
-            {
-              account_id: "acct-1",
-              project_id: projectId,
-              owning_bay_id: "bay-0",
-              host_id: "host-1",
-              title: "Backup Project",
-              description: "projection metadata",
-              theme: null,
-              users_summary: {
-                "acct-1": { group: "owner" },
-              },
-              state_summary: { state: "running" },
-              last_activity_at: "2026-04-05T03:00:00.000Z",
-              sort_key: "2026-04-05T03:00:00.000Z",
-              updated_at: "2026-04-05T03:00:01.000Z",
-              is_hidden: false,
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [
+          {
+            account_id: "acct-1",
+            project_id: projectId,
+            owning_bay_id: "bay-0",
+            host_id: "host-1",
+            title: "Backup Project",
+            description: "projection metadata",
+            theme: null,
+            users_summary: {
+              "acct-1": { group: "owner" },
             },
-          ],
-        },
-      })
-      .mockResolvedValueOnce({
-        query: {
-          projects: [
-            {
-              project_id: projectId,
-              last_backup: "2026-04-05T03:00:00.000Z",
-            },
-          ],
-        },
-      });
+            state_summary: { state: "running" },
+            last_backup: "2026-04-05T03:00:00.000Z",
+            last_activity_at: "2026-04-05T03:00:00.000Z",
+            sort_key: "2026-04-05T03:00:00.000Z",
+            updated_at: "2026-04-05T03:00:01.000Z",
+            is_hidden: false,
+          },
+        ],
+      },
+    });
     const redux = {
       getStore: jest.fn((name: string) => {
         if (name === "account") {
