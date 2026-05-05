@@ -6,6 +6,7 @@
 import { ProjectsTable } from "./table";
 
 const ensureRealtimeFeedForCurrentAccount = jest.fn();
+const applyProjectsTableSnapshot = jest.fn();
 const setState = jest.fn();
 
 jest.mock("../app-framework", () => ({
@@ -27,6 +28,7 @@ jest.mock("../app-framework", () => ({
     }),
     getActions: jest.fn(() => ({
       ensureRealtimeFeedForCurrentAccount,
+      applyProjectsTableSnapshot,
       setState,
     })),
   },
@@ -48,6 +50,9 @@ describe("ProjectsTable", () => {
     };
     ProjectsTable.prototype._change.call({}, table, []);
     expect(ensureRealtimeFeedForCurrentAccount).toHaveBeenCalledTimes(1);
-    expect(setState).toHaveBeenCalledWith({ project_map: "project-map" });
+    expect(applyProjectsTableSnapshot).toHaveBeenCalledWith("project-map", {
+      mergeIntoExisting: false,
+    });
+    expect(setState).not.toHaveBeenCalled();
   });
 });
