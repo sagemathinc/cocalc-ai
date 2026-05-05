@@ -743,8 +743,38 @@ export interface HostRuntimeHostAgentProjectHostAutomaticRollback {
   reason: "health_deadline_exceeded";
 }
 
+export type HostRuntimeHostAgentProjectHostRolloutPhase =
+  | "stable"
+  | "candidate_pending"
+  | "restart_requested"
+  | "candidate_starting"
+  | "candidate_running_unhealthy"
+  | "candidate_running_healthy"
+  | "promoted"
+  | "rollback_requested"
+  | "rolled_back";
+
+export type HostRuntimeHostAgentProjectHostRolloutFailureReason =
+  "health_deadline_exceeded";
+
+export interface HostRuntimeHostAgentProjectHostRolloutState {
+  phase: HostRuntimeHostAgentProjectHostRolloutPhase;
+  target_version?: string;
+  previous_version?: string;
+  started_at?: string;
+  deadline_at?: string;
+  running_pid?: number;
+  running_version?: string;
+  healthy?: boolean;
+  accepted_at?: string;
+  rollback_started_at?: string;
+  rollback_finished_at?: string;
+  failure_reason?: HostRuntimeHostAgentProjectHostRolloutFailureReason;
+}
+
 export interface HostRuntimeHostAgentProjectHostObservation {
   last_known_good_version?: string;
+  rollout?: HostRuntimeHostAgentProjectHostRolloutState;
   pending_rollout?: HostRuntimeHostAgentProjectHostPendingRollout;
   last_automatic_rollback?: HostRuntimeHostAgentProjectHostAutomaticRollback;
 }

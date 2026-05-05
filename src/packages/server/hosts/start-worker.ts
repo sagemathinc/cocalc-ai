@@ -50,6 +50,8 @@ const BACKUP_PARALLEL = 6;
 const BACKUP_WAIT_MS = 6 * 60 * 60 * 1000;
 const BACKUP_PROGRESS_MAX = 60;
 const BACKUP_LRO_KIND = "project-backup";
+const PROJECT_HOST_UPGRADE_CONVERGENCE_TIMEOUT_MS = 60_000;
+const PROJECT_HOST_UPGRADE_CONVERGENCE_POLL_MS = 5_000;
 
 const HOST_OP_KINDS = [
   "host-start",
@@ -228,6 +230,68 @@ function currentBootstrapFailure({
     );
   }
   return undefined;
+}
+
+function projectHostLastKnownGoodVersion(row: any): string | undefined {
+  return (
+    `${row?.metadata?.host_agent?.project_host?.last_known_good_version ?? row?.metadata?.observed_host_agent?.project_host?.last_known_good_version ?? ""}`.trim() ||
+    undefined
+  );
+}
+
+function completedProjectHostUpgradeVersion({
+  row,
+  targetVersion,
+}: {
+  row: any;
+  targetVersion?: string;
+}): string | undefined {
+  const target = `${targetVersion ?? ""}`.trim();
+  if (!target) return undefined;
+  const installedVersion =
+    `${row?.metadata?.software?.project_host ?? row?.version ?? ""}`.trim() ||
+    undefined;
+  const lastKnownGoodVersion = projectHostLastKnownGoodVersion(row);
+  if (
+    installedVersion === target &&
+    lastKnownGoodVersion &&
+    lastKnownGoodVersion === target
+  ) {
+    return target;
+  }
+  return undefined;
+}
+
+async function waitForCompletedProjectHostUpgrade({
+  host_id,
+  targetVersion,
+  timeoutMs = PROJECT_HOST_UPGRADE_CONVERGENCE_TIMEOUT_MS,
+  pollMs = PROJECT_HOST_UPGRADE_CONVERGENCE_POLL_MS,
+}: {
+  host_id: string;
+  targetVersion?: string;
+  timeoutMs?: number;
+  pollMs?: number;
+}): Promise<string | undefined> {
+  const target = `${targetVersion ?? ""}`.trim();
+  if (!target) return undefined;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const row = await loadHostStatus(host_id);
+    const converged = completedProjectHostUpgradeVersion({
+      row,
+      targetVersion: target,
+    });
+    if (converged) {
+      return converged;
+    }
+    await delay(pollMs);
+  }
+  const finalRow = await loadHostStatus(host_id);
+  return completedProjectHostUpgradeVersion({
+    row: finalRow,
+    targetVersion: target,
+  });
 }
 
 async function waitForHostStatus({
@@ -1052,6 +1116,13 @@ async function handleOp(op: LroSummary): Promise<void> {
           targets: input?.targets ?? [],
           base_url: input?.base_url,
           align_runtime_stack: input?.align_runtime_stack,
+          onProgress: async (update) => {
+            await progressStep("waiting", update.rollout_phase_label, {
+              host_id,
+              targets: input?.targets,
+              ...update,
+            });
+          },
         });
         const rolloutComponents = rolloutComponentsForUpgradeResults(
           response.results ?? [],
@@ -1074,9 +1145,19 @@ async function handleOp(op: LroSummary): Promise<void> {
             id: host_id,
             components: rolloutComponents,
             reason: "host_software_upgrade",
+            onProgress: async (update) => {
+              await progressStep("waiting", update.rollout_phase_label, {
+                host_id,
+                components: rolloutComponents,
+                ...update,
+              });
+            },
           });
         }
       } catch (err) {
+        const targetProjectHostVersion =
+          `${(response?.results ?? []).find((result: any) => result?.artifact === "project-host")?.version ?? ""}`.trim() ||
+          undefined;
         if (isProjectHostLocalRollbackError(err)) {
           const automaticRollback = err.automaticRollback;
           const updated = await updateLro({
@@ -1107,6 +1188,65 @@ async function handleOp(op: LroSummary): Promise<void> {
             },
           );
           return;
+        }
+        if (requestedProjectHostUpgrade && targetProjectHostVersion) {
+          await progressStep(
+            "waiting",
+            "project-host upgrade reported drift; confirming host convergence before rollback",
+            {
+              host_id,
+              target_version: targetProjectHostVersion,
+            },
+          );
+          const convergedVersion = await waitForCompletedProjectHostUpgrade({
+            host_id,
+            targetVersion: targetProjectHostVersion,
+          });
+          if (convergedVersion === targetProjectHostVersion) {
+            logger.info(
+              "host upgrade: suppressing stale project-host rollback after observed convergence",
+              {
+                host_id,
+                target_version: targetProjectHostVersion,
+                err: `${err}`,
+              },
+            );
+            const updated = await updateLro({
+              op_id,
+              status: "succeeded",
+              progress_summary: {
+                phase: "done",
+                host_id,
+                results: response?.results ?? [],
+                recovered_after_convergence_delay: true,
+                ...(rolloutResponse
+                  ? { managed_component_rollout: rolloutResponse.results ?? [] }
+                  : {}),
+              },
+              result: {
+                host_id,
+                ...(response ? response : {}),
+                recovered_after_convergence_delay: true,
+                ...(rolloutResponse
+                  ? { managed_component_rollout: rolloutResponse.results ?? [] }
+                  : {}),
+              },
+              error: null,
+            });
+            if (updated) {
+              await publishSummary(updated);
+            }
+            await progressStep(
+              "done",
+              "upgrade complete after delayed project-host convergence",
+              {
+                host_id,
+                target_version: targetProjectHostVersion,
+                results: response?.results ?? [],
+              },
+            );
+            return;
+          }
         }
         if (requestedProjectHostUpgrade && knownGoodProjectHostVersion) {
           try {
@@ -1252,6 +1392,13 @@ async function handleOp(op: LroSummary): Promise<void> {
         id: host_id,
         components: input?.components ?? [],
         reason: input?.reason,
+        onProgress: async (update) => {
+          await progressStep("waiting", update.rollout_phase_label, {
+            host_id,
+            components: input?.components ?? [],
+            ...update,
+          });
+        },
       });
       const updated = await updateLro({
         op_id,
@@ -1322,6 +1469,13 @@ async function handleOp(op: LroSummary): Promise<void> {
         id: host_id,
         components: input?.components ?? [],
         reason: input?.reason,
+        onProgress: async (update) => {
+          await progressStep("waiting", update.rollout_phase_label, {
+            host_id,
+            components: input?.components ?? [],
+            ...update,
+          });
+        },
       });
       const updated = await updateLro({
         op_id,
@@ -1604,4 +1758,5 @@ export function startHostLroWorker({
 
 export const __test__ = {
   currentBootstrapFailure,
+  completedProjectHostUpgradeVersion,
 };

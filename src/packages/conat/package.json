@@ -21,6 +21,7 @@
     "./project/api": "./dist/project/api/index.js",
     "./project/mutagen": "./dist/project/mutagen/index.js",
     "./project/terminal": "./dist/project/terminal/index.js",
+    "./project-host/*": "./dist/project-host/*.js",
     "./project-host/api": "./dist/project-host/api.js",
     "./browser-api": "./dist/browser-api/index.js",
     "./*": "./dist/*.js"

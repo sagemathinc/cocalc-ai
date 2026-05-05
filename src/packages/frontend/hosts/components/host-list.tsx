@@ -75,9 +75,10 @@ import type {
 import { getHostSizeDisplay } from "../utils/format";
 import {
   currentProjectHostAutomaticRollback,
+  currentProjectHostRolloutPhase,
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
-} from "../utils/project-host-rollout";
+} from "@cocalc/conat/project-host/rollout";
 import {
   currentHostRuntimeExceptionSummary,
   hostRuntimeExceptionDescription,
@@ -833,6 +834,11 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         })
           ? undefined
           : op;
+        const projectHostRolloutPhase = currentProjectHostRolloutPhase({
+          op: displayOp,
+          currentVersion: host.version,
+          observation: host.observed_host_agent?.project_host,
+        });
         return (
           <Space orientation="vertical" size={2}>
             <Space size="small">
@@ -885,7 +891,13 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               detailMode="popover"
               showNormal
             />
-            <HostOpProgress op={displayOp} compact />
+            <HostOpProgress
+              op={displayOp}
+              compact
+              displayPhaseLabel={projectHostRolloutPhase?.label}
+              displayPhaseOwner={projectHostRolloutPhase?.owner}
+              displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
+            />
             {projectHostRollback && (
               <Tooltip
                 title={`Project-host rollout to ${
@@ -979,7 +991,14 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const opPhase = getHostOpPhase(op);
         const canCancelBackups =
           !!op?.op_id && hostOpActive && opPhase === "backups";
-        const blockedActionsReason = describeBlockedHostActions(op);
+        const projectHostRolloutPhase = currentProjectHostRolloutPhase({
+          op,
+          currentVersion: host.version,
+          observation: host.observed_host_agent?.project_host,
+        });
+        const blockedActionsReason = describeBlockedHostActions(op, {
+          displayPhaseLabel: projectHostRolloutPhase?.label,
+        });
 
         const actions = [
           <Button

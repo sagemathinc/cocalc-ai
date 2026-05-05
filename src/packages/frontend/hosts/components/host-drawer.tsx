@@ -85,9 +85,10 @@ import {
 } from "../utils/format";
 import type { HostDeleteOptions } from "../types";
 import {
+  currentProjectHostRolloutPhase,
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
-} from "../utils/project-host-rollout";
+} from "@cocalc/conat/project-host/rollout";
 
 type HostDrawerViewModel = {
   open: boolean;
@@ -938,6 +939,46 @@ function formatRolloutReason(reason?: string): string {
   }
 }
 
+function formatProjectHostRolloutPhase(phase?: string): string {
+  switch (`${phase ?? ""}`.trim()) {
+    case "stable":
+      return "Stable";
+    case "candidate_pending":
+      return "Candidate pending";
+    case "restart_requested":
+      return "Restart requested";
+    case "candidate_starting":
+      return "Candidate starting";
+    case "candidate_running_unhealthy":
+      return "Candidate running, evaluating health";
+    case "candidate_running_healthy":
+      return "Candidate running, healthy";
+    case "promoted":
+      return "Candidate promoted";
+    case "rollback_requested":
+      return "Rollback requested";
+    case "rolled_back":
+      return "Rolled back";
+    default:
+      return phase?.trim() || "Unknown";
+  }
+}
+
+function projectHostRolloutAlertType(
+  phase?: string,
+): "info" | "success" | "warning" {
+  switch (`${phase ?? ""}`.trim()) {
+    case "promoted":
+    case "stable":
+      return "success";
+    case "rollback_requested":
+    case "rolled_back":
+      return "warning";
+    default:
+      return "info";
+  }
+}
+
 function runtimeStateTag(state?: ManagedComponentRuntimeState) {
   switch (state) {
     case "running":
@@ -1307,6 +1348,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   })
     ? undefined
     : activeOp;
+  const projectHostRolloutPhase = currentProjectHostRolloutPhase({
+    op: displayActiveOp,
+    currentVersion: host?.version,
+    observation: projectHostObservation,
+    deploymentStatus,
+  });
   const hostOpActive = host ? isHostOpActive(displayActiveOp) : false;
   const opPhase = getHostOpPhase(displayActiveOp);
   const canCancelBackups =
@@ -1483,7 +1530,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
       {!showUpgradeProgress && (
         <Space orientation="vertical" size="small">
-          <HostOpProgress op={displayActiveOp} />
+          <HostOpProgress
+            op={displayActiveOp}
+            displayPhaseLabel={projectHostRolloutPhase?.label}
+            displayPhaseOwner={projectHostRolloutPhase?.owner}
+            displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
+          />
           <HostBootstrapProgress host={host} />
           {canCancelBackups && (
             <Popconfirm
@@ -2047,6 +2099,98 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                         )}
                       </Typography.Text>
                     )}
+                  {projectHostObservation?.rollout && (
+                    <Alert
+                      type={projectHostRolloutAlertType(
+                        projectHostObservation.rollout.phase,
+                      )}
+                      showIcon
+                      message={`Project-host rollout: ${formatProjectHostRolloutPhase(
+                        projectHostObservation.rollout.phase,
+                      )}`}
+                      description={
+                        <span>
+                          {projectHostObservation.rollout.target_version && (
+                            <>
+                              Target{" "}
+                              <code>
+                                {projectHostObservation.rollout.target_version}
+                              </code>
+                            </>
+                          )}
+                          {projectHostObservation.rollout.previous_version && (
+                            <>
+                              {" "}
+                              from{" "}
+                              <code>
+                                {
+                                  projectHostObservation.rollout
+                                    .previous_version
+                                }
+                              </code>
+                            </>
+                          )}
+                          {projectHostObservation.rollout.running_version && (
+                            <>
+                              {" "}
+                              · running{" "}
+                              <code>
+                                {projectHostObservation.rollout.running_version}
+                              </code>
+                            </>
+                          )}
+                          {projectHostObservation.rollout.deadline_at &&
+                            formatRuntimeTimestamp(
+                              projectHostObservation.rollout.deadline_at,
+                            ) && (
+                              <>
+                                {" "}
+                                · deadline{" "}
+                                {formatRuntimeTimestamp(
+                                  projectHostObservation.rollout.deadline_at,
+                                )}
+                              </>
+                            )}
+                          {projectHostObservation.rollout.accepted_at &&
+                            formatRuntimeTimestamp(
+                              projectHostObservation.rollout.accepted_at,
+                            ) && (
+                              <>
+                                {" "}
+                                · accepted{" "}
+                                {formatRuntimeTimestamp(
+                                  projectHostObservation.rollout.accepted_at,
+                                )}
+                              </>
+                            )}
+                          {projectHostObservation.rollout
+                            .rollback_finished_at &&
+                            formatRuntimeTimestamp(
+                              projectHostObservation.rollout
+                                .rollback_finished_at,
+                            ) && (
+                              <>
+                                {" "}
+                                · rollback finished{" "}
+                                {formatRuntimeTimestamp(
+                                  projectHostObservation.rollout
+                                    .rollback_finished_at,
+                                )}
+                              </>
+                            )}
+                          {projectHostObservation.rollout.failure_reason && (
+                            <>
+                              {" "}
+                              ·{" "}
+                              {projectHostRollbackReasonLabel(
+                                projectHostObservation.rollout.failure_reason,
+                              )}
+                            </>
+                          )}
+                        </span>
+                      }
+                    />
+                  )}
                   {projectHostObservation?.last_known_good_version && (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       Project host last known good{" "}
@@ -2316,6 +2460,119 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                         </Typography.Text>
                       )}
                       {deploymentStatus.observed_host_agent.project_host
+                        .rollout && (
+                        <Alert
+                          type={projectHostRolloutAlertType(
+                            deploymentStatus.observed_host_agent.project_host
+                              .rollout.phase,
+                          )}
+                          showIcon
+                          message={`Project-host rollout: ${formatProjectHostRolloutPhase(
+                            deploymentStatus.observed_host_agent.project_host
+                              .rollout.phase,
+                          )}`}
+                          description={
+                            <span>
+                              {deploymentStatus.observed_host_agent.project_host
+                                .rollout.target_version && (
+                                <>
+                                  Target{" "}
+                                  <code>
+                                    {
+                                      deploymentStatus.observed_host_agent
+                                        .project_host.rollout.target_version
+                                    }
+                                  </code>
+                                </>
+                              )}
+                              {deploymentStatus.observed_host_agent.project_host
+                                .rollout.previous_version && (
+                                <>
+                                  {" "}
+                                  from{" "}
+                                  <code>
+                                    {
+                                      deploymentStatus.observed_host_agent
+                                        .project_host.rollout.previous_version
+                                    }
+                                  </code>
+                                </>
+                              )}
+                              {deploymentStatus.observed_host_agent.project_host
+                                .rollout.running_version && (
+                                <>
+                                  {" "}
+                                  · running{" "}
+                                  <code>
+                                    {
+                                      deploymentStatus.observed_host_agent
+                                        .project_host.rollout.running_version
+                                    }
+                                  </code>
+                                </>
+                              )}
+                              {deploymentStatus.observed_host_agent.project_host
+                                .rollout.deadline_at &&
+                                formatRuntimeTimestamp(
+                                  deploymentStatus.observed_host_agent
+                                    .project_host.rollout.deadline_at,
+                                ) && (
+                                  <>
+                                    {" "}
+                                    · deadline{" "}
+                                    {formatRuntimeTimestamp(
+                                      deploymentStatus.observed_host_agent
+                                        .project_host.rollout.deadline_at,
+                                    )}
+                                  </>
+                                )}
+                              {deploymentStatus.observed_host_agent.project_host
+                                .rollout.accepted_at &&
+                                formatRuntimeTimestamp(
+                                  deploymentStatus.observed_host_agent
+                                    .project_host.rollout.accepted_at,
+                                ) && (
+                                  <>
+                                    {" "}
+                                    · accepted{" "}
+                                    {formatRuntimeTimestamp(
+                                      deploymentStatus.observed_host_agent
+                                        .project_host.rollout.accepted_at,
+                                    )}
+                                  </>
+                                )}
+                              {deploymentStatus.observed_host_agent.project_host
+                                .rollout.rollback_finished_at &&
+                                formatRuntimeTimestamp(
+                                  deploymentStatus.observed_host_agent
+                                    .project_host.rollout.rollback_finished_at,
+                                ) && (
+                                  <>
+                                    {" "}
+                                    · rollback finished{" "}
+                                    {formatRuntimeTimestamp(
+                                      deploymentStatus.observed_host_agent
+                                        .project_host.rollout
+                                        .rollback_finished_at,
+                                    )}
+                                  </>
+                                )}
+                              {deploymentStatus.observed_host_agent.project_host
+                                .rollout.failure_reason && (
+                                <>
+                                  {" "}
+                                  ·{" "}
+                                  {projectHostRollbackReasonLabel(
+                                    deploymentStatus.observed_host_agent
+                                      .project_host.rollout.failure_reason,
+                                  )}
+                                </>
+                              )}
+                            </span>
+                          }
+                        />
+                      )}
+                      {deploymentStatus.observed_host_agent.project_host
                         .pending_rollout && (
                         <Alert
                           type="info"
@@ -2419,7 +2676,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                     </Space>
                   </Card>
                 )}
-                {showUpgradeProgress && <HostOpProgress op={displayActiveOp} />}
+                {showUpgradeProgress && (
+                  <HostOpProgress
+                    op={displayActiveOp}
+                    displayPhaseLabel={projectHostRolloutPhase?.label}
+                    displayPhaseOwner={projectHostRolloutPhase?.owner}
+                    displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
+                  />
+                )}
                 <Space
                   orientation="vertical"
                   size="small"

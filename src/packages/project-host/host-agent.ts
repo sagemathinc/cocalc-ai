@@ -1,4 +1,8 @@
 import getLogger from "@cocalc/backend/logger";
+import type {
+  HostAgentProjectHostRolloutPhase,
+  HostAgentProjectHostRolloutState,
+} from "@cocalc/conat/project-host/api";
 import {
   ensureDaemon,
   inspectProjectHostRuntime,
@@ -132,16 +136,120 @@ function clearPendingRollout(state: HostAgentState): void {
   }
 }
 
-function rememberSuccessfulVersion(
+function setProjectHostRolloutState(
   state: HostAgentState,
-  version: string,
-  pending?: ProjectHostRollbackPending,
-): void {
+  rollout: HostAgentProjectHostRolloutState,
+): boolean {
+  const projectHost = ensureProjectHostSection(state);
+  const current = projectHost.rollout;
+  if (JSON.stringify(current ?? null) === JSON.stringify(rollout)) {
+    return false;
+  }
+  projectHost.rollout = rollout;
+  return true;
+}
+
+function phaseForPendingRollout({
+  pending,
+  runningVersion,
+  healthy,
+}: {
+  pending: ProjectHostRollbackPending;
+  runningVersion?: string;
+  healthy: boolean;
+}): HostAgentProjectHostRolloutPhase {
+  if (runningVersion === pending.target_version) {
+    return healthy
+      ? "candidate_running_healthy"
+      : "candidate_running_unhealthy";
+  }
+  if (!runningVersion || runningVersion !== pending.previous_version) {
+    return "candidate_starting";
+  }
+  return "restart_requested";
+}
+
+function recordRolloutState({
+  state,
+  phase,
+  targetVersion,
+  previousVersion,
+  startedAt,
+  deadlineAt,
+  runningPid,
+  runningVersion,
+  healthy,
+  acceptedAt,
+  rollbackStartedAt,
+  rollbackFinishedAt,
+  failureReason,
+}: {
+  state: HostAgentState;
+  phase: HostAgentProjectHostRolloutPhase;
+  targetVersion?: string;
+  previousVersion?: string;
+  startedAt?: string;
+  deadlineAt?: string;
+  runningPid?: number;
+  runningVersion?: string;
+  healthy?: boolean;
+  acceptedAt?: string;
+  rollbackStartedAt?: string;
+  rollbackFinishedAt?: string;
+  failureReason?: "health_deadline_exceeded";
+}): boolean {
+  return setProjectHostRolloutState(state, {
+    phase,
+    ...(targetVersion ? { target_version: targetVersion } : {}),
+    ...(previousVersion ? { previous_version: previousVersion } : {}),
+    ...(startedAt ? { started_at: startedAt } : {}),
+    ...(deadlineAt ? { deadline_at: deadlineAt } : {}),
+    ...(runningPid != null ? { running_pid: runningPid } : {}),
+    ...(runningVersion ? { running_version: runningVersion } : {}),
+    ...(healthy != null ? { healthy } : {}),
+    ...(acceptedAt ? { accepted_at: acceptedAt } : {}),
+    ...(rollbackStartedAt ? { rollback_started_at: rollbackStartedAt } : {}),
+    ...(rollbackFinishedAt ? { rollback_finished_at: rollbackFinishedAt } : {}),
+    ...(failureReason ? { failure_reason: failureReason } : {}),
+  });
+}
+
+function rememberSuccessfulVersion({
+  state,
+  version,
+  pending,
+  nowIso,
+  runningPid,
+  runningVersion,
+  healthy,
+  phase,
+}: {
+  state: HostAgentState;
+  version: string;
+  pending?: ProjectHostRollbackPending;
+  nowIso: string;
+  runningPid?: number;
+  runningVersion?: string;
+  healthy?: boolean;
+  phase: "stable" | "promoted";
+}): boolean {
   const projectHost = ensureProjectHostSection(state);
   projectHost.last_known_good_version = version;
   if (!pending || pending.target_version === version) {
     delete projectHost.pending_rollout;
   }
+  return recordRolloutState({
+    state,
+    phase,
+    targetVersion: pending?.target_version ?? version,
+    previousVersion: pending?.previous_version,
+    startedAt: pending?.started_at,
+    deadlineAt: pending?.deadline_at,
+    runningPid,
+    runningVersion: runningVersion ?? version,
+    healthy,
+    ...(phase === "promoted" ? { acceptedAt: nowIso } : {}),
+  });
 }
 
 function recordAutomaticRollback(
@@ -164,6 +272,7 @@ async function reconcileProjectHostRollback({
   const status = inspectProjectHostRuntime(index);
   const state = readHostAgentState(status.dataDir);
   const now = Date.now();
+  const nowIso = new Date(now).toISOString();
   const currentVersion = `${status.currentVersion ?? ""}`.trim() || undefined;
   const runningVersion = `${status.runningVersion ?? ""}`.trim() || undefined;
   const effectiveLastKnownGood = effectiveLastKnownGoodVersion(
@@ -172,7 +281,15 @@ async function reconcileProjectHostRollback({
   );
 
   if (currentVersion && !state.project_host?.last_known_good_version) {
-    rememberSuccessfulVersion(state, effectiveLastKnownGood ?? currentVersion);
+    rememberSuccessfulVersion({
+      state,
+      version: effectiveLastKnownGood ?? currentVersion,
+      nowIso,
+      runningPid: status.runningPid,
+      runningVersion,
+      healthy: status.healthy,
+      phase: "stable",
+    });
     writeHostAgentState(status.dataDir, state);
   }
 
@@ -182,8 +299,121 @@ async function reconcileProjectHostRollback({
   if (!currentVersion || !lastKnownGood || currentVersion === lastKnownGood) {
     if (pending) {
       clearPendingRollout(state);
+      recordRolloutState({
+        state,
+        phase:
+          state.project_host?.last_automatic_rollback?.rollback_version ===
+            lastKnownGood &&
+          state.project_host?.rollout?.phase === "rollback_requested"
+            ? "rolled_back"
+            : "stable",
+        targetVersion:
+          state.project_host?.rollout?.target_version ?? currentVersion,
+        previousVersion: state.project_host?.rollout?.previous_version,
+        startedAt: state.project_host?.rollout?.started_at,
+        deadlineAt: state.project_host?.rollout?.deadline_at,
+        runningPid: status.runningPid,
+        runningVersion,
+        healthy: status.healthy,
+        rollbackStartedAt:
+          state.project_host?.rollout?.rollback_started_at ??
+          state.project_host?.last_automatic_rollback?.started_at,
+        rollbackFinishedAt:
+          state.project_host?.last_automatic_rollback?.finished_at,
+        failureReason: state.project_host?.rollout?.failure_reason,
+      });
       writeHostAgentState(status.dataDir, state);
+    } else if (state.project_host?.rollout?.phase === "rollback_requested") {
+      if (
+        recordRolloutState({
+          state,
+          phase: "rolled_back",
+          targetVersion: state.project_host.rollout.target_version,
+          previousVersion:
+            state.project_host.rollout.previous_version ?? lastKnownGood,
+          startedAt: state.project_host.rollout.started_at,
+          deadlineAt: state.project_host.rollout.deadline_at,
+          runningPid: status.runningPid,
+          runningVersion,
+          healthy: status.healthy,
+          rollbackStartedAt: state.project_host.rollout.rollback_started_at,
+          rollbackFinishedAt:
+            state.project_host?.last_automatic_rollback?.finished_at ?? nowIso,
+          failureReason:
+            state.project_host.rollout.failure_reason ??
+            state.project_host?.last_automatic_rollback?.reason,
+        })
+      ) {
+        writeHostAgentState(status.dataDir, state);
+      }
+    } else if (
+      !state.project_host?.rollout ||
+      !["promoted", "rolled_back"].includes(state.project_host.rollout.phase)
+    ) {
+      const stableVersion = lastKnownGood ?? currentVersion;
+      if (
+        stableVersion &&
+        rememberSuccessfulVersion({
+          state,
+          version: stableVersion,
+          nowIso,
+          runningPid: status.runningPid,
+          runningVersion,
+          healthy: status.healthy,
+          phase: "stable",
+        })
+      ) {
+        writeHostAgentState(status.dataDir, state);
+      }
     }
+    return;
+  }
+
+  if (!pending && status.healthy && runningVersion === lastKnownGood) {
+    const activePending = beginPendingRollout({
+      state,
+      targetVersion: currentVersion,
+      previousVersion: lastKnownGood,
+      now,
+      timeoutMs,
+    });
+    recordRolloutState({
+      state,
+      phase: "restart_requested",
+      targetVersion: currentVersion,
+      previousVersion: lastKnownGood,
+      startedAt: activePending.started_at,
+      deadlineAt: activePending.deadline_at,
+      runningPid: status.runningPid,
+      runningVersion,
+      healthy: status.healthy,
+    });
+    writeHostAgentState(status.dataDir, state);
+    logger.warn("host-agent restarting project-host onto rollout candidate", {
+      index,
+      target_version: currentVersion,
+      previous_version: lastKnownGood,
+      deadline_at: activePending.deadline_at,
+      running_version: runningVersion,
+      pid: status.runningPid,
+    });
+    recordHostAgentEvent(status.dataDir, {
+      component: "project-host",
+      action: "restart_requested",
+      message: "restarting project-host onto rollout candidate",
+      pid: status.runningPid,
+      target_version: currentVersion,
+      previous_version: lastKnownGood,
+      running_version: runningVersion,
+      deadline_at: activePending.deadline_at,
+      metadata: {
+        healthy: status.healthy,
+        proactive_restart: true,
+      },
+    });
+    restartProjectHost(index, {
+      preserveManagedAuxiliaryDaemons: true,
+    });
     return;
   }
 
@@ -201,7 +431,16 @@ async function reconcileProjectHostRollback({
       current_version: currentVersion,
       running_version: runningVersion,
     });
-    rememberSuccessfulVersion(state, currentVersion, pending);
+    rememberSuccessfulVersion({
+      state,
+      version: currentVersion,
+      pending,
+      nowIso,
+      runningPid: status.runningPid,
+      runningVersion,
+      healthy: status.healthy,
+      phase: "promoted",
+    });
     writeHostAgentState(status.dataDir, state);
     return;
   }
@@ -219,6 +458,21 @@ async function reconcileProjectHostRollback({
       previousVersion: lastKnownGood,
       now,
       timeoutMs,
+    });
+    recordRolloutState({
+      state,
+      phase: phaseForPendingRollout({
+        pending: activePending,
+        runningVersion,
+        healthy: status.healthy,
+      }),
+      targetVersion: currentVersion,
+      previousVersion: lastKnownGood,
+      startedAt: activePending.started_at,
+      deadlineAt: activePending.deadline_at,
+      runningPid: status.runningPid,
+      runningVersion,
+      healthy: status.healthy,
     });
     writeHostAgentState(status.dataDir, state);
     logger.warn("host-agent tracking project-host rollout candidate", {
@@ -244,6 +498,29 @@ async function reconcileProjectHostRollback({
       },
     });
     return;
+  }
+
+  if (activePending) {
+    const rolloutChanged = recordRolloutState({
+      state,
+      phase: phaseForPendingRollout({
+        pending: activePending,
+        runningVersion,
+        healthy: status.healthy,
+      }),
+      targetVersion: activePending.target_version,
+      previousVersion: activePending.previous_version,
+      startedAt: activePending.started_at,
+      deadlineAt: activePending.deadline_at,
+      runningPid: status.runningPid,
+      runningVersion,
+      healthy: status.healthy,
+      rollbackStartedAt: state.project_host?.rollout?.rollback_started_at,
+      failureReason: state.project_host?.rollout?.failure_reason,
+    });
+    if (rolloutChanged) {
+      writeHostAgentState(status.dataDir, state);
+    }
   }
 
   if (
@@ -273,6 +550,19 @@ async function reconcileProjectHostRollback({
       metadata: {
         healthy: status.healthy,
       },
+    });
+    recordRolloutState({
+      state,
+      phase: "rollback_requested",
+      targetVersion: activePending.target_version,
+      previousVersion: activePending.previous_version,
+      startedAt: activePending.started_at,
+      deadlineAt: activePending.deadline_at,
+      runningPid: status.runningPid,
+      runningVersion,
+      healthy: status.healthy,
+      rollbackStartedAt: nowIso,
+      failureReason: "health_deadline_exceeded",
     });
     await activateInstalledProjectHostVersion(activePending.previous_version);
     restartProjectHost(index, {

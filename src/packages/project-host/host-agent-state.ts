@@ -5,6 +5,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import type { HostAgentProjectHostRolloutState } from "@cocalc/conat/project-host/api";
 
 export type ProjectHostRollbackPending = {
   target_version: string;
@@ -24,6 +25,7 @@ export type ProjectHostRollbackRecord = {
 export type HostAgentState = {
   project_host?: {
     last_known_good_version?: string;
+    rollout?: HostAgentProjectHostRolloutState;
     pending_rollout?: ProjectHostRollbackPending;
     last_automatic_rollback?: ProjectHostRollbackRecord;
   };

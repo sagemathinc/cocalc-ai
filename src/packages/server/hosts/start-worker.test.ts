@@ -59,3 +59,47 @@ describe("hosts start-worker bootstrap wait failure detection", () => {
     ).toBe("bootstrap reconcile failed");
   });
 });
+
+describe("hosts start-worker project-host upgrade convergence detection", () => {
+  test("detects a completed project-host upgrade once installed and last-known-good match the target", () => {
+    expect(
+      __test__.completedProjectHostUpgradeVersion({
+        targetVersion: "ph-v2",
+        row: {
+          version: "ph-v2",
+          metadata: {
+            software: {
+              project_host: "ph-v2",
+            },
+            host_agent: {
+              project_host: {
+                last_known_good_version: "ph-v2",
+              },
+            },
+          },
+        },
+      }),
+    ).toBe("ph-v2");
+  });
+
+  test("does not suppress rollback when the host is still on the previous last-known-good version", () => {
+    expect(
+      __test__.completedProjectHostUpgradeVersion({
+        targetVersion: "ph-v2",
+        row: {
+          version: "ph-v2",
+          metadata: {
+            software: {
+              project_host: "ph-v2",
+            },
+            host_agent: {
+              project_host: {
+                last_known_good_version: "ph-v1",
+              },
+            },
+          },
+        },
+      }),
+    ).toBeUndefined();
+  });
+});

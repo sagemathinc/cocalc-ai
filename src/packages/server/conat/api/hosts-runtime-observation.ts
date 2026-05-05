@@ -331,31 +331,82 @@ export function observedHostAgentFromMetadata(
   }
   const lastKnownGoodVersion =
     `${projectHost?.last_known_good_version ?? ""}`.trim() || undefined;
+  const rolloutPhase =
+    `${projectHost?.rollout?.phase ?? ""}`.trim() || undefined;
+  const rolloutTargetVersion =
+    `${projectHost?.rollout?.target_version ?? ""}`.trim() || undefined;
+  const rolloutPreviousVersion =
+    `${projectHost?.rollout?.previous_version ?? ""}`.trim() || undefined;
+  const rolloutStartedAt =
+    `${projectHost?.rollout?.started_at ?? ""}`.trim() || undefined;
+  const rolloutDeadlineAt =
+    `${projectHost?.rollout?.deadline_at ?? ""}`.trim() || undefined;
+  const rolloutRunningVersion =
+    `${projectHost?.rollout?.running_version ?? ""}`.trim() || undefined;
+  const rolloutRunningPid = Number(projectHost?.rollout?.running_pid);
+  const rolloutHealthy =
+    typeof projectHost?.rollout?.healthy === "boolean"
+      ? projectHost.rollout.healthy
+      : undefined;
+  const rolloutAcceptedAt =
+    `${projectHost?.rollout?.accepted_at ?? ""}`.trim() || undefined;
+  const rolloutRollbackStartedAt =
+    `${projectHost?.rollout?.rollback_started_at ?? ""}`.trim() || undefined;
+  const rolloutRollbackFinishedAt =
+    `${projectHost?.rollout?.rollback_finished_at ?? ""}`.trim() || undefined;
+  const rolloutFailureReason =
+    `${projectHost?.rollout?.failure_reason ?? ""}`.trim() || undefined;
   const pendingTargetVersion =
-    `${projectHost?.pending_rollout?.target_version ?? ""}`.trim() || undefined;
+    `${projectHost?.pending_rollout?.target_version ?? ""}`.trim() ||
+    (rolloutTargetVersion &&
+    [
+      "candidate_pending",
+      "restart_requested",
+      "candidate_starting",
+      "candidate_running_unhealthy",
+      "candidate_running_healthy",
+    ].includes(rolloutPhase ?? "")
+      ? rolloutTargetVersion
+      : undefined);
   const pendingPreviousVersion =
     `${projectHost?.pending_rollout?.previous_version ?? ""}`.trim() ||
+    rolloutPreviousVersion ||
     undefined;
   const pendingStartedAt =
-    `${projectHost?.pending_rollout?.started_at ?? ""}`.trim() || undefined;
+    `${projectHost?.pending_rollout?.started_at ?? ""}`.trim() ||
+    rolloutStartedAt ||
+    undefined;
   const pendingDeadlineAt =
-    `${projectHost?.pending_rollout?.deadline_at ?? ""}`.trim() || undefined;
+    `${projectHost?.pending_rollout?.deadline_at ?? ""}`.trim() ||
+    rolloutDeadlineAt ||
+    undefined;
   const rollbackTargetVersion =
     `${projectHost?.last_automatic_rollback?.target_version ?? ""}`.trim() ||
+    (rolloutPhase === "rolled_back" || rolloutPhase === "rollback_requested"
+      ? rolloutTargetVersion
+      : undefined) ||
     undefined;
   const rollbackVersion =
     `${projectHost?.last_automatic_rollback?.rollback_version ?? ""}`.trim() ||
+    (rolloutPhase === "rolled_back" || rolloutPhase === "rollback_requested"
+      ? rolloutPreviousVersion
+      : undefined) ||
     undefined;
   const rollbackStartedAt =
     `${projectHost?.last_automatic_rollback?.started_at ?? ""}`.trim() ||
+    rolloutRollbackStartedAt ||
     undefined;
   const rollbackFinishedAt =
     `${projectHost?.last_automatic_rollback?.finished_at ?? ""}`.trim() ||
+    rolloutRollbackFinishedAt ||
     undefined;
   const rollbackReason =
-    `${projectHost?.last_automatic_rollback?.reason ?? ""}`.trim() || undefined;
+    `${projectHost?.last_automatic_rollback?.reason ?? ""}`.trim() ||
+    rolloutFailureReason ||
+    undefined;
   if (
     !lastKnownGoodVersion &&
+    !rolloutPhase &&
     !pendingTargetVersion &&
     !rollbackTargetVersion &&
     !rollbackVersion
@@ -365,6 +416,39 @@ export function observedHostAgentFromMetadata(
   return {
     project_host: {
       last_known_good_version: lastKnownGoodVersion,
+      rollout:
+        rolloutPhase != null
+          ? {
+              phase: rolloutPhase as any,
+              ...(rolloutTargetVersion
+                ? { target_version: rolloutTargetVersion }
+                : {}),
+              ...(rolloutPreviousVersion
+                ? { previous_version: rolloutPreviousVersion }
+                : {}),
+              ...(rolloutStartedAt ? { started_at: rolloutStartedAt } : {}),
+              ...(rolloutDeadlineAt ? { deadline_at: rolloutDeadlineAt } : {}),
+              ...(Number.isFinite(rolloutRunningPid)
+                ? { running_pid: rolloutRunningPid }
+                : {}),
+              ...(rolloutRunningVersion
+                ? { running_version: rolloutRunningVersion }
+                : {}),
+              ...(rolloutHealthy != null ? { healthy: rolloutHealthy } : {}),
+              ...(rolloutAcceptedAt ? { accepted_at: rolloutAcceptedAt } : {}),
+              ...(rolloutRollbackStartedAt
+                ? { rollback_started_at: rolloutRollbackStartedAt }
+                : {}),
+              ...(rolloutRollbackFinishedAt
+                ? { rollback_finished_at: rolloutRollbackFinishedAt }
+                : {}),
+              ...((rolloutPhase === "rollback_requested" ||
+                rolloutPhase === "rolled_back") &&
+              rollbackReason === "health_deadline_exceeded"
+                ? { failure_reason: "health_deadline_exceeded" as const }
+                : {}),
+            }
+          : undefined,
       pending_rollout:
         pendingTargetVersion && pendingPreviousVersion
           ? {
