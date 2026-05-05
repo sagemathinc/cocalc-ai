@@ -187,6 +187,43 @@ async function reconcileProjectHostRollback({
     return;
   }
 
+  if (!pending && status.healthy && runningVersion === lastKnownGood) {
+    const activePending = beginPendingRollout({
+      state,
+      targetVersion: currentVersion,
+      previousVersion: lastKnownGood,
+      now,
+      timeoutMs,
+    });
+    writeHostAgentState(status.dataDir, state);
+    logger.warn("host-agent restarting project-host onto rollout candidate", {
+      index,
+      target_version: currentVersion,
+      previous_version: lastKnownGood,
+      deadline_at: activePending.deadline_at,
+      running_version: runningVersion,
+      pid: status.runningPid,
+    });
+    recordHostAgentEvent(status.dataDir, {
+      component: "project-host",
+      action: "restart_requested",
+      message: "restarting project-host onto rollout candidate",
+      pid: status.runningPid,
+      target_version: currentVersion,
+      previous_version: lastKnownGood,
+      running_version: runningVersion,
+      deadline_at: activePending.deadline_at,
+      metadata: {
+        healthy: status.healthy,
+        proactive_restart: true,
+      },
+    });
+    restartProjectHost(index, {
+      preserveManagedAuxiliaryDaemons: true,
+    });
+    return;
+  }
+
   if (status.healthy && runningVersion === currentVersion) {
     logger.info("host-agent accepted project-host candidate as healthy", {
       index,

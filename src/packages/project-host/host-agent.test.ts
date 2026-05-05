@@ -46,7 +46,7 @@ describe("project-host host-agent local rollback", () => {
     return path.join(dataDir, "host-agent-state.json");
   }
 
-  it("does not start rollback tracking while the old healthy project-host is still running", async () => {
+  it("restarts a healthy old project-host onto the rollout candidate and starts rollback tracking", async () => {
     const dataDir = mkdtemp("cocalc-host-agent-");
     fs.writeFileSync(
       statePath(dataDir),
@@ -70,13 +70,15 @@ describe("project-host host-agent local rollback", () => {
     });
 
     const state = JSON.parse(fs.readFileSync(statePath(dataDir), "utf8"));
-    expect(state).toEqual({
-      project_host: {
-        last_known_good_version: "ph-v1",
-      },
+    expect(state.project_host.last_known_good_version).toBe("ph-v1");
+    expect(state.project_host.pending_rollout).toMatchObject({
+      target_version: "ph-v2",
+      previous_version: "ph-v1",
     });
     expect(activateInstalledProjectHostVersionMock).not.toHaveBeenCalled();
-    expect(restartProjectHostMock).not.toHaveBeenCalled();
+    expect(restartProjectHostMock).toHaveBeenCalledWith(0, {
+      preserveManagedAuxiliaryDaemons: true,
+    });
   });
 
   it("promotes a healthy candidate project-host bundle to last-known-good", async () => {
