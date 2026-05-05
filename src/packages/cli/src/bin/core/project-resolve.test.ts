@@ -77,6 +77,7 @@ test("queryProjects prefers account_project_index rows automatically in multi-ba
             title: "Auto Projected Project",
             host_id: "77777777-7777-4777-8777-777777777777",
             state_summary: { state: "running" },
+            last_edited: "2026-04-02T00:00:00.000Z",
             sort_key: "2026-04-03T00:00:00.000Z",
             updated_at: "2026-04-03T00:00:01.000Z",
             is_hidden: false,
@@ -95,7 +96,7 @@ test("queryProjects prefers account_project_index rows automatically in multi-ba
       title: "Auto Projected Project",
       host_id: "77777777-7777-4777-8777-777777777777",
       state: { state: "running" },
-      last_edited: "2026-04-03T00:00:00.000Z",
+      last_edited: "2026-04-02T00:00:00.000Z",
       deleted: false,
     },
   ]);
@@ -116,6 +117,7 @@ test("queryProjects prefers account_project_index rows when enabled", async () =
             title: "Projected Project",
             host_id: "44444444-4444-4444-8444-444444444444",
             state_summary: { state: "stopped" },
+            last_edited: "2026-04-02T00:00:00.000Z",
             sort_key: "2026-04-03T00:00:00.000Z",
             updated_at: "2026-04-03T00:00:01.000Z",
             is_hidden: false,
@@ -133,7 +135,7 @@ test("queryProjects prefers account_project_index rows when enabled", async () =
       title: "Projected Project",
       host_id: "44444444-4444-4444-8444-444444444444",
       state: { state: "stopped" },
-      last_edited: "2026-04-03T00:00:00.000Z",
+      last_edited: "2026-04-02T00:00:00.000Z",
       deleted: false,
     },
   ]);
@@ -151,6 +153,7 @@ test("queryProjects filters hidden account_project_index rows", async () => {
             title: "Hidden Project",
             host_id: null,
             state_summary: { state: "running" },
+            last_edited: "2026-04-01T00:00:01.000Z",
             sort_key: "2026-04-03T00:00:01.000Z",
             updated_at: "2026-04-03T00:00:01.000Z",
             is_hidden: true,
@@ -161,6 +164,7 @@ test("queryProjects filters hidden account_project_index rows", async () => {
             title: "Visible Project",
             host_id: null,
             state_summary: { state: "running" },
+            last_edited: "2026-04-02T00:00:00.000Z",
             sort_key: "2026-04-03T00:00:00.000Z",
             updated_at: "2026-04-03T00:00:00.000Z",
             is_hidden: false,
@@ -177,7 +181,43 @@ test("queryProjects filters hidden account_project_index rows", async () => {
       title: "Visible Project",
       host_id: null,
       state: { state: "running" },
-      last_edited: "2026-04-03T00:00:00.000Z",
+      last_edited: "2026-04-02T00:00:00.000Z",
+      deleted: false,
+    },
+  ]);
+});
+
+test("queryProjects does not treat projected sort_key as last_edited", async () => {
+  process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS = "prefer";
+  const rows = await queryProjects({
+    ctx: createContext((table) => {
+      if (table === "account_project_index") {
+        return [
+          {
+            account_id: ACCOUNT_ID,
+            project_id: "77777777-7777-4777-8777-777777777777",
+            title: "Projected Active Project",
+            host_id: null,
+            state_summary: { state: "running" },
+            last_edited: "2026-04-01T00:00:00.000Z",
+            last_activity_at: "2026-04-03T00:00:00.000Z",
+            sort_key: "2026-04-04T00:00:00.000Z",
+            updated_at: "2026-04-05T00:00:00.000Z",
+            is_hidden: false,
+          },
+        ];
+      }
+      return [];
+    }),
+    limit: 10,
+  });
+  assert.deepEqual(rows, [
+    {
+      project_id: "77777777-7777-4777-8777-777777777777",
+      title: "Projected Active Project",
+      host_id: null,
+      state: { state: "running" },
+      last_edited: "2026-04-01T00:00:00.000Z",
       deleted: false,
     },
   ]);
