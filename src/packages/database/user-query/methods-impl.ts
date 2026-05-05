@@ -17,7 +17,7 @@ import { count_result } from "@cocalc/database/postgres/utils/count-result";
 import { one_result } from "@cocalc/database/postgres/utils/one-result";
 import { pg_type } from "@cocalc/database/postgres/utils/pg-type";
 import { quote_field } from "@cocalc/database/postgres/utils/quote-field";
-import { callback2, callback_opts } from "@cocalc/util/async-utils";
+import { callback2 } from "@cocalc/util/async-utils";
 import { checkProjectName } from "@cocalc/util/db-schema/name-rules";
 import * as misc from "@cocalc/util/misc";
 import { SCHEMA } from "@cocalc/util/schema";
@@ -36,19 +36,12 @@ import {
 import { UserQueryQueue } from "./queue";
 import { queryIsCmp, userGetQueryFilter } from "./user-get-query";
 
-const MAX_CHANGEFEEDS_PER_CLIENT = 2000;
-
 // Reject all patches that have timestamp that is more than 3 minutes in the future.
 const MAX_PATCH_FUTURE_MS = 1000 * 60 * 3;
 type AnyRecord = Record<string, any>;
 type QueryOption = Record<string, any>;
 
 type ProjectListReadMode = "off" | "prefer" | "only";
-
-type UserQueryChanges = {
-  id: string;
-  cb?: CB;
-};
 
 type UserQueryArrayOptions = Omit<UserQueryOptions, "query"> & {
   query: any[];
@@ -74,7 +67,6 @@ type UserGetQueryOptions = {
   query: AnyRecord;
   multi: boolean;
   options: QueryOption[];
-  changes?: UserQueryChanges;
   cb: CB;
 };
 
@@ -121,8 +113,6 @@ type ParsedGetQueryOptions = AnyRecord & {
 
 type ChangefeedLocals = {
   result?: any;
-  changes_cb?: CB;
-  changes_queue?: Array<{ err?: any; obj?: any }>;
 };
 
 function getProjectListReadMode(): ProjectListReadMode {
@@ -165,16 +155,6 @@ function shouldUseProjectedBrowserProjectReads(opts: {
   return getProjectListReadMode() !== "off";
 }
 
-function projectUsersContainAccount(
-  users: unknown,
-  account_id: string | undefined,
-): boolean {
-  if (!account_id || users == null || typeof users !== "object") {
-    return false;
-  }
-  return Object.prototype.hasOwnProperty.call(users, account_id);
-}
-
 type RetentionOptions = Parameters<typeof updateRetentionDataImpl>[0];
 
 type LegacyTableSchema = {
@@ -206,26 +186,6 @@ const callWithCb = <T = void>(
   });
 };
 
-async function loadVisibleProjectIdsForAccount(
-  db: Pick<PostgreSQLType, "_query">,
-  account_id: string,
-): Promise<Set<string>> {
-  const result = await callback_opts(db._query.bind(db))({
-    query: "SELECT project_id FROM projects",
-    where: {
-      "users ? $::TEXT": account_id,
-    },
-  });
-  const visibleProjectIds = new Set<string>();
-  for (const row of result?.rows ?? []) {
-    const project_id = `${row?.project_id ?? ""}`.trim();
-    if (project_id) {
-      visibleProjectIds.add(project_id);
-    }
-  }
-  return visibleProjectIds;
-}
-
 // Cancel all queued up queries by the given client
 export function cancel_user_queries(
   this: UserQueryContext,
@@ -235,6 +195,8 @@ export function cancel_user_queries(
 }
 
 export function user_query(this: UserQueryContext, opts: UserQueryOptions) {
+  const legacyChanges = (opts as UserQueryOptions & { changes?: unknown })
+    .changes;
   opts = {
     client_id: opts.client_id ?? undefined, // if given, uses to control number of queries at once by one client.
     priority: opts.priority ?? undefined, // (NOT IMPLEMENTED) priority for this query (an integer [-10,...,19] like in UNIX)
@@ -242,7 +204,6 @@ export function user_query(this: UserQueryContext, opts: UserQueryOptions) {
     project_id: opts.project_id ?? undefined,
     query: opts.query,
     options: opts.options ?? [],
-    changes: opts.changes ?? undefined,
     cb: opts.cb ?? undefined,
   };
   opts.options ??= [];
@@ -297,6 +258,13 @@ export function user_query(this: UserQueryContext, opts: UserQueryOptions) {
     return;
   }
 
+  if (legacyChanges != null) {
+    opts.cb?.(
+      "FATAL: user_query changefeeds were removed; use an explicit Conat-backed or Lite changefeed path instead",
+    );
+    return;
+  }
+
   if (opts.client_id == null) {
     // No client_id given, so do not use query queue.
     delete opts.priority;
@@ -323,7 +291,8 @@ export function user_query(this: UserQueryContext, opts: UserQueryOptions) {
 }
 
 export function _user_query(this: UserQueryContext, opts: UserQueryOptions) {
-  let changes: UserQueryChanges | undefined;
+  const legacyChanges = (opts as UserQueryOptions & { changes?: unknown })
+    .changes;
   let multi: boolean;
   let options: QueryOption[] = [];
   let x: QueryOption;
@@ -337,9 +306,8 @@ export function _user_query(this: UserQueryContext, opts: UserQueryOptions) {
     //    to delete a record, and won't work unless delete:true is set in the schema
     //    for the table to explicitly allow deleting.
     options: opts.options ?? [],
-    changes: opts.changes ?? undefined, // id of change feed
     cb: opts.cb ?? undefined,
-  }; // cb(err, result)  # WARNING -- this *will* get called multiple times when changes is true!
+  };
   opts.options ??= [];
   const id = misc.uuid().slice(0, 6);
   const dbg = this._dbg(`_user_query(id=${id})`);
@@ -367,11 +335,13 @@ export function _user_query(this: UserQueryContext, opts: UserQueryOptions) {
     "{now}": new Date(),
   };
 
-  if (opts.changes != null) {
-    changes = {
-      id: opts.changes,
-      cb: opts.cb,
-    } as UserQueryChanges;
+  if (legacyChanges != null) {
+    if (typeof opts.cb === "function") {
+      opts.cb(
+        "FATAL: user_query changefeeds were removed; use an explicit Conat-backed or Lite changefeed path instead",
+      );
+    }
+    return;
   }
 
   const v = misc.keys(opts.query);
@@ -434,13 +404,6 @@ export function _user_query(this: UserQueryContext, opts: UserQueryOptions) {
     }
     if (is_set_query) {
       dbg("do a set query");
-      if (changes) {
-        dbg("FATAL: changefeed");
-        if (typeof opts.cb === "function") {
-          opts.cb("FATAL: changefeeds only for read queries");
-        }
-        return;
-      }
       if (opts.account_id == null && opts.project_id == null) {
         dbg("FATAL: anon set");
         if (typeof opts.cb === "function") {
@@ -464,32 +427,6 @@ export function _user_query(this: UserQueryContext, opts: UserQueryOptions) {
       });
     } else {
       // do a get query
-      if (changes && !multi) {
-        dbg("FATAL: changefeed multi");
-        if (typeof opts.cb === "function") {
-          opts.cb(
-            "FATAL: changefeeds only implemented for multi-document queries",
-          );
-        }
-        return;
-      }
-
-      if (changes) {
-        const err = this._inc_changefeed_count(
-          opts.account_id,
-          opts.project_id,
-          table,
-          changes.id,
-        );
-        if (err) {
-          dbg(`err changefeed count -- ${err}`);
-          if (typeof opts.cb === "function") {
-            opts.cb(err);
-          }
-          return;
-        }
-      }
-
       dbg("user_get_query");
       return this.user_get_query({
         account_id: opts.account_id,
@@ -498,13 +435,8 @@ export function _user_query(this: UserQueryContext, opts: UserQueryOptions) {
         query,
         options,
         multi,
-        changes,
         cb: (err, x) => {
           dbg(`returned ${err}`);
-          if (err && changes) {
-            // didn't actually make the changefeed, so don't count it.
-            this._dec_changefeed_count(changes.id, table);
-          }
           return typeof opts.cb === "function"
             ? opts.cb(err, !err ? { [table]: x } : undefined)
             : undefined;
@@ -521,86 +453,11 @@ export function _user_query(this: UserQueryContext, opts: UserQueryOptions) {
   }
 }
 
-/*
-TRACK CHANGEFEED COUNTS
-
-_inc and dec below are evidently broken, in that it's CRITICAL that they match up exactly, or users will be
-locked out until they just happen to switch to another hub with different tracking, which is silly.
-
-TODO: DISABLED FOR NOW!
-*/
-
-// Increment a count of the number of changefeeds by a given client so we can cap it.
-export function _inc_changefeed_count(
-  this: UserQueryContext,
-  account_id: string | undefined,
-  project_id: string | undefined,
-  table: string,
-  changefeed_id: string,
-) {
-  return;
-  const client_name = `${account_id}-${project_id}`;
-  const cnt = (this._user_get_changefeed_counts ??= {});
-  const ids = (this._user_get_changefeed_id_to_user ??= {});
-  if (cnt[client_name] == null) {
-    cnt[client_name] = 1;
-  } else if (cnt[client_name] >= MAX_CHANGEFEEDS_PER_CLIENT) {
-    return `user may create at most ${MAX_CHANGEFEEDS_PER_CLIENT} changefeeds; please close files, refresh browser, restart project`;
-  } else {
-    // increment before successfully making get_query to prevent huge bursts causing trouble!
-    cnt[client_name] += 1;
-  }
-  this._dbg(`_inc_changefeed_count(table='${table}')`)(
-    `{${client_name}:${cnt[client_name]} ...}`,
-  );
-  ids[changefeed_id] = client_name;
-  return false;
-}
-
-// Corresponding decrement of count of the number of changefeeds by a given client.
-export function _dec_changefeed_count(
-  this: UserQueryContext,
-  id: string,
-  table?: string,
-) {
-  return;
-  const ids = (this._user_get_changefeed_id_to_user ?? {}) as Record<
-    string,
-    string
-  >;
-  const client_name = ids[id];
-  if (client_name == null) {
-    return;
-  }
-  let t;
-  const counts = (this._user_get_changefeed_counts ?? {}) as Record<
-    string,
-    number
-  >;
-  counts[client_name] = (counts[client_name] ?? 0) - 1;
-  delete ids[id];
-  const countValue = counts[client_name] ?? 0;
-  if (table != null) {
-    t = `(table='${table}')`;
-  } else {
-    t = "";
-  }
-  return this._dbg(`_dec_changefeed_count${t}`)(
-    `counts={${client_name}:${countValue} ...}`,
-  );
-}
-
 // Handle user_query when opts.query is an array.  opts below are as for user_query.
 export function _user_query_array(
   this: UserQueryContext,
   opts: UserQueryArrayOptions,
 ) {
-  if (opts.changes && opts.query.length > 1) {
-    if (typeof opts.cb === "function") {
-      opts.cb("FATAL: changefeeds only implemented for single table");
-    }
-    return;
-  }
   const result: any[] = [];
   const f = (query, cb) => {
     return this.user_query({
@@ -615,27 +472,6 @@ export function _user_query_array(
     });
   };
   return async.mapSeries(opts.query, f, (err) => opts.cb?.(err, result));
-}
-
-export function user_query_cancel_changefeed(
-  this: UserQueryContext,
-  opts: { id: string; cb?: CB },
-) {
-  const id = opts.id;
-  const cb = opts.cb;
-  const dbg = this._dbg(`user_query_cancel_changefeed(id='${id}')`);
-  const feed = this._changefeeds != null ? this._changefeeds[id] : undefined;
-  if (feed != null) {
-    dbg("actually canceling feed");
-    this._dec_changefeed_count(id);
-    if (this._changefeeds != null) {
-      delete this._changefeeds[id];
-    }
-    feed.close();
-  } else {
-    dbg("already canceled before (no such feed)");
-  }
-  return typeof cb === "function" ? cb() : undefined;
 }
 
 export function _user_get_query_columns(
@@ -1860,11 +1696,14 @@ export function _parse_get_query_opts(
   this: UserQueryContext,
   opts: UserGetQueryOptions,
 ) {
+  const legacyChanges = (
+    opts as UserGetQueryOptions & { changes?: { cb?: unknown } }
+  ).changes;
   let x: QueryOption;
   let y: string;
-  if (opts.changes != null && opts.changes.cb == null) {
+  if (legacyChanges != null) {
     return {
-      err: "FATAL: user_get_query -- if opts.changes is specified, then opts.changes.cb must also be specified",
+      err: "FATAL: user_query changefeeds were removed; use an explicit Conat-backed or Lite changefeed path instead",
     };
   }
 
@@ -2316,371 +2155,6 @@ export function _user_get_query_handle_field_deletes(
   })();
 }
 
-export async function _user_get_query_changefeed(
-  this: UserQueryContext,
-  changes: UserQueryChanges,
-  table: string,
-  primary_keys: string[],
-  user_query: AnyRecord,
-  where: AnyRecord[],
-  json_fields: AnyRecord,
-  account_id: string | undefined,
-  client_query: AnyRecord,
-  orig_table: string,
-  cb: CB,
-): Promise<void> {
-  let left: string[] | undefined;
-  let changefeed_table = table;
-  let map_change:
-    | ((change: AnyRecord | undefined) => AnyRecord | undefined)
-    | undefined;
-  let membership_feed: any;
-  let replayPendingProjectMembershipChanges: (() => void) | undefined;
-  let process: (x: AnyRecord) => void;
-  const dbg = this._dbg(`_user_get_query_changefeed(table='${table}')`);
-  dbg();
-  // WARNING: always call changes.cb!  Do not do something like f = changes.cb, then call f!!!!
-  // This is because the value of changes.cb may be changed by the caller.
-  if (!misc.is_object(changes)) {
-    cb("FATAL: changes must be an object with keys id and cb");
-    return;
-  }
-  if (!misc.is_valid_uuid_string(changes.id)) {
-    cb("FATAL: changes.id must be a uuid");
-    return;
-  }
-  if (typeof changes.cb !== "function") {
-    cb("FATAL: changes.cb must be a function");
-    return;
-  }
-  const emit_change = (...args: any[]) => {
-    const cb = changes.cb;
-    if (typeof cb === "function") {
-      cb(...args);
-    }
-  };
-  for (var primary_key of primary_keys) {
-    if (user_query[primary_key] == null && user_query[primary_key] !== null) {
-      cb(
-        `FATAL: changefeed MUST include primary key (='${primary_key}') in query`,
-      );
-      return;
-    }
-  }
-  const watch: string[] = [];
-  const select: AnyRecord = {};
-  const possible_time_fields: AnyRecord = misc.deep_copy(json_fields);
-  let feed: any;
-
-  const changefeed_keys =
-    (left =
-      (schema[orig_table] != null
-        ? schema[orig_table].changefeed_keys
-        : undefined) != null
-        ? schema[orig_table] != null
-          ? schema[orig_table].changefeed_keys
-          : undefined
-        : schema[table] != null
-          ? schema[table].changefeed_keys
-          : undefined) != null
-      ? left
-      : [];
-  for (var field in user_query) {
-    var val = user_query[field];
-    var type = pg_type(schema[table]?.fields?.[field]);
-    if (type === "TIMESTAMP") {
-      possible_time_fields[field] = "all";
-    }
-    if (
-      val === null &&
-      !primary_keys.includes(field) &&
-      !changefeed_keys.includes(field)
-    ) {
-      watch.push(field);
-    } else {
-      select[field] = type;
-    }
-  }
-
-  if (misc.len(possible_time_fields) > 0) {
-    // Convert (likely) timestamps to Date objects; fill in defaults for inserts
-    process = (x) => {
-      if (x == null) {
-        return;
-      }
-      if (x.new_val != null) {
-        this._user_get_query_json_timestamps(x.new_val, possible_time_fields);
-        if (x.action === "insert") {
-          // do not do this for delete or update actions!
-          this._user_get_query_set_defaults(
-            client_query,
-            x.new_val,
-            misc.keys(user_query),
-          );
-        } else if (x.action === "update") {
-          this._user_get_query_handle_field_deletes(client_query, x.new_val);
-        }
-      }
-      if (x.old_val != null) {
-        return this._user_get_query_json_timestamps(
-          x.old_val,
-          possible_time_fields,
-        );
-      }
-    };
-  } else {
-    process = (x) => {
-      if (x == null) {
-        return;
-      }
-      if (x.new_val != null) {
-        if (x.action === "insert") {
-          // do not do this for delete or update actions!
-          return this._user_get_query_set_defaults(
-            client_query,
-            x.new_val,
-            misc.keys(user_query),
-          );
-        } else if (x.action === "update") {
-          return this._user_get_query_handle_field_deletes(
-            client_query,
-            x.new_val,
-          );
-        }
-      }
-    };
-  }
-
-  try {
-    // check for alternative where test for changefeed.
-    let pg_changefeed = client_query?.get?.pg_changefeed;
-    if (pg_changefeed != null) {
-      if (pg_changefeed === "projects") {
-        if (account_id == null) {
-          cb("FATAL: account_id must be given");
-          return;
-        }
-        const visibleProjectIds = await loadVisibleProjectIdsForAccount(
-          this,
-          account_id,
-        );
-        const pendingMembershipChanges: AnyRecord[] = [];
-        const applyMembershipChange = (change?: AnyRecord): void => {
-          const new_project_id = `${change?.new_val?.project_id ?? ""}`.trim();
-          const old_project_id = `${change?.old_val?.project_id ?? ""}`.trim();
-          const new_visible = projectUsersContainAccount(
-            change?.new_val?.users,
-            account_id,
-          );
-          const old_visible = projectUsersContainAccount(
-            change?.old_val?.users,
-            account_id,
-          );
-          if (
-            new_visible &&
-            new_project_id &&
-            !visibleProjectIds.has(new_project_id)
-          ) {
-            visibleProjectIds.add(new_project_id);
-            void feed?.insert?.({ project_id: new_project_id });
-          }
-          if (
-            old_visible &&
-            old_project_id &&
-            !new_visible &&
-            visibleProjectIds.has(old_project_id)
-          ) {
-            visibleProjectIds.delete(old_project_id);
-            feed?.delete?.({ project_id: old_project_id });
-          }
-        };
-        const handleMembershipFeedError = (err) => {
-          emit_change(`membership feed error - ${err}`);
-          membership_feed?.close?.();
-          feed?.close?.();
-        };
-        membership_feed = await callback_opts(this.changefeed.bind(this))({
-          table: "projects",
-          select: {
-            project_id: "UUID",
-            users: "JSONB",
-          },
-          where: (obj) => projectUsersContainAccount(obj?.users, account_id),
-          watch: [],
-        });
-        membership_feed.on("change", (change) => {
-          if (feed == null) {
-            pendingMembershipChanges.push(change);
-            return;
-          }
-          applyMembershipChange(change);
-        });
-        membership_feed.on("error", handleMembershipFeedError);
-        membership_feed.on("close", () => {
-          membership_feed = undefined;
-        });
-        replayPendingProjectMembershipChanges = () => {
-          while (pendingMembershipChanges.length > 0) {
-            applyMembershipChange(pendingMembershipChanges.shift());
-          }
-        };
-
-        pg_changefeed = () => ({
-          where: (obj) => {
-            if (!visibleProjectIds.has(`${obj?.project_id ?? ""}`.trim())) {
-              return false;
-            }
-            if (
-              !this._user_get_query_satisfied_by_obj(
-                user_query,
-                obj,
-                possible_time_fields,
-              )
-            ) {
-              return false;
-            }
-            return true;
-          },
-
-          select: { project_id: "UUID" },
-        });
-      } else if (pg_changefeed === "news") {
-        pg_changefeed = () => ({
-          where(obj) {
-            if (obj.date != null) {
-              const date_obj = new Date(obj.date);
-              // we send future news items to the frontend, but filter it based on the server time
-              return date_obj >= misc.months_ago(3);
-            } else {
-              return true;
-            }
-          },
-
-          select: { id: "SERIAL UNIQUE", date: "TIMESTAMP" },
-        });
-      } else if (pg_changefeed === "one-hour") {
-        pg_changefeed = () => ({
-          where(obj) {
-            if (obj.time != null) {
-              return new Date(obj.time) >= misc.hours_ago(1);
-            } else {
-              return true;
-            }
-          },
-
-          select: { id: "UUID", time: "TIMESTAMP" },
-        });
-      } else if (pg_changefeed === "five-minutes") {
-        pg_changefeed = () => ({
-          where(obj) {
-            if (obj.time != null) {
-              return new Date(obj.time) >= misc.minutes_ago(5);
-            } else {
-              return true;
-            }
-          },
-
-          select: { id: "UUID", time: "TIMESTAMP" },
-        });
-      } else if (pg_changefeed === "collaborators") {
-        if (account_id == null) {
-          cb("FATAL: account_id must be given");
-          return;
-        }
-        pg_changefeed = function (_db, account_id) {
-          return {
-            table: "account_collaborator_index",
-            where(obj) {
-              return obj.account_id === account_id;
-            },
-            select: {
-              account_id: "UUID",
-              collaborator_account_id: "UUID",
-            },
-            map_change(change) {
-              if (change == null) {
-                return change;
-              }
-              const normalizeRow = (row) => {
-                if (row == null) {
-                  return row;
-                }
-                const {
-                  collaborator_account_id,
-                  account_id: _viewer_account_id,
-                  ...rest
-                } = row;
-                if (collaborator_account_id == null) {
-                  return row;
-                }
-                return {
-                  ...rest,
-                  account_id: collaborator_account_id,
-                };
-              };
-              return {
-                ...change,
-                new_val: normalizeRow(change.new_val),
-                old_val: normalizeRow(change.old_val),
-              };
-            },
-          };
-        };
-      }
-
-      const x = pg_changefeed(this, account_id);
-      if (x.table != null) {
-        changefeed_table = x.table;
-      }
-      if (x.map_change != null) {
-        ({ map_change } = x);
-      }
-      if (x.select != null) {
-        for (var k in x.select) {
-          var v = x.select[k];
-          select[k] = v;
-        }
-      }
-
-      if (x.where != null) {
-        ({ where } = x);
-      }
-    }
-
-    feed = await callback_opts(this.changefeed.bind(this))({
-      table: changefeed_table,
-      select,
-      where,
-      watch,
-    });
-    feed.on("change", function (x) {
-      if (typeof map_change === "function") {
-        x = map_change(x);
-        if (x == null) {
-          return;
-        }
-      }
-      process(x);
-      return emit_change(undefined, x);
-    });
-    feed.on("close", function () {
-      emit_change(undefined, { action: "close" });
-      dbg("feed close");
-      membership_feed?.close?.();
-      membership_feed = undefined;
-      return dbg("changefeed closed");
-    });
-    feed.on("error", (err) => emit_change(`feed error - ${err}`));
-    this._changefeeds ??= {};
-    this._changefeeds[changes.id] = feed;
-    replayPendingProjectMembershipChanges?.();
-    cb();
-  } catch (err) {
-    membership_feed?.close?.();
-    cb(err);
-  }
-}
-
 export async function user_get_query(
   this: UserQueryContext,
   opts: UserGetQueryOptions,
@@ -2691,14 +2165,9 @@ export async function user_get_query(
     table: opts.table,
     query: opts.query,
     multi: opts.multi,
-    // used for initial query; **IGNORED** by changefeed,
-    // which ensures that *something* is sent every n minutes, in case no
-    // changes are coming out of the changefeed. This is an additional
-    // measure in case the client somehow doesn't get a "this changefeed died" message.
     // Use [{delete:true}] to instead delete the selected records (must
     // have delete:true in schema).
     options: opts.options ?? [],
-    changes: opts.changes ?? undefined, // {id:?, cb:?}
     cb: opts.cb,
   }; // cb(err, result)
   const cb = opts.cb;
@@ -2719,16 +2188,13 @@ export async function user_get_query(
       opts.project_id
     }', query=${misc.to_json(opts.query)}, multi=${
       opts.multi
-    }, options=${misc.to_json(opts.options)}, changes=${misc.to_json(
-      opts.changes,
-    )}`,
+    }, options=${misc.to_json(opts.options)}`,
   );
   const {
     err,
     table,
     client_query,
     require_admin,
-    primary_keys = [],
     json_fields = {},
   } = this._parse_get_query_opts(opts);
 
@@ -2807,37 +2273,13 @@ export async function user_get_query(
         val = indexscan ? "on" : "off";
         _query_opts.pg_params = { enable_indexscan: val };
       }
-
-      if (opts.changes != null) {
-        locals.changes_cb = opts.changes.cb;
-        locals.changes_queue = [];
-        // see note about why we do the following at the bottom of this file
-        opts.changes.cb = (err, obj) =>
-          locals.changes_queue?.push({ err, obj });
-        dbg("getting changefeed");
-        await callWithCb(
-          this._user_get_query_changefeed.bind(this),
-          opts.changes,
-          table,
-          primary_keys,
-          opts.query,
-          _query_opts.where,
-          json_fields,
-          opts.account_id,
-          client_query,
-          opts.table,
-        );
-      }
     }
 
     if (client_query.get.instead_of_query != null) {
-      if (opts.changes != null) {
-        throw "changefeeds are not supported for querying this table";
-      }
       // Custom version: instead of doing a full query, we instead
       // call a function and that's it.
       dbg("do instead_of_query instead");
-      const opts1 = misc.copy_without(opts, ["cb", "changes", "table"]);
+      const opts1 = misc.copy_without(opts, ["cb", "table"]);
       locals.result = await callWithCb(
         client_query.get.instead_of_query,
         this,
@@ -2865,18 +2307,6 @@ export async function user_get_query(
 
   dbg("series succeeded");
   cb?.(undefined, locals.result);
-  if (opts.changes != null) {
-    dbg("sending change queue");
-    if (locals.changes_cb != null) {
-      opts.changes.cb = locals.changes_cb;
-    }
-    //#dbg("sending queued #{JSON.stringify(locals.changes_queue)}")
-    for (const { err, obj } of locals.changes_queue ?? []) {
-      //#dbg("sending queued changes #{JSON.stringify([err, obj])}")
-      opts.changes.cb?.(err, obj);
-    }
-    return;
-  }
 }
 
 /*
@@ -3090,10 +2520,7 @@ type UserQueryMethods = {
   cancel_user_queries: typeof cancel_user_queries;
   user_query: typeof user_query;
   _user_query: typeof _user_query;
-  _inc_changefeed_count: typeof _inc_changefeed_count;
-  _dec_changefeed_count: typeof _dec_changefeed_count;
   _user_query_array: typeof _user_query_array;
-  user_query_cancel_changefeed: typeof user_query_cancel_changefeed;
   _user_get_query_columns: typeof _user_get_query_columns;
   _require_is_admin: typeof _require_is_admin;
   _require_project_ids_in_groups: typeof _require_project_ids_in_groups;
@@ -3128,7 +2555,6 @@ type UserQueryMethods = {
   _user_get_query_query: typeof _user_get_query_query;
   _user_get_query_satisfied_by_obj: typeof _user_get_query_satisfied_by_obj;
   _user_get_query_handle_field_deletes: typeof _user_get_query_handle_field_deletes;
-  _user_get_query_changefeed: typeof _user_get_query_changefeed;
   user_get_query: typeof user_get_query;
   _user_set_query_syncstring_change_after: typeof _user_set_query_syncstring_change_after;
   _user_set_query_patches_check: typeof _user_set_query_patches_check;
@@ -3141,16 +2567,3 @@ type UserQueryMethods = {
 };
 
 type UserQueryContext = PostgreSQLType & UserQueryMethods;
-
-/*
-Note about opts.changes.cb:
-
-Regarding sync, what was happening I think is:
- - (a) https://github.com/sagemathinc/cocalc/blob/master/src/packages/hub/postgres-user-queries.coffee#L1384 starts sending changes
- - (b) https://github.com/sagemathinc/cocalc/blob/master/src/packages/hub/postgres-user-queries.coffee#L1393 sends the full table.
-
-(a) could result in changes actually getting to the client before the table itself has been initialized.  The client code assumes that it only gets changes *after* the table is initialized.  The browser client seems to be smart enough that it detects this situation and resets itself, so the browser never gets messed up as a result.
-However, the project definitely does NOT do so well, and it can get messed up.  Then it has a broken version of the table, missing some last minute change.    It is broken until the project forgets about that table entirely, which is can be a pretty long time (or project restart).
-
-My fix is to queue up those changes on the server, then only start sending them to the client **after** the (b) query is done.  I tested this by using setTimeout to manually delay (b) for a few seconds, and fully seeing the "file won't save problem".   The other approach would make it so clients are more robust against getting changes first.  However, it would take a long time for all clients to update (restart all projects), and it's an annoying assumption to make in general -- we may have entirely new clients later and they could make the same bad assumptions about order...
-*/

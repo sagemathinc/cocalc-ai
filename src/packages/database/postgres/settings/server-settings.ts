@@ -135,14 +135,6 @@ export async function get_site_settings(db: PostgreSQL): Promise<any> {
 }
 
 /**
- * Create a synctable for server_settings.
- * This allows real-time synchronization of server settings.
- */
-export function server_settings_synctable(db: PostgreSQL, opts: any = {}): any {
-  return db.synctable({ ...opts, table: "server_settings" });
-}
-
-/**
  * Reset the server settings cache.
  * This is a convenience wrapper around resetServerSettingsCache.
  */

@@ -27,26 +27,8 @@ export function extend_PostgreSQL<TBase extends PostgreSQLConstructor>(
       return userQuery._user_query.call(this, ...args);
     }
 
-    _inc_changefeed_count(
-      ...args: Parameters<typeof userQuery._inc_changefeed_count>
-    ) {
-      return userQuery._inc_changefeed_count.call(this, ...args);
-    }
-
-    _dec_changefeed_count(
-      ...args: Parameters<typeof userQuery._dec_changefeed_count>
-    ) {
-      return userQuery._dec_changefeed_count.call(this, ...args);
-    }
-
     _user_query_array(...args: Parameters<typeof userQuery._user_query_array>) {
       return userQuery._user_query_array.call(this, ...args);
-    }
-
-    user_query_cancel_changefeed(
-      ...args: Parameters<typeof userQuery.user_query_cancel_changefeed>
-    ) {
-      return userQuery.user_query_cancel_changefeed.call(this, ...args);
     }
 
     _user_get_query_columns(
@@ -258,12 +240,6 @@ export function extend_PostgreSQL<TBase extends PostgreSQLConstructor>(
       ...args: Parameters<typeof userQuery._user_get_query_handle_field_deletes>
     ) {
       return userQuery._user_get_query_handle_field_deletes.call(this, ...args);
-    }
-
-    _user_get_query_changefeed(
-      ...args: Parameters<typeof userQuery._user_get_query_changefeed>
-    ) {
-      return userQuery._user_get_query_changefeed.call(this, ...args);
     }
 
     user_get_query(...args: Parameters<typeof userQuery.user_get_query>) {

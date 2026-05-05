@@ -7,15 +7,22 @@
 Synchronized table that tracks server settings.
 */
 
+import { EventEmitter } from "events";
 import { isEmpty } from "lodash";
-import { once } from "@cocalc/util/async-utils";
 import { EXTRAS as SERVER_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { buildPublicSiteSettings } from "@cocalc/util/db-schema/site-settings-public";
 import { AllSiteSettings } from "@cocalc/util/db-schema/types";
-import { startswith } from "@cocalc/util/misc";
 import { site_settings_conf as SITE_SETTINGS_CONF } from "@cocalc/util/schema";
-import { decryptSettingValue } from "@cocalc/database/settings/secret-settings";
-import { getDatabase } from "./database";
+import getPool from "@cocalc/database/pool";
+import {
+  getServerSettings as loadServerSettingsSnapshot,
+  resetServerSettingsCache,
+} from "@cocalc/database/settings/server-settings";
+import getLogger from "../logger";
+
+const logger = getLogger("hub:server-settings");
+const SERVER_SETTINGS_POLL_MS =
+  process.env.NODE_ENV === "development" ? 3000 : 5000;
 
 // Returns:
 //   - all: a mutable javascript object that is a map from each server setting to its current value.
@@ -32,99 +39,121 @@ export interface ServerSettingsDynamic {
     version_min_browser?: number;
     version_recommended_browser?: number;
   };
-  table: any;
+  table: EventEmitter;
 }
 
 let serverSettings: ServerSettingsDynamic | undefined = undefined;
+
+async function readServerSettingsLastUpdate(): Promise<string | undefined> {
+  const { rows } = await getPool().query(
+    "SELECT value FROM server_settings WHERE name = $1",
+    ["_last_update"],
+  );
+  return rows[0]?.value ?? undefined;
+}
+
+function applyServerSettingsSnapshot(
+  target: ServerSettingsDynamic,
+  snapshot: Record<string, unknown>,
+): void {
+  const { all, pub, version } = target;
+  for (const key of Object.keys(all)) {
+    delete all[key];
+  }
+  for (const [key, value] of Object.entries(snapshot)) {
+    if (key === "_timestamp") {
+      continue;
+    }
+    all[key] = value as any;
+  }
+
+  // set all default values
+  for (const config of [SITE_SETTINGS_CONF, SERVER_SETTINGS_EXTRAS]) {
+    for (const field in config) {
+      if (all[field] == null) {
+        const spec = config[field];
+        const fallbackVal =
+          spec?.to_val != null ? spec.to_val(spec.default, all) : spec.default;
+        // we don't bother to set empty strings or empty arrays
+        if (
+          (typeof fallbackVal === "string" && fallbackVal === "") ||
+          (Array.isArray(fallbackVal) && isEmpty(fallbackVal))
+        ) {
+          continue;
+        }
+        all[field] = fallbackVal;
+      }
+    }
+  }
+
+  // PRECAUTION: never make the required browser version bigger than version_recommended_browser. Very important
+  // not to stupidly completely eliminate all cocalc users by a typo...
+  const minBrowser = all.version_min_browser || 0;
+  const recommendedBrowser = all.version_recommended_browser || 0;
+  all.version_min_browser = Math.min(minBrowser, recommendedBrowser);
+
+  const { configuration, version: nextVersion } = buildPublicSiteSettings(all);
+  for (const key of Object.keys(pub)) {
+    delete pub[key];
+  }
+  Object.assign(pub, configuration);
+  for (const key of Object.keys(version)) {
+    delete version[key];
+  }
+  Object.assign(version, nextVersion);
+  for (const [key, value] of Object.entries(nextVersion)) {
+    all[key] = value;
+  }
+}
+
+function startServerSettingsPolling(target: ServerSettingsDynamic): void {
+  let lastUpdateValue: string | undefined;
+  let closed = false;
+
+  const poll = async () => {
+    try {
+      const nextLastUpdate = await readServerSettingsLastUpdate();
+      if (nextLastUpdate !== lastUpdateValue) {
+        resetServerSettingsCache();
+        const snapshot = await loadServerSettingsSnapshot();
+        applyServerSettingsSnapshot(target, snapshot);
+        if (lastUpdateValue !== undefined) {
+          target.table.emit("change");
+        }
+        lastUpdateValue = nextLastUpdate;
+      }
+    } catch (err) {
+      logger.warn("server settings refresh failed", { err: `${err}` });
+    } finally {
+      if (closed) {
+        return;
+      }
+      const timer = setTimeout(() => void poll(), SERVER_SETTINGS_POLL_MS);
+      timer.unref?.();
+    }
+  };
+
+  void poll();
+  target.table.once("close", () => {
+    closed = true;
+  });
+}
 
 export default async function getServerSettings(): Promise<ServerSettingsDynamic> {
   if (serverSettings != null) {
     return serverSettings;
   }
-  const database = getDatabase();
-  const table = database.server_settings_synctable();
-  serverSettings = { all: {}, pub: {}, version: {}, table: table };
-  const { all, pub, version } = serverSettings;
-  const update = async function () {
-    const allRaw = {};
-    const entries: Array<[string, any]> = [];
-    table.get().forEach((record, field) => {
-      entries.push([field, record]);
-    });
-    for (const [field, record] of entries) {
-      const { value: rawValue } = await decryptSettingValue(
-        field,
-        record.get("value"),
-      );
-      allRaw[field] = rawValue;
-    }
-
-    for (const [field] of entries) {
-      const rawValue = allRaw[field];
-
-      // process all values from the database according to the optional "to_val" mapping function
-      const spec = SITE_SETTINGS_CONF[field] ?? SERVER_SETTINGS_EXTRAS[field];
-      if (typeof spec?.to_val == "function") {
-        all[field] = spec.to_val(rawValue, allRaw);
-      } else {
-        if (typeof rawValue == "string" || typeof rawValue == "boolean") {
-          all[field] = rawValue;
-        }
-      }
-
-      // Normalize version fields (used elsewhere too)
-      if (SITE_SETTINGS_CONF[field] && startswith(field, "version_")) {
-        const field_val: number = (all[field] = parseInt(all[field]));
-        if (isNaN(field_val) || field_val * 1000 >= new Date().getTime()) {
-          // Guard against horrible error in which version is in future (so impossible) or NaN (e.g., an invalid string pasted by admin).
-          // In this case, just use 0, which is always satisifed.
-          all[field] = 0;
-        }
-      }
-    }
-
-    // set all default values
-    for (const config of [SITE_SETTINGS_CONF, SERVER_SETTINGS_EXTRAS]) {
-      for (const field in config) {
-        if (all[field] == null) {
-          const spec = config[field];
-          const fallbackVal =
-            spec?.to_val != null
-              ? spec.to_val(spec.default, allRaw)
-              : spec.default;
-          // we don't bother to set empty strings or empty arrays
-          if (
-            (typeof fallbackVal === "string" && fallbackVal === "") ||
-            (Array.isArray(fallbackVal) && isEmpty(fallbackVal))
-          )
-            continue;
-          all[field] = fallbackVal;
-        }
-      }
-    }
-
-    // PRECAUTION: never make the required browser version bigger than version_recommended_browser. Very important
-    // not to stupidly completely eliminate all cocalc users by a typo...
-    const minBrowser = all.version_min_browser || 0;
-    const recommendedBrowser = all.version_recommended_browser || 0;
-    all.version_min_browser = Math.min(minBrowser, recommendedBrowser);
-
-    const { configuration, version: nextVersion } =
-      buildPublicSiteSettings(all);
-    for (const key of Object.keys(pub)) {
-      delete pub[key];
-    }
-    Object.assign(pub, configuration);
-    for (const key of Object.keys(version)) {
-      delete version[key];
-    }
-    Object.assign(version, nextVersion);
-    for (const [key, value] of Object.entries(nextVersion)) {
-      all[key] = value;
-    }
+  serverSettings = {
+    all: {},
+    pub: {},
+    version: {},
+    table: new EventEmitter(),
   };
-  table.on("change", update);
-  table.on("init", update);
-  await once(table, "init");
+  resetServerSettingsCache();
+  applyServerSettingsSnapshot(
+    serverSettings,
+    await loadServerSettingsSnapshot(),
+  );
+  startServerSettingsPolling(serverSettings);
   return serverSettings;
 }

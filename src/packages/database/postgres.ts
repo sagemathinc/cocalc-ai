@@ -149,7 +149,6 @@ import {
   get_server_settings_cached,
   get_site_settings,
   reset_server_settings_cache,
-  server_settings_synctable,
   set_server_setting,
 } from "./postgres/settings/server-settings";
 
@@ -233,8 +232,6 @@ import type {
   ArchivePatchesOpts,
   BackupBlobsToTarballOpts,
   BlobMaintenanceOpts,
-  ChangefeedOptions,
-  ChangefeedSelect,
   CloseBlobOpts,
   CopyAllBlobsToGcloudOpts,
   CopyBlobToGcloudOpts,
@@ -246,30 +243,12 @@ import type {
   PostgreSQLOptions,
   RemoveBlobTtlsOpts,
   SaveBlobOpts,
-  SyncTableOptions,
   SyncstringMaintenanceOpts,
   SyncstringPatch,
   TouchBlobOpts,
 } from "./postgres/types";
-import {
-  _ensure_trigger_exists,
-  _listen,
-  _notification,
-  _stop_listening,
-  changefeed,
-  synctable,
-} from "./synctable/methods-impl";
-import type { Changes } from "./postgres/changefeed/changefeed";
 import type { Stats } from "./postgres/stats/stats";
-import type { SyncTable } from "./synctable/synctable";
 import * as userQuery from "./user-query/methods-impl";
-
-type EnsureTriggerContext = Parameters<typeof _ensure_trigger_exists>[0];
-type ListenContext = Parameters<typeof _listen>[0];
-type NotificationContext = Parameters<typeof _notification>[0];
-type StopListeningContext = Parameters<typeof _stop_listening>[0];
-type SynctableContext = Parameters<typeof synctable>[0];
-type ChangefeedContext = Parameters<typeof changefeed>[0];
 type ProjectControl = EventEmitter & {
   start: () => Promise<void>;
   stop: () => Promise<void>;
@@ -421,9 +400,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
   query_time_histogram?: Record<string, number>;
   concurrent_counter?: Record<string, number>;
 
-  // Notification
-  _listening?: Record<string, number>;
-
   // Status
   // External integrations
   declare projectControl?: ProjectControlFunction;
@@ -475,7 +451,7 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
       timeout_delay_ms,
     });
 
-    this.setMaxListeners(0); // because of a potentially large number of changefeeds
+    this.setMaxListeners(0);
     this._state = "init";
     this._connected = false;
     this._timeout_ms = timeout_ms;
@@ -499,10 +475,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
 
   clear_cache() {
     return UtilTS.clearCache(this as any);
-  }
-
-  _clear_listening_state() {
-    this._listening = {};
   }
 
   // Group 5: Connection Management - delegating to TypeScript
@@ -560,9 +532,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
       return this._listen_client;
     }
     const client = await this._pool.connect();
-    if (this._notification != null) {
-      client.on("notification", this._notification as any);
-    }
     const onError = (err) => {
       client.removeListener("error", onError);
       client.removeAllListeners();
@@ -787,57 +756,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     return delete_blob(this, opts);
   }
 
-  _ensure_trigger_exists(
-    table: string,
-    select: ChangefeedSelect,
-    watch: string[],
-    cb: CB,
-  ) {
-    return _ensure_trigger_exists(
-      this as unknown as EnsureTriggerContext,
-      table,
-      select,
-      watch,
-      cb,
-    );
-  }
-
-  _listen(
-    table: string,
-    select: ChangefeedSelect,
-    watch: string[],
-    cb?: CB<string>,
-  ) {
-    return _listen(this as unknown as ListenContext, table, select, watch, cb);
-  }
-
-  _notification(mesg: { channel: string; payload: string }) {
-    return _notification(this as unknown as NotificationContext, mesg);
-  }
-
-  _stop_listening(
-    table: string,
-    select: Record<string, string>,
-    watch: string[],
-    cb?: CB,
-  ) {
-    return _stop_listening(
-      this as unknown as StopListeningContext,
-      table,
-      select,
-      watch,
-      cb,
-    );
-  }
-
-  synctable(opts: SyncTableOptions): SyncTable | undefined {
-    return synctable(this as unknown as SynctableContext, opts);
-  }
-
-  changefeed(opts: ChangefeedOptions): Changes | undefined {
-    return changefeed(this as unknown as ChangefeedContext, opts);
-  }
-
   cancel_user_queries(
     ...args: UserQueryMethodArgs<"cancel_user_queries">
   ): UserQueryMethodReturn<"cancel_user_queries"> {
@@ -856,28 +774,10 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     return userQuery._user_query.call(this, ...args);
   }
 
-  _inc_changefeed_count(
-    ...args: UserQueryMethodArgs<"_inc_changefeed_count">
-  ): UserQueryMethodReturn<"_inc_changefeed_count"> {
-    return userQuery._inc_changefeed_count.call(this, ...args);
-  }
-
-  _dec_changefeed_count(
-    ...args: UserQueryMethodArgs<"_dec_changefeed_count">
-  ): UserQueryMethodReturn<"_dec_changefeed_count"> {
-    return userQuery._dec_changefeed_count.call(this, ...args);
-  }
-
   _user_query_array(
     ...args: UserQueryMethodArgs<"_user_query_array">
   ): UserQueryMethodReturn<"_user_query_array"> {
     return userQuery._user_query_array.call(this, ...args);
-  }
-
-  user_query_cancel_changefeed(
-    ...args: UserQueryMethodArgs<"user_query_cancel_changefeed">
-  ): UserQueryMethodReturn<"user_query_cancel_changefeed"> {
-    return userQuery.user_query_cancel_changefeed.call(this, ...args);
   }
 
   _user_get_query_columns(
@@ -1087,12 +987,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     return userQuery._user_get_query_handle_field_deletes.call(this, ...args);
   }
 
-  _user_get_query_changefeed(
-    ...args: UserQueryMethodArgs<"_user_get_query_changefeed">
-  ): UserQueryMethodReturn<"_user_get_query_changefeed"> {
-    return userQuery._user_get_query_changefeed.call(this, ...args);
-  }
-
   user_get_query(
     ...args: UserQueryMethodArgs<"user_get_query">
   ): UserQueryMethodReturn<"user_get_query"> {
@@ -1219,12 +1113,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
 
   async get_site_settings(opts: PgMethodOpts<"get_site_settings">) {
     return runWithCbResultValue(opts.cb, () => get_site_settings(this));
-  }
-
-  server_settings_synctable(
-    opts: PgMethodOpts<"server_settings_synctable"> = {},
-  ) {
-    return server_settings_synctable(this, opts);
   }
 
   async set_passport_settings(opts: PgMethodOpts<"set_passport_settings">) {

@@ -24,7 +24,6 @@ export async function connectDo(db: PostgreSQL, cb?: CB): Promise<void> {
     }
     return;
   }
-  dbAny._clear_listening_state(); // definitely not listening
   if (db._listen_client != null) {
     db.disconnect();
   }

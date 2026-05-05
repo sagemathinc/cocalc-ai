@@ -16,8 +16,6 @@ import {
   UntypedQueryResult,
 } from "@cocalc/util/types/database";
 
-import type { SyncTable } from "../synctable/synctable";
-import type { Changes } from "./changefeed/changefeed";
 import type {
   RecentProjectsOptions,
   RecentProjectsResult,
@@ -27,28 +25,11 @@ import type { UserQueryQueue } from "../user-query/queue";
 export type { QueryResult };
 export type PostgreSQL = import("../postgres").PostgreSQL & PostgreSQLMethods;
 
-export type QuerySelect = object;
-
 export type QueryWhere =
   | { [field: string]: any }
   | { [field: string]: any }[]
   | string
   | string[];
-
-export type ChangefeedSelect = Record<string, string>;
-export type ChangefeedWhere =
-  | QueryWhere
-  | ((row: Record<string, unknown>) => boolean);
-
-export type SyncTableKey = string;
-export type SyncTableRow = Record<string, unknown>;
-export type SyncTableWhereFunction = (key: SyncTableKey) => boolean;
-export type SyncTableNotificationAction = "DELETE" | "INSERT" | "UPDATE";
-export type SyncTableNotification = [
-  action: SyncTableNotificationAction | string,
-  new_val?: SyncTableRow | null,
-  old_val?: SyncTableRow | null,
-];
 
 export type BlobCompression = "gzip" | "zlib";
 
@@ -254,29 +235,7 @@ export interface UserQueryOptions {
   project_id?: string;
   query?: unknown;
   options?: Record<string, unknown>[];
-  changes?: string; // id of change feed
   cb?: CB<any>;
-}
-
-export interface ChangefeedOptions {
-  table: string; // Name of the table
-  select: ChangefeedSelect; // Map from field names to postgres data types. These must
-  // determine entries of table (e.g., primary key).
-  where: ChangefeedWhere; // Condition involving only the fields in select; or function taking
-  // obj with select and returning true or false
-  watch: string[]; // Array of field names we watch for changes
-  cb: CB<Changes>;
-}
-
-export interface SyncTableOptions {
-  table: string;
-  columns?: string[];
-  where?: QueryWhere;
-  limit?: number;
-  order_by?: string;
-  where_function?: SyncTableWhereFunction;
-  idle_timeout_s?: number;
-  cb?: CB<SyncTable>;
 }
 
 export interface DeletePassportOpts {
@@ -339,17 +298,9 @@ export interface PostgreSQLMethods extends EventEmitter {
   _timeout_delay_ms?: number; // Delay before timeout enforcement after connect
   _test_query?: NodeJS.Timeout; // Interval timer for periodic health check queries
   _stats_cached?: any; // Internal cache for statistics
-  _listening?: Record<string, number>;
 
   _primary_key(table: string): string;
   _primary_keys(table: string): string[];
-
-  _stop_listening(
-    table: string,
-    select: QuerySelect,
-    watch: string[],
-    cb?: CB,
-  ): void;
 
   _query(opts: QueryOptions): void;
   _query_retry_until_success(opts: QueryOptions): void;
@@ -366,9 +317,6 @@ export interface PostgreSQLMethods extends EventEmitter {
 
   user_query(opts: UserQueryOptions): void;
   _user_query_queue?: UserQueryQueue;
-  _user_get_changefeed_counts?: Record<string, number>;
-  _user_get_changefeed_id_to_user?: Record<string, string>;
-  _changefeeds?: Record<string, Changes>;
 
   _get_query_client(): Promise<PoolClient>;
   _get_listen_client(): Promise<PoolClient>;
@@ -381,15 +329,6 @@ export interface PostgreSQLMethods extends EventEmitter {
   async_query<T = UntypedQueryResult>(
     opts: AsyncQueryOptions,
   ): Promise<QueryRows<T>>;
-
-  _listen(
-    table: string,
-    select: QuerySelect,
-    watch: string[],
-    cb?: CB<string>,
-  ): void;
-
-  changefeed(opts: ChangefeedOptions): Changes | undefined;
 
   account_ids_to_usernames(opts: { account_ids: string[]; cb: CB }): void;
 
@@ -617,7 +556,6 @@ export interface PostgreSQLMethods extends EventEmitter {
   get_server_setting(opts: { name: string; cb: CB }): void;
   get_server_settings_cached(opts: { cb: CB }): void;
   set_server_setting(opts: { name: string; value: string; cb: CB }): void;
-  server_settings_synctable(opts?: Record<string, unknown>): any; // returns a table
 
   create_sso_account(opts: CreateSsoAccountOpts & { cb: CB<string> }): void;
 
@@ -770,15 +708,11 @@ export interface PostgreSQLMethods extends EventEmitter {
   _touch_account(account_id: string, cb: CB): void;
   _touch_project(project_id: string, account_id: string, cb: CB): void;
 
-  synctable(opts: SyncTableOptions): SyncTable | undefined;
-
   // Group 5: Connection Management
   connect(opts: { max_time?: number; cb?: CB }): void;
   disconnect(): void;
   is_connected(): boolean;
   close(): void;
-
-  user_query_cancel_changefeed(opts: { id: any; cb?: CB }): void;
 
   save_blob(opts: SaveBlobOpts): void;
 

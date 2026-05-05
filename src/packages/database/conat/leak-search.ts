@@ -14,53 +14,11 @@ Then do this
 
    a = require('@cocalc/database/conat/leak-search')
    await a.testQueryOnly(50)
-   await a.testChangefeed(50)
-
-Do a test multiple times to see if there is a real leak, e.g., the following is GOOD:
-
-  > a.testChangefeed(50)
-  Promise {
-    <pending>,
-    [Symbol(async_id_symbol)]: 47,
-    [Symbol(trigger_async_id_symbol)]: 6
-  }
-  > leaked 5.209536 MB
-
-  > a.testChangefeed(50)
-  Promise {
-    <pending>,
-    [Symbol(async_id_symbol)]: 3167,
-    [Symbol(trigger_async_id_symbol)]: 6
-  }
-  > leaked -0.029184 MB  <--- GOOD!
 */
 
 import { db } from "@cocalc/database";
-import { uuid } from "@cocalc/util/misc";
 import { delay } from "awaiting";
 import { callback2 } from "@cocalc/util/async-utils";
-
-// set env variable to an account_id on your dev server with lots of projects.
-const ACCOUNT_ID = process.env.ACCOUNT_ID;
-
-export function create({ id, cb }: { id; cb? }) {
-  const d = db();
-  d.user_query({
-    query: {
-      projects: [{ project_id: null, title: null, state: null, status: null }],
-    },
-    changes: id,
-    account_id: ACCOUNT_ID,
-    cb: (err) => {
-      cb?.(err);
-      cb = undefined;
-    },
-  });
-}
-
-export function cancel(id) {
-  db().user_query_cancel_changefeed({ id });
-}
 
 let pre: any = { heapUsed: 0 };
 async function before() {
@@ -80,15 +38,10 @@ async function after() {
   return leak;
 }
 
-// This leaks horribly
-export async function testChangefeed(n) {
-  await before();
-  for (let i = 0; i < n; i++) {
-    const id = uuid();
-    await callback2(create, { id });
-    cancel(id);
-  }
-  return await after();
+export async function testChangefeed(_n) {
+  throw Error(
+    "legacy PostgreSQL user_query changefeeds were removed; use an explicit Conat or Lite changefeed path for leak tests",
+  );
 }
 
 // query only does NOT leak
