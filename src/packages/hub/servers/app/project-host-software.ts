@@ -153,13 +153,15 @@ async function readBundleBuildIdentity(
 ): Promise<BundleBuildIdentity | null> {
   const file = buildIdentityPathForBundle(bundlePath, artifact);
   if (!file) return null;
-  const cached = buildIdentityCache.get(file);
+  const s = await stat(file);
+  const cacheKey = `${file}:${s.size}:${s.mtimeMs}`;
+  const cached = buildIdentityCache.get(cacheKey);
   if (cached !== undefined) return cached;
   try {
     const parsed = JSON.parse(
       await readFile(file, "utf8"),
     ) as BundleBuildIdentity;
-    buildIdentityCache.set(file, parsed);
+    buildIdentityCache.set(cacheKey, parsed);
     return parsed;
   } catch (err) {
     logger.warn("failed reading local bundle build identity", {
@@ -167,7 +169,7 @@ async function readBundleBuildIdentity(
       bundlePath,
       err: String(err),
     });
-    buildIdentityCache.set(file, null);
+    buildIdentityCache.set(cacheKey, null);
     return null;
   }
 }

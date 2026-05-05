@@ -2414,40 +2414,27 @@ async function syncBackupIndexCache(
       };
     }
 
-    let preservedLocalOnly = 0;
-    for (const backup_id of Object.keys(manifest.entries)) {
-      if (remoteByBackup.has(backup_id)) continue;
-      const entry = manifest.entries[backup_id];
-      if (!entry) continue;
-
-      const filePath = entry.file
-        ? join(backupIndexDir(project_id), entry.file)
-        : undefined;
-      const hasLocalFile = filePath ? await exists(filePath) : false;
-
-      // Keep local index manifests when there is no remote index snapshot.
-      // This happens when index upload fails but local index build succeeds.
-      if (
-        (entry.snapshot_id === "local" || remote.length === 0) &&
-        hasLocalFile
-      ) {
-        preservedLocalOnly += 1;
-        continue;
+    if (opts?.backupIds) {
+      for (const backup_id of Object.keys(manifest.entries)) {
+        if (opts.backupIds.has(backup_id)) continue;
+        const entry = manifest.entries[backup_id];
+        if (!entry) continue;
+        if (entry.file) {
+          await rm(join(backupIndexDir(project_id), entry.file), {
+            force: true,
+          });
+        }
+        delete manifest.entries[backup_id];
       }
-
-      if (entry.file) {
-        await rm(join(backupIndexDir(project_id), entry.file), {
-          force: true,
-        });
-      }
-      delete manifest.entries[backup_id];
-    }
-    if (preservedLocalOnly > 0 && remote.length === 0) {
+    } else if (
+      remote.length === 0 &&
+      Object.keys(manifest.entries).length > 0
+    ) {
       logger.warn(
-        "backup index remote snapshot list empty; using local index",
+        "backup index remote snapshot list empty; preserving local index cache",
         {
           project_id,
-          preserved: preservedLocalOnly,
+          local_entries: Object.keys(manifest.entries).length,
         },
       );
     }
@@ -3213,17 +3200,7 @@ export async function getBackups({
         }
       }
       backups.sort((a, b) => a.time.valueOf() - b.time.valueOf());
-      if (backups.length > 0) {
-        return backups;
-      }
-      const remote = await listBackupIndexSnapshots(project_id);
-      return remote
-        .map(({ backup_id, time }) => ({
-          id: backup_id,
-          time,
-          summary: {},
-        }))
-        .sort((a, b) => a.time.valueOf() - b.time.valueOf());
+      return backups;
     } catch (err) {
       logger.warn("backup index list failed", { project_id, err });
       return [];
