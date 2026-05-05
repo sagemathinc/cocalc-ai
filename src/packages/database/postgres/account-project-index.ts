@@ -218,13 +218,28 @@ export async function rebuildAccountProjectIndex(opts: {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    const preservedRows = await client.query<{
+      project_id: string;
+      last_opened_at: Date | null;
+    }>(
+      `SELECT project_id, last_opened_at
+         FROM account_project_index
+        WHERE account_id = $1`,
+      [account_id],
+    );
+    const preservedLastOpenedAt = new Map(
+      preservedRows.rows.map((row) => [row.project_id, row.last_opened_at]),
+    );
     const deleted = await client.query(
       `DELETE FROM account_project_index
         WHERE account_id = $1`,
       [account_id],
     );
     const inserted = await client.query(
-      `INSERT INTO account_project_index (
+      `WITH previous_rows(project_id, last_opened_at) AS (
+         SELECT * FROM unnest($4::UUID[], $3::TIMESTAMP[])
+       )
+       INSERT INTO account_project_index (
           account_id,
           project_id,
           owning_bay_id,
@@ -255,7 +270,7 @@ export async function rebuildAccountProjectIndex(opts: {
           last_edited,
           last_backup,
           (last_active #>> ARRAY[$1::TEXT]::TEXT[])::TIMESTAMP AS last_activity_at,
-          NULL::TIMESTAMP AS last_opened_at,
+          previous_rows.last_opened_at,
           COALESCE(
             (users #>> ARRAY[$1::TEXT, 'hide']::TEXT[])::BOOLEAN,
             FALSE
@@ -268,9 +283,15 @@ export async function rebuildAccountProjectIndex(opts: {
           ) AS sort_key,
           NOW() AS updated_at
         FROM projects
+        LEFT JOIN previous_rows USING (project_id)
         WHERE deleted IS NOT TRUE
           AND users ? $1::TEXT`,
-      [account_id, bay_id],
+      [
+        account_id,
+        bay_id,
+        Array.from(preservedLastOpenedAt.values()),
+        Array.from(preservedLastOpenedAt.keys()),
+      ],
     );
     await client.query("COMMIT");
     return {
