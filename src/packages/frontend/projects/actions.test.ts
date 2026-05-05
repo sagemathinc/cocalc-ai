@@ -643,6 +643,134 @@ describe("ProjectsActions project metadata updates", () => {
     ).toBe("2026-05-03T00:05:00.000Z");
   });
 
+  it("keeps local ssh_keys when a synced projects table snapshot updates users", () => {
+    const projectMap = ImmutableMap<string, any>([
+      [
+        project_id,
+        ImmutableMap({
+          title: "Local title",
+          users: ImmutableMap({
+            "acct-1": ImmutableMap({
+              group: "owner",
+              ssh_keys: ImmutableMap({
+                "fp-1": ImmutableMap({
+                  title: "laptop",
+                  value: "ssh-ed25519 AAAATEST laptop",
+                  creation_date: 1,
+                }),
+              }),
+            }),
+          }),
+        }),
+      ],
+    ]);
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map" ? projectMap : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+    const { actions, redux } = makeActions();
+
+    actions.applyProjectsTableSnapshot(
+      ImmutableMap<string, any>([
+        [
+          project_id,
+          ImmutableMap({
+            title: "Table title",
+            users: ImmutableMap({
+              "acct-1": ImmutableMap({
+                group: "owner",
+              }),
+            }),
+          }),
+        ],
+      ]),
+    );
+
+    expect(redux._set_state).toHaveBeenCalled();
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.getIn([
+        project_id,
+        "title",
+      ]),
+    ).toBe("Table title");
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.getIn([
+        project_id,
+        "users",
+        "acct-1",
+        "ssh_keys",
+        "fp-1",
+        "title",
+      ]),
+    ).toBe("laptop");
+  });
+
+  it("keeps projection-only projects that are absent from a synced table snapshot", () => {
+    const remoteProjectId = "project-remote";
+    const projectMap = ImmutableMap<string, any>([
+      [
+        remoteProjectId,
+        ImmutableMap({
+          title: "Shared Remote Project",
+          __projection_only: true,
+        }),
+      ],
+    ]);
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map" ? projectMap : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+    const { actions, redux } = makeActions();
+
+    actions.applyProjectsTableSnapshot(ImmutableMap<string, any>());
+
+    expect(redux._set_state).toHaveBeenCalled();
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.getIn([
+        remoteProjectId,
+        "title",
+      ]),
+    ).toBe("Shared Remote Project");
+  });
+
+  it("still removes non-projection projects that are absent from a synced table snapshot", () => {
+    const projectMap = ImmutableMap<string, any>([
+      [
+        project_id,
+        ImmutableMap({
+          title: "Local Project",
+        }),
+      ],
+    ]);
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map" ? projectMap : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+    const { actions, redux } = makeActions();
+
+    actions.applyProjectsTableSnapshot(ImmutableMap<string, any>());
+
+    expect(redux._set_state).toHaveBeenCalled();
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.has(project_id),
+    ).toBe(false);
+  });
+
   it("still fails when feed wait times out and direct bootstrap finds nothing", async () => {
     mockedStore.async_wait.mockRejectedValueOnce("timeout");
     mockedWebappClient.project_client.create.mockResolvedValueOnce(

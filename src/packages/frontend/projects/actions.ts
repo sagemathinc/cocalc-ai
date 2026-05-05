@@ -59,6 +59,9 @@ import type {
 } from "@cocalc/util/db-schema/projects";
 export type { Datastore, EnvVars, EnvVarsRecord };
 
+const PROJECTION_ONLY_FIELD = "__projection_only";
+const PROJECTED_PROJECT_BOOTSTRAP_LIMIT = 2000;
+
 function dateOrNull(value: unknown): Date | null {
   if (value == null) return null;
   const date = value instanceof Date ? value : new Date(`${value}`);
@@ -468,21 +471,26 @@ export class ProjectsActions extends Actions<ProjectsState> {
               },
             ],
           },
-          options: [{ limit: 2000 }],
+          options: [{ limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT }],
         });
       } catch (err) {
         console.warn("project projected bootstrap failed", err);
         return;
       }
       const rows = resp?.query?.account_project_index;
-      if (!Array.isArray(rows) || rows.length === 0) {
+      if (!Array.isArray(rows)) {
         return;
       }
       let project_map = store.get("project_map") ?? Map<string, any>();
+      let changed = false;
+      const seenProjectedIds = new globalThis.Set<string>();
+      const projectsToClose: string[] = [];
       for (const row of rows as ProjectIndexBootstrapRow[]) {
         if (row?.is_hidden === true || !row?.project_id) {
           continue;
         }
+        seenProjectedIds.add(row.project_id);
+        const hadProject = project_map.has(row.project_id);
         const currentProject =
           project_map.get(row.project_id) ?? Map<string, any>();
         const currentHostId = currentProject.get("host_id");
@@ -554,7 +562,36 @@ export class ProjectsActions extends Actions<ProjectsState> {
           currentProject,
           nextProject,
         );
+        if (currentProject.get(PROJECTION_ONLY_FIELD) === true || !hadProject) {
+          nextProject = nextProject.set(PROJECTION_ONLY_FIELD, true);
+        } else {
+          nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
+        }
         project_map = project_map.set(row.project_id, nextProject);
+        changed = true;
+      }
+      if (rows.length < PROJECTED_PROJECT_BOOTSTRAP_LIMIT) {
+        for (const [project_id, project] of project_map) {
+          if (
+            project.get(PROJECTION_ONLY_FIELD) === true &&
+            !seenProjectedIds.has(project_id)
+          ) {
+            project_map = project_map.delete(project_id);
+            changed = true;
+            if (this.isProjectOpen(project_id)) {
+              projectsToClose.push(project_id);
+            }
+          }
+        }
+      }
+      if (rows.length === 0) {
+        if (changed) {
+          this.setState({ project_map } as ProjectsState);
+        }
+        for (const project_id of projectsToClose) {
+          this.set_project_closed(project_id);
+        }
+        return;
       }
       try {
         const backupResp = await webapp_client.async_query({
@@ -566,7 +603,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
               },
             ],
           },
-          options: [{ limit: 2000 }],
+          options: [{ limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT }],
         });
         const backupRows = backupResp?.query?.projects;
         if (Array.isArray(backupRows)) {
@@ -593,7 +630,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
       } catch (err) {
         console.warn("project backup bootstrap failed", err);
       }
-      this.setState({ project_map } as ProjectsState);
+      if (changed) {
+        this.setState({ project_map } as ProjectsState);
+      }
+      for (const project_id of projectsToClose) {
+        this.set_project_closed(project_id);
+      }
     },
   );
 
@@ -706,6 +748,29 @@ export class ProjectsActions extends Actions<ProjectsState> {
     return merged != null
       ? nextProject.set("last_active", merged)
       : nextProject;
+  }
+
+  private mergeLocalProjectUsers(
+    currentProject: Map<string, any>,
+    nextProject: Map<string, any>,
+  ): Map<string, any> {
+    const currentUsers = currentProject.get("users");
+    const nextUsers = nextProject.get("users");
+    if (currentUsers == null || nextUsers == null) {
+      return nextProject;
+    }
+    let mergedUsers = nextUsers;
+    for (const [account_id, nextUser] of nextUsers) {
+      const currentUser = currentUsers.get(account_id);
+      if (currentUser == null) {
+        continue;
+      }
+      mergedUsers = mergedUsers.set(
+        account_id,
+        currentUser.mergeDeep(nextUser),
+      );
+    }
+    return nextProject.set("users", mergedUsers);
   }
 
   private queueProjectFeedUpsert(
@@ -954,7 +1019,19 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const currentProjectMap = store.get("project_map") ?? Map<string, any>();
     let project_map = opts?.mergeIntoExisting
       ? currentProjectMap
-      : incomingProjectMap;
+      : incomingProjectMap.map((project) =>
+          (project as Map<string, any>).delete(PROJECTION_ONLY_FIELD),
+        );
+    if (!opts?.mergeIntoExisting) {
+      for (const [project_id, currentProject] of currentProjectMap) {
+        if (
+          currentProject.get(PROJECTION_ONLY_FIELD) === true &&
+          !incomingProjectMap.has(project_id)
+        ) {
+          project_map = project_map.set(project_id, currentProject);
+        }
+      }
+    }
     for (const [project_id, incomingProject] of incomingProjectMap) {
       const currentProject =
         currentProjectMap.get(project_id) ?? Map<string, any>();
@@ -989,7 +1066,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
           currentProject.get("last_backup"),
         );
       }
+      nextProject = this.mergeLocalProjectUsers(currentProject, nextProject);
       nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
+      nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
       project_map = project_map.set(project_id, nextProject);
     }
     this.setState({ project_map } as ProjectsState);
