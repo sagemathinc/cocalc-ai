@@ -7,6 +7,9 @@ import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const CLUSTER_ACCOUNT_DIRECTORY_TABLE = "cluster_account_directory";
+const COLLAB_MEMBERSHIP_GROUPS_SQL = `('owner','collaborator')`;
+const REQUESTER_COLLAB_PROJECT_SQL = `(users -> $1::text ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL}`;
+const PEER_COLLAB_GROUP_SQL = `(info ->> 'group') IN ${COLLAB_MEMBERSHIP_GROUPS_SQL}`;
 
 export interface RebuildAccountCollaboratorIndexResult {
   bay_id: string;
@@ -306,11 +309,14 @@ async function getSourceCounts(account_id: string): Promise<{
         SELECT project_id, users
           FROM projects
          WHERE deleted IS NOT TRUE
-           AND users ? $1::TEXT
+           AND ${REQUESTER_COLLAB_PROJECT_SQL}
       ),
       shared_collaborators AS (
-        SELECT DISTINCT jsonb_object_keys(users)::UUID AS collaborator_account_id
+        SELECT DISTINCT u.account_id_text::UUID AS collaborator_account_id
           FROM shared_projects
+          CROSS JOIN LATERAL jsonb_each(users) AS u(account_id_text, info)
+         WHERE u.account_id_text ~* '^[0-9a-f-]{36}$'
+           AND ${PEER_COLLAB_GROUP_SQL}
       )
       SELECT
         (SELECT COUNT(*)::TEXT FROM shared_projects) AS source_project_rows,
@@ -338,11 +344,14 @@ export async function replaceAccountCollaboratorIndexRows(opts: {
   const inserted = await opts.db.query(
     `WITH shared AS (
         SELECT
-          jsonb_object_keys(p.users)::UUID AS collaborator_account_id,
+          u.account_id_text::UUID AS collaborator_account_id,
           COUNT(*)::INT AS common_project_count
         FROM projects p
+        CROSS JOIN LATERAL jsonb_each(p.users) AS u(account_id_text, info)
         WHERE p.deleted IS NOT TRUE
-          AND p.users ? $1::TEXT
+          AND ${REQUESTER_COLLAB_PROJECT_SQL}
+          AND u.account_id_text ~* '^[0-9a-f-]{36}$'
+          AND ${PEER_COLLAB_GROUP_SQL}
         GROUP BY 1
       )
       INSERT INTO account_collaborator_index

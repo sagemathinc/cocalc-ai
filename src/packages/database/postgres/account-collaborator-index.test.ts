@@ -334,6 +334,74 @@ describe("account_collaborator_index rebuild", () => {
     ]);
   });
 
+  it("skips viewer-only relationships during rebuild", async () => {
+    const VIEWER_ONLY = "55555555-5555-4555-8555-555555555555";
+    const PROJECT_VIEWER_PEER = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const PROJECT_VIEWER_SELF = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    await getPool().query(
+      `INSERT INTO accounts
+         (account_id, first_name, last_name, created, email_address, home_bay_id)
+       VALUES
+         ($1, 'Local', 'User', NOW(), 'local@example.com', $4),
+         ($2, 'Alice', 'A', NOW(), 'alice@example.com', $4),
+         ($3, 'Viewer', 'Peer', NOW(), 'viewer-peer@example.com', $4)`,
+      [ACCOUNT_ID, COLLAB_A, VIEWER_ONLY, LOCAL_BAY_ID],
+    );
+    await getPool().query(
+      `INSERT INTO projects
+        (project_id, title, users, created, last_edited, deleted)
+       VALUES
+        ($1, 'Owner + Collaborator', $4::JSONB, NOW(), NOW(), FALSE),
+        ($2, 'Owner + Viewer', $5::JSONB, NOW(), NOW(), FALSE),
+        ($3, 'Viewer Self', $6::JSONB, NOW(), NOW(), FALSE)`,
+      [
+        PROJECT_A,
+        PROJECT_VIEWER_PEER,
+        PROJECT_VIEWER_SELF,
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+          [COLLAB_A]: { group: "collaborator" },
+        }),
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "owner" },
+          [VIEWER_ONLY]: { group: "viewer" },
+        }),
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "viewer" },
+          [COLLAB_A]: { group: "owner" },
+        }),
+      ],
+    );
+
+    await expect(
+      rebuildAccountCollaboratorIndex({
+        account_id: ACCOUNT_ID,
+        bay_id: LOCAL_BAY_ID,
+      }),
+    ).resolves.toMatchObject({
+      source_project_rows: 2,
+      source_collaborator_rows: 2,
+    });
+
+    await rebuildAccountCollaboratorIndex({
+      account_id: ACCOUNT_ID,
+      bay_id: LOCAL_BAY_ID,
+      dry_run: false,
+    });
+
+    await expect(
+      listProjectedMyCollaboratorsForAccount({
+        account_id: ACCOUNT_ID,
+        limit: 10,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        account_id: COLLAB_A,
+        shared_projects: 1,
+      }),
+    ]);
+  });
+
   it("rejects accounts homed in another bay", async () => {
     await getPool().query(
       `INSERT INTO accounts
