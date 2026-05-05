@@ -253,6 +253,38 @@ export function restoreGitDiffScrollAnchor(
   return true;
 }
 
+export function scrollGitDrawerElementIntoView(
+  node: Pick<
+    HTMLDivElement,
+    "scrollTop" | "scrollHeight" | "clientHeight" | "getBoundingClientRect"
+  >,
+  target: Pick<HTMLElement, "getBoundingClientRect">,
+  opts: {
+    block: "start" | "center";
+    offsetTop?: number;
+  },
+): boolean {
+  const containerRect = node.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  let rawTop =
+    node.scrollTop +
+    (targetRect.top - containerRect.top) -
+    Math.max(0, opts.offsetTop ?? 0);
+  if (opts.block === "center") {
+    rawTop =
+      node.scrollTop +
+      (targetRect.top - containerRect.top) -
+      Math.max(0, (node.clientHeight - targetRect.height) / 2);
+  }
+  const maxTop = Math.max(0, node.scrollHeight - node.clientHeight);
+  const nextTop = Math.max(0, Math.min(maxTop, rawTop));
+  if (Math.abs(nextTop - node.scrollTop) < 1) {
+    return false;
+  }
+  node.scrollTop = nextTop;
+  return true;
+}
+
 type GitShowFile = {
   path: string;
   lines: string[];
@@ -2954,13 +2986,16 @@ export function GitCommitDrawer({
     [activeInlineEditId, reopenInlineComment],
   );
 
-  const scrollToDiffFile = useCallback((index: number) => {
-    virtuosoRef.current?.scrollToIndex({
-      index,
-      align: "start",
-      behavior: "smooth",
-    });
-  }, []);
+  const scrollToDiffFile = useCallback(
+    (index: number, behavior: "auto" | "smooth" = "smooth") => {
+      virtuosoRef.current?.scrollToIndex({
+        index,
+        align: "start",
+        behavior,
+      });
+    },
+    [],
+  );
 
   const goToNextDiffFindMatch = useCallback(() => {
     if (diffFindMatches.length === 0) return;
@@ -2997,7 +3032,7 @@ export function GitCommitDrawer({
         };
       });
     }
-    scrollToDiffFile(activeDiffFindMatch.fileIndex);
+    scrollToDiffFile(activeDiffFindMatch.fileIndex, "auto");
   }, [
     activeDiffFindMatch,
     activeDiffFindVisibleLineLimitUpdate,
@@ -3023,9 +3058,18 @@ export function GitCommitDrawer({
     const scrollTargetIntoView = () => {
       const element = document.getElementById(targetId);
       if (element) {
-        element.scrollIntoView({
-          block: activeDiffFindMatch.kind === "file" ? "start" : "center",
-        });
+        const node = scrollRef.current;
+        if (
+          !node ||
+          !scrollGitDrawerElementIntoView(node, element, {
+            block: activeDiffFindMatch.kind === "file" ? "start" : "center",
+            offsetTop: activeDiffFindMatch.kind === "file" ? 16 : 0,
+          })
+        ) {
+          element.scrollIntoView({
+            block: activeDiffFindMatch.kind === "file" ? "start" : "center",
+          });
+        }
         return;
       }
       if (attempts >= 10) return;

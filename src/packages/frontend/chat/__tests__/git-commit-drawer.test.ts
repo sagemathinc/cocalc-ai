@@ -21,6 +21,7 @@ import {
   resolveGitCommitSearchChange,
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
+  scrollGitDrawerElementIntoView,
   shouldCaptureGitDrawerFindShortcut,
 } from "../git-commit-drawer";
 import { act, fireEvent, render } from "@testing-library/react";
@@ -750,5 +751,33 @@ describe("git commit drawer merge commit formatting", () => {
       }),
     ).toBe(true);
     expect(node.scrollTop).toBe(240);
+  });
+
+  it("scrolls drawer targets with drawer-owned start and center math", () => {
+    const node = {
+      scrollTop: 200,
+      scrollHeight: 2000,
+      clientHeight: 400,
+      getBoundingClientRect: () => ({ top: 100, bottom: 500 }),
+    } as any;
+    const target = {
+      getBoundingClientRect: () => ({ top: 340, bottom: 380, height: 40 }),
+    } as any;
+
+    expect(
+      scrollGitDrawerElementIntoView(node, target, {
+        block: "start",
+        offsetTop: 16,
+      }),
+    ).toBe(true);
+    expect(node.scrollTop).toBe(424);
+
+    node.scrollTop = 200;
+    expect(
+      scrollGitDrawerElementIntoView(node, target, {
+        block: "center",
+      }),
+    ).toBe(true);
+    expect(node.scrollTop).toBe(260);
   });
 });
