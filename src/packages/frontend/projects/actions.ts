@@ -861,19 +861,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
       const currentProject =
         currentProjectMap.get(project_id) ?? Map<string, any>();
       let nextProject = incomingProject as Map<string, any>;
-      const currentHostId = currentProject.get("host_id");
-      if (
-        typeof currentHostId === "string" &&
-        currentHostId &&
-        this.shouldPreserveLocalHostIdAfterMove({
-          project_id,
-          current_host_id: currentHostId,
-          incoming_host_id: nextProject.get("host_id") as string | undefined,
-          incoming_updated_at: undefined,
-        })
-      ) {
-        nextProject = nextProject.set("host_id", currentHostId);
-      }
       if (
         this.shouldPreserveNewerLocalState({
           currentProject,

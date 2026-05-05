@@ -433,6 +433,57 @@ describe("ProjectsActions project metadata updates", () => {
     ).toBe("running");
   });
 
+  it("accepts the incoming host from a synced projects table snapshot after a move", () => {
+    const projectMap = ImmutableMap<string, any>([
+      [
+        project_id,
+        ImmutableMap({
+          host_id: "host-old",
+          title: "Moved project",
+        }),
+      ],
+    ]);
+    const projectStore = ImmutableMap({
+      move_lro: ImmutableMap({
+        summary: {
+          status: "succeeded",
+          updated_at: "2026-05-03T00:05:00.000Z",
+        },
+      }),
+    });
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map" ? projectMap : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+    const { actions, redux } = makeActions();
+    redux.getProjectStore = jest.fn(() => projectStore);
+
+    actions.applyProjectsTableSnapshot(
+      ImmutableMap<string, any>([
+        [
+          project_id,
+          ImmutableMap({
+            host_id: "host-new",
+            title: "Moved project",
+          }),
+        ],
+      ]),
+    );
+
+    expect(redux._set_state).toHaveBeenCalled();
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.getIn([
+        project_id,
+        "host_id",
+      ]),
+    ).toBe("host-new");
+  });
+
   it("still fails when feed wait times out and direct bootstrap finds nothing", async () => {
     mockedStore.async_wait.mockRejectedValueOnce("timeout");
     mockedWebappClient.project_client.create.mockResolvedValueOnce(
