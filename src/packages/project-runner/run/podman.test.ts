@@ -495,4 +495,47 @@ describe("project-runner podman orphan fallback", () => {
     );
     expect(status).toMatchObject({ state: "running" });
   });
+
+  it("restores an explicit backup id without listing backups", async () => {
+    mockPodman.mockResolvedValue({ stdout: "" });
+    const getBackups = jest.fn();
+    const restoreBackup = jest.fn(async () => undefined);
+    mockFileServerClient.mockReturnValue({
+      beginRestoreStaging: jest.fn(async () => ({
+        project_id: project1,
+        home: `/tmp/project-${project1}`,
+        restore: "required",
+        homeExists: true,
+        stagingRoot: `/tmp/project-${project1}/.restore-staging`,
+        stagingPath: `/tmp/project-${project1}/.restore-staging/project-${project1}`,
+        markerPath: `/tmp/project-${project1}/.restore-staging/project-${project1}.json`,
+      })),
+      getBackups,
+      ensureRestoreStaging: jest.fn(async () => undefined),
+      restoreBackup,
+      finalizeRestoreStaging: jest.fn(async () => undefined),
+      releaseRestoreStaging: jest.fn(async () => undefined),
+    });
+
+    const status = await start({
+      project_id: project1,
+      localPath: async () => ({
+        home: `/tmp/project-${project1}`,
+      }),
+      config: {
+        image: "docker.io/library/ubuntu:latest",
+        restore: "required",
+        restore_backup_id: "backup-explicit",
+      },
+    });
+
+    expect(getBackups).not.toHaveBeenCalled();
+    expect(restoreBackup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: project1,
+        id: "backup-explicit",
+      }),
+    );
+    expect(status).toMatchObject({ state: "running" });
+  });
 });

@@ -3,6 +3,7 @@ export {};
 let materializeProjectHostTargetMock: jest.Mock;
 let materializeRemoteProjectHostTargetMock: jest.Mock;
 let fileServerClientMock: jest.Mock;
+let fsClientMock: jest.Mock;
 let conatWithProjectRoutingMock: jest.Mock;
 let getExplicitProjectRoutedClientMock: jest.Mock;
 let pingMock: jest.Mock;
@@ -28,6 +29,13 @@ jest.mock("@cocalc/conat/files/file-server", () => ({
   client: (...args: any[]) => fileServerClientMock(...args),
 }));
 
+jest.mock("@cocalc/conat/files/fs", () => ({
+  __esModule: true,
+  fsClient: (...args: any[]) => fsClientMock(...args),
+  fsSubject: ({ project_id }: { project_id: string }) =>
+    `fs.project-${project_id}`,
+}));
+
 describe("conat/file-server-client", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -45,6 +53,13 @@ describe("conat/file-server-client", () => {
       createBackup: jest.fn(),
       conat: { ping: pingMock },
     }));
+    fsClientMock = jest.fn(() => ({
+      exists: jest.fn(),
+      mkdir: jest.fn(),
+      writeFile: jest.fn(),
+      readFile: jest.fn(),
+      rm: jest.fn(),
+    }));
   });
 
   it("materializes route before creating project file-server client", async () => {
@@ -60,6 +75,7 @@ describe("conat/file-server-client", () => {
     );
     expect(getExplicitProjectRoutedClientMock).toHaveBeenCalledWith({
       project_id: "11111111-1111-1111-1111-111111111111",
+      fresh: true,
     });
     expect(fileServerClientMock).toHaveBeenCalledWith({
       client: { id: "explicit-project-client" },
@@ -146,6 +162,37 @@ describe("conat/file-server-client", () => {
     expect(fileServerClientMock).toHaveBeenCalledWith({
       client: { id: "routed-client" },
       project_id: "33333333-3333-3333-3333-333333333333",
+      timeout: undefined,
+      waitForInterest: true,
+    });
+  });
+
+  it("forwards an explicit stale-route override to the local routed client", async () => {
+    const { getProjectFileServerClient } = await import("./file-server-client");
+    await getProjectFileServerClient({
+      project_id: "77777777-7777-7777-7777-777777777777",
+      fresh: false,
+    });
+
+    expect(getExplicitProjectRoutedClientMock).toHaveBeenCalledWith({
+      project_id: "77777777-7777-7777-7777-777777777777",
+      fresh: false,
+    });
+  });
+
+  it("creates a project filesystem client with the same fresh local routing", async () => {
+    const { getProjectFsClient } = await import("./file-server-client");
+    await getProjectFsClient({
+      project_id: "88888888-8888-8888-8888-888888888888",
+    });
+
+    expect(getExplicitProjectRoutedClientMock).toHaveBeenCalledWith({
+      project_id: "88888888-8888-8888-8888-888888888888",
+      fresh: true,
+    });
+    expect(fsClientMock).toHaveBeenCalledWith({
+      client: { id: "explicit-project-client" },
+      subject: "fs.project-88888888-8888-8888-8888-888888888888",
       timeout: undefined,
       waitForInterest: true,
     });

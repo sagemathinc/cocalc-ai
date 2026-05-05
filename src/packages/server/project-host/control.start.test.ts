@@ -948,4 +948,210 @@ describe("startProjectOnHost placement", () => {
       }),
     );
   });
+
+  it("passes an explicit restore backup id to host start", async () => {
+    const startProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "running",
+      phase_timings_ms: { runner_start: 1234 },
+    }));
+    createHostControlClientMock = jest.fn(() => ({
+      startProject: startProjectMock,
+      getProjectStatus: jest.fn(async () => ({ state: "stopped" })),
+    }));
+
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return {
+          rows: [{ state: { state: "stopped", time: "2026-03-29T00:00:00Z" } }],
+        };
+      }
+      if (
+        sql ===
+        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+      ) {
+        return {
+          rows: [
+            {
+              title: "Restore test",
+              users: { owner: { group: "owner" } },
+              image: DEFAULT_PROJECT_IMAGE,
+              host_id: "host-1",
+              region: "wnam",
+              owning_bay_id: "bay-0",
+              run_quota: null,
+            },
+          ],
+        };
+      }
+      if (
+        sql ===
+        "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        return {
+          rows: [{ metadata: { machine: {} } }],
+        };
+      }
+      if (
+        sql ===
+        "SELECT id, bay_id, name, region, public_url, internal_url, ssh_server, tier, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              bay_id: "bay-0",
+              name: "Host 1",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: 0,
+              metadata: { machine: {} },
+            },
+          ],
+        };
+      }
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ backup_repo_id: "repo-1", provisioned: true }] };
+      }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("UPDATE projects SET last_started")) {
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
+
+    const { startProjectOnHost } = await import("./control");
+    await startProjectOnHost("proj-1", {
+      restore_backup_id: "backup-explicit",
+    });
+
+    expect(startProjectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        restore: "auto",
+        restore_backup_id: "backup-explicit",
+      }),
+    );
+  });
+
+  it("does not skip restart when an explicit restore backup id is requested", async () => {
+    const startProjectMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "running",
+      phase_timings_ms: { runner_start: 1234 },
+    }));
+    const getProjectStatusMock = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "running",
+    }));
+    createHostControlClientMock = jest.fn(() => ({
+      startProject: startProjectMock,
+      getProjectStatus: getProjectStatusMock,
+    }));
+
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (sql === "SELECT state FROM projects WHERE project_id=$1") {
+        return {
+          rows: [{ state: { state: "opened", time: "2026-03-29T00:00:00Z" } }],
+        };
+      }
+      if (sql.includes("FROM long_running_operations")) {
+        return { rows: [{ exists: false }] };
+      }
+      if (
+        sql ===
+        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+      ) {
+        return {
+          rows: [
+            {
+              title: "Restore retry test",
+              users: { owner: { group: "owner" } },
+              image: DEFAULT_PROJECT_IMAGE,
+              host_id: "host-1",
+              region: "wnam",
+              owning_bay_id: "bay-0",
+              run_quota: null,
+            },
+          ],
+        };
+      }
+      if (
+        sql ===
+        "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        return {
+          rows: [{ metadata: { machine: {} } }],
+        };
+      }
+      if (
+        sql ===
+        "SELECT id, bay_id, name, region, public_url, internal_url, ssh_server, tier, metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL"
+      ) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              bay_id: "bay-0",
+              name: "Host 1",
+              region: "us-west1",
+              public_url: null,
+              internal_url: null,
+              ssh_server: null,
+              tier: 0,
+              metadata: { machine: {} },
+            },
+          ],
+        };
+      }
+      if (
+        sql ===
+        "SELECT backup_repo_id, provisioned FROM projects WHERE project_id=$1"
+      ) {
+        return { rows: [{ backup_repo_id: "repo-1", provisioned: true }] };
+      }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("UPDATE projects SET last_started")) {
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    poolConnectMock = jest.fn(async () => ({
+      query: queryMock,
+      release: releaseMock,
+    }));
+
+    const { startProjectOnHost } = await import("./control");
+    await startProjectOnHost("proj-1", {
+      restore_backup_id: "backup-explicit",
+    });
+
+    expect(getProjectStatusMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+    });
+    expect(startProjectMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        restore: "auto",
+        restore_backup_id: "backup-explicit",
+      }),
+    );
+  });
 });

@@ -2,6 +2,11 @@ import {
   client as fileServerClient,
   type Fileserver,
 } from "@cocalc/conat/files/file-server";
+import {
+  fsClient,
+  fsSubject,
+  type FilesystemClient,
+} from "@cocalc/conat/files/fs";
 import type { Client } from "@cocalc/conat/core/client";
 import {
   conatWithProjectRouting,
@@ -23,6 +28,32 @@ type FileserverServiceClient = Fileserver & {
 function getRoutedClient(): Client {
   routedClient ??= conatWithProjectRouting();
   return routedClient;
+}
+
+async function getProjectConatClient({
+  project_id,
+  account_id,
+  ensure_route = true,
+  fresh = true,
+}: {
+  project_id: string;
+  account_id?: string;
+  ensure_route?: boolean;
+  fresh?: boolean;
+}): Promise<Client> {
+  if (!ensure_route) {
+    return getRoutedClient();
+  }
+  const target = await resolveProjectFileServerTarget({
+    project_id,
+    account_id,
+  });
+  if (!target?.address) {
+    throw new Error(`unable to route project ${project_id} to a host`);
+  }
+  return target.local
+    ? await getExplicitProjectRoutedClient({ project_id, fresh })
+    : getRoutedClient();
 }
 
 async function resolveProjectFileServerTarget({
@@ -77,32 +108,52 @@ export async function getProjectFileServerClient({
   account_id,
   timeout,
   ensure_route = true,
+  fresh = true,
 }: {
   project_id: string;
   account_id?: string;
   timeout?: number;
   ensure_route?: boolean;
+  fresh?: boolean;
 }): Promise<Fileserver> {
-  let conatClient: Client;
-  if (ensure_route) {
-    const target = await resolveProjectFileServerTarget({
-      project_id,
-      account_id,
-    });
-    if (!target?.address) {
-      throw new Error(`unable to route project ${project_id} to a host`);
-    }
-    conatClient = target.local
-      ? await getExplicitProjectRoutedClient({ project_id })
-      : getRoutedClient();
-  } else {
-    conatClient = getRoutedClient();
-  }
+  const conatClient = await getProjectConatClient({
+    project_id,
+    account_id,
+    ensure_route,
+    fresh,
+  });
   // File-server is a server-only service. account_id is used above only to
   // discover a remote project route after caller-side permission checks.
   return fileServerClient({
     client: conatClient,
     project_id,
+    timeout,
+    waitForInterest: true,
+  });
+}
+
+export async function getProjectFsClient({
+  project_id,
+  account_id,
+  timeout,
+  ensure_route = true,
+  fresh = true,
+}: {
+  project_id: string;
+  account_id?: string;
+  timeout?: number;
+  ensure_route?: boolean;
+  fresh?: boolean;
+}): Promise<FilesystemClient> {
+  const conatClient = await getProjectConatClient({
+    project_id,
+    account_id,
+    ensure_route,
+    fresh,
+  });
+  return fsClient({
+    client: conatClient,
+    subject: fsSubject({ project_id }),
     timeout,
     waitForInterest: true,
   });

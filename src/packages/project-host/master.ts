@@ -825,6 +825,7 @@ export async function startMasterRegistration({
         run_quota,
         image,
         restore,
+        restore_backup_id,
         lro_op_id,
       }) {
         await awaitReadyForControl("startProject", waitUntilReady);
@@ -838,6 +839,7 @@ export async function startMasterRegistration({
           run_quota,
           image,
           restore,
+          restore_backup_id,
           lro_op_id,
         });
         return {

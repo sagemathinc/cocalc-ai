@@ -298,6 +298,7 @@ export interface HostControlApi {
     run_quota?: any;
     image?: string;
     restore?: "none" | "auto" | "required";
+    restore_backup_id?: string;
     lro_op_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
   }) => Promise<HostCreateProjectResponse>;
@@ -389,9 +390,7 @@ export function createHostControlClient({
     client,
     timeout,
     transport:
-      timeout != null && timeout > MAX_INTEREST_TIMEOUT
-        ? "request"
-        : undefined,
+      timeout != null && timeout > MAX_INTEREST_TIMEOUT ? "request" : undefined,
   });
 }
 

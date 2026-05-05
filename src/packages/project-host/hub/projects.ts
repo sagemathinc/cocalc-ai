@@ -773,6 +773,7 @@ async function getRunnerConfig(
   >,
   opts?: {
     restore?: "none" | "auto" | "required";
+    restore_backup_id?: string;
     lro_op_id?: string;
     rotate_ports?: boolean;
     avoid_port_offsets?: Iterable<number>;
@@ -808,6 +809,7 @@ async function getRunnerConfig(
     run_quota,
     env: resolved.env ?? undefined,
     restore: opts?.restore,
+    restore_backup_id: opts?.restore_backup_id,
     lro_op_id: opts?.lro_op_id,
     ...limits,
     disk,
@@ -1171,6 +1173,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     run_quota,
     image,
     restore,
+    restore_backup_id,
     lro_op_id,
     managed_egress_override,
   }: {
@@ -1179,6 +1182,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     run_quota?: any;
     image?: string;
     restore?: "none" | "auto" | "required";
+    restore_backup_id?: string;
     lro_op_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
   }): Promise<{
@@ -1254,6 +1258,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           },
           {
             restore,
+            restore_backup_id,
             lro_op_id: op_id,
           },
         );
@@ -1304,6 +1309,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
               },
               {
                 restore,
+                restore_backup_id,
                 lro_op_id: op_id,
                 rotate_ports: true,
                 avoid_port_offsets: retryOpts.avoid_port_offsets,

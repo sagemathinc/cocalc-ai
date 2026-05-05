@@ -283,8 +283,9 @@ describe("moveProjectToHost", () => {
           writeFile: jest.fn(async (path: string, data: any) => {
             maybeThrowNotInitialized();
             const files = routedFsByHost.get(currentRoutedHostId);
-            if (!files)
+            if (!files) {
               throw new Error(`missing routed fs host ${currentRoutedHostId}`);
+            }
             files.set(path, typeof data === "string" ? data : `${data}`);
           }),
           readFile: jest.fn(async (path: string) => {
@@ -1712,6 +1713,12 @@ describe("moveProjectToHost", () => {
           }),
         }),
       ]),
+    );
+    expect(startProjectLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: PROJECT_ID,
+        restore_backup_id: "backup-3",
+      }),
     );
   });
 

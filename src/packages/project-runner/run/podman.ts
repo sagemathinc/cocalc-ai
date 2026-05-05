@@ -163,11 +163,13 @@ async function maybeRestoreFromBackup({
   project_id,
   home,
   restore,
+  restore_backup_id,
   lro_op_id,
 }: {
   project_id: string;
   home: string;
   restore?: RestoreMode;
+  restore_backup_id?: string;
   lro_op_id?: string;
 }): Promise<void> {
   if (!restore || restore === "none") return;
@@ -188,58 +190,62 @@ async function maybeRestoreFromBackup({
     );
   };
   try {
-    stage = "list-backups";
-    report({
-      type: "start-project",
-      progress: 8,
-      desc: "checking backups...",
-    });
-
-    let backups: Awaited<ReturnType<typeof fs.getBackups>>;
-    try {
-      backups = await fs.getBackups({ project_id });
-    } catch (err) {
-      if (!shouldFallbackToIndexedBackupList(err)) {
-        throw err;
-      }
-      logger.warn(
-        "start: full backup listing failed; trying indexed backup list",
-        {
-          project_id,
-          err: `${err}`,
-        },
-      );
-      try {
-        backups = await fs.getBackups({ project_id, indexed_only: true });
-      } catch (indexedErr) {
-        logger.warn("start: indexed backup listing also failed", {
-          project_id,
-          err: `${indexedErr}`,
-        });
-        throw err;
-      }
-      if (!backups.length) {
-        throw err;
-      }
-    }
-    if (!backups.length) {
-      cleanupStaging = true;
-      if (restore === "required") {
-        throw Error("no backups available for restore");
-      }
+    let backupId = `${restore_backup_id ?? ""}`.trim();
+    if (!backupId) {
+      stage = "list-backups";
       report({
         type: "start-project",
-        progress: 10,
-        desc: "no backups found; continuing",
+        progress: 8,
+        desc: "checking backups...",
       });
-      return;
-    }
 
-    const latest = backups.reduce((best, current) =>
-      new Date(current.time).getTime() > new Date(best.time).getTime()
-        ? current
-        : best,
-    );
+      let backups: Awaited<ReturnType<typeof fs.getBackups>>;
+      try {
+        backups = await fs.getBackups({ project_id });
+      } catch (err) {
+        if (!shouldFallbackToIndexedBackupList(err)) {
+          throw err;
+        }
+        logger.warn(
+          "start: full backup listing failed; trying indexed backup list",
+          {
+            project_id,
+            err: `${err}`,
+          },
+        );
+        try {
+          backups = await fs.getBackups({ project_id, indexed_only: true });
+        } catch (indexedErr) {
+          logger.warn("start: indexed backup listing also failed", {
+            project_id,
+            err: `${indexedErr}`,
+          });
+          throw err;
+        }
+        if (!backups.length) {
+          throw err;
+        }
+      }
+      if (!backups.length) {
+        cleanupStaging = true;
+        if (restore === "required") {
+          throw Error("no backups available for restore");
+        }
+        report({
+          type: "start-project",
+          progress: 10,
+          desc: "no backups found; continuing",
+        });
+        return;
+      }
+
+      const latest = backups.reduce((best, current) =>
+        new Date(current.time).getTime() > new Date(best.time).getTime()
+          ? current
+          : best,
+      );
+      backupId = latest.id;
+    }
     report({
       type: "start-project",
       progress: 12,
@@ -251,7 +257,7 @@ async function maybeRestoreFromBackup({
     stage = "restore-backup";
     await fs.restoreBackup({
       project_id,
-      id: latest.id,
+      id: backupId,
       dest: handle.stagingPath,
       lro: lro_op_id
         ? { op_id: lro_op_id, scope_type: "project", scope_id: project_id }
@@ -951,6 +957,7 @@ export async function start({
         project_id,
         home,
         restore: config?.restore,
+        restore_backup_id: config?.restore_backup_id,
         lro_op_id,
       });
     });

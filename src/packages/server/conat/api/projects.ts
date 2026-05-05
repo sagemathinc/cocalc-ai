@@ -1059,6 +1059,7 @@ export async function start({
   account_id,
   project_id,
   restore: _restore,
+  restore_backup_id,
   managed_egress_override,
   wait = true,
 }: {
@@ -1068,6 +1069,7 @@ export async function start({
   run_quota?: any;
   // not used; passed through for typing compatibility with project-host
   restore?: "none" | "auto" | "required";
+  restore_backup_id?: string;
   managed_egress_override?: ManagedProjectEgressOverride;
   wait?: boolean;
 }): Promise<{
@@ -1081,6 +1083,7 @@ export async function start({
     kind: "start",
     account_id,
     project_id,
+    restore_backup_id,
     managed_egress_override,
     wait,
   });
@@ -1113,12 +1116,14 @@ async function runProjectStartLikeAction({
   kind,
   account_id,
   project_id,
+  restore_backup_id,
   managed_egress_override,
   wait = true,
 }: {
   kind: "start" | "restart";
   account_id: string;
   project_id: string;
+  restore_backup_id?: string;
   managed_egress_override?: ManagedProjectEgressOverride;
   wait?: boolean;
 }): Promise<{
@@ -1135,7 +1140,11 @@ async function runProjectStartLikeAction({
     scope_id: project_id,
     created_by: account_id,
     routing: "hub",
-    input: { project_id, action: kind },
+    input: {
+      project_id,
+      action: kind,
+      ...(restore_backup_id ? { restore_backup_id } : {}),
+    },
     status: "queued",
   });
   publishStartLroSummaryBestEffort({
@@ -1207,6 +1216,7 @@ async function runProjectStartLikeAction({
         await projectControl.start({
           project_id,
           account_id,
+          ...(restore_backup_id ? { restore_backup_id } : {}),
           lro_op_id: op.op_id,
           source_bay_id: getConfiguredBayId(),
           ...(managed_egress_override ? { managed_egress_override } : {}),
