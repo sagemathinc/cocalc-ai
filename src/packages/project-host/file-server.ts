@@ -2132,7 +2132,14 @@ const BACKUP_INDEX_SYNC_TTL_MS = 30_000;
 
 interface BackupIndexManifest {
   updated_at?: string;
-  entries: Record<string, { snapshot_id: string; file: string }>;
+  entries: Record<
+    string,
+    {
+      snapshot_id: string;
+      file: string;
+      remote_snapshot_id?: string;
+    }
+  >;
 }
 
 const backupIndexSyncState = new Map<
@@ -2188,10 +2195,53 @@ async function recordBackupIndexLocal({
   }
   const manifest = await loadBackupIndexManifest(project_id);
   manifest.entries[backup_id] = {
-    snapshot_id: snapshot_id ?? "local",
+    snapshot_id: "local",
     file,
+    remote_snapshot_id: snapshot_id,
   };
   await saveBackupIndexManifest(project_id, manifest);
+}
+
+async function loadLocalBackupIndexEntries(
+  project_id: string,
+): Promise<BackupIndexManifest["entries"]> {
+  const dir = backupIndexDir(project_id);
+  const entries: BackupIndexManifest["entries"] = {};
+  const files = await readdir(dir).catch(() => []);
+  for (const file of files) {
+    if (!file.endsWith(".sqlite")) continue;
+    const dbPath = join(dir, file);
+    let db: DatabaseSync | undefined;
+    try {
+      db = new DatabaseSync(dbPath);
+      const metaRows = db.prepare("SELECT key, value FROM meta").all();
+      const meta = Object.fromEntries(
+        metaRows.map((row: { key: string; value: string }) => [
+          row.key,
+          row.value,
+        ]),
+      );
+      const backupId = meta.backup_id;
+      if (!backupId) continue;
+      entries[backupId] = {
+        snapshot_id: "local",
+        file,
+        remote_snapshot_id:
+          typeof meta.snapshot_id === "string" && meta.snapshot_id.length > 0
+            ? meta.snapshot_id
+            : undefined,
+      };
+    } catch (err) {
+      logger.warn("backup index local metadata scan failed", {
+        project_id,
+        file,
+        err,
+      });
+    } finally {
+      db?.close();
+    }
+  }
+  return entries;
 }
 
 function parseBackupIdFromLabel(label?: string): string | null {
@@ -2299,6 +2349,13 @@ async function syncBackupIndexCache(
   const task = (async () => {
     await mkdir(backupIndexDir(project_id), { recursive: true });
     const manifest = await loadBackupIndexManifest(project_id);
+    const localEntries = await loadLocalBackupIndexEntries(project_id);
+    for (const [backup_id, entry] of Object.entries(localEntries)) {
+      manifest.entries[backup_id] = {
+        ...entry,
+        ...(manifest.entries[backup_id] ?? {}),
+      };
+    }
     let remote: {
       backup_id: string;
       snapshot_id: string;
@@ -2350,7 +2407,11 @@ async function syncBackupIndexCache(
         continue;
       }
       await restoreBackupIndexSnapshot(project_id, entry.snapshot_id);
-      manifest.entries[backup_id] = { snapshot_id: entry.snapshot_id, file };
+      manifest.entries[backup_id] = {
+        snapshot_id: entry.snapshot_id,
+        file,
+        remote_snapshot_id: entry.snapshot_id,
+      };
     }
 
     let preservedLocalOnly = 0;
@@ -2366,7 +2427,10 @@ async function syncBackupIndexCache(
 
       // Keep local index manifests when there is no remote index snapshot.
       // This happens when index upload fails but local index build succeeds.
-      if (entry.snapshot_id === "local" && hasLocalFile) {
+      if (
+        (entry.snapshot_id === "local" || remote.length === 0) &&
+        hasLocalFile
+      ) {
         preservedLocalOnly += 1;
         continue;
       }
@@ -2400,6 +2464,39 @@ async function syncBackupIndexCache(
   } finally {
     state.inFlight = undefined;
   }
+}
+
+async function ensureBackupIndexEntryAvailable({
+  project_id,
+  backup_id,
+}: {
+  project_id: string;
+  backup_id: string;
+}): Promise<{
+  snapshot_id: string;
+  file: string;
+  remote_snapshot_id?: string;
+} | null> {
+  await syncBackupIndexCache(project_id);
+  const dir = backupIndexDir(project_id);
+  const manifest = await loadBackupIndexManifest(project_id);
+  const existing = manifest.entries[backup_id];
+  const existingPath = existing?.file ? join(dir, existing.file) : undefined;
+  if (existing && existingPath && (await exists(existingPath))) {
+    return existing;
+  }
+  const remote = await listBackupIndexSnapshots(project_id);
+  const match = remote.find((entry) => entry.backup_id === backup_id);
+  if (!match) return null;
+  await restoreBackupIndexSnapshot(project_id, match.snapshot_id);
+  const entry = {
+    snapshot_id: match.snapshot_id,
+    file: backupIndexFileName(backup_id),
+    remote_snapshot_id: match.snapshot_id,
+  };
+  manifest.entries[backup_id] = entry;
+  await saveBackupIndexManifest(project_id, manifest);
+  return entry;
 }
 
 async function removeBackupIndexLocal(
@@ -2534,9 +2631,10 @@ async function getBackupFilesIndexed({
   id: string;
   path?: string;
 }): Promise<{ name: string; isDir: boolean; mtime: number; size: number }[]> {
-  await syncBackupIndexCache(project_id);
-  const manifest = await loadBackupIndexManifest(project_id);
-  const entry = manifest.entries[id];
+  const entry = await ensureBackupIndexEntryAvailable({
+    project_id,
+    backup_id: id,
+  });
   if (!entry) return [];
   const dbPath = join(backupIndexDir(project_id), entry.file);
   if (!(await exists(dbPath))) return [];
@@ -2633,9 +2731,10 @@ async function getBackupIndexEntry({
   backup_id: string;
   path: string;
 }): Promise<{ type: string; size: number; mtime: number } | null> {
-  await syncBackupIndexCache(project_id);
-  const manifest = await loadBackupIndexManifest(project_id);
-  const entry = manifest.entries[backup_id];
+  const entry = await ensureBackupIndexEntryAvailable({
+    project_id,
+    backup_id,
+  });
   if (!entry) return null;
   const dbPath = join(backupIndexDir(project_id), entry.file);
   if (!(await exists(dbPath))) return null;
@@ -3114,7 +3213,17 @@ export async function getBackups({
         }
       }
       backups.sort((a, b) => a.time.valueOf() - b.time.valueOf());
-      return backups;
+      if (backups.length > 0) {
+        return backups;
+      }
+      const remote = await listBackupIndexSnapshots(project_id);
+      return remote
+        .map(({ backup_id, time }) => ({
+          id: backup_id,
+          time,
+          summary: {},
+        }))
+        .sort((a, b) => a.time.valueOf() - b.time.valueOf());
     } catch (err) {
       logger.warn("backup index list failed", { project_id, err });
       return [];
