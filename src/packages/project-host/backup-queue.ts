@@ -33,6 +33,19 @@ async function acquireBackupSlot(): Promise<void> {
   });
 }
 
+async function tryAcquireBackupSlot(): Promise<boolean> {
+  const { max_parallel } = await getBackupExecutionLimit();
+  while (backupWaiters.length > 0 && backupInFlight < max_parallel) {
+    backupInFlight += 1;
+    backupWaiters.shift()?.();
+  }
+  if (backupInFlight < max_parallel) {
+    backupInFlight += 1;
+    return true;
+  }
+  return false;
+}
+
 function releaseBackupSlot() {
   backupInFlight = Math.max(0, backupInFlight - 1);
   const { max_parallel } = getCachedBackupExecutionLimit();
@@ -140,8 +153,7 @@ export async function withBackupParallelLimit<T>({
 }: QueuedBackupLockOptions<T> | TryBackupLockOptions<T>): Promise<
   T | undefined
 > {
-  const lockedRun = async () => {
-    await acquireBackupSlot();
+  const withAcquiredSlot = async () => {
     logger.debug("backup slot acquired", {
       project_id,
       op,
@@ -163,12 +175,29 @@ export async function withBackupParallelLimit<T>({
     }
   };
 
+  const lockedRun = async () => {
+    await acquireBackupSlot();
+    return await withAcquiredSlot();
+  };
+
   if (!queue_if_busy) {
     return await withBackupProjectLock({
       project_id,
       op,
       queue_if_busy: false,
-      run: lockedRun,
+      run: async () => {
+        if (!(await tryAcquireBackupSlot())) {
+          logger.debug("skipping backup slot wait", {
+            project_id,
+            op,
+            in_flight: backupInFlight,
+            queued: backupWaiters.length,
+            max_parallel: getCachedBackupExecutionLimit().max_parallel,
+          });
+          return undefined;
+        }
+        return await withAcquiredSlot();
+      },
     });
   }
 

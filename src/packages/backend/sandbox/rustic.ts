@@ -89,7 +89,9 @@ export default async function rustic(
   } = options;
 
   const common = getCommonArgs(repo);
-  await ensureInitialized(repo);
+  if (!repo.endsWith(".toml")) {
+    await ensureInitialized(repo);
+  }
   const cwdArg = options.cwd ?? "";
   const cwd = await safeAbsPath?.(cwdArg);
 
@@ -104,6 +106,30 @@ export default async function rustic(
       onStdoutLine,
       onStderrLine,
     });
+  };
+
+  const runWithTomlInitFallback = async (
+    sanitizedArgs: string[],
+    opts?: { initOnMissingRepo?: boolean },
+  ) => {
+    const output = await run(sanitizedArgs);
+    if (repo.endsWith(".toml") && output.code == 0) {
+      initializedTomlRepos.add(repo);
+    }
+    if (
+      !repo.endsWith(".toml") ||
+      !opts?.initOnMissingRepo ||
+      output.code == 0 ||
+      !isMissingTomlRepositoryError(output.stderr)
+    ) {
+      return output;
+    }
+    await initializeTomlRepo(repo, common);
+    const retry = await run(sanitizedArgs);
+    if (retry.code == 0) {
+      initializedTomlRepos.add(repo);
+    }
+    return retry;
   };
 
   switch (args[0]) {
@@ -132,21 +158,24 @@ export default async function rustic(
         whitelist.backup,
       );
 
-      return await run([
-        ...parsedOptions,
-        "--no-scan",
-        "--host",
-        host,
-        "--",
-        source ? source : ".",
-      ]);
+      return await runWithTomlInitFallback(
+        [
+          ...parsedOptions,
+          "--no-scan",
+          "--host",
+          host,
+          "--",
+          source ? source : ".",
+        ],
+        { initOnMissingRepo: true },
+      );
     }
     case "snapshots": {
       const options = parseAndValidateOptions(
         args.slice(1),
         whitelist.snapshots,
       );
-      return await run([...options, "--filter-host", host]);
+      return await runWithTomlInitFallback([...options, "--filter-host", host]);
     }
     case "restore": {
       if (args.length <= 2) {
@@ -162,18 +191,18 @@ export default async function rustic(
         args.slice(1, -2),
         whitelist.restore,
       );
-      return await run([...options, snapshot, destination]);
+      return await runWithTomlInitFallback([...options, snapshot, destination]);
     }
     case "forget": {
       if (args.length == 2 && !args[1].startsWith("-")) {
         // delete exactly id
         const snapshot = args[1];
         await assertValidSnapshot({ snapshot, host, repo });
-        return await run([snapshot]);
+        return await runWithTomlInitFallback([snapshot]);
       }
       // delete several defined by rules.
       const options = parseAndValidateOptions(args.slice(1), whitelist.forget);
-      return await run([...options, "--filter-host", host]);
+      return await runWithTomlInitFallback([...options, "--filter-host", host]);
     }
     default:
       throw Error(`subcommand not allowed: ${args[0]}`);
@@ -291,43 +320,9 @@ export async function ensureInitialized(repo: string) {
 
 async function ensureInitializedWithCommon(repo: string, common: string[]) {
   if (repo.endsWith(".toml")) {
-    if (initializedTomlRepos.has(repo)) {
-      return;
-    }
-    const inFlight = initializingTomlRepos.get(repo);
-    if (inFlight) {
-      await inFlight;
-      return;
-    }
-    const task = (async () => {
-      try {
-        parseOutput(
-          await exec({
-            cmd: rusticPath,
-            safety: [...common, "repoinfo"],
-            timeout: 30_000,
-          }),
-        );
-        logger.debug("ensureInitializedWithCommon - repo is initialized");
-      } catch {
-        logger.debug("ensureInitializedWithCommon - initializing");
-        parseOutput(
-          await exec({
-            cmd: rusticPath,
-            safety: ["--no-progress", ...common, "init"],
-            timeout: 30_000,
-          }),
-        );
-        logger.debug("ensureInitializedWithCommon - initialiszing");
-      }
-      initializedTomlRepos.add(repo);
-    })();
-    initializingTomlRepos.set(repo, task);
-    try {
-      await task;
-    } finally {
-      initializingTomlRepos.delete(repo);
-    }
+    // TOML-backed repos may point at remote object stores where `repoinfo`
+    // is expensive. Callers should run the real command first and only fall
+    // back to `init` if that command shows the repo is missing.
     return;
   }
   const config = join(repo, "config");
@@ -344,6 +339,40 @@ async function ensureInitializedWithCommon(repo: string, common: string[]) {
       "ensureInitializedWithCommon - successfully initialized locally",
     );
   }
+}
+
+async function initializeTomlRepo(repo: string, common: string[]) {
+  if (initializedTomlRepos.has(repo)) {
+    return;
+  }
+  const inFlight = initializingTomlRepos.get(repo);
+  if (inFlight) {
+    await inFlight;
+    return;
+  }
+  const task = (async () => {
+    logger.debug("initializeTomlRepo - initializing", { repo });
+    parseOutput(
+      await exec({
+        cmd: rusticPath,
+        safety: ["--no-progress", ...common, "init"],
+        timeout: 30_000,
+      }),
+    );
+    initializedTomlRepos.add(repo);
+    logger.debug("initializeTomlRepo - initialized", { repo });
+  })();
+  initializingTomlRepos.set(repo, task);
+  try {
+    await task;
+  } finally {
+    initializingTomlRepos.delete(repo);
+  }
+}
+
+function isMissingTomlRepositoryError(err: unknown): boolean {
+  const text = `${err ?? ""}`;
+  return text.includes("No repository config file found");
 }
 
 async function assertValidSnapshot({ snapshot, host, repo }) {

@@ -40,6 +40,8 @@ type MissingRuntimePackages = {
 
 const DISABLED_RUNTIME_PASSWORD_HASH =
   "$6$cocalcruntime$2xieJC95lcJzQ05t39hXoMmKKs4hYtiKuOTfoHqbIaFG2rb8JC7M0bPdSej2EFWrhnuKZbqijNAoOZKnqZepp1";
+const GCE_UBUNTU_MIRROR_RE =
+  /https?:\/\/[A-Za-z0-9.-]*gce(?:\.clouds)?\.archive\.ubuntu\.com\/ubuntu\//g;
 
 function parseRuntimeIdentity(): RuntimeIdentity {
   const user =
@@ -141,8 +143,10 @@ export function rewriteUbuntuAptSources(
   }
   return current
     .replaceAll("http://archive.ubuntu.com/ubuntu/", normalizedMirror)
+    .replaceAll("https://archive.ubuntu.com/ubuntu/", normalizedMirror)
     .replaceAll("http://security.ubuntu.com/ubuntu/", normalizedMirror)
-    .replaceAll("https://security.ubuntu.com/ubuntu/", normalizedMirror);
+    .replaceAll("https://security.ubuntu.com/ubuntu/", normalizedMirror)
+    .replace(GCE_UBUNTU_MIRROR_RE, normalizedMirror);
 }
 
 async function rewriteIfChanged(

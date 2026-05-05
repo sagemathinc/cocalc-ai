@@ -72,9 +72,32 @@ describe("runtime bootstrap rewrite helpers", () => {
     expect(
       rewriteUbuntuAptSources(
         current,
-        "http://us-west3.gce.archive.ubuntu.com/ubuntu/",
+        "http://us-west3-c.gce.clouds.archive.ubuntu.com/ubuntu/",
       ),
-    ).toContain("URIs: http://us-west3.gce.archive.ubuntu.com/ubuntu/");
+    ).toContain(
+      "URIs: http://us-west3-c.gce.clouds.archive.ubuntu.com/ubuntu/",
+    );
+  });
+
+  it("rewrites previously injected GCE mirrors to the configured mirror", () => {
+    const current = [
+      "Types: deb",
+      "URIs: http://us-south1.gce.archive.ubuntu.com/ubuntu/",
+      "Suites: noble noble-updates noble-backports",
+      "",
+      "Types: deb",
+      "URIs: http://us-south1.gce.archive.ubuntu.com/ubuntu/",
+      "Suites: noble-security",
+      "",
+    ].join("\n");
+    const rewritten = rewriteUbuntuAptSources(
+      current,
+      "http://us-south1-c.gce.clouds.archive.ubuntu.com/ubuntu/",
+    );
+    expect(rewritten).toContain(
+      "URIs: http://us-south1-c.gce.clouds.archive.ubuntu.com/ubuntu/",
+    );
+    expect(rewritten).not.toContain("us-south1.gce.archive.ubuntu.com");
   });
 });
 
@@ -169,7 +192,7 @@ describe("runtime bootstrap writable state repair", () => {
 
   it("rewrites ubuntu apt sources when a mirror policy is configured", async () => {
     process.env.COCALC_APT_UBUNTU_MIRROR =
-      "http://us-west3.gce.archive.ubuntu.com/ubuntu/";
+      "http://us-west3-c.gce.clouds.archive.ubuntu.com/ubuntu/";
     const mkdir = jest.spyOn(require("node:fs/promises"), "mkdir");
     const chmod = jest.spyOn(require("node:fs/promises"), "chmod");
     const chown = jest.spyOn(require("node:fs/promises"), "chown");
@@ -213,7 +236,9 @@ describe("runtime bootstrap writable state repair", () => {
 
     expect(writeFile).toHaveBeenCalledWith(
       "/etc/apt/sources.list.d/ubuntu.sources",
-      expect.stringContaining("http://us-west3.gce.archive.ubuntu.com/ubuntu/"),
+      expect.stringContaining(
+        "http://us-west3-c.gce.clouds.archive.ubuntu.com/ubuntu/",
+      ),
       { mode: 0o644 },
     );
   });

@@ -906,6 +906,7 @@ export interface Projects {
     run_quota?: any;
     image?: string;
     restore?: "none" | "auto" | "required";
+    restore_backup_id?: string;
     lro_op_id?: string;
     // When false, enqueue start and return immediately; callers can watch
     // LRO/changefeed for progress.

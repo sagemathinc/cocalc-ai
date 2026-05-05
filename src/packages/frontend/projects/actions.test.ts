@@ -743,12 +743,101 @@ describe("ProjectsActions project metadata updates", () => {
     ).toBe("Shared Remote Project");
   });
 
-  it("still removes non-projection projects that are absent from a synced table snapshot", () => {
+  it("removes non-projection projects that are absent from a synced table snapshot and closes them if open", () => {
     const projectMap = ImmutableMap<string, any>([
       [
         project_id,
         ImmutableMap({
           title: "Local Project",
+        }),
+      ],
+    ]);
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map"
+        ? projectMap
+        : key === "open_projects"
+          ? [project_id]
+          : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+    const { actions, redux } = makeActions();
+    actions.set_project_closed = jest.fn();
+
+    actions.applyProjectsTableSnapshot(ImmutableMap<string, any>());
+
+    expect(redux._set_state).toHaveBeenCalled();
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.has(project_id),
+    ).toBe(false);
+    expect(actions.set_project_closed).toHaveBeenCalledWith(project_id);
+  });
+
+  it("removes a missing kiosk project while preserving unrelated local projects", () => {
+    const kioskProjectId = "project-kiosk";
+    const otherProjectId = "project-other";
+    const projectMap = ImmutableMap<string, any>([
+      [
+        kioskProjectId,
+        ImmutableMap({
+          title: "Kiosk Project",
+        }),
+      ],
+      [
+        otherProjectId,
+        ImmutableMap({
+          title: "Other Project",
+        }),
+      ],
+    ]);
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map"
+        ? projectMap
+        : key === "open_projects"
+          ? [kioskProjectId]
+          : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+    const { actions, redux } = makeActions();
+    actions.set_project_closed = jest.fn();
+
+    actions.applyProjectsTableSnapshot(ImmutableMap<string, any>(), {
+      mergeIntoExisting: true,
+      removeMissingProjectIds: [kioskProjectId],
+    });
+
+    expect(redux._set_state).toHaveBeenCalled();
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.has(
+        kioskProjectId,
+      ),
+    ).toBe(false);
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.getIn([
+        otherProjectId,
+        "title",
+      ]),
+    ).toBe("Other Project");
+    expect(actions.set_project_closed).toHaveBeenCalledWith(kioskProjectId);
+  });
+
+  it("keeps a projection-only kiosk project when the synced table snapshot is empty", () => {
+    const kioskProjectId = "project-kiosk-remote";
+    const projectMap = ImmutableMap<string, any>([
+      [
+        kioskProjectId,
+        ImmutableMap({
+          title: "Shared Remote Project",
+          __projection_only: true,
         }),
       ],
     ]);
@@ -763,12 +852,18 @@ describe("ProjectsActions project metadata updates", () => {
     });
     const { actions, redux } = makeActions();
 
-    actions.applyProjectsTableSnapshot(ImmutableMap<string, any>());
+    actions.applyProjectsTableSnapshot(ImmutableMap<string, any>(), {
+      mergeIntoExisting: true,
+      removeMissingProjectIds: [kioskProjectId],
+    });
 
     expect(redux._set_state).toHaveBeenCalled();
     expect(
-      redux._set_state.mock.calls[0][0].projects.project_map.has(project_id),
-    ).toBe(false);
+      redux._set_state.mock.calls[0][0].projects.project_map.getIn([
+        kioskProjectId,
+        "title",
+      ]),
+    ).toBe("Shared Remote Project");
   });
 
   it("still fails when feed wait times out and direct bootstrap finds nothing", async () => {

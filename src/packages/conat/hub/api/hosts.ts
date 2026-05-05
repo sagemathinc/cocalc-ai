@@ -170,6 +170,39 @@ export interface HostCloudRefreshResult {
   next_at?: string;
 }
 
+export interface ProjectBackupIndexStoreConfig {
+  kind: "r2-object-store";
+  endpoint: string;
+  bucket: string;
+  access_key_id: string;
+  secret_access_key: string;
+  key_prefix: string;
+  compression: "gzip";
+}
+
+export interface ProjectBackupConfig {
+  toml: string;
+  ttl_seconds: number;
+  index_store?: ProjectBackupIndexStoreConfig | null;
+}
+
+export interface ProjectBackupIndexRecord {
+  backup_id: string;
+  backup_time: string;
+  status: "complete" | "failed";
+  storage_backend: "r2-object-store";
+  bucket_id?: string | null;
+  object_key?: string | null;
+  compression?: string | null;
+  sqlite_bytes?: number | null;
+  object_bytes?: number | null;
+  sha256?: string | null;
+  error?: string | null;
+  host_id?: string | null;
+  created?: string | null;
+  updated?: string | null;
+}
+
 export interface HostMachine {
   cloud?: string; // e.g., gcp, hyperstack, lambda, nebius, self-host, local
   machine_type?: string; // e.g., n2-standard-4, custom specs
@@ -945,6 +978,10 @@ export const hosts = {
   getBackupConfig: authFirstRequireHost,
   getProjectOwnerEffectiveLimits: authFirstRequireHost,
   recordProjectBackup: authFirstRequireHost,
+  recordProjectBackupIndex: authFirstRequireHost,
+  getProjectBackupIndexes: authFirstRequireHost,
+  syncProjectBackupIndexes: authFirstRequireHost,
+  deleteProjectBackupIndex: authFirstRequireHost,
   touchProject: authFirstRequireHost,
   claimPendingCopies: authFirstRequireHost,
   getProjectStartMetadata: authFirstRequireHost,
@@ -1110,7 +1147,7 @@ export interface Hosts {
     project_id?: string;
     host_region?: string | null;
     host_machine?: HostMachine | null;
-  }) => Promise<{ toml: string; ttl_seconds: number }>;
+  }) => Promise<ProjectBackupConfig>;
   getProjectOwnerEffectiveLimits: (opts: {
     host_id?: string;
     project_id?: string;
@@ -1119,6 +1156,34 @@ export interface Hosts {
     host_id?: string;
     project_id: string;
     time: Date;
+  }) => Promise<void>;
+  recordProjectBackupIndex: (opts: {
+    host_id?: string;
+    project_id: string;
+    backup_id: string;
+    backup_time: Date | string;
+    status: "complete" | "failed";
+    storage_backend?: "r2-object-store";
+    object_key?: string | null;
+    compression?: string | null;
+    sqlite_bytes?: number | null;
+    object_bytes?: number | null;
+    sha256?: string | null;
+    error?: string | null;
+  }) => Promise<void>;
+  getProjectBackupIndexes: (opts: {
+    host_id?: string;
+    project_id: string;
+  }) => Promise<ProjectBackupIndexRecord[]>;
+  syncProjectBackupIndexes: (opts: {
+    host_id?: string;
+    project_id: string;
+    backup_ids: string[];
+  }) => Promise<void>;
+  deleteProjectBackupIndex: (opts: {
+    host_id?: string;
+    project_id: string;
+    backup_id: string;
   }) => Promise<void>;
   touchProject: (opts: {
     host_id?: string;

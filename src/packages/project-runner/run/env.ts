@@ -29,10 +29,15 @@ function normalizedCloudRegion(): string | undefined {
   return value || undefined;
 }
 
-function gceUbuntuMirrorForRegion(region?: string): string | undefined {
-  const normalized = `${region ?? ""}`.trim().toLowerCase();
+function normalizedCloudZone(): string | undefined {
+  const value = `${process.env.PROJECT_HOST_ZONE ?? ""}`.trim().toLowerCase();
+  return value || undefined;
+}
+
+function gceUbuntuMirrorForZone(zone?: string): string | undefined {
+  const normalized = `${zone ?? ""}`.trim().toLowerCase();
   if (!normalized) return;
-  return `http://${normalized}.gce.archive.ubuntu.com/ubuntu/`;
+  return `http://${normalized}.gce.clouds.archive.ubuntu.com/ubuntu/`;
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -105,8 +110,9 @@ export async function getEnvironment({
   delete imageEnv.LOGS;
   const cloudProvider = normalizedCloudProvider();
   const cloudRegion = normalizedCloudRegion();
+  const cloudZone = normalizedCloudZone();
   const aptUbuntuMirror =
-    cloudProvider === "gcp" ? gceUbuntuMirrorForRegion(cloudRegion) : undefined;
+    cloudProvider === "gcp" ? gceUbuntuMirrorForZone(cloudZone) : undefined;
 
   const USER = DEFAULT_PROJECT_RUNTIME_USER;
   const DATA = dataPath(HOME);
@@ -158,6 +164,7 @@ export async function getEnvironment({
     COCALC_PROXY_PORT: DEFAULT_PROJECT_PROXY_PORT,
     ...(cloudProvider ? { COCALC_CLOUD_PROVIDER: cloudProvider } : {}),
     ...(cloudRegion ? { COCALC_CLOUD_REGION: cloudRegion } : {}),
+    ...(cloudZone ? { COCALC_CLOUD_ZONE: cloudZone } : {}),
     ...(aptUbuntuMirror ? { COCALC_APT_UBUNTU_MIRROR: aptUbuntuMirror } : {}),
   };
 }

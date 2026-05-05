@@ -112,6 +112,14 @@ function isoOrNull(value: Date | null): string | null {
   return value?.toISOString() ?? null;
 }
 
+function eventTimestampMs(value: unknown): number {
+  const date =
+    value instanceof Date ? value : value != null ? new Date(`${value}`) : null;
+  return date != null && Number.isFinite(date.getTime())
+    ? date.getTime()
+    : Date.now();
+}
+
 async function collaboratorRowsForAccount(
   db: PoolClient,
   account_id: string,
@@ -160,15 +168,17 @@ function collaboratorFeedEventsForAccount(opts: {
   account_id: string;
   previous_rows: AccountFeedCollaboratorRow[];
   current_rows: AccountFeedCollaboratorRow[];
+  event_ts?: string | Date | number | null;
 }): AccountFeedEvent[] {
   const previousIds = new Set(opts.previous_rows.map((row) => row.account_id));
   const currentIds = new Set(opts.current_rows.map((row) => row.account_id));
   const events: AccountFeedEvent[] = [];
+  const ts = eventTimestampMs(opts.event_ts);
   for (const collaborator_account_id of previousIds) {
     if (currentIds.has(collaborator_account_id)) continue;
     events.push({
       type: "collaborator.remove",
-      ts: Date.now(),
+      ts,
       account_id: opts.account_id,
       collaborator_account_id,
       reason: "membership_removed",
@@ -177,7 +187,7 @@ function collaboratorFeedEventsForAccount(opts: {
   for (const collaborator of opts.current_rows) {
     events.push({
       type: "collaborator.upsert",
-      ts: Date.now(),
+      ts,
       account_id: opts.account_id,
       collaborator,
     });
@@ -279,6 +289,7 @@ export async function applyProjectEventToAccountCollaboratorIndex(opts: {
             account_id,
             previous_rows,
             current_rows,
+            event_ts: opts.event.created_at,
           }),
         };
       },

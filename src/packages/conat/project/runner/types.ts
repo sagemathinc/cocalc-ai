@@ -61,6 +61,8 @@ export interface Configuration {
   gpu?: boolean;
   // backup restore behavior when starting a project on a host
   restore?: "none" | "auto" | "required";
+  // optional explicit backup id to restore instead of resolving "latest"
+  restore_backup_id?: string;
   // LRO op_id to publish progress for project start.
   lro_op_id?: string;
 }

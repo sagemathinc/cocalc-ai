@@ -132,6 +132,7 @@ export async function handleProjectControlStart(
       account_id: req.account_id,
       lro_op_id: req.lro_op_id,
       managed_egress_override: req.managed_egress_override,
+      restore_backup_id: req.restore_backup_id,
     });
   } finally {
     await stopForward();

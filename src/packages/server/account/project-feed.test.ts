@@ -153,6 +153,7 @@ describe("publishProjectAccountFeedEventsBestEffort", () => {
     expect(computeAccountProjectFeedEventsMock).toHaveBeenCalledWith({
       db: client,
       bay_id: "bay-0",
+      event_ts: new Date("2026-04-08T22:00:00.000Z"),
       payload: {
         project_id: "p1",
         owning_bay_id: "bay-0",
@@ -261,6 +262,7 @@ describe("publishProjectAccountFeedEventsBestEffort", () => {
     expect(remoteUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "project.upsert",
+        ts: Date.parse("2026-04-08T22:05:00.000Z"),
         account_id: REMOTE_ACCOUNT_ID,
         project: expect.objectContaining({
           project_id: "p1",
