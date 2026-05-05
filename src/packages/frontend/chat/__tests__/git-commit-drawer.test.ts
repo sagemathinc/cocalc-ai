@@ -3,6 +3,7 @@ import {
   filterGitReviewLogEntries,
   buildGitReviewFileSectionId,
   captureGitDiffScrollAnchor,
+  commentAnchorKey,
   DiffBlock,
   diffLineNumberColumnWidth,
   getNextRenderedDiffLineLimit,
@@ -207,8 +208,12 @@ describe("git commit drawer merge commit formatting", () => {
     };
 
     try {
-      const rendered = render(
-        React.createElement(DiffBlock, {
+      function Harness() {
+        const [draftAnchorId, setDraftAnchorId] = useState<string | undefined>(
+          undefined,
+        );
+        const [draftValue, setDraftValue] = useState("");
+        return React.createElement(DiffBlock, {
           filePath: "src/example.ts",
           lines: stableDiffLines,
           languageHint: "ts",
@@ -216,12 +221,27 @@ describe("git commit drawer merge commit formatting", () => {
           comments: stableComments,
           showResolvedComments: false,
           commentEnabled: true,
+          activeDraftAnchorId: draftAnchorId,
+          activeDraftBody: draftValue,
+          onOpenDraft: (anchor: any) => {
+            setDraftAnchorId(commentAnchorKey(anchor));
+            setDraftValue((current) =>
+              draftAnchorId === commentAnchorKey(anchor) ? current : "",
+            );
+          },
+          onDraftBodyChange: setDraftValue,
+          onCancelDraft: () => {
+            setDraftAnchorId(undefined);
+            setDraftValue("");
+          },
           onCreateComment: noopAsync,
           onUpdateComment: noopAsync,
           onResolveComment: noopAsync,
           onReopenComment: noopAsync,
-        }),
-      );
+        });
+      }
+
+      const rendered = render(React.createElement(Harness));
       expect(renders).toHaveLength(1);
 
       const line = rendered.container.querySelector("[data-git-anchor-id]");
@@ -234,17 +254,83 @@ describe("git commit drawer merge commit formatting", () => {
       act(() => {
         rendered.getAllByTitle("Add inline comment")[0].click();
       });
-      expect(renders).toHaveLength(2);
       expect(latestMarkdownInputProps).toBeTruthy();
 
       act(() => {
         latestMarkdownInputProps.onChange("draft text");
       });
-
-      expect(renders).toHaveLength(2);
+      expect(latestMarkdownInputProps.value).toBe("draft text");
     } finally {
       (DiffBlock as any).type = originalType;
     }
+  });
+
+  it("preserves inline draft text across diff block remounts", () => {
+    function Harness() {
+      const [visible, setVisible] = useState(true);
+      const [draftAnchorId, setDraftAnchorId] = useState<string | undefined>(
+        undefined,
+      );
+      const [draftValue, setDraftValue] = useState("");
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(
+          "button",
+          { onClick: () => setVisible((v) => !v) },
+          "toggle",
+        ),
+        visible
+          ? React.createElement(DiffBlock, {
+              filePath: "src/example.ts",
+              lines: stableDiffLines,
+              languageHint: "ts",
+              fontSize: 14,
+              comments: stableComments,
+              showResolvedComments: false,
+              commentEnabled: true,
+              activeDraftAnchorId: draftAnchorId,
+              activeDraftBody: draftValue,
+              onOpenDraft: (anchor: any) => {
+                setDraftAnchorId(commentAnchorKey(anchor));
+                setDraftValue((current) =>
+                  draftAnchorId === commentAnchorKey(anchor) ? current : "",
+                );
+              },
+              onDraftBodyChange: setDraftValue,
+              onCancelDraft: () => {
+                setDraftAnchorId(undefined);
+                setDraftValue("");
+              },
+              onCreateComment: noopAsync,
+              onUpdateComment: noopAsync,
+              onResolveComment: noopAsync,
+              onReopenComment: noopAsync,
+            })
+          : null,
+      );
+    }
+
+    const rendered = render(React.createElement(Harness));
+    act(() => {
+      rendered.getAllByTitle("Add inline comment")[0].click();
+    });
+    expect(latestMarkdownInputProps).toBeTruthy();
+
+    act(() => {
+      latestMarkdownInputProps.onChange("persist me");
+    });
+    expect(latestMarkdownInputProps.value).toBe("persist me");
+
+    act(() => {
+      rendered.getByText("toggle").click();
+    });
+    act(() => {
+      rendered.getByText("toggle").click();
+    });
+
+    expect(latestMarkdownInputProps).toBeTruthy();
+    expect(latestMarkdownInputProps.value).toBe("persist me");
   });
 
   it("sizes diff line number gutters using ch units for wide line numbers", () => {

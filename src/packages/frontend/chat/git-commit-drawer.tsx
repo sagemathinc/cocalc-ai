@@ -59,6 +59,7 @@ import {
   languageHintFromPath,
 } from "./diff-prism";
 import "./git-commit-drawer.css";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 const MAX_GIT_SHOW_LINES = 10_000;
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
@@ -854,7 +855,7 @@ function makeCommentAnchor(
   };
 }
 
-function commentAnchorKey({
+export function commentAnchorKey({
   side,
   line,
   hunk_hash,
@@ -970,26 +971,29 @@ export function MarkdownHistoryInput({
 function InlineDraftCommentEditor({
   filePath,
   anchorId,
+  value,
   fontSize,
   loading,
+  onChange,
   onCancel,
   onSave,
 }: {
   filePath: string;
   anchorId: string;
+  value: string;
   fontSize: number;
   loading: boolean;
+  onChange: (value: string) => void;
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
-  const [value, setValue] = useState("");
   return (
     <>
       <MarkdownHistoryInput
         historyId={`git-inline-draft:${filePath}:${anchorId}`}
         cacheId={`git-inline-draft:${filePath}:${anchorId}`}
         value={value}
-        onChange={setValue}
+        onChange={onChange}
         onShiftEnter={(next) => onSave(next)}
         placeholder="Add inline review comment..."
         fontSize={fontSize}
@@ -1029,28 +1033,29 @@ function InlineDraftCommentEditor({
 function InlineEditCommentEditor({
   filePath,
   commentId,
-  initialValue,
+  value,
   fontSize,
   loading,
+  onChange,
   onCancel,
   onSave,
 }: {
   filePath: string;
   commentId: string;
-  initialValue: string;
+  value: string;
   fontSize: number;
   loading: boolean;
+  onChange: (value: string) => void;
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
-  const [value, setValue] = useState(initialValue);
   return (
     <>
       <MarkdownHistoryInput
         historyId={`git-inline-edit:${filePath}:${commentId}`}
         cacheId={`git-inline-edit:${filePath}:${commentId}`}
         value={value}
-        onChange={setValue}
+        onChange={onChange}
         onShiftEnter={(next) => onSave(next)}
         placeholder="Edit inline review comment..."
         fontSize={fontSize}
@@ -1090,6 +1095,17 @@ export const DiffBlock = memo(function DiffBlock({
   showResolvedComments,
   commentEnabled,
   commentDisabledMessage,
+  activeDraftAnchorId,
+  activeDraftBody = "",
+  activeEditingId,
+  activeEditingBody = "",
+  pendingKey = "",
+  onOpenDraft = () => {},
+  onDraftBodyChange = () => {},
+  onCancelDraft = () => {},
+  onOpenEdit = () => {},
+  onEditingBodyChange = () => {},
+  onCancelEdit = () => {},
   onCreateComment,
   onUpdateComment,
   onResolveComment,
@@ -1104,6 +1120,17 @@ export const DiffBlock = memo(function DiffBlock({
   showResolvedComments: boolean;
   commentEnabled: boolean;
   commentDisabledMessage?: string;
+  activeDraftAnchorId?: string;
+  activeDraftBody?: string;
+  activeEditingId?: string;
+  activeEditingBody?: string;
+  pendingKey?: string;
+  onOpenDraft?: (anchor: CommentAnchor) => void;
+  onDraftBodyChange?: (value: string) => void;
+  onCancelDraft?: () => void;
+  onOpenEdit?: (comment: GitReviewCommentV2) => void;
+  onEditingBodyChange?: (value: string) => void;
+  onCancelEdit?: () => void;
   onCreateComment: (anchor: CommentAnchor, body: string) => Promise<void>;
   onUpdateComment: (id: string, body: string) => Promise<void>;
   onResolveComment: (id: string) => Promise<void>;
@@ -1139,13 +1166,6 @@ export const DiffBlock = memo(function DiffBlock({
     }
     return byAnchor;
   }, [comments, showResolvedComments]);
-  const [draftAnchor, setDraftAnchor] = useState<CommentAnchor | undefined>(
-    undefined,
-  );
-  const [editingId, setEditingId] = useState<string | undefined>(undefined);
-  const [pendingKey, setPendingKey] = useState<string>("");
-  const draftAnchorId =
-    draftAnchor == null ? "" : commentAnchorKey(draftAnchor);
   const commentButtonSlotStyle = {
     display: "inline-flex",
     alignItems: "center",
@@ -1155,62 +1175,12 @@ export const DiffBlock = memo(function DiffBlock({
     height: 22,
   } as const;
 
-  const closeDraft = () => {
-    setDraftAnchor(undefined);
-  };
-
-  const saveDraft = async (rawValue: string) => {
-    if (!draftAnchor) return;
-    const trimmed = `${rawValue ?? ""}`.trim();
-    if (!trimmed) return;
-    const key = `create:${commentAnchorKey(draftAnchor)}`;
-    setPendingKey(key);
-    try {
-      await onCreateComment(draftAnchor, trimmed);
-      closeDraft();
-    } finally {
-      setPendingKey("");
-    }
-  };
-
-  const saveEdit = async (id: string, rawValue: string) => {
-    if (editingId !== id) return;
-    const trimmed = `${rawValue ?? ""}`.trim();
-    if (!trimmed) return;
-    const key = `edit:${id}`;
-    setPendingKey(key);
-    try {
-      await onUpdateComment(id, trimmed);
-      setEditingId(undefined);
-    } finally {
-      setPendingKey("");
-    }
-  };
-
   const resolveComment = async (id: string) => {
-    const key = `resolve:${id}`;
-    setPendingKey(key);
-    try {
-      await onResolveComment(id);
-      if (editingId === id) {
-        setEditingId(undefined);
-      }
-    } finally {
-      setPendingKey("");
-    }
+    await onResolveComment(id);
   };
 
   const reopenComment = async (id: string) => {
-    const key = `reopen:${id}`;
-    setPendingKey(key);
-    try {
-      await onReopenComment(id);
-      if (editingId === id) {
-        setEditingId(undefined);
-      }
-    } finally {
-      setPendingKey("");
-    }
+    await onReopenComment(id);
   };
 
   return (
@@ -1239,7 +1209,10 @@ export const DiffBlock = memo(function DiffBlock({
         const anchorId = anchor == null ? "" : commentAnchorKey(anchor);
         const lineComments =
           anchor == null ? [] : (commentsByAnchor.get(anchorId) ?? []);
-        const showDraft = draftAnchorId !== "" && draftAnchorId === anchorId;
+        const showDraft =
+          activeDraftAnchorId != null &&
+          activeDraftAnchorId !== "" &&
+          activeDraftAnchorId === anchorId;
         return (
           <div key={idx}>
             <div
@@ -1310,7 +1283,7 @@ export const DiffBlock = memo(function DiffBlock({
                         });
                         return;
                       }
-                      setDraftAnchor(anchor);
+                      onOpenDraft(anchor);
                     }}
                     title={
                       commentEnabled
@@ -1333,7 +1306,7 @@ export const DiffBlock = memo(function DiffBlock({
             </div>
             {lineComments.length > 0
               ? lineComments.map((comment) => {
-                  const isEditing = editingId === comment.id;
+                  const isEditing = activeEditingId === comment.id;
                   return (
                     <div
                       key={comment.id}
@@ -1372,11 +1345,14 @@ export const DiffBlock = memo(function DiffBlock({
                           key={comment.id}
                           filePath={filePath}
                           commentId={comment.id}
-                          initialValue={comment.body_md}
+                          value={activeEditingBody}
                           fontSize={commentFontSize}
                           loading={pendingKey === `edit:${comment.id}`}
-                          onCancel={() => setEditingId(undefined)}
-                          onSave={(value) => void saveEdit(comment.id, value)}
+                          onChange={onEditingBodyChange}
+                          onCancel={onCancelEdit}
+                          onSave={(value) =>
+                            void onUpdateComment(comment.id, value)
+                          }
                         />
                       ) : (
                         <StaticMarkdown
@@ -1412,7 +1388,7 @@ export const DiffBlock = memo(function DiffBlock({
                           <Space.Compact size="small">
                             <Button
                               size="small"
-                              onClick={() => setEditingId(comment.id)}
+                              onClick={() => onOpenEdit(comment)}
                             >
                               Edit
                             </Button>
@@ -1462,16 +1438,182 @@ export const DiffBlock = memo(function DiffBlock({
                   key={anchorId}
                   filePath={filePath}
                   anchorId={anchorId}
+                  value={activeDraftBody}
                   fontSize={commentFontSize}
                   loading={pendingKey === `create:${anchorId}`}
-                  onCancel={closeDraft}
-                  onSave={(value) => void saveDraft(value)}
+                  onChange={onDraftBodyChange}
+                  onCancel={onCancelDraft}
+                  onSave={(value) => {
+                    if (!anchor) return;
+                    void onCreateComment(anchor, value);
+                  }}
                 />
               </div>
             ) : null}
           </div>
         );
       })}
+    </div>
+  );
+});
+
+const DiffFileSection = memo(function DiffFileSection({
+  file,
+  index,
+  fontSize,
+  editorTheme,
+  fileComments,
+  showResolvedComments,
+  isHeadSelected,
+  visibleLineLimit,
+  onOpenFile,
+  onShowMoreLines,
+  activeDraftAnchorId,
+  activeDraftBody,
+  activeEditingId,
+  activeEditingBody,
+  pendingKey,
+  onOpenDraft,
+  onDraftBodyChange,
+  onCancelDraft,
+  onOpenEdit,
+  onEditingBodyChange,
+  onCancelEdit,
+  onCreateComment,
+  onUpdateComment,
+  onResolveComment,
+  onReopenComment,
+}: {
+  file: GitShowFile;
+  index: number;
+  fontSize: number;
+  editorTheme?: string | null;
+  fileComments: GitReviewCommentV2[];
+  showResolvedComments: boolean;
+  isHeadSelected: boolean;
+  visibleLineLimit: number;
+  onOpenFile: (filePath: string) => Promise<void>;
+  onShowMoreLines: (sectionId: string) => void;
+  activeDraftAnchorId?: string;
+  activeDraftBody: string;
+  activeEditingId?: string;
+  activeEditingBody: string;
+  pendingKey: string;
+  onOpenDraft: (anchor: CommentAnchor) => void;
+  onDraftBodyChange: (value: string) => void;
+  onCancelDraft: () => void;
+  onOpenEdit: (comment: GitReviewCommentV2) => void;
+  onEditingBodyChange: (value: string) => void;
+  onCancelEdit: () => void;
+  onCreateComment: (anchor: CommentAnchor, body: string) => Promise<void>;
+  onUpdateComment: (id: string, body: string) => Promise<void>;
+  onResolveComment: (id: string) => Promise<void>;
+  onReopenComment: (id: string) => Promise<void>;
+}) {
+  const languageHint = languageHintFromPath(file.path);
+  const sectionId = buildGitReviewFileSectionId(file.path, index);
+  const visibleLines = file.lines.slice(0, visibleLineLimit);
+  const remainingLineCount = Math.max(
+    0,
+    file.lines.length - visibleLines.length,
+  );
+  return (
+    <div id={sectionId} style={{ marginBottom: 18 }}>
+      <div
+        style={{
+          position: "sticky",
+          top: -16,
+          zIndex: 3,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          flexWrap: "wrap",
+          marginBottom: 8,
+          padding: "8px 10px",
+          border: `1px solid ${DIFF_FILE_HEADER_BORDER}`,
+          borderRadius: 8,
+          background: DIFF_FILE_HEADER_BACKGROUND,
+          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+        }}
+      >
+        <Button
+          type="link"
+          size="small"
+          style={{
+            padding: 0,
+            height: "auto",
+            fontFamily: "monospace",
+            fontWeight: 700,
+            fontSize: Math.max(13, fontSize),
+            color: DIFF_FILE_HEADER_TEXT,
+          }}
+          onClick={() => void onOpenFile(file.path)}
+        >
+          {file.path}
+        </Button>
+        <Typography.Text
+          style={{
+            fontSize: 11,
+            color: DIFF_FILE_HEADER_SECONDARY,
+          }}
+        >
+          {filenameMode(file.path, "text")}
+          {fileComments.length > 0 ? ` · ${fileComments.length} comments` : ""}
+          {remainingLineCount > 0
+            ? ` · showing ${visibleLines.length.toLocaleString()} / ${file.lines.length.toLocaleString()} diff lines`
+            : ""}
+        </Typography.Text>
+      </div>
+      <DiffBlock
+        filePath={file.path}
+        lines={visibleLines}
+        languageHint={languageHint}
+        fontSize={fontSize}
+        editorTheme={editorTheme}
+        comments={fileComments}
+        showResolvedComments={showResolvedComments}
+        commentEnabled={!isHeadSelected}
+        commentDisabledMessage={
+          isHeadSelected ? "Please commit first, then comment." : undefined
+        }
+        activeDraftAnchorId={activeDraftAnchorId}
+        activeDraftBody={activeDraftBody}
+        activeEditingId={activeEditingId}
+        activeEditingBody={activeEditingBody}
+        pendingKey={pendingKey}
+        onOpenDraft={onOpenDraft}
+        onDraftBodyChange={onDraftBodyChange}
+        onCancelDraft={onCancelDraft}
+        onOpenEdit={onOpenEdit}
+        onEditingBodyChange={onEditingBodyChange}
+        onCancelEdit={onCancelEdit}
+        onCreateComment={onCreateComment}
+        onUpdateComment={onUpdateComment}
+        onResolveComment={onResolveComment}
+        onReopenComment={onReopenComment}
+      />
+      {remainingLineCount > 0 ? (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            marginTop: 10,
+          }}
+        >
+          <Button onClick={() => onShowMoreLines(sectionId)}>
+            Show{" "}
+            {Math.min(
+              RENDERED_DIFF_LINES_INCREMENT,
+              remainingLineCount,
+            ).toLocaleString()}{" "}
+            more lines
+            {remainingLineCount > RENDERED_DIFF_LINES_INCREMENT
+              ? ` (${remainingLineCount.toLocaleString()} remaining)`
+              : ""}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 });
@@ -1560,13 +1702,24 @@ export function GitCommitDrawer({
   const preserveCommitSearchOnAutoClearRef = useRef(false);
   const reviewImportInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const fileSectionRefs = useRef(new Map<string, HTMLDivElement | null>());
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const restoringScrollRef = useRef(false);
   const pendingScrollRestoreRef = useRef<number | null>(null);
   const pendingContextAnchorRef = useRef<GitDiffScrollAnchor | null>(null);
   const [visibleDiffLinesByFile, setVisibleDiffLinesByFile] = useState<
     Record<string, number>
   >({});
+  const [drawerScrollParent, setDrawerScrollParent] =
+    useState<HTMLDivElement | null>(null);
+  const [activeInlineDraft, setActiveInlineDraft] = useState<
+    CommentAnchor | undefined
+  >(undefined);
+  const [activeInlineDraftBody, setActiveInlineDraftBody] = useState("");
+  const [activeInlineEditId, setActiveInlineEditId] = useState<
+    string | undefined
+  >(undefined);
+  const [activeInlineEditBody, setActiveInlineEditBody] = useState("");
+  const [inlineCommentPendingKey, setInlineCommentPendingKey] = useState("");
 
   const cwd = useMemo(() => {
     const override = `${cwdOverride ?? ""}`.trim();
@@ -1616,6 +1769,15 @@ export function GitCommitDrawer({
   useEffect(() => {
     if (!open) return;
     setVisibleDiffLinesByFile({});
+  }, [open, commit, contextLines, reloadCounter]);
+
+  useEffect(() => {
+    if (!open) return;
+    setActiveInlineDraft(undefined);
+    setActiveInlineDraftBody("");
+    setActiveInlineEditId(undefined);
+    setActiveInlineEditBody("");
+    setInlineCommentPendingKey("");
   }, [open, commit, contextLines, reloadCounter]);
 
   useEffect(() => {
@@ -2438,17 +2600,115 @@ export function GitCommitDrawer({
     return byFile;
   }, [inlineComments]);
 
-  const scrollToDiffFile = useCallback((sectionId: string) => {
-    const container = scrollRef.current;
-    const target = fileSectionRefs.current.get(sectionId);
-    if (!container || !target) return;
-    const containerRect = container.getBoundingClientRect();
-    const targetRect = target.getBoundingClientRect();
-    const nextTop = Math.max(
-      0,
-      container.scrollTop + (targetRect.top - containerRect.top) - 12,
-    );
-    container.scrollTo({ top: nextTop, behavior: "smooth" });
+  const activeDraftAnchorId = useMemo(
+    () =>
+      activeInlineDraft == null
+        ? undefined
+        : commentAnchorKey(activeInlineDraft),
+    [activeInlineDraft],
+  );
+
+  const openInlineDraft = useCallback(
+    (anchor: CommentAnchor) => {
+      setActiveInlineEditId(undefined);
+      setActiveInlineEditBody("");
+      setActiveInlineDraft(anchor);
+      setActiveInlineDraftBody((current) =>
+        activeDraftAnchorId === commentAnchorKey(anchor) ? current : "",
+      );
+    },
+    [activeDraftAnchorId],
+  );
+
+  const cancelInlineDraft = useCallback(() => {
+    setActiveInlineDraft(undefined);
+    setActiveInlineDraftBody("");
+  }, []);
+
+  const openInlineEdit = useCallback((comment: GitReviewCommentV2) => {
+    setActiveInlineDraft(undefined);
+    setActiveInlineDraftBody("");
+    setActiveInlineEditId(comment.id);
+    setActiveInlineEditBody(comment.body_md);
+  }, []);
+
+  const cancelInlineEdit = useCallback(() => {
+    setActiveInlineEditId(undefined);
+    setActiveInlineEditBody("");
+  }, []);
+
+  const submitInlineDraft = useCallback(
+    async (anchor: CommentAnchor, value: string) => {
+      const trimmed = `${value ?? ""}`.trim();
+      if (!trimmed) return;
+      const key = `create:${commentAnchorKey(anchor)}`;
+      setInlineCommentPendingKey(key);
+      try {
+        await createInlineComment(anchor, trimmed);
+        setActiveInlineDraft(undefined);
+        setActiveInlineDraftBody("");
+      } finally {
+        setInlineCommentPendingKey("");
+      }
+    },
+    [createInlineComment],
+  );
+
+  const submitInlineEdit = useCallback(
+    async (id: string, value: string) => {
+      if (activeInlineEditId !== id) return;
+      const trimmed = `${value ?? ""}`.trim();
+      if (!trimmed) return;
+      setInlineCommentPendingKey(`edit:${id}`);
+      try {
+        await updateInlineComment(id, trimmed);
+        setActiveInlineEditId(undefined);
+        setActiveInlineEditBody("");
+      } finally {
+        setInlineCommentPendingKey("");
+      }
+    },
+    [activeInlineEditId, updateInlineComment],
+  );
+
+  const handleResolveInlineComment = useCallback(
+    async (id: string) => {
+      setInlineCommentPendingKey(`resolve:${id}`);
+      try {
+        await resolveInlineComment(id);
+        if (activeInlineEditId === id) {
+          setActiveInlineEditId(undefined);
+          setActiveInlineEditBody("");
+        }
+      } finally {
+        setInlineCommentPendingKey("");
+      }
+    },
+    [activeInlineEditId, resolveInlineComment],
+  );
+
+  const handleReopenInlineComment = useCallback(
+    async (id: string) => {
+      setInlineCommentPendingKey(`reopen:${id}`);
+      try {
+        await reopenInlineComment(id);
+        if (activeInlineEditId === id) {
+          setActiveInlineEditId(undefined);
+          setActiveInlineEditBody("");
+        }
+      } finally {
+        setInlineCommentPendingKey("");
+      }
+    },
+    [activeInlineEditId, reopenInlineComment],
+  );
+
+  const scrollToDiffFile = useCallback((index: number) => {
+    virtuosoRef.current?.scrollToIndex({
+      index,
+      align: "start",
+      behavior: "smooth",
+    });
   }, []);
 
   const sendInlineReviewToAgent = async () => {
@@ -2767,6 +3027,11 @@ export function GitCommitDrawer({
     if (restoringScrollRef.current) return;
     persistDrawerScrollPosition(scrollStorageId, node.scrollTop);
   };
+
+  const handleDrawerScrollRef = useCallback((node: HTMLDivElement | null) => {
+    scrollRef.current = node;
+    setDrawerScrollParent((current) => (current === node ? current : node));
+  }, []);
 
   const handleDrawerClose = () => {
     const node = scrollRef.current;
@@ -3159,7 +3424,7 @@ export function GitCommitDrawer({
         }}
       />
       <div
-        ref={scrollRef}
+        ref={handleDrawerScrollRef}
         onScroll={handleDrawerScroll}
         style={{
           height: "100%",
@@ -3808,7 +4073,7 @@ export function GitCommitDrawer({
                             fontFamily: "monospace",
                             maxWidth: "100%",
                           }}
-                          onClick={() => scrollToDiffFile(sectionId)}
+                          onClick={() => scrollToDiffFile(idx)}
                         >
                           {file.path}
                           {fileComments.length > 0
@@ -3819,129 +4084,62 @@ export function GitCommitDrawer({
                     })}
                   </div>
                 </div>
-                {data.files.map((file, idx) => {
-                  const languageHint = languageHintFromPath(file.path);
-                  const fileComments =
-                    inlineCommentsByFile.get(file.path) ??
-                    EMPTY_GIT_REVIEW_COMMENTS;
-                  const sectionId = buildGitReviewFileSectionId(file.path, idx);
-                  const visibleLineLimit = getRenderedDiffLineLimit(
-                    visibleDiffLinesByFile[sectionId],
-                  );
-                  const visibleLines = file.lines.slice(0, visibleLineLimit);
-                  const remainingLineCount = Math.max(
-                    0,
-                    file.lines.length - visibleLines.length,
-                  );
-                  return (
-                    <div
-                      key={`${file.path}-${idx}`}
-                      id={sectionId}
-                      ref={(node) => {
-                        fileSectionRefs.current.set(sectionId, node);
-                      }}
-                      style={{ marginBottom: 18 }}
-                    >
-                      <div
-                        style={{
-                          position: "sticky",
-                          top: -16,
-                          zIndex: 3,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                          flexWrap: "wrap",
-                          marginBottom: 8,
-                          padding: "8px 10px",
-                          border: `1px solid ${DIFF_FILE_HEADER_BORDER}`,
-                          borderRadius: 8,
-                          background: DIFF_FILE_HEADER_BACKGROUND,
-                          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
-                        }}
-                      >
-                        <Button
-                          type="link"
-                          size="small"
-                          style={{
-                            padding: 0,
-                            height: "auto",
-                            fontFamily: "monospace",
-                            fontWeight: 700,
-                            fontSize: Math.max(13, fontSize),
-                            color: DIFF_FILE_HEADER_TEXT,
-                          }}
-                          onClick={() => void openFile(file.path)}
-                        >
-                          {file.path}
-                        </Button>
-                        <Typography.Text
-                          style={{
-                            fontSize: 11,
-                            color: DIFF_FILE_HEADER_SECONDARY,
-                          }}
-                        >
-                          {filenameMode(file.path, "text")}
-                          {fileComments.length > 0
-                            ? ` · ${fileComments.length} comments`
-                            : ""}
-                          {remainingLineCount > 0
-                            ? ` · showing ${visibleLines.length.toLocaleString()} / ${file.lines.length.toLocaleString()} diff lines`
-                            : ""}
-                        </Typography.Text>
-                      </div>
-                      <DiffBlock
-                        filePath={file.path}
-                        lines={visibleLines}
-                        languageHint={languageHint}
+                <Virtuoso
+                  ref={virtuosoRef}
+                  customScrollParent={drawerScrollParent ?? undefined}
+                  data={data.files}
+                  computeItemKey={(idx, file) =>
+                    buildGitReviewFileSectionId(file.path, idx)
+                  }
+                  increaseViewportBy={1200}
+                  itemContent={(idx, file) => {
+                    const sectionId = buildGitReviewFileSectionId(
+                      file.path,
+                      idx,
+                    );
+                    const fileComments =
+                      inlineCommentsByFile.get(file.path) ??
+                      EMPTY_GIT_REVIEW_COMMENTS;
+                    return (
+                      <DiffFileSection
+                        file={file}
+                        index={idx}
                         fontSize={fontSize}
                         editorTheme={editorTheme}
-                        comments={fileComments}
+                        fileComments={fileComments}
                         showResolvedComments={showResolvedComments}
-                        commentEnabled={!isHeadSelected}
-                        commentDisabledMessage={
-                          isHeadSelected
-                            ? "Please commit first, then comment."
-                            : undefined
-                        }
-                        onCreateComment={createInlineComment}
-                        onUpdateComment={updateInlineComment}
-                        onResolveComment={resolveInlineComment}
-                        onReopenComment={reopenInlineComment}
+                        isHeadSelected={isHeadSelected}
+                        visibleLineLimit={getRenderedDiffLineLimit(
+                          visibleDiffLinesByFile[sectionId],
+                        )}
+                        onOpenFile={openFile}
+                        onShowMoreLines={(nextSectionId) => {
+                          setVisibleDiffLinesByFile((prev) => ({
+                            ...prev,
+                            [nextSectionId]: getNextRenderedDiffLineLimit(
+                              prev[nextSectionId],
+                            ),
+                          }));
+                        }}
+                        activeDraftAnchorId={activeDraftAnchorId}
+                        activeDraftBody={activeInlineDraftBody}
+                        activeEditingId={activeInlineEditId}
+                        activeEditingBody={activeInlineEditBody}
+                        pendingKey={inlineCommentPendingKey}
+                        onOpenDraft={openInlineDraft}
+                        onDraftBodyChange={setActiveInlineDraftBody}
+                        onCancelDraft={cancelInlineDraft}
+                        onOpenEdit={openInlineEdit}
+                        onEditingBodyChange={setActiveInlineEditBody}
+                        onCancelEdit={cancelInlineEdit}
+                        onCreateComment={submitInlineDraft}
+                        onUpdateComment={submitInlineEdit}
+                        onResolveComment={handleResolveInlineComment}
+                        onReopenComment={handleReopenInlineComment}
                       />
-                      {remainingLineCount > 0 ? (
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "center",
-                            marginTop: 10,
-                          }}
-                        >
-                          <Button
-                            onClick={() => {
-                              setVisibleDiffLinesByFile((prev) => ({
-                                ...prev,
-                                [sectionId]: getNextRenderedDiffLineLimit(
-                                  prev[sectionId],
-                                ),
-                              }));
-                            }}
-                          >
-                            Show{" "}
-                            {Math.min(
-                              RENDERED_DIFF_LINES_INCREMENT,
-                              remainingLineCount,
-                            ).toLocaleString()}{" "}
-                            more lines
-                            {remainingLineCount > RENDERED_DIFF_LINES_INCREMENT
-                              ? ` (${remainingLineCount.toLocaleString()} remaining)`
-                              : ""}
-                          </Button>
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                    );
+                  }}
+                />
               </>
             )}
             {data.linesTruncated ? (
