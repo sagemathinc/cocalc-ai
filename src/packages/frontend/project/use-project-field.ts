@@ -208,21 +208,25 @@ export async function ensureProjectFieldValue<T>({
   state,
   project_id,
   fetch,
+  force,
 }: {
   state: ProjectFieldState<T>;
   project_id: string;
   fetch: (project_id: string) => Promise<T | null>;
+  force?: boolean;
 }): Promise<T | null> {
   if (!project_id) {
     return null;
   }
-  const cached = getCachedProjectFieldValue({ state, project_id });
-  if (cached !== undefined) {
-    return cached ?? null;
-  }
   const existing = state.inflight.get(project_id);
   if (existing) {
     return await existing;
+  }
+  if (!force) {
+    const cached = getCachedProjectFieldValue({ state, project_id });
+    if (cached !== undefined) {
+      return cached ?? null;
+    }
   }
   const request = (async () => {
     try {
@@ -350,11 +354,15 @@ export function useProjectField<T>({
         return;
       }
       const requestId = ++requestSeq.current;
-      const nextValue = await fetch(project_id);
+      await ensureProjectFieldValue({
+        state,
+        project_id,
+        fetch,
+        force: counter !== 0,
+      });
       if (!isMounted() || requestId !== requestSeq.current) {
         return;
       }
-      setValue(nextValue ?? null);
     },
     [
       counter,

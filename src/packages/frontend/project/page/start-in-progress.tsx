@@ -3,6 +3,7 @@ import { Button, Progress, Space, Spin, Steps, Tag } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { TimeAgo } from "@cocalc/frontend/components";
+import { useProjectContext } from "@cocalc/frontend/project/context";
 import type { StartLroState } from "@cocalc/frontend/project/start-ops";
 import { useProjectActiveOperation } from "../use-project-active-op";
 import { progressBarStatus } from "@cocalc/frontend/lro/utils";
@@ -171,19 +172,27 @@ export default function StartInProgress({
 }: {
   project_id: string;
 }) {
+  const { is_active } = useProjectContext();
   const projectMap = useTypedRedux("projects", "project_map");
   const startLroRecord = useTypedRedux({ project_id }, "start_lro");
   const startLro = useMemo(
     () => startLroRecord?.toJS() as StartLroState | undefined,
     [startLroRecord],
   );
-  const { activeOp } = useProjectActiveOperation(project_id);
-  const activeOpStartLike = isActiveOpStartLike(activeOp);
   const lifecycleState = `${
     projectMap?.getIn([project_id, "state", "state"]) ?? ""
   }`
     .trim()
     .toLowerCase();
+  const startLroActive = isStartActive(startLro);
+  const { activeOp } = useProjectActiveOperation(project_id, {
+    pollWhile:
+      is_active &&
+      (startLroActive ||
+        lifecycleState === "starting" ||
+        lifecycleState === "opening"),
+  });
+  const activeOpStartLike = isActiveOpStartLike(activeOp);
   const active = isStartInProgressActive({
     startLro,
     activeOp,
@@ -253,7 +262,6 @@ export default function StartInProgress({
     activeOp?.message ??
     ""
   }`.trim();
-  const startLroActive = isStartActive(startLro);
   const phaseLabel = START_PHASES[current]?.label ?? "Starting";
   const actionLabel =
     activeOp?.action === "restart" ? "Restarting" : "Starting";

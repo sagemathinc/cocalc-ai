@@ -81,7 +81,7 @@ export function StartButton({
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectsLabel = intl.formatMessage(labels.projects);
-  const { project_id: contextProjectId } = useProjectContext();
+  const { project_id: contextProjectId, is_active } = useProjectContext();
   const project_id = projectIdProp ?? contextProjectId;
   const resolvedProjectId = project_id ?? "";
   const project_map = useTypedRedux("projects", "project_map");
@@ -115,15 +115,11 @@ export function StartButton({
     () => moveLroRecord?.toJS() as MoveLroState | undefined,
     [moveLroRecord],
   );
-  const { activeOp } = useProjectActiveOperation(resolvedProjectId);
   const startLroActive =
     startLro != null &&
     (!startLro.summary ||
       startLro.summary.status === "queued" ||
       startLro.summary.status === "running");
-  const activeOpStartLike =
-    activeOp?.kind === "project-start" &&
-    (activeOp.status === "queued" || activeOp.status === "running");
   const startLroSummary = startLro?.summary;
   const startLroStatus = startLroSummary?.status
     ? capitalize(startLroSummary.status)
@@ -156,14 +152,24 @@ export function StartButton({
     }
     return state;
   }, [project_map, resolvedProjectId, host_id, hostInfo]);
+  const lifecycleState = `${state?.get("state") ?? ""}`.trim().toLowerCase();
+  const { activeOp } = useProjectActiveOperation(resolvedProjectId, {
+    pollWhile:
+      is_active &&
+      (startLroActive ||
+        lifecycleState === "starting" ||
+        lifecycleState === "opening"),
+  });
+  const activeOpStartLike =
+    activeOp?.kind === "project-start" &&
+    (activeOp.status === "queued" || activeOp.status === "running");
 
   const starting = useMemo(() => {
-    const lifecycleState = state?.get("state");
     if (lifecycleState === "starting" || lifecycleState === "opening")
       return true;
     if (lifecycleState === "running") return false;
     return startLroActive || activeOpStartLike;
-  }, [activeOpStartLike, startLroActive, state]);
+  }, [activeOpStartLike, lifecycleState, startLroActive]);
 
   if (!project_id) {
     return null;

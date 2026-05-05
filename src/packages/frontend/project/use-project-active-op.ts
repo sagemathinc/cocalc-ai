@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ProjectActiveOperationSummary } from "@cocalc/conat/hub/api/projects";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -17,7 +17,46 @@ const POLL_MS = 4000;
 const activeOpFieldState =
   createProjectFieldState<ProjectActiveOperationSummary>("active_op");
 
-export function useProjectActiveOperation(project_id: string) {
+export function useProjectActiveOperation(
+  project_id: string,
+  opts?: {
+    pollWhile?: boolean;
+  },
+) {
+  const [isVisible, setIsVisible] = useState<boolean>(() =>
+    typeof document === "undefined"
+      ? true
+      : document.visibilityState === "visible",
+  );
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const updateVisibility = () => {
+      setIsVisible(document.visibilityState === "visible");
+    };
+    updateVisibility();
+    document.addEventListener("visibilitychange", updateVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", updateVisibility);
+    };
+  }, []);
+  const fetchActiveOp = useCallback(async (project_id0: string) => {
+    try {
+      return await webapp_client.conat_client.hub.projects.getProjectActiveOperation(
+        {
+          project_id: project_id0,
+        },
+      );
+    } catch {
+      return (
+        getCachedProjectFieldValue({
+          state: activeOpFieldState,
+          project_id: project_id0,
+        }) ?? null
+      );
+    }
+  }, []);
   const {
     value: activeOp,
     refresh,
@@ -26,33 +65,29 @@ export function useProjectActiveOperation(project_id: string) {
     state: activeOpFieldState,
     project_id,
     projectMapField: "active_op",
-    fetch: async (project_id0) => {
-      try {
-        return await webapp_client.conat_client.hub.projects.getProjectActiveOperation(
-          {
-            project_id: project_id0,
-          },
-        );
-      } catch {
-        return (
-          getCachedProjectFieldValue({
-            state: activeOpFieldState,
-            project_id: project_id0,
-          }) ?? null
-        );
-      }
-    },
+    fetch: fetchActiveOp,
   });
+  const shouldPoll = useMemo(
+    () =>
+      isVisible &&
+      !!project_id &&
+      !!(
+        opts?.pollWhile ||
+        (activeOp != null &&
+          (activeOp.status === "queued" || activeOp.status === "running"))
+      ),
+    [activeOp, isVisible, opts?.pollWhile, project_id],
+  );
 
   useEffect(() => {
-    if (!project_id) {
+    if (!shouldPoll) {
       return;
     }
     const timer = window.setInterval(() => {
       refresh();
     }, POLL_MS);
     return () => window.clearInterval(timer);
-  }, [project_id, refresh]);
+  }, [refresh, shouldPoll]);
 
   return {
     activeOp,
