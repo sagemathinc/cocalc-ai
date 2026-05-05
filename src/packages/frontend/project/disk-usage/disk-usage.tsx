@@ -1093,19 +1093,6 @@ export default function DiskUsage({
             </div>
           </div>
           <div style={{ marginBottom: "16px" }}>
-            <Space size={8} wrap style={{ marginBottom: "12px" }}>
-              <Text strong>Last backup:</Text>
-              {backupSummary.date != null ? (
-                <>
-                  <TimeAgo date={backupSummary.date} />
-                  {backupSummary.absolute ? (
-                    <Text type="secondary">({backupSummary.absolute})</Text>
-                  ) : null}
-                </>
-              ) : (
-                <Text>{backupSummary.detail}</Text>
-              )}
-            </Space>
             <Segmented
               options={[
                 { label: "Overview", value: "overview" },
@@ -1275,6 +1262,29 @@ export default function DiskUsage({
                         , not the shared base image itself.
                       </div>
                     )}
+                    <div
+                      style={{
+                        borderTop: `1px solid ${COLORS.GRAY_LL}`,
+                        marginTop: "14px",
+                        paddingTop: "12px",
+                      }}
+                    >
+                      <Text strong>Last backup:</Text>
+                      <div style={{ color: COLORS.GRAY_D, marginTop: "4px" }}>
+                        {backupSummary.date != null ? (
+                          <Space size={8} wrap>
+                            <TimeAgo date={backupSummary.date} />
+                            {backupSummary.absolute ? (
+                              <Text type="secondary">
+                                ({backupSummary.absolute})
+                              </Text>
+                            ) : null}
+                          </Space>
+                        ) : (
+                          <Text>{backupSummary.detail}</Text>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </>
               )}
