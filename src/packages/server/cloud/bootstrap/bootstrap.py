@@ -41,7 +41,7 @@ from typing import Any
 
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
-RUNTIME_WRAPPER_VERSION = "20260430-v7"
+RUNTIME_WRAPPER_VERSION = "20260505-v8"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 ROOTLESS_SUBID_MIN_TOTAL = 4 * 1024 * 1024
@@ -2267,14 +2267,21 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       repo_profile="${repo_profile%.toml}"
     fi
     rustic_cmd=(/opt/cocalc/tools/current/rustic -P "$repo_profile")
-    if ! "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
-      if ! "${rustic_cmd[@]}" --no-progress init >/dev/null 2>&1; then
-        # Another process may have initialized the repo concurrently; accept
-        # that case and only fail if the repository is still unusable.
-        "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1
+    cd "$src"
+    if "${rustic_cmd[@]}" backup --json --no-scan --host "$host_name" "$@" .; then
+      exit 0
+    fi
+    backup_status="$?"
+    if "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
+      exit "$backup_status"
+    fi
+    if ! "${rustic_cmd[@]}" --no-progress init >/dev/null 2>&1; then
+      # Another process may have initialized the repo concurrently; accept
+      # that case and only fail if the repository is still unusable.
+      if ! "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
+        exit "$backup_status"
       fi
     fi
-    cd "$src"
     exec "${rustic_cmd[@]}" backup --json --no-scan --host "$host_name" "$@" .
     ;;
   rootfs-rustic-restore)
@@ -2326,12 +2333,19 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
       repo_profile="${repo_profile%.toml}"
     fi
     rustic_cmd=(/opt/cocalc/tools/current/rustic -P "$repo_profile")
-    if ! "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
-      if ! "${rustic_cmd[@]}" --no-progress init >/dev/null 2>&1; then
-        "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1
+    cd "$src"
+    if "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .; then
+      exit 0
+    fi
+    backup_status="$?"
+    if "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
+      exit "$backup_status"
+    fi
+    if ! "${rustic_cmd[@]}" --no-progress init >/dev/null 2>&1; then
+      if ! "${rustic_cmd[@]}" repoinfo >/dev/null 2>&1; then
+        exit "$backup_status"
       fi
     fi
-    cd "$src"
     exec "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .
     ;;
   project-rustic-restore)
