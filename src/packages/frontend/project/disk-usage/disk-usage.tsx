@@ -85,7 +85,7 @@ export function describeLastBackup(lastBackup: unknown): BackupSummary {
   switch (indexedBackupState(lastBackup)) {
     case "present":
       return {
-        label: "Backed up",
+        label: "Backups",
         detail: "Last backup recorded.",
         absolute: date?.toLocaleString(),
         date,
