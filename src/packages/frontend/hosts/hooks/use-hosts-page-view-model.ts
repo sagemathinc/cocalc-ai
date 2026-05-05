@@ -843,6 +843,7 @@ export const useHostsPageViewModel = () => {
             ...(source === "hub" && baseUrl
               ? { base_url: `${baseUrl}/software` }
               : {}),
+            align_runtime_stack: true,
           });
           trackHostOp(host.id, op);
         }
