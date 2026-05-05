@@ -483,9 +483,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
       let project_map = store.get("project_map") ?? Map<string, any>();
       let changed = false;
       const seenProjectedIds = new globalThis.Set<string>();
+      const hiddenProjectedIds = new globalThis.Set<string>();
       const projectsToClose: string[] = [];
       for (const row of rows as ProjectIndexBootstrapRow[]) {
-        if (row?.is_hidden === true || !row?.project_id) {
+        if (!row?.project_id) {
+          continue;
+        }
+        if (row.is_hidden === true) {
+          hiddenProjectedIds.add(row.project_id);
           continue;
         }
         seenProjectedIds.add(row.project_id);
@@ -568,6 +573,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
         }
         project_map = project_map.set(row.project_id, nextProject);
         changed = true;
+      }
+      for (const project_id of hiddenProjectedIds) {
+        const project = project_map.get(project_id);
+        if (project?.get(PROJECTION_ONLY_FIELD) !== true) {
+          continue;
+        }
+        project_map = project_map.delete(project_id);
+        changed = true;
+        if (this.isProjectOpen(project_id)) {
+          projectsToClose.push(project_id);
+        }
       }
       if (rows.length < PROJECTED_PROJECT_BOOTSTRAP_LIMIT) {
         for (const [project_id, project] of project_map) {
