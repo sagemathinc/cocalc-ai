@@ -51,6 +51,10 @@ const DEFAULT_SNAPSHOTS_TIMEOUT_MS = Math.max(
   10_000,
   Number(process.env.COCALC_RUSTIC_SNAPSHOTS_TIMEOUT_MS ?? 60_000),
 );
+const DEFAULT_SNAPSHOTS_MAX_SIZE = Math.max(
+  10_000_000,
+  Number(process.env.COCALC_RUSTIC_SNAPSHOTS_MAX_SIZE ?? 100_000_000),
+);
 const BACKUP_EXCLUDE_GLOBS = ["!.snapshots", "!.snapshots/**"] as const;
 const RUSTIC_BACKUP_STAGING_DIR = ".rustic-backup-staging";
 
@@ -345,6 +349,7 @@ export class SubvolumeRustic {
     const { stdout, truncated } = parseOutput(
       await this.rusticHost(["snapshots", "--json"], {
         timeout: DEFAULT_SNAPSHOTS_TIMEOUT_MS,
+        maxSize: DEFAULT_SNAPSHOTS_MAX_SIZE,
       }),
     );
     /* stdout = [

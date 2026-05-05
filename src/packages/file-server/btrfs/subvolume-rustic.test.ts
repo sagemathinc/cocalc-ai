@@ -2,6 +2,7 @@ let btrfsMock: jest.Mock;
 let sudoMock: jest.Mock;
 let sandboxedFilesystemMock: jest.Mock;
 let backupFsRusticMock: jest.Mock;
+let rusticHostMock: jest.Mock;
 
 jest.mock("./util", () => ({
   btrfs: (...args: any[]) => btrfsMock(...args),
@@ -12,6 +13,11 @@ jest.mock("@cocalc/backend/sandbox", () => ({
   SandboxedFilesystem: function (...args: any[]) {
     return sandboxedFilesystemMock(...args);
   },
+}));
+
+jest.mock("@cocalc/backend/sandbox/rustic", () => ({
+  __esModule: true,
+  default: (...args: any[]) => rusticHostMock(...args),
 }));
 
 import {
@@ -73,6 +79,7 @@ describe("SubvolumeRustic.backup", () => {
   beforeEach(() => {
     btrfsMock = jest.fn(async () => undefined);
     sudoMock = jest.fn(async () => undefined);
+    rusticHostMock = jest.fn();
     backupFsRusticMock = jest.fn(async (_args, _opts) => {
       return {
         stdout: Buffer.from(
@@ -90,6 +97,50 @@ describe("SubvolumeRustic.backup", () => {
     sandboxedFilesystemMock = jest.fn((_path, _opts) => ({
       rustic: backupFsRusticMock,
     }));
+  });
+
+  it("uses a larger output budget when listing rustic snapshots", async () => {
+    rusticHostMock.mockResolvedValue({
+      stdout: Buffer.from(
+        JSON.stringify([
+          {
+            group_key: { hostname: "project-1" },
+            snapshots: [
+              {
+                id: "snap-1",
+                time: "2026-04-30T21:00:00.000Z",
+                summary: {},
+              },
+            ],
+          },
+        ]),
+      ),
+      stderr: Buffer.alloc(0),
+      code: 0,
+      truncated: false,
+    });
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: {
+        opts: { mount: "/mnt/test" },
+      },
+      fs: {
+        rusticRepo: "/repo",
+        rustic: jest.fn(),
+      },
+    } as any);
+
+    await rustic.snapshots();
+
+    expect(rusticHostMock).toHaveBeenCalledWith(
+      ["snapshots", "--json"],
+      expect.objectContaining({
+        timeout: 60000,
+        maxSize: expect.any(Number),
+      }),
+    );
+    expect(rusticHostMock.mock.calls[0][1].maxSize).toBeGreaterThan(10_000_000);
   });
 
   it("excludes .snapshots from future backups", async () => {

@@ -1061,6 +1061,19 @@ async function assertBackupSnapshotExists({
   project_id: string;
   id: string;
 }): Promise<void> {
+  try {
+    await syncBackupIndexCache(project_id);
+    const manifest = await loadBackupIndexManifest(project_id);
+    if (manifest.entries[id] != null) {
+      return;
+    }
+  } catch (err) {
+    logger.debug("backup index existence check failed", {
+      project_id,
+      id,
+      err: `${err}`,
+    });
+  }
   const vol = await getVolumeForBackup(project_id);
   const snapshots = await vol.rustic.snapshots();
   if (!snapshots.some((snapshot) => snapshot.id === id)) {

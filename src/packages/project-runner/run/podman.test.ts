@@ -3,6 +3,7 @@ const mockExecuteCode = jest.fn();
 const mockGetConmonContainerProcesses = jest.fn();
 const mockGetConmonContainerProcessLists = jest.fn();
 const mockUnmountAll = jest.fn();
+const mockFileServerClient = jest.fn();
 let processKillSpy: jest.SpyInstance;
 
 jest.mock("@cocalc/backend/logger", () => {
@@ -70,7 +71,7 @@ jest.mock("./env", () => ({
 }));
 
 jest.mock("./filesystem", () => ({
-  fileServerClient: {},
+  fileServerClient: (...args: any[]) => mockFileServerClient(...args),
   setQuota: jest.fn(),
 }));
 
@@ -103,6 +104,9 @@ describe("project-runner podman orphan fallback", () => {
     mockUnmountAll.mockResolvedValue(undefined);
     mockExecuteCode.mockResolvedValue({ stdout: "" });
     mockGetConmonContainerProcessLists.mockResolvedValue(new Map());
+    mockFileServerClient.mockReturnValue({
+      beginRestoreStaging: jest.fn(async () => null),
+    });
     processKillSpy = jest.spyOn(process, "kill").mockImplementation(() => true);
   });
 
@@ -431,5 +435,64 @@ describe("project-runner podman orphan fallback", () => {
       ssh_port: 30123,
       http_port: 45123,
     });
+  });
+
+  it("falls back to indexed backups when full rustic backup listing is truncated", async () => {
+    mockPodman.mockResolvedValue({ stdout: "" });
+    const getBackups = jest
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "rustic snapshots output truncated while listing backups for project-11111111-1111-4111-8111-111111111111",
+        ),
+      )
+      .mockResolvedValueOnce([
+        {
+          id: "backup-1",
+          time: new Date("2026-05-01T00:00:00.000Z"),
+          summary: {},
+        },
+      ]);
+    const restoreBackup = jest.fn(async () => undefined);
+    mockFileServerClient.mockReturnValue({
+      beginRestoreStaging: jest.fn(async () => ({
+        project_id: project1,
+        home: `/tmp/project-${project1}`,
+        restore: "auto",
+        homeExists: true,
+        stagingRoot: `/tmp/project-${project1}/.restore-staging`,
+        stagingPath: `/tmp/project-${project1}/.restore-staging/project-${project1}`,
+        markerPath: `/tmp/project-${project1}/.restore-staging/project-${project1}.json`,
+      })),
+      getBackups,
+      ensureRestoreStaging: jest.fn(async () => undefined),
+      restoreBackup,
+      finalizeRestoreStaging: jest.fn(async () => undefined),
+      releaseRestoreStaging: jest.fn(async () => undefined),
+    });
+
+    const status = await start({
+      project_id: project1,
+      localPath: async () => ({
+        home: `/tmp/project-${project1}`,
+      }),
+      config: {
+        image: "docker.io/library/ubuntu:latest",
+        restore: "auto",
+      },
+    });
+
+    expect(getBackups).toHaveBeenNthCalledWith(1, { project_id: project1 });
+    expect(getBackups).toHaveBeenNthCalledWith(2, {
+      project_id: project1,
+      indexed_only: true,
+    });
+    expect(restoreBackup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: project1,
+        id: "backup-1",
+      }),
+    );
+    expect(status).toMatchObject({ state: "running" });
   });
 });
