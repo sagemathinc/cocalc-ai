@@ -160,7 +160,7 @@ async function queryProjectedProjects<W extends ProjectLike = ProjectLike>({
   title?: string;
   host_id?: string | null;
   limit: number;
-}): Promise<W[]> {
+}): Promise<{ rows: W[]; matchedRowCount: number }> {
   const row: Record<string, unknown> = {
     account_id: ctx.accountId ?? null,
     project_id: null,
@@ -187,9 +187,12 @@ async function queryProjectedProjects<W extends ProjectLike = ProjectLike>({
     row,
     [{ limit, order_by: "-sort_key" }],
   );
-  return rows
-    .filter((x) => x.is_hidden !== true)
-    .map((x) => mapProjectedProjectRow<W>(x));
+  return {
+    rows: rows
+      .filter((x) => x.is_hidden !== true)
+      .map((x) => mapProjectedProjectRow<W>(x)),
+    matchedRowCount: rows.length,
+  };
 }
 
 export async function queryProjects<W extends ProjectLike = ProjectLike>({
@@ -208,14 +211,19 @@ export async function queryProjects<W extends ProjectLike = ProjectLike>({
   const readMode = getProjectListReadMode();
   if (readMode !== "off") {
     try {
-      const projectedRows = await queryProjectedProjects<W>({
-        ctx,
-        project_id,
-        title,
-        host_id,
-        limit,
-      });
-      if (readMode === "only" || projectedRows.length > 0) {
+      const { rows: projectedRows, matchedRowCount } =
+        await queryProjectedProjects<W>({
+          ctx,
+          project_id,
+          title,
+          host_id,
+          limit,
+        });
+      if (
+        readMode === "only" ||
+        projectedRows.length > 0 ||
+        matchedRowCount > 0
+      ) {
         return projectedRows;
       }
     } catch (err) {

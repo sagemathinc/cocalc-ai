@@ -187,6 +187,47 @@ test("queryProjects filters hidden account_project_index rows", async () => {
   ]);
 });
 
+test("queryProjects does not fall back and reveal hidden projected rows", async () => {
+  process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS = "prefer";
+  const seen: string[] = [];
+  const rows = await queryProjects({
+    ctx: createContext((table) => {
+      seen.push(table);
+      if (table === "account_project_index") {
+        return [
+          {
+            account_id: ACCOUNT_ID,
+            project_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            title: "Hidden Project",
+            host_id: null,
+            state_summary: { state: "running" },
+            last_edited: "2026-04-02T00:00:00.000Z",
+            sort_key: "2026-04-03T00:00:00.000Z",
+            updated_at: "2026-04-03T00:00:00.000Z",
+            is_hidden: true,
+          },
+        ];
+      }
+      if (table === "projects") {
+        return [
+          {
+            project_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            title: "Hidden Project",
+            host_id: null,
+            state: { state: "running" },
+            last_edited: "2026-04-02T00:00:00.000Z",
+            deleted: false,
+          },
+        ];
+      }
+      return [];
+    }),
+    limit: 10,
+  });
+  assert.deepEqual(seen, ["account_project_index"]);
+  assert.deepEqual(rows, []);
+});
+
 test("queryProjects does not treat projected sort_key as last_edited", async () => {
   process.env.COCALC_ACCOUNT_PROJECT_INDEX_PROJECT_LIST_READS = "prefer";
   const rows = await queryProjects({
