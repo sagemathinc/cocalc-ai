@@ -175,18 +175,75 @@ async function loadHostStatus(id: string) {
   return rows[0];
 }
 
+function parseTimestampMs(value?: string): number | undefined {
+  const text = `${value ?? ""}`.trim();
+  if (!text) return undefined;
+  const ms = new Date(text).getTime();
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function currentBootstrapFailure({
+  row,
+  since,
+}: {
+  row: any;
+  since?: number;
+}): string | undefined {
+  if (!since) return undefined;
+  const metadata = row?.metadata ?? {};
+  const bootstrap = metadata.bootstrap ?? {};
+  const bootstrapStatus = `${bootstrap.status ?? ""}`.trim().toLowerCase();
+  const bootstrapUpdatedMs = parseTimestampMs(bootstrap.updated_at);
+  const bootstrapMessage = `${bootstrap.message ?? ""}`.trim() || undefined;
+  if (
+    bootstrapStatus === "error" &&
+    (bootstrapUpdatedMs == null || bootstrapUpdatedMs >= since)
+  ) {
+    return bootstrapMessage ?? "host bootstrap failed";
+  }
+  const lifecycle = metadata.bootstrap_lifecycle ?? {};
+  const lifecycleStatus = `${lifecycle.summary_status ?? ""}`
+    .trim()
+    .toLowerCase();
+  const lifecycleStartedMs = parseTimestampMs(
+    lifecycle.last_reconcile_started_at,
+  );
+  const lifecycleFinishedMs = parseTimestampMs(
+    lifecycle.last_reconcile_finished_at,
+  );
+  if (
+    lifecycleStatus === "error" &&
+    [
+      lifecycleStartedMs,
+      lifecycleFinishedMs,
+      bootstrapUpdatedMs,
+      parseTimestampMs(metadata.last_action_at),
+    ].some((value) => value != null && value >= since)
+  ) {
+    return (
+      `${lifecycle.last_error ?? ""}`.trim() ||
+      `${lifecycle.summary_message ?? ""}`.trim() ||
+      bootstrapMessage ||
+      "host bootstrap failed"
+    );
+  }
+  return undefined;
+}
+
 async function waitForHostStatus({
   host_id,
   desired,
   failOn,
   allowDeleted,
   onUpdate,
+  bootstrapFailureSince,
 }: {
   host_id: string;
   desired: string[];
   failOn?: string[];
   allowDeleted?: boolean;
   onUpdate: (status: string, metadata?: any) => Promise<void>;
+  bootstrapFailureSince?: number;
 }) {
   const startedAt = Date.now();
   let lastStatus = "";
@@ -212,6 +269,13 @@ async function waitForHostStatus({
     }
     if (desired.includes(status)) {
       return { status, metadata: row.metadata ?? {} };
+    }
+    const bootstrapFailure = currentBootstrapFailure({
+      row,
+      since: bootstrapFailureSince,
+    });
+    if (bootstrapFailure) {
+      throw new Error(bootstrapFailure);
     }
     if (failOn && failOn.includes(status)) {
       const lastError = row.metadata?.last_error;
@@ -1372,12 +1436,15 @@ async function handleOp(op: LroSummary): Promise<void> {
     });
 
     const wait = waitConfig(kind);
+    const bootstrapFailureSince =
+      kind === "host-start" || kind === "host-restart" ? Date.now() : undefined;
     await progressStep("waiting", wait.message, { host_id });
     const final = await waitForHostStatus({
       host_id,
       desired: wait.desired,
       failOn: wait.failOn,
       allowDeleted: wait.allowDeleted,
+      bootstrapFailureSince,
       onUpdate: async (status, metadata) => {
         logger.debug("host op status update", {
           op_id,
@@ -1534,3 +1601,7 @@ export function startHostLroWorker({
     clearInterval(timer);
   };
 }
+
+export const __test__ = {
+  currentBootstrapFailure,
+};
