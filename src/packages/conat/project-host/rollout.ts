@@ -8,6 +8,7 @@ import type {
   HostRuntimeDeploymentStatus,
   HostRuntimeHostAgentProjectHostAutomaticRollback,
   HostRuntimeHostAgentProjectHostObservation,
+  HostRuntimeHostAgentProjectHostRolloutState,
 } from "@cocalc/conat/hub/api/hosts";
 import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
 
@@ -52,13 +53,33 @@ export function currentProjectHostAutomaticRollback({
   currentVersion?: string;
 }): HostRuntimeHostAgentProjectHostAutomaticRollback | undefined {
   const rollback = observation?.last_automatic_rollback;
-  if (!rollback) {
+  const fallbackRollback =
+    observation?.rollout?.phase === "rolled_back" &&
+    observation.rollout.target_version &&
+    observation.rollout.previous_version
+      ? {
+          target_version: observation.rollout.target_version,
+          rollback_version: observation.rollout.previous_version,
+          started_at:
+            observation.rollout.rollback_started_at ??
+            observation.rollout.started_at ??
+            "",
+          finished_at:
+            observation.rollout.rollback_finished_at ??
+            observation.rollout.accepted_at ??
+            "",
+          reason:
+            observation.rollout.failure_reason ?? "health_deadline_exceeded",
+        }
+      : undefined;
+  const candidate = rollback ?? fallbackRollback;
+  if (!candidate) {
     return undefined;
   }
-  if (currentVersion && rollback.rollback_version !== currentVersion) {
+  if (currentVersion && candidate.rollback_version !== currentVersion) {
     return undefined;
   }
-  return rollback;
+  return candidate;
 }
 
 export function shouldSuppressProjectHostFailedOp({
@@ -211,6 +232,72 @@ function currentManagedAlignmentPhase(
   return undefined;
 }
 
+function rolloutRecordPhase(
+  rollout: HostRuntimeHostAgentProjectHostRolloutState | undefined,
+): HostRolloutDisplayPhase | undefined {
+  if (!rollout) {
+    return undefined;
+  }
+  switch (rollout.phase) {
+    case "candidate_pending":
+      return {
+        label: "Installed on host; waiting for project-host restart",
+        owner: "project-host activation",
+        deadlineAt: rollout.deadline_at,
+        targetVersion: rollout.target_version,
+        observedVersion: rollout.running_version,
+      };
+    case "restart_requested":
+      return {
+        label: "Waiting for host-agent to restart project-host",
+        owner: "project-host activation",
+        deadlineAt: rollout.deadline_at,
+        targetVersion: rollout.target_version,
+        observedVersion: rollout.running_version,
+      };
+    case "candidate_starting":
+      return {
+        label: "Waiting for project-host candidate to start",
+        owner: "project-host activation",
+        deadlineAt: rollout.deadline_at,
+        targetVersion: rollout.target_version,
+        observedVersion: rollout.running_version,
+      };
+    case "candidate_running_unhealthy":
+    case "candidate_running_healthy":
+      return {
+        label: "Candidate running; evaluating health",
+        owner: "project-host activation",
+        deadlineAt: rollout.deadline_at,
+        targetVersion: rollout.target_version,
+        observedVersion: rollout.running_version,
+      };
+    case "promoted":
+      return {
+        label: "Candidate promoted to last known good",
+        owner: "project-host activation",
+        targetVersion: rollout.target_version,
+        observedVersion: rollout.running_version,
+      };
+    case "rollback_requested":
+      return {
+        label: "Rolling back to last known good",
+        owner: "project-host activation",
+        targetVersion: rollout.target_version,
+        observedVersion: rollout.running_version,
+      };
+    case "rolled_back":
+      return {
+        label: "Rolled back to last known good",
+        owner: "project-host activation",
+        targetVersion: rollout.target_version,
+        observedVersion: rollout.running_version,
+      };
+    default:
+      return undefined;
+  }
+}
+
 export function currentProjectHostRolloutPhase({
   op,
   currentVersion,
@@ -236,6 +323,7 @@ export function currentProjectHostRolloutPhase({
   }
 
   const message = progressMessage(op);
+  const rollout = observation?.rollout;
   const pending = observation?.pending_rollout;
   const projectHostArtifact = observedTargetForArtifact(
     deploymentStatus,
@@ -246,7 +334,7 @@ export function currentProjectHostRolloutPhase({
     "project-host",
   );
   const desiredVersion =
-    `${projectHostComponent?.desired_version ?? projectHostArtifact?.desired_version ?? pending?.target_version ?? ""}`.trim() ||
+    `${projectHostComponent?.desired_version ?? projectHostArtifact?.desired_version ?? rollout?.target_version ?? pending?.target_version ?? ""}`.trim() ||
     undefined;
   const artifactState = projectHostArtifact?.observed_version_state;
   const projectHostRunning = projectHostComponent?.running_versions ?? [];
@@ -266,6 +354,18 @@ export function currentProjectHostRolloutPhase({
       label: "Installing artifact",
       owner: "artifact installation",
     };
+  }
+
+  const rolloutPhase = rolloutRecordPhase(rollout);
+  if (rolloutPhase) {
+    if (
+      rollout?.phase === "promoted" &&
+      desiredVersion &&
+      projectHostRunning.includes(desiredVersion)
+    ) {
+      return currentManagedAlignmentPhase(deploymentStatus) ?? rolloutPhase;
+    }
+    return rolloutPhase;
   }
 
   if (pending) {

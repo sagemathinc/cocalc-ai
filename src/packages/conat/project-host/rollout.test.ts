@@ -198,6 +198,63 @@ describe("project-host-rollout", () => {
     });
   });
 
+  test("prefers the canonical rollout record for restart and deadline state", () => {
+    expect(
+      currentProjectHostRolloutPhase({
+        op: {
+          op_id: "op-1",
+          kind: "host-upgrade-software",
+          summary: { status: "running" } as any,
+        },
+        observation: {
+          rollout: {
+            phase: "restart_requested",
+            target_version: "ph-v2",
+            previous_version: "ph-v1",
+            deadline_at: "2026-05-05T00:05:00Z",
+            running_version: "ph-v1",
+          },
+          pending_rollout: {
+            target_version: "ph-v2",
+            previous_version: "ph-v1",
+            started_at: "2026-05-05T00:00:00Z",
+            deadline_at: "2026-05-05T00:05:00Z",
+          },
+        },
+      }),
+    ).toEqual({
+      label: "Waiting for host-agent to restart project-host",
+      owner: "project-host activation",
+      deadlineAt: "2026-05-05T00:05:00Z",
+      targetVersion: "ph-v2",
+      observedVersion: "ph-v1",
+    });
+  });
+
+  test("uses the canonical rollout record for a rolled-back automatic rollback marker", () => {
+    expect(
+      currentProjectHostAutomaticRollback({
+        currentVersion: "ph-v1",
+        observation: {
+          rollout: {
+            phase: "rolled_back",
+            target_version: "ph-v2",
+            previous_version: "ph-v1",
+            rollback_started_at: "2026-05-05T00:05:00Z",
+            rollback_finished_at: "2026-05-05T00:05:05Z",
+            failure_reason: "health_deadline_exceeded",
+          },
+        },
+      }),
+    ).toEqual({
+      target_version: "ph-v2",
+      rollback_version: "ph-v1",
+      started_at: "2026-05-05T00:05:00Z",
+      finished_at: "2026-05-05T00:05:05Z",
+      reason: "health_deadline_exceeded",
+    });
+  });
+
   test("shows managed component alignment after project-host promotion", () => {
     expect(
       currentProjectHostRolloutPhase({

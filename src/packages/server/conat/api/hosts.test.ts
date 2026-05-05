@@ -1256,6 +1256,13 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       getHostAgentStatus: async () => ({
         project_host: {
           last_known_good_version: "ph-v1",
+          rollout: {
+            phase: "candidate_pending",
+            target_version: "ph-v3",
+            previous_version: "ph-v1",
+            started_at: "2026-04-16T06:14:11.396Z",
+            deadline_at: "2026-04-16T06:14:31.396Z",
+          },
           pending_rollout: {
             target_version: "ph-v3",
             previous_version: "ph-v1",
@@ -1363,6 +1370,13 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
     expect(status.observed_host_agent).toEqual({
       project_host: {
         last_known_good_version: "ph-v1",
+        rollout: {
+          phase: "candidate_pending",
+          target_version: "ph-v3",
+          previous_version: "ph-v1",
+          started_at: "2026-04-16T06:14:11.396Z",
+          deadline_at: "2026-04-16T06:14:31.396Z",
+        },
         pending_rollout: {
           target_version: "ph-v3",
           previous_version: "ph-v1",

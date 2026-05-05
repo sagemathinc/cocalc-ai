@@ -5,6 +5,7 @@
 
 import {
   isProjectHostLocalRollbackError,
+  observedHostAgentFromMetadata,
   summarizeObservedRuntimeDeployments,
   summarizeRollbackTargets,
 } from "./hosts-runtime-observation";
@@ -231,5 +232,52 @@ describe("isProjectHostLocalRollbackError", () => {
         },
       }),
     ).toBe(false);
+  });
+});
+
+describe("observedHostAgentFromMetadata", () => {
+  it("surfaces a canonical rollout record and derives legacy rollout fields from it", () => {
+    expect(
+      observedHostAgentFromMetadata({
+        metadata: {
+          host_agent: {
+            project_host: {
+              last_known_good_version: "ph-v1",
+              rollout: {
+                phase: "rolled_back",
+                target_version: "ph-v2",
+                previous_version: "ph-v1",
+                started_at: "2026-05-05T07:00:00.000Z",
+                deadline_at: "2026-05-05T07:02:00.000Z",
+                rollback_started_at: "2026-05-05T07:02:01.000Z",
+                rollback_finished_at: "2026-05-05T07:02:05.000Z",
+                failure_reason: "health_deadline_exceeded",
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      project_host: {
+        last_known_good_version: "ph-v1",
+        rollout: {
+          phase: "rolled_back",
+          target_version: "ph-v2",
+          previous_version: "ph-v1",
+          started_at: "2026-05-05T07:00:00.000Z",
+          deadline_at: "2026-05-05T07:02:00.000Z",
+          rollback_started_at: "2026-05-05T07:02:01.000Z",
+          rollback_finished_at: "2026-05-05T07:02:05.000Z",
+          failure_reason: "health_deadline_exceeded",
+        },
+        last_automatic_rollback: {
+          target_version: "ph-v2",
+          rollback_version: "ph-v1",
+          started_at: "2026-05-05T07:02:01.000Z",
+          finished_at: "2026-05-05T07:02:05.000Z",
+          reason: "health_deadline_exceeded",
+        },
+      },
+    });
   });
 });

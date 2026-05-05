@@ -237,13 +237,17 @@ function projectHostRollbackVersionFromHostAgent({
   desiredVersion?: string;
 }): string | undefined {
   const targetVersion = normalizeObservedVersion(
-    hostAgentStatus?.project_host?.last_automatic_rollback?.target_version,
+    hostAgentStatus?.project_host?.last_automatic_rollback?.target_version ??
+      (hostAgentStatus?.project_host?.rollout?.phase === "rolled_back"
+        ? hostAgentStatus?.project_host?.rollout?.target_version
+        : undefined),
   );
   if (!desiredVersion || targetVersion !== desiredVersion) {
     return undefined;
   }
   return normalizeObservedVersion(
-    hostAgentStatus?.project_host?.last_automatic_rollback?.rollback_version,
+    hostAgentStatus?.project_host?.last_automatic_rollback?.rollback_version ??
+      hostAgentStatus?.project_host?.rollout?.previous_version,
   );
 }
 
@@ -255,7 +259,8 @@ function projectHostPendingRolloutMatches({
   desiredVersion?: string;
 }): boolean {
   const targetVersion = normalizeObservedVersion(
-    hostAgentStatus?.project_host?.pending_rollout?.target_version,
+    hostAgentStatus?.project_host?.pending_rollout?.target_version ??
+      hostAgentStatus?.project_host?.rollout?.target_version,
   );
   return !!desiredVersion && targetVersion === desiredVersion;
 }
@@ -266,7 +271,12 @@ function lastKnownGoodProjectHostVersion({
   hostAgentStatus?: HostAgentStatus;
 }): string | undefined {
   return normalizeObservedVersion(
-    hostAgentStatus?.project_host?.last_known_good_version,
+    hostAgentStatus?.project_host?.last_known_good_version ??
+      (hostAgentStatus?.project_host?.rollout?.phase === "promoted"
+        ? hostAgentStatus?.project_host?.rollout?.target_version
+        : hostAgentStatus?.project_host?.rollout?.phase === "rolled_back"
+          ? hostAgentStatus?.project_host?.rollout?.previous_version
+          : undefined),
   );
 }
 
@@ -282,6 +292,88 @@ function projectHostRolloutProgressUpdate({
   const targetVersion = normalizeObservedVersion(desiredVersion);
   if (!targetVersion) {
     return undefined;
+  }
+  const rollout = hostAgentStatus?.project_host?.rollout;
+  if (
+    rollout &&
+    normalizeObservedVersion(rollout.target_version) === targetVersion
+  ) {
+    const previousVersion = normalizeObservedVersion(rollout.previous_version);
+    const rolloutObservedVersion =
+      normalizeObservedVersion(rollout.running_version) ?? observedVersion;
+    switch (rollout.phase) {
+      case "candidate_pending":
+        return {
+          rollout_phase: "project_host.candidate_pending",
+          rollout_phase_label:
+            "Installed on host; waiting for project-host restart",
+          rollout_phase_owner: "project-host activation",
+          rollout_target_version: targetVersion,
+          rollout_observed_version: rolloutObservedVersion,
+          rollout_previous_version: previousVersion,
+          rollout_deadline_at: normalizeObservedVersion(rollout.deadline_at),
+        };
+      case "restart_requested":
+        return {
+          rollout_phase: "project_host.awaiting_restart",
+          rollout_phase_label: "Waiting for host-agent to restart project-host",
+          rollout_phase_owner: "project-host activation",
+          rollout_target_version: targetVersion,
+          rollout_observed_version: rolloutObservedVersion,
+          rollout_previous_version: previousVersion,
+          rollout_deadline_at: normalizeObservedVersion(rollout.deadline_at),
+        };
+      case "candidate_starting":
+        return {
+          rollout_phase: "project_host.candidate_starting",
+          rollout_phase_label: "Waiting for project-host candidate to start",
+          rollout_phase_owner: "project-host activation",
+          rollout_target_version: targetVersion,
+          rollout_observed_version: rolloutObservedVersion,
+          rollout_previous_version: previousVersion,
+          rollout_deadline_at: normalizeObservedVersion(rollout.deadline_at),
+        };
+      case "candidate_running_unhealthy":
+      case "candidate_running_healthy":
+        return {
+          rollout_phase: "project_host.candidate_health",
+          rollout_phase_label: "Candidate running; evaluating health",
+          rollout_phase_owner: "project-host activation",
+          rollout_target_version: targetVersion,
+          rollout_observed_version: rolloutObservedVersion,
+          rollout_previous_version: previousVersion,
+          rollout_deadline_at: normalizeObservedVersion(rollout.deadline_at),
+        };
+      case "promoted":
+        return {
+          rollout_phase: "project_host.candidate_promoted",
+          rollout_phase_label: "Candidate promoted to last known good",
+          rollout_phase_owner: "project-host activation",
+          rollout_target_version: targetVersion,
+          rollout_observed_version: rolloutObservedVersion,
+        };
+      case "rollback_requested":
+        return {
+          rollout_phase: "project_host.rollback_requested",
+          rollout_phase_label: "Rolling back to last known good",
+          rollout_phase_owner: "project-host activation",
+          rollout_target_version: targetVersion,
+          rollout_observed_version: rolloutObservedVersion,
+          rollout_previous_version: previousVersion,
+          rollout_deadline_at: normalizeObservedVersion(rollout.deadline_at),
+        };
+      case "rolled_back":
+        return {
+          rollout_phase: "project_host.rolled_back",
+          rollout_phase_label: "Rolled back to last known good",
+          rollout_phase_owner: "project-host activation",
+          rollout_target_version: targetVersion,
+          rollout_observed_version: rolloutObservedVersion,
+          rollout_previous_version: previousVersion,
+        };
+      default:
+        break;
+    }
   }
   const pending = hostAgentStatus?.project_host?.pending_rollout;
   const lastKnownGoodVersion = lastKnownGoodProjectHostVersion({
