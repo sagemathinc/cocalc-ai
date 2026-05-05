@@ -152,6 +152,11 @@ function eventTimeMs(
   return Number.isFinite(ms) ? ms : undefined;
 }
 
+function dateValueMs(value: unknown): number | undefined {
+  const date = dateOrNull(value);
+  return date != null ? date.getTime() : undefined;
+}
+
 type DirectProjectBootstrapRow = {
   project_id: string;
   title?: string | null;
@@ -502,6 +507,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
         ) {
           nextProject = nextProject.set("state", currentProject.get("state"));
         }
+        if (
+          this.shouldPreserveNewerLocalLastEdited({
+            currentProject,
+            incomingLastEdited: row.sort_key ?? row.updated_at,
+          })
+        ) {
+          nextProject = nextProject.set(
+            "last_edited",
+            currentProject.get("last_edited"),
+          );
+        }
         project_map = project_map.set(row.project_id, nextProject);
       }
       try {
@@ -600,6 +616,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return false;
     }
     const incomingMs = stateTimeMs(incomingState);
+    return incomingMs == null || incomingMs < currentMs;
+  }
+
+  private shouldPreserveNewerLocalLastEdited({
+    currentProject,
+    incomingLastEdited,
+  }: {
+    currentProject: Map<string, any>;
+    incomingLastEdited?: string | Date | null;
+  }): boolean {
+    const currentMs = dateValueMs(currentProject.get("last_edited"));
+    if (currentMs == null) {
+      return false;
+    }
+    const incomingMs = dateValueMs(incomingLastEdited);
     return incomingMs == null || incomingMs < currentMs;
   }
 
@@ -734,6 +765,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
       ) {
         nextProject = nextProject.set("state", currentProject.get("state"));
       }
+      if (
+        this.shouldPreserveNewerLocalLastEdited({
+          currentProject,
+          incomingLastEdited: row.last_edited ?? undefined,
+        })
+      ) {
+        nextProject = nextProject.set(
+          "last_edited",
+          currentProject.get("last_edited"),
+        );
+      }
       project_map = project_map.set(row.project_id, nextProject);
       changed = true;
       hostChanges.push({
@@ -785,6 +827,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
       })
     ) {
       nextProject = nextProject.set("state", currentProject.get("state"));
+    }
+    if (
+      this.shouldPreserveNewerLocalLastEdited({
+        currentProject,
+        incomingLastEdited: row.last_edited ?? undefined,
+      })
+    ) {
+      nextProject = nextProject.set(
+        "last_edited",
+        currentProject.get("last_edited"),
+      );
     }
     const project_map = (store.get("project_map") ?? Map<string, any>()).set(
       row.project_id,
