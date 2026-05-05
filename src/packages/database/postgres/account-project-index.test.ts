@@ -277,4 +277,58 @@ describe("account_project_index rebuild", () => {
       rows: [{ last_opened_at: new Date("2026-04-03T23:45:00.000Z") }],
     });
   });
+
+  it("skips viewer-only memberships during rebuild", async () => {
+    await getPool().query(
+      `INSERT INTO accounts (account_id, first_name, last_name, created, email_address, home_bay_id)
+       VALUES ($1, 'Viewer', 'User', NOW(), 'viewer-user@example.com', $2)`,
+      [ACCOUNT_ID, LOCAL_BAY_ID],
+    );
+    await getPool().query(
+      `INSERT INTO projects
+        (project_id, title, description, users, state, host_id, owning_bay_id, last_edited, created)
+       VALUES
+        ($1, 'Viewer Project', 'should not project', $2, $3, NULL, $4, NOW(), NOW())`,
+      [
+        PROJECT_VISIBLE,
+        JSON.stringify({
+          [ACCOUNT_ID]: { group: "viewer" },
+        }),
+        JSON.stringify({ state: "running" }),
+        LOCAL_BAY_ID,
+      ],
+    );
+
+    await expect(
+      rebuildAccountProjectIndex({
+        account_id: ACCOUNT_ID,
+        bay_id: LOCAL_BAY_ID,
+      }),
+    ).resolves.toMatchObject({
+      source_rows: 0,
+      visible_rows: 0,
+      hidden_rows: 0,
+    });
+
+    await expect(
+      rebuildAccountProjectIndex({
+        account_id: ACCOUNT_ID,
+        bay_id: LOCAL_BAY_ID,
+        dry_run: false,
+      }),
+    ).resolves.toMatchObject({
+      inserted_rows: 0,
+    });
+
+    await expect(
+      getPool().query(
+        `SELECT project_id
+           FROM account_project_index
+          WHERE account_id = $1`,
+        [ACCOUNT_ID],
+      ),
+    ).resolves.toMatchObject({
+      rows: [],
+    });
+  });
 });

@@ -6,6 +6,11 @@
 import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 
+const VISIBLE_PROJECT_GROUP_SQL = `COALESCE(
+  users #>> ARRAY[$1::TEXT, 'group']::TEXT[],
+  ''
+) IN ('owner', 'collaborator')`;
+
 export interface RebuildAccountProjectIndexResult {
   bay_id: string;
   target_account_id: string;
@@ -164,20 +169,23 @@ async function getSourceCounts(account_id: string): Promise<{
     `SELECT
         COUNT(*)::TEXT AS source_rows,
         COUNT(*) FILTER (
-          WHERE NOT COALESCE(
+          WHERE ${VISIBLE_PROJECT_GROUP_SQL}
+            AND NOT COALESCE(
             (users #>> ARRAY[$1::TEXT, 'hide']::TEXT[])::BOOLEAN,
             FALSE
           )
         )::TEXT AS visible_rows,
         COUNT(*) FILTER (
-          WHERE COALESCE(
+          WHERE ${VISIBLE_PROJECT_GROUP_SQL}
+            AND COALESCE(
             (users #>> ARRAY[$1::TEXT, 'hide']::TEXT[])::BOOLEAN,
             FALSE
           )
         )::TEXT AS hidden_rows
       FROM projects
       WHERE deleted IS NOT TRUE
-        AND users ? $1::TEXT`,
+        AND users ? $1::TEXT
+        AND ${VISIBLE_PROJECT_GROUP_SQL}`,
     [account_id],
   );
   return {
@@ -285,7 +293,8 @@ export async function rebuildAccountProjectIndex(opts: {
         FROM projects
         LEFT JOIN previous_rows USING (project_id)
         WHERE deleted IS NOT TRUE
-          AND users ? $1::TEXT`,
+          AND users ? $1::TEXT
+          AND ${VISIBLE_PROJECT_GROUP_SQL}`,
       [
         account_id,
         bay_id,
