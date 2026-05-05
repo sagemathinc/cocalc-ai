@@ -32,6 +32,11 @@ import {
   ConatError,
   type Client as ConatClient,
 } from "@cocalc/conat/core/client";
+import type {
+  ProjectBackupConfig,
+  ProjectBackupIndexRecord,
+  ProjectBackupIndexStoreConfig,
+} from "@cocalc/conat/hub/api/hosts";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getLogger from "@cocalc/backend/logger";
@@ -142,6 +147,10 @@ import {
 import { btrfs, sudo } from "@cocalc/file-server/btrfs/util";
 import { subvolume } from "@cocalc/file-server/btrfs/subvolume";
 import { ensureRootfsRusticRepoProfile } from "./rootfs-rustic";
+import {
+  downloadBackupIndexObject,
+  uploadBackupIndexObject,
+} from "./backup-index-object-store";
 
 type SshTarget = { type: "project"; project_id: string };
 
@@ -965,7 +974,12 @@ async function assertBackupSnapshotExists({
 
 const backupConfigCache = new Map<
   string,
-  { toml: string; expiresAt: number; path: string }
+  {
+    toml: string;
+    expiresAt: number;
+    path: string;
+    index_store?: ProjectBackupIndexStoreConfig | null;
+  }
 >();
 let backupConfigInvalidationSub: any = null;
 const BACKUP_CONFIG_FETCH_RETRY_MS = 5000;
@@ -1047,10 +1061,9 @@ async function startBackupConfigInvalidation(client: ConatClient) {
   );
 }
 
-async function fetchBackupConfig(project_id: string): Promise<{
-  toml: string;
-  ttl_seconds: number;
-} | null> {
+async function fetchBackupConfig(
+  project_id: string,
+): Promise<ProjectBackupConfig | null> {
   logger.debug("fetchBackupConfig", { project_id });
   const client = getMasterConatClient();
   if (!client) {
@@ -1094,6 +1107,131 @@ async function reportBackupSuccess(
   });
 }
 
+async function reportProjectBackupIndex({
+  project_id,
+  backup_id,
+  backup_time,
+  status,
+  object_key,
+  compression,
+  sqlite_bytes,
+  object_bytes,
+  sha256,
+  error,
+}: {
+  project_id: string;
+  backup_id: string;
+  backup_time: Date | string;
+  status: "complete" | "failed";
+  object_key?: string | null;
+  compression?: string | null;
+  sqlite_bytes?: number | null;
+  object_bytes?: number | null;
+  sha256?: string | null;
+  error?: string | null;
+}): Promise<void> {
+  const client = getMasterConatClient();
+  if (!client) {
+    logger.warn("backup index manifest not reported: master missing", {
+      project_id,
+      backup_id,
+      status,
+    });
+    return;
+  }
+  const hostId = getLocalHostId();
+  if (!hostId) return;
+  await callHub({
+    client,
+    host_id: hostId,
+    name: "hosts.recordProjectBackupIndex",
+    args: [
+      {
+        project_id,
+        backup_id,
+        backup_time,
+        status,
+        storage_backend: "r2-object-store",
+        object_key,
+        compression,
+        sqlite_bytes,
+        object_bytes,
+        sha256,
+        error,
+      },
+    ],
+    timeout: 30000,
+  });
+}
+
+async function getRemoteProjectBackupIndexes(
+  project_id: string,
+): Promise<ProjectBackupIndexRecord[]> {
+  const client = getMasterConatClient();
+  if (!client) {
+    throw new Error("master conat client missing");
+  }
+  const hostId = getLocalHostId();
+  if (!hostId) {
+    throw new Error("local host_id missing");
+  }
+  return await callHub({
+    client,
+    host_id: hostId,
+    name: "hosts.getProjectBackupIndexes",
+    args: [{ project_id }],
+    timeout: 30000,
+  });
+}
+
+async function syncRemoteProjectBackupIndexes({
+  project_id,
+  backup_ids,
+}: {
+  project_id: string;
+  backup_ids: string[];
+}): Promise<void> {
+  const client = getMasterConatClient();
+  if (!client) {
+    throw new Error("master conat client missing");
+  }
+  const hostId = getLocalHostId();
+  if (!hostId) {
+    throw new Error("local host_id missing");
+  }
+  await callHub({
+    client,
+    host_id: hostId,
+    name: "hosts.syncProjectBackupIndexes",
+    args: [{ project_id, backup_ids }],
+    timeout: 30000,
+  });
+}
+
+async function deleteRemoteProjectBackupIndex({
+  project_id,
+  backup_id,
+}: {
+  project_id: string;
+  backup_id: string;
+}): Promise<void> {
+  const client = getMasterConatClient();
+  if (!client) {
+    throw new Error("master conat client missing");
+  }
+  const hostId = getLocalHostId();
+  if (!hostId) {
+    throw new Error("local host_id missing");
+  }
+  await callHub({
+    client,
+    host_id: hostId,
+    name: "hosts.deleteProjectBackupIndex",
+    args: [{ project_id, backup_id }],
+    timeout: 30000,
+  });
+}
+
 async function ensureBackupConfig(project_id: string): Promise<string | null> {
   logger.debug("ensureBackupConfig", { project_id });
   const profilePath = join(secrets, "rustic", `project-${project_id}.toml`);
@@ -1120,6 +1258,7 @@ async function ensureBackupConfig(project_id: string): Promise<string | null> {
             ? fetchedAt + ttlSeconds * 1000
             : fetchedAt + 3600 * 1000,
         path: profilePath,
+        index_store: remoteConfig?.index_store,
       });
       await mkdir(profileDir, { recursive: true });
       await writeFile(profilePath, toml, "utf8");
@@ -1146,6 +1285,18 @@ async function ensureBackupConfig(project_id: string): Promise<string | null> {
       );
     }
   }
+}
+
+async function getBackupIndexStoreConfig(
+  project_id: string,
+): Promise<ProjectBackupIndexStoreConfig | null> {
+  const now = Date.now();
+  const cached = backupConfigCache.get(project_id);
+  if (cached && now < cached.expiresAt) {
+    return cached.index_store ?? null;
+  }
+  await ensureBackupConfig(project_id);
+  return backupConfigCache.get(project_id)?.index_store ?? null;
 }
 
 export async function resolveRusticRepo(project_id?: string): Promise<string> {
@@ -2017,6 +2168,14 @@ interface BackupIndexManifest {
       snapshot_id: string;
       file: string;
       remote_snapshot_id?: string;
+      status?: "complete" | "failed";
+      object_key?: string;
+      compression?: string;
+      sha256?: string;
+      sqlite_bytes?: number;
+      object_bytes?: number;
+      backup_time?: string;
+      error?: string;
     }
   >;
 }
@@ -2062,14 +2221,30 @@ async function recordBackupIndexLocal({
   project_id,
   backup_id,
   snapshot_id,
+  status,
+  object_key,
+  compression,
+  sha256,
+  sqlite_bytes,
+  object_bytes,
+  backup_time,
+  error,
 }: {
   project_id: string;
   backup_id: string;
   snapshot_id?: string;
+  status?: "complete" | "failed";
+  object_key?: string;
+  compression?: string;
+  sha256?: string;
+  sqlite_bytes?: number;
+  object_bytes?: number;
+  backup_time?: string;
+  error?: string;
 }): Promise<void> {
   const file = backupIndexFileName(backup_id);
   const filePath = join(backupIndexDir(project_id), file);
-  if (!(await exists(filePath))) {
+  if (!(await exists(filePath)) && !object_key) {
     return;
   }
   const manifest = await loadBackupIndexManifest(project_id);
@@ -2077,6 +2252,14 @@ async function recordBackupIndexLocal({
     snapshot_id: "local",
     file,
     remote_snapshot_id: snapshot_id,
+    status,
+    object_key,
+    compression,
+    sha256,
+    sqlite_bytes,
+    object_bytes,
+    backup_time,
+    error,
   };
   await saveBackupIndexManifest(project_id, manifest);
 }
@@ -2127,6 +2310,118 @@ function parseBackupIdFromLabel(label?: string): string | null {
   if (!label) return null;
   const match = label.match(/backup-id=([0-9a-f-]+)/i);
   return match?.[1] ?? null;
+}
+
+function manifestEntryFromRemoteBackupIndex(
+  record: ProjectBackupIndexRecord,
+): BackupIndexManifest["entries"][string] {
+  return {
+    snapshot_id: "local",
+    file: backupIndexFileName(record.backup_id),
+    status: record.status,
+    object_key: record.object_key ?? undefined,
+    compression: record.compression ?? undefined,
+    sha256: record.sha256 ?? undefined,
+    sqlite_bytes:
+      record.sqlite_bytes == null ? undefined : Number(record.sqlite_bytes),
+    object_bytes:
+      record.object_bytes == null ? undefined : Number(record.object_bytes),
+    backup_time: record.backup_time,
+    error: record.error ?? undefined,
+  };
+}
+
+async function materializeDirectBackupIndexEntry({
+  project_id,
+  config,
+  record,
+}: {
+  project_id: string;
+  config: ProjectBackupIndexStoreConfig;
+  record: ProjectBackupIndexRecord;
+}): Promise<void> {
+  if (
+    record.status !== "complete" ||
+    !record.object_key ||
+    record.compression !== "gzip"
+  ) {
+    return;
+  }
+  const filePath = join(
+    backupIndexDir(project_id),
+    backupIndexFileName(record.backup_id),
+  );
+  if (await exists(filePath)) {
+    return;
+  }
+  await downloadBackupIndexObject({
+    config,
+    object_key: record.object_key,
+    sha256: record.sha256,
+    output_path: filePath,
+  });
+}
+
+async function syncDirectBackupIndexCache(
+  project_id: string,
+  manifest: BackupIndexManifest,
+  opts?: { backupIds?: Set<string>; materialize?: boolean },
+): Promise<BackupIndexManifest> {
+  const config = await getBackupIndexStoreConfig(project_id);
+  if (!config) {
+    return manifest;
+  }
+  if (opts?.backupIds) {
+    await syncRemoteProjectBackupIndexes({
+      project_id,
+      backup_ids: Array.from(opts.backupIds),
+    });
+  }
+  const remote = await getRemoteProjectBackupIndexes(project_id);
+  const allowed = opts?.backupIds;
+  const remoteEntries = allowed
+    ? remote.filter((entry) => allowed.has(entry.backup_id))
+    : remote;
+  for (const record of remoteEntries) {
+    manifest.entries[record.backup_id] = {
+      ...(manifest.entries[record.backup_id] ?? {}),
+      ...manifestEntryFromRemoteBackupIndex(record),
+    };
+    if (opts?.materialize) {
+      try {
+        await materializeDirectBackupIndexEntry({
+          project_id,
+          config,
+          record,
+        });
+      } catch (err) {
+        logger.warn("backup index object materialization failed", {
+          project_id,
+          backup_id: record.backup_id,
+          err,
+        });
+      }
+    }
+  }
+  const remoteIds = new Set(remoteEntries.map((entry) => entry.backup_id));
+  for (const backup_id of Object.keys(manifest.entries)) {
+    const entry = manifest.entries[backup_id];
+    if (!entry) continue;
+    const isLegacyOnly =
+      !entry.object_key && (!!entry.remote_snapshot_id || entry.status == null);
+    const shouldKeep = allowed
+      ? allowed.has(backup_id)
+      : remoteIds.has(backup_id) || isLegacyOnly;
+    if (shouldKeep) continue;
+    if (entry.file) {
+      await rm(join(backupIndexDir(project_id), entry.file), {
+        force: true,
+      }).catch(() => undefined);
+    }
+    delete manifest.entries[backup_id];
+  }
+  await saveBackupIndexManifest(project_id, manifest);
+  return manifest;
 }
 
 async function listBackupIndexSnapshots(project_id: string): Promise<
@@ -2213,7 +2508,7 @@ async function forgetBackupIndexSnapshot(
 
 async function syncBackupIndexCache(
   project_id: string,
-  opts?: { backupIds?: Set<string>; force?: boolean },
+  opts?: { backupIds?: Set<string>; force?: boolean; materialize?: boolean },
 ): Promise<BackupIndexManifest> {
   const state = backupIndexSyncState.get(project_id) ?? {};
   if (!opts?.force && state.lastSync) {
@@ -2234,6 +2529,20 @@ async function syncBackupIndexCache(
         ...entry,
         ...(manifest.entries[backup_id] ?? {}),
       };
+    }
+    try {
+      const directConfig = await getBackupIndexStoreConfig(project_id);
+      if (directConfig) {
+        return await syncDirectBackupIndexCache(project_id, manifest, {
+          backupIds: opts?.backupIds,
+          materialize: opts?.materialize,
+        });
+      }
+    } catch (err) {
+      logger.warn("direct backup index sync failed; falling back to rustic", {
+        project_id,
+        err,
+      });
     }
     let remote: {
       backup_id: string;
@@ -2351,6 +2660,18 @@ async function ensureBackupIndexEntryAvailable({
   if (existing && existingPath && (await exists(existingPath))) {
     return existing;
   }
+  const directConfig = await getBackupIndexStoreConfig(project_id).catch(
+    () => null,
+  );
+  if (directConfig && existing?.object_key && existing.status === "complete") {
+    await downloadBackupIndexObject({
+      config: directConfig,
+      object_key: existing.object_key,
+      sha256: existing.sha256,
+      output_path: join(dir, existing.file),
+    });
+    return existing;
+  }
   const remote = await listBackupIndexSnapshots(project_id);
   const match = remote.find((entry) => entry.backup_id === backup_id);
   if (!match) return null;
@@ -2407,7 +2728,7 @@ async function findBackupFilesIndexed({
     size: number;
   }[]
 > {
-  await syncBackupIndexCache(project_id);
+  await syncBackupIndexCache(project_id, { materialize: true });
   const dir = backupIndexDir(project_id);
   const files = (await readdir(dir).catch(() => []))
     .filter((name) => name.endsWith(".sqlite"))
@@ -2665,12 +2986,17 @@ async function createBackup({
         project_id,
         op: "createBackup",
         run: async () => {
+          const directIndexStore = await getBackupIndexStoreConfig(project_id);
           if (limit != null) {
-            const indexedBackups = await getBackups({
-              project_id,
-              indexed_only: true,
-            });
-            if (indexedBackups.length >= limit) {
+            const backupCount = directIndexStore
+              ? (await getRemoteProjectBackupIndexes(project_id)).length
+              : (
+                  await getBackups({
+                    project_id,
+                    indexed_only: true,
+                  })
+                ).length;
+            if (backupCount >= limit) {
               throw new ConatError(`there is a limit of ${limit} backups`, {
                 code: 507,
               });
@@ -2682,7 +3008,10 @@ async function createBackup({
             return await vol.rustic.backup({
               tags,
               progress,
-              index: { project_id },
+              index: {
+                project_id,
+                upload: directIndexStore ? "local-only" : "rustic",
+              },
               runner: async ({ src, host, timeout, tags, progress }) =>
                 await projectRusticBackup({
                   src,
@@ -2707,21 +3036,92 @@ async function createBackup({
             return await vol.rustic.backup({
               tags,
               progress,
-              index: { project_id },
+              index: {
+                project_id,
+                upload: directIndexStore ? "local-only" : "rustic",
+              },
             });
           }
         },
       }),
   });
   if (result.index_path) {
-    try {
-      await recordBackupIndexLocal({
-        project_id,
-        backup_id: result.id,
-        snapshot_id: result.index_snapshot_id,
-      });
-    } catch (err) {
-      logger.warn("backup index manifest update failed", { project_id, err });
+    const directIndexStore = await getBackupIndexStoreConfig(project_id).catch(
+      () => null,
+    );
+    if (directIndexStore) {
+      try {
+        const uploaded = await uploadBackupIndexObject({
+          config: directIndexStore,
+          project_id,
+          backup_id: result.id,
+          input_path: result.index_path,
+        });
+        await reportProjectBackupIndex({
+          project_id,
+          backup_id: result.id,
+          backup_time: result.time,
+          status: "complete",
+          object_key: uploaded.object_key,
+          compression: uploaded.compression,
+          sqlite_bytes: uploaded.sqlite_bytes,
+          object_bytes: uploaded.object_bytes,
+          sha256: uploaded.sha256,
+        });
+        await recordBackupIndexLocal({
+          project_id,
+          backup_id: result.id,
+          status: "complete",
+          object_key: uploaded.object_key,
+          compression: uploaded.compression,
+          sha256: uploaded.sha256,
+          sqlite_bytes: uploaded.sqlite_bytes,
+          object_bytes: uploaded.object_bytes,
+          backup_time: result.time.toISOString(),
+        });
+      } catch (err) {
+        logger.warn("backup index object upload failed", { project_id, err });
+        try {
+          await reportProjectBackupIndex({
+            project_id,
+            backup_id: result.id,
+            backup_time: result.time,
+            status: "failed",
+            error: `${err}`,
+          });
+        } catch (reportErr) {
+          logger.warn("backup index failure report failed", {
+            project_id,
+            backup_id: result.id,
+            err: reportErr,
+          });
+        }
+        try {
+          await recordBackupIndexLocal({
+            project_id,
+            backup_id: result.id,
+            status: "failed",
+            backup_time: result.time.toISOString(),
+            error: `${err}`,
+          });
+        } catch (cacheErr) {
+          logger.warn("backup index failure cache update failed", {
+            project_id,
+            backup_id: result.id,
+            err: cacheErr,
+          });
+        }
+      }
+    } else {
+      try {
+        await recordBackupIndexLocal({
+          project_id,
+          backup_id: result.id,
+          snapshot_id: result.index_snapshot_id,
+        });
+      } catch (err) {
+        logger.warn("backup index manifest update failed", { project_id, err });
+      }
     }
   }
   await recordManagedBackupEgressBestEffort({
@@ -2937,17 +3337,31 @@ async function deleteBackup({
 }): Promise<void> {
   const vol = await getVolumeForBackup(project_id);
   await vol.rustic.forget({ id });
-  try {
-    await rustic(
-      ["forget", "--filter-label", `${BACKUP_INDEX_LABEL_PREFIX}${id}`],
-      {
-        repo: vol.fs.rusticRepo,
-        host: backupIndexHost(project_id),
-        timeout: 30 * 60 * 1000,
-      },
-    );
-  } catch (err) {
-    logger.warn("backup index delete failed", { project_id, id, err });
+  const directIndexStore = await getBackupIndexStoreConfig(project_id).catch(
+    () => null,
+  );
+  if (directIndexStore) {
+    try {
+      await deleteRemoteProjectBackupIndex({
+        project_id,
+        backup_id: id,
+      });
+    } catch (err) {
+      logger.warn("backup index delete failed", { project_id, id, err });
+    }
+  } else {
+    try {
+      await rustic(
+        ["forget", "--filter-label", `${BACKUP_INDEX_LABEL_PREFIX}${id}`],
+        {
+          repo: vol.fs.rusticRepo,
+          host: backupIndexHost(project_id),
+          timeout: 30 * 60 * 1000,
+        },
+      );
+    } catch (err) {
+      logger.warn("backup index delete failed", { project_id, id, err });
+    }
   }
   await removeBackupIndexLocal(project_id, id).catch((err) => {
     logger.warn("backup index cache cleanup failed", { project_id, id, err });
@@ -3003,6 +3417,15 @@ async function updateBackups({
   });
   try {
     const backups = await vol.rustic.snapshots();
+    const directIndexStore = await getBackupIndexStoreConfig(project_id).catch(
+      () => null,
+    );
+    if (directIndexStore) {
+      await syncRemoteProjectBackupIndexes({
+        project_id,
+        backup_ids: backups.map((backup) => backup.id),
+      });
+    }
     await syncBackupIndexCache(project_id, {
       backupIds: new Set(backups.map((backup) => backup.id)),
       force: true,
@@ -3049,6 +3472,23 @@ export async function getBackups({
 > {
   if (indexed_only) {
     try {
+      const directIndexStore = await getBackupIndexStoreConfig(
+        project_id,
+      ).catch(() => null);
+      if (directIndexStore) {
+        const records = await getRemoteProjectBackupIndexes(project_id);
+        const complete = records
+          .filter((record) => record.status === "complete")
+          .map((record) => ({
+            id: record.backup_id,
+            time: new Date(record.backup_time),
+            summary: {},
+          }))
+          .sort((a, b) => a.time.valueOf() - b.time.valueOf());
+        if (complete.length > 0) {
+          return complete;
+        }
+      }
       await syncBackupIndexCache(project_id);
       const manifest = await loadBackupIndexManifest(project_id);
       const backups: {

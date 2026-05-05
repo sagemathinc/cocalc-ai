@@ -208,7 +208,11 @@ export class SubvolumeRustic {
     limit?: number;
     tags?: string[];
     progress?: (update: RusticProgressUpdate) => void;
-    index?: { project_id: string; enabled?: boolean };
+    index?: {
+      project_id: string;
+      enabled?: boolean;
+      upload?: "rustic" | "local-only";
+    };
     runner?: RusticBackupRunner;
   } = {}): Promise<Snapshot> => {
     if (limit != null && (await this.snapshots()).length >= limit) {
@@ -273,13 +277,15 @@ export class SubvolumeRustic {
             outputPath,
             meta: { backupId: id, backupTime, snapshotId: id },
           });
-          const uploaded = await uploadBackupIndex({
-            projectId: index.project_id,
-            backupId: id,
-            repo: this.subvolume.fs.rusticRepo,
-            timeout,
-          });
-          indexSnapshotId = uploaded.snapshot_id;
+          if (index.upload !== "local-only") {
+            const uploaded = await uploadBackupIndex({
+              projectId: index.project_id,
+              backupId: id,
+              repo: this.subvolume.fs.rusticRepo,
+              timeout,
+            });
+            indexSnapshotId = uploaded.snapshot_id;
+          }
         } catch (err) {
           logger.warn("backup: index build failed", {
             project_id: index.project_id,
@@ -448,7 +454,11 @@ export class SubvolumeRustic {
       limit?: number;
       tags?: string[];
       progress?: (update: RusticProgressUpdate) => void;
-      index?: { project_id: string; enabled?: boolean };
+      index?: {
+        project_id: string;
+        enabled?: boolean;
+        upload?: "rustic" | "local-only";
+      };
     } = {},
   ) => {
     return await this.backup({ limit, timeout, tags, progress, index });

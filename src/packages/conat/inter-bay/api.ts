@@ -639,6 +639,10 @@ export type HostConnectionMethod =
   | "get-project-owner-effective-limits"
   | "get-seed-backup-config"
   | "record-project-backup"
+  | "record-project-backup-index"
+  | "get-project-backup-indexes"
+  | "sync-project-backup-indexes"
+  | "delete-project-backup-index"
   | "list-host-projects"
   | "ensure-host-owner-ssh-trust"
   | "rehome-host"
@@ -847,10 +851,31 @@ export interface InterBayHostConnectionApi {
     toml: string;
     ttl_seconds: number;
     backup_repo_id: string | null;
+    index_store?: {
+      kind: "r2-object-store";
+      endpoint: string;
+      bucket: string;
+      access_key_id: string;
+      secret_access_key: string;
+      key_prefix: string;
+      compression: "gzip";
+    } | null;
   }>;
   recordProjectBackup: (
     opts: Parameters<Hosts["recordProjectBackup"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackup"]>>>;
+  recordProjectBackupIndex: (
+    opts: Parameters<Hosts["recordProjectBackupIndex"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackupIndex"]>>>;
+  getProjectBackupIndexes: (
+    opts: Parameters<Hosts["getProjectBackupIndexes"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getProjectBackupIndexes"]>>>;
+  syncProjectBackupIndexes: (
+    opts: Parameters<Hosts["syncProjectBackupIndexes"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["syncProjectBackupIndexes"]>>>;
+  deleteProjectBackupIndex: (
+    opts: Parameters<Hosts["deleteProjectBackupIndex"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["deleteProjectBackupIndex"]>>>;
   listHostProjects: (
     opts: Pick<
       Parameters<Hosts["listHostProjects"]>[0],
@@ -947,6 +972,22 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "recordProjectBackup",
     method: "record-project-backup",
+  },
+  {
+    name: "recordProjectBackupIndex",
+    method: "record-project-backup-index",
+  },
+  {
+    name: "getProjectBackupIndexes",
+    method: "get-project-backup-indexes",
+  },
+  {
+    name: "syncProjectBackupIndexes",
+    method: "sync-project-backup-indexes",
+  },
+  {
+    name: "deleteProjectBackupIndex",
+    method: "delete-project-backup-index",
   },
   {
     name: "listHostProjects",

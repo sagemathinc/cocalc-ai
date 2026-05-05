@@ -140,9 +140,13 @@ import {
   pullHostRootfsImage,
   issueProjectHostAuthTokenLocal,
   listHostsLocal,
+  recordProjectBackupIndexLocal,
   recordProjectBackupLocal,
   resolveHostConnectionLocal,
   setHostRuntimeDeployments,
+  getProjectBackupIndexesLocal,
+  syncProjectBackupIndexesLocal,
+  deleteProjectBackupIndexLocal,
 } from "@cocalc/server/conat/api/hosts";
 import { getSeedProjectBackupConfig } from "@cocalc/server/project-backup";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -829,6 +833,40 @@ async function startHostConnectionService(): Promise<void> {
       }),
     recordProjectBackup: async ({ host_id, project_id, time }) =>
       await recordProjectBackupLocal({ host_id, project_id, time }),
+    recordProjectBackupIndex: async ({
+      host_id,
+      project_id,
+      backup_id,
+      backup_time,
+      status,
+      storage_backend,
+      object_key,
+      compression,
+      sqlite_bytes,
+      object_bytes,
+      sha256,
+      error,
+    }) =>
+      await recordProjectBackupIndexLocal({
+        host_id,
+        project_id,
+        backup_id,
+        backup_time,
+        status,
+        storage_backend,
+        object_key,
+        compression,
+        sqlite_bytes,
+        object_bytes,
+        sha256,
+        error,
+      }),
+    getProjectBackupIndexes: async ({ host_id, project_id }) =>
+      await getProjectBackupIndexesLocal({ host_id, project_id }),
+    syncProjectBackupIndexes: async ({ host_id, project_id, backup_ids }) =>
+      await syncProjectBackupIndexesLocal({ host_id, project_id, backup_ids }),
+    deleteProjectBackupIndex: async ({ host_id, project_id, backup_id }) =>
+      await deleteProjectBackupIndexLocal({ host_id, project_id, backup_id }),
     listHostProjects: async ({
       account_id,
       id,

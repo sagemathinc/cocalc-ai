@@ -11,9 +11,14 @@ import {
   mapCloudRegionToR2Region,
   parseR2Region,
 } from "@cocalc/util/consts";
-import { createBucket, listBuckets, R2BucketInfo } from "./r2";
+import { createBucket, deleteObject, listBuckets, R2BucketInfo } from "./r2";
 import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
-import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostMachine,
+  ProjectBackupConfig,
+  ProjectBackupIndexRecord,
+  ProjectBackupIndexStoreConfig,
+} from "@cocalc/conat/hub/api/hosts";
 import { buildLaunchpadRestRusticRepoConfig } from "@cocalc/server/launchpad/rest-repo";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getClusterConfig } from "@cocalc/server/cluster-config";
@@ -26,6 +31,11 @@ const BUCKET_PURPOSE = "project-backups";
 const BUCKET_LIST_CACHE_MS = 30 * 1000;
 const BUCKET_VERIFY_TTL_MS = 10 * 60 * 1000;
 const PROJECT_BACKUP_REPO_STATUS_ACTIVE = "active";
+const PROJECT_BACKUP_INDEX_STATUS_COMPLETE = "complete";
+const PROJECT_BACKUP_INDEX_STATUS_FAILED = "failed";
+const PROJECT_BACKUP_INDEX_STORAGE_BACKEND = "r2-object-store";
+const PROJECT_BACKUP_INDEX_COMPRESSION = "gzip";
+const PROJECT_BACKUP_INDEX_KEY_PREFIX = "project-backup-index/v1";
 
 const logger = getLogger("server:project-backup");
 const bucketListCache = new Map<
@@ -99,6 +109,25 @@ type ProjectBackupRepoRow = {
   assigned_project_count?: number | null;
 };
 
+type ProjectBackupIndexRow = {
+  id: string;
+  project_id: string;
+  backup_id: string;
+  backup_time: Date | null;
+  status: string | null;
+  storage_backend: string | null;
+  bucket_id: string | null;
+  object_key: string | null;
+  compression: string | null;
+  sqlite_bytes: number | null;
+  object_bytes: number | null;
+  sha256: string | null;
+  error: string | null;
+  host_id: string | null;
+  created: Date | null;
+  updated: Date | null;
+};
+
 export interface ProjectBackupInfrastructureStatus {
   r2: {
     configured: boolean;
@@ -147,6 +176,7 @@ export interface ProjectBackupInfrastructureStatus {
 }
 
 let projectBackupRepoSchemaReady: Promise<void> | undefined;
+let projectBackupIndexSchemaReady: Promise<void> | undefined;
 
 async function ensureProjectBackupRepoSchema(): Promise<void> {
   if (!projectBackupRepoSchemaReady) {
@@ -187,6 +217,52 @@ async function ensureProjectBackupRepoSchema(): Promise<void> {
     });
   }
   await projectBackupRepoSchemaReady;
+}
+
+async function ensureProjectBackupIndexSchema(): Promise<void> {
+  if (!projectBackupIndexSchemaReady) {
+    projectBackupIndexSchemaReady = (async () => {
+      await pool().query(`
+        CREATE TABLE IF NOT EXISTS project_backup_indexes (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          project_id UUID NOT NULL,
+          backup_id TEXT NOT NULL,
+          backup_time TIMESTAMPTZ NOT NULL,
+          status TEXT NOT NULL,
+          storage_backend TEXT NOT NULL DEFAULT '${PROJECT_BACKUP_INDEX_STORAGE_BACKEND}',
+          bucket_id UUID,
+          object_key TEXT,
+          compression TEXT,
+          sqlite_bytes BIGINT,
+          object_bytes BIGINT,
+          sha256 TEXT,
+          error TEXT,
+          host_id UUID,
+          created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await pool().query(
+        "CREATE INDEX IF NOT EXISTS project_backup_indexes_project_id_idx ON project_backup_indexes(project_id)",
+      );
+      await pool().query(
+        "CREATE INDEX IF NOT EXISTS project_backup_indexes_status_idx ON project_backup_indexes(status)",
+      );
+      await pool().query(
+        "CREATE INDEX IF NOT EXISTS project_backup_indexes_bucket_id_idx ON project_backup_indexes(bucket_id)",
+      );
+      await pool().query(
+        "CREATE INDEX IF NOT EXISTS project_backup_indexes_host_id_idx ON project_backup_indexes(host_id)",
+      );
+      await pool().query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS project_backup_indexes_project_backup_idx ON project_backup_indexes(project_id, backup_id)",
+      );
+    })().catch((err) => {
+      projectBackupIndexSchemaReady = undefined;
+      throw err;
+    });
+  }
+  await projectBackupIndexSchemaReady;
 }
 
 async function loadBucketById(id: string): Promise<BucketRow | null> {
@@ -859,6 +935,304 @@ export async function recordProjectBackup({
   ]);
 }
 
+function mapProjectBackupIndexRow(
+  row: ProjectBackupIndexRow,
+): ProjectBackupIndexRecord {
+  return {
+    backup_id: row.backup_id,
+    backup_time: asIso(row.backup_time) ?? new Date(0).toISOString(),
+    status:
+      row.status === PROJECT_BACKUP_INDEX_STATUS_FAILED
+        ? "failed"
+        : PROJECT_BACKUP_INDEX_STATUS_COMPLETE,
+    storage_backend: "r2-object-store",
+    bucket_id: row.bucket_id,
+    object_key: row.object_key,
+    compression: row.compression,
+    sqlite_bytes:
+      row.sqlite_bytes == null ? null : Number(row.sqlite_bytes ?? null),
+    object_bytes:
+      row.object_bytes == null ? null : Number(row.object_bytes ?? null),
+    sha256: row.sha256,
+    error: row.error,
+    host_id: row.host_id,
+    created: asIso(row.created),
+    updated: asIso(row.updated),
+  };
+}
+
+async function getProjectBackupIndexBucket({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<BucketRow | null> {
+  const assignment = await getProjectBackupAssignment(project_id);
+  let repo: ProjectBackupRepoRow | null = null;
+  if (assignment.backup_repo_id) {
+    repo = await loadProjectBackupRepoById(assignment.backup_repo_id);
+  }
+  if (!repo) {
+    const projectRegion = await resolveProjectRegion(project_id, null);
+    const assigned = await getOrCreateProjectBackupRepoForRegion(projectRegion);
+    if (!assigned?.repo) {
+      return null;
+    }
+    repo = assigned.repo;
+    await assignProjectBackupRepo({ project_id, repo });
+  }
+  if (!repo.bucket_id) {
+    return null;
+  }
+  return await loadBucketById(repo.bucket_id);
+}
+
+async function deleteProjectBackupIndexObject(
+  row: ProjectBackupIndexRow,
+): Promise<void> {
+  if (!row.bucket_id || !row.object_key) {
+    return;
+  }
+  const bucket = await loadBucketById(row.bucket_id);
+  if (!bucket?.name) {
+    return;
+  }
+  const accountId =
+    (await getSiteSetting("r2_account_id")) ?? bucket.account_id;
+  const accessKey =
+    (await getSiteSetting("r2_access_key_id")) ?? bucket.access_key_id;
+  const secretKey =
+    (await getSiteSetting("r2_secret_access_key")) ?? bucket.secret_access_key;
+  const endpoint =
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined) ??
+    bucket.endpoint;
+  if (!accessKey || !secretKey || !endpoint) {
+    logger.warn("backup index object delete skipped: missing bucket config", {
+      bucket_id: row.bucket_id,
+      backup_id: row.backup_id,
+      object_key: row.object_key,
+    });
+    return;
+  }
+  await deleteObject({
+    endpoint,
+    accessKey,
+    secretKey,
+    bucket: bucket.name,
+    key: row.object_key,
+  });
+}
+
+export async function recordProjectBackupIndex({
+  host_id,
+  project_id,
+  backup_id,
+  backup_time,
+  status,
+  storage_backend = "r2-object-store",
+  object_key,
+  compression,
+  sqlite_bytes,
+  object_bytes,
+  sha256,
+  error,
+}: {
+  host_id?: string;
+  project_id: string;
+  backup_id: string;
+  backup_time: Date | string;
+  status: "complete" | "failed";
+  storage_backend?: "r2-object-store";
+  object_key?: string | null;
+  compression?: string | null;
+  sqlite_bytes?: number | null;
+  object_bytes?: number | null;
+  sha256?: string | null;
+  error?: string | null;
+}): Promise<void> {
+  if (!host_id || !isValidUUID(host_id)) {
+    throw new Error("invalid host_id");
+  }
+  if (!isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  if (!backup_id) {
+    throw new Error("backup_id must be specified");
+  }
+  await assertHostProjectAccess(host_id, project_id);
+  await ensureProjectBackupIndexSchema();
+  const bucket = await getProjectBackupIndexBucket({ project_id });
+  let recordedAt = backup_time ? new Date(backup_time) : new Date();
+  if (Number.isNaN(recordedAt.getTime())) {
+    recordedAt = new Date();
+  }
+  await pool().query(
+    `INSERT INTO project_backup_indexes (
+      project_id, backup_id, backup_time, status, storage_backend, bucket_id,
+      object_key, compression, sqlite_bytes, object_bytes, sha256, error, host_id
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    ON CONFLICT (project_id, backup_id) DO UPDATE SET
+      backup_time = EXCLUDED.backup_time,
+      status = EXCLUDED.status,
+      storage_backend = EXCLUDED.storage_backend,
+      bucket_id = EXCLUDED.bucket_id,
+      object_key = EXCLUDED.object_key,
+      compression = EXCLUDED.compression,
+      sqlite_bytes = EXCLUDED.sqlite_bytes,
+      object_bytes = EXCLUDED.object_bytes,
+      sha256 = EXCLUDED.sha256,
+      error = EXCLUDED.error,
+      host_id = EXCLUDED.host_id,
+      updated = NOW()`,
+    [
+      project_id,
+      backup_id,
+      recordedAt,
+      status === "failed"
+        ? PROJECT_BACKUP_INDEX_STATUS_FAILED
+        : PROJECT_BACKUP_INDEX_STATUS_COMPLETE,
+      storage_backend,
+      bucket?.id ?? null,
+      object_key ?? null,
+      compression ?? null,
+      sqlite_bytes ?? null,
+      object_bytes ?? null,
+      sha256 ?? null,
+      error ?? null,
+      host_id,
+    ],
+  );
+}
+
+export async function getProjectBackupIndexes({
+  host_id,
+  project_id,
+}: {
+  host_id?: string;
+  project_id: string;
+}): Promise<ProjectBackupIndexRecord[]> {
+  if (!host_id || !isValidUUID(host_id)) {
+    throw new Error("invalid host_id");
+  }
+  if (!isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  await assertHostProjectAccess(host_id, project_id);
+  await ensureProjectBackupIndexSchema();
+  const { rows } = await pool().query<ProjectBackupIndexRow>(
+    `SELECT
+      id, project_id, backup_id, backup_time, status, storage_backend, bucket_id,
+      object_key, compression, sqlite_bytes, object_bytes, sha256, error, host_id,
+      created, updated
+    FROM project_backup_indexes
+    WHERE project_id=$1
+    ORDER BY backup_time ASC, created ASC`,
+    [project_id],
+  );
+  return rows.map(mapProjectBackupIndexRow);
+}
+
+export async function syncProjectBackupIndexes({
+  host_id,
+  project_id,
+  backup_ids,
+}: {
+  host_id?: string;
+  project_id: string;
+  backup_ids: string[];
+}): Promise<void> {
+  if (!host_id || !isValidUUID(host_id)) {
+    throw new Error("invalid host_id");
+  }
+  if (!isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  await assertHostProjectAccess(host_id, project_id);
+  await ensureProjectBackupIndexSchema();
+  const keep = new Set((backup_ids ?? []).filter(Boolean));
+  const { rows } = await pool().query<ProjectBackupIndexRow>(
+    `SELECT
+      id, project_id, backup_id, backup_time, status, storage_backend, bucket_id,
+      object_key, compression, sqlite_bytes, object_bytes, sha256, error, host_id,
+      created, updated
+    FROM project_backup_indexes
+    WHERE project_id=$1`,
+    [project_id],
+  );
+  for (const row of rows) {
+    if (keep.has(row.backup_id)) {
+      continue;
+    }
+    try {
+      await deleteProjectBackupIndexObject(row);
+    } catch (err) {
+      logger.warn("backup index object cleanup failed during sync", {
+        project_id,
+        backup_id: row.backup_id,
+        err: `${err}`,
+      });
+    }
+  }
+  if (keep.size === 0) {
+    await pool().query(
+      "DELETE FROM project_backup_indexes WHERE project_id=$1",
+      [project_id],
+    );
+    return;
+  }
+  await pool().query(
+    "DELETE FROM project_backup_indexes WHERE project_id=$1 AND NOT (backup_id = ANY($2::text[]))",
+    [project_id, Array.from(keep)],
+  );
+}
+
+export async function deleteProjectBackupIndex({
+  host_id,
+  project_id,
+  backup_id,
+}: {
+  host_id?: string;
+  project_id: string;
+  backup_id: string;
+}): Promise<void> {
+  if (!host_id || !isValidUUID(host_id)) {
+    throw new Error("invalid host_id");
+  }
+  if (!isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  if (!backup_id) {
+    throw new Error("backup_id must be specified");
+  }
+  await assertHostProjectAccess(host_id, project_id);
+  await ensureProjectBackupIndexSchema();
+  const { rows } = await pool().query<ProjectBackupIndexRow>(
+    `SELECT
+      id, project_id, backup_id, backup_time, status, storage_backend, bucket_id,
+      object_key, compression, sqlite_bytes, object_bytes, sha256, error, host_id,
+      created, updated
+    FROM project_backup_indexes
+    WHERE project_id=$1 AND backup_id=$2
+    LIMIT 1`,
+    [project_id, backup_id],
+  );
+  const row = rows[0];
+  if (row) {
+    try {
+      await deleteProjectBackupIndexObject(row);
+    } catch (err) {
+      logger.warn("backup index object delete failed", {
+        project_id,
+        backup_id,
+        err: `${err}`,
+      });
+    }
+  }
+  await pool().query(
+    "DELETE FROM project_backup_indexes WHERE project_id=$1 AND backup_id=$2",
+    [project_id, backup_id],
+  );
+}
+
 function isSelfHostLocalMachine(machine: HostMachine): boolean {
   const selfHostMode = machine?.metadata?.self_host_mode;
   const effectiveSelfHostMode =
@@ -869,6 +1243,7 @@ function isSelfHostLocalMachine(machine: HostMachine): boolean {
 async function buildSelfHostLocalBackupConfig(): Promise<{
   toml: string;
   ttl_seconds: number;
+  index_store?: ProjectBackupIndexStoreConfig | null;
 }> {
   const repo = await buildLaunchpadRestRusticRepoConfig({
     root: DEFAULT_BACKUP_ROOT,
@@ -942,13 +1317,46 @@ async function buildTomlForBucket({
   });
 }
 
+async function buildBackupIndexStoreConfigForBucket({
+  bucket,
+}: {
+  bucket: BucketRow;
+}): Promise<ProjectBackupIndexStoreConfig | null> {
+  const accountId =
+    (await getSiteSetting("r2_account_id")) ?? bucket.account_id;
+  const accessKey =
+    (await getSiteSetting("r2_access_key_id")) ?? bucket.access_key_id;
+  const secretKey =
+    (await getSiteSetting("r2_secret_access_key")) ?? bucket.secret_access_key;
+  const endpoint =
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined) ??
+    bucket.endpoint;
+  if (!accessKey || !secretKey || !endpoint || !bucket.name) {
+    return null;
+  }
+  return {
+    kind: "r2-object-store",
+    endpoint,
+    bucket: bucket.name,
+    access_key_id: accessKey,
+    secret_access_key: secretKey,
+    key_prefix: PROJECT_BACKUP_INDEX_KEY_PREFIX,
+    compression: PROJECT_BACKUP_INDEX_COMPRESSION,
+  };
+}
+
 async function buildBackupConfigFromRepo({
   repo,
   fallbackRegion,
 }: {
   repo: ProjectBackupRepoRow;
   fallbackRegion: string;
-}): Promise<{ toml: string; ttl_seconds: number; backup_repo_id: string }> {
+}): Promise<{
+  toml: string;
+  ttl_seconds: number;
+  backup_repo_id: string;
+  index_store?: ProjectBackupIndexStoreConfig | null;
+}> {
   if (!repo.bucket_id || !repo.root) {
     return { toml: "", ttl_seconds: 0, backup_repo_id: repo.id };
   }
@@ -965,10 +1373,12 @@ async function buildBackupConfigFromRepo({
     password: await getProjectBackupRepoSecret(repo),
     root: repo.root,
   });
+  const index_store = await buildBackupIndexStoreConfigForBucket({ bucket });
   return {
     toml,
     ttl_seconds: toml ? DEFAULT_BACKUP_TTL_SECONDS : 0,
     backup_repo_id: repo.id,
+    index_store,
   };
 }
 
@@ -993,6 +1403,7 @@ async function getSeedManagedProjectBackupConfig({
   toml: string;
   ttl_seconds: number;
   backup_repo_id: string | null;
+  index_store?: ProjectBackupIndexStoreConfig | null;
 }> {
   const cluster = getClusterConfig();
   const { getInterBayBridge } = await import("@cocalc/server/inter-bay/bridge");
@@ -1024,6 +1435,7 @@ export async function getSeedProjectBackupConfig({
   toml: string;
   ttl_seconds: number;
   backup_repo_id: string | null;
+  index_store?: ProjectBackupIndexStoreConfig | null;
 }> {
   if (!project_id || !isValidUUID(project_id)) {
     throw new Error("invalid project_id");
@@ -1063,7 +1475,7 @@ export async function getBackupConfig({
   project_id?: string;
   host_region?: string | null;
   host_machine?: HostMachine | null;
-}): Promise<{ toml: string; ttl_seconds: number }> {
+}): Promise<ProjectBackupConfig> {
   if (!host_id || !isValidUUID(host_id)) {
     throw new Error("invalid host_id");
   }
@@ -1106,7 +1518,11 @@ export async function getBackupConfig({
       project_region: projectR2Region,
       backup_repo_id: assignment.backup_repo_id,
     });
-    return { toml: config.toml, ttl_seconds: config.ttl_seconds };
+    return {
+      toml: config.toml,
+      ttl_seconds: config.ttl_seconds,
+      index_store: config.index_store,
+    };
   }
 
   if (assignment.backup_repo_id) {
@@ -1116,7 +1532,11 @@ export async function getBackupConfig({
         repo,
         fallbackRegion: projectR2Region,
       });
-      return { toml: config.toml, ttl_seconds: config.ttl_seconds };
+      return {
+        toml: config.toml,
+        ttl_seconds: config.ttl_seconds,
+        index_store: config.index_store,
+      };
     }
   }
 
@@ -1130,7 +1550,13 @@ export async function getBackupConfig({
     password: await getProjectBackupRepoSecret(assigned.repo),
     root: assigned.repo.root,
   });
-  return { toml, ttl_seconds: toml ? DEFAULT_BACKUP_TTL_SECONDS : 0 };
+  return {
+    toml,
+    ttl_seconds: toml ? DEFAULT_BACKUP_TTL_SECONDS : 0,
+    index_store: await buildBackupIndexStoreConfigForBucket({
+      bucket: assigned.bucket,
+    }),
+  };
 }
 
 export async function getProjectBackupConfigForDeletion({
