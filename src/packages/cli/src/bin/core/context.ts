@@ -86,7 +86,6 @@ const HUB_API_GROUPS: HubGroupName[] = [
   "sync",
   "org",
   "messages",
-  "fileSync",
   "hosts",
   "software",
   "notifications",

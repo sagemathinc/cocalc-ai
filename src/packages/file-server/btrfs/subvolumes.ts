@@ -8,10 +8,9 @@ import { btrfs } from "./util";
 import { chmod, rm } from "node:fs/promises";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 import { RUSTIC } from "./subvolume-rustic";
-import { SYNC_STATE } from "./sync";
 import { btrfsQuotasDisabled } from "./config";
 
-const RESERVED = new Set([RUSTIC, SNAPSHOTS, SYNC_STATE]);
+const RESERVED = new Set([RUSTIC, SNAPSHOTS]);
 
 const logger = getLogger("file-server:btrfs:subvolumes");
 

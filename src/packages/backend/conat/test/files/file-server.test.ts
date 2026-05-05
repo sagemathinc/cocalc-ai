@@ -185,11 +185,6 @@ describe("create basic mocked file server and test it out", () => {
       }): Promise<void> => {},
 
       allSnapshotUsage: Stub,
-
-      createSync: Stub,
-      getAllSyncs: Stub,
-      getSync: Stub,
-      syncCommand: Stub,
     });
   });
 

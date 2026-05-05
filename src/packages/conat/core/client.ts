@@ -279,7 +279,6 @@ import {
   type ConatSyncTable,
   createSyncTable,
 } from "@cocalc/conat/sync/synctable";
-import mutagen from "@cocalc/conat/project/mutagen";
 
 export const MAX_INTEREST_TIMEOUT = 90_000;
 
@@ -2443,8 +2442,6 @@ export class Client extends EventEmitter {
       syncdb({ ...opts, client: this }),
     immer: (opts: Omit<Omit<ImmerDBOptions, "client">, "fs">): ImmerDB =>
       immerdb({ ...opts, client: this }),
-    mutagen: ({ project_id }: { project_id: string }) =>
-      mutagen({ client: this, project_id }),
   };
 
   socket = {

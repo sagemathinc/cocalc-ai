@@ -7,7 +7,6 @@ import { handleErrorMessage } from "@cocalc/conat/util";
 import { type Sync, sync } from "./sync";
 import { type Org, org } from "./org";
 import { type Messages, messages } from "./messages";
-import { type FileSync, fileSync } from "./file-sync";
 import { type Hosts, hosts } from "./hosts";
 import { type Software, software } from "./software";
 import { type LroApi, lro } from "./lro";
@@ -24,7 +23,6 @@ export interface HubApi {
   sync: Sync;
   org: Org;
   messages: Messages;
-  fileSync: FileSync;
   hosts: Hosts;
   software: Software;
   lro: LroApi;
@@ -42,7 +40,6 @@ const HubApiStructure = {
   sync,
   org,
   messages,
-  fileSync,
   hosts,
   software,
   lro,

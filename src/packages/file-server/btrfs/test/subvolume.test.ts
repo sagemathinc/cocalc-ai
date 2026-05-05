@@ -3,13 +3,11 @@ import { wait } from "@cocalc/backend/conat/test/util";
 import { randomBytes } from "crypto";
 import { type Subvolume } from "../subvolume";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
-import { SYNC_STATE } from "../sync";
 import { SandboxedFilesystem } from "@cocalc/backend/sandbox";
 
 beforeAll(before);
 
-const filtered = (v: string[]) =>
-  v.filter((x) => x !== SNAPSHOTS && x !== SYNC_STATE);
+const filtered = (v: string[]) => v.filter((x) => x !== SNAPSHOTS);
 
 jest.setTimeout(15000);
 describe("setting and getting quota of a subvolume", () => {

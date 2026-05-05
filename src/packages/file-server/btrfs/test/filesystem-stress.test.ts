@@ -1,6 +1,5 @@
 import { before, after, fs } from "./setup";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
-import { SYNC_STATE } from "../sync";
 import { RUSTIC } from "../subvolume-rustic";
 
 beforeAll(before);
@@ -8,7 +7,7 @@ beforeAll(before);
 const DEBUG = false;
 const log = DEBUG ? console.log : (..._args) => {};
 
-const RESERVED = new Set([SNAPSHOTS, SYNC_STATE, RUSTIC]);
+const RESERVED = new Set([SNAPSHOTS, RUSTIC]);
 const filtered = (list: string[]) => list.filter((n) => !RESERVED.has(n));
 
 describe("stress operations with subvolumes", () => {

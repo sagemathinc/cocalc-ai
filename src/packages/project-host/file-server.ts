@@ -27,7 +27,6 @@ import {
   type RestoreStagingHandle,
   type SnapshotRestoreMode,
   type SnapshotUsage,
-  type Sync,
 } from "@cocalc/conat/files/file-server";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import { hubApi } from "@cocalc/lite/hub/api";
@@ -76,7 +75,6 @@ import {
   DEFAULT_PROJECT_RUNTIME_USER,
   projectRuntimeHomeRelativePath,
 } from "@cocalc/util/project-runtime";
-import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
 import {
   fsServer,
   DEFAULT_FILE_SERVICE,
@@ -987,13 +985,6 @@ export async function listProvisionedProjects(): Promise<string[]> {
     ids.add(project_id);
   }
   return Array.from(ids);
-}
-
-function getFileSync() {
-  if (fs == null) {
-    throw Error("file server not initialized");
-  }
-  return fs.fileSync;
 }
 
 function projectMountpoint(project_id: string): string {
@@ -3245,30 +3236,6 @@ async function getSnapshotFileText({
   return await readTextPreview({ filePath: absPath, maxBytes });
 }
 
-// File Sync
-async function createSync(sync: Sync & { ignores?: string[] }): Promise<void> {
-  await getFileSync().create(sync);
-}
-
-async function syncCommand(
-  command: "flush" | "reset" | "pause" | "resume" | "terminate",
-  sync: Sync,
-): Promise<{ stdout: string; stderr: string; exit_code: number }> {
-  return await getFileSync().command(command, sync);
-}
-
-async function getAllSyncs(opts: {
-  name: string;
-}): Promise<(Sync & MutagenSyncSession)[]> {
-  return await getFileSync().getAll(opts);
-}
-
-async function getSync(
-  sync: Sync,
-): Promise<undefined | (Sync & MutagenSyncSession)> {
-  return await getFileSync().get(sync);
-}
-
 export async function initFsServer({
   client,
   service = DEFAULT_FILE_SERVICE,
@@ -3398,11 +3365,6 @@ export async function initFileServer({
     restoreSnapshot: reuseInFlight(restoreSnapshot),
     publishRootfsImage: reuseInFlight(publishRootfsImage),
     uploadRootfsReleaseArtifact: reuseInFlight(uploadRootfsReleaseArtifact),
-    // file sync
-    createSync,
-    getAllSyncs,
-    getSync,
-    syncCommand,
   });
   logger.debug("initFileServer: fs successfully initialized");
 

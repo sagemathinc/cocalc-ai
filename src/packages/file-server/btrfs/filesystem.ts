@@ -19,7 +19,6 @@ import { exists } from "@cocalc/backend/misc/async-utils-node";
 import { ensureInitialized } from "@cocalc/backend/sandbox/rustic";
 import { until } from "@cocalc/util/async-utils";
 import { delay } from "awaiting";
-import { FileSync } from "./sync";
 import bees, { signalBeesProcessGroup } from "./bees";
 import { type ChildProcess } from "node:child_process";
 import { install } from "@cocalc/backend/sandbox/install";
@@ -57,7 +56,6 @@ let mountLock = false;
 export class Filesystem {
   public readonly opts: Options;
   public readonly subvolumes: Subvolumes;
-  public readonly fileSync: FileSync;
   private bees?: ChildProcess;
   private beesRunningExternally = false;
   private beesRestartTimer?: NodeJS.Timeout;
@@ -73,7 +71,6 @@ export class Filesystem {
   constructor(opts: Options) {
     this.opts = opts;
     this.subvolumes = new Subvolumes(this);
-    this.fileSync = new FileSync(this);
   }
 
   init = async () => {
@@ -81,16 +78,6 @@ export class Filesystem {
     await this.initDevice();
     await this.mountFilesystem();
     await this.sync();
-    try {
-      await this.fileSync.init();
-    } catch (err) {
-      // [ ] TODO: this error is expected right now if mutagen not installed.
-      // We will rewrite this to use reflect-sync, integrated with cocalc.
-      logger.debug(
-        "Error starting file sync service -- sync not available",
-        err,
-      );
-    }
     // Reconcile the mounted filesystem to CoCalc's only supported quota modes:
     // simple quotas or fully disabled quotas. Classic btrfs qgroups are
     // intentionally unsupported here because they caused severe latency,
@@ -149,7 +136,6 @@ export class Filesystem {
       );
       timer.unref();
     }
-    this.fileSync.close();
   };
 
   getBeesStatus = () => {

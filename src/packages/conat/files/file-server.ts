@@ -37,21 +37,9 @@ import type {
 } from "@cocalc/util/rootfs-images";
 import { type CopyOptions } from "./fs";
 export { type CopyOptions };
-import { type MutagenSyncSession } from "@cocalc/conat/project/mutagen/types";
 import { type LroScopeType } from "@cocalc/conat/hub/api/lro";
 
 const SUBJECT = "file-server";
-
-export interface Sync {
-  // {volume-name}:path/into/volume
-  src: string;
-  dest: string;
-
-  // if true, dest is kept as an exact copy of src
-  // and any changes to dest are immediately reverted;
-  // basically, dest acts as a read-only copy of src.
-  replica?: boolean;
-}
 
 export type RestoreMode = "none" | "auto" | "required";
 export type SnapshotRestoreMode = "home" | "rootfs" | "both";
@@ -131,25 +119,6 @@ export interface Fileserver {
     dest: { project_id: string; path: string };
     options?: CopyOptions;
   }) => Promise<void>;
-
-  /////////////
-  // Sync
-  // Automated realtime bidirectional sync of files between a path
-  // in one project with a path in another project.
-  // It's bidirectional, but conflicts always resolve in favor
-  // of the source.
-  /////////////
-  createSync: (sync: Sync & { ignores?: string[] }) => Promise<void>;
-  // list all sync links with src or dest the given volume
-  getAllSyncs: (opts: {
-    name: string;
-  }) => Promise<(MutagenSyncSession & Sync)[]>;
-  getSync: (sync: Sync) => Promise<undefined | (MutagenSyncSession & Sync)>;
-  syncCommand: (
-    command: "flush" | "reset" | "pause" | "resume" | "terminate",
-    sync: Sync,
-  ) => Promise<{ stdout: string; stderr: string; exit_code: number }>;
-
   /////////////
   // BACKUPS
   /////////////

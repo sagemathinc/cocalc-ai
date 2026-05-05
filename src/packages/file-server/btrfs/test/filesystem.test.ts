@@ -1,11 +1,6 @@
 import { before, after, fs } from "./setup";
 import { isValidUUID } from "@cocalc/util/misc";
 import { RUSTIC } from "@cocalc/file-server/btrfs/subvolume-rustic";
-import { SYNC_STATE } from "../sync";
-
-function filteredList(list: string[]) {
-  return list.filter((name) => name !== SYNC_STATE);
-}
 
 beforeAll(before);
 
@@ -21,7 +16,7 @@ describe("some basic tests", () => {
   });
 
   it("lists the subvolumes (there are none)", async () => {
-    expect(filteredList(await fs.subvolumes.list())).toEqual([]);
+    expect(await fs.subvolumes.list()).toEqual([]);
   });
 });
 
@@ -40,14 +35,14 @@ describe("operations with subvolumes", () => {
   });
 
   it("our subvolume is in the list", async () => {
-    expect(filteredList(await fs.subvolumes.list())).toEqual(["cocalc"]);
+    expect(await fs.subvolumes.list()).toEqual(["cocalc"]);
   });
 
   it("create another two subvolumes", async () => {
     await fs.subvolumes.ensure("sagemath");
     await fs.subvolumes.ensure("a-math");
     // list is sorted:
-    expect(filteredList(await fs.subvolumes.list())).toEqual([
+    expect(await fs.subvolumes.list()).toEqual([
       "a-math",
       "cocalc",
       "sagemath",
@@ -56,15 +51,12 @@ describe("operations with subvolumes", () => {
 
   it("delete a subvolume", async () => {
     await fs.subvolumes.delete("a-math");
-    expect(filteredList(await fs.subvolumes.list())).toEqual([
-      "cocalc",
-      "sagemath",
-    ]);
+    expect(await fs.subvolumes.list()).toEqual(["cocalc", "sagemath"]);
   });
 
   it("clone a subvolume", async () => {
     await fs.subvolumes.clone("sagemath", "cython");
-    expect(filteredList(await fs.subvolumes.list())).toEqual([
+    expect(await fs.subvolumes.list()).toEqual([
       "cocalc",
       "cython",
       "sagemath",
