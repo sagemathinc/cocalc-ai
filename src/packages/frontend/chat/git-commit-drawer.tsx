@@ -1134,6 +1134,64 @@ export function MarkdownHistoryInput({
   );
 }
 
+function useBufferedInlineMarkdownValue({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [localValue, setLocalValue] = useState(value);
+  const localValueRef = useRef(localValue);
+  const syncedValueRef = useRef(value);
+  const skipUnmountFlushRef = useRef(false);
+
+  useEffect(() => {
+    localValueRef.current = localValue;
+  }, [localValue]);
+
+  useEffect(() => {
+    setLocalValue(value);
+    localValueRef.current = value;
+    syncedValueRef.current = value;
+    skipUnmountFlushRef.current = false;
+  }, [value]);
+
+  const flush = useCallback(
+    (nextValue?: string) => {
+      const resolved = nextValue ?? localValueRef.current;
+      if (resolved === syncedValueRef.current) return;
+      syncedValueRef.current = resolved;
+      onChange(resolved);
+    },
+    [onChange],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (!skipUnmountFlushRef.current) {
+        flush();
+      }
+    };
+  }, [flush]);
+
+  const update = useCallback((nextValue: string) => {
+    localValueRef.current = nextValue;
+    setLocalValue(nextValue);
+  }, []);
+
+  const skipNextUnmountFlush = useCallback(() => {
+    skipUnmountFlushRef.current = true;
+  }, []);
+
+  return {
+    localValue,
+    update,
+    flush,
+    skipNextUnmountFlush,
+  };
+}
+
 function InlineDraftCommentEditor({
   filePath,
   anchorId,
@@ -1153,14 +1211,24 @@ function InlineDraftCommentEditor({
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
+  const { localValue, update, flush, skipNextUnmountFlush } =
+    useBufferedInlineMarkdownValue({
+      value,
+      onChange,
+    });
   return (
     <>
       <MarkdownHistoryInput
         historyId={`git-inline-draft:${filePath}:${anchorId}`}
         cacheId={`git-inline-draft:${filePath}:${anchorId}`}
-        value={value}
-        onChange={onChange}
-        onShiftEnter={(next) => onSave(next)}
+        value={localValue}
+        onChange={update}
+        onBlur={flush}
+        onShiftEnter={(next) => {
+          skipNextUnmountFlush();
+          flush(next);
+          onSave(next);
+        }}
         placeholder="Add inline review comment..."
         fontSize={fontSize}
         autoGrow
@@ -1179,14 +1247,24 @@ function InlineDraftCommentEditor({
           gap: 8,
         }}
       >
-        <Button size="small" onClick={onCancel}>
+        <Button
+          size="small"
+          onClick={() => {
+            skipNextUnmountFlush();
+            onCancel();
+          }}
+        >
           Cancel
         </Button>
         <Button
           size="small"
           type="primary"
-          onClick={() => onSave(value)}
-          disabled={!value.trim()}
+          onClick={() => {
+            skipNextUnmountFlush();
+            flush(localValue);
+            onSave(localValue);
+          }}
+          disabled={!localValue.trim()}
           loading={loading}
         >
           Add comment
@@ -1215,14 +1293,24 @@ function InlineEditCommentEditor({
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
+  const { localValue, update, flush, skipNextUnmountFlush } =
+    useBufferedInlineMarkdownValue({
+      value,
+      onChange,
+    });
   return (
     <>
       <MarkdownHistoryInput
         historyId={`git-inline-edit:${filePath}:${commentId}`}
         cacheId={`git-inline-edit:${filePath}:${commentId}`}
-        value={value}
-        onChange={onChange}
-        onShiftEnter={(next) => onSave(next)}
+        value={localValue}
+        onChange={update}
+        onBlur={flush}
+        onShiftEnter={(next) => {
+          skipNextUnmountFlush();
+          flush(next);
+          onSave(next);
+        }}
         placeholder="Edit inline review comment..."
         fontSize={fontSize}
         autoGrow
@@ -1234,14 +1322,24 @@ function InlineEditCommentEditor({
         enableUpload={true}
       />
       <Space.Compact size="small">
-        <Button size="small" onClick={onCancel}>
+        <Button
+          size="small"
+          onClick={() => {
+            skipNextUnmountFlush();
+            onCancel();
+          }}
+        >
           Cancel
         </Button>
         <Button
           size="small"
           type="primary"
-          onClick={() => onSave(value)}
-          disabled={!value.trim()}
+          onClick={() => {
+            skipNextUnmountFlush();
+            flush(localValue);
+            onSave(localValue);
+          }}
+          disabled={!localValue.trim()}
           loading={loading}
         >
           Save

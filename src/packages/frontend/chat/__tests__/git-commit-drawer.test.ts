@@ -338,6 +338,64 @@ describe("git commit drawer merge commit formatting", () => {
     expect(latestMarkdownInputProps.value).toBe("persist me");
   });
 
+  it("does not re-render the whole diff block on inline draft typing", () => {
+    const renders: number[] = [];
+    const originalType = (DiffBlock as any).type;
+    (DiffBlock as any).type = function WrappedDiffBlock(props: any) {
+      renders.push(Date.now());
+      return originalType(props);
+    };
+
+    try {
+      function Harness() {
+        const [draftAnchorId, setDraftAnchorId] = useState<string | undefined>(
+          undefined,
+        );
+        const [draftValue, setDraftValue] = useState("");
+        return React.createElement(DiffBlock, {
+          filePath: "src/example.ts",
+          lines: stableDiffLines,
+          languageHint: "ts",
+          fontSize: 14,
+          comments: stableComments,
+          showResolvedComments: false,
+          commentEnabled: true,
+          activeDraftAnchorId: draftAnchorId,
+          activeDraftBody: draftValue,
+          onOpenDraft: (anchor: any) => {
+            setDraftAnchorId(commentAnchorKey(anchor));
+            setDraftValue("");
+          },
+          onDraftBodyChange: setDraftValue,
+          onCancelDraft: () => {
+            setDraftAnchorId(undefined);
+            setDraftValue("");
+          },
+          onCreateComment: noopAsync,
+          onUpdateComment: noopAsync,
+          onResolveComment: noopAsync,
+          onReopenComment: noopAsync,
+        });
+      }
+
+      const rendered = render(React.createElement(Harness));
+      act(() => {
+        rendered.getAllByTitle("Add inline comment")[0].click();
+      });
+      expect(renders).toHaveLength(2);
+      expect(latestMarkdownInputProps).toBeTruthy();
+
+      act(() => {
+        latestMarkdownInputProps.onChange("typed locally");
+      });
+
+      expect(latestMarkdownInputProps.value).toBe("typed locally");
+      expect(renders).toHaveLength(2);
+    } finally {
+      (DiffBlock as any).type = originalType;
+    }
+  });
+
   it("sizes diff line number gutters using ch units for wide line numbers", () => {
     expect(diffLineNumberColumnWidth(0)).toBe("calc(3ch + 12px)");
     expect(diffLineNumberColumnWidth(99)).toBe("calc(3ch + 12px)");
