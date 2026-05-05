@@ -1016,7 +1016,7 @@ async function performBackupRegionCutover({
   ) {
     progress({
       step: "purge-old-backups",
-      message: "purging old-region backup snapshots",
+      message: "scheduling old-region backup purge",
       detail: {
         source_region: context.project_region,
         dest_region: context.dest_region,
@@ -1024,48 +1024,37 @@ async function performBackupRegionCutover({
         next_backup_repo_id,
       },
     });
-    try {
-      purge = await purgeProjectBackupsForRepo({
-        project_id: context.project_id,
-        backup_repo_id: previous_backup_repo_id,
-        region: context.project_region,
-      });
-      progress({
-        step: "purge-old-backups",
-        message: purge.skipped
-          ? "old-region backup purge skipped"
-          : "old-region backup snapshots purged",
-        detail: {
-          source_region: context.project_region,
-          dest_region: context.dest_region,
+    purge = {
+      skipped: true,
+      deleted_snapshots: 0,
+      deleted_index_snapshots: 0,
+      reason: "scheduled asynchronously",
+    };
+    void (async () => {
+      try {
+        const purged = await purgeProjectBackupsForRepo({
+          project_id: context.project_id,
+          backup_repo_id: previous_backup_repo_id,
+          region: context.project_region,
+        });
+        log.info("backup-region cutover old-repo purge completed", {
+          project_id: context.project_id,
           previous_backup_repo_id,
           next_backup_repo_id,
-          deleted_snapshots: purge.deleted_snapshots,
-          deleted_index_snapshots: purge.deleted_index_snapshots,
-          skipped: purge.skipped,
-          reason: purge.reason,
-        },
-      });
-    } catch (err) {
-      purge_error = `${err}`;
-      log.warn("backup-region cutover old-repo purge failed", {
-        project_id: context.project_id,
-        previous_backup_repo_id,
-        next_backup_repo_id,
-        err,
-      });
-      progress({
-        step: "purge-old-backups",
-        message: "old-region backup purge failed",
-        detail: {
-          source_region: context.project_region,
-          dest_region: context.dest_region,
+          deleted_snapshots: purged.deleted_snapshots,
+          deleted_index_snapshots: purged.deleted_index_snapshots,
+          skipped: purged.skipped,
+          reason: purged.reason,
+        });
+      } catch (err) {
+        log.warn("backup-region cutover old-repo purge failed", {
+          project_id: context.project_id,
           previous_backup_repo_id,
           next_backup_repo_id,
-          error: purge_error,
-        },
-      });
-    }
+          err,
+        });
+      }
+    })();
   }
 
   return {

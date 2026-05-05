@@ -810,6 +810,157 @@ describe("moveProjectToHost", () => {
     });
   });
 
+  it("does not block move completion on old-region backup purge", async () => {
+    const consts = await import("@cocalc/util/consts");
+    (consts.parseR2Region as jest.Mock).mockImplementation((value: string) => {
+      if (value === "wnam" || value === "weur") return value;
+      return null;
+    });
+    (consts.mapCloudRegionToR2Region as jest.Mock).mockImplementation(
+      (value: string) => {
+        if (value === "europe-west1") return "weur";
+        return "wnam";
+      },
+    );
+
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: false,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    resolveHostConnectionMock = jest.fn(async ({ host_id }: any) => ({
+      host_id,
+      bay_id: "bay-0",
+      name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
+      region: host_id === DEST_HOST_ID ? "europe-west1" : "us-west1",
+    }));
+    createBackupLroMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        op_id: "backup-op-final",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      })
+      .mockResolvedValueOnce({
+        op_id: "backup-op-cutover",
+        scope_type: "project",
+        scope_id: PROJECT_ID,
+      });
+    lroSummaryByOpId.set("backup-op-final", {
+      op_id: "backup-op-final",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "succeeded",
+      result: {
+        id: "backup-for-backup-op-final",
+        time: new Date("2026-04-26T16:00:00.000Z"),
+      },
+    });
+    lroSummaryByOpId.set("backup-op-cutover", {
+      op_id: "backup-op-cutover",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+      status: "succeeded",
+      result: {
+        id: "backup-for-backup-op-cutover",
+        time: new Date("2026-04-26T16:00:00.000Z"),
+      },
+    });
+    startProjectLroMock = jest.fn(async () => ({
+      op_id: "start-op-cross-region",
+      scope_type: "project",
+      scope_id: PROJECT_ID,
+    }));
+    waitForLroCompletionMock = jest.fn(async ({ op_id }: any) => {
+      if (op_id === "backup-op-final" || op_id === "backup-op-cutover") {
+        return {
+          status: "succeeded",
+          result: {
+            id: `backup-for-${op_id}`,
+            time: new Date("2026-04-26T16:00:00.000Z"),
+          },
+        };
+      }
+      if (op_id === "start-op-cross-region") {
+        return { status: "succeeded" };
+      }
+      throw new Error(`unexpected op_id ${op_id}`);
+    });
+    purgeProjectBackupsForRepoMock = jest.fn(() => new Promise(() => {}));
+
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost(
+        {
+          project_id: PROJECT_ID,
+          dest_host_id: DEST_HOST_ID,
+          account_id: "account-id",
+          backup_region_cutover: true,
+        },
+        { op_id: "move-op-cross-region-async-purge" },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(purgeProjectBackupsForRepoMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      backup_repo_id: "66666666-6666-4666-8666-666666666666",
+      region: "wnam",
+    });
+    expect(projectLogRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "project-move:move-op-cross-region-async-purge:project_moved",
+          event: expect.objectContaining({
+            event: "project_moved",
+            previous_backup_repo_id: "66666666-6666-4666-8666-666666666666",
+            next_backup_repo_id: "77777777-7777-4777-8777-777777777777",
+            old_backup_purge: expect.objectContaining({
+              skipped: true,
+              reason: "scheduled asynchronously",
+            }),
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("fails and preserves the source when destination sentinel verification fails", async () => {
     process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS = "25";
     process.env.COCALC_MOVE_SENTINEL_VERIFY_RETRY_MS = "5";
