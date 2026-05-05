@@ -3,7 +3,10 @@ import {
   type Fileserver,
 } from "@cocalc/conat/files/file-server";
 import type { Client } from "@cocalc/conat/core/client";
-import { conatWithProjectRouting } from "./route-client";
+import {
+  conatWithProjectRouting,
+  getExplicitProjectRoutedClient,
+} from "./route-client";
 import {
   materializeProjectHostTarget,
   materializeRemoteProjectHostTarget,
@@ -22,20 +25,47 @@ function getRoutedClient(): Client {
   return routedClient;
 }
 
+async function resolveProjectFileServerTarget({
+  project_id,
+  account_id,
+}: {
+  project_id: string;
+  account_id?: string;
+}): Promise<
+  | {
+      address: string;
+      host_id: string;
+      host_session_id?: string;
+      local: boolean;
+    }
+  | undefined
+> {
+  const local = await materializeProjectHostTarget(project_id, {
+    fresh: true,
+  });
+  if (local?.address && local.host_id) {
+    return { ...local, local: true };
+  }
+  if (!account_id) {
+    return;
+  }
+  const remote = await materializeRemoteProjectHostTarget({
+    account_id,
+    project_id,
+  });
+  if (remote?.address && remote.host_id) {
+    return { ...remote, local: false };
+  }
+}
+
 export async function ensureProjectFileServerRoute(
   project_id: string,
   account_id?: string,
 ): Promise<string> {
-  const target =
-    (await materializeProjectHostTarget(project_id, {
-      fresh: true,
-    })) ??
-    (account_id
-      ? await materializeRemoteProjectHostTarget({
-          account_id,
-          project_id,
-        })
-      : undefined);
+  const target = await resolveProjectFileServerTarget({
+    project_id,
+    account_id,
+  });
   if (!target?.address) {
     throw new Error(`unable to route project ${project_id} to a host`);
   }
@@ -53,13 +83,25 @@ export async function getProjectFileServerClient({
   timeout?: number;
   ensure_route?: boolean;
 }): Promise<Fileserver> {
+  let conatClient: Client;
   if (ensure_route) {
-    await ensureProjectFileServerRoute(project_id, account_id);
+    const target = await resolveProjectFileServerTarget({
+      project_id,
+      account_id,
+    });
+    if (!target?.address) {
+      throw new Error(`unable to route project ${project_id} to a host`);
+    }
+    conatClient = target.local
+      ? await getExplicitProjectRoutedClient({ project_id })
+      : getRoutedClient();
+  } else {
+    conatClient = getRoutedClient();
   }
   // File-server is a server-only service. account_id is used above only to
   // discover a remote project route after caller-side permission checks.
   return fileServerClient({
-    client: getRoutedClient(),
+    client: conatClient,
     project_id,
     timeout,
     waitForInterest: true,
