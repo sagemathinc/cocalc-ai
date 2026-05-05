@@ -71,6 +71,14 @@ const MOVE_SENTINEL_IO_TIMEOUT_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_SENTINEL_IO_TIMEOUT_MS) || 5000,
 );
+const MOVE_PROJECT_FS_READY_TIMEOUT_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_PROJECT_FS_READY_TIMEOUT_MS) || 30 * 1000,
+);
+const MOVE_PROJECT_FS_READY_RETRY_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_PROJECT_FS_READY_RETRY_MS) || 1000,
+);
 const CHILD_LRO_POLL_INTERVAL_MS = Math.max(
   250,
   Number(process.env.COCALC_MOVE_CHILD_LRO_POLL_INTERVAL_MS) || 1000,
@@ -188,6 +196,53 @@ async function openProjectFs(project_id: string, opts?: { fresh?: boolean }) {
   return client.fs({ project_id });
 }
 
+function isProjectFsNotInitializedError(err: unknown): boolean {
+  const text = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return text.includes("file server not initialized");
+}
+
+function isRetryableProjectFsReadyError(err: unknown): boolean {
+  const text = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    isProjectFsNotInitializedError(err) ||
+    isRetryableTransientMoveError(err) ||
+    text.includes("timed out after")
+  );
+}
+
+async function waitForProjectFsReady(
+  project_id: string,
+  opts?: { fresh?: boolean; timeout_ms?: number },
+) {
+  const timeout_ms = Math.max(
+    1,
+    opts?.timeout_ms ?? MOVE_PROJECT_FS_READY_TIMEOUT_MS,
+  );
+  const deadline = Date.now() + timeout_ms;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    const remaining = Math.max(1, deadline - Date.now());
+    try {
+      const fs = await openProjectFs(project_id, { fresh: opts?.fresh });
+      await withTimeout({
+        promise: fs.exists("."),
+        timeout_ms: Math.min(MOVE_SENTINEL_IO_TIMEOUT_MS, remaining),
+        label: `probing project fs readiness for ${project_id}`,
+      });
+      return fs;
+    } catch (err) {
+      lastError = err;
+      if (!isRetryableProjectFsReadyError(err)) {
+        throw err;
+      }
+    }
+    await delay(Math.min(MOVE_PROJECT_FS_READY_RETRY_MS, remaining));
+  }
+  throw new Error(
+    `project fs did not become ready for move after ${timeout_ms}ms: ${lastError ?? "unknown error"}`,
+  );
+}
+
 async function createMoveSentinel({
   context,
   move_log_id,
@@ -197,7 +252,7 @@ async function createMoveSentinel({
   move_log_id: string;
   op_id?: string;
 }): Promise<MoveSentinel> {
-  const fs = await openProjectFs(context.project_id, { fresh: true });
+  const fs = await waitForProjectFsReady(context.project_id, { fresh: true });
   await fs.mkdir(MOVE_SENTINEL_DIR, { recursive: true });
   const content = `${JSON.stringify(
     {
@@ -254,8 +309,17 @@ async function verifyMoveSentinel({
   while (Date.now() < deadline) {
     try {
       const fs = await withTimeout({
-        promise: openProjectFs(project_id, { fresh: true }),
-        timeout_ms: MOVE_SENTINEL_IO_TIMEOUT_MS,
+        promise: waitForProjectFsReady(project_id, {
+          fresh: true,
+          timeout_ms: Math.min(
+            MOVE_PROJECT_FS_READY_TIMEOUT_MS,
+            Math.max(1, deadline - Date.now()),
+          ),
+        }),
+        timeout_ms: Math.min(
+          MOVE_PROJECT_FS_READY_TIMEOUT_MS,
+          Math.max(1, deadline - Date.now()),
+        ),
         label: "opening destination project fs for move sentinel verification",
       });
       const actual = `${await withTimeout({
@@ -287,7 +351,10 @@ async function deleteMoveSentinelBestEffort({
   stage: string;
 }): Promise<void> {
   try {
-    const fs = await openProjectFs(project_id, { fresh: true });
+    const fs = await waitForProjectFsReady(project_id, {
+      fresh: true,
+      timeout_ms: MOVE_SENTINEL_IO_TIMEOUT_MS,
+    });
     await fs.rm(MOVE_SENTINEL_PATH, { force: true });
   } catch (err) {
     log.warn("moveProjectToHost sentinel cleanup failed", {

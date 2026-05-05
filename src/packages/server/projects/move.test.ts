@@ -127,6 +127,7 @@ describe("moveProjectToHost", () => {
   let currentRoutedHostId: string;
   let routedFsByHost: Map<string, Map<string, string>>;
   let hangMoveSentinelReadOnDest: boolean;
+  let fsNotInitializedFailuresByHost: Map<string, number>;
   let lroSummaryByOpId: Map<string, any>;
 
   beforeEach(() => {
@@ -139,6 +140,7 @@ describe("moveProjectToHost", () => {
       [DEST_HOST_ID, sharedFiles],
     ]);
     hangMoveSentinelReadOnDest = false;
+    fsNotInitializedFailuresByHost = new Map();
     lroSummaryByOpId = new Map([
       [
         "55555555-5555-4555-8555-555555555555",
@@ -256,34 +258,58 @@ describe("moveProjectToHost", () => {
           close: jest.fn(),
         })),
       },
-      fs: jest.fn(() => ({
-        mkdir: jest.fn(async () => undefined),
-        writeFile: jest.fn(async (path: string, data: any) => {
-          const files = routedFsByHost.get(currentRoutedHostId);
-          if (!files)
-            throw new Error(`missing routed fs host ${currentRoutedHostId}`);
-          files.set(path, typeof data === "string" ? data : `${data}`);
-        }),
-        readFile: jest.fn(async (path: string) => {
-          if (
-            hangMoveSentinelReadOnDest &&
-            currentRoutedHostId === DEST_HOST_ID &&
-            path === MOVE_SENTINEL_PATH
-          ) {
-            return await new Promise<string>(() => {});
-          }
-          const files = routedFsByHost.get(currentRoutedHostId);
-          if (!files?.has(path)) {
-            throw new Error(
-              `ENOENT: no such file or directory, open '${path}'`,
-            );
-          }
-          return files.get(path)!;
-        }),
-        rm: jest.fn(async (path: string) => {
-          routedFsByHost.get(currentRoutedHostId)?.delete(path);
-        }),
-      })),
+      fs: jest.fn(() => {
+        const maybeThrowNotInitialized = () => {
+          const remaining =
+            fsNotInitializedFailuresByHost.get(currentRoutedHostId) ?? 0;
+          if (remaining <= 0) return;
+          fsNotInitializedFailuresByHost.set(
+            currentRoutedHostId,
+            remaining - 1,
+          );
+          throw new Error("file server not initialized");
+        };
+        return {
+          exists: jest.fn(async (path: string) => {
+            maybeThrowNotInitialized();
+            if (path === ".") {
+              return true;
+            }
+            return routedFsByHost.get(currentRoutedHostId)?.has(path) ?? false;
+          }),
+          mkdir: jest.fn(async () => {
+            maybeThrowNotInitialized();
+          }),
+          writeFile: jest.fn(async (path: string, data: any) => {
+            maybeThrowNotInitialized();
+            const files = routedFsByHost.get(currentRoutedHostId);
+            if (!files)
+              throw new Error(`missing routed fs host ${currentRoutedHostId}`);
+            files.set(path, typeof data === "string" ? data : `${data}`);
+          }),
+          readFile: jest.fn(async (path: string) => {
+            maybeThrowNotInitialized();
+            if (
+              hangMoveSentinelReadOnDest &&
+              currentRoutedHostId === DEST_HOST_ID &&
+              path === MOVE_SENTINEL_PATH
+            ) {
+              return await new Promise<string>(() => {});
+            }
+            const files = routedFsByHost.get(currentRoutedHostId);
+            if (!files?.has(path)) {
+              throw new Error(
+                `ENOENT: no such file or directory, open '${path}'`,
+              );
+            }
+            return files.get(path)!;
+          }),
+          rm: jest.fn(async (path: string) => {
+            maybeThrowNotInitialized();
+            routedFsByHost.get(currentRoutedHostId)?.delete(path);
+          }),
+        };
+      }),
     }));
     getProjectBackupAssignmentStateMock = jest.fn(async () => ({
       backup_repo_id: "66666666-6666-4666-8666-666666666666",
@@ -324,6 +350,69 @@ describe("moveProjectToHost", () => {
       host_id: DEST_HOST_ID,
     });
     expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("retries when the source project file server is still initializing", async () => {
+    fsNotInitializedFailuresByHost.set(SOURCE_HOST_ID, 2);
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("COALESCE(projects.owning_bay_id, $2)") &&
+        sql.includes("COALESCE(project_hosts.bay_id, $2)")
+      ) {
+        return {
+          rows: [
+            {
+              project_id: PROJECT_ID,
+              host_id: SOURCE_HOST_ID,
+              region: "wnam",
+              project_state: "running",
+              provisioned: true,
+              last_backup: null,
+              last_edited: null,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes(
+          "SELECT status, deleted, last_seen, name FROM project_hosts",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              last_seen: new Date(),
+              name: SOURCE_HOST_NAME,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT host_id, state->>'state' AS project_state")) {
+        return { rows: [postTimeoutState] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+        allow_offline: true,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(createBackupLroMock).toHaveBeenCalledTimes(1);
+    expect(savePlacementMock).toHaveBeenCalledWith(PROJECT_ID, {
+      host_id: DEST_HOST_ID,
+    });
+    expect(routedFsByHost.get(SOURCE_HOST_ID)?.has(MOVE_SENTINEL_PATH)).toBe(
+      false,
+    );
   });
 
   it("reverts placement and cleans destination data if the destination never reaches running", async () => {
