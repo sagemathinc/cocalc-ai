@@ -477,14 +477,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
         return;
       }
       const rows = resp?.query?.account_project_index;
-      if (!Array.isArray(rows) || rows.length === 0) {
+      if (!Array.isArray(rows)) {
         return;
       }
       let project_map = store.get("project_map") ?? Map<string, any>();
+      let changed = false;
+      const seenProjectedIds = new globalThis.Set<string>();
+      const projectsToClose: string[] = [];
       for (const row of rows as ProjectIndexBootstrapRow[]) {
         if (row?.is_hidden === true || !row?.project_id) {
           continue;
         }
+        seenProjectedIds.add(row.project_id);
         const hadProject = project_map.has(row.project_id);
         const currentProject =
           project_map.get(row.project_id) ?? Map<string, any>();
@@ -563,6 +567,28 @@ export class ProjectsActions extends Actions<ProjectsState> {
           nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
         }
         project_map = project_map.set(row.project_id, nextProject);
+        changed = true;
+      }
+      for (const [project_id, project] of project_map) {
+        if (
+          project.get(PROJECTION_ONLY_FIELD) === true &&
+          !seenProjectedIds.has(project_id)
+        ) {
+          project_map = project_map.delete(project_id);
+          changed = true;
+          if (this.isProjectOpen(project_id)) {
+            projectsToClose.push(project_id);
+          }
+        }
+      }
+      if (rows.length === 0) {
+        if (changed) {
+          this.setState({ project_map } as ProjectsState);
+        }
+        for (const project_id of projectsToClose) {
+          this.set_project_closed(project_id);
+        }
+        return;
       }
       try {
         const backupResp = await webapp_client.async_query({
@@ -601,7 +627,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
       } catch (err) {
         console.warn("project backup bootstrap failed", err);
       }
-      this.setState({ project_map } as ProjectsState);
+      if (changed) {
+        this.setState({ project_map } as ProjectsState);
+      }
+      for (const project_id of projectsToClose) {
+        this.set_project_closed(project_id);
+      }
     },
   );
 
