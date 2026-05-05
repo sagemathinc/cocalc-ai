@@ -29,7 +29,6 @@ import { execute_code, uuidsha1 } from "@cocalc/backend/misc_node";
 import { CoCalcSocket } from "@cocalc/backend/tcp/enable-messaging-protocol";
 import type { ProjectClient as ProjectClientInterface } from "@cocalc/sync/editor/generic/types";
 import { SyncString } from "@cocalc/sync/editor/string/sync";
-import * as synctable2 from "@cocalc/sync/table";
 import { callback2 } from "@cocalc/util/async-utils";
 import { PROJECT_HUB_HEARTBEAT_INTERVAL_S } from "@cocalc/util/heartbeat";
 import * as message from "@cocalc/util/message";
@@ -488,8 +487,10 @@ export class Client extends EventEmitter implements ProjectClientInterface {
     return await callback2(this._query_cancel, { id });
   }
 
-  public sync_table(query, options?: any, throttle_changes = undefined) {
-    return synctable2.synctable(query, options, this, throttle_changes);
+  public sync_table(_query, _options?: any, _throttle_changes = undefined) {
+    throw Error(
+      "project client sync_table uses a removed legacy live changefeed path; use synctable_conat or synctable_ephemeral instead",
+    );
   }
 
   conat = () => connectToConat();

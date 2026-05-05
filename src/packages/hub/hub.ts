@@ -53,7 +53,6 @@ import initDatabase, { getDatabase } from "./servers/database";
 import initExpressApp from "./servers/express-app";
 import {
   loadConatConfiguration,
-  initConatChangefeedServer,
   initConatApi,
   initConatPersist,
   initConatHostRegistry,
@@ -268,7 +267,6 @@ async function startServer(): Promise<void> {
 
   if (program.conatApi || program.conatServer) {
     await initConatApi();
-    await initConatChangefeedServer();
   }
 
   if (program.conatPersist || program.conatServer) {

@@ -447,12 +447,6 @@ export let projectRunnerCount = parseInt(
   process.env.COCALC_PROJECT_RUNNER_COUNT ?? "1",
 );
 
-// number of changefeed servers to run in process.  The only reason to increase this
-// is for testing and development.
-export let conatChangefeedServerCount = parseInt(
-  process.env.CONAT_CHANGEFEED_SERVER_COUNT ?? "1",
-);
-
 // Dedicated socket.io port used by the standalone Conat server. In clustered
 // mode it is the base port for the local cluster; otherwise it is the single
 // standalone port proxied by the hub at /conat.

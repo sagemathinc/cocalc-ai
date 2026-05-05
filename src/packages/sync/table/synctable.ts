@@ -17,11 +17,6 @@ ways of orchestrating a SyncTable.
 // info about every get/set
 let DEBUG: boolean = false;
 
-// enable default conat database backed changefeed.
-// for this to work you must explicitly run the server in @cocalc/database/conat/changefeeds
-// We only turn this off for a mock testing mode.
-const USE_CONAT = !process.env.COCALC_TEST_MODE;
-
 export function set_debug(x: boolean): void {
   DEBUG = x;
 }
@@ -45,10 +40,8 @@ import {
 import * as schema from "@cocalc/util/schema";
 import mergeDeep from "@cocalc/util/immutable-deep-merge";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
-import { Changefeed } from "./changefeed";
 import { ConatChangefeed } from "./changefeed-conat";
 import { parse_query, to_key } from "./util";
-import { isTestClient } from "@cocalc/sync/editor/generic/util";
 
 import type { Client } from "@cocalc/sync/client/types";
 export type { Client };
@@ -74,8 +67,10 @@ function is_fatal(err: string): boolean {
 
 export type State = "disconnected" | "connected" | "closed";
 
+type LiveChangefeed = ConatChangefeed;
+
 export class SyncTable extends EventEmitter {
-  private changefeed?: Changefeed | ConatChangefeed;
+  private changefeed?: LiveChangefeed;
   private query: Query;
   private client_query: any;
   private primary_keys: string[];
@@ -538,6 +533,9 @@ export class SyncTable extends EventEmitter {
         // swallow errors on close; we're shutting down
         this.dbg("close")(err);
       } finally {
+        if (this.changefeed == null && this.client.no_changefeed?.()) {
+          this.client.query_cancel?.(undefined);
+        }
         this.close_changefeed();
         this.set_state("closed");
         this.removeAllListeners();
@@ -721,19 +719,44 @@ export class SyncTable extends EventEmitter {
     delete this.changefeed;
   }
 
+  private initial_query_without_changefeed = async (): Promise<any[]> => {
+    await this.wait_until_ready_to_query_db();
+    const do_query = query_function(this.client.query, this.table);
+    return await new Promise<any[]>((resolve, reject) => {
+      do_query({
+        query: this.query,
+        options: this.options,
+        changes: false,
+        cb: (err, resp) => {
+          if (err != null) {
+            reject(err);
+            return;
+          }
+          const rows = resp?.query?.[this.table];
+          if (rows == null) {
+            reject(
+              new Error(
+                `${this.table} initial query without changefeed returned no data`,
+              ),
+            );
+            return;
+          }
+          resolve(rows);
+        },
+      });
+    });
+  };
+
   private create_changefeed_connection = async (): Promise<any[]> => {
     let delay_ms: number = 3000;
     let warned = false;
     let first = true;
     while (true) {
       this.close_changefeed();
-      if (
-        USE_CONAT &&
-        !isTestClient(this.client) &&
-        this.client.is_browser() &&
-        !this.client.no_changefeed?.() &&
-        !this.project_id
-      ) {
+      if (this.client.no_changefeed?.()) {
+        return await this.initial_query_without_changefeed();
+      }
+      if (!this.project_id) {
         const account_id = this.client.client_id?.();
         if (!isValidUUID(account_id)) {
           if (first) {
@@ -766,9 +789,9 @@ export class SyncTable extends EventEmitter {
         // get closed very soon, and missing a close event would be very, very bad.
         this.init_changefeed_handlers();
       } else {
-        this.changefeed = new Changefeed(this.changefeed_options());
-        this.init_changefeed_handlers();
-        await this.wait_until_ready_to_query_db();
+        throw Error(
+          `${this.table} uses a removed legacy live changefeed path; use an explicit Conat-backed sync table or a no-changefeed/no-database wrapper instead`,
+        );
       }
       try {
         const initval = await this.changefeed.connect();
@@ -838,18 +861,7 @@ export class SyncTable extends EventEmitter {
     dbg(`success -- client emited ${client_state}`);
   }
 
-  private changefeed_options() {
-    return {
-      do_query: query_function(this.client.query, this.table),
-      query_cancel: this.client.query_cancel.bind(this.client),
-      options: this.options,
-      query: this.query,
-      table: this.table,
-    };
-  }
-
-  // awkward code due to typescript weirdness using both
-  // ConatChangefeed and Changefeed types (for unit testing).
+  // awkward code due to typescript weirdness around EventEmitter compatibility.
   private init_changefeed_handlers(): void {
     const c = this.changefeed as EventEmitter | null;
     if (c == null) return;

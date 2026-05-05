@@ -1,15 +1,10 @@
 import getLogger from "@cocalc/backend/logger";
 import { initAPI } from "./api";
-import { init as initChangefeedServer } from "@cocalc/database/conat/changefeed-api";
 import { loadConatConfiguration } from "./configuration";
 import { createTimeService } from "@cocalc/conat/service/time";
 import { listenForUpdates as listenForProjectHostUpdates } from "./route-project";
 export { initConatPersist } from "./persist";
-import {
-  conatApiCount,
-  projectRunnerCount,
-  conatChangefeedServerCount,
-} from "@cocalc/backend/data";
+import { conatApiCount, projectRunnerCount } from "@cocalc/backend/data";
 import * as Module from "module";
 import { conat } from "@cocalc/backend/conat";
 import { initHostRegistryService } from "./host-registry";
@@ -67,17 +62,6 @@ function logProjectionReadModes(): void {
       process.env.COCALC_ACCOUNT_COLLABORATOR_INDEX_COLLABORATOR_READS,
     ),
   });
-}
-
-export async function initConatChangefeedServer() {
-  logger.debug(
-    "initConatChangefeedServer: postgresql database changefeed server",
-    { conatChangefeedServerCount },
-  );
-  await loadConatConfiguration();
-  for (let i = 0; i < conatChangefeedServerCount; i++) {
-    initChangefeedServer({ client: conat({ noCache: true }) });
-  }
 }
 
 export async function initConatApi() {

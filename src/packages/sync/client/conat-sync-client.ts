@@ -11,6 +11,7 @@ Any functionality involving the filesystem obviously is a no-op.
 import { EventEmitter } from "events";
 import { type Client as SyncClient } from "@cocalc/sync/client/types";
 import { SyncTable } from "@cocalc/sync/table/synctable";
+import { synctable_no_changefeed } from "@cocalc/sync/table";
 import { once } from "@cocalc/util/async-utils";
 import { FileWatcher } from "@cocalc/sync/editor/string/test/client-test";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
@@ -141,7 +142,7 @@ export class ConatSyncClient extends EventEmitter implements SyncClient {
     options: any,
     throttle_changes?: number,
   ): Promise<SyncTable> => {
-    const s = new SyncTable(query, options, this, throttle_changes);
+    const s = synctable_no_changefeed(query, options, this, throttle_changes);
     await once(s, "connected");
     return s;
   };

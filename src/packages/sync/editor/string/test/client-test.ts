@@ -14,6 +14,7 @@ import {
   FileWatcher as FileWatcher0,
 } from "../../generic/types";
 import { SyncTable } from "@cocalc/sync/table/synctable";
+import { synctable_no_changefeed } from "@cocalc/sync/table";
 import { ExecuteCodeOptionsWithCallback } from "@cocalc/util/types/execute-code";
 import { once } from "@cocalc/util/async-utils";
 
@@ -161,7 +162,7 @@ export class Client extends EventEmitter implements Client0 {
     options: any,
     throttle_changes?: number,
   ): Promise<SyncTable> {
-    const s = new SyncTable(query, options, this, throttle_changes);
+    const s = synctable_no_changefeed(query, options, this, throttle_changes);
     await once(s, "connected");
     return s;
   }
