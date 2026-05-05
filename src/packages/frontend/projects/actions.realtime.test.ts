@@ -259,6 +259,79 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-2", "state", "state"])).toBe("running");
   });
 
+  it("keeps the newest project upsert within a batch when arrivals are out of order", async () => {
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.parse("2026-04-05T03:00:02.000Z"),
+      account_id: "acct-1",
+      project: {
+        project_id: "project-1",
+        title: "Newest Title",
+        description: "",
+        name: null,
+        theme: null,
+        host_id: null,
+        owning_bay_id: "bay-0",
+        users: {},
+        state: {
+          state: "running",
+          time: "2026-04-05T03:00:02.000Z",
+        },
+        last_active: {},
+        last_edited: "2026-04-05T03:00:02.000Z",
+        deleted: false,
+      },
+    });
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.parse("2026-04-05T03:00:01.000Z"),
+      account_id: "acct-1",
+      project: {
+        project_id: "project-1",
+        title: "Older Title",
+        description: "",
+        name: null,
+        theme: null,
+        host_id: null,
+        owning_bay_id: "bay-0",
+        users: {},
+        state: {
+          state: "opened",
+          time: "2026-04-05T03:00:01.000Z",
+        },
+        last_active: {},
+        last_edited: "2026-04-05T03:00:01.000Z",
+        deleted: false,
+      },
+    });
+    await flush();
+
+    expect(projectMap.getIn(["project-1", "title"])).toBe("Newest Title");
+    expect(projectMap.getIn(["project-1", "state", "state"])).toBe("running");
+  });
+
   it("resets routing for an open project when the feed reports a host change", async () => {
     const projectId = "00000000-0000-4000-8000-000000000001";
     projectMap = ImmutableMap<string, any>([

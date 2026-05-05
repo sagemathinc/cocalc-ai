@@ -144,6 +144,14 @@ function stateTimeMs(state: any): number | undefined {
   return Number.isFinite(ms) ? ms : undefined;
 }
 
+function eventTimeMs(
+  value: number | string | Date | null | undefined,
+): number | undefined {
+  const ms =
+    typeof value === "number" ? value : new Date(`${value ?? ""}`).getTime();
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
 type DirectProjectBootstrapRow = {
   project_id: string;
   title?: string | null;
@@ -599,6 +607,16 @@ export class ProjectsActions extends Actions<ProjectsState> {
     updated_at?: number,
   ): void {
     const existing = this.pendingProjectFeedUpserts[row.project_id];
+    const existingMs = eventTimeMs(existing?.updated_at);
+    const incomingMs = eventTimeMs(updated_at);
+    if (
+      existing != null &&
+      existingMs != null &&
+      incomingMs != null &&
+      existingMs > incomingMs
+    ) {
+      return;
+    }
     this.pendingProjectFeedUpserts[row.project_id] = {
       row,
       source_host_id:
