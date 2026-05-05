@@ -475,8 +475,23 @@ describe("git commit drawer merge commit formatting", () => {
       lineIndex: 450,
       preview: "alpha 450",
     } as const;
+    const visibleLineMatch = {
+      id: "line:0:120",
+      kind: "line",
+      fileIndex: 0,
+      lineIndex: 120,
+      preview: "alpha 120",
+    } as const;
     const alphaSectionId = buildGitReviewFileSectionId("src/alpha.ts", 0);
     const betaSectionId = buildGitReviewFileSectionId("src/beta.ts", 1);
+
+    expect(
+      getGitDiffFindVisibleLineLimitUpdate({
+        data,
+        match: visibleLineMatch,
+        visibleDiffLinesByFile: {},
+      }),
+    ).toBeUndefined();
 
     expect(
       getGitDiffFindVisibleLineLimitUpdate({

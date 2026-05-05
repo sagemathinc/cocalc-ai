@@ -401,7 +401,10 @@ export function getGitDiffFindVisibleLineLimitUpdate({
   if (!file) return;
   const sectionId = buildGitReviewFileSectionId(file.path, match.fileIndex);
   const neededLimit = getRenderedDiffLineLimit(match.lineIndex + 1);
-  if ((visibleDiffLinesByFile[sectionId] ?? 0) >= neededLimit) {
+  const currentVisibleLimit = getRenderedDiffLineLimit(
+    visibleDiffLinesByFile[sectionId],
+  );
+  if (currentVisibleLimit >= neededLimit) {
     return;
   }
   return { sectionId, neededLimit };
