@@ -32,6 +32,78 @@ Recent bugs came from two missing explicit transitions:
 Both failures happened because we had local logic for individual conditions, but
 no single written rollout model.
 
+## Comparison With Kubernetes Deployments
+
+This model is intentionally not the same as a Kubernetes `Deployment`.
+
+As of 2026-05-05, upstream Kubernetes `Deployment` rollout behavior is:
+
+- create a new ReplicaSet / new Pods
+- wait for the new Pods to become ready and available
+- scale old Pods down as the new Pods come up
+- mark stalled rollout via `Progressing=False` with
+  `Reason=ProgressDeadlineExceeded`
+- not automatically roll the `Deployment` back in core Kubernetes
+
+Official references:
+
+- https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+- https://kubernetes.io/docs/tasks/run-application/update-deployment-rolling/
+
+That is a materially different problem from our `project-host` rollout.
+
+### Why Our Model Differs
+
+Kubernetes usually has overlap between old and new capacity:
+
+- old Pods can remain serving
+- new Pods can come up beside them
+- the controller can stop making progress without immediately killing the old
+  serving path
+
+Our `project-host` rollout is a singleton in-place daemon switch on one host:
+
+- there is one active `project-host` process on one host-local control plane
+- activation requires an explicit restart from old daemon to candidate
+- there is no ReplicaSet-style parallel steady-state during activation
+- a failed candidate needs immediate host-local recovery, not just a status
+  condition
+
+Because of that, our design must differ from Kubernetes in two important ways:
+
+1. local automatic rollback must exist
+   - this belongs to host-agent
+   - otherwise a bad singleton handoff can strand the host
+2. explicit activation state must exist
+   - artifact installed is not equivalent to process switched
+   - Kubernetes gets this distinction from ReplicaSet/Pod objects; we must make
+     it explicit in our own state
+
+### What We Should Borrow From Kubernetes
+
+We should not copy Kubernetes rollout mechanics, but we should copy its
+discipline around conditions and visibility.
+
+Useful Kubernetes ideas:
+
+- explicit status conditions instead of one generic `waiting`
+- deadlines owned by the controller that is actually evaluating progress
+- separation of desired state from observed state
+- failure reported as a first-class condition, not inferred from side effects
+
+That implies our host UI and LRO progress should expose condition-like facts
+such as:
+
+- `ArtifactInstalled`
+- `ProjectHostProgressing`
+- `ProjectHostAvailable`
+- `ProjectHostDegraded`
+- `ManagedComponentsMixed`
+- `RolledBack`
+
+This note keeps the rollout mechanics host-specific while borrowing the
+operator-facing clarity that Kubernetes conditions provide.
+
 ## Top-Level Rule
 
 A host software rollout is not one state machine.
