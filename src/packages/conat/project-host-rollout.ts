@@ -9,7 +9,7 @@ import type {
   HostRuntimeHostAgentProjectHostAutomaticRollback,
   HostRuntimeHostAgentProjectHostObservation,
 } from "@cocalc/conat/hub/api/hosts";
-import type { HostLroState } from "../hooks/use-host-ops";
+import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
 
 const PROJECT_HOST_ROLLOUT_OP_KINDS = new Set([
   "host-upgrade-software",
@@ -28,6 +28,13 @@ export type HostRolloutDisplayPhase = {
   deadlineAt?: string;
   targetVersion?: string;
   observedVersion?: string;
+};
+
+export type ProjectHostRolloutLroState = {
+  op_id?: string;
+  kind?: string;
+  summary?: Partial<LroSummary>;
+  last_progress?: Partial<Extract<LroEvent, { type: "progress" }>>;
 };
 
 function toTimestamp(value?: Date | string | null): number | undefined {
@@ -59,7 +66,7 @@ export function shouldSuppressProjectHostFailedOp({
   currentVersion,
   observation,
 }: {
-  op?: HostLroState;
+  op?: ProjectHostRolloutLroState;
   currentVersion?: string;
   observation?: HostRuntimeHostAgentProjectHostObservation;
 }): boolean {
@@ -125,7 +132,7 @@ function messageContains(
   return !!message && pattern.test(message);
 }
 
-function progressMessage(op?: HostLroState): string | undefined {
+function progressMessage(op?: ProjectHostRolloutLroState): string | undefined {
   const value =
     op?.last_progress?.message ??
     (typeof op?.summary?.progress_summary?.message === "string"
@@ -136,7 +143,7 @@ function progressMessage(op?: HostLroState): string | undefined {
 }
 
 function progressSummaryPhase(
-  op?: HostLroState,
+  op?: ProjectHostRolloutLroState,
 ): HostRolloutDisplayPhase | undefined {
   const summary = op?.summary?.progress_summary ?? {};
   const label = `${summary?.rollout_phase_label ?? ""}`.trim();
@@ -210,7 +217,7 @@ export function currentProjectHostRolloutPhase({
   observation,
   deploymentStatus,
 }: {
-  op?: HostLroState;
+  op?: ProjectHostRolloutLroState;
   currentVersion?: string;
   observation?: HostRuntimeHostAgentProjectHostObservation;
   deploymentStatus?: HostRuntimeDeploymentStatus;

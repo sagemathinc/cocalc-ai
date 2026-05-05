@@ -88,7 +88,7 @@ import {
   currentProjectHostRolloutPhase,
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
-} from "../utils/project-host-rollout";
+} from "@cocalc/conat/project-host-rollout";
 
 type HostDrawerViewModel = {
   open: boolean;

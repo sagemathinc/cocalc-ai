@@ -67,7 +67,7 @@ describe("project-host-rollout", () => {
             scope_type: "host",
             service: "hosts",
             stream_name: "x",
-          },
+          } as any,
         },
       }),
     ).toBe(true);
@@ -99,7 +99,7 @@ describe("project-host-rollout", () => {
             scope_type: "host",
             service: "hosts",
             stream_name: "x",
-          },
+          } as any,
         },
       }),
     ).toBe(false);
