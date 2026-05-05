@@ -27,6 +27,6 @@ export default function initPublicFeatures(router: Router): void {
     } else {
       url.searchParams.set("target", targetPath);
     }
-    res.redirect(join(basePath, "static/public-features.html") + url.search);
+    res.redirect(join(basePath, "static/public.html") + url.search);
   });
 }

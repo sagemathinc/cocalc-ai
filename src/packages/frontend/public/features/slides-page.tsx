@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -13,7 +13,7 @@ import {
   featureAppPath as appPath,
 } from "./page-components";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 export default function SlidesFeaturePage({
   helpEmail,
@@ -22,13 +22,10 @@ export default function SlidesFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Text strong type="secondary">
-                COMPUTATIONAL SLIDES
-              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 Present technical work with code, math, and collaboration built
                 in
@@ -59,11 +56,11 @@ export default function SlidesFeaturePage({
             />
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Slides for technical subjects
             </Title>
@@ -80,10 +77,10 @@ export default function SlidesFeaturePage({
               and live explanation than a conventional slide deck disconnected
               from the rest of the workflow.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Present and edit from the same workspace
             </Title>
@@ -96,11 +93,11 @@ export default function SlidesFeaturePage({
             <Paragraph style={{ margin: 0 }}>
               Coauthors can also work on the same presentation in real time.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Tag
           color="blue"
           style={{
@@ -125,9 +122,9 @@ export default function SlidesFeaturePage({
           easier to evolve presentations over time without losing earlier
           versions.
         </Paragraph>
-      </PublicSectionCard>
+      </PublicCard>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={3} style={{ margin: 0 }}>
           Why use slides in CoCalc
         </Title>
@@ -148,7 +145,7 @@ export default function SlidesFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
     </Flex>
   );
 }

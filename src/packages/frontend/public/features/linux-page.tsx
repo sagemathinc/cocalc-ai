@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -13,7 +13,7 @@ import {
   featureAppPath as appPath,
 } from "./page-components";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 export default function LinuxFeaturePage({
   helpEmail,
@@ -22,13 +22,10 @@ export default function LinuxFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Text strong type="secondary">
-                ONLINE LINUX ENVIRONMENT
-              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 A browser-based Linux workspace for real technical projects
               </Title>
@@ -59,11 +56,11 @@ export default function LinuxFeaturePage({
             />
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Learn and use Linux without risking your own machine
             </Title>
@@ -78,10 +75,10 @@ export default function LinuxFeaturePage({
               That is useful both for teaching Linux and for practical
               day-to-day project work where reproducibility matters.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="Collaborative terminals in CoCalc"
               src="/public/features/cocalc-terminal-collab.gif"
@@ -97,11 +94,11 @@ export default function LinuxFeaturePage({
               This is why CoCalc works well for teaching, pair debugging, and
               research collaboration where the environment itself matters.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -137,11 +134,11 @@ export default function LinuxFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="Running PostgreSQL inside a CoCalc project"
               src="/public/features/terminal-jupyter-postgresql.png"
@@ -159,10 +156,10 @@ export default function LinuxFeaturePage({
               This is much easier when the shell, the service, and the notebook
               consuming it all live in the same place.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Why the Linux environment matters
             </Title>
@@ -174,11 +171,11 @@ export default function LinuxFeaturePage({
                 "Make complex technical workflows accessible from any modern browser.",
               ]}
             />
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={3} style={{ margin: 0 }}>
           A Linux environment is the foundation for the rest of CoCalc
         </Title>
@@ -196,7 +193,7 @@ export default function LinuxFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
     </Flex>
   );
 }

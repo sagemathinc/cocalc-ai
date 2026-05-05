@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -14,7 +14,7 @@ import {
   LinkButton,
 } from "./page-components";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 export default function LatexEditorFeaturePage({
   helpEmail,
@@ -23,13 +23,10 @@ export default function LatexEditorFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Text strong type="secondary">
-                ONLINE LATEX EDITOR
-              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 Focus on writing and collaboration instead of managing the TeX
                 toolchain
@@ -61,11 +58,11 @@ export default function LatexEditorFeaturePage({
             />
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Writing workflow that stays out of the way
             </Title>
@@ -82,10 +79,10 @@ export default function LatexEditorFeaturePage({
               editor, but CoCalc adds collaboration, history, and the rest of
               the project environment around it.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Realtime collaboration and discussion
             </Title>
@@ -100,11 +97,11 @@ export default function LatexEditorFeaturePage({
               This is especially useful for coauthors, student-teacher feedback,
               and iterative editorial work on technical documents.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -140,11 +137,11 @@ export default function LatexEditorFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="TimeTravel in the LaTeX editor"
               src="/public/features/latex-editor-timetravel-01.png"
@@ -164,10 +161,10 @@ export default function LatexEditorFeaturePage({
             <LinkButton href="https://doc.cocalc.com/time-travel.html">
               Learn about TimeTravel
             </LinkButton>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="AI formula assistant for LaTeX"
               src="/public/features/latex-ai-formula.png"
@@ -185,13 +182,13 @@ export default function LatexEditorFeaturePage({
               This is much more useful when it happens next to the source
               itself, not in a disconnected external assistant.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="Multi-file LaTeX project support"
               src="/public/features/latex-editor-multifile-20251006.png"
@@ -208,10 +205,10 @@ export default function LatexEditorFeaturePage({
               That makes it a strong fit for technical notes, homework, books,
               and research documents that are generated from data or code.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="Dark mode LaTeX editor"
               src="/public/features/latex-editor-darkmode-20251003.png"
@@ -228,11 +225,11 @@ export default function LatexEditorFeaturePage({
               CoCalc aims to make those longer technical writing sessions feel
               viable in the browser, not compromised.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={3} style={{ margin: 0 }}>
           Why people use CoCalc for LaTeX
         </Title>
@@ -254,7 +251,7 @@ export default function LatexEditorFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
     </Flex>
   );
 }

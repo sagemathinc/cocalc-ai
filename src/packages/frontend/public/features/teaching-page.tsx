@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -14,7 +14,7 @@ import {
   LinkButton,
 } from "./page-components";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 export default function TeachingFeaturePage({
   helpEmail,
@@ -23,13 +23,10 @@ export default function TeachingFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Text strong type="secondary">
-                TEACHING AND COURSES
-              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 Run a technical course on shared infrastructure instead of
                 troubleshooting everyone&apos;s laptop
@@ -61,11 +58,11 @@ export default function TeachingFeaturePage({
             />
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               An entire computer lab in the cloud
             </Title>
@@ -81,10 +78,10 @@ export default function TeachingFeaturePage({
               This changes office hours and lab support dramatically because the
               student and instructor are looking at the same live environment.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               No software setup on student machines
             </Title>
@@ -100,11 +97,11 @@ export default function TeachingFeaturePage({
               courses: it eliminates the slowest and most frustrating part of
               getting started.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -139,11 +136,11 @@ export default function TeachingFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="nbgrader workflow in CoCalc"
               src="/public/features/cocalc-jupyter-nbgrader-overview.png"
@@ -163,10 +160,10 @@ export default function TeachingFeaturePage({
             <LinkButton href="https://doc.cocalc.com/teaching-nbgrader.html">
               nbgrader documentation
             </LinkButton>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Help students in context
             </Title>
@@ -180,11 +177,11 @@ export default function TeachingFeaturePage({
               labs, and understanding whether a student is stuck because of the
               math, the code, or the environment.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={3} style={{ margin: 0 }}>
           Built for technical courses, not just generic LMS uploads
         </Title>
@@ -204,7 +201,7 @@ export default function TeachingFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
     </Flex>
   );
 }
