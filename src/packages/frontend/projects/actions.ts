@@ -539,6 +539,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
             currentProject.get("last_edited"),
           );
         }
+        if (
+          this.shouldPreserveNewerLocalLastBackup({
+            currentProject,
+            incomingLastBackup: undefined,
+          })
+        ) {
+          nextProject = nextProject.set(
+            "last_backup",
+            currentProject.get("last_backup"),
+          );
+        }
         nextProject = this.mergeNewerLocalLastActive(
           currentProject,
           nextProject,
@@ -561,6 +572,16 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (Array.isArray(backupRows)) {
           for (const row of backupRows as ProjectBackupBootstrapRow[]) {
             if (!row?.project_id || !project_map.has(row.project_id)) {
+              continue;
+            }
+            const currentProject =
+              project_map.get(row.project_id) ?? Map<string, any>();
+            if (
+              this.shouldPreserveNewerLocalLastBackup({
+                currentProject,
+                incomingLastBackup: row.last_backup,
+              })
+            ) {
               continue;
             }
             project_map = project_map.setIn(
@@ -656,6 +677,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return false;
     }
     const incomingMs = dateValueMs(incomingLastEdited);
+    return incomingMs == null || incomingMs < currentMs;
+  }
+
+  private shouldPreserveNewerLocalLastBackup({
+    currentProject,
+    incomingLastBackup,
+  }: {
+    currentProject: Map<string, any>;
+    incomingLastBackup?: string | Date | null;
+  }): boolean {
+    const currentMs = dateValueMs(currentProject.get("last_backup"));
+    if (currentMs == null) {
+      return false;
+    }
+    const incomingMs = dateValueMs(incomingLastBackup);
     return incomingMs == null || incomingMs < currentMs;
   }
 
@@ -814,6 +850,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
           currentProject.get("last_edited"),
         );
       }
+      if (
+        this.shouldPreserveNewerLocalLastBackup({
+          currentProject,
+          incomingLastBackup: row.last_backup ?? undefined,
+        })
+      ) {
+        nextProject = nextProject.set(
+          "last_backup",
+          currentProject.get("last_backup"),
+        );
+      }
       nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
       project_map = project_map.set(row.project_id, nextProject);
       changed = true;
@@ -878,6 +925,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
         currentProject.get("last_edited"),
       );
     }
+    if (
+      this.shouldPreserveNewerLocalLastBackup({
+        currentProject,
+        incomingLastBackup: row.last_backup ?? undefined,
+      })
+    ) {
+      nextProject = nextProject.set(
+        "last_backup",
+        currentProject.get("last_backup"),
+      );
+    }
     nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
     const project_map = (store.get("project_map") ?? Map<string, any>()).set(
       row.project_id,
@@ -918,6 +976,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
         nextProject = nextProject.set(
           "last_edited",
           currentProject.get("last_edited"),
+        );
+      }
+      if (
+        this.shouldPreserveNewerLocalLastBackup({
+          currentProject,
+          incomingLastBackup: nextProject.get("last_backup"),
+        })
+      ) {
+        nextProject = nextProject.set(
+          "last_backup",
+          currentProject.get("last_backup"),
         );
       }
       nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
