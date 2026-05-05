@@ -234,6 +234,8 @@ export async function rebuildAccountProjectIndex(opts: {
           theme,
           users_summary,
           state_summary,
+          last_edited,
+          last_backup,
           last_activity_at,
           last_opened_at,
           is_hidden,
@@ -250,6 +252,8 @@ export async function rebuildAccountProjectIndex(opts: {
           COALESCE(theme, '{}'::JSONB) AS theme,
           COALESCE(users, '{}'::JSONB) AS users_summary,
           COALESCE(state, '{}'::JSONB) AS state_summary,
+          last_edited,
+          last_backup,
           (last_active #>> ARRAY[$1::TEXT]::TEXT[])::TIMESTAMP AS last_activity_at,
           NULL::TIMESTAMP AS last_opened_at,
           COALESCE(

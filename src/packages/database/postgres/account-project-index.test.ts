@@ -63,6 +63,17 @@ describe("account_project_index rebuild", () => {
         }),
       ],
     );
+    await getPool().query(
+      `UPDATE projects
+          SET last_edited = $2,
+              last_backup = $3
+        WHERE project_id = $1`,
+      [
+        PROJECT_VISIBLE,
+        new Date("2026-04-03T20:00:00.000Z"),
+        new Date("2026-04-03T20:30:00.000Z"),
+      ],
+    );
 
     await expect(
       rebuildAccountProjectIndex({
@@ -101,7 +112,7 @@ describe("account_project_index rebuild", () => {
 
     const { rows } = await getPool().query(
       `SELECT project_id, owning_bay_id, host_id, title, description, is_hidden,
-              users_summary, state_summary
+              users_summary, state_summary, last_edited, last_backup
          FROM account_project_index
         WHERE account_id = $1
         ORDER BY project_id`,
@@ -119,6 +130,8 @@ describe("account_project_index rebuild", () => {
           [ACCOUNT_ID]: { group: "owner" },
         },
         state_summary: { state: "running" },
+        last_edited: new Date("2026-04-03T20:00:00.000Z"),
+        last_backup: new Date("2026-04-03T20:30:00.000Z"),
       },
       {
         project_id: PROJECT_HIDDEN,
@@ -131,6 +144,8 @@ describe("account_project_index rebuild", () => {
           [ACCOUNT_ID]: { group: "collaborator", hide: true },
         },
         state_summary: { state: "stopped" },
+        last_edited: expect.any(Date),
+        last_backup: null,
       },
     ]);
   });
