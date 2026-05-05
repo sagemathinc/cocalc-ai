@@ -89,6 +89,11 @@ describe("bootstrap-host promoted artifact defaults", () => {
         return;
       }
       if (path.endsWith(".sha256")) {
+        if (path.includes("/missing-build/")) {
+          res.statusCode = 404;
+          res.end("not found");
+          return;
+        }
         sendText(`${"d".repeat(64)}  ${path.split("/").at(-1) ?? "bundle"}`);
         return;
       }
@@ -311,5 +316,25 @@ describe("bootstrap-host promoted artifact defaults", () => {
       `${softwareBaseUrl}/project-host/1777603320059/bundle-linux.tar.xz`,
     );
     expect(scripts.projectHostVersion).toBe("1777603320059");
+  });
+
+  it("falls back to the latest manifest when a promoted artifact version is no longer served", async () => {
+    loadEffectiveProjectHostRuntimeDeploymentsMock.mockResolvedValue([
+      {
+        scope_type: "global",
+        scope_id: "global",
+        target_type: "artifact",
+        target: "project-host",
+        desired_version: "missing-build",
+      },
+    ]);
+
+    const { buildBootstrapScripts } = await loadBootstrapHost();
+    const scripts = await buildBootstrapScripts(baseRow() as any);
+
+    expect(scripts.projectHostBundleUrl).toBe(
+      `${softwareBaseUrl}/project-host/ph-latest/bundle-linux.tar.xz`,
+    );
+    expect(scripts.projectHostVersion).toBe("ph-latest");
   });
 });

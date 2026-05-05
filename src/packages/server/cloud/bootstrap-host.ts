@@ -678,12 +678,25 @@ async function resolveBootstrapArtifactBundle({
       os: targetOs,
       arch: targetArch,
     });
-    return {
-      manifestUrl: "",
-      url,
-      sha256: await fetchSha256(`${url}.sha256`),
-      version,
-    };
+    const sha256 = await fetchSha256(`${url}.sha256`);
+    if (sha256) {
+      return {
+        manifestUrl: "",
+        url,
+        sha256,
+        version,
+      };
+    }
+    logger.warn(
+      "bootstrap host: desired artifact bundle is unavailable; falling back to latest manifest",
+      {
+        artifact,
+        desired_version: version,
+        software_base_url: softwareBaseUrl,
+        os: targetOs,
+        arch: targetArch,
+      },
+    );
   }
   const manifestUrl =
     artifact === "tools"
