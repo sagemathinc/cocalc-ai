@@ -123,10 +123,8 @@ import {
 } from "@cocalc/project-runner/run/rootfs-base";
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
 import { resetClonedProjectState } from "./clone-state";
-import {
-  getBackupExecutionLimit,
-  getCachedBackupExecutionLimit,
-} from "./backup-execution-limit";
+import { withBackupParallelLimit } from "./backup-queue";
+export { getBackupExecutionStatus } from "./backup-queue";
 import {
   projectRuntimeRootfsContractLabelsForCurrentHost,
   readCurrentProjectRuntimeUsernsMapFingerprint,
@@ -167,9 +165,6 @@ const QUOTA_CACHE_TTL_MS = Math.max(
   0,
   envToInt("COCALC_PROJECT_HOST_QUOTA_CACHE_TTL_MS", 60_000),
 );
-let backupInFlight = 0;
-const backupWaiters: Array<() => void> = [];
-const backupProjectTails = new Map<string, Promise<void>>();
 const sshWakeInFlight = new Map<string, Promise<number | null>>();
 const quotaCache = new Map<
   string,
@@ -289,122 +284,6 @@ async function ensureProjectSshWake(
   });
   sshWakeInFlight.set(project_id, task);
   return await task;
-}
-
-async function acquireBackupSlot(): Promise<void> {
-  const { max_parallel } = await getBackupExecutionLimit();
-  while (backupWaiters.length > 0 && backupInFlight < max_parallel) {
-    backupInFlight += 1;
-    backupWaiters.shift()?.();
-  }
-  if (backupInFlight < max_parallel) {
-    backupInFlight += 1;
-    return;
-  }
-  await new Promise<void>((resolve) => {
-    backupWaiters.push(() => {
-      backupInFlight += 1;
-      resolve();
-    });
-  });
-}
-
-function releaseBackupSlot() {
-  backupInFlight = Math.max(0, backupInFlight - 1);
-  const { max_parallel } = getCachedBackupExecutionLimit();
-  while (backupWaiters.length > 0 && backupInFlight < max_parallel) {
-    backupInFlight += 1;
-    backupWaiters.shift()?.();
-  }
-}
-
-export async function getBackupExecutionStatus() {
-  const { max_parallel, config_source } = await getBackupExecutionLimit();
-  return {
-    max_parallel,
-    in_flight: backupInFlight,
-    queued: backupWaiters.length,
-    project_lock_count: backupProjectTails.size,
-    config_source,
-  };
-}
-
-async function withBackupProjectLock<T>({
-  project_id,
-  op,
-  run,
-}: {
-  project_id: string;
-  op: string;
-  run: () => Promise<T>;
-}): Promise<T> {
-  let release: () => void = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const previous = backupProjectTails.get(project_id) ?? Promise.resolve();
-  const queued = previous.then(() => gate);
-  backupProjectTails.set(project_id, queued);
-
-  const waitStartedAt = Date.now();
-  await previous;
-  logger.debug("backup project lock acquired", {
-    project_id,
-    op,
-    wait_ms: Date.now() - waitStartedAt,
-    queued_projects: backupProjectTails.size,
-  });
-
-  try {
-    return await run();
-  } finally {
-    release();
-    if (backupProjectTails.get(project_id) === queued) {
-      backupProjectTails.delete(project_id);
-    }
-    logger.debug("backup project lock released", {
-      project_id,
-      op,
-      queued_projects: backupProjectTails.size,
-    });
-  }
-}
-
-async function withBackupParallelLimit<T>({
-  project_id,
-  op,
-  run,
-}: {
-  project_id: string;
-  op: string;
-  run: () => Promise<T>;
-}): Promise<T> {
-  return await withBackupProjectLock({
-    project_id,
-    op,
-    run: async () => {
-      await acquireBackupSlot();
-      logger.debug("backup slot acquired", {
-        project_id,
-        op,
-        in_flight: backupInFlight,
-        queued: backupWaiters.length,
-        max_parallel: getCachedBackupExecutionLimit().max_parallel,
-      });
-      try {
-        return await run();
-      } finally {
-        releaseBackupSlot();
-        logger.debug("backup slot released", {
-          project_id,
-          op,
-          in_flight: backupInFlight,
-          queued: backupWaiters.length,
-          max_parallel: getCachedBackupExecutionLimit().max_parallel,
-        });
-      }
-    },
-  });
 }
 
 function scratchVolName(project_id: string) {
@@ -3145,6 +3024,7 @@ export async function runScheduledBackupMaintenance({
   await withBackupParallelLimit({
     project_id,
     op: "runScheduledBackupMaintenance",
+    queue_if_busy: false,
     run: async () =>
       await updateBackups({
         project_id,
