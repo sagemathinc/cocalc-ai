@@ -28,7 +28,10 @@ import {
   type SnapshotRestoreMode,
   type SnapshotUsage,
 } from "@cocalc/conat/files/file-server";
-import { type Client as ConatClient } from "@cocalc/conat/core/client";
+import {
+  ConatError,
+  type Client as ConatClient,
+} from "@cocalc/conat/core/client";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getLogger from "@cocalc/backend/logger";
@@ -2676,6 +2679,11 @@ async function createBackup({
   lro?: LroRef;
   managed_egress_override?: ManagedBackupEgressOverride;
 }): Promise<{ time: Date; id: string }> {
+  if (limit != null && limit <= 0) {
+    throw new ConatError(`there is a limit of ${limit} backups`, {
+      code: 507,
+    });
+  }
   const progress = createLroRusticReporter(lro, "backup");
   const managedBackupPolicy = await checkManagedBackupAllowedBestEffort({
     project_id,
@@ -2692,11 +2700,21 @@ async function createBackup({
         project_id,
         op: "createBackup",
         run: async () => {
+          if (limit != null) {
+            const indexedBackups = await getBackups({
+              project_id,
+              indexed_only: true,
+            });
+            if (indexedBackups.length >= limit) {
+              throw new ConatError(`there is a limit of ${limit} backups`, {
+                code: 507,
+              });
+            }
+          }
           const vol = await getVolume(project_id);
           vol.fs.rusticRepo = await resolveRusticRepo(project_id);
           try {
             return await vol.rustic.backup({
-              limit,
               tags,
               progress,
               index: { project_id },
@@ -2722,7 +2740,6 @@ async function createBackup({
               },
             );
             return await vol.rustic.backup({
-              limit,
               tags,
               progress,
               index: { project_id },

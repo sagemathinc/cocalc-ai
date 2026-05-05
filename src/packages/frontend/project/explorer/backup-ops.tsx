@@ -11,10 +11,8 @@ import {
 import { useMemo, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
-import type { LroStatus } from "@cocalc/conat/hub/api/lro";
 import {
   LRO_TERMINAL_STATUSES,
-  isDismissed,
   progressBarStatus,
 } from "@cocalc/frontend/lro/utils";
 import type { BackupLroState } from "@cocalc/frontend/project/backup-ops";
@@ -27,8 +25,7 @@ import {
   lroStatusColor,
   lroUpdatedAt,
 } from "./lro-timeline-utils";
-
-const HIDE_STATUSES = new Set<LroStatus>(["succeeded"]);
+import { shouldDisplayBackupOp } from "./backup-op-visibility";
 
 const BACKUP_PHASES = [
   {
@@ -62,12 +59,7 @@ const BACKUP_PHASE_SET = new Set<BackupPhaseKey>(
 export default function BackupOps({ project_id }: { project_id: string }) {
   const backupOps = useTypedRedux({ project_id }, "backup_ops")?.toJS() ?? {};
   const entries = Object.values(backupOps) as BackupLroState[];
-  const active = entries.filter(
-    (op) =>
-      !op.summary ||
-      (!LRO_TERMINAL_STATUSES.has(op.summary.status) &&
-        !isDismissed(op.summary)),
-  );
+  const active = entries.filter((op) => shouldDisplayBackupOp(op));
   if (!active.length) {
     return null;
   }
@@ -97,7 +89,7 @@ function BackupOpRow({ op }: { op: BackupLroState }) {
   const summary = op.summary;
   const lastDetailRef = useRef<string | undefined>(undefined);
   const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
-  if (summary && HIDE_STATUSES.has(summary.status)) {
+  if (!shouldDisplayBackupOp(op)) {
     return null;
   }
   const percent = progressPercent(op);
