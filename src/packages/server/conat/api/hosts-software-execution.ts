@@ -47,6 +47,19 @@ const PROJECT_HOST_ROLLOUT_SETTLE_TIMEOUT_MS = 150_000;
 const PROJECT_HOST_ROLLOUT_POLL_MS = 5_000;
 const PROJECT_HOST_ROLLOUT_MIN_OBSERVATION_MS = 30_000;
 
+export type HostSoftwareRolloutProgressUpdate = {
+  rollout_phase: string;
+  rollout_phase_label: string;
+  rollout_phase_owner:
+    | "artifact installation"
+    | "project-host activation"
+    | "managed component alignment";
+  rollout_target_version?: string;
+  rollout_observed_version?: string;
+  rollout_previous_version?: string;
+  rollout_deadline_at?: string;
+};
+
 const RUNTIME_LOG_SOURCE_BY_COMPONENT: Partial<
   Record<
     HostManagedComponentRolloutRequest["components"][number],
@@ -247,6 +260,85 @@ function projectHostPendingRolloutMatches({
   return !!desiredVersion && targetVersion === desiredVersion;
 }
 
+function lastKnownGoodProjectHostVersion({
+  hostAgentStatus,
+}: {
+  hostAgentStatus?: HostAgentStatus;
+}): string | undefined {
+  return normalizeObservedVersion(
+    hostAgentStatus?.project_host?.last_known_good_version,
+  );
+}
+
+function projectHostRolloutProgressUpdate({
+  desiredVersion,
+  observedVersion,
+  hostAgentStatus,
+}: {
+  desiredVersion?: string;
+  observedVersion?: string;
+  hostAgentStatus?: HostAgentStatus;
+}): HostSoftwareRolloutProgressUpdate | undefined {
+  const targetVersion = normalizeObservedVersion(desiredVersion);
+  if (!targetVersion) {
+    return undefined;
+  }
+  const pending = hostAgentStatus?.project_host?.pending_rollout;
+  const lastKnownGoodVersion = lastKnownGoodProjectHostVersion({
+    hostAgentStatus,
+  });
+  if (
+    pending &&
+    normalizeObservedVersion(pending.target_version) === targetVersion
+  ) {
+    return {
+      rollout_phase:
+        observedVersion === targetVersion
+          ? "project_host.candidate_health"
+          : "project_host.awaiting_restart",
+      rollout_phase_label:
+        observedVersion === targetVersion
+          ? "Candidate running; evaluating health"
+          : "Waiting for host-agent to restart project-host",
+      rollout_phase_owner: "project-host activation",
+      rollout_target_version: targetVersion,
+      rollout_observed_version: observedVersion,
+      rollout_previous_version: normalizeObservedVersion(
+        pending.previous_version,
+      ),
+      rollout_deadline_at: normalizeObservedVersion(pending.deadline_at),
+    };
+  }
+  if (
+    observedVersion === targetVersion &&
+    lastKnownGoodVersion === targetVersion
+  ) {
+    return {
+      rollout_phase: "project_host.candidate_promoted",
+      rollout_phase_label: "Candidate promoted to last known good",
+      rollout_phase_owner: "project-host activation",
+      rollout_target_version: targetVersion,
+      rollout_observed_version: observedVersion,
+    };
+  }
+  if (observedVersion === targetVersion) {
+    return {
+      rollout_phase: "project_host.candidate_started",
+      rollout_phase_label: "Candidate running; awaiting promotion",
+      rollout_phase_owner: "project-host activation",
+      rollout_target_version: targetVersion,
+      rollout_observed_version: observedVersion,
+    };
+  }
+  return {
+    rollout_phase: "project_host.awaiting_restart",
+    rollout_phase_label: "Installed on host; waiting for project-host restart",
+    rollout_phase_owner: "project-host activation",
+    rollout_target_version: targetVersion,
+    rollout_observed_version: observedVersion,
+  };
+}
+
 async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -334,6 +426,7 @@ export async function upgradeHostSoftwareInternalHelper({
   runtimeDeploymentsForUpgradeResults,
   requestedByForRuntimeDeployments,
   setProjectHostRuntimeDeployments,
+  onProgress,
 }: {
   account_id?: string;
   id: string;
@@ -391,6 +484,9 @@ export async function upgradeHostSoftwareInternalHelper({
     deployments: any[];
     replace: boolean;
   }) => Promise<any>;
+  onProgress?: (
+    update: HostSoftwareRolloutProgressUpdate,
+  ) => Promise<void> | void;
 }): Promise<HostSoftwareUpgradeResponse> {
   const HOST_UPGRADE_RPC_TIMEOUT_MS = 10 * 60 * 1000;
   const row = await loadHostForStartStop(id, account_id);
@@ -418,6 +514,17 @@ export async function upgradeHostSoftwareInternalHelper({
     row,
     baseUrl: resolvedBaseUrl,
   });
+  const explicitProjectHostTargetVersion = normalizeObservedVersion(
+    directTargets.find((target) => target.artifact === "project-host")?.version,
+  );
+  if (requestedProjectHostUpgrade) {
+    await onProgress?.({
+      rollout_phase: "artifact.installing",
+      rollout_phase_label: "Downloading/installing artifact",
+      rollout_phase_owner: "artifact installation",
+      rollout_target_version: explicitProjectHostTargetVersion,
+    });
+  }
   const bootstrapRuntimeDeployments = await Promise.all(
     bootstrapTargets.map(async (target) => ({
       target_type: "artifact" as const,
@@ -550,6 +657,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   projectHostRolloutSettleTimeoutMs = PROJECT_HOST_ROLLOUT_SETTLE_TIMEOUT_MS,
   projectHostRolloutPollMs = PROJECT_HOST_ROLLOUT_POLL_MS,
   projectHostRolloutMinObservationMs = PROJECT_HOST_ROLLOUT_MIN_OBSERVATION_MS,
+  onProgress,
 }: {
   account_id?: string;
   id: string;
@@ -618,6 +726,9 @@ export async function rolloutHostManagedComponentsInternalHelper({
   projectHostRolloutSettleTimeoutMs?: number;
   projectHostRolloutPollMs?: number;
   projectHostRolloutMinObservationMs?: number;
+  onProgress?: (
+    update: HostSoftwareRolloutProgressUpdate,
+  ) => Promise<void> | void;
 }): Promise<HostManagedComponentRolloutResponse> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
@@ -696,7 +807,33 @@ export async function rolloutHostManagedComponentsInternalHelper({
       hostAgentStatus,
       desiredVersion,
     });
+    if (requestedProjectHostRollout) {
+      const progress = projectHostRolloutProgressUpdate({
+        desiredVersion,
+        observedVersion:
+          observedProjectHostVersion ?? fallbackProjectHostVersion,
+        hostAgentStatus,
+      });
+      if (progress) {
+        await onProgress?.(progress);
+      }
+    }
   };
+  if (requestedProjectHostRollout) {
+    await onProgress?.({
+      rollout_phase: "project_host.awaiting_heartbeat",
+      rollout_phase_label:
+        "Waiting for host to return after project-host restart",
+      rollout_phase_owner: "project-host activation",
+      rollout_target_version: desiredVersion,
+    });
+  } else if (components.length > 0) {
+    await onProgress?.({
+      rollout_phase: "managed_components.aligning",
+      rollout_phase_label: "Rolling out managed components",
+      rollout_phase_owner: "managed component alignment",
+    });
+  }
   await refreshProjectHostObservation();
   if (requestedProjectHostRollout && desiredVersion) {
     const settleStartedAt = Date.now();
@@ -753,6 +890,14 @@ export async function rolloutHostManagedComponentsInternalHelper({
         observedProjectHostVersion ??
         fallbackProjectHostVersion ??
         desiredVersion,
+    });
+    await onProgress?.({
+      rollout_phase: "project_host.candidate_promoted",
+      rollout_phase_label: "Candidate promoted to last known good",
+      rollout_phase_owner: "project-host activation",
+      rollout_target_version: desiredVersion,
+      rollout_observed_version:
+        observedProjectHostVersion ?? fallbackProjectHostVersion,
     });
   }
   const runtimeDeployments = runtimeDeploymentsForComponentRollout({

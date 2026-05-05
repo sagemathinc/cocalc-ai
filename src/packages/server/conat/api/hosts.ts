@@ -197,6 +197,7 @@ import {
   rollbackHostRuntimeDeploymentsInternalHelper,
 } from "./hosts-runtime-deployment-execution";
 import {
+  type HostSoftwareRolloutProgressUpdate,
   rolloutHostManagedComponentsInternalHelper,
   upgradeHostSoftwareInternalHelper,
 } from "./hosts-software-execution";
@@ -4950,11 +4951,15 @@ export async function reconcileHostRuntimeDeploymentsInternal({
   id,
   components,
   reason,
+  onProgress,
 }: {
   account_id?: string;
   id: string;
   components?: ManagedComponentKind[];
   reason?: string;
+  onProgress?: (
+    update: HostSoftwareRolloutProgressUpdate,
+  ) => Promise<void> | void;
 }): Promise<HostRuntimeDeploymentReconcileResult> {
   return await reconcileHostRuntimeDeploymentsInternalHelper({
     account_id,
@@ -4966,6 +4971,7 @@ export async function reconcileHostRuntimeDeploymentsInternal({
     getHostRuntimeDeploymentStatus,
     computeHostRuntimeDeploymentReconcilePlan,
     rolloutHostManagedComponentsInternal,
+    onProgress,
   });
 }
 
@@ -5069,12 +5075,16 @@ export async function upgradeHostSoftwareInternal({
   targets,
   base_url,
   align_runtime_stack,
+  onProgress,
 }: {
   account_id?: string;
   id: string;
   targets: HostSoftwareUpgradeTarget[];
   base_url?: string;
   align_runtime_stack?: boolean;
+  onProgress?: (
+    update: HostSoftwareRolloutProgressUpdate,
+  ) => Promise<void> | void;
 }): Promise<HostSoftwareUpgradeResponse> {
   return await upgradeHostSoftwareInternalHelper({
     account_id,
@@ -5112,6 +5122,7 @@ export async function upgradeHostSoftwareInternal({
     runtimeDeploymentsForUpgradeResults,
     requestedByForRuntimeDeployments,
     setProjectHostRuntimeDeployments,
+    onProgress,
   });
 }
 
@@ -5120,11 +5131,15 @@ export async function rolloutHostManagedComponentsInternal({
   id,
   components,
   reason,
+  onProgress,
 }: {
   account_id?: string;
   id: string;
   components: HostManagedComponentRolloutRequest["components"];
   reason?: string;
+  onProgress?: (
+    update: HostSoftwareRolloutProgressUpdate,
+  ) => Promise<void> | void;
 }): Promise<HostManagedComponentRolloutResponse> {
   return await rolloutHostManagedComponentsInternalHelper({
     account_id,
@@ -5144,6 +5159,7 @@ export async function rolloutHostManagedComponentsInternal({
     requestedByForRuntimeDeployments,
     setProjectHostRuntimeDeployments,
     loadEffectiveRuntimeDeployments: loadEffectiveProjectHostRuntimeDeployments,
+    onProgress,
   });
 }
 

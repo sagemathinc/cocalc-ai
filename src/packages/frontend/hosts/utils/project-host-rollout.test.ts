@@ -155,6 +155,7 @@ describe("project-host-rollout", () => {
     ).toEqual({
       label: "Waiting for host-agent to restart project-host",
       owner: "project-host activation",
+      deadlineAt: "2026-05-05T00:05:00Z",
     });
   });
 
@@ -193,6 +194,7 @@ describe("project-host-rollout", () => {
     ).toEqual({
       label: "Candidate running; evaluating health",
       owner: "project-host activation",
+      deadlineAt: "2026-05-05T00:05:00Z",
     });
   });
 
@@ -272,6 +274,34 @@ describe("project-host-rollout", () => {
     ).toEqual({
       label: "Downloading/installing artifact",
       owner: "artifact installation",
+    });
+  });
+
+  test("prefers structured rollout progress from the backend summary when available", () => {
+    expect(
+      currentProjectHostRolloutPhase({
+        op: {
+          op_id: "op-1",
+          kind: "host-upgrade-software",
+          summary: {
+            status: "running",
+            progress_summary: {
+              rollout_phase: "project_host.candidate_health",
+              rollout_phase_label: "Candidate running; evaluating health",
+              rollout_phase_owner: "project-host activation",
+              rollout_deadline_at: "2026-05-05T00:05:00Z",
+              rollout_target_version: "ph-v2",
+              rollout_observed_version: "ph-v2",
+            },
+          } as any,
+        },
+      }),
+    ).toEqual({
+      label: "Candidate running; evaluating health",
+      owner: "project-host activation",
+      deadlineAt: "2026-05-05T00:05:00Z",
+      targetVersion: "ph-v2",
+      observedVersion: "ph-v2",
     });
   });
 });

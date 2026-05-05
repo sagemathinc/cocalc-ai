@@ -1116,6 +1116,13 @@ async function handleOp(op: LroSummary): Promise<void> {
           targets: input?.targets ?? [],
           base_url: input?.base_url,
           align_runtime_stack: input?.align_runtime_stack,
+          onProgress: async (update) => {
+            await progressStep("waiting", update.rollout_phase_label, {
+              host_id,
+              targets: input?.targets,
+              ...update,
+            });
+          },
         });
         const rolloutComponents = rolloutComponentsForUpgradeResults(
           response.results ?? [],
@@ -1138,6 +1145,13 @@ async function handleOp(op: LroSummary): Promise<void> {
             id: host_id,
             components: rolloutComponents,
             reason: "host_software_upgrade",
+            onProgress: async (update) => {
+              await progressStep("waiting", update.rollout_phase_label, {
+                host_id,
+                components: rolloutComponents,
+                ...update,
+              });
+            },
           });
         }
       } catch (err) {
@@ -1378,6 +1392,13 @@ async function handleOp(op: LroSummary): Promise<void> {
         id: host_id,
         components: input?.components ?? [],
         reason: input?.reason,
+        onProgress: async (update) => {
+          await progressStep("waiting", update.rollout_phase_label, {
+            host_id,
+            components: input?.components ?? [],
+            ...update,
+          });
+        },
       });
       const updated = await updateLro({
         op_id,
@@ -1448,6 +1469,13 @@ async function handleOp(op: LroSummary): Promise<void> {
         id: host_id,
         components: input?.components ?? [],
         reason: input?.reason,
+        onProgress: async (update) => {
+          await progressStep("waiting", update.rollout_phase_label, {
+            host_id,
+            components: input?.components ?? [],
+            ...update,
+          });
+        },
       });
       const updated = await updateLro({
         op_id,

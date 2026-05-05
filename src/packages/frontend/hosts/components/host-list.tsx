@@ -896,6 +896,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               compact
               displayPhaseLabel={projectHostRolloutPhase?.label}
               displayPhaseOwner={projectHostRolloutPhase?.owner}
+              displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
             />
             {projectHostRollback && (
               <Tooltip

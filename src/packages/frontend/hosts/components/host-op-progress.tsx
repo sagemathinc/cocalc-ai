@@ -347,10 +347,12 @@ function HostOpTimeline({
   op,
   displayPhaseLabel,
   displayPhaseOwner,
+  displayDeadlineAt,
 }: {
   op: HostLroState;
   displayPhaseLabel?: string;
   displayPhaseOwner?: string;
+  displayDeadlineAt?: string;
 }) {
   const summary = op.summary;
   const status = summary?.status;
@@ -395,6 +397,11 @@ function HostOpTimeline({
             <Tag style={WRAP_TAG_STYLE}>{displayPhaseLabel}</Tag>
           ) : null}
           {displayPhaseOwner ? <Tag>{displayPhaseOwner}</Tag> : null}
+          {displayDeadlineAt ? (
+            <Tag style={WRAP_TAG_STYLE}>
+              Deadline <TimeAgo date={displayDeadlineAt} />
+            </Tag>
+          ) : null}
           {currentPhase ? (
             <Tag style={WRAP_TAG_STYLE}>{currentPhase}</Tag>
           ) : null}
@@ -458,10 +465,12 @@ function HostOpDetailsButton({
   op,
   displayPhaseLabel,
   displayPhaseOwner,
+  displayDeadlineAt,
 }: {
   op: HostLroState;
   displayPhaseLabel?: string;
   displayPhaseOwner?: string;
+  displayDeadlineAt?: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -474,6 +483,7 @@ function HostOpDetailsButton({
           op={op}
           displayPhaseLabel={displayPhaseLabel}
           displayPhaseOwner={displayPhaseOwner}
+          displayDeadlineAt={displayDeadlineAt}
         />
       }
       placement="bottomLeft"
@@ -490,11 +500,13 @@ export function HostOpProgress({
   compact = false,
   displayPhaseLabel,
   displayPhaseOwner,
+  displayDeadlineAt,
 }: {
   op?: HostLroState;
   compact?: boolean;
   displayPhaseLabel?: string;
   displayPhaseOwner?: string;
+  displayDeadlineAt?: string;
 }) {
   if (!op) {
     return null;
@@ -541,6 +553,7 @@ export function HostOpProgress({
           op={op}
           displayPhaseLabel={displayPhaseLabel}
           displayPhaseOwner={displayPhaseOwner}
+          displayDeadlineAt={displayDeadlineAt}
         />
       </Space>
     );
@@ -577,6 +590,7 @@ export function HostOpProgress({
           op={op}
           displayPhaseLabel={displayPhaseLabel}
           displayPhaseOwner={displayPhaseOwner}
+          displayDeadlineAt={displayDeadlineAt}
         />
       </Space>
     );
@@ -598,10 +612,16 @@ export function HostOpProgress({
           )}
         </Typography.Text>
         {displayPhaseOwner ? <Tag>{displayPhaseOwner}</Tag> : null}
+        {displayDeadlineAt ? (
+          <Tag>
+            Deadline <TimeAgo date={displayDeadlineAt} />
+          </Tag>
+        ) : null}
         <HostOpDetailsButton
           op={op}
           displayPhaseLabel={displayPhaseLabel}
           displayPhaseOwner={displayPhaseOwner}
+          displayDeadlineAt={displayDeadlineAt}
         />
       </Space>
       <Progress

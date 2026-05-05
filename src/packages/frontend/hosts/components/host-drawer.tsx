@@ -1494,6 +1494,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             op={displayActiveOp}
             displayPhaseLabel={projectHostRolloutPhase?.label}
             displayPhaseOwner={projectHostRolloutPhase?.owner}
+            displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
           />
           <HostBootstrapProgress host={host} />
           {canCancelBackups && (
@@ -2435,6 +2436,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                     op={displayActiveOp}
                     displayPhaseLabel={projectHostRolloutPhase?.label}
                     displayPhaseOwner={projectHostRolloutPhase?.owner}
+                    displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
                   />
                 )}
                 <Space

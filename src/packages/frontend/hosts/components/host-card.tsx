@@ -401,6 +401,7 @@ export const HostCard: React.FC<HostCardProps> = ({
           compact
           displayPhaseLabel={projectHostRolloutPhase?.label}
           displayPhaseOwner={projectHostRolloutPhase?.owner}
+          displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
         />
         {projectHostRollback && (
           <Tooltip

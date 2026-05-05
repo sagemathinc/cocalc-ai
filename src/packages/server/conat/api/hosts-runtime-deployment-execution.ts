@@ -31,6 +31,7 @@ import type {
   HostRuntimeDeploymentRecord,
 } from "@cocalc/conat/hub/api/hosts";
 import type { ManagedComponentKind } from "@cocalc/conat/project-host/api";
+import type { HostSoftwareRolloutProgressUpdate } from "./hosts-software-execution";
 
 export async function reconcileHostRuntimeDeploymentsInternalHelper({
   account_id,
@@ -42,6 +43,7 @@ export async function reconcileHostRuntimeDeploymentsInternalHelper({
   getHostRuntimeDeploymentStatus,
   computeHostRuntimeDeploymentReconcilePlan,
   rolloutHostManagedComponentsInternal,
+  onProgress,
 }: {
   account_id?: string;
   id: string;
@@ -66,9 +68,15 @@ export async function reconcileHostRuntimeDeploymentsInternalHelper({
     id: string;
     components: ManagedComponentKind[];
     reason?: string;
+    onProgress?: (
+      update: HostSoftwareRolloutProgressUpdate,
+    ) => Promise<void> | void;
   }) => Promise<{
     results?: HostRuntimeDeploymentReconcileResult["rollout_results"];
   }>;
+  onProgress?: (
+    update: HostSoftwareRolloutProgressUpdate,
+  ) => Promise<void> | void;
 }): Promise<HostRuntimeDeploymentReconcileResult> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
@@ -91,6 +99,7 @@ export async function reconcileHostRuntimeDeploymentsInternalHelper({
     id,
     components: plan.reconciled_components,
     reason,
+    onProgress,
   });
   return {
     ...result,

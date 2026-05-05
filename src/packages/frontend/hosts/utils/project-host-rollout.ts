@@ -25,6 +25,9 @@ export type HostRolloutDisplayPhase = {
     | "artifact installation"
     | "project-host activation"
     | "managed component alignment";
+  deadlineAt?: string;
+  targetVersion?: string;
+  observedVersion?: string;
 };
 
 function toTimestamp(value?: Date | string | null): number | undefined {
@@ -132,6 +135,33 @@ function progressMessage(op?: HostLroState): string | undefined {
   return text || undefined;
 }
 
+function progressSummaryPhase(
+  op?: HostLroState,
+): HostRolloutDisplayPhase | undefined {
+  const summary = op?.summary?.progress_summary ?? {};
+  const label = `${summary?.rollout_phase_label ?? ""}`.trim();
+  const owner = `${summary?.rollout_phase_owner ?? ""}`.trim();
+  if (!label) {
+    return undefined;
+  }
+  if (
+    owner !== "artifact installation" &&
+    owner !== "project-host activation" &&
+    owner !== "managed component alignment"
+  ) {
+    return undefined;
+  }
+  return {
+    label,
+    owner,
+    deadlineAt: `${summary?.rollout_deadline_at ?? ""}`.trim() || undefined,
+    targetVersion:
+      `${summary?.rollout_target_version ?? ""}`.trim() || undefined,
+    observedVersion:
+      `${summary?.rollout_observed_version ?? ""}`.trim() || undefined,
+  };
+}
+
 function currentManagedAlignmentPhase(
   status?: HostRuntimeDeploymentStatus,
 ): HostRolloutDisplayPhase | undefined {
@@ -193,6 +223,10 @@ export function currentProjectHostRolloutPhase({
   if (!kind || !PROJECT_HOST_ROLLOUT_OP_KINDS.has(kind)) {
     return undefined;
   }
+  const summaryPhase = progressSummaryPhase(op);
+  if (summaryPhase) {
+    return summaryPhase;
+  }
 
   const message = progressMessage(op);
   const pending = observation?.pending_rollout;
@@ -232,11 +266,13 @@ export function currentProjectHostRolloutPhase({
       return {
         label: "Candidate running; evaluating health",
         owner: "project-host activation",
+        deadlineAt: pending.deadline_at,
       };
     }
     return {
       label: "Waiting for host-agent to restart project-host",
       owner: "project-host activation",
+      deadlineAt: pending.deadline_at,
     };
   }
 
