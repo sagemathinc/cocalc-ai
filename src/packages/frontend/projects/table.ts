@@ -26,20 +26,21 @@ export class ProjectsTable extends Table {
   }
 
   _change(table, _keys) {
-    // in kiosk mode, merge in the new project table into the known project map
-    let project_map;
     const project_id = redux.getStore("page").get("kiosk_project_id");
     const actions = redux.getActions("projects");
     void actions.ensureRealtimeFeedForCurrentAccount?.();
+    if (actions.applyProjectsTableSnapshot != null) {
+      return actions.applyProjectsTableSnapshot(table.get(), {
+        mergeIntoExisting: project_id != null,
+      });
+    }
+    // Fallback for tests or older callers.
     if (project_id != null) {
-      let new_project_map;
-      project_map = redux.getStore("projects")?.get("project_map");
-      if (project_map != null) {
-        new_project_map = project_map.merge(table.get());
-      } else {
-        new_project_map = table.get();
-      }
-      return actions.setState({ project_map: new_project_map });
+      const project_map = redux.getStore("projects")?.get("project_map");
+      return actions.setState({
+        project_map:
+          project_map != null ? project_map.merge(table.get()) : table.get(),
+      });
     } else {
       return actions.setState({ project_map: table.get() });
     }

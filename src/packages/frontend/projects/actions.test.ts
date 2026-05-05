@@ -378,6 +378,61 @@ describe("ProjectsActions project metadata updates", () => {
     ).toBe("2026-05-03T00:05:00.000Z");
   });
 
+  it("keeps a newer local state when a synced projects table snapshot is older", () => {
+    const projectMap = ImmutableMap<string, any>([
+      [
+        project_id,
+        ImmutableMap({
+          title: "Local title",
+          state: ImmutableMap({
+            state: "running",
+            time: "2026-05-03T00:05:00.000Z",
+          }),
+        }),
+      ],
+    ]);
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map" ? projectMap : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+    const { actions, redux } = makeActions();
+
+    actions.applyProjectsTableSnapshot(
+      ImmutableMap<string, any>([
+        [
+          project_id,
+          ImmutableMap({
+            title: "Table title",
+            state: ImmutableMap({
+              state: "opened",
+              time: "2026-05-03T00:00:00.000Z",
+            }),
+          }),
+        ],
+      ]),
+    );
+
+    expect(redux._set_state).toHaveBeenCalled();
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.getIn([
+        project_id,
+        "title",
+      ]),
+    ).toBe("Table title");
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.getIn([
+        project_id,
+        "state",
+        "state",
+      ]),
+    ).toBe("running");
+  });
+
   it("still fails when feed wait times out and direct bootstrap finds nothing", async () => {
     mockedStore.async_wait.mockRejectedValueOnce("timeout");
     mockedWebappClient.project_client.create.mockResolvedValueOnce(

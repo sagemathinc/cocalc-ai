@@ -846,6 +846,58 @@ export class ProjectsActions extends Actions<ProjectsState> {
     this.setState({ project_map } as ProjectsState);
   }
 
+  public applyProjectsTableSnapshot(
+    snapshot: Map<string, any> | undefined,
+    opts?: {
+      mergeIntoExisting?: boolean;
+    },
+  ): void {
+    const incomingProjectMap = snapshot ?? Map<string, any>();
+    const currentProjectMap = store.get("project_map") ?? Map<string, any>();
+    let project_map = opts?.mergeIntoExisting
+      ? currentProjectMap
+      : incomingProjectMap;
+    for (const [project_id, incomingProject] of incomingProjectMap) {
+      const currentProject =
+        currentProjectMap.get(project_id) ?? Map<string, any>();
+      let nextProject = incomingProject as Map<string, any>;
+      const currentHostId = currentProject.get("host_id");
+      if (
+        typeof currentHostId === "string" &&
+        currentHostId &&
+        this.shouldPreserveLocalHostIdAfterMove({
+          project_id,
+          current_host_id: currentHostId,
+          incoming_host_id: nextProject.get("host_id") as string | undefined,
+          incoming_updated_at: undefined,
+        })
+      ) {
+        nextProject = nextProject.set("host_id", currentHostId);
+      }
+      if (
+        this.shouldPreserveNewerLocalState({
+          currentProject,
+          incomingState: nextProject.get("state"),
+        })
+      ) {
+        nextProject = nextProject.set("state", currentProject.get("state"));
+      }
+      if (
+        this.shouldPreserveNewerLocalLastEdited({
+          currentProject,
+          incomingLastEdited: nextProject.get("last_edited"),
+        })
+      ) {
+        nextProject = nextProject.set(
+          "last_edited",
+          currentProject.get("last_edited"),
+        );
+      }
+      project_map = project_map.set(project_id, nextProject);
+    }
+    this.setState({ project_map } as ProjectsState);
+  }
+
   private async bootstrapCreatedProjectDirectly(
     project_id: string,
   ): Promise<boolean> {
