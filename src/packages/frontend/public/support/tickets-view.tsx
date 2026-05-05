@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "antd";
 import api from "@cocalc/frontend/client/api";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import MarkdownIt from "markdown-it";
@@ -259,7 +259,7 @@ export default function SupportTickets({ config }: { config: SupportConfig }) {
     <div style={STACK_STYLE}>
       {refreshButton}
       {tickets.map((ticket, i) => (
-        <PublicSectionCard key={`${ticket.id ?? i}`}>
+        <PublicCard key={`${ticket.id ?? i}`}>
           <div
             style={{
               display: "flex",
@@ -296,7 +296,7 @@ export default function SupportTickets({ config }: { config: SupportConfig }) {
               </a>
             </div>
           ) : null}
-        </PublicSectionCard>
+        </PublicCard>
       ))}
     </div>
   );

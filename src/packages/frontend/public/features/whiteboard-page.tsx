@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -14,7 +14,7 @@ import {
   LinkButton,
 } from "./page-components";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 export default function WhiteboardFeaturePage({
   helpEmail,
@@ -23,13 +23,10 @@ export default function WhiteboardFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Text strong type="secondary">
-                COMPUTATIONAL WHITEBOARD
-              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 An infinite collaborative canvas with code, math, and sketching
               </Title>
@@ -58,11 +55,11 @@ export default function WhiteboardFeaturePage({
             />
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Built for interactive explanation
             </Title>
@@ -79,10 +76,10 @@ export default function WhiteboardFeaturePage({
               freehand sketching. It becomes a workspace for technical
               explanation.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Better than a static diagram
             </Title>
@@ -97,11 +94,11 @@ export default function WhiteboardFeaturePage({
               whiteboard without giving up the ability to run code or write
               precise mathematics.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -135,11 +132,11 @@ export default function WhiteboardFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               TimeTravel and collaboration history
             </Title>
@@ -148,10 +145,10 @@ export default function WhiteboardFeaturePage({
               ephemeral drawing surfaces. You can inspect earlier states and
               understand how an explanation or solution evolved over time.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Closely related to slides
             </Title>
@@ -163,11 +160,11 @@ export default function WhiteboardFeaturePage({
             <LinkButton href={appPath("features/slides")}>
               Explore slides
             </LinkButton>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={3} style={{ margin: 0 }}>
           Why teams use whiteboards in CoCalc
         </Title>
@@ -187,7 +184,7 @@ export default function WhiteboardFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
     </Flex>
   );
 }

@@ -325,15 +325,13 @@ export function PublicPasswordResetForm({
 }
 
 export function PublicSignUpForm({
-  initialRequiresToken,
   onNavigate,
   redirectToPath,
 }: {
-  initialRequiresToken?: boolean;
   onNavigate: (view: AuthView) => void;
   redirectToPath?: string | (() => string);
 }) {
-  const [requiresToken, setRequiresToken] = useState(initialRequiresToken);
+  const [requiresToken, setRequiresToken] = useState<boolean>();
   const [registrationToken, setRegistrationToken] = useState(
     new URL(window.location.href).searchParams.get("registrationToken") ?? "",
   );
@@ -349,10 +347,6 @@ export function PublicSignUpForm({
     () => new URL(window.location.href).searchParams.get("bootstrap") === "1",
     [],
   );
-
-  useEffect(() => {
-    setRequiresToken(initialRequiresToken);
-  }, [initialRequiresToken]);
 
   useEffect(() => {
     if (requiresToken !== undefined) {

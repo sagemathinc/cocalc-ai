@@ -1,8 +1,18 @@
 /** @jest-environment jsdom */
 
 import { render, screen } from "@testing-library/react";
+import api from "@cocalc/frontend/client/api";
+import type { PublicConfig } from "@cocalc/frontend/public/common";
 import PublicAuthApp, { getPublicAuthRouteFromPath } from "../app";
-import { getPublicAuthRedirectTargetFromSearch } from "../bootstrap";
+import { getPublicAuthRedirectTargetFromSearch } from "../routes";
+
+jest.mock("@cocalc/frontend/client/api", () => jest.fn());
+
+const mockedApi = jest.mocked(api);
+const config = (overrides: Partial<PublicConfig> = {}): PublicConfig => ({
+  site_name: "Launchpad",
+  ...overrides,
+});
 
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -18,6 +28,10 @@ beforeAll(() => {
       removeListener: () => {},
     }),
   });
+});
+
+beforeEach(() => {
+  mockedApi.mockReset();
 });
 
 describe("getPublicAuthRouteFromPath", () => {
@@ -97,27 +111,27 @@ describe("getPublicAuthRedirectTargetFromSearch", () => {
 });
 
 describe("PublicAuthApp", () => {
-  it("renders the sign-up view without the app redux shell", () => {
+  it("renders the sign-up view without the app redux shell", async () => {
+    mockedApi.mockResolvedValueOnce(true);
+
     render(
       <PublicAuthApp
+        config={config()}
         initialRoute={{ kind: "auth-form", view: "sign-up" }}
-        initialRequiresToken={true}
-        siteName="Launchpad"
       />,
     );
 
     expect(
       screen.getByRole("heading", { name: "Create your Launchpad account" }),
     ).not.toBeNull();
-    expect(screen.getByText("Registration token")).not.toBeNull();
+    expect(await screen.findByText("Registration token")).not.toBeNull();
   });
 
   it("shows Projects but not Settings in the shared nav for authenticated users", () => {
     render(
       <PublicAuthApp
+        config={config({ is_authenticated: true })}
         initialRoute={{ kind: "auth-form", view: "sign-in" }}
-        isAuthenticated={true}
-        siteName="Launchpad"
       />,
     );
 
@@ -128,8 +142,8 @@ describe("PublicAuthApp", () => {
   it("renders the password reset done screen", () => {
     render(
       <PublicAuthApp
+        config={config()}
         initialRoute={{ kind: "auth-password-reset-done" }}
-        siteName="Launchpad"
       />,
     );
 
@@ -142,6 +156,7 @@ describe("PublicAuthApp", () => {
   it("renders the sso index with provided strategies", () => {
     render(
       <PublicAuthApp
+        config={config()}
         initialRoute={{ kind: "sso-index" }}
         initialSSOStrategies={[
           {
@@ -151,7 +166,6 @@ describe("PublicAuthApp", () => {
             id: "example",
           },
         ]}
-        siteName="Launchpad"
       />,
     );
 
@@ -165,8 +179,8 @@ describe("PublicAuthApp", () => {
   it("renders the public redeem view", () => {
     render(
       <PublicAuthApp
+        config={config()}
         initialRoute={{ code: "CODE12345", kind: "redeem" }}
-        siteName="Launchpad"
       />,
     );
 

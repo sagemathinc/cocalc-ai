@@ -12,11 +12,9 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { FeatureImage } from "@cocalc/frontend/public/features/page-components";
 import {
   PublicHero,
-  PublicPageRoot,
-  PublicSectionCard,
-} from "@cocalc/frontend/public/ui/shell";
-import { getPolicyPagesMode } from "@cocalc/frontend/public/ui/policy-pages";
-import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+  PublicPage,
+  PublicCard,
+} from "@cocalc/frontend/public/layout/shell";
 import { LOCALE, LOCALIZATIONS, type Locale } from "@cocalc/util/i18n";
 import { SITE_NAME } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -27,7 +25,7 @@ const { Paragraph, Text, Title } = Typography;
 
 interface LangConfig {
   is_authenticated?: boolean;
-  policy_pages?: string;
+  logo_square?: string;
   show_policies?: boolean;
   site_name?: string;
 }
@@ -120,7 +118,7 @@ function sortedLocales(): Locale[] {
 
 function LocaleSwitcher({ current }: { current?: Locale }) {
   return (
-    <PublicSectionCard>
+    <PublicCard>
       <Text strong type="secondary">
         LANGUAGES
       </Text>
@@ -138,7 +136,7 @@ function LocaleSwitcher({ current }: { current?: Locale }) {
           );
         })}
       </Flex>
-    </PublicSectionCard>
+    </PublicCard>
   );
 }
 
@@ -152,7 +150,7 @@ function LangIndex({ siteName }: { siteName: string }) {
       />
       <div style={{ display: "grid", gap: 16, marginTop: 24 }}>
         <LocaleSwitcher />
-        <PublicSectionCard>
+        <PublicCard>
           <Title level={3} style={{ margin: 0 }}>
             Available languages
           </Title>
@@ -161,7 +159,7 @@ function LangIndex({ siteName }: { siteName: string }) {
             languages, while the broader public site and main application
             continue to evolve in English first.
           </Paragraph>
-        </PublicSectionCard>
+        </PublicCard>
       </div>
     </>
   );
@@ -208,7 +206,7 @@ function LocaleLanding({
         }
       />
       <div style={{ display: "grid", gap: 16, marginTop: 24 }}>
-        <PublicSectionCard>
+        <PublicCard>
           <Text strong type="secondary">
             {messages.intro ?? "Overview"}
           </Text>
@@ -220,7 +218,7 @@ function LocaleLanding({
             src="/public/cocalc-screenshot-20200128-nq8.png"
           />
           <HTML value={messages["intro-1"] ?? ""} />
-        </PublicSectionCard>
+        </PublicCard>
         <LocaleSwitcher current={locale} />
         <section>
           <Title level={2} style={{ margin: 0 }}>
@@ -233,7 +231,7 @@ function LocaleLanding({
           <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
             {TRANSLATED_FEATURES.map((feature) => (
               <Col key={feature.titleKey} xs={24} lg={12}>
-                <PublicSectionCard>
+                <PublicCard>
                   <FeatureImage
                     alt={messages[feature.titleKey] ?? feature.titleKey}
                     src={feature.image}
@@ -247,7 +245,7 @@ function LocaleLanding({
                       feature.links,
                     )}
                   />
-                </PublicSectionCard>
+                </PublicCard>
               </Col>
             ))}
           </Row>
@@ -270,6 +268,10 @@ export default function PublicLangApp({
       : undefined,
   );
   const siteName = config?.site_name ?? SITE_NAME;
+  const title =
+    initialRoute.view === "locale"
+      ? `${siteName} – ${LOCALIZATIONS[initialRoute.locale].native}`
+      : `Translations – ${siteName}`;
 
   useEffect(() => {
     if (initialRoute.view !== "locale") {
@@ -296,13 +298,8 @@ export default function PublicLangApp({
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    if (initialRoute.view === "locale") {
-      const localization = LOCALIZATIONS[initialRoute.locale];
-      document.title = `${siteName} – ${localization.native}`;
-      return;
-    }
-    document.title = `Translations – ${siteName}`;
-  }, [initialRoute, siteName]);
+    document.title = title;
+  }, [title]);
 
   const content = useMemo(() => {
     if (initialRoute.view === "index") {
@@ -310,9 +307,9 @@ export default function PublicLangApp({
     }
     if (!messages) {
       return (
-        <PublicSectionCard>
+        <PublicCard>
           <Empty description="Loading translation…" />
-        </PublicSectionCard>
+        </PublicCard>
       );
     }
     return (
@@ -326,14 +323,8 @@ export default function PublicLangApp({
   }, [config, initialRoute, messages, siteName]);
 
   return (
-    <PublicPageRoot>
-      <PublicTopNav
-        active="home"
-        isAuthenticated={!!config?.is_authenticated}
-        showPolicies={getPolicyPagesMode(config) !== "none"}
-        siteName={siteName}
-      />
+    <PublicPage config={config} title={title}>
       {content}
-    </PublicPageRoot>
+    </PublicPage>
   );
 }
