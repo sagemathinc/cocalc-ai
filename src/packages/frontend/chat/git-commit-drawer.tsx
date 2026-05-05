@@ -278,6 +278,62 @@ type GitShowParsed = {
   shownLineCount: number;
 };
 
+export type GitDiffFindMatch = {
+  id: string;
+  kind: "file" | "line";
+  fileIndex: number;
+  lineIndex?: number;
+  preview: string;
+};
+
+function countCaseInsensitiveMatches(text: string, needle: string): number {
+  const haystack = `${text ?? ""}`.toLowerCase();
+  const normalizedNeedle = `${needle ?? ""}`.trim().toLowerCase();
+  if (!haystack || !normalizedNeedle) return 0;
+  let count = 0;
+  let start = 0;
+  while (start <= haystack.length - normalizedNeedle.length) {
+    const idx = haystack.indexOf(normalizedNeedle, start);
+    if (idx === -1) break;
+    count += 1;
+    start = idx + normalizedNeedle.length;
+  }
+  return count;
+}
+
+export function buildGitDiffFindMatches({
+  data,
+  query,
+}: {
+  data?: Pick<GitShowParsed, "files">;
+  query: string;
+}): GitDiffFindMatch[] {
+  const normalizedQuery = `${query ?? ""}`.trim();
+  if (!normalizedQuery || !data?.files?.length) return [];
+  const matches: GitDiffFindMatch[] = [];
+  for (const [fileIndex, file] of data.files.entries()) {
+    if (countCaseInsensitiveMatches(file.path, normalizedQuery) > 0) {
+      matches.push({
+        id: `file:${fileIndex}`,
+        kind: "file",
+        fileIndex,
+        preview: file.path,
+      });
+    }
+    for (const [lineIndex, line] of file.lines.entries()) {
+      if (countCaseInsensitiveMatches(line, normalizedQuery) === 0) continue;
+      matches.push({
+        id: `line:${fileIndex}:${lineIndex}`,
+        kind: "line",
+        fileIndex,
+        lineIndex,
+        preview: line,
+      });
+    }
+  }
+  return matches;
+}
+
 export function getRenderedDiffLineLimit(requested?: number): number {
   const value = Number(requested);
   if (!Number.isFinite(value) || value <= 0) {
@@ -295,6 +351,18 @@ export function buildGitReviewFileSectionId(
   index: number,
 ): string {
   return `git-review-file-${index}-${hashString(path).slice(0, 12)}`;
+}
+
+export function buildGitReviewLineElementId({
+  filePath,
+  fileIndex,
+  lineIndex,
+}: {
+  filePath: string;
+  fileIndex: number;
+  lineIndex: number;
+}): string {
+  return `git-review-line-${fileIndex}-${lineIndex}-${hashString(filePath).slice(0, 12)}`;
 }
 
 type GitLogEntry = {
@@ -1087,6 +1155,7 @@ function InlineEditCommentEditor({
 
 export const DiffBlock = memo(function DiffBlock({
   filePath,
+  fileIndex,
   lines,
   languageHint,
   fontSize,
@@ -1110,8 +1179,11 @@ export const DiffBlock = memo(function DiffBlock({
   onUpdateComment,
   onResolveComment,
   onReopenComment,
+  matchedLineIndexes,
+  activeMatchedLineIndex,
 }: {
   filePath: string;
+  fileIndex?: number;
   lines: string[];
   languageHint: string;
   fontSize: number;
@@ -1135,6 +1207,8 @@ export const DiffBlock = memo(function DiffBlock({
   onUpdateComment: (id: string, body: string) => Promise<void>;
   onResolveComment: (id: string) => Promise<void>;
   onReopenComment: (id: string) => Promise<void>;
+  matchedLineIndexes?: Set<number>;
+  activeMatchedLineIndex?: number;
 }) {
   const codeFontSize = Math.max(11, fontSize - 1);
   const commentFontSize = Math.max(13, fontSize);
@@ -1207,15 +1281,23 @@ export const DiffBlock = memo(function DiffBlock({
         const html = highlightedByLine[idx] ?? "";
         const anchor = makeCommentAnchor(meta, filePath);
         const anchorId = anchor == null ? "" : commentAnchorKey(anchor);
+        const lineElementId = buildGitReviewLineElementId({
+          filePath,
+          fileIndex: fileIndex ?? 0,
+          lineIndex: idx,
+        });
         const lineComments =
           anchor == null ? [] : (commentsByAnchor.get(anchorId) ?? []);
         const showDraft =
           activeDraftAnchorId != null &&
           activeDraftAnchorId !== "" &&
           activeDraftAnchorId === anchorId;
+        const hasFindMatch = matchedLineIndexes?.has(idx) ?? false;
+        const isActiveFindMatch = activeMatchedLineIndex === idx;
         return (
           <div key={idx}>
             <div
+              id={lineElementId}
               className="cocalc-git-diff-line"
               style={{
                 background,
@@ -1225,6 +1307,11 @@ export const DiffBlock = memo(function DiffBlock({
                 display: "flex",
                 alignItems: "flex-start",
                 gap: 6,
+                boxShadow: isActiveFindMatch
+                  ? "inset 0 0 0 2px #faad14"
+                  : hasFindMatch
+                    ? "inset 0 0 0 1px #ffe58f"
+                    : undefined,
               }}
               data-git-anchor-id={anchorId || undefined}
               data-git-hunk-hash={meta.hunkHash || undefined}
@@ -1483,6 +1570,10 @@ const DiffFileSection = memo(function DiffFileSection({
   onUpdateComment,
   onResolveComment,
   onReopenComment,
+  matchedFindCount,
+  matchedLineIndexes,
+  activeFindMatchKind,
+  activeFindLineIndex,
 }: {
   file: GitShowFile;
   index: number;
@@ -1509,6 +1600,10 @@ const DiffFileSection = memo(function DiffFileSection({
   onUpdateComment: (id: string, body: string) => Promise<void>;
   onResolveComment: (id: string) => Promise<void>;
   onReopenComment: (id: string) => Promise<void>;
+  matchedFindCount: number;
+  matchedLineIndexes?: Set<number>;
+  activeFindMatchKind?: GitDiffFindMatch["kind"];
+  activeFindLineIndex?: number;
 }) {
   const languageHint = languageHintFromPath(file.path);
   const sectionId = buildGitReviewFileSectionId(file.path, index);
@@ -1531,10 +1626,15 @@ const DiffFileSection = memo(function DiffFileSection({
           flexWrap: "wrap",
           marginBottom: 8,
           padding: "8px 10px",
-          border: `1px solid ${DIFF_FILE_HEADER_BORDER}`,
+          border: `1px solid ${
+            activeFindMatchKind === "file" ? "#faad14" : DIFF_FILE_HEADER_BORDER
+          }`,
           borderRadius: 8,
           background: DIFF_FILE_HEADER_BACKGROUND,
-          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+          boxShadow:
+            activeFindMatchKind === "file"
+              ? "0 0 0 2px rgba(250, 173, 20, 0.18)"
+              : "0 1px 3px rgba(0,0,0,0.05)",
         }}
       >
         <Button
@@ -1560,6 +1660,7 @@ const DiffFileSection = memo(function DiffFileSection({
         >
           {filenameMode(file.path, "text")}
           {fileComments.length > 0 ? ` · ${fileComments.length} comments` : ""}
+          {matchedFindCount > 0 ? ` · ${matchedFindCount} matches` : ""}
           {remainingLineCount > 0
             ? ` · showing ${visibleLines.length.toLocaleString()} / ${file.lines.length.toLocaleString()} diff lines`
             : ""}
@@ -1567,6 +1668,7 @@ const DiffFileSection = memo(function DiffFileSection({
       </div>
       <DiffBlock
         filePath={file.path}
+        fileIndex={index}
         lines={visibleLines}
         languageHint={languageHint}
         fontSize={fontSize}
@@ -1592,6 +1694,8 @@ const DiffFileSection = memo(function DiffFileSection({
         onUpdateComment={onUpdateComment}
         onResolveComment={onResolveComment}
         onReopenComment={onReopenComment}
+        matchedLineIndexes={matchedLineIndexes}
+        activeMatchedLineIndex={activeFindLineIndex}
       />
       {remainingLineCount > 0 ? (
         <div
@@ -1667,6 +1771,9 @@ export function GitCommitDrawer({
     incomingCommit,
   );
   const [commitSearch, setCommitSearch] = useState("");
+  const [diffFindQuery, setDiffFindQuery] = useState("");
+  const [activeDiffFindMatchIndex, setActiveDiffFindMatchIndex] =
+    useState<number>(-1);
   const [showOnlyUnreviewedCommits, setShowOnlyUnreviewedCommits] =
     useState(false);
   const commit = selectedCommit;
@@ -1701,6 +1808,7 @@ export function GitCommitDrawer({
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
   const preserveCommitSearchOnAutoClearRef = useRef(false);
   const reviewImportInputRef = useRef<HTMLInputElement | null>(null);
+  const diffFindInputRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const restoringScrollRef = useRef(false);
@@ -1739,6 +1847,8 @@ export function GitCommitDrawer({
 
   useEffect(() => {
     setCommitSearch("");
+    setDiffFindQuery("");
+    setActiveDiffFindMatchIndex(-1);
     preserveCommitSearchOnAutoClearRef.current = false;
   }, [open]);
 
@@ -1779,6 +1889,61 @@ export function GitCommitDrawer({
     setActiveInlineEditBody("");
     setInlineCommentPendingKey("");
   }, [open, commit, contextLines, reloadCounter]);
+
+  const diffFindMatches = useMemo(
+    () =>
+      buildGitDiffFindMatches({
+        data,
+        query: diffFindQuery,
+      }),
+    [data, diffFindQuery],
+  );
+
+  const activeDiffFindMatch =
+    activeDiffFindMatchIndex >= 0 &&
+    activeDiffFindMatchIndex < diffFindMatches.length
+      ? diffFindMatches[activeDiffFindMatchIndex]
+      : undefined;
+
+  const diffFindMeta = useMemo(() => {
+    const counts = new Map<number, number>();
+    const matchedLineIndexes = new Map<number, Set<number>>();
+    for (const match of diffFindMatches) {
+      counts.set(match.fileIndex, (counts.get(match.fileIndex) ?? 0) + 1);
+      if (match.kind === "file") {
+        continue;
+      } else if (typeof match.lineIndex === "number") {
+        const existing = matchedLineIndexes.get(match.fileIndex) ?? new Set();
+        existing.add(match.lineIndex);
+        matchedLineIndexes.set(match.fileIndex, existing);
+      }
+    }
+    return { counts, matchedLineIndexes };
+  }, [diffFindMatches]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!diffFindQuery.trim()) {
+      setActiveDiffFindMatchIndex(-1);
+      return;
+    }
+    setActiveDiffFindMatchIndex(diffFindMatches.length > 0 ? 0 : -1);
+  }, [open, commit, diffFindQuery, diffFindMatches.length]);
+
+  useEffect(() => {
+    if (diffFindMatches.length === 0) {
+      if (activeDiffFindMatchIndex !== -1) {
+        setActiveDiffFindMatchIndex(-1);
+      }
+      return;
+    }
+    if (
+      activeDiffFindMatchIndex < 0 ||
+      activeDiffFindMatchIndex >= diffFindMatches.length
+    ) {
+      setActiveDiffFindMatchIndex(0);
+    }
+  }, [activeDiffFindMatchIndex, diffFindMatches.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -2711,6 +2876,81 @@ export function GitCommitDrawer({
     });
   }, []);
 
+  const goToNextDiffFindMatch = useCallback(() => {
+    if (diffFindMatches.length === 0) return;
+    setActiveDiffFindMatchIndex((current) => {
+      if (current < 0) return 0;
+      return (current + 1) % diffFindMatches.length;
+    });
+  }, [diffFindMatches.length]);
+
+  const goToPreviousDiffFindMatch = useCallback(() => {
+    if (diffFindMatches.length === 0) return;
+    setActiveDiffFindMatchIndex((current) => {
+      if (current < 0) return diffFindMatches.length - 1;
+      return (current - 1 + diffFindMatches.length) % diffFindMatches.length;
+    });
+  }, [diffFindMatches.length]);
+
+  useEffect(() => {
+    if (!open || !data || !activeDiffFindMatch) return;
+    const file = data.files[activeDiffFindMatch.fileIndex];
+    if (!file) return;
+    const sectionId = buildGitReviewFileSectionId(
+      file.path,
+      activeDiffFindMatch.fileIndex,
+    );
+    if (typeof activeDiffFindMatch.lineIndex === "number") {
+      const neededLimit = getRenderedDiffLineLimit(
+        activeDiffFindMatch.lineIndex + 1,
+      );
+      setVisibleDiffLinesByFile((prev) => {
+        if ((prev[sectionId] ?? 0) >= neededLimit) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [sectionId]: neededLimit,
+        };
+      });
+    }
+    scrollToDiffFile(activeDiffFindMatch.fileIndex);
+  }, [activeDiffFindMatch, data, open, scrollToDiffFile]);
+
+  useEffect(() => {
+    if (!open || !data || !activeDiffFindMatch) return;
+    const file = data.files[activeDiffFindMatch.fileIndex];
+    if (!file) return;
+    let attempts = 0;
+    let frame = 0;
+    const targetId =
+      typeof activeDiffFindMatch.lineIndex === "number"
+        ? buildGitReviewLineElementId({
+            filePath: file.path,
+            fileIndex: activeDiffFindMatch.fileIndex,
+            lineIndex: activeDiffFindMatch.lineIndex,
+          })
+        : buildGitReviewFileSectionId(file.path, activeDiffFindMatch.fileIndex);
+    const scrollTargetIntoView = () => {
+      const element = document.getElementById(targetId);
+      if (element) {
+        element.scrollIntoView({
+          block: activeDiffFindMatch.kind === "file" ? "start" : "center",
+        });
+        return;
+      }
+      if (attempts >= 10) return;
+      attempts += 1;
+      frame = window.requestAnimationFrame(scrollTargetIntoView);
+    };
+    frame = window.requestAnimationFrame(scrollTargetIntoView);
+    return () => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [activeDiffFindMatch, data, open, visibleDiffLinesByFile]);
+
   const sendInlineReviewToAgent = async () => {
     if (!onRequestAgentTurn || !commit || isHeadSelected) return;
     const actionable = actionableInlineComments;
@@ -3174,6 +3414,11 @@ export function GitCommitDrawer({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (evt: KeyboardEvent) => {
+      if ((evt.metaKey || evt.ctrlKey) && !evt.altKey && evt.key === "f") {
+        evt.preventDefault();
+        diffFindInputRef.current?.focus?.();
+        return;
+      }
       if (
         isEditableEventTarget(evt.target) ||
         isEditableEventTarget(document.activeElement)
@@ -3190,6 +3435,11 @@ export function GitCommitDrawer({
         return;
       }
       if (evt.altKey || evt.ctrlKey || evt.metaKey) return;
+      if (evt.key === "/") {
+        evt.preventDefault();
+        diffFindInputRef.current?.focus?.();
+        return;
+      }
       if (evt.key === "j") {
         evt.preventDefault();
         if (canGoOlder) {
@@ -3225,6 +3475,7 @@ export function GitCommitDrawer({
     canGoOlder,
     canGoNewer,
     commitIndex,
+    diffFindInputRef,
     navigableGitLog,
     contextLines,
     isHeadSelected,
@@ -3266,6 +3517,48 @@ export function GitCommitDrawer({
               >
                 Only unreviewed
               </Checkbox>
+              <Space.Compact size="small">
+                <Input
+                  ref={diffFindInputRef}
+                  size="small"
+                  allowClear
+                  value={diffFindQuery}
+                  placeholder="Find in diff"
+                  style={{ width: 220 }}
+                  onChange={(evt) => setDiffFindQuery(evt.target.value)}
+                  onPressEnter={(evt) => {
+                    if ((evt as any)?.shiftKey) {
+                      goToPreviousDiffFindMatch();
+                    } else {
+                      goToNextDiffFindMatch();
+                    }
+                  }}
+                />
+                <Button
+                  size="small"
+                  disabled={diffFindMatches.length === 0}
+                  onClick={goToPreviousDiffFindMatch}
+                >
+                  Prev
+                </Button>
+                <Button
+                  size="small"
+                  disabled={diffFindMatches.length === 0}
+                  onClick={goToNextDiffFindMatch}
+                >
+                  Next
+                </Button>
+              </Space.Compact>
+              {diffFindQuery.trim() ? (
+                <Typography.Text
+                  type="secondary"
+                  style={{ fontSize: 12, whiteSpace: "nowrap" }}
+                >
+                  {diffFindMatches.length === 0
+                    ? "0 matches"
+                    : `${activeDiffFindMatchIndex + 1} / ${diffFindMatches.length}`}
+                </Typography.Text>
+              ) : null}
               <Space.Compact size="small">
                 <Tooltip title="Newer commit (shortcut: k)">
                   <span style={{ display: "inline-flex" }}>
@@ -4136,6 +4429,20 @@ export function GitCommitDrawer({
                         onUpdateComment={submitInlineEdit}
                         onResolveComment={handleResolveInlineComment}
                         onReopenComment={handleReopenInlineComment}
+                        matchedFindCount={diffFindMeta.counts.get(idx) ?? 0}
+                        matchedLineIndexes={diffFindMeta.matchedLineIndexes.get(
+                          idx,
+                        )}
+                        activeFindMatchKind={
+                          activeDiffFindMatch?.fileIndex === idx
+                            ? activeDiffFindMatch.kind
+                            : undefined
+                        }
+                        activeFindLineIndex={
+                          activeDiffFindMatch?.fileIndex === idx
+                            ? activeDiffFindMatch.lineIndex
+                            : undefined
+                        }
                       />
                     );
                   }}

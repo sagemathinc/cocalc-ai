@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import {
+  buildGitDiffFindMatches,
   filterGitReviewLogEntries,
   buildGitReviewFileSectionId,
   captureGitDiffScrollAnchor,
@@ -359,6 +360,44 @@ describe("git commit drawer merge commit formatting", () => {
     expect(buildGitReviewFileSectionId("src/example.ts", 0)).not.toBe(
       buildGitReviewFileSectionId("src/example.ts", 1),
     );
+  });
+
+  it("builds file and line matches for drawer-local diff search", () => {
+    expect(
+      buildGitDiffFindMatches({
+        query: "widget",
+        data: {
+          files: [
+            {
+              path: "src/widget.ts",
+              lines: ["@@ -1 +1 @@", "-old widget", "+new widget"],
+            },
+            {
+              path: "src/other.ts",
+              lines: ["context only"],
+            },
+          ],
+        } as any,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "file",
+        fileIndex: 0,
+        preview: "src/widget.ts",
+      }),
+      expect.objectContaining({
+        kind: "line",
+        fileIndex: 0,
+        lineIndex: 1,
+        preview: "-old widget",
+      }),
+      expect.objectContaining({
+        kind: "line",
+        fileIndex: 0,
+        lineIndex: 2,
+        preview: "+new widget",
+      }),
+    ]);
   });
 
   it("filters the commit list down to unreviewed commits when requested", () => {
