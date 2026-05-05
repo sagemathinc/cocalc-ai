@@ -485,6 +485,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (row?.is_hidden === true || !row?.project_id) {
           continue;
         }
+        const hadProject = project_map.has(row.project_id);
         const currentProject =
           project_map.get(row.project_id) ?? Map<string, any>();
         const currentHostId = currentProject.get("host_id");
@@ -556,7 +557,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           currentProject,
           nextProject,
         );
-        if (currentProject.get(PROJECTION_ONLY_FIELD) === true) {
+        if (currentProject.get(PROJECTION_ONLY_FIELD) === true || !hadProject) {
           nextProject = nextProject.set(PROJECTION_ONLY_FIELD, true);
         } else {
           nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
