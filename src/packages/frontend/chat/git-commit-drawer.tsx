@@ -387,6 +387,26 @@ export function isGitDiffFindTargetRendered({
   return match.lineIndex < visibleLineLimit;
 }
 
+export function getGitDiffFindVisibleLineLimitUpdate({
+  data,
+  match,
+  visibleDiffLinesByFile,
+}: {
+  data?: Pick<GitShowParsed, "files">;
+  match?: GitDiffFindMatch;
+  visibleDiffLinesByFile: Record<string, number>;
+}): { sectionId: string; neededLimit: number } | undefined {
+  if (!data || !match || typeof match.lineIndex !== "number") return;
+  const file = data.files?.[match.fileIndex];
+  if (!file) return;
+  const sectionId = buildGitReviewFileSectionId(file.path, match.fileIndex);
+  const neededLimit = getRenderedDiffLineLimit(match.lineIndex + 1);
+  if ((visibleDiffLinesByFile[sectionId] ?? 0) >= neededLimit) {
+    return;
+  }
+  return { sectionId, neededLimit };
+}
+
 type GitLogEntry = {
   hash: string;
   subject: string;
@@ -1974,6 +1994,16 @@ export function GitCommitDrawer({
     [data, activeDiffFindMatch, visibleDiffLinesByFile],
   );
 
+  const activeDiffFindVisibleLineLimitUpdate = useMemo(
+    () =>
+      getGitDiffFindVisibleLineLimitUpdate({
+        data,
+        match: activeDiffFindMatch,
+        visibleDiffLinesByFile,
+      }),
+    [data, activeDiffFindMatch, visibleDiffLinesByFile],
+  );
+
   useEffect(() => {
     if (!open) return;
     if (!diffFindQuery.trim()) {
@@ -2946,30 +2976,32 @@ export function GitCommitDrawer({
   }, [diffFindMatches.length]);
 
   useEffect(() => {
-    if (!open || !data || !activeDiffFindMatch || !activeDiffFindTargetRendered)
-      return;
+    if (!open || !data || !activeDiffFindMatch) return;
     const file = data.files[activeDiffFindMatch.fileIndex];
     if (!file) return;
-    const sectionId = buildGitReviewFileSectionId(
-      file.path,
-      activeDiffFindMatch.fileIndex,
-    );
-    if (typeof activeDiffFindMatch.lineIndex === "number") {
-      const neededLimit = getRenderedDiffLineLimit(
-        activeDiffFindMatch.lineIndex + 1,
-      );
+    if (activeDiffFindVisibleLineLimitUpdate) {
       setVisibleDiffLinesByFile((prev) => {
-        if ((prev[sectionId] ?? 0) >= neededLimit) {
+        if (
+          (prev[activeDiffFindVisibleLineLimitUpdate.sectionId] ?? 0) >=
+          activeDiffFindVisibleLineLimitUpdate.neededLimit
+        ) {
           return prev;
         }
         return {
           ...prev,
-          [sectionId]: neededLimit,
+          [activeDiffFindVisibleLineLimitUpdate.sectionId]:
+            activeDiffFindVisibleLineLimitUpdate.neededLimit,
         };
       });
     }
     scrollToDiffFile(activeDiffFindMatch.fileIndex);
-  }, [activeDiffFindMatch, data, open, scrollToDiffFile]);
+  }, [
+    activeDiffFindMatch,
+    activeDiffFindVisibleLineLimitUpdate,
+    data,
+    open,
+    scrollToDiffFile,
+  ]);
 
   useEffect(() => {
     if (!open || !data || !activeDiffFindMatch) return;
