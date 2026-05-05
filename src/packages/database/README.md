@@ -2,7 +2,8 @@
 
 This package connects the hub and nextjs servers to the PostgreSQL database, and implements some nontrivial functionality to support these servers. In particular:
 
-- It implements changefeeds and user queries, which provides a pure JSON language similar to the basics of GraphQL for setting, getting, and subscribing to data in the database. This uses PostgreSQL LISTEN/NOTIFY to send push notifications about changes to tables. It's specifically designed for our data structures, of course, and is not generic. The data structures are currently defined in `@cocalc/util/db-schema`.
+- It implements the central user-query and database access layer used by the hub and server packages.
+- It still supports raw PostgreSQL `LISTEN` / `NOTIFY` queries for a small number of targeted coordination paths and tests, but the old database-backed changefeed / `db.synctable` runtime path has been removed.
 
 ## Development
 
