@@ -71,6 +71,14 @@ function isUnsupportedCommandError(
   command: ProjectRusticCommand,
   stderr: string,
 ): boolean {
+  if (
+    command === "project-rustic-backup" &&
+    stderr.includes("SECURITY_DENY") &&
+    stderr.includes("project-rustic-backup-bad-args") &&
+    stderr.includes("detail=--parent")
+  ) {
+    return true;
+  }
   return (
     stderr.includes("SECURITY_DENY") &&
     stderr.includes("unsupported-command") &&

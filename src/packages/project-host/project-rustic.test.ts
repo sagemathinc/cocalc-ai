@@ -114,4 +114,23 @@ describe("project rustic wrapper", () => {
       }),
     ).rejects.toBeInstanceOf(ProjectRusticUnsupportedError);
   });
+
+  it("treats old wrappers that reject --parent as unsupported", async () => {
+    mockedExecuteCode.mockResolvedValue({
+      type: "blocking",
+      stdout: "",
+      stderr: "SECURITY_DENY code=project-rustic-backup-bad-args detail=--parent",
+      exit_code: 2,
+    } as any);
+
+    await expect(
+      projectRusticBackup({
+        src: "/mnt/cocalc/project-1/.snapshots/temp",
+        repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+        host: "project-1",
+        timeoutMs: 30_000,
+        parent: "snap-parent",
+      }),
+    ).rejects.toBeInstanceOf(ProjectRusticUnsupportedError);
+  });
 });
