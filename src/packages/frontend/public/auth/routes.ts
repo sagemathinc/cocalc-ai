@@ -39,6 +39,16 @@ function basePathPrefix(): string {
   return appBasePath === "/" ? "" : appBasePath;
 }
 
+function appRelativePath(pathname: string): string {
+  if (
+    appBasePath !== "/" &&
+    (pathname === appBasePath || pathname.startsWith(`${appBasePath}/`))
+  ) {
+    return pathname.slice(appBasePath.length) || "/";
+  }
+  return pathname;
+}
+
 export function pathForAuthView(view: AuthView): string {
   const base = basePathPrefix();
   switch (view) {
@@ -65,6 +75,31 @@ export function pathForRedeem(code?: string): string {
   const base = basePathPrefix();
   const normalized = `${code ?? ""}`.trim().replace(/^\/+/, "");
   return normalized ? `${base}/redeem/${normalized}` : `${base}/redeem`;
+}
+
+export function getPublicAuthRedirectTargetFromSearch(
+  search: string,
+  depth = 0,
+): string | undefined {
+  const target = new URLSearchParams(search).get("target");
+  if (!target || !target.startsWith("/") || target.startsWith("//")) {
+    return undefined;
+  }
+  try {
+    const url = new URL(target, "https://example.invalid");
+    if (url.origin !== "https://example.invalid") {
+      return undefined;
+    }
+    const relative = appRelativePath(url.pathname);
+    if (/^\/(auth|sso|redeem)(\/|$)/.test(relative)) {
+      return depth < 3
+        ? getPublicAuthRedirectTargetFromSearch(url.search, depth + 1)
+        : undefined;
+    }
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return undefined;
+  }
 }
 
 export function getPublicAuthRouteFromPath(

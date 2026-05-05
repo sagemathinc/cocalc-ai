@@ -5,6 +5,7 @@
 
 import { type ReactNode, useEffect, useState } from "react";
 
+import { CaretRightFilled } from "@ant-design/icons";
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -14,12 +15,10 @@ import {
   LinkButton,
 } from "@cocalc/frontend/public/features/page-components";
 import {
-  PublicHero,
-  PublicPageRoot,
-  PublicSectionCard,
-} from "@cocalc/frontend/public/ui/shell";
-import { getPolicyPagesMode } from "@cocalc/frontend/public/ui/policy-pages";
-import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+  PublicCard,
+  PublicPage,
+  PublicGrid,
+} from "@cocalc/frontend/public/layout/shell";
 import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import { slugURL } from "@cocalc/util/news";
 import type { NewsItem } from "@cocalc/util/types/news";
@@ -31,9 +30,9 @@ interface HomeConfig {
   help_email?: string;
   index_tagline?: string;
   is_authenticated?: boolean;
+  logo_square?: string;
   organization_name?: string;
   organization_url?: string;
-  policy_pages?: string;
   show_policies?: boolean;
   site_description?: string;
   site_name?: string;
@@ -42,18 +41,18 @@ interface HomeConfig {
 
 const VIDEO_RESOURCES = [
   {
-    description: "A broad product walkthrough of how CoCalc fits together.",
     href: "https://www.youtube.com/watch?v=oDdfmkQ0Hvw",
+    thumbnail: "https://i.ytimg.com/vi/oDdfmkQ0Hvw/hqdefault.jpg",
     title: "CoCalc overview",
   },
   {
-    description: "A current look at coding agents and AI-assisted workflows.",
     href: "https://www.youtube.com/watch?v=UfmjYxalyh0",
+    thumbnail: "https://i.ytimg.com/vi/UfmjYxalyh0/hqdefault.jpg",
     title: "Using AI in CoCalc",
   },
   {
-    description: "A direct look at JupyterLab running inside CoCalc.",
     href: "https://www.youtube.com/watch?v=LLtLFtD8qfo",
+    thumbnail: "https://i.ytimg.com/vi/LLtLFtD8qfo/hqdefault.jpg",
     title: "Using JupyterLab in CoCalc",
   },
 ] as const;
@@ -112,7 +111,7 @@ function getHomeHighlights(): Array<{ body: ReactNode; title: string }> {
       body: (
         <>
           Use hosted CoCalc,{" "}
-          <a href={appPath("software/cocalc-plus")}>CoCalc Plus</a>,{" "}
+          <a href={appPath("products/cocalc-plus")}>CoCalc Plus</a>,{" "}
           <a
             href="https://software.cocalc.ai/software/cocalc-launchpad/index.html"
             rel="noreferrer"
@@ -137,6 +136,16 @@ function formatNewsDate(value?: number | Date): string {
     month: "short",
     day: "numeric",
   });
+}
+
+async function loadNews(): Promise<NewsItem[] | undefined> {
+  try {
+    const resp = await fetch(joinUrlPath(appBasePath, "api/v2/news/list"));
+    const payload = await resp.json();
+    return Array.isArray(payload) ? payload : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function stripMarkdown(text?: string): string {
@@ -220,9 +229,9 @@ function HeroDetails({
   siteName: string;
 }) {
   return (
-    <Row gutter={[24, 24]} style={{ marginTop: 24 }}>
+    <Row gutter={[24, 24]}>
       <Col xs={24} xl={15}>
-        <PublicSectionCard>
+        <PublicCard>
           <FeatureImage
             alt={`${siteName} workspace screenshot`}
             src={
@@ -230,11 +239,11 @@ function HeroDetails({
               "/public/cocalc-screenshot-20200128-nq8.png"
             }
           />
-        </PublicSectionCard>
+        </PublicCard>
       </Col>
       <Col xs={24} xl={9}>
         <Flex vertical gap={16}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Why teams choose {siteName}
             </Title>
@@ -243,8 +252,8 @@ function HeroDetails({
               workflow together: files, shell, documents, teaching, support, and
               increasingly agent-first coding workflows in the same environment.
             </Paragraph>
-          </PublicSectionCard>
-          <PublicSectionCard>
+          </PublicCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               {config?.is_authenticated ? "Go straight to work" : "Start fast"}
             </Title>
@@ -270,8 +279,8 @@ function HeroDetails({
                 </>
               )}
             </Flex>
-          </PublicSectionCard>
-          <PublicSectionCard>
+          </PublicCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Learn more
             </Title>
@@ -286,7 +295,7 @@ function HeroDetails({
                 Compare
               </LinkButton>
             </Flex>
-          </PublicSectionCard>
+          </PublicCard>
         </Flex>
       </Col>
     </Row>
@@ -295,8 +304,8 @@ function HeroDetails({
 
 function AgentSection() {
   return (
-    <section style={{ marginTop: 32 }}>
-      <PublicSectionCard>
+    <section>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} xl={13}>
             <Flex vertical gap={12}>
@@ -336,7 +345,7 @@ function AgentSection() {
             />
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
     </section>
   );
 }
@@ -344,22 +353,20 @@ function AgentSection() {
 function HighlightSection({ siteName }: { siteName: string }) {
   const highlights = getHomeHighlights();
   return (
-    <section style={{ marginTop: 32 }}>
+    <section>
       <Title level={2} style={{ margin: 0 }}>
         Why {siteName} is different
       </Title>
-      <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
+      <PublicGrid columns={2}>
         {highlights.map((item) => (
-          <Col key={item.title} xs={24} md={12}>
-            <PublicSectionCard>
-              <Title level={3} style={{ margin: 0 }}>
-                {item.title}
-              </Title>
-              <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
-            </PublicSectionCard>
-          </Col>
+          <PublicCard key={item.title}>
+            <Title level={3} style={{ margin: 0 }}>
+              {item.title}
+            </Title>
+            <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
+          </PublicCard>
         ))}
-      </Row>
+      </PublicGrid>
     </section>
   );
 }
@@ -381,7 +388,7 @@ function FeaturesSection({ siteName }: { siteName: string }) {
     .map(({ feature }) => feature)
     .slice(0, 8);
   return (
-    <section style={{ marginTop: 32 }}>
+    <section>
       <Flex align="baseline" justify="space-between" wrap gap={12}>
         <Title level={2} style={{ margin: 0 }}>
           Core workflows
@@ -394,66 +401,75 @@ function FeaturesSection({ siteName }: { siteName: string }) {
           All features
         </Button>
       </Flex>
-      <Paragraph style={{ margin: "8px 0 0", maxWidth: "70ch" }}>
+      <Paragraph style={{ margin: 0, maxWidth: "70ch" }}>
         These are some of the most important workflows that already live inside
         the same {siteName} environment, including the newer agent-first
         direction.
       </Paragraph>
-      <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
+      <PublicGrid columns={3}>
         {features.map((feature) => (
-          <Col key={feature.slug} xs={24} md={12} xl={6}>
-            <PublicSectionCard>
-              <FeatureImage alt={feature.title} src={feature.image} />
-              <Text strong type="secondary">
-                FEATURE
-              </Text>
-              <Title level={3} style={{ margin: 0 }}>
-                {feature.title}
-              </Title>
-              <Paragraph style={{ margin: 0 }}>{feature.summary}</Paragraph>
-              <div>
-                <Button
-                  href={appPath(`features/${feature.slug}`)}
-                  type="link"
-                  style={{ paddingInline: 0 }}
-                >
-                  Open page
-                </Button>
-              </div>
-            </PublicSectionCard>
-          </Col>
+          <PublicCard
+            href={appPath(`features/${feature.slug}`)}
+            key={feature.slug}
+            title={feature.title}
+          >
+            <FeatureImage alt={feature.title} src={feature.image} />
+            <Text strong type="secondary">
+              FEATURE
+            </Text>
+            <Paragraph style={{ margin: 0 }}>{feature.summary}</Paragraph>
+          </PublicCard>
         ))}
-      </Row>
+      </PublicGrid>
     </section>
   );
 }
 
 function ResourceSection() {
   return (
-    <section style={{ marginTop: 32 }}>
+    <section>
       <Title level={2} style={{ margin: 0 }}>
         Learn by example
       </Title>
-      <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
+      <PublicGrid columns={3}>
         {VIDEO_RESOURCES.map((item) => (
-          <Col key={item.href} xs={24} md={8}>
-            <PublicSectionCard>
-              <Text strong type="secondary">
-                VIDEO
-              </Text>
-              <Title level={3} style={{ margin: 0 }}>
-                {item.title}
-              </Title>
-              <Paragraph style={{ margin: 0 }}>{item.description}</Paragraph>
-              <Flex wrap gap={12}>
-                <Button href={item.href} type="primary">
-                  Watch
-                </Button>
-              </Flex>
-            </PublicSectionCard>
-          </Col>
+          <PublicCard
+            href={item.href}
+            key={item.href}
+            rel="noreferrer"
+            target="_blank"
+            title={item.title}
+          >
+            <div style={{ position: "relative" }}>
+              <FeatureImage alt={item.title} src={item.thumbnail} />
+              <div
+                aria-hidden="true"
+                style={{
+                  alignItems: "center",
+                  background: COLORS.ANTD_RED,
+                  borderRadius: "999px",
+                  boxShadow: "0 2px 12px rgba(0, 0, 0, 0.35)",
+                  display: "flex",
+                  height: 64,
+                  inset: "50% auto auto 50%",
+                  justifyContent: "center",
+                  position: "absolute",
+                  transform: "translate(-50%, -50%)",
+                  width: 64,
+                }}
+              >
+                <CaretRightFilled
+                  style={{
+                    color: "white",
+                    fontSize: 26,
+                    marginLeft: 4,
+                  }}
+                />
+              </div>
+            </div>
+          </PublicCard>
         ))}
-      </Row>
+      </PublicGrid>
     </section>
   );
 }
@@ -463,7 +479,7 @@ function NewsSection({ initialNews }: { initialNews?: NewsItem[] }) {
   if (news.length === 0) return null;
 
   return (
-    <section style={{ marginTop: 32 }}>
+    <section>
       <Flex align="baseline" justify="space-between" wrap gap={12}>
         <Title level={2} style={{ margin: 0 }}>
           Recent News
@@ -481,33 +497,31 @@ function NewsSection({ initialNews }: { initialNews?: NewsItem[] }) {
           </Button>
         </Flex>
       </Flex>
-      <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
+      <PublicGrid columns={3}>
         {news.map((item) => (
-          <Col key={`${item.id}`} xs={24} md={12} xl={8}>
-            <PublicSectionCard>
-              <Flex wrap gap={8}>
-                <Tag color="blue">{item.channel}</Tag>
-                <Text type="secondary">{formatNewsDate(item.date)}</Text>
-              </Flex>
-              <Title level={3} style={{ margin: 0 }}>
-                {item.title}
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                {truncate(stripMarkdown(item.text))}
-              </Paragraph>
-              <div>
-                <Button
-                  href={appPath(slugURL(item))}
-                  type="link"
-                  style={{ paddingInline: 0 }}
-                >
-                  Read more
-                </Button>
-              </div>
-            </PublicSectionCard>
-          </Col>
+          <PublicCard key={`${item.id}`}>
+            <Flex wrap gap={8}>
+              <Tag color="blue">{item.channel}</Tag>
+              <Text type="secondary">{formatNewsDate(item.date)}</Text>
+            </Flex>
+            <Title level={3} style={{ margin: 0 }}>
+              {item.title}
+            </Title>
+            <Paragraph style={{ margin: 0 }}>
+              {truncate(stripMarkdown(item.text))}
+            </Paragraph>
+            <div>
+              <Button
+                href={appPath(slugURL(item))}
+                type="link"
+                style={{ paddingInline: 0 }}
+              >
+                Read more
+              </Button>
+            </div>
+          </PublicCard>
         ))}
-      </Row>
+      </PublicGrid>
     </section>
   );
 }
@@ -520,8 +534,8 @@ function BottomCallout({
   siteName: string;
 }) {
   return (
-    <section style={{ marginTop: 32 }}>
-      <PublicSectionCard>
+    <section>
+      <PublicCard>
         <Title level={2} style={{ margin: 0 }}>
           {config?.organization_name
             ? `Hosted by ${config.organization_name}`
@@ -564,81 +578,43 @@ function BottomCallout({
             </>
           )}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
     </section>
   );
 }
 
-export default function PublicHomeApp({
-  config,
-  initialNews,
-}: {
-  config?: HomeConfig;
-  initialNews?: NewsItem[];
-}) {
+export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
   const siteName = config?.site_name ?? SITE_NAME;
+  const [news, setNews] = useState<NewsItem[]>();
 
   useEffect(() => {
     document.title = siteName;
   }, [siteName]);
 
+  useEffect(() => {
+    let canceled = false;
+    void loadNews().then((items) => {
+      if (!canceled) setNews(items ?? []);
+    });
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
   return (
-    <PublicPageRoot>
-      <PublicTopNav
-        active="home"
-        isAuthenticated={!!config?.is_authenticated}
-        showPolicies={getPolicyPagesMode(config) !== "none"}
-        siteName={siteName}
-      />
-      <NewsBanner items={initialNews ?? []} />
-      <PublicHero
-        eyebrow="COLLABORATIVE TECHNICAL COMPUTING"
-        title={siteName}
-        subtitle={
-          config?.site_description ??
-          "Run Jupyter notebooks, Linux terminals, documents, and coding agents in one collaborative online workspace built for real technical projects."
-        }
-        actions={
-          <Flex wrap gap={12}>
-            {config?.is_authenticated ? (
-              <>
-                <Button href={appPath("projects")} size="large" type="primary">
-                  Open projects
-                </Button>
-                <Button href={appPath("settings")} size="large">
-                  Settings
-                </Button>
-                <Button href={appPath("features")} size="large">
-                  Explore features
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  href={appPath("auth/sign-up")}
-                  size="large"
-                  type="primary"
-                >
-                  Create account
-                </Button>
-                <Button href={appPath("features")} size="large">
-                  Explore features
-                </Button>
-                <Button href={appPath("support")} size="large">
-                  Contact support
-                </Button>
-              </>
-            )}
-          </Flex>
-        }
-      />
+    <PublicPage
+      active="home"
+      beforeTitle={<NewsBanner items={news ?? []} />}
+      config={config}
+      title={siteName}
+    >
       <HeroDetails config={config} siteName={siteName} />
+      <ResourceSection />
       <AgentSection />
       <HighlightSection siteName={siteName} />
       <FeaturesSection siteName={siteName} />
-      <ResourceSection />
-      <NewsSection initialNews={initialNews} />
+      <NewsSection initialNews={news} />
       <BottomCallout config={config} siteName={siteName} />
-    </PublicPageRoot>
+    </PublicPage>
   );
 }

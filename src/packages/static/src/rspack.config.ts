@@ -265,49 +265,21 @@ export default function getConfig({ middleware }: Options = {}): Configuration {
         ]),
         dependOn: "load",
       },
-      "public-auth": {
+      public: {
         import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-auth.js"),
-        ]),
-        dependOn: "load",
-      },
-      "public-home": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-home.js"),
-        ]),
-        dependOn: "load",
-      },
-      "public-support": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-support.js"),
-        ]),
-        dependOn: "load",
-      },
-      "public-content": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-content.js"),
-        ]),
-        dependOn: "load",
-      },
-      "public-lang": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-lang.js"),
-        ]),
-        dependOn: "load",
-      },
-      "public-features": {
-        import: insertHotMiddlewareUrl([
-          resolve("dist-ts/src/webapp-public-features.js"),
+          resolve("dist-ts/src/webapp-public.js"),
         ]),
         dependOn: "load",
       },
     },
-    // Use contenthash rather than chunkhash so the filename is tied to the
-    // final emitted bytes, after module ids and other late transforms.
+    /* Why chunkhash below, rather than contenthash? This says contenthash is a special
+     thing for css and other text files only (??):
+        https://medium.com/@sahilkkrazy/hash-vs-chunkhash-vs-contenthash-e94d38a32208
+  */
     output: {
       path: OUTPUT,
-      filename: PRODMODE ? "[name]-[contenthash].js" : "[id]-[contenthash].js",
-      chunkFilename: PRODMODE ? "[contenthash].js" : "[id]-[contenthash].js",
+      filename: PRODMODE ? "[name]-[chunkhash].js" : "[id]-[chunkhash].js",
+      chunkFilename: PRODMODE ? "[chunkhash].js" : "[id]-[chunkhash].js",
     },
     module: moduleRules(RSPACK_DEV_SERVER),
     resolve: {

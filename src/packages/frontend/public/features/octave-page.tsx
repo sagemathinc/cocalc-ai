@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -14,7 +14,7 @@ import {
   LinkButton,
 } from "./page-components";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 export default function OctaveFeaturePage({
   helpEmail,
@@ -23,13 +23,10 @@ export default function OctaveFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Text strong type="secondary">
-                GNU OCTAVE
-              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 Run Octave online in notebooks, terminals, or a graphical
                 desktop
@@ -60,11 +57,11 @@ export default function OctaveFeaturePage({
             />
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Flexible Octave workflows
             </Title>
@@ -79,10 +76,10 @@ export default function OctaveFeaturePage({
               Different Octave tasks need different interfaces, and CoCalc lets
               them all live in the same project.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Benefits of working online
             </Title>
@@ -96,11 +93,11 @@ export default function OctaveFeaturePage({
               where a common browser-accessible environment is more practical
               than a lab full of local installs.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -135,11 +132,11 @@ export default function OctaveFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="Octave GUI running through X11"
               src="/public/features/cocalc-octave-x11-20200511.png"
@@ -152,10 +149,10 @@ export default function OctaveFeaturePage({
               support can expose traditional GUI applications in the browser.
             </Paragraph>
             <LinkButton href={appPath("features/x11")}>X11 desktop</LinkButton>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="Interactive Octave graphics in an X11 terminal"
               src="/public/features/octave-x11-terminal.png"
@@ -170,11 +167,11 @@ export default function OctaveFeaturePage({
             <Paragraph style={{ margin: 0 }}>
               That extends what you can do beyond a plain shell or notebook.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={3} style={{ margin: 0 }}>
           Why use Octave on CoCalc
         </Title>
@@ -193,7 +190,7 @@ export default function OctaveFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
     </Flex>
   );
 }

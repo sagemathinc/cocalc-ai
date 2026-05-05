@@ -1,8 +1,10 @@
 /** @jest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 import PublicHomeApp from "../app";
+
+const originalFetch = global.fetch;
 
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -21,24 +23,30 @@ beforeAll(() => {
 });
 
 describe("PublicHomeApp", () => {
-  it("renders the top nav and major landing sections", () => {
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("renders the top nav and major landing sections", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => [
+        {
+          channel: "blog",
+          date: 1700000000,
+          id: 1,
+          tags: ["launch"],
+          text: "This is a **news** item.",
+          title: "Launch update",
+        },
+      ],
+    }) as typeof fetch;
     render(
       <PublicHomeApp
         config={{ site_name: "Launchpad", site_description: "Hello world" }}
-        initialNews={[
-          {
-            channel: "blog",
-            date: 1700000000,
-            id: 1,
-            tags: ["launch"],
-            text: "This is a **news** item.",
-            title: "Launch update",
-          } as any,
-        ]}
       />,
     );
 
-    expect(screen.getByRole("link", { name: "Home" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Launchpad home" })).not.toBeNull();
     expect(
       screen.getByRole("heading", {
         name: "CoCalc AI is becoming agent-first",
@@ -47,13 +55,17 @@ describe("PublicHomeApp", () => {
     expect(
       screen.getByRole("heading", { name: "Core workflows" }),
     ).not.toBeNull();
-    expect(screen.getByRole("heading", { name: "Recent News" })).not.toBeNull();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Recent News" }),
+      ).not.toBeNull(),
+    );
     expect(
       screen.getByRole("link", { name: "Patchflow" }).getAttribute("href"),
     ).toBe("https://github.com/sagemathinc/patchflow");
     expect(
       screen.getByRole("link", { name: "CoCalc Plus" }).getAttribute("href"),
-    ).toBe("/software/cocalc-plus");
+    ).toBe("/products/cocalc-plus");
     expect(
       screen
         .getAllByRole("link", { name: "Launchpad" })
@@ -63,10 +75,19 @@ describe("PublicHomeApp", () => {
             "https://software.cocalc.ai/software/cocalc-launchpad/index.html",
         ),
     ).toBe(true);
+    expect(screen.queryByText("Open page")).toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: /Jupyter Notebooks/i })
+        .getAttribute("href"),
+    ).toBe("/features/jupyter-notebook");
     expect(screen.getByRole("link", { name: "All news..." })).not.toBeNull();
   });
 
   it("shows direct app actions when authenticated", () => {
+    global.fetch = jest.fn(
+      () => new Promise<Response>(() => undefined),
+    ) as typeof fetch;
     render(
       <PublicHomeApp
         config={{ is_authenticated: true, site_name: "Launchpad" }}
@@ -74,7 +95,7 @@ describe("PublicHomeApp", () => {
     );
 
     expect(screen.getAllByRole("link", { name: "Open projects" })).toHaveLength(
-      2,
+      1,
     );
     expect(
       screen.getAllByRole("link", { name: "Settings" }).length,

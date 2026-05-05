@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Divider, Input, Radio, Space, Typography } from "antd";
 
 import api from "@cocalc/frontend/client/api";
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import RecentFiles from "./recent-files";
@@ -542,7 +542,7 @@ export default function SupportNew({
   return (
     <Space orientation="vertical" size="large" style={{ width: "100%" }}>
       {!initial.hideExtra ? (
-        <PublicSectionCard>
+        <PublicCard>
           <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
             <Title level={2} style={{ margin: 0 }}>
               {initial.title || "Create a New Support Ticket"}
@@ -589,10 +589,10 @@ export default function SupportNew({
               }
             />
           </Space>
-        </PublicSectionCard>
+        </PublicCard>
       ) : null}
 
-      <PublicSectionCard>
+      <PublicCard>
         <Space orientation="vertical" size="large" style={{ width: "100%" }}>
           <div>
             <SectionLabel done={isValidEmailAddress(email)}>
@@ -796,7 +796,7 @@ export default function SupportNew({
             ) : null}
           </div>
         </Space>
-      </PublicSectionCard>
+      </PublicCard>
 
       {type !== "chat" ? (
         <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: 0 }}>

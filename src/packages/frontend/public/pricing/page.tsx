@@ -3,12 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
 
 import { Alert, Button, Card, Flex, Space, Tag, Typography } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { currency, plural, round2 } from "@cocalc/util/misc";
 import { upgrades } from "@cocalc/util/upgrade-spec";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -57,6 +57,20 @@ function supportPurchasePath(subject: string, body: string): string {
     type: "purchase",
   });
   return `${appPath("support/new")}?${params.toString()}`;
+}
+
+async function loadMembershipTiers(): Promise<
+  PublicMembershipTier[] | undefined
+> {
+  try {
+    const resp = await fetch(
+      joinUrlPath(appBasePath, "api/v2/purchases/get-membership-tiers"),
+    );
+    const payload = await resp.json();
+    return Array.isArray(payload?.tiers) ? payload.tiers : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeRecord(value?: unknown): Record<string, unknown> {
@@ -217,12 +231,27 @@ function TierCard({
 export default function PricingPage({
   isAuthenticated = false,
   siteName,
-  tiers,
 }: {
   isAuthenticated?: boolean;
   siteName: string;
-  tiers?: PublicMembershipTier[];
 }) {
+  const [tiers, setTiers] = useState<PublicMembershipTier[]>();
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let canceled = false;
+    void loadMembershipTiers()
+      .then((value) => {
+        if (!canceled) setTiers(value ?? []);
+      })
+      .finally(() => {
+        if (!canceled) setLoaded(true);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
   const visibleTiers = [...(tiers ?? [])]
     .filter((tier) => tier.store_visible && !tier.disabled)
     .sort((a, b) => {
@@ -234,7 +263,7 @@ export default function PricingPage({
 
   return (
     <>
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={2} style={{ margin: 0 }}>
           Membership-first pricing
         </Title>
@@ -272,7 +301,7 @@ export default function PricingPage({
             Ask Sales
           </Button>
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
 
       {visibleTiers.length > 0 ? (
         <div style={GRID_STYLE}>
@@ -284,17 +313,17 @@ export default function PricingPage({
             />
           ))}
         </div>
-      ) : (
-        <PublicSectionCard>
+      ) : loaded ? (
+        <PublicCard>
           <Alert
             title="No public membership tiers are currently configured."
             showIcon
             type="info"
           />
-        </PublicSectionCard>
-      )}
+        </PublicCard>
+      ) : null}
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={2} style={{ margin: 0 }}>
           What you can buy
         </Title>
@@ -325,9 +354,9 @@ export default function PricingPage({
             </Paragraph>
           </Card>
         </div>
-      </PublicSectionCard>
+      </PublicCard>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={2} style={{ margin: 0 }}>
           Teaching and course payment options
         </Title>
@@ -406,10 +435,10 @@ export default function PricingPage({
             </Space>
           </Card>
         </div>
-      </PublicSectionCard>
+      </PublicCard>
 
       <div style={GRID_STYLE}>
-        <PublicSectionCard>
+        <PublicCard>
           <Title level={3} style={{ margin: 0 }}>
             Subscription options
           </Title>
@@ -423,9 +452,9 @@ export default function PricingPage({
             use support to request invoicing, purchase-order handling, or
             assisted purchases.
           </Paragraph>
-        </PublicSectionCard>
+        </PublicCard>
 
-        <PublicSectionCard>
+        <PublicCard>
           <Title level={3} style={{ margin: 0 }}>
             On-premises and self-hosted installs
           </Title>
@@ -434,14 +463,14 @@ export default function PricingPage({
             offerings instead of the hosted membership flow.
           </Paragraph>
           <Flex gap={8} wrap>
-            <Button href={appPath("software/cocalc-plus")}>CoCalc Plus</Button>
-            <Button href={appPath("software/cocalc-launchpad")}>
+            <Button href={appPath("products/cocalc-plus")}>CoCalc Plus</Button>
+            <Button href={appPath("products/cocalc-launchpad")}>
               CoCalc Launchpad
             </Button>
           </Flex>
-        </PublicSectionCard>
+        </PublicCard>
 
-        <PublicSectionCard>
+        <PublicCard>
           <Title level={3} style={{ margin: 0 }}>
             User-owned project hosts
           </Title>
@@ -452,7 +481,7 @@ export default function PricingPage({
             <Text code> /hosts </Text> and is a separate second-round follow-up.
           </Paragraph>
           <Button href={appPath("hosts")}>Project hosts</Button>
-        </PublicSectionCard>
+        </PublicCard>
       </div>
     </>
   );

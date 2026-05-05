@@ -5,15 +5,13 @@
 
 import { useEffect } from "react";
 
-import { Button, Col, Empty, Flex, Row, Tag, Typography } from "antd";
+import { Button, Empty, Flex, Typography } from "antd";
 
 import {
-  PublicHero,
-  PublicPageRoot,
-  PublicSectionCard,
-} from "@cocalc/frontend/public/ui/shell";
-import { getPolicyPagesMode } from "@cocalc/frontend/public/ui/policy-pages";
-import PublicTopNav from "@cocalc/frontend/public/ui/top-nav";
+  PublicCard,
+  PublicGrid,
+  PublicPage,
+} from "@cocalc/frontend/public/layout/shell";
 import { SITE_NAME } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
@@ -36,12 +34,12 @@ import TerminalFeaturePage from "./terminal-page";
 import WhiteboardFeaturePage from "./whiteboard-page";
 import X11FeaturePage from "./x11-page";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 interface FeaturesConfig {
   help_email?: string;
   is_authenticated?: boolean;
-  policy_pages?: string;
+  logo_square?: string;
   show_policies?: boolean;
   site_name?: string;
 }
@@ -82,7 +80,7 @@ function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
   if (route.view === "detail" && route.slug) {
     return `${getFeaturePage(route.slug)?.title ?? "Features"} – ${siteName}`;
   }
-  return `${siteName} features`;
+  return `${siteName} Features`;
 }
 
 function FeaturesIndex({ siteName }: { siteName: string }) {
@@ -102,7 +100,7 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
     .map(({ page }) => page);
   return (
     <>
-      <PublicSectionCard>
+      <PublicCard>
         <Paragraph style={{ margin: 0, maxWidth: "70ch" }}>
           Explore the core capabilities of {siteName}, from collaborative
           notebooks and terminals to AI-assisted workflows, teaching tools, and
@@ -130,68 +128,48 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
           </Button>
           <Button href={featurePath("compare")}>Compare CoCalc</Button>
         </Flex>
-      </PublicSectionCard>
-      <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
-        <Col xs={24} md={8}>
-          <PublicSectionCard>
-            <Title level={4} style={{ margin: 0 }}>
-              Integrated technical projects
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Keep notebooks, Linux tools, documents, slides, and support in one
-              place instead of spreading work across separate services.
-            </Paragraph>
-          </PublicSectionCard>
-        </Col>
-        <Col xs={24} md={8}>
-          <PublicSectionCard>
-            <Title level={4} style={{ margin: 0 }}>
-              Agent-native workflows
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Use AI where the technical work is already happening, not only in
-              a detached prompt interface.
-            </Paragraph>
-          </PublicSectionCard>
-        </Col>
-        <Col xs={24} md={8}>
-          <PublicSectionCard>
-            <Title level={4} style={{ margin: 0 }}>
-              Teaching and deployment flexibility
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Support classes, research groups, and engineering teams, whether
-              you stay hosted or move to CoCalc Plus, Launchpad, or custom
-              deployment.
-            </Paragraph>
-          </PublicSectionCard>
-        </Col>
-      </Row>
-      <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
+      </PublicCard>
+      <PublicGrid columns={2}>
+        <PublicCard>
+          <Title level={4} style={{ margin: 0 }}>
+            Integrated technical projects
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Keep notebooks, Linux tools, documents, slides, and support in one
+            place instead of spreading work across separate services.
+          </Paragraph>
+        </PublicCard>
+        <PublicCard>
+          <Title level={4} style={{ margin: 0 }}>
+            Agent-native workflows
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Use AI where the technical work is already happening, not only in a
+            detached prompt interface.
+          </Paragraph>
+        </PublicCard>
+        <PublicCard>
+          <Title level={4} style={{ margin: 0 }}>
+            Teaching and deployment flexibility
+          </Title>
+          <Paragraph style={{ margin: 0 }}>
+            Support classes, research groups, and engineering teams, whether you
+            stay hosted or move to CoCalc Plus, Launchpad, or custom deployment.
+          </Paragraph>
+        </PublicCard>
+      </PublicGrid>
+      <PublicGrid columns={2}>
         {pages.map((page) => (
-          <Col key={page.slug} xs={24} md={12} xl={8}>
-            <PublicSectionCard>
-              <FeatureImage alt={page.title} src={page.image} />
-              <Text strong type="secondary">
-                FEATURE
-              </Text>
-              <Title level={3} style={{ margin: 0 }}>
-                {page.title}
-              </Title>
-              <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
-              <div>
-                <Button
-                  type="link"
-                  href={featurePath(page.slug)}
-                  style={{ paddingInline: 0 }}
-                >
-                  Open page
-                </Button>
-              </div>
-            </PublicSectionCard>
-          </Col>
+          <PublicCard
+            href={featurePath(page.slug)}
+            key={page.slug}
+            title={page.title}
+          >
+            <FeatureImage alt={page.title} src={page.image} />
+            <Paragraph style={{ margin: 0 }}>{page.summary}</Paragraph>
+          </PublicCard>
         ))}
-      </Row>
+      </PublicGrid>
     </>
   );
 }
@@ -206,14 +184,14 @@ function FeatureDetail({
   const page = getFeaturePage(slug);
   if (!page) {
     return (
-      <PublicSectionCard>
+      <PublicCard>
         <Empty description="Feature page not found" />
         <div>
           <Button type="link" href={featurePath()} style={{ paddingInline: 0 }}>
             Back to features
           </Button>
         </div>
-      </PublicSectionCard>
+      </PublicCard>
     );
   }
 
@@ -230,11 +208,8 @@ function FeatureDetail({
           Back to features
         </Button>
       </div>
-      <PublicSectionCard>
+      <PublicCard>
         <FeatureImage alt={page.title} src={page.image} />
-        <Text strong type="secondary">
-          FEATURE
-        </Text>
         <Title level={2} style={{ margin: 0 }}>
           {page.title}
         </Title>
@@ -259,9 +234,9 @@ function FeatureDetail({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
       {(page.sections ?? []).map((section) => (
-        <PublicSectionCard key={section.title}>
+        <PublicCard key={section.title}>
           <Title level={3} style={{ margin: 0 }}>
             {section.title}
           </Title>
@@ -293,7 +268,7 @@ function FeatureDetail({
               ))}
             </Flex>
           ) : null}
-        </PublicSectionCard>
+        </PublicCard>
       ))}
     </Flex>
   );
@@ -310,45 +285,28 @@ export default function PublicFeaturesApp({
     document.title = title;
   }, [title]);
 
+  const feature = initialRoute.slug
+    ? getFeaturePage(initialRoute.slug)
+    : undefined;
+
   return (
-    <PublicPageRoot>
-      <PublicTopNav
-        active="features"
-        isAuthenticated={!!config?.is_authenticated}
-        showPolicies={getPolicyPagesMode(config) !== "none"}
-        siteName={siteName}
-      />
-      <PublicHero
-        eyebrow="FEATURES"
-        title={
-          initialRoute.view === "detail" && initialRoute.slug
-            ? (getFeaturePage(initialRoute.slug)?.title ?? "Features")
-            : `${siteName} features`
-        }
-        subtitle={
-          initialRoute.view === "detail" && initialRoute.slug
-            ? getFeaturePage(initialRoute.slug)?.tagline
-            : "Standalone feature landing pages for the main CoCalc workflows."
-        }
-        actions={
-          initialRoute.view === "detail" ? (
-            <Flex wrap gap={8}>
-              <Tag color="blue">AntD public UI</Tag>
-              <Tag>Next-free routing</Tag>
-            </Flex>
-          ) : null
-        }
-      />
-      <div style={{ marginTop: 24 }}>
-        {initialRoute.view === "detail" && initialRoute.slug ? (
-          <FeatureDetail
-            helpEmail={config?.help_email}
-            slug={initialRoute.slug}
-          />
-        ) : (
-          <FeaturesIndex siteName={siteName} />
-        )}
-      </div>
-    </PublicPageRoot>
+    <PublicPage
+      active="features"
+      config={config}
+      title={
+        initialRoute.view === "index"
+          ? `${siteName} Features`
+          : (feature?.title ?? "Features")
+      }
+    >
+      {initialRoute.view === "detail" && initialRoute.slug ? (
+        <FeatureDetail
+          helpEmail={config?.help_email}
+          slug={initialRoute.slug}
+        />
+      ) : (
+        <FeaturesIndex siteName={siteName} />
+      )}
+    </PublicPage>
   );
 }

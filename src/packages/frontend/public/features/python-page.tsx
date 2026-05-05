@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicSectionCard } from "@cocalc/frontend/public/ui/shell";
+import { PublicCard } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -13,7 +13,7 @@ import {
   featureAppPath as appPath,
 } from "./page-components";
 
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
 
 export default function PythonFeaturePage({
   helpEmail,
@@ -22,13 +22,10 @@ export default function PythonFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
-              <Text strong type="secondary">
-                PYTHON WORKFLOWS
-              </Text>
               <Title level={2} style={{ margin: 0 }}>
                 Run Python notebooks, scripts, and experiments in one shared
                 environment
@@ -60,11 +57,11 @@ export default function PythonFeaturePage({
             />
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Zero-setup Python for technical work
             </Title>
@@ -81,10 +78,10 @@ export default function PythonFeaturePage({
               the cost of everyone managing their own inconsistent local Python
               stack adds up quickly.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <Title level={3} style={{ margin: 0 }}>
               Broad scientific and data workflow support
             </Title>
@@ -100,11 +97,11 @@ export default function PythonFeaturePage({
               CoCalc is strongest when Python is part of a larger technical
               environment, not just an isolated interpreter.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -140,11 +137,11 @@ export default function PythonFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicSectionCard>
+      </PublicCard>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="Realtime collaborative Python notebook editing"
               src="/public/features/cocalc-real-time-jupyter.png"
@@ -162,10 +159,10 @@ export default function PythonFeaturePage({
               That is useful for data science teams, students and TAs, and
               anyone doing technical support or pair work.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicSectionCard>
+          <PublicCard>
             <FeatureImage
               alt="PythonTeX workflow inside CoCalc"
               src="/public/features/cocalc-latex-pythontex.png"
@@ -182,11 +179,11 @@ export default function PythonFeaturePage({
               This is one of the reasons a unified project environment matters:
               code, notebooks, and documents can evolve together.
             </Paragraph>
-          </PublicSectionCard>
+          </PublicCard>
         </Col>
       </Row>
 
-      <PublicSectionCard>
+      <PublicCard>
         <Title level={3} style={{ margin: 0 }}>
           Why people choose CoCalc for Python
         </Title>
@@ -205,7 +202,7 @@ export default function PythonFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicSectionCard>
+      </PublicCard>
     </Flex>
   );
 }
