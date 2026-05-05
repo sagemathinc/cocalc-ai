@@ -4,6 +4,8 @@
  */
 
 import type {
+  HostRuntimeDeploymentObservedTarget,
+  HostRuntimeDeploymentStatus,
   HostRuntimeHostAgentProjectHostAutomaticRollback,
   HostRuntimeHostAgentProjectHostObservation,
 } from "@cocalc/conat/hub/api/hosts";
@@ -14,7 +16,16 @@ const PROJECT_HOST_ROLLOUT_OP_KINDS = new Set([
   "host-reconcile-software",
   "host-reconcile-runtime-deployments",
   "host-rollback-runtime-deployments",
+  "host-rollout-managed-components",
 ]);
+
+export type HostRolloutDisplayPhase = {
+  label: string;
+  owner:
+    | "artifact installation"
+    | "project-host activation"
+    | "managed component alignment";
+};
 
 function toTimestamp(value?: Date | string | null): number | undefined {
   if (!value) return undefined;
@@ -83,4 +94,225 @@ export function projectHostRollbackReasonLabel(
     default:
       return "automatic rollback";
   }
+}
+
+function observedTargetForArtifact(
+  status: HostRuntimeDeploymentStatus | undefined,
+  artifact: "project-host",
+): HostRuntimeDeploymentObservedTarget | undefined {
+  return status?.observed_targets?.find(
+    (record) => record.target_type === "artifact" && record.target === artifact,
+  );
+}
+
+function observedTargetForComponent(
+  status: HostRuntimeDeploymentStatus | undefined,
+  component: "project-host" | "conat-router" | "conat-persist" | "acp-worker",
+): HostRuntimeDeploymentObservedTarget | undefined {
+  return status?.observed_targets?.find(
+    (record) =>
+      record.target_type === "component" && record.target === component,
+  );
+}
+
+function messageContains(
+  message: string | undefined,
+  pattern: RegExp,
+): boolean {
+  return !!message && pattern.test(message);
+}
+
+function progressMessage(op?: HostLroState): string | undefined {
+  const value =
+    op?.last_progress?.message ??
+    (typeof op?.summary?.progress_summary?.message === "string"
+      ? op.summary.progress_summary.message
+      : undefined);
+  const text = `${value ?? ""}`.trim();
+  return text || undefined;
+}
+
+function currentManagedAlignmentPhase(
+  status?: HostRuntimeDeploymentStatus,
+): HostRolloutDisplayPhase | undefined {
+  const router = observedTargetForComponent(status, "conat-router");
+  if (
+    router &&
+    (router.observed_version_state !== "aligned" ||
+      router.observed_runtime_state !== "running")
+  ) {
+    return {
+      label: "Restarting conat router",
+      owner: "managed component alignment",
+    };
+  }
+
+  const persist = observedTargetForComponent(status, "conat-persist");
+  if (
+    persist &&
+    (persist.observed_version_state !== "aligned" ||
+      persist.observed_runtime_state !== "running")
+  ) {
+    return {
+      label: "Restarting conat persist",
+      owner: "managed component alignment",
+    };
+  }
+
+  const acp = observedTargetForComponent(status, "acp-worker");
+  if (
+    acp &&
+    (acp.observed_version_state !== "aligned" ||
+      acp.observed_runtime_state !== "running")
+  ) {
+    return {
+      label: "Draining/replacing ACP worker",
+      owner: "managed component alignment",
+    };
+  }
+
+  return undefined;
+}
+
+export function currentProjectHostRolloutPhase({
+  op,
+  currentVersion,
+  observation,
+  deploymentStatus,
+}: {
+  op?: HostLroState;
+  currentVersion?: string;
+  observation?: HostRuntimeHostAgentProjectHostObservation;
+  deploymentStatus?: HostRuntimeDeploymentStatus;
+}): HostRolloutDisplayPhase | undefined {
+  if (!op) return undefined;
+  if (`${op.summary?.status ?? ""}`.trim() !== "running") {
+    return undefined;
+  }
+  const kind = op.summary?.kind ?? op.kind;
+  if (!kind || !PROJECT_HOST_ROLLOUT_OP_KINDS.has(kind)) {
+    return undefined;
+  }
+
+  const message = progressMessage(op);
+  const pending = observation?.pending_rollout;
+  const projectHostArtifact = observedTargetForArtifact(
+    deploymentStatus,
+    "project-host",
+  );
+  const projectHostComponent = observedTargetForComponent(
+    deploymentStatus,
+    "project-host",
+  );
+  const desiredVersion =
+    `${projectHostComponent?.desired_version ?? projectHostArtifact?.desired_version ?? pending?.target_version ?? ""}`.trim() ||
+    undefined;
+  const artifactState = projectHostArtifact?.observed_version_state;
+  const projectHostRunning = projectHostComponent?.running_versions ?? [];
+
+  if (
+    artifactState === "missing" ||
+    messageContains(message, /running upgrade|downloading|resolving artifact/i)
+  ) {
+    return {
+      label: "Downloading/installing artifact",
+      owner: "artifact installation",
+    };
+  }
+
+  if (artifactState === "drifted") {
+    return {
+      label: "Installing artifact",
+      owner: "artifact installation",
+    };
+  }
+
+  if (pending) {
+    if (projectHostRunning.includes(pending.target_version)) {
+      return {
+        label: "Candidate running; evaluating health",
+        owner: "project-host activation",
+      };
+    }
+    return {
+      label: "Waiting for host-agent to restart project-host",
+      owner: "project-host activation",
+    };
+  }
+
+  if (
+    desiredVersion &&
+    projectHostArtifact?.current_version === desiredVersion &&
+    !projectHostRunning.includes(desiredVersion)
+  ) {
+    return {
+      label: "Installed on host; waiting for project-host restart",
+      owner: "project-host activation",
+    };
+  }
+
+  if (
+    desiredVersion &&
+    projectHostRunning.includes(desiredVersion) &&
+    observation?.last_known_good_version &&
+    observation.last_known_good_version !== desiredVersion
+  ) {
+    return {
+      label: "Candidate running; awaiting promotion",
+      owner: "project-host activation",
+    };
+  }
+
+  if (
+    desiredVersion &&
+    projectHostRunning.includes(desiredVersion) &&
+    observation?.last_known_good_version === desiredVersion
+  ) {
+    return currentManagedAlignmentPhase(deploymentStatus);
+  }
+
+  if (messageContains(message, /rolling out upgraded managed components/i)) {
+    return {
+      label: "Rolling out managed components",
+      owner: "managed component alignment",
+    };
+  }
+
+  if (
+    messageContains(
+      message,
+      /running reconcile|reconciling runtime deployments/i,
+    )
+  ) {
+    return {
+      label: "Reconciling runtime deployments",
+      owner: "managed component alignment",
+    };
+  }
+
+  if (
+    messageContains(
+      message,
+      /waiting for host to return|waiting for host heartbeat/i,
+    )
+  ) {
+    return {
+      label: "Waiting for host heartbeat",
+      owner: "managed component alignment",
+    };
+  }
+
+  if (
+    desiredVersion &&
+    currentVersion &&
+    desiredVersion !== currentVersion &&
+    !deploymentStatus
+  ) {
+    return {
+      label: "Rolling out project-host",
+      owner: "project-host activation",
+    };
+  }
+
+  return undefined;
 }

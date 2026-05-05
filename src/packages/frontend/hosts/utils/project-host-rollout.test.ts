@@ -1,5 +1,6 @@
 import {
   currentProjectHostAutomaticRollback,
+  currentProjectHostRolloutPhase,
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
 } from "./project-host-rollout";
@@ -108,5 +109,169 @@ describe("project-host-rollout", () => {
     expect(projectHostRollbackReasonLabel("health_deadline_exceeded")).toBe(
       "health deadline exceeded",
     );
+  });
+
+  test("shows host-agent restart wait when a candidate is installed but the old daemon is still running", () => {
+    expect(
+      currentProjectHostRolloutPhase({
+        op: {
+          op_id: "op-1",
+          kind: "host-upgrade-software",
+          summary: { status: "running" } as any,
+        },
+        currentVersion: "ph-v1",
+        observation: {
+          last_known_good_version: "ph-v1",
+          pending_rollout: {
+            target_version: "ph-v2",
+            previous_version: "ph-v1",
+            started_at: "2026-05-05T00:00:00Z",
+            deadline_at: "2026-05-05T00:05:00Z",
+          },
+        },
+        deploymentStatus: {
+          host_id: "h",
+          configured: [],
+          effective: [],
+          observed_targets: [
+            {
+              target_type: "artifact",
+              target: "project-host",
+              desired_version: "ph-v2",
+              observed_version_state: "aligned",
+              current_version: "ph-v2",
+              installed_versions: ["ph-v2", "ph-v1"],
+            },
+            {
+              target_type: "component",
+              target: "project-host",
+              desired_version: "ph-v2",
+              observed_version_state: "drifted",
+              running_versions: ["ph-v1"],
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      label: "Waiting for host-agent to restart project-host",
+      owner: "project-host activation",
+    });
+  });
+
+  test("shows candidate health evaluation once the candidate process is running", () => {
+    expect(
+      currentProjectHostRolloutPhase({
+        op: {
+          op_id: "op-1",
+          kind: "host-upgrade-software",
+          summary: { status: "running" } as any,
+        },
+        observation: {
+          last_known_good_version: "ph-v1",
+          pending_rollout: {
+            target_version: "ph-v2",
+            previous_version: "ph-v1",
+            started_at: "2026-05-05T00:00:00Z",
+            deadline_at: "2026-05-05T00:05:00Z",
+          },
+        },
+        deploymentStatus: {
+          host_id: "h",
+          configured: [],
+          effective: [],
+          observed_targets: [
+            {
+              target_type: "component",
+              target: "project-host",
+              desired_version: "ph-v2",
+              observed_version_state: "aligned",
+              running_versions: ["ph-v2"],
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      label: "Candidate running; evaluating health",
+      owner: "project-host activation",
+    });
+  });
+
+  test("shows managed component alignment after project-host promotion", () => {
+    expect(
+      currentProjectHostRolloutPhase({
+        op: {
+          op_id: "op-1",
+          kind: "host-upgrade-software",
+          summary: { status: "running" } as any,
+        },
+        observation: {
+          last_known_good_version: "ph-v2",
+        },
+        deploymentStatus: {
+          host_id: "h",
+          configured: [],
+          effective: [],
+          observed_targets: [
+            {
+              target_type: "artifact",
+              target: "project-host",
+              desired_version: "ph-v2",
+              observed_version_state: "aligned",
+              current_version: "ph-v2",
+              installed_versions: ["ph-v2", "ph-v1"],
+            },
+            {
+              target_type: "component",
+              target: "project-host",
+              desired_version: "ph-v2",
+              observed_version_state: "aligned",
+              observed_runtime_state: "running",
+              running_versions: ["ph-v2"],
+            },
+            {
+              target_type: "component",
+              target: "conat-router",
+              desired_version: "ph-v2",
+              observed_version_state: "drifted",
+              observed_runtime_state: "running",
+              running_versions: ["ph-v1"],
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      label: "Restarting conat router",
+      owner: "managed component alignment",
+    });
+  });
+
+  test("shows artifact installation before project-host activation starts", () => {
+    expect(
+      currentProjectHostRolloutPhase({
+        op: {
+          op_id: "op-1",
+          kind: "host-upgrade-software",
+          summary: { status: "running" } as any,
+        },
+        deploymentStatus: {
+          host_id: "h",
+          configured: [],
+          effective: [],
+          observed_targets: [
+            {
+              target_type: "artifact",
+              target: "project-host",
+              desired_version: "ph-v2",
+              observed_version_state: "missing",
+              current_version: "ph-v1",
+              installed_versions: ["ph-v1"],
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      label: "Downloading/installing artifact",
+      owner: "artifact installation",
+    });
   });
 });

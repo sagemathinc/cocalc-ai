@@ -47,6 +47,7 @@ import { HostCurrentMetrics } from "./host-current-metrics";
 import { HostPlacementSummary, HostPressureTag } from "../pressure-ui";
 import {
   currentProjectHostAutomaticRollback,
+  currentProjectHostRolloutPhase,
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
 } from "../utils/project-host-rollout";
@@ -123,6 +124,11 @@ export const HostCard: React.FC<HostCardProps> = ({
     ? undefined
     : hostOp;
   const hostOpActive = isHostOpActive(displayHostOp);
+  const projectHostRolloutPhase = currentProjectHostRolloutPhase({
+    op: displayHostOp,
+    currentVersion: host.version,
+    observation: projectHostObservation,
+  });
   const startDisabled =
     isDeleted ||
     host.status === "running" ||
@@ -178,7 +184,9 @@ export const HostCard: React.FC<HostCardProps> = ({
     hostOpActive &&
     opPhase === "backups" &&
     !!onCancelOp;
-  const blockedActionsReason = describeBlockedHostActions(displayHostOp);
+  const blockedActionsReason = describeBlockedHostActions(displayHostOp, {
+    displayPhaseLabel: projectHostRolloutPhase?.label,
+  });
   const actions = [
     <Button
       key="start"
@@ -388,7 +396,12 @@ export const HostCard: React.FC<HostCardProps> = ({
             <Tag color="orange">Reprovision on next start</Tag>
           </Tooltip>
         )}
-        <HostOpProgress op={displayHostOp} compact />
+        <HostOpProgress
+          op={displayHostOp}
+          compact
+          displayPhaseLabel={projectHostRolloutPhase?.label}
+          displayPhaseOwner={projectHostRolloutPhase?.owner}
+        />
         {projectHostRollback && (
           <Tooltip
             title={`Project-host rollout to ${projectHostRollback.target_version} was rolled back to ${projectHostRollback.rollback_version}${

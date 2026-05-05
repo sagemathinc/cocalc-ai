@@ -290,11 +290,14 @@ export function getHostOpPhase(op?: HostLroState): string | undefined {
 
 export function describeBlockedHostActions(
   op?: HostLroState,
+  opts?: {
+    displayPhaseLabel?: string;
+  },
 ): string | undefined {
   if (!op || !ACTIVE_STATUSES.has(op.summary?.status as LroStatus))
     return undefined;
   const label = getHostOpLabel(op);
-  const phase = getHostOpPhase(op);
+  const phase = opts?.displayPhaseLabel ?? getHostOpPhase(op);
   if (phase) {
     return `Actions blocked while ${label.toLowerCase()} is ${phase.toLowerCase()}.`;
   }
@@ -340,7 +343,15 @@ function kindInputTags(op: HostLroState) {
   );
 }
 
-function HostOpTimeline({ op }: { op: HostLroState }) {
+function HostOpTimeline({
+  op,
+  displayPhaseLabel,
+  displayPhaseOwner,
+}: {
+  op: HostLroState;
+  displayPhaseLabel?: string;
+  displayPhaseOwner?: string;
+}) {
   const summary = op.summary;
   const status = summary?.status;
   const [copied, setCopied] = useState(false);
@@ -380,6 +391,10 @@ function HostOpTimeline({ op }: { op: HostLroState }) {
         <div style={{ fontWeight: 600 }}>{actionLabel} lifecycle</div>
         <Space wrap size={[6, 6]}>
           <Tag color={statusColor(status)}>{status ?? "running"}</Tag>
+          {displayPhaseLabel ? (
+            <Tag style={WRAP_TAG_STYLE}>{displayPhaseLabel}</Tag>
+          ) : null}
+          {displayPhaseOwner ? <Tag>{displayPhaseOwner}</Tag> : null}
           {currentPhase ? (
             <Tag style={WRAP_TAG_STYLE}>{currentPhase}</Tag>
           ) : null}
@@ -439,14 +454,28 @@ function HostOpTimeline({ op }: { op: HostLroState }) {
   );
 }
 
-function HostOpDetailsButton({ op }: { op: HostLroState }) {
+function HostOpDetailsButton({
+  op,
+  displayPhaseLabel,
+  displayPhaseOwner,
+}: {
+  op: HostLroState;
+  displayPhaseLabel?: string;
+  displayPhaseOwner?: string;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <Popover
       trigger="click"
       open={open}
       onOpenChange={setOpen}
-      content={<HostOpTimeline op={op} />}
+      content={
+        <HostOpTimeline
+          op={op}
+          displayPhaseLabel={displayPhaseLabel}
+          displayPhaseOwner={displayPhaseOwner}
+        />
+      }
       placement="bottomLeft"
     >
       <Button size="small" type="link" style={{ padding: 0, height: "auto" }}>
@@ -459,9 +488,13 @@ function HostOpDetailsButton({ op }: { op: HostLroState }) {
 export function HostOpProgress({
   op,
   compact = false,
+  displayPhaseLabel,
+  displayPhaseOwner,
 }: {
   op?: HostLroState;
   compact?: boolean;
+  displayPhaseLabel?: string;
+  displayPhaseOwner?: string;
 }) {
   if (!op) {
     return null;
@@ -477,7 +510,11 @@ export function HostOpProgress({
   }
 
   const phase = getHostOpPhase(op);
-  const label = phase ? capitalize(phase) : capitalize(status);
+  const label = displayPhaseLabel
+    ? displayPhaseLabel
+    : phase
+      ? capitalize(phase)
+      : capitalize(status);
   const created_ts = toTimestamp(summary?.created_at);
   const started_ts = toTimestamp(summary?.started_at);
   const start_ts =
@@ -500,7 +537,11 @@ export function HostOpProgress({
         >
           {errorText}
         </Typography.Text>
-        <HostOpDetailsButton op={op} />
+        <HostOpDetailsButton
+          op={op}
+          displayPhaseLabel={displayPhaseLabel}
+          displayPhaseOwner={displayPhaseOwner}
+        />
       </Space>
     );
   }
@@ -529,7 +570,14 @@ export function HostOpProgress({
             </>
           )}
         </Typography.Text>
-        <HostOpDetailsButton op={op} />
+        {displayPhaseOwner ? (
+          <Tag style={{ marginInlineEnd: 0 }}>{displayPhaseOwner}</Tag>
+        ) : null}
+        <HostOpDetailsButton
+          op={op}
+          displayPhaseLabel={displayPhaseLabel}
+          displayPhaseOwner={displayPhaseOwner}
+        />
       </Space>
     );
   }
@@ -549,7 +597,12 @@ export function HostOpProgress({
             </>
           )}
         </Typography.Text>
-        <HostOpDetailsButton op={op} />
+        {displayPhaseOwner ? <Tag>{displayPhaseOwner}</Tag> : null}
+        <HostOpDetailsButton
+          op={op}
+          displayPhaseLabel={displayPhaseLabel}
+          displayPhaseOwner={displayPhaseOwner}
+        />
       </Space>
       <Progress
         percent={displayPercent}

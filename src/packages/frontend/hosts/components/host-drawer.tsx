@@ -85,6 +85,7 @@ import {
 } from "../utils/format";
 import type { HostDeleteOptions } from "../types";
 import {
+  currentProjectHostRolloutPhase,
   projectHostRollbackReasonLabel,
   shouldSuppressProjectHostFailedOp,
 } from "../utils/project-host-rollout";
@@ -1307,6 +1308,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   })
     ? undefined
     : activeOp;
+  const projectHostRolloutPhase = currentProjectHostRolloutPhase({
+    op: displayActiveOp,
+    currentVersion: host?.version,
+    observation: projectHostObservation,
+    deploymentStatus,
+  });
   const hostOpActive = host ? isHostOpActive(displayActiveOp) : false;
   const opPhase = getHostOpPhase(displayActiveOp);
   const canCancelBackups =
@@ -1483,7 +1490,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
       {!showUpgradeProgress && (
         <Space orientation="vertical" size="small">
-          <HostOpProgress op={displayActiveOp} />
+          <HostOpProgress
+            op={displayActiveOp}
+            displayPhaseLabel={projectHostRolloutPhase?.label}
+            displayPhaseOwner={projectHostRolloutPhase?.owner}
+          />
           <HostBootstrapProgress host={host} />
           {canCancelBackups && (
             <Popconfirm
@@ -2419,7 +2430,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                     </Space>
                   </Card>
                 )}
-                {showUpgradeProgress && <HostOpProgress op={displayActiveOp} />}
+                {showUpgradeProgress && (
+                  <HostOpProgress
+                    op={displayActiveOp}
+                    displayPhaseLabel={projectHostRolloutPhase?.label}
+                    displayPhaseOwner={projectHostRolloutPhase?.owner}
+                  />
+                )}
                 <Space
                   orientation="vertical"
                   size="small"
