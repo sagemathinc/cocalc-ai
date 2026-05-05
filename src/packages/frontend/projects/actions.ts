@@ -60,6 +60,7 @@ import type {
 export type { Datastore, EnvVars, EnvVarsRecord };
 
 const PROJECTION_ONLY_FIELD = "__projection_only";
+const PROJECTED_PROJECT_BOOTSTRAP_LIMIT = 2000;
 
 function dateOrNull(value: unknown): Date | null {
   if (value == null) return null;
@@ -470,7 +471,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
               },
             ],
           },
-          options: [{ limit: 2000 }],
+          options: [{ limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT }],
         });
       } catch (err) {
         console.warn("project projected bootstrap failed", err);
@@ -569,15 +570,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
         project_map = project_map.set(row.project_id, nextProject);
         changed = true;
       }
-      for (const [project_id, project] of project_map) {
-        if (
-          project.get(PROJECTION_ONLY_FIELD) === true &&
-          !seenProjectedIds.has(project_id)
-        ) {
-          project_map = project_map.delete(project_id);
-          changed = true;
-          if (this.isProjectOpen(project_id)) {
-            projectsToClose.push(project_id);
+      if (rows.length < PROJECTED_PROJECT_BOOTSTRAP_LIMIT) {
+        for (const [project_id, project] of project_map) {
+          if (
+            project.get(PROJECTION_ONLY_FIELD) === true &&
+            !seenProjectedIds.has(project_id)
+          ) {
+            project_map = project_map.delete(project_id);
+            changed = true;
+            if (this.isProjectOpen(project_id)) {
+              projectsToClose.push(project_id);
+            }
           }
         }
       }
@@ -600,7 +603,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
               },
             ],
           },
-          options: [{ limit: 2000 }],
+          options: [{ limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT }],
         });
         const backupRows = backupResp?.query?.projects;
         if (Array.isArray(backupRows)) {

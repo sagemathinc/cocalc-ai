@@ -1129,6 +1129,66 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.has("project-remote")).toBe(false);
   });
 
+  it("does not drop projection-only remote projects when account_project_index hits the page limit", async () => {
+    projectMap = ImmutableMap<string, any>([
+      [
+        "project-remote",
+        ImmutableMap({
+          title: "Shared Remote Project",
+          __projection_only: true,
+        }),
+      ],
+    ]);
+    mockedWebappClient.async_query
+      .mockResolvedValueOnce({
+        query: {
+          account_project_index: Array.from({ length: 2000 }, (_, n) => ({
+            account_id: "acct-1",
+            project_id: `project-${n}`,
+            owning_bay_id: "bay-0",
+            host_id: "host-1",
+            title: `Shared Project ${n}`,
+            description: "visible from projection",
+            theme: null,
+            users_summary: {
+              "acct-1": { group: "collaborator" },
+            },
+            state_summary: { state: "running" },
+            last_activity_at: "2026-04-05T03:00:00.000Z",
+            sort_key: "2026-04-05T03:00:00.000Z",
+            updated_at: "2026-04-05T03:00:01.000Z",
+            is_hidden: false,
+          })),
+        },
+      })
+      .mockResolvedValueOnce({
+        query: { projects: [] },
+      });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    await (actions as any).loadProjectedProjectsForCurrentAccount("acct-1");
+
+    expect(projectMap.has("project-remote")).toBe(true);
+  });
+
   it("keeps a newer local moved host when projected bootstrap rows are older", async () => {
     const projectId = "00000000-0000-4000-8000-000000000003";
     projectMap = ImmutableMap<string, any>([
