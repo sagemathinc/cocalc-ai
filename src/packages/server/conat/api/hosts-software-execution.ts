@@ -31,6 +31,7 @@ import type {
   HostSoftwareUpgradeTarget,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
+  HostAgentStatus,
   HostManagedComponentRolloutRequest,
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
@@ -42,6 +43,8 @@ import { defaultHostRuntimeRetentionPolicy } from "./hosts-runtime-retention-pol
 import { runtimeDeploymentsForAlignedProjectHostVersion } from "./hosts-runtime-deployment-planning";
 
 const ROLLOUT_DIAGNOSTIC_LINES = 25;
+const PROJECT_HOST_ROLLOUT_SETTLE_TIMEOUT_MS = 150_000;
+const PROJECT_HOST_ROLLOUT_POLL_MS = 5_000;
 
 const RUNTIME_LOG_SOURCE_BY_COMPONENT: Partial<
   Record<
@@ -210,6 +213,41 @@ function observedRunningProjectHostVersion(
     ),
   ];
   return versions.length === 1 ? versions[0] : undefined;
+}
+
+function projectHostRollbackVersionFromHostAgent({
+  hostAgentStatus,
+  desiredVersion,
+}: {
+  hostAgentStatus?: HostAgentStatus;
+  desiredVersion?: string;
+}): string | undefined {
+  const targetVersion = normalizeObservedVersion(
+    hostAgentStatus?.project_host?.last_automatic_rollback?.target_version,
+  );
+  if (!desiredVersion || targetVersion !== desiredVersion) {
+    return undefined;
+  }
+  return normalizeObservedVersion(
+    hostAgentStatus?.project_host?.last_automatic_rollback?.rollback_version,
+  );
+}
+
+function projectHostPendingRolloutMatches({
+  hostAgentStatus,
+  desiredVersion,
+}: {
+  hostAgentStatus?: HostAgentStatus;
+  desiredVersion?: string;
+}): boolean {
+  const targetVersion = normalizeObservedVersion(
+    hostAgentStatus?.project_host?.pending_rollout?.target_version,
+  );
+  return !!desiredVersion && targetVersion === desiredVersion;
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function resolveDesiredProjectHostVersion({
@@ -508,6 +546,8 @@ export async function rolloutHostManagedComponentsInternalHelper({
   requestedByForRuntimeDeployments,
   setProjectHostRuntimeDeployments,
   loadEffectiveRuntimeDeployments,
+  projectHostRolloutSettleTimeoutMs = PROJECT_HOST_ROLLOUT_SETTLE_TIMEOUT_MS,
+  projectHostRolloutPollMs = PROJECT_HOST_ROLLOUT_POLL_MS,
 }: {
   account_id?: string;
   id: string;
@@ -528,6 +568,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
       reason?: string;
     }) => Promise<HostManagedComponentRolloutResponse>;
     getManagedComponentStatus?: () => Promise<HostManagedComponentStatus[]>;
+    getHostAgentStatus?: () => Promise<HostAgentStatus>;
   }>;
   waitForHostHeartbeatAfter: (opts: {
     host_id: string;
@@ -572,6 +613,8 @@ export async function rolloutHostManagedComponentsInternalHelper({
   }) => Promise<
     Array<{ target_type: string; target: string; desired_version?: string }>
   >;
+  projectHostRolloutSettleTimeoutMs?: number;
+  projectHostRolloutPollMs?: number;
 }): Promise<HostManagedComponentRolloutResponse> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
@@ -606,48 +649,81 @@ export async function rolloutHostManagedComponentsInternalHelper({
         loadEffectiveRuntimeDeployments,
       })
     : undefined;
-  let observedProjectHostVersion =
-    observedInstalledProjectHostVersionFromRow(refreshedRow);
-  if (requestedProjectHostRollout) {
+  let observedProjectHostVersion: string | undefined;
+  let fallbackProjectHostVersion: string | undefined;
+  let projectHostRollbackVersion: string | undefined;
+  let pendingProjectHostRollout = false;
+  const refreshProjectHostObservation = async () => {
+    let statusClient:
+      | Awaited<ReturnType<typeof hostControlClient>>
+      | undefined = undefined;
+    let runningVersion: string | undefined;
+    let hostAgentStatus: HostAgentStatus | undefined;
     try {
-      const statusClient = await hostControlClient(id, 30_000);
+      statusClient = await hostControlClient(id, 30_000);
       if (typeof statusClient.getManagedComponentStatus === "function") {
-        observedProjectHostVersion =
-          observedRunningProjectHostVersion(
-            await statusClient.getManagedComponentStatus(),
-          ) ?? observedProjectHostVersion;
+        runningVersion = observedRunningProjectHostVersion(
+          await statusClient.getManagedComponentStatus(),
+        );
+      }
+      if (typeof statusClient.getHostAgentStatus === "function") {
+        hostAgentStatus = await statusClient.getHostAgentStatus();
       }
     } catch {
       // The host control RPC can still be coming back after project-host
       // restart; fall back to bootstrap/runtime observations in that case.
     }
-  }
-  observedProjectHostVersion = normalizeObservedProjectHostRolloutVersion({
-    row: refreshedRow,
-    desiredVersion,
-    observedVersion: observedProjectHostVersion,
-  });
-  const fallbackProjectHostVersion = normalizeObservedProjectHostRolloutVersion(
-    {
+    observedProjectHostVersion = normalizeObservedProjectHostRolloutVersion({
+      row: refreshedRow,
+      desiredVersion,
+      observedVersion:
+        runningVersion ??
+        observedInstalledProjectHostVersionFromRow(refreshedRow),
+    });
+    fallbackProjectHostVersion = normalizeObservedProjectHostRolloutVersion({
       row: refreshedRow,
       desiredVersion,
       observedVersion: installedProjectHostArtifactVersion(refreshedRow),
-    },
-  );
+    });
+    projectHostRollbackVersion = projectHostRollbackVersionFromHostAgent({
+      hostAgentStatus,
+      desiredVersion,
+    });
+    pendingProjectHostRollout = projectHostPendingRolloutMatches({
+      hostAgentStatus,
+      desiredVersion,
+    });
+  };
+  await refreshProjectHostObservation();
   if (requestedProjectHostRollout && desiredVersion) {
-    if (
-      observedProjectHostVersion &&
-      observedProjectHostVersion !== desiredVersion
+    const settleStartedAt = Date.now();
+    while (
+      projectHostRollbackVersion == null &&
+      observedProjectHostVersion !== desiredVersion &&
+      Date.now() - settleStartedAt < projectHostRolloutSettleTimeoutMs
     ) {
+      if (
+        !pendingProjectHostRollout &&
+        observedProjectHostVersion &&
+        observedProjectHostVersion !== desiredVersion &&
+        fallbackProjectHostVersion !== desiredVersion
+      ) {
+        break;
+      }
+      await delay(projectHostRolloutPollMs);
+      refreshedRow = await loadHostForStartStop(id, account_id);
+      await refreshProjectHostObservation();
+    }
+    if (projectHostRollbackVersion) {
       const automaticRollback = await recordProjectHostLocalRollbackInternal({
         account_id,
         id,
-        version: observedProjectHostVersion,
+        version: projectHostRollbackVersion,
         reason: "automatic_project_host_local_rollback",
       });
       const err = Object.assign(
         new Error(
-          `project-host rollout converged to ${observedProjectHostVersion} instead of desired ${desiredVersion}`,
+          `project-host rollout converged to ${projectHostRollbackVersion} instead of desired ${desiredVersion}`,
         ),
         {
           code: project_host_local_rollback_error_code,
@@ -655,6 +731,14 @@ export async function rolloutHostManagedComponentsInternalHelper({
         },
       );
       throw err;
+    }
+    if (
+      observedProjectHostVersion &&
+      observedProjectHostVersion !== desiredVersion
+    ) {
+      throw new Error(
+        `project-host rollout did not converge to desired ${desiredVersion}; observed ${observedProjectHostVersion}`,
+      );
     }
     await setLastKnownGoodArtifactVersionInternal({
       host_id: refreshedRow.id,

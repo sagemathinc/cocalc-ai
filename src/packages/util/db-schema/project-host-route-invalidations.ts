@@ -14,7 +14,7 @@ Table({
   fields: {
     event_id: {
       type: "integer",
-      pg_type: "BIGSERIAL",
+      pg_type: "SERIAL",
       desc: "Monotonic event id for durable route cache invalidation polling.",
       noCoerce: true,
     },

@@ -125,11 +125,10 @@ function startServerSettingsPolling(target: ServerSettingsDynamic): void {
     } catch (err) {
       logger.warn("server settings refresh failed", { err: `${err}` });
     } finally {
-      if (closed) {
-        return;
+      if (!closed) {
+        const timer = setTimeout(() => void poll(), SERVER_SETTINGS_POLL_MS);
+        timer.unref?.();
       }
-      const timer = setTimeout(() => void poll(), SERVER_SETTINGS_POLL_MS);
-      timer.unref?.();
     }
   };
 
