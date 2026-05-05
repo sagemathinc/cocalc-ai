@@ -708,6 +708,29 @@ export class ProjectsActions extends Actions<ProjectsState> {
       : nextProject;
   }
 
+  private mergeLocalProjectUsers(
+    currentProject: Map<string, any>,
+    nextProject: Map<string, any>,
+  ): Map<string, any> {
+    const currentUsers = currentProject.get("users");
+    const nextUsers = nextProject.get("users");
+    if (currentUsers == null || nextUsers == null) {
+      return nextProject;
+    }
+    let mergedUsers = nextUsers;
+    for (const [account_id, nextUser] of nextUsers) {
+      const currentUser = currentUsers.get(account_id);
+      if (currentUser == null) {
+        continue;
+      }
+      mergedUsers = mergedUsers.set(
+        account_id,
+        currentUser.mergeDeep(nextUser),
+      );
+    }
+    return nextProject.set("users", mergedUsers);
+  }
+
   private queueProjectFeedUpsert(
     row: AccountFeedProjectRow,
     updated_at?: number,
@@ -989,6 +1012,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           currentProject.get("last_backup"),
         );
       }
+      nextProject = this.mergeLocalProjectUsers(currentProject, nextProject);
       nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
       project_map = project_map.set(project_id, nextProject);
     }
