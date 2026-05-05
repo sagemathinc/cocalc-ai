@@ -60,15 +60,15 @@ APT_RETRIES = 5
 APT_ACQUIRE_TIMEOUT_S = 60
 APT_UPDATE_TIMEOUT_S = 180
 APT_INSTALL_TIMEOUT_S = 600
-HOST_OWNED_DATA_DIRS = (
+HOST_OWNED_DATA_TREE_DIRS = (
     "secrets",
-    "cache",
     "sync",
     "rustic",
     "backup-index",
     "forensics",
     "logs",
 )
+HOST_OWNED_DATA_TOPLEVEL_DIRS = ("cache",)
 HOST_OWNED_DATA_FILES = (
     "log",
     "daemon.pid",
@@ -1223,18 +1223,33 @@ def tree_has_unexpected_ownership(path: Path, uid: int, gid: int) -> bool:
     return False
 
 
+def path_has_unexpected_ownership(path: Path, uid: int, gid: int) -> bool:
+    if not path.exists():
+        return False
+    try:
+        stat = path.lstat()
+    except FileNotFoundError:
+        return False
+    return stat.st_uid != uid or stat.st_gid != gid
+
+
 def repair_host_data_ownership(cfg: BootstrapConfig) -> None:
     if cfg.ssh_user == "root":
         return
     desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
     data_root = Path("/mnt/cocalc/data")
     recursive_targets: list[str] = []
+    top_level_dir_targets: list[str] = []
     file_targets: list[str] = []
 
-    for dirname in HOST_OWNED_DATA_DIRS:
+    for dirname in HOST_OWNED_DATA_TREE_DIRS:
         path = data_root / dirname
         if tree_has_unexpected_ownership(path, desired_uid, desired_gid):
             recursive_targets.append(str(path))
+    for dirname in HOST_OWNED_DATA_TOPLEVEL_DIRS:
+        path = data_root / dirname
+        if path_has_unexpected_ownership(path, desired_uid, desired_gid):
+            top_level_dir_targets.append(str(path))
 
     try:
         for child in data_root.iterdir():
@@ -1244,7 +1259,7 @@ def repair_host_data_ownership(cfg: BootstrapConfig) -> None:
                 child.name
             ):
                 continue
-            if tree_has_unexpected_ownership(child, desired_uid, desired_gid):
+            if path_has_unexpected_ownership(child, desired_uid, desired_gid):
                 file_targets.append(str(child))
     except FileNotFoundError:
         return
@@ -1254,6 +1269,12 @@ def repair_host_data_ownership(cfg: BootstrapConfig) -> None:
             cfg,
             ["chown", "-R", f"{cfg.ssh_user}:{cfg.ssh_user}", *recursive_targets],
             "repair host data dir ownership",
+        )
+    if top_level_dir_targets:
+        run_best_effort(
+            cfg,
+            ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", *top_level_dir_targets],
+            "repair host data top-level dir ownership",
         )
     if file_targets:
         run_best_effort(

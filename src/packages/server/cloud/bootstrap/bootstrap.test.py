@@ -608,6 +608,7 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
             original_iterdir = Path.iterdir
             original_is_file = Path.is_file
             original_has_unexpected = bootstrap.tree_has_unexpected_ownership
+            original_path_has_unexpected = bootstrap.path_has_unexpected_ownership
             try:
                 bootstrap.run_best_effort = (
                     lambda _cfg, args, desc: recorded.append((args, desc))
@@ -636,6 +637,7 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                     }
 
                 bootstrap.tree_has_unexpected_ownership = fake_has_unexpected
+                bootstrap.path_has_unexpected_ownership = fake_has_unexpected
                 bootstrap.ensure_btrfs_data(cfg)
             finally:
                 bootstrap.run_best_effort = original_run_best_effort
@@ -646,6 +648,7 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                 Path.iterdir = original_iterdir  # type: ignore[method-assign]
                 Path.is_file = original_is_file  # type: ignore[method-assign]
                 bootstrap.tree_has_unexpected_ownership = original_has_unexpected
+                bootstrap.path_has_unexpected_ownership = original_path_has_unexpected
 
             self.assertIn(
                 (
@@ -653,10 +656,20 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                         "chown",
                         "-R",
                         "missing-runtime-user:missing-runtime-user",
-                        "/mnt/cocalc/data/cache",
                         "/mnt/cocalc/data/logs",
                     ],
                     "repair host data dir ownership",
+                ),
+                recorded,
+            )
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "missing-runtime-user:missing-runtime-user",
+                        "/mnt/cocalc/data/cache",
+                    ],
+                    "repair host data top-level dir ownership",
                 ),
                 recorded,
             )
