@@ -196,7 +196,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
       updated_at?: number;
     }
   > = Object.create(null);
-  private pendingProjectFeedRemovals = new globalThis.Set<string>();
+  private pendingProjectFeedRemovals: Record<string, number | undefined> =
+    Object.create(null);
 
   _init() {
     this.signedInListener = () => {
@@ -327,7 +328,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         this.queueProjectFeedUpsert(event.project, event.ts);
         break;
       case "project.remove":
-        this.queueProjectFeedRemove(event.project_id);
+        this.queueProjectFeedRemove(event.project_id, event.ts);
         break;
       case "project.detail.invalidate":
         if (event.fields.includes("course")) {
@@ -609,11 +610,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const existing = this.pendingProjectFeedUpserts[row.project_id];
     const existingMs = eventTimeMs(existing?.updated_at);
     const incomingMs = eventTimeMs(updated_at);
+    const pendingRemovalMs = eventTimeMs(
+      this.pendingProjectFeedRemovals[row.project_id],
+    );
     if (
       existing != null &&
       existingMs != null &&
       incomingMs != null &&
       existingMs > incomingMs
+    ) {
+      return;
+    }
+    if (
+      pendingRemovalMs != null &&
+      incomingMs != null &&
+      pendingRemovalMs > incomingMs
     ) {
       return;
     }
@@ -627,13 +638,37 @@ export class ProjectsActions extends Actions<ProjectsState> {
         undefined,
       updated_at,
     };
-    this.pendingProjectFeedRemovals.delete(row.project_id);
+    delete this.pendingProjectFeedRemovals[row.project_id];
     this.scheduleProjectFeedFlush();
   }
 
-  private queueProjectFeedRemove(project_id: string): void {
+  private queueProjectFeedRemove(
+    project_id: string,
+    updated_at?: number,
+  ): void {
+    const pendingUpsert = this.pendingProjectFeedUpserts[project_id];
+    const pendingUpsertMs = eventTimeMs(pendingUpsert?.updated_at);
+    const incomingMs = eventTimeMs(updated_at);
+    if (
+      pendingUpsert != null &&
+      pendingUpsertMs != null &&
+      incomingMs != null &&
+      pendingUpsertMs > incomingMs
+    ) {
+      return;
+    }
+    const existingRemovalMs = eventTimeMs(
+      this.pendingProjectFeedRemovals[project_id],
+    );
+    if (
+      existingRemovalMs != null &&
+      incomingMs != null &&
+      existingRemovalMs > incomingMs
+    ) {
+      return;
+    }
     delete this.pendingProjectFeedUpserts[project_id];
-    this.pendingProjectFeedRemovals.add(project_id);
+    this.pendingProjectFeedRemovals[project_id] = updated_at;
     this.scheduleProjectFeedFlush();
   }
 
@@ -653,9 +688,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.realtimeFeedFlushTimer = undefined;
     }
     const pendingUpserts = Object.values(this.pendingProjectFeedUpserts);
-    const pendingRemovals = Array.from(this.pendingProjectFeedRemovals);
+    const pendingRemovals = Object.keys(this.pendingProjectFeedRemovals);
     this.pendingProjectFeedUpserts = Object.create(null);
-    this.pendingProjectFeedRemovals.clear();
+    this.pendingProjectFeedRemovals = Object.create(null);
     if (pendingUpserts.length === 0 && pendingRemovals.length === 0) {
       return;
     }

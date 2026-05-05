@@ -332,6 +332,131 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-1", "state", "state"])).toBe("running");
   });
 
+  it("ignores an older remove when a newer upsert for the same project is pending", async () => {
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.parse("2026-04-05T03:00:02.000Z"),
+      account_id: "acct-1",
+      project: {
+        project_id: "project-3",
+        title: "Keep Me",
+        description: "",
+        name: null,
+        theme: null,
+        host_id: null,
+        owning_bay_id: "bay-0",
+        users: {},
+        state: {
+          state: "running",
+          time: "2026-04-05T03:00:02.000Z",
+        },
+        last_active: {},
+        last_edited: "2026-04-05T03:00:02.000Z",
+        deleted: false,
+      },
+    });
+    feed.emit("change", {
+      type: "project.remove",
+      ts: Date.parse("2026-04-05T03:00:01.000Z"),
+      account_id: "acct-1",
+      project_id: "project-3",
+    });
+    await flush();
+
+    expect(projectMap.getIn(["project-3", "title"])).toBe("Keep Me");
+    expect(projectMap.getIn(["project-3", "state", "state"])).toBe("running");
+  });
+
+  it("keeps a newer remove when an older upsert arrives later in the same batch", async () => {
+    projectMap = ImmutableMap<string, any>([
+      [
+        "project-4",
+        ImmutableMap({
+          title: "Remove Me",
+          state: ImmutableMap({
+            state: "running",
+            time: "2026-04-05T03:00:00.000Z",
+          }),
+        }),
+      ],
+    ]);
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.remove",
+      ts: Date.parse("2026-04-05T03:00:02.000Z"),
+      account_id: "acct-1",
+      project_id: "project-4",
+    });
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.parse("2026-04-05T03:00:01.000Z"),
+      account_id: "acct-1",
+      project: {
+        project_id: "project-4",
+        title: "Older Snapshot",
+        description: "",
+        name: null,
+        theme: null,
+        host_id: null,
+        owning_bay_id: "bay-0",
+        users: {},
+        state: {
+          state: "opened",
+          time: "2026-04-05T03:00:01.000Z",
+        },
+        last_active: {},
+        last_edited: "2026-04-05T03:00:01.000Z",
+        deleted: false,
+      },
+    });
+    await flush();
+
+    expect(projectMap.has("project-4")).toBe(false);
+  });
+
   it("resets routing for an open project when the feed reports a host change", async () => {
     const projectId = "00000000-0000-4000-8000-000000000001";
     projectMap = ImmutableMap<string, any>([
