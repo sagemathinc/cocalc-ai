@@ -144,6 +144,19 @@ function stateTimeMs(state: any): number | undefined {
   return Number.isFinite(ms) ? ms : undefined;
 }
 
+function eventTimeMs(
+  value: number | string | Date | null | undefined,
+): number | undefined {
+  const ms =
+    typeof value === "number" ? value : new Date(`${value ?? ""}`).getTime();
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function dateValueMs(value: unknown): number | undefined {
+  const date = dateOrNull(value);
+  return date != null ? date.getTime() : undefined;
+}
+
 type DirectProjectBootstrapRow = {
   project_id: string;
   title?: string | null;
@@ -188,7 +201,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
       updated_at?: number;
     }
   > = Object.create(null);
-  private pendingProjectFeedRemovals = new globalThis.Set<string>();
+  private pendingProjectFeedRemovals: Record<string, number | undefined> =
+    Object.create(null);
 
   _init() {
     this.signedInListener = () => {
@@ -319,7 +333,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         this.queueProjectFeedUpsert(event.project, event.ts);
         break;
       case "project.remove":
-        this.queueProjectFeedRemove(event.project_id);
+        this.queueProjectFeedRemove(event.project_id, event.ts);
         break;
       case "project.detail.invalidate":
         if (event.fields.includes("course")) {
@@ -493,6 +507,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
         ) {
           nextProject = nextProject.set("state", currentProject.get("state"));
         }
+        if (
+          this.shouldPreserveNewerLocalLastEdited({
+            currentProject,
+            incomingLastEdited: row.sort_key ?? row.updated_at,
+          })
+        ) {
+          nextProject = nextProject.set(
+            "last_edited",
+            currentProject.get("last_edited"),
+          );
+        }
         project_map = project_map.set(row.project_id, nextProject);
       }
       try {
@@ -594,11 +619,46 @@ export class ProjectsActions extends Actions<ProjectsState> {
     return incomingMs == null || incomingMs < currentMs;
   }
 
+  private shouldPreserveNewerLocalLastEdited({
+    currentProject,
+    incomingLastEdited,
+  }: {
+    currentProject: Map<string, any>;
+    incomingLastEdited?: string | Date | null;
+  }): boolean {
+    const currentMs = dateValueMs(currentProject.get("last_edited"));
+    if (currentMs == null) {
+      return false;
+    }
+    const incomingMs = dateValueMs(incomingLastEdited);
+    return incomingMs == null || incomingMs < currentMs;
+  }
+
   private queueProjectFeedUpsert(
     row: AccountFeedProjectRow,
     updated_at?: number,
   ): void {
     const existing = this.pendingProjectFeedUpserts[row.project_id];
+    const existingMs = eventTimeMs(existing?.updated_at);
+    const incomingMs = eventTimeMs(updated_at);
+    const pendingRemovalMs = eventTimeMs(
+      this.pendingProjectFeedRemovals[row.project_id],
+    );
+    if (
+      existing != null &&
+      existingMs != null &&
+      incomingMs != null &&
+      existingMs > incomingMs
+    ) {
+      return;
+    }
+    if (
+      pendingRemovalMs != null &&
+      incomingMs != null &&
+      pendingRemovalMs > incomingMs
+    ) {
+      return;
+    }
     this.pendingProjectFeedUpserts[row.project_id] = {
       row,
       source_host_id:
@@ -609,13 +669,37 @@ export class ProjectsActions extends Actions<ProjectsState> {
         undefined,
       updated_at,
     };
-    this.pendingProjectFeedRemovals.delete(row.project_id);
+    delete this.pendingProjectFeedRemovals[row.project_id];
     this.scheduleProjectFeedFlush();
   }
 
-  private queueProjectFeedRemove(project_id: string): void {
+  private queueProjectFeedRemove(
+    project_id: string,
+    updated_at?: number,
+  ): void {
+    const pendingUpsert = this.pendingProjectFeedUpserts[project_id];
+    const pendingUpsertMs = eventTimeMs(pendingUpsert?.updated_at);
+    const incomingMs = eventTimeMs(updated_at);
+    if (
+      pendingUpsert != null &&
+      pendingUpsertMs != null &&
+      incomingMs != null &&
+      pendingUpsertMs > incomingMs
+    ) {
+      return;
+    }
+    const existingRemovalMs = eventTimeMs(
+      this.pendingProjectFeedRemovals[project_id],
+    );
+    if (
+      existingRemovalMs != null &&
+      incomingMs != null &&
+      existingRemovalMs > incomingMs
+    ) {
+      return;
+    }
     delete this.pendingProjectFeedUpserts[project_id];
-    this.pendingProjectFeedRemovals.add(project_id);
+    this.pendingProjectFeedRemovals[project_id] = updated_at;
     this.scheduleProjectFeedFlush();
   }
 
@@ -635,9 +719,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.realtimeFeedFlushTimer = undefined;
     }
     const pendingUpserts = Object.values(this.pendingProjectFeedUpserts);
-    const pendingRemovals = Array.from(this.pendingProjectFeedRemovals);
+    const pendingRemovals = Object.keys(this.pendingProjectFeedRemovals);
     this.pendingProjectFeedUpserts = Object.create(null);
-    this.pendingProjectFeedRemovals.clear();
+    this.pendingProjectFeedRemovals = Object.create(null);
     if (pendingUpserts.length === 0 && pendingRemovals.length === 0) {
       return;
     }
@@ -680,6 +764,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
         })
       ) {
         nextProject = nextProject.set("state", currentProject.get("state"));
+      }
+      if (
+        this.shouldPreserveNewerLocalLastEdited({
+          currentProject,
+          incomingLastEdited: row.last_edited ?? undefined,
+        })
+      ) {
+        nextProject = nextProject.set(
+          "last_edited",
+          currentProject.get("last_edited"),
+        );
       }
       project_map = project_map.set(row.project_id, nextProject);
       changed = true;
@@ -733,10 +828,73 @@ export class ProjectsActions extends Actions<ProjectsState> {
     ) {
       nextProject = nextProject.set("state", currentProject.get("state"));
     }
+    if (
+      this.shouldPreserveNewerLocalLastEdited({
+        currentProject,
+        incomingLastEdited: row.last_edited ?? undefined,
+      })
+    ) {
+      nextProject = nextProject.set(
+        "last_edited",
+        currentProject.get("last_edited"),
+      );
+    }
     const project_map = (store.get("project_map") ?? Map<string, any>()).set(
       row.project_id,
       nextProject,
     );
+    this.setState({ project_map } as ProjectsState);
+  }
+
+  public applyProjectsTableSnapshot(
+    snapshot: Map<string, any> | undefined,
+    opts?: {
+      mergeIntoExisting?: boolean;
+    },
+  ): void {
+    const incomingProjectMap = snapshot ?? Map<string, any>();
+    const currentProjectMap = store.get("project_map") ?? Map<string, any>();
+    let project_map = opts?.mergeIntoExisting
+      ? currentProjectMap
+      : incomingProjectMap;
+    for (const [project_id, incomingProject] of incomingProjectMap) {
+      const currentProject =
+        currentProjectMap.get(project_id) ?? Map<string, any>();
+      let nextProject = incomingProject as Map<string, any>;
+      const currentHostId = currentProject.get("host_id");
+      if (
+        typeof currentHostId === "string" &&
+        currentHostId &&
+        this.shouldPreserveLocalHostIdAfterMove({
+          project_id,
+          current_host_id: currentHostId,
+          incoming_host_id: nextProject.get("host_id") as string | undefined,
+          incoming_updated_at: undefined,
+        })
+      ) {
+        nextProject = nextProject.set("host_id", currentHostId);
+      }
+      if (
+        this.shouldPreserveNewerLocalState({
+          currentProject,
+          incomingState: nextProject.get("state"),
+        })
+      ) {
+        nextProject = nextProject.set("state", currentProject.get("state"));
+      }
+      if (
+        this.shouldPreserveNewerLocalLastEdited({
+          currentProject,
+          incomingLastEdited: nextProject.get("last_edited"),
+        })
+      ) {
+        nextProject = nextProject.set(
+          "last_edited",
+          currentProject.get("last_edited"),
+        );
+      }
+      project_map = project_map.set(project_id, nextProject);
+    }
     this.setState({ project_map } as ProjectsState);
   }
 
