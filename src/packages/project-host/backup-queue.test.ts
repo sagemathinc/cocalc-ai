@@ -92,4 +92,45 @@ describe("backup queue", () => {
     releaseFirst?.();
     await first;
   });
+
+  it("skips maintenance instead of queuing behind the global backup slot limit", async () => {
+    const {
+      getBackupExecutionStatus,
+      resetBackupQueueForTest,
+      withBackupParallelLimit,
+    } = await import("./backup-queue");
+
+    resetBackupQueueForTest();
+    let releaseFirst: (() => void) | undefined;
+
+    const first = withBackupParallelLimit({
+      project_id: "project-1",
+      op: "createBackup",
+      run: async () => {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      },
+    });
+
+    await flushEventLoop();
+
+    await expect(
+      withBackupParallelLimit({
+        project_id: "project-2",
+        op: "runScheduledBackupMaintenance",
+        queue_if_busy: false,
+        run: async () => "unexpected",
+      }),
+    ).resolves.toBeUndefined();
+
+    await expect(getBackupExecutionStatus()).resolves.toMatchObject({
+      in_flight: 1,
+      queued: 0,
+      project_lock_count: 1,
+    });
+
+    releaseFirst?.();
+    await first;
+  });
 });
