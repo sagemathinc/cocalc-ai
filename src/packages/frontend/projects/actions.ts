@@ -137,6 +137,13 @@ function readMaybeImmutableIn(value: any, path: string[]): any {
   return current;
 }
 
+function stateTimeMs(state: any): number | undefined {
+  const time = readMaybeImmutable(state, "time");
+  const ms =
+    typeof time === "number" ? time : new Date(`${time ?? ""}`).getTime();
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
 type DirectProjectBootstrapRow = {
   project_id: string;
   title?: string | null;
@@ -478,6 +485,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
         ) {
           nextProject = nextProject.set("host_id", currentHostId);
         }
+        if (
+          this.shouldPreserveNewerLocalState({
+            currentProject,
+            incomingState: row.state_summary ?? undefined,
+          })
+        ) {
+          nextProject = nextProject.set("state", currentProject.get("state"));
+        }
         project_map = project_map.set(row.project_id, nextProject);
       }
       try {
@@ -557,6 +572,28 @@ export class ProjectsActions extends Actions<ProjectsState> {
     return incomingMs < moveMs;
   }
 
+  private shouldPreserveNewerLocalState({
+    currentProject,
+    incomingState,
+  }: {
+    currentProject: Map<string, any>;
+    incomingState?: Record<string, any> | null;
+  }): boolean {
+    if (incomingState == null) {
+      return false;
+    }
+    const currentState = currentProject.get("state");
+    if (currentState == null) {
+      return false;
+    }
+    const currentMs = stateTimeMs(currentState);
+    if (currentMs == null) {
+      return false;
+    }
+    const incomingMs = stateTimeMs(incomingState);
+    return incomingMs == null || incomingMs < currentMs;
+  }
+
   private queueProjectFeedUpsert(
     row: AccountFeedProjectRow,
     updated_at?: number,
@@ -619,9 +656,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
         typeof row.host_id === "string" && row.host_id
           ? row.host_id
           : undefined;
-      let nextProject = (
-        project_map.get(row.project_id) ?? Map<string, any>()
-      ).mergeDeep(buildProjectRecordFromFeedRow(row));
+      const currentProject =
+        project_map.get(row.project_id) ?? Map<string, any>();
+      let nextProject = currentProject.mergeDeep(
+        buildProjectRecordFromFeedRow(row),
+      );
       if (
         typeof source_host_id === "string" &&
         source_host_id &&
@@ -633,6 +672,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
         })
       ) {
         nextProject = nextProject.set("host_id", source_host_id);
+      }
+      if (
+        this.shouldPreserveNewerLocalState({
+          currentProject,
+          incomingState: row.state ?? undefined,
+        })
+      ) {
+        nextProject = nextProject.set("state", currentProject.get("state"));
       }
       project_map = project_map.set(row.project_id, nextProject);
       changed = true;
@@ -673,11 +720,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }
 
   private upsertProjectMapFromRow(row: AccountFeedProjectRow): void {
+    const currentProject =
+      store.get("project_map")?.get(row.project_id) ?? Map<string, any>();
+    let nextProject = currentProject.mergeDeep(
+      buildProjectRecordFromFeedRow(row),
+    );
+    if (
+      this.shouldPreserveNewerLocalState({
+        currentProject,
+        incomingState: row.state ?? undefined,
+      })
+    ) {
+      nextProject = nextProject.set("state", currentProject.get("state"));
+    }
     const project_map = (store.get("project_map") ?? Map<string, any>()).set(
       row.project_id,
-      (
-        store.get("project_map")?.get(row.project_id) ?? Map<string, any>()
-      ).mergeDeep(buildProjectRecordFromFeedRow(row)),
+      nextProject,
     );
     this.setState({ project_map } as ProjectsState);
   }
