@@ -18,18 +18,31 @@ import {
   Typography,
 } from "antd";
 import ShowError from "@cocalc/frontend/components/error";
+import { TimeAgo } from "@cocalc/frontend/components";
 import type {
   ProjectStorageHistory,
   ProjectStorageHistoryPoint,
 } from "@cocalc/conat/project/storage-info";
 import { human_readable_size } from "@cocalc/util/misc";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Icon } from "@cocalc/frontend/components";
-import { redux, useAsyncEffect } from "@cocalc/frontend/app-framework";
+import {
+  redux,
+  useAsyncEffect,
+  useTypedRedux,
+} from "@cocalc/frontend/app-framework";
 import { dirname, posix } from "path";
 import { COLORS } from "@cocalc/util/theme";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
+import { indexedBackupState } from "@cocalc/frontend/projects/host-operational";
 
 const { Text } = Typography;
 type VisibleBucketKey = StorageVisibleSummary["key"];
@@ -46,6 +59,13 @@ type StorageHistoryMetricKey =
   | "home"
   | "environment";
 type HistorySeriesPoint = { collected_at: string; value: number };
+type BackupSummary = {
+  label: string;
+  detail: string;
+  absolute?: string;
+  date?: Date;
+  style: CSSProperties;
+};
 
 const HISTORY_MAX_POINTS = 96;
 const HISTORY_WINDOW_OPTIONS = [
@@ -53,6 +73,50 @@ const HISTORY_WINDOW_OPTIONS = [
   { label: "24h", value: 24 * 60 },
   { label: "7d", value: 7 * 24 * 60 },
 ] as const;
+
+function asDate(value: unknown): Date | undefined {
+  if (value == null) return undefined;
+  const date = value instanceof Date ? value : new Date(`${value}`);
+  return Number.isFinite(date.valueOf()) ? date : undefined;
+}
+
+export function describeLastBackup(lastBackup: unknown): BackupSummary {
+  const date = asDate(lastBackup);
+  switch (indexedBackupState(lastBackup)) {
+    case "present":
+      return {
+        label: "Backed up",
+        detail: "Last backup recorded.",
+        absolute: date?.toLocaleString(),
+        date,
+        style: {
+          background: COLORS.BS_GREEN_LL,
+          borderColor: COLORS.BS_GREEN_D,
+          color: COLORS.BS_GREEN_D,
+        },
+      };
+    case "missing":
+      return {
+        label: "No backup",
+        detail: "No successful backup recorded yet.",
+        style: {
+          background: COLORS.GRAY_LLL,
+          borderColor: COLORS.ORANGE_WARN,
+          color: COLORS.ORANGE_WARN,
+        },
+      };
+    default:
+      return {
+        label: "Backup unknown",
+        detail: "Backup timestamp has not loaded yet.",
+        style: {
+          background: COLORS.GRAY_LLL,
+          borderColor: COLORS.GRAY_D,
+          color: COLORS.GRAY_D,
+        },
+      };
+  }
+}
 
 function bucketPercent(bytes: number, total: number): number {
   if (total <= 0) return 0;
@@ -569,6 +633,12 @@ export default function DiskUsage({
   compact?: boolean;
   current_path?: string;
 }) {
+  const projectMap = useTypedRedux("projects", "project_map");
+  const lastBackup = projectMap?.getIn([project_id, "last_backup"]);
+  const backupSummary = useMemo(
+    () => describeLastBackup(lastBackup),
+    [lastBackup],
+  );
   const [expand, setExpand] = useState<boolean>(false);
   const [activePanel, setActivePanel] = useState<"overview" | "history">(
     "overview",
@@ -899,6 +969,9 @@ export default function DiskUsage({
                 </Text>
               </>
             ) : null}
+            <Tag style={backupSummary.style} title={backupSummary.absolute}>
+              {backupSummary.label}
+            </Tag>
             {loading && hasSummaryData ? (
               <Text type="secondary">Refreshing…</Text>
             ) : null}
@@ -946,6 +1019,9 @@ export default function DiskUsage({
               </Text>
             </>
           ) : null}
+          <Tag style={backupSummary.style} title={backupSummary.absolute}>
+            {backupSummary.label}
+          </Tag>
           {live != null ? (
             <Tag>Live {human_readable_size(live.bytes)}</Tag>
           ) : null}
@@ -1017,6 +1093,19 @@ export default function DiskUsage({
             </div>
           </div>
           <div style={{ marginBottom: "16px" }}>
+            <Space size={8} wrap style={{ marginBottom: "12px" }}>
+              <Text strong>Last backup:</Text>
+              {backupSummary.date != null ? (
+                <>
+                  <TimeAgo date={backupSummary.date} />
+                  {backupSummary.absolute ? (
+                    <Text type="secondary">({backupSummary.absolute})</Text>
+                  ) : null}
+                </>
+              ) : (
+                <Text>{backupSummary.detail}</Text>
+              )}
+            </Space>
             <Segmented
               options={[
                 { label: "Overview", value: "overview" },
