@@ -76,6 +76,27 @@ function lastActiveMap(last_active?: Record<string, any>): Map<string, Date> {
   return next.asImmutable();
 }
 
+function preserveNewerLastActive(
+  currentLastActive: Map<string, Date> | undefined,
+  nextLastActive: Map<string, Date> | undefined,
+): Map<string, Date> | undefined {
+  if (currentLastActive == null || nextLastActive == null) {
+    return nextLastActive;
+  }
+  let merged = nextLastActive;
+  for (const [account_id, currentValue] of currentLastActive) {
+    const currentMs = dateValueMs(currentValue);
+    if (currentMs == null) {
+      continue;
+    }
+    const nextMs = dateValueMs(nextLastActive.get(account_id));
+    if (nextMs == null || nextMs < currentMs) {
+      merged = merged.set(account_id, currentValue);
+    }
+  }
+  return merged;
+}
+
 export function buildProjectRecordFromFeedRow(
   row: AccountFeedProjectRow,
 ): Map<string, any> {
@@ -518,6 +539,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
             currentProject.get("last_edited"),
           );
         }
+        if (
+          this.shouldPreserveNewerLocalLastBackup({
+            currentProject,
+            incomingLastBackup: undefined,
+          })
+        ) {
+          nextProject = nextProject.set(
+            "last_backup",
+            currentProject.get("last_backup"),
+          );
+        }
+        nextProject = this.mergeNewerLocalLastActive(
+          currentProject,
+          nextProject,
+        );
         project_map = project_map.set(row.project_id, nextProject);
       }
       try {
@@ -536,6 +572,16 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (Array.isArray(backupRows)) {
           for (const row of backupRows as ProjectBackupBootstrapRow[]) {
             if (!row?.project_id || !project_map.has(row.project_id)) {
+              continue;
+            }
+            const currentProject =
+              project_map.get(row.project_id) ?? Map<string, any>();
+            if (
+              this.shouldPreserveNewerLocalLastBackup({
+                currentProject,
+                incomingLastBackup: row.last_backup,
+              })
+            ) {
               continue;
             }
             project_map = project_map.setIn(
@@ -632,6 +678,34 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     const incomingMs = dateValueMs(incomingLastEdited);
     return incomingMs == null || incomingMs < currentMs;
+  }
+
+  private shouldPreserveNewerLocalLastBackup({
+    currentProject,
+    incomingLastBackup,
+  }: {
+    currentProject: Map<string, any>;
+    incomingLastBackup?: string | Date | null;
+  }): boolean {
+    const currentMs = dateValueMs(currentProject.get("last_backup"));
+    if (currentMs == null) {
+      return false;
+    }
+    const incomingMs = dateValueMs(incomingLastBackup);
+    return incomingMs == null || incomingMs < currentMs;
+  }
+
+  private mergeNewerLocalLastActive(
+    currentProject: Map<string, any>,
+    nextProject: Map<string, any>,
+  ): Map<string, any> {
+    const merged = preserveNewerLastActive(
+      currentProject.get("last_active"),
+      nextProject.get("last_active"),
+    );
+    return merged != null
+      ? nextProject.set("last_active", merged)
+      : nextProject;
   }
 
   private queueProjectFeedUpsert(
@@ -776,6 +850,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
           currentProject.get("last_edited"),
         );
       }
+      if (
+        this.shouldPreserveNewerLocalLastBackup({
+          currentProject,
+          incomingLastBackup: row.last_backup ?? undefined,
+        })
+      ) {
+        nextProject = nextProject.set(
+          "last_backup",
+          currentProject.get("last_backup"),
+        );
+      }
+      nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
       project_map = project_map.set(row.project_id, nextProject);
       changed = true;
       hostChanges.push({
@@ -839,6 +925,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
         currentProject.get("last_edited"),
       );
     }
+    if (
+      this.shouldPreserveNewerLocalLastBackup({
+        currentProject,
+        incomingLastBackup: row.last_backup ?? undefined,
+      })
+    ) {
+      nextProject = nextProject.set(
+        "last_backup",
+        currentProject.get("last_backup"),
+      );
+    }
+    nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
     const project_map = (store.get("project_map") ?? Map<string, any>()).set(
       row.project_id,
       nextProject,
@@ -861,19 +959,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
       const currentProject =
         currentProjectMap.get(project_id) ?? Map<string, any>();
       let nextProject = incomingProject as Map<string, any>;
-      const currentHostId = currentProject.get("host_id");
-      if (
-        typeof currentHostId === "string" &&
-        currentHostId &&
-        this.shouldPreserveLocalHostIdAfterMove({
-          project_id,
-          current_host_id: currentHostId,
-          incoming_host_id: nextProject.get("host_id") as string | undefined,
-          incoming_updated_at: undefined,
-        })
-      ) {
-        nextProject = nextProject.set("host_id", currentHostId);
-      }
       if (
         this.shouldPreserveNewerLocalState({
           currentProject,
@@ -893,6 +978,18 @@ export class ProjectsActions extends Actions<ProjectsState> {
           currentProject.get("last_edited"),
         );
       }
+      if (
+        this.shouldPreserveNewerLocalLastBackup({
+          currentProject,
+          incomingLastBackup: nextProject.get("last_backup"),
+        })
+      ) {
+        nextProject = nextProject.set(
+          "last_backup",
+          currentProject.get("last_backup"),
+        );
+      }
+      nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
       project_map = project_map.set(project_id, nextProject);
     }
     this.setState({ project_map } as ProjectsState);
