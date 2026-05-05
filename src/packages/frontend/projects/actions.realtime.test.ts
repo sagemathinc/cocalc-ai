@@ -763,6 +763,72 @@ describe("ProjectsActions realtime feed", () => {
     );
   });
 
+  it("keeps newer local last_active values when a realtime upsert is older", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000009";
+    projectMap = ImmutableMap<string, any>([
+      [
+        projectId,
+        ImmutableMap({
+          title: "Activity Project",
+          last_active: ImmutableMap({
+            "acct-1": new Date("2026-04-05T03:05:00.000Z"),
+          }),
+        }),
+      ],
+    ]);
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.parse("2026-04-05T03:00:00.000Z"),
+      account_id: "acct-1",
+      project: {
+        project_id: projectId,
+        title: "Retitled Project",
+        description: "fresh metadata",
+        name: null,
+        theme: null,
+        host_id: null,
+        owning_bay_id: "bay-0",
+        users: {
+          "acct-1": { group: "owner" },
+        },
+        state: { state: "running" },
+        last_active: { "acct-1": "2026-04-05T03:00:00.000Z" },
+        last_edited: "2026-04-05T03:00:00.000Z",
+        deleted: false,
+      },
+    });
+    await flush();
+
+    expect(projectMap.getIn([projectId, "title"])).toBe("Retitled Project");
+    expect(
+      projectMap.getIn([projectId, "last_active", "acct-1"]).toISOString(),
+    ).toBe("2026-04-05T03:05:00.000Z");
+  });
+
   it("does not close an open project when a transient remove lands during an active move", async () => {
     const projectId = "00000000-0000-4000-8000-000000000002";
     projectMap = ImmutableMap<string, any>([
