@@ -239,10 +239,10 @@ async function applyProjectEventToAccountProjectIndex(opts: {
     await db.query(
       `INSERT INTO account_project_index
          (account_id, project_id, owning_bay_id, host_id, title, description,
-          theme, users_summary, state_summary, last_backup, last_activity_at, last_opened_at,
-          is_hidden, sort_key, updated_at)
+          theme, users_summary, state_summary, last_edited, last_backup, last_activity_at,
+          last_opened_at, is_hidden, sort_key, updated_at)
        VALUES
-         ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, $13, $14, NOW())`,
+         ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, $13, $14, $15, NOW())`,
       [
         account_id,
         payload.project_id,
@@ -253,6 +253,7 @@ async function applyProjectEventToAccountProjectIndex(opts: {
         JSON.stringify(payload.theme ?? {}),
         JSON.stringify(payload.users_summary ?? {}),
         JSON.stringify(payload.state_summary ?? {}),
+        parseDate(payload.last_edited_at),
         parseDate(payload.last_backup_at),
         last_activity_at,
         lastOpenedByAccount.get(account_id) ?? null,

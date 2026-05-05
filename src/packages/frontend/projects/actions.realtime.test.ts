@@ -970,6 +970,7 @@ describe("ProjectsActions realtime feed", () => {
               "acct-1": { group: "collaborator" },
             },
             state_summary: { state: "running" },
+            last_edited: "2026-04-05T02:40:00.000Z",
             last_backup: "2026-04-05T02:55:00.000Z",
             last_activity_at: "2026-04-05T03:00:00.000Z",
             sort_key: "2026-04-05T03:00:00.000Z",
@@ -1017,6 +1018,9 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-remote", "state", "state"])).toBe(
       "running",
     );
+    expect(
+      projectMap.getIn(["project-remote", "last_edited"]).toISOString(),
+    ).toBe("2026-04-05T02:40:00.000Z");
     expect(
       projectMap.getIn(["project-remote", "last_backup"]).toISOString(),
     ).toBe("2026-04-05T02:55:00.000Z");
@@ -1213,6 +1217,7 @@ describe("ProjectsActions realtime feed", () => {
               "acct-1": { group: "owner" },
             },
             state_summary: { state: "running" },
+            last_edited: "2026-04-05T03:00:00.000Z",
             last_activity_at: "2026-04-05T03:00:00.000Z",
             sort_key: "2026-04-05T03:00:00.000Z",
             updated_at: "2026-04-05T03:00:01.000Z",

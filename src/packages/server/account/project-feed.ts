@@ -159,10 +159,10 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
   await getPool().query(
     `INSERT INTO account_project_index
        (account_id, project_id, owning_bay_id, host_id, title, description,
-        theme, users_summary, state_summary, last_backup, last_activity_at, last_opened_at,
-        is_hidden, sort_key, updated_at)
+        theme, users_summary, state_summary, last_edited, last_backup, last_activity_at,
+        last_opened_at, is_hidden, sort_key, updated_at)
      VALUES
-       ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, NULL, $12, $13, $14)
+       ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, NULL, $13, $14, $15)
      ON CONFLICT (account_id, project_id)
      DO UPDATE SET
        owning_bay_id = EXCLUDED.owning_bay_id,
@@ -172,6 +172,7 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
        theme = EXCLUDED.theme,
        users_summary = EXCLUDED.users_summary,
        state_summary = EXCLUDED.state_summary,
+       last_edited = EXCLUDED.last_edited,
        last_backup = EXCLUDED.last_backup,
        last_activity_at = EXCLUDED.last_activity_at,
        is_hidden = EXCLUDED.is_hidden,
@@ -187,6 +188,7 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
       JSON.stringify(event.project.theme ?? {}),
       JSON.stringify(event.project.users ?? {}),
       JSON.stringify(event.project.state ?? {}),
+      parseDate(event.project.last_edited) ?? null,
       parseDate(event.project.last_backup) ?? null,
       last_activity_at,
       !!event.project.users?.[event.account_id]?.hide,

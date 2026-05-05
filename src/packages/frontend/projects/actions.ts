@@ -134,6 +134,7 @@ type ProjectIndexBootstrapRow = {
   theme?: Record<string, any> | null;
   users_summary?: Record<string, any> | null;
   state_summary?: Record<string, any> | null;
+  last_edited?: string | Date | null;
   last_backup?: string | Date | null;
   last_activity_at?: string | Date | null;
   sort_key?: string | Date | null;
@@ -460,6 +461,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
                 theme: null,
                 users_summary: null,
                 state_summary: null,
+                last_edited: null,
                 last_backup: null,
                 last_activity_at: null,
                 sort_key: null,
@@ -501,13 +503,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
           owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
           users: row.users_summary ?? {},
           state: row.state_summary ?? {},
+          last_edited: dateOrNull(row.last_edited)?.toISOString() ?? null,
           last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
           last_active:
             row.last_activity_at == null
               ? {}
               : { [account_id]: row.last_activity_at },
-          last_edited:
-            dateOrNull(row.sort_key ?? row.updated_at)?.toISOString() ?? null,
           deleted: false,
         });
         let nextProject = currentProject.mergeDeep(projectedRecord);
@@ -537,7 +538,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (
           this.shouldPreserveNewerLocalLastEdited({
             currentProject,
-            incomingLastEdited: row.sort_key ?? row.updated_at,
+            incomingLastEdited: row.last_edited ?? undefined,
           })
         ) {
           nextProject = nextProject.set(
