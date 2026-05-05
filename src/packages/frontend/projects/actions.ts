@@ -996,6 +996,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   ): void {
     const incomingProjectMap = snapshot ?? Map<string, any>();
     const currentProjectMap = store.get("project_map") ?? Map<string, any>();
+    const projectsToClose = new globalThis.Set<string>();
     let project_map = opts?.mergeIntoExisting
       ? currentProjectMap
       : incomingProjectMap.map((project) =>
@@ -1008,6 +1009,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
           !incomingProjectMap.has(project_id)
         ) {
           project_map = project_map.set(project_id, currentProject);
+        } else if (this.isProjectOpen(project_id)) {
+          projectsToClose.add(project_id);
         }
       }
     }
@@ -1018,6 +1021,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
           currentProjectMap.get(project_id)?.get(PROJECTION_ONLY_FIELD) !== true
         ) {
           project_map = project_map.remove(project_id);
+          if (this.isProjectOpen(project_id)) {
+            projectsToClose.add(project_id);
+          }
         }
       }
     }
@@ -1061,6 +1067,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       project_map = project_map.set(project_id, nextProject);
     }
     this.setState({ project_map } as ProjectsState);
+    for (const project_id of projectsToClose) {
+      this.set_project_closed(project_id);
+    }
   }
 
   private async bootstrapCreatedProjectDirectly(
@@ -1169,7 +1178,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }
 
   private isProjectOpen = (project_id: string): boolean => {
-    return store.get("open_projects").indexOf(project_id) != -1;
+    return (store.get("open_projects")?.indexOf?.(project_id) ?? -1) != -1;
   };
 
   private isProjectMoveInProgress(project_id: string): boolean {

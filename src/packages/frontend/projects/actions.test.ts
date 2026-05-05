@@ -743,7 +743,7 @@ describe("ProjectsActions project metadata updates", () => {
     ).toBe("Shared Remote Project");
   });
 
-  it("still removes non-projection projects that are absent from a synced table snapshot", () => {
+  it("removes non-projection projects that are absent from a synced table snapshot and closes them if open", () => {
     const projectMap = ImmutableMap<string, any>([
       [
         project_id,
@@ -753,7 +753,11 @@ describe("ProjectsActions project metadata updates", () => {
       ],
     ]);
     mockedStore.get.mockImplementation((key) =>
-      key === "project_map" ? projectMap : undefined,
+      key === "project_map"
+        ? projectMap
+        : key === "open_projects"
+          ? [project_id]
+          : undefined,
     );
     mockedStore.getIn.mockImplementation((path) => {
       if (path[0] !== "project_map") {
@@ -762,6 +766,7 @@ describe("ProjectsActions project metadata updates", () => {
       return projectMap.getIn(path.slice(1) as any);
     });
     const { actions, redux } = makeActions();
+    actions.set_project_closed = jest.fn();
 
     actions.applyProjectsTableSnapshot(ImmutableMap<string, any>());
 
@@ -769,6 +774,7 @@ describe("ProjectsActions project metadata updates", () => {
     expect(
       redux._set_state.mock.calls[0][0].projects.project_map.has(project_id),
     ).toBe(false);
+    expect(actions.set_project_closed).toHaveBeenCalledWith(project_id);
   });
 
   it("removes a missing kiosk project while preserving unrelated local projects", () => {
@@ -789,7 +795,11 @@ describe("ProjectsActions project metadata updates", () => {
       ],
     ]);
     mockedStore.get.mockImplementation((key) =>
-      key === "project_map" ? projectMap : undefined,
+      key === "project_map"
+        ? projectMap
+        : key === "open_projects"
+          ? [kioskProjectId]
+          : undefined,
     );
     mockedStore.getIn.mockImplementation((path) => {
       if (path[0] !== "project_map") {
@@ -798,6 +808,7 @@ describe("ProjectsActions project metadata updates", () => {
       return projectMap.getIn(path.slice(1) as any);
     });
     const { actions, redux } = makeActions();
+    actions.set_project_closed = jest.fn();
 
     actions.applyProjectsTableSnapshot(ImmutableMap<string, any>(), {
       mergeIntoExisting: true,
@@ -816,6 +827,7 @@ describe("ProjectsActions project metadata updates", () => {
         "title",
       ]),
     ).toBe("Other Project");
+    expect(actions.set_project_closed).toHaveBeenCalledWith(kioskProjectId);
   });
 
   it("keeps a projection-only kiosk project when the synced table snapshot is empty", () => {
