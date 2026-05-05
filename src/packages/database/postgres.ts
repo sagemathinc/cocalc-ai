@@ -532,6 +532,17 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
       return this._listen_client;
     }
     const client = await this._pool.connect();
+    client.on("notification", (mesg: { channel: string; payload?: string }) => {
+      let payload: unknown = mesg.payload;
+      if (typeof payload === "string") {
+        try {
+          payload = JSON.parse(payload);
+        } catch {
+          // Keep the raw string payload for callers that aren't sending JSON.
+        }
+      }
+      this.emit(mesg.channel, payload);
+    });
     const onError = (err) => {
       client.removeListener("error", onError);
       client.removeAllListeners();

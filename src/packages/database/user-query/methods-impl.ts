@@ -458,6 +458,15 @@ export function _user_query_array(
   this: UserQueryContext,
   opts: UserQueryArrayOptions,
 ) {
+  const legacyChanges = (opts as UserQueryArrayOptions & { changes?: unknown })
+    .changes;
+  if (legacyChanges != null) {
+    opts.cb?.(
+      "FATAL: user_query changefeeds were removed; use an explicit Conat-backed or Lite changefeed path instead",
+      [],
+    );
+    return;
+  }
   const result: any[] = [];
   const f = (query, cb) => {
     return this.user_query({

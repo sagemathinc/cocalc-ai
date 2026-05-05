@@ -521,7 +521,7 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           query: { test_table: { id: null } },
           changes: "changefeed-id",
           cb: (err) => {
-            expect(err).toContain("changefeeds only implemented");
+            expect(err).toContain("changefeeds were removed");
             done();
           },
         });
@@ -533,7 +533,7 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           query: { test_table: { id: "1", name: "Test" } },
           changes: "changefeed-id",
           cb: (err) => {
-            expect(err).toContain("changefeeds only for read queries");
+            expect(err).toContain("changefeeds were removed");
             done();
           },
         });
@@ -580,7 +580,7 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
           query: [{ table1: {} }, { table2: {} }],
           changes: "test-changefeed",
           cb: (err) => {
-            expect(err).toContain("changefeeds only implemented for single");
+            expect(err).toContain("changefeeds were removed");
             done();
           },
         });
