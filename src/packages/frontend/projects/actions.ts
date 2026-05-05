@@ -59,6 +59,8 @@ import type {
 } from "@cocalc/util/db-schema/projects";
 export type { Datastore, EnvVars, EnvVarsRecord };
 
+const PROJECTION_ONLY_FIELD = "__projection_only";
+
 function dateOrNull(value: unknown): Date | null {
   if (value == null) return null;
   const date = value instanceof Date ? value : new Date(`${value}`);
@@ -554,6 +556,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
           currentProject,
           nextProject,
         );
+        if (currentProject.get(PROJECTION_ONLY_FIELD) === true) {
+          nextProject = nextProject.set(PROJECTION_ONLY_FIELD, true);
+        } else {
+          nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
+        }
         project_map = project_map.set(row.project_id, nextProject);
       }
       try {
@@ -977,7 +984,19 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const currentProjectMap = store.get("project_map") ?? Map<string, any>();
     let project_map = opts?.mergeIntoExisting
       ? currentProjectMap
-      : incomingProjectMap;
+      : incomingProjectMap.map((project) =>
+          (project as Map<string, any>).delete(PROJECTION_ONLY_FIELD),
+        );
+    if (!opts?.mergeIntoExisting) {
+      for (const [project_id, currentProject] of currentProjectMap) {
+        if (
+          currentProject.get(PROJECTION_ONLY_FIELD) === true &&
+          !incomingProjectMap.has(project_id)
+        ) {
+          project_map = project_map.set(project_id, currentProject);
+        }
+      }
+    }
     for (const [project_id, incomingProject] of incomingProjectMap) {
       const currentProject =
         currentProjectMap.get(project_id) ?? Map<string, any>();
@@ -1014,6 +1033,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
       nextProject = this.mergeLocalProjectUsers(currentProject, nextProject);
       nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
+      nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
       project_map = project_map.set(project_id, nextProject);
     }
     this.setState({ project_map } as ProjectsState);
