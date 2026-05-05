@@ -771,6 +771,53 @@ describe("ProjectsActions project metadata updates", () => {
     ).toBe(false);
   });
 
+  it("removes a missing kiosk project while preserving unrelated local projects", () => {
+    const kioskProjectId = "project-kiosk";
+    const otherProjectId = "project-other";
+    const projectMap = ImmutableMap<string, any>([
+      [
+        kioskProjectId,
+        ImmutableMap({
+          title: "Kiosk Project",
+        }),
+      ],
+      [
+        otherProjectId,
+        ImmutableMap({
+          title: "Other Project",
+        }),
+      ],
+    ]);
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map" ? projectMap : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+    const { actions, redux } = makeActions();
+
+    actions.applyProjectsTableSnapshot(ImmutableMap<string, any>(), {
+      mergeIntoExisting: true,
+      removeMissingProjectIds: [kioskProjectId],
+    });
+
+    expect(redux._set_state).toHaveBeenCalled();
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.has(
+        kioskProjectId,
+      ),
+    ).toBe(false);
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.getIn([
+        otherProjectId,
+        "title",
+      ]),
+    ).toBe("Other Project");
+  });
+
   it("still fails when feed wait times out and direct bootstrap finds nothing", async () => {
     mockedStore.async_wait.mockRejectedValueOnce("timeout");
     mockedWebappClient.project_client.create.mockResolvedValueOnce(

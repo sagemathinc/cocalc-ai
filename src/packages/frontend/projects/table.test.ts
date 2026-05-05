@@ -52,7 +52,35 @@ describe("ProjectsTable", () => {
     expect(ensureRealtimeFeedForCurrentAccount).toHaveBeenCalledTimes(1);
     expect(applyProjectsTableSnapshot).toHaveBeenCalledWith("project-map", {
       mergeIntoExisting: false,
+      removeMissingProjectIds: undefined,
     });
     expect(setState).not.toHaveBeenCalled();
+  });
+
+  it("removes a missing kiosk project from merge snapshots", () => {
+    const pageStore = {
+      get: jest.fn((key) =>
+        key === "kiosk_project_id" ? "project-1" : undefined,
+      ),
+    };
+    const appFramework = jest.requireMock("../app-framework");
+    appFramework.redux.getStore.mockImplementation((name: string) => {
+      if (name === "page") {
+        return pageStore;
+      }
+      return {
+        get: jest.fn(() => undefined),
+      };
+    });
+    const table = {
+      get: jest.fn(() => "project-map"),
+    };
+
+    ProjectsTable.prototype._change.call({}, table, []);
+
+    expect(applyProjectsTableSnapshot).toHaveBeenCalledWith("project-map", {
+      mergeIntoExisting: true,
+      removeMissingProjectIds: ["project-1"],
+    });
   });
 });

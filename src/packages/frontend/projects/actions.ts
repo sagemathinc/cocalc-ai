@@ -991,6 +991,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     snapshot: Map<string, any> | undefined,
     opts?: {
       mergeIntoExisting?: boolean;
+      removeMissingProjectIds?: string[];
     },
   ): void {
     const incomingProjectMap = snapshot ?? Map<string, any>();
@@ -1007,6 +1008,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
           !incomingProjectMap.has(project_id)
         ) {
           project_map = project_map.set(project_id, currentProject);
+        }
+      }
+    }
+    if (opts?.mergeIntoExisting && opts.removeMissingProjectIds != null) {
+      for (const project_id of opts.removeMissingProjectIds) {
+        if (!incomingProjectMap.has(project_id)) {
+          project_map = project_map.remove(project_id);
         }
       }
     }
