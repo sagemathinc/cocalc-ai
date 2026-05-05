@@ -1,8 +1,5 @@
 import getLogger from "@cocalc/backend/logger";
-import getPool, {
-  getPglitePgClient,
-  isPgliteEnabled,
-} from "@cocalc/database/pool";
+import getPool from "@cocalc/database/pool";
 import LRU from "lru-cache";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -11,7 +8,11 @@ import { isValidUUID } from "@cocalc/util/misc";
 
 const log = getLogger("server:conat:route-project");
 
-const CHANNEL = "project_host_update";
+const INVALIDATION_TABLE = "project_host_route_invalidations";
+const INVALIDATION_POLL_MS = 1_000;
+const INVALIDATION_BATCH_SIZE = 256;
+const INVALIDATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const INVALIDATION_PRUNE_INTERVAL_MS = 15 * 60 * 1000;
 
 export interface ProjectHostRouteTarget {
   address: string;
@@ -32,6 +33,9 @@ const hostCache = new LRU<string, ProjectHostRouteTarget>({
 const inflight: Partial<Record<string, Promise<void>>> = {};
 const hostInflight: Partial<Record<string, Promise<void>>> = {};
 let listenerStarted: boolean = false;
+let invalidationCursor = 0;
+let lastInvalidationPruneAt = 0;
+
 function onPremTunnelAddress(metadata: any): string | undefined {
   const port = metadata?.self_host?.http_tunnel_port;
   if (!port) return undefined;
@@ -65,6 +69,11 @@ function extractHostId(subject: string): string | undefined {
   }
   const host_id = subject.split(".")[1];
   return isValidUUID(host_id) ? host_id : undefined;
+}
+
+function normalizeUuid(value: unknown): string | undefined {
+  const normalized = `${value ?? ""}`.trim();
+  return isValidUUID(normalized) ? normalized : undefined;
 }
 
 function cacheRouteTarget(
@@ -348,94 +357,124 @@ export function routeHostSubject(
   return;
 }
 
-async function handleNotification(msg: {
-  channel: string;
-  payload?: string | null;
-}) {
-  if (msg.channel !== CHANNEL || !msg.payload) return;
+function invalidateRouteTargets({
+  project_id,
+  host_id,
+}: {
+  project_id?: string;
+  host_id?: string;
+}): void {
+  if (project_id) {
+    projectCache.delete(project_id);
+    void fetchHostAddress(project_id);
+  }
+  if (!host_id) {
+    return;
+  }
+  hostCache.delete(host_id);
+  void fetchHostTarget(host_id);
+  for (const [cachedProjectId, target] of projectCache.entries()) {
+    if (target.host_id === host_id) {
+      projectCache.delete(cachedProjectId);
+    }
+  }
+}
+
+async function pollInvalidationsOnce(): Promise<void> {
+  while (true) {
+    const { rows } = await getPool().query<{
+      event_id: number | string;
+      project_id?: string | null;
+      host_id?: string | null;
+    }>(
+      `SELECT event_id, project_id, host_id
+         FROM ${INVALIDATION_TABLE}
+        WHERE event_id > $1
+        ORDER BY event_id ASC
+        LIMIT $2`,
+      [invalidationCursor, INVALIDATION_BATCH_SIZE],
+    );
+    if (!rows.length) {
+      return;
+    }
+    for (const row of rows) {
+      invalidationCursor = Math.max(
+        invalidationCursor,
+        Number(row.event_id ?? 0) || invalidationCursor,
+      );
+      invalidateRouteTargets({
+        project_id: normalizeUuid(row.project_id),
+        host_id: normalizeUuid(row.host_id),
+      });
+    }
+    if (rows.length < INVALIDATION_BATCH_SIZE) {
+      return;
+    }
+  }
+}
+
+async function pruneInvalidationsMaybe(): Promise<void> {
+  const now = Date.now();
+  if (now - lastInvalidationPruneAt < INVALIDATION_PRUNE_INTERVAL_MS) {
+    return;
+  }
+  lastInvalidationPruneAt = now;
   try {
-    const payload = JSON.parse(msg.payload);
-    const project_id = `${payload?.project_id ?? ""}`.trim();
-    const host_id = `${payload?.host_id ?? ""}`.trim();
-    if (project_id && isValidUUID(project_id)) {
-      projectCache.delete(project_id);
-      void fetchHostAddress(project_id);
-    }
-    if (host_id && isValidUUID(host_id)) {
-      hostCache.delete(host_id);
-      void fetchHostTarget(host_id);
-      for (const [cachedProjectId, target] of projectCache.entries()) {
-        if (target.host_id === host_id) {
-          projectCache.delete(cachedProjectId);
-        }
-      }
-    }
+    await getPool().query(
+      `DELETE FROM ${INVALIDATION_TABLE}
+        WHERE created_at < $1`,
+      [new Date(now - INVALIDATION_RETENTION_MS)],
+    );
   } catch (err) {
-    log.debug("handleNotification parse failed", { err, payload: msg.payload });
+    log.debug("project host route invalidation prune failed", { err });
   }
 }
 
 export async function listenForUpdates() {
   if (listenerStarted) return;
   listenerStarted = true;
-  const pool = getPool();
 
-  async function connect() {
-    let client: any | undefined;
-    let cleaned = false;
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-      client?.removeAllListeners?.();
-      // release is safe to call once; ignore errors if connection is already gone
-      try {
-        client?.release();
-      } catch (err) {
-        log.debug("project_host_update listener release failed", err);
-      }
-    };
-    try {
-      if (isPgliteEnabled()) {
-        client = getPglitePgClient();
-      } else {
-        client = await pool.connect();
-      }
-      client.on("notification", (msg) => {
-        void handleNotification(msg as any);
-      });
-      client.on("error", (err) => {
-        log.warn("project_host_update listener error", err);
-        cleanup();
-        setTimeout(connect, 1000).unref?.();
-      });
-      client.on("end", () => {
-        cleanup();
-        setTimeout(connect, 1000).unref?.();
-      });
-      await client.query(`LISTEN ${CHANNEL}`);
-      log.debug("listening for project host updates");
-    } catch (err) {
-      cleanup();
-      log.warn("failed to start project_host_update listener", err);
-      setTimeout(connect, 1000).unref?.();
-    }
-  }
+  const runPollLoop = (delayMs: number) => {
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          await pollInvalidationsOnce();
+        } catch (err) {
+          log.warn("project host route invalidation poll failed", { err });
+        } finally {
+          runPollLoop(INVALIDATION_POLL_MS);
+        }
+      })();
+    }, delayMs);
+    timer.unref?.();
+  };
 
-  void connect();
+  runPollLoop(0);
 }
 
 export async function notifyProjectHostUpdate(opts: {
   project_id?: string;
   host_id?: string;
 }) {
+  const project_id = normalizeUuid(opts.project_id);
+  const host_id = normalizeUuid(opts.host_id);
+  if (!project_id && !host_id) {
+    return;
+  }
+  invalidateRouteTargets({ project_id, host_id });
   try {
-    // Parameterized NOTIFY is awkward; use pg_notify to avoid string interpolation.
-    await getPool().query(`SELECT pg_notify($1, $2)`, [
-      CHANNEL,
-      JSON.stringify(opts),
-    ]);
+    await getPool().query(
+      `INSERT INTO ${INVALIDATION_TABLE} (project_id, host_id, created_at)
+       VALUES ($1, $2, NOW())`,
+      [project_id ?? null, host_id ?? null],
+    );
+    await pruneInvalidationsMaybe();
   } catch (err) {
-    log.debug("notifyProjectHostUpdate failed", { opts, err });
+    log.debug("notifyProjectHostUpdate failed", {
+      project_id,
+      host_id,
+      err,
+    });
   }
 }
 

@@ -10,9 +10,9 @@ TypeScript implementations of connection management methods.
 
 Methods implemented here:
 - connect(db, opts) - Connect with retry orchestration
-- disconnect(db) - Release listener client
+- disconnect(db) - Mark the database disconnected
 - isConnected(db) - Check connection status
-- close(db) - Full cleanup (listener + pinned query clients, cache, test query)
+- close(db) - Full cleanup (pinned query clients, cache, test query)
 */
 
 import * as misc from "@cocalc/util/misc";
@@ -93,19 +93,12 @@ export function connect(
 }
 
 /**
- * Release the dedicated listener client (if any)
- *
- * Clears the listener client and marks the connection as disconnected.
+ * Mark the database disconnected.
  *
  * @param db - PostgreSQL database instance
  */
 export function disconnect(db: PostgreSQL): void {
   const dbAny = db as any;
-  if (db._listen_client) {
-    db._listen_client.removeAllListeners();
-    db._listen_client.release();
-    delete db._listen_client;
-  }
   dbAny._connected = false;
 }
 
@@ -130,7 +123,7 @@ export function isConnected(db: PostgreSQL): boolean {
  * 3. Sets state to 'closed'
  * 4. Emits 'close' event
  * 5. Removes all event listeners
- * 6. Releases listener client and any pinned query client
+ * 6. Releases any pinned query client
  *
  * @param db - PostgreSQL database instance
  */
@@ -151,16 +144,10 @@ export function closeDatabase(db: PostgreSQL): void {
   // Remove all event listeners
   db.removeAllListeners();
 
-  // Release listen client
   if (db._query_client) {
     db._query_client.removeAllListeners();
     db._query_client.release();
     delete db._query_client;
-  }
-  if (db._listen_client) {
-    db._listen_client.removeAllListeners();
-    db._listen_client.release();
-    delete db._listen_client;
   }
   (db as any)._connected = false;
 }

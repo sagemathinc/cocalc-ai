@@ -20,7 +20,6 @@ export * from "./util";
 import { patchPoolForUtc } from "./pg-utc-normalize";
 import {
   getPgliteClient,
-  getPglitePgClient,
   getPglitePool,
   isPgliteEnabled,
   PglitePool,
@@ -312,7 +311,7 @@ export function getClient(): Client {
   return new Client({ password: dbPassword(), user, host, database, ssl });
 }
 
-export { getPglitePgClient, isPgliteEnabled };
+export { isPgliteEnabled };
 const TEST = "smc_ephemeral_testing_database";
 
 /**

@@ -12,6 +12,9 @@ SQL queries with optional helpers (select, where, values, set, etc).
 
 import type { PostgreSQL, QueryOptions } from "../types";
 
+const LISTEN_QUERY_ERR =
+  "raw LISTEN/UNLISTEN queries are no longer supported; use durable polling or app-level events instead";
+
 /**
  * Execute a query with optional query builder inputs.
  *
@@ -47,6 +50,16 @@ export function query(db: PostgreSQL, opts: QueryOptions): void {
   normalized.cache ??= false;
   normalized.safety_check ??= true;
   opts = normalized;
+
+  if (
+    typeof opts.query === "string" &&
+    /^\s*(listen|unlisten)\b/i.test(opts.query)
+  ) {
+    if (typeof opts.cb === "function") {
+      opts.cb(LISTEN_QUERY_ERR);
+    }
+    return;
+  }
 
   if (opts.retry_until_success) {
     db._query_retry_until_success(opts);

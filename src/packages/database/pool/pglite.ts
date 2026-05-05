@@ -42,6 +42,8 @@ type QueryArgs =
 
 const LOWLEVEL_DEBUG = Boolean(process.env.PGLITE_LOWLEVEL_DEBUG);
 const SLOW_QUERY_MS = 3000;
+const LISTEN_QUERY_ERR =
+  "raw LISTEN/UNLISTEN queries are no longer supported; use durable polling or app-level events instead";
 
 function withLowlevelDebug<T>(
   label: string,
@@ -154,9 +156,14 @@ function toPgResult(result: PgliteQueryResult): PgLikeResult {
   };
 }
 
+function assertListenUnsupported(text: string): void {
+  if (/^\s*(listen|unlisten)\b/i.test(text)) {
+    throw new Error(LISTEN_QUERY_ERR);
+  }
+}
+
 class PglitePoolClient extends EventEmitter {
   private readonly sessionId = makeSessionId("client");
-  private readonly subscriptions = new Map<string, () => Promise<void>>();
 
   constructor(private readonly pool: PglitePool) {
     super();
@@ -172,37 +179,7 @@ class PglitePoolClient extends EventEmitter {
       valuesOrCb,
       cb,
     );
-
-    const trimmed = text.trim();
-    const listenMatch = trimmed.match(listenRegex);
-    if (listenMatch) {
-      const channel = this.normalizeChannel(listenMatch[1]);
-      if (channel) {
-        await this.ensureListen(channel);
-      }
-      const emptyResult: PgLikeResult = { rows: [], rowCount: 0 };
-      if (callback) {
-        callback(null, emptyResult);
-        return;
-      }
-      return emptyResult;
-    }
-
-    const unlistenMatch = trimmed.match(unlistenRegex);
-    if (unlistenMatch) {
-      const channel = this.normalizeChannel(unlistenMatch[1]);
-      if (channel === "*") {
-        await this.cleanupListeners();
-      } else if (channel) {
-        await this.removeListen(channel);
-      }
-      const emptyResult: PgLikeResult = { rows: [], rowCount: 0 };
-      if (callback) {
-        callback(null, emptyResult);
-        return;
-      }
-      return emptyResult;
-    }
+    assertListenUnsupported(text);
 
     const promise =
       values == null
@@ -220,7 +197,6 @@ class PglitePoolClient extends EventEmitter {
 
   release(): void {
     this.removeAllListeners();
-    void this.cleanupListeners();
     releaseAllLocks(this.sessionId);
   }
 
@@ -231,47 +207,7 @@ class PglitePoolClient extends EventEmitter {
   async end(): Promise<void> {
     this.release();
   }
-
-  private normalizeChannel(value: string): string | null {
-    const trimmed = value.trim().replace(/;$/, "");
-    if (!trimmed) {
-      return null;
-    }
-    if (trimmed === "*") {
-      return "*";
-    }
-    return trimmed.replace(/^"|"$/g, "");
-  }
-
-  private async ensureListen(channel: string): Promise<void> {
-    if (this.subscriptions.has(channel)) {
-      return;
-    }
-    const pg = await getPglite();
-    const unsubscribe = await pg.listen(channel, (payload) => {
-      this.emit("notification", { channel, payload });
-    });
-    this.subscriptions.set(channel, unsubscribe);
-  }
-
-  private async removeListen(channel: string): Promise<void> {
-    const unsubscribe = this.subscriptions.get(channel);
-    if (!unsubscribe) {
-      return;
-    }
-    await unsubscribe();
-    this.subscriptions.delete(channel);
-  }
-
-  private async cleanupListeners(): Promise<void> {
-    const entries = Array.from(this.subscriptions.entries());
-    this.subscriptions.clear();
-    await Promise.allSettled(entries.map(([, unsubscribe]) => unsubscribe()));
-  }
 }
-
-const listenRegex = /^\s*listen\s+(.+?)\s*;?\s*$/i;
-const unlistenRegex = /^\s*unlisten\s+(.+?)\s*;?\s*$/i;
 
 // Advisory locks in pglite are emulated in-process, keyed by the
 // hashtext argument and scoped per "session" (pool client or
@@ -424,115 +360,6 @@ async function handleAdvisoryQuery(
   return null;
 }
 
-class PglitePgClient extends EventEmitter {
-  private readonly pool = getPglitePool();
-  private readonly sessionId = makeSessionId("pg");
-  private readonly subscriptions = new Map<string, () => Promise<void>>();
-
-  async query(
-    textOrConfig: string | (QueryConfig & { query?: string }),
-    valuesOrCb?: any[] | ((err: Error | null, result?: PgLikeResult) => void),
-    cb?: (err: Error | null, result?: PgLikeResult) => void,
-  ): Promise<PgLikeResult | void> {
-    const { text, values, callback } = parseQueryConfig(
-      textOrConfig,
-      valuesOrCb,
-      cb,
-    );
-
-    const promise = this.runQuery(text, values);
-    if (callback) {
-      promise.then(
-        (result) => callback(null, result),
-        (err) => callback(err as Error),
-      );
-      return;
-    }
-    return await promise;
-  }
-
-  end(): void {
-    void this.cleanupListeners();
-    releaseAllLocks(this.sessionId);
-  }
-
-  release(): void {
-    this.removeAllListeners();
-    void this.cleanupListeners();
-    releaseAllLocks(this.sessionId);
-  }
-
-  private async runQuery(text: string, values?: any[]): Promise<PgLikeResult> {
-    const advisory = await handleAdvisoryQuery(this.sessionId, text, values);
-    if (advisory) {
-      return advisory;
-    }
-    const trimmed = text.trim();
-    const listenMatch = trimmed.match(listenRegex);
-    if (listenMatch) {
-      const channel = this.normalizeChannel(listenMatch[1]);
-      if (channel) {
-        await this.ensureListen(channel);
-      }
-      return { rows: [], rowCount: 0 };
-    }
-
-    const unlistenMatch = trimmed.match(unlistenRegex);
-    if (unlistenMatch) {
-      const channel = this.normalizeChannel(unlistenMatch[1]);
-      if (channel === "*") {
-        await this.cleanupListeners();
-      } else if (channel) {
-        await this.removeListen(channel);
-      }
-      return { rows: [], rowCount: 0 };
-    }
-
-    if (values == null) {
-      return await this.pool.query(text);
-    }
-    const normalized = normalizeValues(values) ?? values;
-    return await this.pool.query(text, normalized);
-  }
-
-  private normalizeChannel(value: string): string | null {
-    const trimmed = value.trim().replace(/;$/, "");
-    if (!trimmed) {
-      return null;
-    }
-    if (trimmed === "*") {
-      return "*";
-    }
-    return trimmed.replace(/^"|"$/g, "");
-  }
-
-  private async ensureListen(channel: string): Promise<void> {
-    if (this.subscriptions.has(channel)) {
-      return;
-    }
-    const pg = await getPglite();
-    const unsubscribe = await pg.listen(channel, (payload) => {
-      this.emit("notification", { channel, payload });
-    });
-    this.subscriptions.set(channel, unsubscribe);
-  }
-
-  private async removeListen(channel: string): Promise<void> {
-    const unsubscribe = this.subscriptions.get(channel);
-    if (!unsubscribe) {
-      return;
-    }
-    await unsubscribe();
-    this.subscriptions.delete(channel);
-  }
-
-  private async cleanupListeners(): Promise<void> {
-    const entries = Array.from(this.subscriptions.entries());
-    this.subscriptions.clear();
-    await Promise.allSettled(entries.map(([, unsubscribe]) => unsubscribe()));
-  }
-}
-
 export class PglitePool {
   public readonly options = { database: "pglite" };
   private queue: Promise<unknown> = Promise.resolve();
@@ -546,6 +373,7 @@ export class PglitePool {
     ...args: QueryArgs
   ): Promise<PgLikeResult> {
     const { text, values } = normalizeQueryArgs(args);
+    assertListenUnsupported(text);
     return await withLowlevelDebug(
       `pool:${sessionId}`,
       text,
@@ -598,8 +426,4 @@ export function getPglitePool(): PglitePool {
 
 export function getPgliteClient(): PglitePoolClient {
   return new PglitePoolClient(getPglitePool());
-}
-
-export function getPglitePgClient(): PglitePgClient {
-  return new PglitePgClient();
 }

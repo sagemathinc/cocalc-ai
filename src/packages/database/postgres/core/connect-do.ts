@@ -24,9 +24,6 @@ export async function connectDo(db: PostgreSQL, cb?: CB): Promise<void> {
     }
     return;
   }
-  if (db._listen_client != null) {
-    db.disconnect();
-  }
   dbAny._connect_time = 0;
   db._concurrent_queries = 0; // can't be any going on now.
   try {

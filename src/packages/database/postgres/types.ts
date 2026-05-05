@@ -289,7 +289,6 @@ export interface CreateSsoAccountOpts {
 export interface PostgreSQLMethods extends EventEmitter {
   _dbg(desc: string): (...args: unknown[]) => void;
   _pool: Pool;
-  _listen_client?: PoolClient;
   _query_client?: PoolClient;
   _connected?: boolean;
   _ensure_exists?: boolean;
@@ -319,7 +318,6 @@ export interface PostgreSQLMethods extends EventEmitter {
   _user_query_queue?: UserQueryQueue;
 
   _get_query_client(): Promise<PoolClient>;
-  _get_listen_client(): Promise<PoolClient>;
   get_db_query(): Pool["query"] | undefined;
 
   _create_account_passport_keys?: Record<string, Date>;

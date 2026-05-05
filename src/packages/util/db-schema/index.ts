@@ -63,6 +63,7 @@ import "./project-host-bootstrap-tokens";
 import "./project-backup-repos";
 import "./project-collab-invites";
 import "./project-events-outbox";
+import "./project-host-route-invalidations";
 import "./project-rootfs-states";
 import "./projects";
 import "./rootfs-image-events";

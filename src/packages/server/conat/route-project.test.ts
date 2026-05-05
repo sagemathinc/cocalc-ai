@@ -25,8 +25,6 @@ jest.mock("@cocalc/database/pool", () => ({
   default: jest.fn(() => ({
     query: (...args: any[]) => queryMock(...args),
   })),
-  getPglitePgClient: jest.fn(),
-  isPgliteEnabled: jest.fn(() => false),
 }));
 
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
@@ -53,6 +51,7 @@ describe("route-project bay-aware routing", () => {
 
   beforeEach(() => {
     jest.resetModules();
+    jest.useRealTimers();
     queryMock = jest.fn();
     warnMock = jest.fn();
     debugMock = jest.fn();
@@ -305,5 +304,128 @@ describe("route-project bay-aware routing", () => {
     ).resolves.toBeUndefined();
     expect(routeHostSubject(`project-host.${HOST_ID}.api`)).toBeUndefined();
     expect(warnMock).not.toHaveBeenCalled();
+  });
+
+  it("durably polls route invalidations and refreshes cached project routes", async () => {
+    jest.useFakeTimers();
+    let projectFetchCount = 0;
+    let invalidationPollCount = 0;
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM project_host_route_invalidations")) {
+        invalidationPollCount += 1;
+        if (invalidationPollCount === 1) {
+          return {
+            rows: [{ event_id: 1, project_id: PROJECT_ID, host_id: null }],
+          };
+        }
+        return { rows: [] };
+      }
+      if (sql.includes("FROM projects")) {
+        projectFetchCount += 1;
+        return {
+          rows: [
+            {
+              host_id: HOST_ID,
+              resolved_host_id: HOST_ID,
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+              internal_url:
+                projectFetchCount === 1
+                  ? "http://host-a.internal:9000"
+                  : "http://host-b.internal:9000",
+              public_url: "https://host.example.com",
+              metadata: {
+                host_session_id:
+                  projectFetchCount === 1 ? "session-a" : "session-b",
+                machine: {},
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const {
+      listenForUpdates,
+      materializeProjectHostTarget,
+      routeProjectSubject,
+    } = await import("./route-project");
+
+    expect(
+      await materializeProjectHostTarget(PROJECT_ID, { fresh: true }),
+    ).toEqual({
+      address: "http://host-a.internal:9000",
+      host_id: HOST_ID,
+      host_session_id: "session-a",
+    });
+
+    await listenForUpdates();
+    await jest.advanceTimersByTimeAsync(1_000);
+
+    expect(routeProjectSubject(`project.${PROJECT_ID}.api`)).toEqual({
+      address: "http://host-b.internal:9000",
+      host_id: HOST_ID,
+      host_session_id: "session-b",
+    });
+    expect(projectFetchCount).toBe(2);
+  });
+
+  it("records route invalidations durably while evicting local host caches", async () => {
+    let hostFetchCount = 0;
+    queryMock.mockImplementation(async (sql: string, values?: any[]) => {
+      if (sql.includes("INSERT INTO project_host_route_invalidations")) {
+        expect(values).toEqual([null, HOST_ID]);
+        return { rows: [] };
+      }
+      if (sql.includes("DELETE FROM project_host_route_invalidations")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        hostFetchCount += 1;
+        return {
+          rows: [
+            {
+              resolved_host_id: HOST_ID,
+              host_bay_id: "bay-0",
+              internal_url:
+                hostFetchCount === 1
+                  ? "http://host-a.internal:9000"
+                  : "http://host-b.internal:9000",
+              public_url: "https://host.example.com",
+              metadata: {
+                host_session_id:
+                  hostFetchCount === 1 ? "session-a" : "session-b",
+                machine: {},
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const {
+      materializeHostRouteTarget,
+      notifyProjectHostUpdate,
+      routeHostSubject,
+    } = await import("./route-project");
+
+    expect(await materializeHostRouteTarget(HOST_ID, { fresh: true })).toEqual({
+      address: "http://host-a.internal:9000",
+      host_id: HOST_ID,
+      host_session_id: "session-a",
+    });
+
+    await notifyProjectHostUpdate({ host_id: HOST_ID });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(routeHostSubject(`project-host.${HOST_ID}.api`)).toEqual({
+      address: "http://host-b.internal:9000",
+      host_id: HOST_ID,
+      host_session_id: "session-b",
+    });
+    expect(hostFetchCount).toBe(2);
   });
 });

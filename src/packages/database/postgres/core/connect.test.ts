@@ -10,10 +10,10 @@ Tests for connection management methods that handle database
 connection lifecycle and pool usage:
 - constructor(opts) - Initialize PostgreSQL client instance
 - connect(opts) - Public connection method with retry logic
-- disconnect() - Release listener client
+- disconnect() - Mark the database disconnected
 - is_connected() - Check connection status
 - _connect(cb) - Pool connectivity check
-- close() - Full cleanup (listener client, cache, test query)
+- close() - Full cleanup (cache, test query)
 - _get_query_client() - Get pooled client for queries
 
 These tests target the CoffeeScript class via db() to validate
@@ -87,32 +87,11 @@ describe("Connection Management - Group 5", () => {
     });
   });
 
-  describe("_get_listen_client - Get listener client", () => {
-    it("returns a cached listener client", async () => {
-      const client1 = await database._get_listen_client();
-      const client2 = await database._get_listen_client();
-      expect(client1).toBeDefined();
-      expect(client2).toBeDefined();
-      expect(client1).toBe(client2);
-      client1.removeAllListeners();
-      client1.release();
-      delete (database as any)._listen_client;
-    });
-  });
-
-  describe("disconnect - Release listener client", () => {
-    it("clears the listener client", async () => {
-      // Ensure we have a listener client first
-      await database._get_listen_client();
-      expect((database as any)._listen_client).toBeDefined();
-
-      // Disconnect
+  describe("disconnect - mark disconnected", () => {
+    it("clears the connected flag", async () => {
       database.disconnect();
+      expect(database.is_connected()).toBe(false);
 
-      // Should clear listener client
-      expect((database as any)._listen_client).toBeUndefined();
-
-      // Reconnect for other tests
       await new Promise<void>((resolve, reject) => {
         database.connect({
           cb: (err) => {
@@ -121,17 +100,15 @@ describe("Connection Management - Group 5", () => {
           },
         });
       });
+      expect(database.is_connected()).toBe(true);
     }, 30000);
 
     it("can be called multiple times safely", async () => {
-      // First disconnect
       database.disconnect();
-      expect((database as any)._listen_client).toBeUndefined();
+      expect(database.is_connected()).toBe(false);
 
-      // Second disconnect should not throw
       expect(() => database.disconnect()).not.toThrow();
 
-      // Reconnect for other tests
       await new Promise<void>((resolve, reject) => {
         database.connect({
           cb: (err) => {

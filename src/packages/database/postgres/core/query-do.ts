@@ -18,6 +18,8 @@ import type { PostgreSQL, QueryOptions } from "../types";
 import { quote_field } from "../utils/quote-field";
 
 const QUERY_ALERT_THRESH_MS = 5000;
+const LISTEN_QUERY_ERR =
+  "raw LISTEN/UNLISTEN queries are no longer supported; use durable polling or app-level events instead";
 
 export function doQuery(db: PostgreSQL, opts: QueryOptions): void {
   const dbAny = db as any;
@@ -464,12 +466,15 @@ export function doQuery(db: PostgreSQL, opts: QueryOptions): void {
   //dbg("query='#{opts.query}', params=#{misc.to_json(opts.params)}")
   const runQuery = async (): Promise<void> => {
     const isListenQuery = /^\s*(listen|unlisten)\b/i.test(queryText);
-    const client = isListenQuery
-      ? await db._get_listen_client()
-      : await db._get_query_client();
+    if (isListenQuery) {
+      if (typeof opts.cb === "function") {
+        opts.cb(LISTEN_QUERY_ERR);
+      }
+      return;
+    }
+    const client = await db._get_query_client();
     let released = false;
-    const shouldRelease =
-      db._query_client !== client && db._listen_client !== client;
+    const shouldRelease = db._query_client !== client;
     const releaseClient = (err?: unknown): void => {
       if (released || !shouldRelease) {
         return;

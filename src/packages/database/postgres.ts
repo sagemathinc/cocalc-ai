@@ -200,7 +200,6 @@ import { syncSchema } from "./postgres/schema";
 import { primaryKey, primaryKeys } from "./postgres/schema/table";
 import { count_result } from "./postgres/utils/count-result";
 import * as UtilTS from "./postgres/core/util";
-import { recordDisconnected } from "./postgres/record-connect-error";
 import {
   closeDatabase,
   connect as connectTS,
@@ -373,7 +372,6 @@ const runWithCbOrThrow = async (
 export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
   // Connection configuration
   _pool!: Pool;
-  _listen_client?: PoolClient;
   _query_client?: PoolClient;
   _connected?: boolean;
   _ensure_exists?: boolean;
@@ -525,38 +523,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
       return this._query_client;
     }
     return await this._pool.connect();
-  }
-
-  async _get_listen_client(): Promise<PoolClient> {
-    if (this._listen_client) {
-      return this._listen_client;
-    }
-    const client = await this._pool.connect();
-    client.on("notification", (mesg: { channel: string; payload?: string }) => {
-      let payload: unknown = mesg.payload;
-      if (typeof payload === "string") {
-        try {
-          payload = JSON.parse(payload);
-        } catch {
-          // Keep the raw string payload for callers that aren't sending JSON.
-        }
-      }
-      this.emit(mesg.channel, payload);
-    });
-    const onError = (err) => {
-      client.removeListener("error", onError);
-      client.removeAllListeners();
-      if (this._listen_client === client) {
-        delete this._listen_client;
-      }
-      client.release(err);
-      this.emit("disconnect");
-      recordDisconnected();
-      this.connect({});
-    };
-    client.on("error", onError);
-    this._listen_client = client;
-    return client;
   }
 
   // Return query function of a database connection.
