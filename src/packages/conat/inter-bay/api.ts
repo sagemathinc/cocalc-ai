@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import type { Client } from "@cocalc/conat/core/client";
+import { MAX_INTEREST_TIMEOUT, type Client } from "@cocalc/conat/core/client";
 import {
   createServiceClient,
   createServiceHandler,
@@ -100,6 +100,7 @@ export interface ResolveHostBayRequest {
 export interface ProjectControlStartRequest {
   project_id: string;
   account_id: string;
+  restore_backup_id?: string;
   lro_op_id?: string;
   source_bay_id?: string;
   managed_egress_override?: "admin-host-drain";
@@ -639,6 +640,10 @@ export type HostConnectionMethod =
   | "get-project-owner-effective-limits"
   | "get-seed-backup-config"
   | "record-project-backup"
+  | "record-project-backup-index"
+  | "get-project-backup-indexes"
+  | "sync-project-backup-indexes"
+  | "delete-project-backup-index"
   | "list-host-projects"
   | "ensure-host-owner-ssh-trust"
   | "rehome-host"
@@ -847,10 +852,31 @@ export interface InterBayHostConnectionApi {
     toml: string;
     ttl_seconds: number;
     backup_repo_id: string | null;
+    index_store?: {
+      kind: "r2-object-store";
+      endpoint: string;
+      bucket: string;
+      access_key_id: string;
+      secret_access_key: string;
+      key_prefix: string;
+      compression: "gzip";
+    } | null;
   }>;
   recordProjectBackup: (
     opts: Parameters<Hosts["recordProjectBackup"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackup"]>>>;
+  recordProjectBackupIndex: (
+    opts: Parameters<Hosts["recordProjectBackupIndex"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["recordProjectBackupIndex"]>>>;
+  getProjectBackupIndexes: (
+    opts: Parameters<Hosts["getProjectBackupIndexes"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getProjectBackupIndexes"]>>>;
+  syncProjectBackupIndexes: (
+    opts: Parameters<Hosts["syncProjectBackupIndexes"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["syncProjectBackupIndexes"]>>>;
+  deleteProjectBackupIndex: (
+    opts: Parameters<Hosts["deleteProjectBackupIndex"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["deleteProjectBackupIndex"]>>>;
   listHostProjects: (
     opts: Pick<
       Parameters<Hosts["listHostProjects"]>[0],
@@ -947,6 +973,22 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "recordProjectBackup",
     method: "record-project-backup",
+  },
+  {
+    name: "recordProjectBackupIndex",
+    method: "record-project-backup-index",
+  },
+  {
+    name: "getProjectBackupIndexes",
+    method: "get-project-backup-indexes",
+  },
+  {
+    name: "syncProjectBackupIndexes",
+    method: "sync-project-backup-indexes",
+  },
+  {
+    name: "deleteProjectBackupIndex",
+    method: "delete-project-backup-index",
   },
   {
     name: "listHostProjects",
@@ -1200,11 +1242,18 @@ function serviceClientOptions({
 }: {
   client: Client;
   timeout?: number;
-}): Omit<ServiceCall, "mesg"> {
+}): Omit<ServiceCall, "mesg"> & {
+  transport?: "fast-rpc" | "request";
+} {
   return {
     service: "inter-bay",
     client,
     timeout,
+    // Fast RPC relies on a socket.io ack from the target service handler,
+    // and that ack path is capped by MAX_INTEREST_TIMEOUT. For longer-lived
+    // cross-bay operations, use request/reply transport instead.
+    transport:
+      timeout != null && timeout > MAX_INTEREST_TIMEOUT ? "request" : undefined,
   };
 }
 

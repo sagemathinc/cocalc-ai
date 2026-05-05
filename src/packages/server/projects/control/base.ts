@@ -164,6 +164,7 @@ export class BaseProject extends EventEmitter {
     lro_op_id?: string;
     account_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
+    restore_backup_id?: string;
   }): Promise<void> => {
     await this.computeQuota(opts?.account_id);
     await startProjectOnHost(this.project_id, opts);
@@ -252,6 +253,7 @@ export class BaseProject extends EventEmitter {
     lro_op_id?: string;
     account_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
+    restore_backup_id?: string;
   }): Promise<void> => {
     await this.ensureLocalOwnership();
     await this.startOnHost(opts);

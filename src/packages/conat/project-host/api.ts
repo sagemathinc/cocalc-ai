@@ -1,4 +1,4 @@
-import type { Client } from "@cocalc/conat/core/client";
+import { MAX_INTEREST_TIMEOUT, type Client } from "@cocalc/conat/core/client";
 import {
   createServiceClient,
   createServiceHandler,
@@ -298,6 +298,7 @@ export interface HostControlApi {
     run_quota?: any;
     image?: string;
     restore?: "none" | "auto" | "required";
+    restore_backup_id?: string;
     lro_op_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
   }) => Promise<HostCreateProjectResponse>;
@@ -388,6 +389,8 @@ export function createHostControlClient({
     subject: subjectForHost(host_id),
     client,
     timeout,
+    transport:
+      timeout != null && timeout > MAX_INTEREST_TIMEOUT ? "request" : undefined,
   });
 }
 

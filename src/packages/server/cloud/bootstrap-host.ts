@@ -1024,6 +1024,7 @@ export async function buildBootstrapScripts(
     `PROJECT_HOST_ID=${row.id}`,
     `PROJECT_HOST_NAME=${row.name ?? row.id}`,
     `PROJECT_HOST_REGION=${row.region ?? ""}`,
+    `PROJECT_HOST_ZONE=${metadata.runtime?.zone ?? machine.zone ?? ""}`,
     `PROJECT_HOST_CLOUD_PROVIDER=${providerId ?? ""}`,
     `COCALC_PROJECT_HOST_CLOUD_PROVIDER=${providerId ?? ""}`,
     `PROJECT_HOST_PUBLIC_URL=${publicUrl}`,

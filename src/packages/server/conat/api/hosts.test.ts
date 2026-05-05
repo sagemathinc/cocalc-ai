@@ -47,6 +47,10 @@ let hostConnectionGetProjectStartMetadataMock: jest.Mock;
 let hostConnectionGetBackupConfigMock: jest.Mock;
 let hostConnectionGetProjectOwnerEffectiveLimitsMock: jest.Mock;
 let hostConnectionRecordProjectBackupMock: jest.Mock;
+let hostConnectionRecordProjectBackupIndexMock: jest.Mock;
+let hostConnectionGetProjectBackupIndexesMock: jest.Mock;
+let hostConnectionSyncProjectBackupIndexesMock: jest.Mock;
+let hostConnectionDeleteProjectBackupIndexMock: jest.Mock;
 let hostConnectionListHostProjectsMock: jest.Mock;
 let projectHostAuthTokenIssueMock: jest.Mock;
 let projectReferenceGetMock: jest.Mock;
@@ -65,6 +69,10 @@ let getServerSettingsMock: jest.Mock;
 let fetchMock: jest.Mock;
 let getBackupConfigLocalInternalMock: jest.Mock;
 let recordProjectBackupLocalInternalMock: jest.Mock;
+let recordProjectBackupIndexLocalInternalMock: jest.Mock;
+let getProjectBackupIndexesLocalInternalMock: jest.Mock;
+let syncProjectBackupIndexesLocalInternalMock: jest.Mock;
+let deleteProjectBackupIndexLocalInternalMock: jest.Mock;
 let refreshCloudCatalogNowMock: jest.Mock;
 let bumpReconcileMock: jest.Mock;
 let runReconcileOnceMock: jest.Mock;
@@ -313,6 +321,14 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         hostConnectionGetProjectOwnerEffectiveLimitsMock(...args),
       recordProjectBackup: (...args: any[]) =>
         hostConnectionRecordProjectBackupMock(...args),
+      recordProjectBackupIndex: (...args: any[]) =>
+        hostConnectionRecordProjectBackupIndexMock(...args),
+      getProjectBackupIndexes: (...args: any[]) =>
+        hostConnectionGetProjectBackupIndexesMock(...args),
+      syncProjectBackupIndexes: (...args: any[]) =>
+        hostConnectionSyncProjectBackupIndexesMock(...args),
+      deleteProjectBackupIndex: (...args: any[]) =>
+        hostConnectionDeleteProjectBackupIndexMock(...args),
       listHostProjects: (...args: any[]) =>
         hostConnectionListHostProjectsMock(...args),
     })),
@@ -329,6 +345,14 @@ jest.mock("@cocalc/server/project-backup", () => ({
   __esModule: true,
   getBackupConfig: (...args: any[]) =>
     getBackupConfigLocalInternalMock(...args),
+  getProjectBackupIndexes: (...args: any[]) =>
+    getProjectBackupIndexesLocalInternalMock(...args),
+  syncProjectBackupIndexes: (...args: any[]) =>
+    syncProjectBackupIndexesLocalInternalMock(...args),
+  deleteProjectBackupIndex: (...args: any[]) =>
+    deleteProjectBackupIndexLocalInternalMock(...args),
+  recordProjectBackupIndex: (...args: any[]) =>
+    recordProjectBackupIndexLocalInternalMock(...args),
   recordProjectBackup: (...args: any[]) =>
     recordProjectBackupLocalInternalMock(...args),
 }));
@@ -537,6 +561,10 @@ beforeEach(() => {
   hostConnectionGetBackupConfigMock = jest.fn();
   hostConnectionGetProjectOwnerEffectiveLimitsMock = jest.fn();
   hostConnectionRecordProjectBackupMock = jest.fn(async () => undefined);
+  hostConnectionRecordProjectBackupIndexMock = jest.fn(async () => undefined);
+  hostConnectionGetProjectBackupIndexesMock = jest.fn(async () => []);
+  hostConnectionSyncProjectBackupIndexesMock = jest.fn(async () => undefined);
+  hostConnectionDeleteProjectBackupIndexMock = jest.fn(async () => undefined);
   hostConnectionListHostProjectsMock = jest.fn(async () => ({
     rows: [],
     summary: {
@@ -548,7 +576,11 @@ beforeEach(() => {
     },
   }));
   getBackupConfigLocalInternalMock = jest.fn();
+  getProjectBackupIndexesLocalInternalMock = jest.fn(async () => []);
+  syncProjectBackupIndexesLocalInternalMock = jest.fn(async () => undefined);
+  deleteProjectBackupIndexLocalInternalMock = jest.fn(async () => undefined);
   recordProjectBackupLocalInternalMock = jest.fn(async () => undefined);
+  recordProjectBackupIndexLocalInternalMock = jest.fn(async () => undefined);
   refreshCloudCatalogNowMock = jest.fn(async () => undefined);
   bumpReconcileMock = jest.fn(async () => undefined);
   runReconcileOnceMock = jest.fn(async () => ({

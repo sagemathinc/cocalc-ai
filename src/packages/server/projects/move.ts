@@ -171,6 +171,24 @@ type MoveSentinel = {
   content: string;
 };
 
+function summarizeMoveSentinelContent(content: string): Record<string, string> {
+  try {
+    const parsed = JSON.parse(content);
+    return {
+      move_log_id: `${parsed?.move_log_id ?? ""}`,
+      op_id: `${parsed?.op_id ?? ""}`,
+      source_host_id: `${parsed?.source_host_id ?? ""}`,
+      dest_host_id: `${parsed?.dest_host_id ?? ""}`,
+      token: `${parsed?.token ?? ""}`,
+      written_at: `${parsed?.written_at ?? ""}`,
+    };
+  } catch {
+    return {
+      preview: `${content}`.slice(0, 200),
+    };
+  }
+}
+
 async function openProjectLogStream(
   project_id: string,
   opts?: { fresh?: boolean },
@@ -330,8 +348,16 @@ async function verifyMoveSentinel({
       if (actual === sentinel.content) {
         return;
       }
+      const expectedSummary = summarizeMoveSentinelContent(sentinel.content);
+      const actualSummary = summarizeMoveSentinelContent(actual);
+      log.warn("moveProjectToHost sentinel mismatch", {
+        project_id,
+        path: sentinel.path,
+        expected: expectedSummary,
+        actual: actualSummary,
+      });
       lastError = new Error(
-        `sentinel content mismatch at ${sentinel.path} on destination`,
+        `sentinel content mismatch at ${sentinel.path} on destination (expected move_log_id=${expectedSummary.move_log_id || "unknown"} actual move_log_id=${actualSummary.move_log_id || "unknown"})`,
       );
     } catch (err) {
       lastError = err;
@@ -1016,7 +1042,7 @@ async function performBackupRegionCutover({
   ) {
     progress({
       step: "purge-old-backups",
-      message: "purging old-region backup snapshots",
+      message: "scheduling old-region backup purge",
       detail: {
         source_region: context.project_region,
         dest_region: context.dest_region,
@@ -1024,48 +1050,37 @@ async function performBackupRegionCutover({
         next_backup_repo_id,
       },
     });
-    try {
-      purge = await purgeProjectBackupsForRepo({
-        project_id: context.project_id,
-        backup_repo_id: previous_backup_repo_id,
-        region: context.project_region,
-      });
-      progress({
-        step: "purge-old-backups",
-        message: purge.skipped
-          ? "old-region backup purge skipped"
-          : "old-region backup snapshots purged",
-        detail: {
-          source_region: context.project_region,
-          dest_region: context.dest_region,
+    purge = {
+      skipped: true,
+      deleted_snapshots: 0,
+      deleted_index_snapshots: 0,
+      reason: "scheduled asynchronously",
+    };
+    void (async () => {
+      try {
+        const purged = await purgeProjectBackupsForRepo({
+          project_id: context.project_id,
+          backup_repo_id: previous_backup_repo_id,
+          region: context.project_region,
+        });
+        log.info("backup-region cutover old-repo purge completed", {
+          project_id: context.project_id,
           previous_backup_repo_id,
           next_backup_repo_id,
-          deleted_snapshots: purge.deleted_snapshots,
-          deleted_index_snapshots: purge.deleted_index_snapshots,
-          skipped: purge.skipped,
-          reason: purge.reason,
-        },
-      });
-    } catch (err) {
-      purge_error = `${err}`;
-      log.warn("backup-region cutover old-repo purge failed", {
-        project_id: context.project_id,
-        previous_backup_repo_id,
-        next_backup_repo_id,
-        err,
-      });
-      progress({
-        step: "purge-old-backups",
-        message: "old-region backup purge failed",
-        detail: {
-          source_region: context.project_region,
-          dest_region: context.dest_region,
+          deleted_snapshots: purged.deleted_snapshots,
+          deleted_index_snapshots: purged.deleted_index_snapshots,
+          skipped: purged.skipped,
+          reason: purged.reason,
+        });
+      } catch (err) {
+        log.warn("backup-region cutover old-repo purge failed", {
+          project_id: context.project_id,
           previous_backup_repo_id,
           next_backup_repo_id,
-          error: purge_error,
-        },
-      });
-    }
+          err,
+        });
+      }
+    })();
   }
 
   return {
@@ -1199,6 +1214,7 @@ export async function moveProjectToHost(
   let placementUpdated = false;
   let backupRegionCutoverResult: MoveBackupRegionCutoverResult | undefined;
   let moveSentinel: MoveSentinel | undefined;
+  let finalBackupId: string | undefined;
   const moveLogExtraEvent = () => ({
     source_region: context.project_region,
     dest_region: context.dest_region,
@@ -1456,6 +1472,7 @@ export async function moveProjectToHost(
               }),
           });
           const backup_id = result.id;
+          finalBackupId = backup_id;
           const backup_time = result.time;
           const duration_ms = Date.now() - backupStart;
           progress({
@@ -1555,6 +1572,7 @@ export async function moveProjectToHost(
             const startOp = await startProjectLro({
               account_id: context.account_id,
               project_id: context.project_id,
+              ...(finalBackupId ? { restore_backup_id: finalBackupId } : {}),
               managed_egress_override: input.managed_egress_override,
               wait: false,
             });

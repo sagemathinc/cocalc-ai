@@ -35,6 +35,8 @@ import type {
   HostRehomeOperationSummary,
   HostRehomeResponse,
   HostCloudRefreshResult,
+  ProjectBackupConfig,
+  ProjectBackupIndexRecord,
 } from "@cocalc/conat/hub/api/hosts";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import type {
@@ -126,7 +128,11 @@ import {
 } from "@cocalc/server/cloud/cloudflare-tunnel";
 import {
   getBackupConfig as getBackupConfigLocalInternal,
+  getProjectBackupIndexes as getProjectBackupIndexesLocalInternal,
+  recordProjectBackupIndex as recordProjectBackupIndexLocalInternal,
   recordProjectBackup as recordProjectBackupLocalInternal,
+  deleteProjectBackupIndex as deleteProjectBackupIndexLocalInternal,
+  syncProjectBackupIndexes as syncProjectBackupIndexesLocalInternal,
 } from "@cocalc/server/project-backup";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
@@ -884,7 +890,7 @@ export async function getBackupConfig({
   project_id?: string;
   host_region?: string | null;
   host_machine?: HostMachine | null;
-}): Promise<{ toml: string; ttl_seconds: number }> {
+}): Promise<ProjectBackupConfig> {
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
@@ -933,7 +939,7 @@ export async function getBackupConfigLocal({
   project_id?: string;
   host_region?: string | null;
   host_machine?: HostMachine | null;
-}): Promise<{ toml: string; ttl_seconds: number }> {
+}): Promise<ProjectBackupConfig> {
   return await getBackupConfigLocalInternal({
     host_id,
     project_id,
@@ -1031,6 +1037,240 @@ export async function recordProjectBackupLocal({
   time: Date;
 }): Promise<void> {
   await recordProjectBackupLocalInternal({ host_id, project_id, time });
+}
+
+export async function recordProjectBackupIndex({
+  host_id,
+  project_id,
+  backup_id,
+  backup_time,
+  status,
+  storage_backend,
+  object_key,
+  compression,
+  sqlite_bytes,
+  object_bytes,
+  sha256,
+  error,
+}: {
+  host_id?: string;
+  project_id: string;
+  backup_id: string;
+  backup_time: Date | string;
+  status: "complete" | "failed";
+  storage_backend?: "r2-object-store";
+  object_key?: string | null;
+  compression?: string | null;
+  sqlite_bytes?: number | null;
+  object_bytes?: number | null;
+  sha256?: string | null;
+  error?: string | null;
+}): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .recordProjectBackupIndex({
+        host_id,
+        project_id,
+        backup_id,
+        backup_time,
+        status,
+        storage_backend,
+        object_key,
+        compression,
+        sqlite_bytes,
+        object_bytes,
+        sha256,
+        error,
+      });
+    return;
+  }
+  await recordProjectBackupIndexLocalInternal({
+    host_id,
+    project_id,
+    backup_id,
+    backup_time,
+    status,
+    storage_backend,
+    object_key,
+    compression,
+    sqlite_bytes,
+    object_bytes,
+    sha256,
+    error,
+  });
+}
+
+export async function recordProjectBackupIndexLocal({
+  host_id,
+  project_id,
+  backup_id,
+  backup_time,
+  status,
+  storage_backend,
+  object_key,
+  compression,
+  sqlite_bytes,
+  object_bytes,
+  sha256,
+  error,
+}: {
+  host_id?: string;
+  project_id: string;
+  backup_id: string;
+  backup_time: Date | string;
+  status: "complete" | "failed";
+  storage_backend?: "r2-object-store";
+  object_key?: string | null;
+  compression?: string | null;
+  sqlite_bytes?: number | null;
+  object_bytes?: number | null;
+  sha256?: string | null;
+  error?: string | null;
+}): Promise<void> {
+  await recordProjectBackupIndexLocalInternal({
+    host_id,
+    project_id,
+    backup_id,
+    backup_time,
+    status,
+    storage_backend,
+    object_key,
+    compression,
+    sqlite_bytes,
+    object_bytes,
+    sha256,
+    error,
+  });
+}
+
+export async function getProjectBackupIndexes({
+  host_id,
+  project_id,
+}: {
+  host_id?: string;
+  project_id: string;
+}): Promise<ProjectBackupIndexRecord[]> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .getProjectBackupIndexes({ host_id, project_id });
+  }
+  return await getProjectBackupIndexesLocalInternal({ host_id, project_id });
+}
+
+export async function getProjectBackupIndexesLocal({
+  host_id,
+  project_id,
+}: {
+  host_id?: string;
+  project_id: string;
+}): Promise<ProjectBackupIndexRecord[]> {
+  return await getProjectBackupIndexesLocalInternal({ host_id, project_id });
+}
+
+export async function syncProjectBackupIndexes({
+  host_id,
+  project_id,
+  backup_ids,
+}: {
+  host_id?: string;
+  project_id: string;
+  backup_ids: string[];
+}): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .syncProjectBackupIndexes({ host_id, project_id, backup_ids });
+    return;
+  }
+  await syncProjectBackupIndexesLocalInternal({
+    host_id,
+    project_id,
+    backup_ids,
+  });
+}
+
+export async function syncProjectBackupIndexesLocal({
+  host_id,
+  project_id,
+  backup_ids,
+}: {
+  host_id?: string;
+  project_id: string;
+  backup_ids: string[];
+}): Promise<void> {
+  await syncProjectBackupIndexesLocalInternal({
+    host_id,
+    project_id,
+    backup_ids,
+  });
+}
+
+export async function deleteProjectBackupIndex({
+  host_id,
+  project_id,
+  backup_id,
+}: {
+  host_id?: string;
+  project_id: string;
+  backup_id: string;
+}): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .deleteProjectBackupIndex({ host_id, project_id, backup_id });
+    return;
+  }
+  await deleteProjectBackupIndexLocalInternal({
+    host_id,
+    project_id,
+    backup_id,
+  });
+}
+
+export async function deleteProjectBackupIndexLocal({
+  host_id,
+  project_id,
+  backup_id,
+}: {
+  host_id?: string;
+  project_id: string;
+  backup_id: string;
+}): Promise<void> {
+  await deleteProjectBackupIndexLocalInternal({
+    host_id,
+    project_id,
+    backup_id,
+  });
 }
 
 export async function touchProject({

@@ -766,6 +766,15 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 '--glob "!.snapshots" --glob "!.snapshots/**"',
                 script,
             )
+            self.assertEqual(script.count('backup_status="$?"'), 2)
+            self.assertIn(
+                'if "${rustic_cmd[@]}" backup --json --no-scan --host "$host_name" "$@" .; then',
+                script,
+            )
+            self.assertIn(
+                'if "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .; then',
+                script,
+            )
             self.assertIn("normalize-rootfs)", script)
             self.assertIn("BEES_ALREADY_RUNNING", script)
             self.assertIn("flock -n 9", script)

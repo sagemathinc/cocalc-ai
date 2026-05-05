@@ -5,6 +5,7 @@ let readFileMock: jest.Mock;
 let writeFileMock: jest.Mock;
 let createBucketMock: jest.Mock;
 let listBucketsMock: jest.Mock;
+let deleteObjectMock: jest.Mock;
 let seedBackupConfigMock: jest.Mock;
 let settings: Record<string, any> = {};
 
@@ -26,6 +27,7 @@ jest.mock("fs/promises", () => ({
 
 jest.mock("./r2", () => ({
   createBucket: (...args: any[]) => createBucketMock(...args),
+  deleteObject: (...args: any[]) => deleteObjectMock(...args),
   listBuckets: (...args: any[]) => listBucketsMock(...args),
 }));
 
@@ -33,6 +35,7 @@ const HOST_ID = "11111111-1111-1111-1111-111111111111";
 const PROJECT_ID = "22222222-2222-2222-2222-222222222222";
 const BUCKET_ID = "33333333-3333-3333-3333-333333333333";
 const REPO_ID = "44444444-4444-4444-4444-444444444444";
+const BACKUP_ID = "backup-123";
 
 function bucketRow(name = "cocalc-backups-wnam") {
   return {
@@ -61,6 +64,29 @@ function repoRow(overrides: Record<string, any> = {}) {
     created: overrides.created ?? new Date("2026-01-01T00:00:00Z"),
     updated: overrides.updated ?? new Date("2026-01-01T00:00:00Z"),
     assigned_project_count: overrides.assigned_project_count ?? 0,
+  };
+}
+
+function backupIndexRow(overrides: Record<string, any> = {}) {
+  return {
+    id: overrides.id ?? "55555555-5555-5555-5555-555555555555",
+    project_id: overrides.project_id ?? PROJECT_ID,
+    backup_id: overrides.backup_id ?? BACKUP_ID,
+    backup_time: overrides.backup_time ?? new Date("2026-01-02T00:00:00.000Z"),
+    status: overrides.status ?? "complete",
+    storage_backend: overrides.storage_backend ?? "r2-object-store",
+    bucket_id: overrides.bucket_id ?? BUCKET_ID,
+    object_key:
+      overrides.object_key ??
+      `project-backup-index/v1/${PROJECT_ID.slice(0, 2)}/${PROJECT_ID}/backup-${BACKUP_ID}.sqlite.gz`,
+    compression: overrides.compression ?? "gzip",
+    sqlite_bytes: overrides.sqlite_bytes ?? 1024,
+    object_bytes: overrides.object_bytes ?? 256,
+    sha256: overrides.sha256 ?? "a".repeat(64),
+    error: overrides.error ?? null,
+    host_id: overrides.host_id ?? HOST_ID,
+    created: overrides.created ?? new Date("2026-01-02T00:00:00.000Z"),
+    updated: overrides.updated ?? new Date("2026-01-02T00:00:00.000Z"),
   };
 }
 
@@ -100,12 +126,14 @@ describe("project-backup", () => {
       name: "cocalc-backups-wnam",
       location: "wnam",
     }));
+    deleteObjectMock = jest.fn(async () => undefined);
     listBucketsMock = jest.fn(async () => ["cocalc-backups-wnam"]);
     readFileMock = jest.fn(async () => masterKeyBase64);
     writeFileMock = jest.fn(async () => undefined);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS project_backup_repos") ||
+        sql.includes("CREATE TABLE IF NOT EXISTS project_backup_indexes") ||
         sql.includes(
           "ALTER TABLE projects ADD COLUMN IF NOT EXISTS backup_repo_id",
         ) ||
@@ -113,7 +141,13 @@ describe("project-backup", () => {
         sql.includes(
           "CREATE UNIQUE INDEX IF NOT EXISTS project_backup_repos_",
         ) ||
-        sql.includes("CREATE INDEX IF NOT EXISTS projects_backup_repo_id_idx")
+        sql.includes(
+          "CREATE INDEX IF NOT EXISTS projects_backup_repo_id_idx",
+        ) ||
+        sql.includes("CREATE INDEX IF NOT EXISTS project_backup_indexes_") ||
+        sql.includes(
+          "CREATE UNIQUE INDEX IF NOT EXISTS project_backup_indexes_",
+        )
       ) {
         return { rows: [] };
       }
@@ -158,7 +192,10 @@ describe("project-backup", () => {
       if (sql.includes("project_copies")) {
         return { rows: [] };
       }
-      if (sql.includes("FROM project_backup_repos WHERE id=$1")) {
+      if (
+        sql.includes("FROM project_backup_repos") &&
+        sql.includes("WHERE id=$1")
+      ) {
         return settings.backup_repo_id ? { rows: [repoRow()] } : { rows: [] };
       }
       if (sql.includes("FROM project_backup_repos r")) {
@@ -185,6 +222,68 @@ describe("project-backup", () => {
       }
       if (sql.startsWith("UPDATE projects SET last_backup")) {
         return { rows: [] };
+      }
+      if (sql.startsWith("INSERT INTO project_backup_indexes")) {
+        settings.project_backup_indexes_rows = [
+          backupIndexRow({
+            backup_id: params?.[1],
+            backup_time: params?.[2],
+            status: params?.[3],
+            storage_backend: params?.[4],
+            bucket_id: params?.[5],
+            object_key: params?.[6],
+            compression: params?.[7],
+            sqlite_bytes: params?.[8],
+            object_bytes: params?.[9],
+            sha256: params?.[10],
+            error: params?.[11],
+            host_id: params?.[12],
+          }),
+        ];
+        return { rows: [] };
+      }
+      if (
+        sql.includes("DELETE FROM project_backup_indexes WHERE project_id=$1")
+      ) {
+        const rows = settings.project_backup_indexes_rows ?? [];
+        if (sql.includes("backup_id=$2")) {
+          settings.project_backup_indexes_rows = rows.filter(
+            (row: any) =>
+              !(
+                row.project_id === params?.[0] && row.backup_id === params?.[1]
+              ),
+          );
+        } else if (sql.includes("NOT (backup_id = ANY")) {
+          const keep = new Set(params?.[1] ?? []);
+          settings.project_backup_indexes_rows = rows.filter(
+            (row: any) =>
+              row.project_id !== params?.[0] || keep.has(row.backup_id),
+          );
+        } else {
+          settings.project_backup_indexes_rows = rows.filter(
+            (row: any) => row.project_id !== params?.[0],
+          );
+        }
+        return { rows: [] };
+      }
+      if (
+        sql.includes("FROM project_backup_indexes") &&
+        sql.includes("WHERE project_id=$1 AND backup_id=$2")
+      ) {
+        const rows = (settings.project_backup_indexes_rows ?? []).filter(
+          (row: any) =>
+            row.project_id === params?.[0] && row.backup_id === params?.[1],
+        );
+        return { rows };
+      }
+      if (
+        sql.includes("FROM project_backup_indexes") &&
+        sql.includes("WHERE project_id=$1")
+      ) {
+        const rows = (settings.project_backup_indexes_rows ?? []).filter(
+          (row: any) => row.project_id === params?.[0],
+        );
+        return { rows };
       }
       if (sql.startsWith("INSERT INTO buckets")) {
         return { rows: [] };
@@ -223,6 +322,12 @@ describe("project-backup", () => {
     expect(result.toml).toContain('password = "repo-secret"');
     expect(result.toml).toContain('bucket = "cocalc-backups-wnam"');
     expect(result.toml).toContain('root = "rustic/shared-wnam-0001"');
+    expect(result.index_store).toMatchObject({
+      kind: "r2-object-store",
+      bucket: "cocalc-backups-wnam",
+      key_prefix: "project-backup-index/v1",
+      compression: "gzip",
+    });
     expect(
       queryMock.mock.calls.some(
         ([sql]) =>
@@ -282,7 +387,11 @@ describe("project-backup", () => {
       host_region: "us-west1",
       host_machine: { cloud: "gcp" } as any,
     });
-    expect(result).toEqual({ toml: "seed-toml", ttl_seconds: 123 });
+    expect(result).toEqual({
+      toml: "seed-toml",
+      ttl_seconds: 123,
+      index_store: undefined,
+    });
     expect(seedBackupConfigMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
       project_region: "wnam",
@@ -319,6 +428,10 @@ describe("project-backup", () => {
     expect(result.toml).toContain('password = "repo-secret"');
     expect(result.toml).toContain('bucket = "cocalc-backups-wnam"');
     expect(result.ttl_seconds).toBeGreaterThan(0);
+    expect(result.index_store).toMatchObject({
+      kind: "r2-object-store",
+      bucket: "cocalc-backups-wnam",
+    });
   });
 
   it("ensures a region bucket exists for first use", async () => {
@@ -443,5 +556,68 @@ describe("project-backup", () => {
     ).resolves.toMatchObject({
       ttl_seconds: expect.any(Number),
     });
+  });
+
+  it("records and lists direct backup index manifests", async () => {
+    settings = {
+      project_host_id: HOST_ID,
+      project_region: "wnam",
+      backup_repo_id: REPO_ID,
+    };
+    const { recordProjectBackupIndex, getProjectBackupIndexes } =
+      await import("./index");
+    await recordProjectBackupIndex({
+      host_id: HOST_ID,
+      project_id: PROJECT_ID,
+      backup_id: BACKUP_ID,
+      backup_time: "2026-01-02T00:00:00.000Z",
+      status: "complete",
+      object_key:
+        "project-backup-index/v1/22/22222222-2222-2222-2222-222222222222/backup-backup-123.sqlite.gz",
+      compression: "gzip",
+      sqlite_bytes: 2048,
+      object_bytes: 512,
+      sha256: "b".repeat(64),
+    });
+    await expect(
+      getProjectBackupIndexes({
+        host_id: HOST_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        backup_id: BACKUP_ID,
+        status: "complete",
+        storage_backend: "r2-object-store",
+        compression: "gzip",
+      }),
+    ]);
+  });
+
+  it("syncs and deletes backup index manifests", async () => {
+    settings = {
+      project_host_id: HOST_ID,
+      project_region: "wnam",
+      backup_repo_id: REPO_ID,
+      project_backup_indexes_rows: [
+        backupIndexRow({ backup_id: "backup-a" }),
+        backupIndexRow({ backup_id: "backup-b" }),
+      ],
+    };
+    const { syncProjectBackupIndexes, deleteProjectBackupIndex } =
+      await import("./index");
+    await syncProjectBackupIndexes({
+      host_id: HOST_ID,
+      project_id: PROJECT_ID,
+      backup_ids: ["backup-b"],
+    });
+    expect(settings.project_backup_indexes_rows).toHaveLength(1);
+    expect(settings.project_backup_indexes_rows[0].backup_id).toBe("backup-b");
+    await deleteProjectBackupIndex({
+      host_id: HOST_ID,
+      project_id: PROJECT_ID,
+      backup_id: "backup-b",
+    });
+    expect(settings.project_backup_indexes_rows).toHaveLength(0);
   });
 });

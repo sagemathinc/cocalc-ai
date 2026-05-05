@@ -513,6 +513,7 @@ export async function startProjectOnHost(
   opts?: {
     lro_op_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
+    restore_backup_id?: string;
   },
 ): Promise<void> {
   const existing = startProjectInFlight.get(project_id);
@@ -557,6 +558,7 @@ export async function startProjectOnHost(
     }
 
     const placement = await ensurePlacement(project_id);
+    const explicitRestoreBackupId = `${opts?.restore_backup_id ?? ""}`.trim();
     const client = await getRoutedHostControlClient({
       host_id: placement.host_id,
       timeout: START_PROJECT_TIMEOUT_MS,
@@ -564,7 +566,21 @@ export async function startProjectOnHost(
     try {
       if (typeof client.getProjectStatus === "function") {
         const live = await client.getProjectStatus({ project_id });
-        if (live?.state === "running" || live?.state === "starting") {
+        if (
+          explicitRestoreBackupId &&
+          (live?.state === "running" || live?.state === "starting")
+        ) {
+          log.warn(
+            "startProjectOnHost ignoring active destination state because an explicit restore backup was requested",
+            {
+              project_id,
+              host_id: placement.host_id,
+              snapshot_state: snapshot.state,
+              live_state: live.state,
+              restore_backup_id: explicitRestoreBackupId,
+            },
+          );
+        } else if (live?.state === "running" || live?.state === "starting") {
           log.warn(
             "startProjectOnHost found project already active on assigned host; skipping restart",
             {
@@ -607,6 +623,7 @@ export async function startProjectOnHost(
         run_quota,
         image: meta.image,
         restore,
+        restore_backup_id: explicitRestoreBackupId || undefined,
         lro_op_id: opts?.lro_op_id,
         ...(opts?.managed_egress_override
           ? { managed_egress_override: opts.managed_egress_override }
@@ -633,6 +650,7 @@ export async function startProjectOnHost(
           run_quota,
           image: meta.image,
           restore,
+          restore_backup_id: explicitRestoreBackupId || undefined,
           lro_op_id: opts?.lro_op_id,
           ...(opts?.managed_egress_override
             ? { managed_egress_override: opts.managed_egress_override }
