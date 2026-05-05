@@ -968,6 +968,27 @@ function isEditableEventTarget(target: EventTarget | null): boolean {
   );
 }
 
+export function shouldCaptureGitDrawerFindShortcut({
+  key,
+  altKey,
+  ctrlKey,
+  metaKey,
+  target,
+  activeElement,
+}: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "target"> & {
+  activeElement?: EventTarget | null;
+}): boolean {
+  if (!(metaKey || ctrlKey) || altKey) return false;
+  if (`${key ?? ""}`.toLowerCase() !== "f") return false;
+  if (
+    isEditableEventTarget(target ?? null) ||
+    isEditableEventTarget(activeElement ?? null)
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function isNotGitRepoError(message: string): boolean {
   const text = `${message ?? ""}`.toLowerCase();
   return (
@@ -3414,7 +3435,16 @@ export function GitCommitDrawer({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (evt: KeyboardEvent) => {
-      if ((evt.metaKey || evt.ctrlKey) && !evt.altKey && evt.key === "f") {
+      if (
+        shouldCaptureGitDrawerFindShortcut({
+          key: evt.key,
+          altKey: evt.altKey,
+          ctrlKey: evt.ctrlKey,
+          metaKey: evt.metaKey,
+          target: evt.target,
+          activeElement: document.activeElement,
+        })
+      ) {
         evt.preventDefault();
         diffFindInputRef.current?.focus?.();
         return;

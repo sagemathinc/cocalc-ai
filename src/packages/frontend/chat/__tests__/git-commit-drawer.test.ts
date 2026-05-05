@@ -19,6 +19,7 @@ import {
   resolveGitCommitSearchChange,
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
+  shouldCaptureGitDrawerFindShortcut,
 } from "../git-commit-drawer";
 import { act, fireEvent, render } from "@testing-library/react";
 
@@ -510,6 +511,45 @@ describe("git commit drawer merge commit formatting", () => {
         metaKey: false,
       } as KeyboardEvent),
     ).toBeUndefined();
+  });
+
+  it("does not hijack ctrl/cmd-f from editable targets", () => {
+    const input = document.createElement("input");
+    const editor = document.createElement("div");
+    editor.setAttribute("contenteditable", "true");
+
+    expect(
+      shouldCaptureGitDrawerFindShortcut({
+        key: "f",
+        altKey: false,
+        ctrlKey: true,
+        metaKey: false,
+        target: input,
+        activeElement: input,
+      } as any),
+    ).toBe(false);
+
+    expect(
+      shouldCaptureGitDrawerFindShortcut({
+        key: "F",
+        altKey: false,
+        ctrlKey: false,
+        metaKey: true,
+        target: editor,
+        activeElement: editor,
+      } as any),
+    ).toBe(false);
+
+    expect(
+      shouldCaptureGitDrawerFindShortcut({
+        key: "f",
+        altKey: false,
+        ctrlKey: true,
+        metaKey: false,
+        target: document.createElement("div"),
+        activeElement: document.body,
+      } as any),
+    ).toBe(true);
   });
 
   it("scrolls the git review drawer by line, page, and top commands", () => {
