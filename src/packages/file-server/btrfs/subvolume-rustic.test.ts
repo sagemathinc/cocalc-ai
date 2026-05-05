@@ -215,4 +215,25 @@ describe("SubvolumeRustic.backup", () => {
       verbose: false,
     });
   });
+
+  it("passes an explicit parent snapshot to rustic backup", async () => {
+    const rustic = new SubvolumeRustic({
+      name: "project-1",
+      path: "/mnt/test/project-1",
+      filesystem: {
+        opts: { mount: "/mnt/test" },
+      },
+      fs: {
+        rusticRepo: "/repo",
+        rustic: jest.fn(),
+      },
+    } as any);
+
+    await rustic.backup({ parent: "snap-parent" });
+
+    expect(backupFsRusticMock).toHaveBeenCalledWith(
+      expect.arrayContaining(["--parent", "snap-parent"]),
+      expect.any(Object),
+    );
+  });
 });

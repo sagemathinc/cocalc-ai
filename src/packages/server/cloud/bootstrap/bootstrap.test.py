@@ -772,9 +772,12 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 script,
             )
             self.assertIn(
-                'if "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .; then',
+                'if "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" "${parent_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .; then',
                 script,
             )
+            self.assertIn("parent_args=()", script)
+            self.assertIn("--parent)", script)
+            self.assertIn('"${parent_args[@]}"', script)
             self.assertIn("normalize-rootfs)", script)
             self.assertIn("BEES_ALREADY_RUNNING", script)
             self.assertIn("flock -n 9", script)

@@ -37,6 +37,7 @@ describe("project rustic wrapper", () => {
       host: "project-1",
       timeoutMs: 90_000,
       tags: ["xattr", "rootfs"],
+      parent: "snap-parent",
     });
 
     expect(result.id).toBe("backup-id");
@@ -56,6 +57,8 @@ describe("project rustic wrapper", () => {
           "xattr",
           "--tag",
           "rootfs",
+          "--parent",
+          "snap-parent",
         ],
         timeout: 90,
       }),

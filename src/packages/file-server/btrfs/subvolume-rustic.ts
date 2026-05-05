@@ -131,6 +131,7 @@ export type RusticBackupRunner = (opts: {
   host: string;
   timeout: number;
   tags?: string[];
+  parent?: string;
   progress?: (update: RusticProgressUpdate) => void;
 }) => Promise<{
   time: string | Date;
@@ -200,6 +201,7 @@ export class SubvolumeRustic {
     limit,
     timeout = 30 * 60 * 1000,
     tags,
+    parent,
     progress,
     index,
     runner,
@@ -207,6 +209,7 @@ export class SubvolumeRustic {
     timeout?: number;
     limit?: number;
     tags?: string[];
+    parent?: string;
     progress?: (update: RusticProgressUpdate) => void;
     index?: {
       project_id: string;
@@ -225,6 +228,7 @@ export class SubvolumeRustic {
       .map((tag) => tag.trim())
       .filter((tag) => tag.length > 0)
       .flatMap((tag) => ["--tag", tag]);
+    const parentArgs = parent ? ["--parent", parent] : [];
     const excludeArgs = BACKUP_EXCLUDE_GLOBS.flatMap((glob) => [
       "--glob",
       glob,
@@ -245,12 +249,21 @@ export class SubvolumeRustic {
             host: this.subvolume.name,
             timeout,
             tags,
+            parent,
             progress,
           })
         : JSON.parse(
             parseOutput(
               await backupFs.rustic(
-                ["backup", "-x", "--json", ...tagArgs, ...excludeArgs, "."],
+                [
+                  "backup",
+                  "-x",
+                  "--json",
+                  ...tagArgs,
+                  ...parentArgs,
+                  ...excludeArgs,
+                  ".",
+                ],
                 {
                   timeout,
                   cwd: ".",
