@@ -316,7 +316,7 @@ describe("moveProjectToHost", () => {
 
     expect(waitForLroCompletionMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        timeout_ms: 5 * 60 * 1000,
+        timeout_ms: 2 * 60 * 60 * 1000,
       }),
     );
     expect(savePlacementMock).toHaveBeenCalledTimes(1);

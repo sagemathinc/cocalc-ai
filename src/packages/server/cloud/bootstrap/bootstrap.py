@@ -60,6 +60,9 @@ APT_RETRIES = 5
 APT_ACQUIRE_TIMEOUT_S = 60
 APT_UPDATE_TIMEOUT_S = 180
 APT_INSTALL_TIMEOUT_S = 600
+GCE_UBUNTU_MIRROR_RE = re.compile(
+    r"https?://[A-Za-z0-9.-]*gce(?:\.clouds)?\.archive\.ubuntu\.com/ubuntu/?"
+)
 HOST_OWNED_DATA_TREE_DIRS = (
     "secrets",
     "sync",
@@ -913,7 +916,48 @@ def apt_run(cfg: BootstrapConfig, args: list[str], desc: str, retries: int, time
             time.sleep(5 if desc == "apt-get update" else 10)
 
 
+def reconcile_gce_ubuntu_apt_sources(
+    cfg: BootstrapConfig, paths: list[Path] | None = None
+) -> None:
+    source_paths = paths or [
+        Path("/etc/apt/sources.list.d/ubuntu.sources"),
+        Path("/etc/apt/sources.list"),
+    ]
+    mirror: str | None = None
+    existing: list[tuple[Path, str]] = []
+    for path in source_paths:
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception as exc:
+            log_line(cfg, f"bootstrap: unable to read apt sources from {path}: {exc}")
+            continue
+        existing.append((path, text))
+        if mirror is None:
+            match = GCE_UBUNTU_MIRROR_RE.search(text)
+            if match:
+                mirror = match.group(0).rstrip("/")
+    if mirror is None:
+        return
+    for path, text in existing:
+        updated = (
+            text.replace("https://security.ubuntu.com/ubuntu/", f"{mirror}/")
+            .replace("http://security.ubuntu.com/ubuntu/", f"{mirror}/")
+            .replace("https://security.ubuntu.com/ubuntu", mirror)
+            .replace("http://security.ubuntu.com/ubuntu", mirror)
+        )
+        if updated == text:
+            continue
+        path.write_text(updated, encoding="utf-8")
+        log_line(
+            cfg,
+            f"bootstrap: rewrote Ubuntu security mirror in {path} to {mirror}",
+        )
+
+
 def apt_update_install(cfg: BootstrapConfig) -> None:
+    reconcile_gce_ubuntu_apt_sources(cfg)
     log_line(cfg, "bootstrap: updating apt package lists")
     apt_opts = [
         "-y",

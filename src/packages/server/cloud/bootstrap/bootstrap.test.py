@@ -1531,6 +1531,60 @@ class GpuBootstrapTest(unittest.TestCase):
 
 
 class AptBootstrapTest(unittest.TestCase):
+    def test_reconcile_gce_ubuntu_apt_sources_rewrites_security_to_gce_mirror(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = make_cfg(tmpdir)
+            sources = Path(tmpdir) / "ubuntu.sources"
+            sources.write_text(
+                """Types: deb
+URIs: http://us-south1-c.gce.clouds.archive.ubuntu.com/ubuntu/
+Suites: noble noble-updates noble-backports
+Components: main universe restricted multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: http://security.ubuntu.com/ubuntu
+Suites: noble-security
+Components: main universe restricted multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+""",
+                encoding="utf-8",
+            )
+
+            bootstrap.reconcile_gce_ubuntu_apt_sources(cfg, [sources])
+
+            self.assertIn(
+                "URIs: http://us-south1-c.gce.clouds.archive.ubuntu.com/ubuntu",
+                sources.read_text(encoding="utf-8"),
+            )
+            self.assertNotIn(
+                "security.ubuntu.com/ubuntu",
+                sources.read_text(encoding="utf-8"),
+            )
+
+    def test_apt_update_install_reconciles_gce_ubuntu_sources_before_update(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = replace(make_cfg(tmpdir), apt_packages=["curl", "git"])
+            recorded = []
+
+            original_apt_run = bootstrap.apt_run
+            original_reconcile = bootstrap.reconcile_gce_ubuntu_apt_sources
+            try:
+                bootstrap.reconcile_gce_ubuntu_apt_sources = (
+                    lambda _cfg: recorded.append(("reconcile",))
+                )
+                bootstrap.apt_run = (
+                    lambda _cfg, args, desc, retries, timeout: recorded.append(
+                        (args, desc, retries, timeout)
+                    )
+                )
+                bootstrap.apt_update_install(cfg)
+            finally:
+                bootstrap.apt_run = original_apt_run
+                bootstrap.reconcile_gce_ubuntu_apt_sources = original_reconcile
+
+            self.assertEqual(recorded[0], ("reconcile",))
+
     def test_apt_update_install_uses_more_tolerant_network_timeouts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = replace(make_cfg(tmpdir), apt_packages=["curl", "git"])

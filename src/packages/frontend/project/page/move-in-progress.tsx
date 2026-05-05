@@ -11,6 +11,7 @@ import { useMemo, useState } from "react";
 import { redux } from "@cocalc/frontend/app-framework";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import {
+  LRO_DISMISSABLE_STATUSES,
   LRO_TERMINAL_STATUSES,
   progressBarStatus,
 } from "@cocalc/frontend/lro/utils";
@@ -203,6 +204,8 @@ export default function MoveInProgress({
 
   const status = moveLro.summary?.status;
   const canCancel = status != null && !LRO_TERMINAL_STATUSES.has(status);
+  const canDismiss =
+    status != null && LRO_DISMISSABLE_STATUSES.has(status as any);
   const phaseText = currentPhaseText(moveLro);
   const percent = progressPercent(moveLro);
   const phaseIdx = phaseIndex(moveLro);
@@ -513,6 +516,14 @@ export default function MoveInProgress({
                   <Icon name="times-circle" /> Cancel move
                 </Button>
               </Popconfirm>
+            ) : null}
+            {canDismiss ? (
+              <Button
+                size="large"
+                onClick={() => actions?.dismissMoveLro(moveLro.op_id)}
+              >
+                Dismiss
+              </Button>
             ) : null}
           </Space>
         </Space>

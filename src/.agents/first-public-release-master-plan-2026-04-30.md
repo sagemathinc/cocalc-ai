@@ -680,15 +680,19 @@ If we want the shortest path to release from today, do these next:
   - stale host state/operator-trust issues
   - runtime cleanup / leaked-state recovery after failed high-density runs
   - project-move frontend confusion during the post-move settle window
+- [ ] snapshots
+  - [ ] get ordinary flows off full snapshot listing entirely
+  - [ ] finish sharding implementation
+- [ ] creating a custom image on the todo list, since that'll make bootstrap much faster and more robust for GCP hosts. 
 - [ ] finish central admin override controls
 - [ ] implement student pay
 - [ ] implement minimal site/domain license
 - [ ] finish packaging/deploy/rollback path
 - [ ] validate one supported rented dedicated-host path end to end, including
-      billing/access-control polish rather than only host lifecycle
+  billing/access-control polish rather than only host lifecycle
 - [ ] run a real 3-bay soak and fix what it finds
 - [ ] turn the current benchmark evidence into a conservative sizing note and a
-      cleanup / runtime-repair playbook
+  cleanup / runtime-repair playbook
 
 That is the highest-value path to a real first public release without
 expanding scope.
