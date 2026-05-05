@@ -45,6 +45,7 @@ import { runtimeDeploymentsForAlignedProjectHostVersion } from "./hosts-runtime-
 const ROLLOUT_DIAGNOSTIC_LINES = 25;
 const PROJECT_HOST_ROLLOUT_SETTLE_TIMEOUT_MS = 150_000;
 const PROJECT_HOST_ROLLOUT_POLL_MS = 5_000;
+const PROJECT_HOST_ROLLOUT_MIN_OBSERVATION_MS = 30_000;
 
 const RUNTIME_LOG_SOURCE_BY_COMPONENT: Partial<
   Record<
@@ -548,6 +549,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   loadEffectiveRuntimeDeployments,
   projectHostRolloutSettleTimeoutMs = PROJECT_HOST_ROLLOUT_SETTLE_TIMEOUT_MS,
   projectHostRolloutPollMs = PROJECT_HOST_ROLLOUT_POLL_MS,
+  projectHostRolloutMinObservationMs = PROJECT_HOST_ROLLOUT_MIN_OBSERVATION_MS,
 }: {
   account_id?: string;
   id: string;
@@ -615,6 +617,7 @@ export async function rolloutHostManagedComponentsInternalHelper({
   >;
   projectHostRolloutSettleTimeoutMs?: number;
   projectHostRolloutPollMs?: number;
+  projectHostRolloutMinObservationMs?: number;
 }): Promise<HostManagedComponentRolloutResponse> {
   const row = await loadHostForStartStop(id, account_id);
   assertHostRunningForUpgrade(row);
@@ -702,7 +705,9 @@ export async function rolloutHostManagedComponentsInternalHelper({
       observedProjectHostVersion !== desiredVersion &&
       Date.now() - settleStartedAt < projectHostRolloutSettleTimeoutMs
     ) {
+      const settleElapsedMs = Date.now() - settleStartedAt;
       if (
+        settleElapsedMs >= projectHostRolloutMinObservationMs &&
         !pendingProjectHostRollout &&
         observedProjectHostVersion &&
         observedProjectHostVersion !== desiredVersion &&
