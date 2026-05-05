@@ -49,7 +49,13 @@ import { getLro } from "@cocalc/server/lro/lro-db";
 const log = getLogger("server:projects:move");
 const BACKUP_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const MOVE_STOP_PROJECT_TIMEOUT_MS = 3 * 60 * 1000;
-const MOVE_START_DEST_TIMEOUT_MS = 5 * 60 * 1000;
+// Destination start can include backup restore, rootfs preparation, and
+// cross-region downloads, so it needs a much longer budget than a simple
+// steady-state process start.
+const MOVE_START_DEST_TIMEOUT_MS = Math.max(
+  1,
+  Number(process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS) || 2 * 60 * 60 * 1000,
+);
 const TRANSIENT_MOVE_RPC_RETRY_DELAY_MS = 1000;
 const MOVE_SENTINEL_DIR = ".local/share/cocalc";
 const MOVE_SENTINEL_PATH = `${MOVE_SENTINEL_DIR}/move-sentinel.json`;

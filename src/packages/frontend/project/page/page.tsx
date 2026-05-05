@@ -75,6 +75,7 @@ import {
   PROJECT_PAGE_ATTRIBUTE,
   handleProjectNavigationKeydown,
 } from "./keyboard-navigation";
+import { shouldRenderMoveStatus } from "./move-status";
 
 const START_BANNER = false;
 
@@ -125,11 +126,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   const moveLro = useTypedRedux({ project_id }, "move_lro")?.toJS() as
     | MoveLroState
     | undefined;
-  const moveInProgress =
-    moveLro != null &&
-    (!moveLro.summary ||
-      moveLro.summary.status === "queued" ||
-      moveLro.summary.status === "running");
+  const moveStatusVisible = shouldRenderMoveStatus(moveLro);
   const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
   const lifecycle = useMemo(
     () =>
@@ -142,7 +139,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     [hostInfo, host_id, project],
   );
   const archivedLike = lifecycle.isArchivedLike;
-  const workspaceBlocked = moveInProgress;
+  const workspaceBlocked = moveStatusVisible;
   const hostUnavailableReason =
     hostOperational.reason ?? "Assigned host is unavailable.";
   const assignedHostLabel = hostLabel(hostInfo, host_id);
@@ -605,7 +602,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   }
 
   function renderMainContent() {
-    if (moveInProgress && moveLro) {
+    if (moveStatusVisible && moveLro) {
       return <MoveInProgress project_id={project_id} moveLro={moveLro} />;
     }
 
