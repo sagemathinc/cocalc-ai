@@ -74,6 +74,10 @@ function parseDate(value: unknown): Date | null {
   return date;
 }
 
+function eventTimestampMs(value: unknown): number {
+  return parseDate(value)?.getTime() ?? Date.now();
+}
+
 function sortKeyForAccount(
   payload: ProjectOutboxPayload,
   account_id: string,
@@ -133,8 +137,10 @@ export async function computeAccountProjectFeedEvents(opts: {
   bay_id: string;
   payload: ProjectOutboxPayload;
   previous_local_account_ids?: string[];
+  event_ts?: string | Date | number | null;
 }): Promise<AccountFeedEvent[]> {
   const { db, bay_id, payload } = opts;
+  const ts = eventTimestampMs(opts.event_ts);
   const previousLocalAccountIds =
     opts.previous_local_account_ids ??
     Array.from((await existingLastOpenedAt(db, payload.project_id)).keys());
@@ -153,7 +159,7 @@ export async function computeAccountProjectFeedEvents(opts: {
   for (const account_id of removedAccountIds) {
     feed_events.push({
       type: "project.remove",
-      ts: Date.now(),
+      ts,
       account_id,
       project_id: payload.project_id,
       reason: "membership_removed",
@@ -162,7 +168,7 @@ export async function computeAccountProjectFeedEvents(opts: {
   for (const account_id of currentLocalAccountIds) {
     feed_events.push({
       type: "project.upsert",
-      ts: Date.now(),
+      ts,
       account_id,
       project: projectRowForFeed({ payload, account_id }),
     });
@@ -217,6 +223,7 @@ async function applyProjectEventToAccountProjectIndex(opts: {
     bay_id,
     payload,
     previous_local_account_ids: Array.from(lastOpenedByAccount.keys()),
+    event_ts: event.created_at,
   });
   const currentLocalAccountIds = feed_events
     .filter(

@@ -51,6 +51,10 @@ function parseDate(value: unknown): Date | null {
   return Number.isFinite(date.getTime()) ? date : null;
 }
 
+function eventTimestampMs(value: unknown): number {
+  return parseDate(value)?.getTime() ?? Date.now();
+}
+
 function visibleAccountIdsFromUsers(
   users_summary: Record<string, any>,
 ): string[] {
@@ -225,6 +229,7 @@ async function forwardRemoteProjectFeedEventsBestEffort(opts: {
   bay_id: string;
   payload: ProjectOutboxPayload;
   previousVisibleAccountIds: string[];
+  event_ts?: string | Date | number | null;
 }): Promise<void> {
   if (!isMultiBayCluster()) {
     return;
@@ -245,7 +250,7 @@ async function forwardRemoteProjectFeedEventsBestEffort(opts: {
   const currentVisibleSet = new Set(currentVisible);
   const fabric = getInterBayFabricClient();
   const remoteClients = new Map<string, InterBayAccountProjectFeedApi>();
-  const ts = Date.now();
+  const ts = eventTimestampMs(opts.event_ts);
   for (const account_id of impacted) {
     const dest_bay = byAccountId.get(account_id);
     if (!dest_bay || dest_bay === opts.bay_id) {
@@ -305,8 +310,9 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
   let collaboratorFeedEvents: AccountFeedEvent[] = [];
   let payload: ProjectOutboxPayload | undefined;
   let previousVisibleAccountIds: string[] = [];
+  let latestEvent: ProjectOutboxEventRow | null = null;
   try {
-    const latestEvent = await loadLatestProjectOutboxEvent({
+    latestEvent = await loadLatestProjectOutboxEvent({
       db: client,
       project_id: opts.project_id,
     });
@@ -321,6 +327,7 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
       db: client,
       bay_id,
       payload,
+      event_ts: latestEvent?.created_at,
     });
     previousVisibleAccountIds =
       latestEvent == null
@@ -358,6 +365,7 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
       bay_id,
       payload,
       previousVisibleAccountIds,
+      event_ts: latestEvent?.created_at,
     });
   }
   for (const event of collaboratorFeedEvents) {
