@@ -75,6 +75,12 @@ import {
   parseGitStatusOutput,
 } from "./git-commit/git-output";
 import {
+  filterGitReviewLogEntries,
+  isHeadCommit,
+  parseCommitHash,
+  resolveGitCommitSearchChange,
+} from "./git-commit/commit-selection";
+import {
   buildGitDiffFindMatches,
   getGitDiffFindVisibleLineLimitUpdate,
   getNextRenderedDiffLineLimit,
@@ -121,10 +127,10 @@ export {
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
 };
+export { filterGitReviewLogEntries, resolveGitCommitSearchChange };
 export { resolveGitReviewSaveCompletion, resolveGitReviewSaveState };
 
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
-const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
 const HEAD_REF = "HEAD";
 const DEFAULT_CONTEXT_LINES = 3;
 const GIT_LOG_WINDOW_SIZE = 250;
@@ -158,43 +164,6 @@ export function getCommitReviewIndicatorState(
   };
 }
 
-export function filterGitReviewLogEntries({
-  entries,
-  reviewedByCommit,
-  onlyUnreviewed,
-}: {
-  entries: GitLogEntry[];
-  reviewedByCommit: Record<string, boolean>;
-  onlyUnreviewed: boolean;
-}): GitLogEntry[] {
-  if (!onlyUnreviewed) return entries;
-  return entries.filter((entry) => reviewedByCommit[entry.hash] !== true);
-}
-
-export function resolveGitCommitSearchChange({
-  currentSearch,
-  nextSearch,
-  preserveSearchOnAutoClear,
-}: {
-  currentSearch: string;
-  nextSearch: string;
-  preserveSearchOnAutoClear: boolean;
-}): {
-  search: string;
-  preserveSearchOnAutoClear: boolean;
-} {
-  if (preserveSearchOnAutoClear && nextSearch === "") {
-    return {
-      search: currentSearch,
-      preserveSearchOnAutoClear: false,
-    };
-  }
-  return {
-    search: nextSearch,
-    preserveSearchOnAutoClear: false,
-  };
-}
-
 interface GitCommitDrawerProps {
   projectId?: string;
   sourcePath?: string;
@@ -210,18 +179,6 @@ interface GitCommitDrawerProps {
   }) => void | Promise<void>;
   onFindInChat?: (query: string) => void | Promise<void>;
   onOpenActivityLog?: () => void;
-}
-
-function parseCommitHash(commitHash?: string): string | undefined {
-  const trimmed = `${commitHash ?? ""}`.trim();
-  if (!trimmed) return undefined;
-  if (trimmed.toUpperCase() === HEAD_REF) return HEAD_REF;
-  if (!COMMIT_HASH_RE.test(trimmed)) return undefined;
-  return trimmed.toLowerCase();
-}
-
-function isHeadCommit(commit?: string): boolean {
-  return `${commit ?? ""}`.toUpperCase() === HEAD_REF;
 }
 
 async function runGitCommand({
@@ -2165,7 +2122,9 @@ export function GitCommitDrawer({
       new Set(
         [...visibleLogEntries.map((entry) => entry.hash), commit].filter(
           (hash): hash is string =>
-            Boolean(hash) && COMMIT_HASH_RE.test(`${hash ?? ""}`),
+            Boolean(hash) &&
+            parseCommitHash(hash) != null &&
+            !isHeadCommit(hash),
         ),
       ),
     );
