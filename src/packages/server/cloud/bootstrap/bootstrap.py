@@ -41,7 +41,7 @@ from typing import Any
 
 STATE_SCHEMA_VERSION = 1
 HELPER_SCHEMA_VERSION = "20260330-v1"
-RUNTIME_WRAPPER_VERSION = "20260505-v8"
+RUNTIME_WRAPPER_VERSION = "20260505-v9"
 BOOTSTRAP_LOG_MAX_BYTES = 4 * 1024 * 1024
 BUNDLE_RETENTION_COUNT = 3
 ROOTLESS_SUBID_MIN_TOTAL = 4 * 1024 * 1024
@@ -2301,7 +2301,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     ;;
   project-rustic-backup)
     if [ "$#" -lt 3 ]; then
-      echo "usage: cocalc-runtime-storage project-rustic-backup <src> <repo-profile> <host> [--tag <tag>]..." >&2
+      echo "usage: cocalc-runtime-storage project-rustic-backup <src> <repo-profile> <host> [--tag <tag>] [--parent <snapshot>]..." >&2
       exit 2
     fi
     src="$1"
@@ -2315,6 +2315,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
         ;;
     esac
     tag_args=()
+    parent_args=()
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --tag)
@@ -2322,6 +2323,18 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
             deny "project-rustic-backup-bad-args" "missing-tag-value"
           fi
           tag_args+=("$1" "$2")
+          shift 2
+          ;;
+        --parent)
+          if [ "$#" -lt 2 ]; then
+            deny "project-rustic-backup-bad-args" "missing-parent-value"
+          fi
+          case "$2" in
+            -*)
+              deny "project-rustic-backup-bad-parent" "$2"
+              ;;
+          esac
+          parent_args+=("$1" "$2")
           shift 2
           ;;
         *)
@@ -2334,7 +2347,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
     fi
     rustic_cmd=(/opt/cocalc/tools/current/rustic -P "$repo_profile")
     cd "$src"
-    if "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .; then
+    if "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" "${parent_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .; then
       exit 0
     fi
     backup_status="$?"
@@ -2346,7 +2359,7 @@ EOF_COCALC_FIX_SETID_RUNTIME_HELPERS
         exit "$backup_status"
       fi
     fi
-    exec "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .
+    exec "${rustic_cmd[@]}" backup -x --json --no-scan --host "$host_name" "${tag_args[@]}" "${parent_args[@]}" --glob "!.snapshots" --glob "!.snapshots/**" .
     ;;
   project-rustic-restore)
     if [ "$#" -ne 3 ]; then

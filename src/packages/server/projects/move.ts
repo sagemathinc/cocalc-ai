@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { posix as pathPosix } from "node:path";
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
@@ -57,8 +58,7 @@ const MOVE_START_DEST_TIMEOUT_MS = Math.max(
   Number(process.env.COCALC_MOVE_START_DEST_TIMEOUT_MS) || 2 * 60 * 60 * 1000,
 );
 const TRANSIENT_MOVE_RPC_RETRY_DELAY_MS = 1000;
-const MOVE_SENTINEL_DIR = ".local/share/cocalc";
-const MOVE_SENTINEL_PATH = `${MOVE_SENTINEL_DIR}/move-sentinel.json`;
+const MOVE_SENTINEL_PATH = ".move-sentinel.json";
 const MOVE_SENTINEL_VERIFY_TIMEOUT_MS = Math.max(
   1,
   Number(process.env.COCALC_MOVE_SENTINEL_VERIFY_TIMEOUT_MS) || 30 * 1000,
@@ -271,7 +271,10 @@ async function createMoveSentinel({
   op_id?: string;
 }): Promise<MoveSentinel> {
   const fs = await waitForProjectFsReady(context.project_id, { fresh: true });
-  await fs.mkdir(MOVE_SENTINEL_DIR, { recursive: true });
+  const parentDir = pathPosix.dirname(MOVE_SENTINEL_PATH);
+  if (parentDir && parentDir !== ".") {
+    await fs.mkdir(parentDir, { recursive: true });
+  }
   const content = `${JSON.stringify(
     {
       version: 1,
