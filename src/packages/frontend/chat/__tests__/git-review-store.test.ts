@@ -308,6 +308,19 @@ describe("git review import/export", () => {
     });
   });
 
+  it("does not create new legacy drafts when no account id is available", () => {
+    saveReviewDraft("fff6666", {
+      reviewed: true,
+      note: "should not persist",
+      comments: {},
+    });
+
+    expect(
+      localStorage.getItem("cocalc:git-review:draft:v2:commit:fff6666"),
+    ).toBe(null);
+    expect(loadReviewDraft("fff6666")).toBeUndefined();
+  });
+
   it("deletes all persisted reviews and local drafts for the account", async () => {
     const store = getStore("acct-3", "cocalc-git-review-v2");
     store.set("commit:aaa1111", {

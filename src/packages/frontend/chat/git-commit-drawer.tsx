@@ -3549,7 +3549,7 @@ export function GitCommitDrawer({
   };
 
   useEffect(() => {
-    if (!open || !commit || isHeadCommit(commit)) return;
+    if (!open || !accountId || !commit || isHeadCommit(commit)) return;
     const normalizedCommit = normalizeCommitSha(commit);
     if (!normalizedCommit) return;
     if (reviewStateCommit !== normalizedCommit) return;
@@ -4498,7 +4498,11 @@ export function GitCommitDrawer({
               <Checkbox
                 checked={reviewed}
                 disabled={
-                  reviewLoading || reviewSaving || !commit || isHeadSelected
+                  reviewLoading ||
+                  reviewSaving ||
+                  !accountId ||
+                  !commit ||
+                  isHeadSelected
                 }
                 style={{
                   display: "inline-flex",
@@ -4553,10 +4557,18 @@ export function GitCommitDrawer({
                 fontSize={fontSize}
                 saving={reviewSaving}
                 disabled={
-                  reviewLoading || isHeadSelected || !currentReviewCommit
+                  reviewLoading ||
+                  !accountId ||
+                  isHeadSelected ||
+                  !currentReviewCommit
                 }
                 onPersistDraft={(value) => {
-                  if (reviewLoading || isHeadSelected || !currentReviewCommit)
+                  if (
+                    reviewLoading ||
+                    !accountId ||
+                    isHeadSelected ||
+                    !currentReviewCommit
+                  )
                     return;
                   if (activeReviewCommitRef.current !== currentReviewCommit)
                     return;
@@ -4636,7 +4648,10 @@ export function GitCommitDrawer({
                 <Button
                   size="small"
                   disabled={
-                    reviewSaving || !currentReviewCommit || isHeadSelected
+                    reviewSaving ||
+                    !accountId ||
+                    !currentReviewCommit ||
+                    isHeadSelected
                   }
                   onClick={() => {
                     setReviewNoteDraft(reviewNote);

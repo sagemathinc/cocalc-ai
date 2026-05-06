@@ -280,6 +280,8 @@ export function saveReviewDraft(
   },
   accountId?: string,
 ): void {
+  const normalizedAccountId = `${accountId ?? ""}`.trim();
+  if (!normalizedAccountId) return;
   const key = makeDraftKey(commitSha, accountId);
   if (!key) return;
   const prev = loadReviewDraft(commitSha, accountId);
