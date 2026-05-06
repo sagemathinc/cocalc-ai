@@ -80,14 +80,24 @@ jest.mock("./full", () => ({
     project_id,
     project_state,
     show_long_loading,
+    modal,
+    selected,
   }: {
     project_id: string;
     project_state?: string;
     show_long_loading?: boolean;
+    modal?: string | { pid?: number };
+    selected?: number[];
   }) => (
     <div data-testid="project-info-full">
       {project_id}:{project_state ?? "none"}:
-      {show_long_loading ? "long" : "short"}
+      {show_long_loading ? "long" : "short"}:
+      {typeof modal === "string"
+        ? modal
+        : modal != null && typeof modal === "object" && "pid" in modal
+          ? `pid:${modal.pid}`
+          : "no-modal"}
+      :{selected?.join(",") ?? ""}
     </div>
   ),
 }));
@@ -126,7 +136,7 @@ describe("ProjectInfo", () => {
       project_id: "prop-project",
     });
     expect(screen.getByTestId("project-info-full")).toHaveTextContent(
-      "prop-project:none:short",
+      "prop-project:none:short:no-modal:",
     );
   });
 
@@ -157,14 +167,14 @@ describe("ProjectInfo", () => {
     const { rerender } = render(<ProjectInfo project_id="project-1" />);
     await waitFor(() =>
       expect(screen.getByTestId("project-info-full")).toHaveTextContent(
-        "project-1:starting:short",
+        "project-1:starting:short:no-modal:",
       ),
     );
 
     rerender(<ProjectInfo project_id="project-2" />);
     await waitFor(() =>
       expect(screen.getByTestId("project-info-full")).toHaveTextContent(
-        "project-2:running:short",
+        "project-2:running:short:no-modal:",
       ),
     );
   });
@@ -178,13 +188,76 @@ describe("ProjectInfo", () => {
       jest.advanceTimersByTime(30000);
     });
     expect(screen.getByTestId("project-info-full")).toHaveTextContent(
-      "project-1:none:long",
+      "project-1:none:long:no-modal:",
     );
 
     rerender(<ProjectInfo project_id="project-2" />);
     await waitFor(() =>
       expect(screen.getByTestId("project-info-full")).toHaveTextContent(
-        "project-2:none:short",
+        "project-2:none:short:no-modal:",
+      ),
+    );
+  });
+
+  it("clears stale modal and selection state when switching projects", async () => {
+    const project1Info = {
+      processes: {
+        11: {
+          pid: 11,
+          ppid: 1,
+          exe: "/usr/bin/python3",
+          cmdline: ["python3", "notebook.ipynb"],
+          cpu: { secs: 1, pct: 2 },
+          stat: {
+            state: "R",
+            num_threads: 4,
+            mem: { rss: 128 },
+          },
+        },
+      },
+    };
+    let focus: { pid: number } | undefined = { pid: 11 };
+    useTypedRedux.mockImplementation((arg0, arg1) => {
+      if (arg0 === "projects" && arg1 === "project_map") {
+        return {
+          get: () => undefined,
+        };
+      }
+      if (arg1 === "project_info_focus") {
+        if ((arg0 as { project_id?: string })?.project_id === "project-1") {
+          return focus;
+        }
+        return undefined;
+      }
+      return undefined;
+    });
+
+    useProjectInfo.mockImplementation(
+      ({ project_id }: { project_id: string }) => ({
+        disconnected: false,
+        info: project_id === "project-1" ? project1Info : null,
+        error: "",
+        setError: jest.fn(),
+        refresh: jest.fn(async () => {}),
+      }),
+    );
+
+    const setState = jest.fn(({ project_info_focus }) => {
+      focus = project_info_focus;
+    });
+    useActions.mockReturnValue({ setState });
+
+    const { rerender } = render(<ProjectInfo project_id="project-1" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("project-info-full")).toHaveTextContent(
+        "project-1:none:short:pid:11:11",
+      ),
+    );
+
+    rerender(<ProjectInfo project_id="project-2" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("project-info-full")).toHaveTextContent(
+        "project-2:none:short:no-modal:",
       ),
     );
   });

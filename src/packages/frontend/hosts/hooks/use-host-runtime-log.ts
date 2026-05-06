@@ -57,7 +57,7 @@ export function useHostRuntimeLog(
 
   useEffect(() => {
     clear();
-  }, [clear, hostId]);
+  }, [clear, enabled, hostId]);
 
   const load = useCallback(
     async (opts?: { source?: HostRuntimeLogSource; lines?: number }) => {

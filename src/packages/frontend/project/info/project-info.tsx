@@ -135,6 +135,17 @@ export const ProjectInfo: React.FC<Props> = React.memo(
       return () => clearTimeout(timer);
     }, [project_id]);
 
+    React.useEffect(() => {
+      set_ptree(undefined);
+      set_pt_stats(pt_stats_init);
+      set_selected([]);
+      set_expanded([]);
+      set_have_children([]);
+      set_cg_info(gc_info_init);
+      set_disk_usage(du_init);
+      set_modal(undefined);
+    }, [project_id]);
+
     function update_top(info: ProjectInfoType) {
       // this shouldn't be the case, but somehow I saw this happening once
       // the ProjectInfoType type is updated to reflect this edge case and here we bail out

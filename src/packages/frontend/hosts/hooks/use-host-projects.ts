@@ -22,6 +22,10 @@ type HostProjectsState = {
   hostLastSeen?: string;
 };
 
+const EMPTY_STATE: HostProjectsState = {
+  rows: [],
+};
+
 export function useHostProjects({
   hostId,
   riskOnly = false,
@@ -30,15 +34,30 @@ export function useHostProjects({
   limit = 200,
   enabled = true,
 }: Options) {
-  const [state, setState] = React.useState<HostProjectsState>({
-    rows: [],
-  });
+  const [state, setState] = React.useState<HostProjectsState>(EMPTY_STATE);
   const [loading, setLoading] = React.useState(false);
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const requestSeqRef = React.useRef(0);
+  const scopeKey = [
+    hostId ?? "",
+    enabled ? "1" : "0",
+    riskOnly ? "1" : "0",
+    stateFilter,
+    projectState ?? "",
+    `${limit}`,
+  ].join("\0");
 
   const fetchPage = React.useCallback(
-    async (cursor?: string, append?: boolean) => {
+    async ({
+      cursor,
+      append,
+      requestSeq,
+    }: {
+      cursor?: string;
+      append?: boolean;
+      requestSeq: number;
+    }) => {
       if (!hostId || !enabled) return;
       const client = webapp_client.conat_client?.hub?.hosts;
       if (!client?.listHostProjects) return;
@@ -51,6 +70,9 @@ export function useHostProjects({
           state_filter: stateFilter,
           ...(projectState ? { project_state: projectState } : {}),
         });
+        if (requestSeq !== requestSeqRef.current) {
+          return;
+        }
         setState((prev) => ({
           rows: append
             ? prev.rows.concat(response.rows ?? [])
@@ -61,6 +83,9 @@ export function useHostProjects({
         }));
         setError(null);
       } catch (err) {
+        if (requestSeq !== requestSeqRef.current) {
+          return;
+        }
         console.error("failed to load host projects", err);
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -68,19 +93,38 @@ export function useHostProjects({
     [enabled, hostId, limit, projectState, riskOnly, stateFilter],
   );
 
+  React.useEffect(() => {
+    requestSeqRef.current += 1;
+    setState(EMPTY_STATE);
+    setLoading(false);
+    setLoadingMore(false);
+    setError(null);
+  }, [scopeKey]);
+
   const refresh = React.useCallback(async () => {
     if (!hostId || !enabled) return;
+    const requestSeq = ++requestSeqRef.current;
     setLoading(true);
-    await fetchPage(undefined, false);
-    setLoading(false);
+    setLoadingMore(false);
+    await fetchPage({ cursor: undefined, append: false, requestSeq });
+    if (requestSeq === requestSeqRef.current) {
+      setLoading(false);
+    }
   }, [enabled, fetchPage, hostId]);
 
   const loadMore = React.useCallback(async () => {
     if (!hostId || !enabled) return;
     if (!state.nextCursor || loadingMore) return;
+    const requestSeq = ++requestSeqRef.current;
     setLoadingMore(true);
-    await fetchPage(state.nextCursor, true);
-    setLoadingMore(false);
+    await fetchPage({
+      cursor: state.nextCursor,
+      append: true,
+      requestSeq,
+    });
+    if (requestSeq === requestSeqRef.current) {
+      setLoadingMore(false);
+    }
   }, [enabled, fetchPage, hostId, loadingMore, state.nextCursor]);
 
   React.useEffect(() => {

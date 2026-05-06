@@ -34,12 +34,15 @@ export default function useProjectInfo({
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const startRef = useRef(Date.now());
+  const scopeRef = useRef(project_id);
+  scopeRef.current = project_id;
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [error, setError] = useState<string>("");
   const [disconnected, setDisconnected] = useState<boolean>(true);
   const [visible, setVisible] = useState<boolean>(isVisible());
 
   const update = useCallback(async () => {
+    const requestScope = project_id;
     // console.log("update", { project_id });
     try {
       const client = await webapp_client.conat_client.projectConat({
@@ -50,10 +53,12 @@ export default function useProjectInfo({
         client,
         project_id,
       });
+      if (scopeRef.current !== requestScope) return;
       setInfo(info);
       setDisconnected(false);
       setError("");
     } catch (err) {
+      if (scopeRef.current !== requestScope) return;
       if (Date.now() - startRef.current >= intervalVisible * 2.1) {
         console.log(`WARNING: project info -- ${err}`);
         setError(
