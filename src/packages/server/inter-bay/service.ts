@@ -151,6 +151,7 @@ import {
 import {
   getProjectBackupShardAdminStatus,
   getSeedProjectBackupConfig,
+  releaseProjectBackupRepoAssignment,
   resolveProjectBackupRepoAssignment,
 } from "@cocalc/server/project-backup";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -843,6 +844,10 @@ async function startHostConnectionService(): Promise<void> {
         project_region,
         backup_repo_id,
         preferred_backup_repo_id,
+      }),
+    releaseSeedBackupRepoAssignment: async ({ project_id }) =>
+      await releaseProjectBackupRepoAssignment({
+        project_id,
       }),
     getSeedProjectBackupShards: async (opts = {}) =>
       await getProjectBackupShardAdminStatus({

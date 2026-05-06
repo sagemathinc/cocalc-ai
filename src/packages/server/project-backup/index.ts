@@ -1001,6 +1001,26 @@ async function assignProjectBackupRepo({
   );
 }
 
+async function releaseProjectBackupRepoAssignmentLocal({
+  project_id,
+  clear_local_backup_repo_id = false,
+}: {
+  project_id: string;
+  clear_local_backup_repo_id?: boolean;
+}): Promise<void> {
+  await ensureProjectBackupRepoSchema();
+  await pool().query(
+    "DELETE FROM project_backup_repo_assignments WHERE project_id=$1",
+    [project_id],
+  );
+  if (clear_local_backup_repo_id) {
+    await pool().query(
+      "UPDATE projects SET backup_repo_id=NULL WHERE project_id=$1",
+      [project_id],
+    );
+  }
+}
+
 export async function setProjectBackupRepoId({
   project_id,
   backup_repo_id,
@@ -1097,6 +1117,39 @@ export async function resolveProjectBackupRepoAssignment({
   return {
     backup_repo_id: assigned.repo.id,
   };
+}
+
+export async function releaseProjectBackupRepoAssignment({
+  project_id,
+  clear_local_backup_repo_id = false,
+}: {
+  project_id: string;
+  clear_local_backup_repo_id?: boolean;
+}): Promise<void> {
+  if (!project_id || !isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  if (shouldUseSeedManagedProjectBackups()) {
+    const cluster = getClusterConfig();
+    const { getInterBayBridge } =
+      await import("@cocalc/server/inter-bay/bridge");
+    await getInterBayBridge()
+      .hostConnection(cluster.seed_bay_id, { timeout_ms: 30_000 })
+      .releaseSeedBackupRepoAssignment({
+        project_id,
+      });
+    if (clear_local_backup_repo_id) {
+      await pool().query(
+        "UPDATE projects SET backup_repo_id=NULL WHERE project_id=$1",
+        [project_id],
+      );
+    }
+    return;
+  }
+  await releaseProjectBackupRepoAssignmentLocal({
+    project_id,
+    clear_local_backup_repo_id,
+  });
 }
 
 export async function ensureProjectBackupRepoForRegion({
