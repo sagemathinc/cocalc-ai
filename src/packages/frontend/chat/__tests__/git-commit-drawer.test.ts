@@ -3,6 +3,7 @@ import {
   buildGitInlineDraftEditorId,
   buildGitInlineEditEditorId,
   buildGitDiffFindMatches,
+  GIT_DIFF_LIST_FOOTER_SPACER_HEIGHT,
   buildGitReviewEditorScope,
   filterGitReviewLogEntries,
   buildGitReviewFileSectionId,
@@ -11,6 +12,7 @@ import {
   commentAnchorKey,
   DiffBlock,
   diffLineNumberColumnWidth,
+  GitDiffFilesPanel,
   getGitDiffFindVisibleLineLimitUpdate,
   getNextRenderedDiffLineLimit,
   getRenderedDiffLineLimit,
@@ -45,6 +47,28 @@ jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
     return null;
   },
 }));
+
+jest.mock("react-virtuoso", () => {
+  const React = require("react");
+  return {
+    Virtuoso: React.forwardRef(function MockVirtuoso(props: any, _ref: any) {
+      const { data = [], itemContent, components } = props;
+      const Footer = components?.Footer;
+      return React.createElement(
+        "div",
+        { "data-testid": "mock-virtuoso" },
+        ...data.map((item: any, index: number) =>
+          React.createElement(
+            React.Fragment,
+            { key: index },
+            itemContent(index, item),
+          ),
+        ),
+        Footer ? React.createElement(Footer) : null,
+      );
+    }),
+  };
+});
 
 describe("git commit drawer merge commit formatting", () => {
   beforeEach(() => {
@@ -701,6 +725,45 @@ describe("git commit drawer merge commit formatting", () => {
     expect(getNextRenderedDiffLineLimit(undefined)).toBe(500);
     expect(getNextRenderedDiffLineLimit(300)).toBe(500);
     expect(getNextRenderedDiffLineLimit(420)).toBe(620);
+  });
+
+  it("adds a footer spacer below the virtualized diff list", () => {
+    const rendered = render(
+      React.createElement(GitDiffFilesPanel, {
+        files: [{ path: "src/example.ts", lines: stableDiffLines }],
+        drawerScrollParent: null,
+        virtuosoRef: { current: null },
+        fontSize: 14,
+        editorTheme: null,
+        reviewEditorScope: "scope:test",
+        inlineCommentsByFile: new Map(),
+        showResolvedComments: false,
+        isHeadSelected: false,
+        visibleDiffLinesByFile: {},
+        onOpenFile: noopAsync,
+        onShowMoreLines: () => {},
+        activeDraftBody: "",
+        activeEditingBody: "",
+        pendingKey: "",
+        onOpenDraft: () => {},
+        onDraftBodyChange: () => {},
+        onCancelDraft: () => {},
+        onOpenEdit: () => {},
+        onEditingBodyChange: () => {},
+        onCancelEdit: () => {},
+        onCreateComment: noopAsync,
+        onUpdateComment: noopAsync,
+        onResolveComment: noopAsync,
+        onReopenComment: noopAsync,
+        diffFindMatchCounts: new Map(),
+        diffFindMatchedLineIndexes: new Map(),
+      }),
+    );
+
+    const spacer = rendered.getByTestId("git-diff-list-footer-spacer");
+    expect((spacer as HTMLDivElement).style.height).toBe(
+      `${GIT_DIFF_LIST_FOOTER_SPACER_HEIGHT}px`,
+    );
   });
 
   it("builds stable file section ids for changed-file navigation", () => {

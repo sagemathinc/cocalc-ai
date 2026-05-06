@@ -59,10 +59,11 @@ function chatRowToAcpState({
       const threadStateName = `${(threadState as any)?.state ?? ""}`.trim();
       const activeMessageId =
         `${(threadState as any)?.active_message_id ?? ""}`.trim();
-      return activeMessageId === messageId &&
-        (threadStateName === "queued" || threadStateName === "running")
-        ? "running"
-        : undefined;
+      if (activeMessageId !== messageId) return undefined;
+      if (threadStateName === "queued") {
+        return "queue";
+      }
+      return threadStateName === "running" ? "running" : undefined;
     }
     default:
       return undefined;
