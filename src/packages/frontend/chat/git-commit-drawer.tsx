@@ -519,6 +519,36 @@ export function resolveGitReviewSaveState({
   };
 }
 
+export function resolveGitReviewSaveCompletion({
+  payload,
+  sent,
+  current,
+}: {
+  payload: Pick<GitReviewRecordV2, "reviewed" | "note">;
+  sent: {
+    reviewed: boolean;
+    note: string;
+  };
+  current: {
+    reviewed: boolean;
+    noteDraft: string;
+  };
+}): {
+  reviewed: boolean;
+  reviewNote: string;
+  reviewNoteDraft: string;
+  reviewDirty: boolean;
+} {
+  const reviewedChangedSinceSave = current.reviewed !== sent.reviewed;
+  const noteChangedSinceSave = current.noteDraft !== sent.note;
+  return {
+    reviewed: reviewedChangedSinceSave ? current.reviewed : payload.reviewed,
+    reviewNote: payload.note,
+    reviewNoteDraft: noteChangedSinceSave ? current.noteDraft : payload.note,
+    reviewDirty: reviewedChangedSinceSave || noteChangedSinceSave,
+  };
+}
+
 interface GitCommitDrawerProps {
   projectId?: string;
   sourcePath?: string;
@@ -2146,6 +2176,8 @@ export function GitCommitDrawer({
     useState("");
   const reviewLoadTokenRef = useRef(0);
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
+  const reviewNoteDraftRef = useRef(reviewNoteDraft);
+  const reviewedRef = useRef(reviewed);
   const preserveCommitSearchOnAutoClearRef = useRef(false);
   const reviewImportInputRef = useRef<HTMLInputElement | null>(null);
   const diffFindInputRef = useRef<any>(null);
@@ -2174,6 +2206,14 @@ export function GitCommitDrawer({
     if (override) return override;
     return containingPath(sourcePath ?? ".") || ".";
   }, [sourcePath, cwdOverride]);
+
+  useEffect(() => {
+    reviewNoteDraftRef.current = reviewNoteDraft;
+  }, [reviewNoteDraft]);
+
+  useEffect(() => {
+    reviewedRef.current = reviewed;
+  }, [reviewed]);
   const scrollStorageId = useMemo(() => {
     const commitKey = `${commit ?? HEAD_REF}`.toLowerCase();
     const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${cwd}|${commitKey}`;
@@ -2920,6 +2960,10 @@ export function GitCommitDrawer({
       const nextReviewed = resolved.reviewed;
       const nextNote = resolved.note;
       const nextComments = resolved.comments;
+      const sentState = {
+        reviewed: Boolean(nextReviewed),
+        note: `${nextNote ?? ""}`,
+      };
       const isActiveCommit = activeReviewCommitRef.current === normalizedCommit;
       if (isActiveCommit) {
         setReviewSaving(true);
@@ -2960,12 +3004,20 @@ export function GitCommitDrawer({
           [normalizedCommit]: payload.reviewed,
         }));
         if (activeReviewCommitRef.current === normalizedCommit) {
-          setReviewed(payload.reviewed);
-          setReviewNote(payload.note);
-          setReviewNoteDraft(payload.note);
+          const completion = resolveGitReviewSaveCompletion({
+            payload,
+            sent: sentState,
+            current: {
+              reviewed: reviewedRef.current,
+              noteDraft: reviewNoteDraftRef.current,
+            },
+          });
+          setReviewed(completion.reviewed);
+          setReviewNote(completion.reviewNote);
+          setReviewNoteDraft(completion.reviewNoteDraft);
           setReviewRecord(payload);
           setReviewUpdatedAt(payload.updated_at);
-          setReviewDirty(false);
+          setReviewDirty(completion.reviewDirty);
           setReviewError("");
         }
       } catch (err) {

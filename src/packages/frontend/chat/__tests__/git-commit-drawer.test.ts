@@ -14,6 +14,7 @@ import {
   isGitDiffFindTargetRendered,
   MarkdownHistoryInput,
   ReviewNoteEditor,
+  resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
   buildGitLogArgs,
   buildGitShowArgs,
@@ -247,6 +248,30 @@ describe("git commit drawer merge commit formatting", () => {
       reviewed: true,
       note: "newer draft note",
       comments: {},
+    });
+  });
+
+  it("preserves a newer in-memory draft when an older save completes", () => {
+    expect(
+      resolveGitReviewSaveCompletion({
+        payload: {
+          reviewed: true,
+          note: "saved note",
+        },
+        sent: {
+          reviewed: true,
+          note: "saved note",
+        },
+        current: {
+          reviewed: true,
+          noteDraft: "newer local draft",
+        },
+      }),
+    ).toEqual({
+      reviewed: true,
+      reviewNote: "saved note",
+      reviewNoteDraft: "newer local draft",
+      reviewDirty: true,
     });
   });
 
