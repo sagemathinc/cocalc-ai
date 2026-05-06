@@ -82,12 +82,14 @@ describe("restoreSessionState", () => {
       path: "a.txt",
       foreground: false,
       foreground_project: false,
+      wait_for_ready: false,
       change_history: false,
     });
     expect(openFile).toHaveBeenNthCalledWith(2, {
       path: "b.txt",
       foreground: false,
       foreground_project: false,
+      wait_for_ready: false,
       change_history: false,
     });
     expect(events).toEqual([

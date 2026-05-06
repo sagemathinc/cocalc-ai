@@ -208,6 +208,7 @@ class SessionManager {
           path,
           foreground: false,
           foreground_project: false,
+          wait_for_ready: false,
           change_history: false,
         });
       }
@@ -310,6 +311,7 @@ export async function restoreSessionState(
               path,
               foreground: false,
               foreground_project: false,
+              wait_for_ready: false,
               change_history: false,
             });
           } catch (err) {
