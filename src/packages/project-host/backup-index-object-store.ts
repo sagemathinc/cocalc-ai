@@ -3,15 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { createHash, createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
-import { Readable, Transform } from "node:stream";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip, createGzip } from "node:zlib";
 import getLogger from "@cocalc/backend/logger";
+import { getR2ObjectToFile, putR2ObjectFromFile } from "@cocalc/backend/r2";
 import type { ProjectBackupIndexStoreConfig } from "@cocalc/conat/hub/api/hosts";
 
 const logger = getLogger("project-host:backup-index-object-store");
@@ -22,108 +23,6 @@ export interface UploadedBackupIndexObject {
   sqlite_bytes: number;
   object_bytes: number;
   sha256: string;
-}
-
-function hashHex(data: string | Buffer): string {
-  return createHash("sha256").update(data).digest("hex");
-}
-
-function hmac(
-  key: string | Buffer,
-  data: string,
-  encoding?: "hex",
-): Buffer | string {
-  const hash = createHmac("sha256", key).update(data, "utf8");
-  return encoding ? hash.digest(encoding) : hash.digest();
-}
-
-function getSignatureKey(secret: string, dateStamp: string): Buffer {
-  const kDate = hmac(`AWS4${secret}`, dateStamp) as Buffer;
-  const kRegion = hmac(kDate, "auto") as Buffer;
-  const kService = hmac(kRegion, "s3") as Buffer;
-  return hmac(kService, "aws4_request") as Buffer;
-}
-
-function toAmzDate(now: Date): string {
-  return now.toISOString().replace(/[:-]|\.\d{3}/g, "");
-}
-
-function encodeRfc3986(str: string): string {
-  return encodeURIComponent(str).replace(
-    /[!'()*]/g,
-    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-}
-
-function canonicalizeObjectPath(bucket: string, key: string): string {
-  const parts = [bucket, ...`${key}`.split("/").filter(Boolean)];
-  return `/${parts.map(encodeRfc3986).join("/")}`;
-}
-
-function signedObjectHeaders({
-  method,
-  endpoint,
-  accessKey,
-  secretKey,
-  bucket,
-  key,
-  payloadSha256,
-  contentType,
-}: {
-  method: "PUT" | "GET";
-  endpoint: string;
-  accessKey: string;
-  secretKey: string;
-  bucket: string;
-  key: string;
-  payloadSha256: string;
-  contentType?: string;
-}): { url: string; canonicalUri: string; headers: Record<string, string> } {
-  const parsed = new URL(endpoint);
-  if (parsed.protocol !== "https:") {
-    throw new Error("object store endpoint must use https");
-  }
-  const host = parsed.host;
-  const canonicalUri = canonicalizeObjectPath(bucket, key);
-  const now = new Date();
-  const amzDate = toAmzDate(now);
-  const dateStamp = amzDate.slice(0, 8);
-  const headers: Record<string, string> = {
-    host,
-    "x-amz-content-sha256": payloadSha256,
-    "x-amz-date": amzDate,
-  };
-  if (contentType) {
-    headers["content-type"] = contentType;
-  }
-  const signedHeaderNames = Object.keys(headers).sort();
-  const canonicalHeaders = signedHeaderNames
-    .map((name) => `${name}:${String(headers[name]).trim()}\n`)
-    .join("");
-  const signedHeaders = signedHeaderNames.join(";");
-  const canonicalRequest = [
-    method,
-    canonicalUri,
-    "",
-    canonicalHeaders,
-    signedHeaders,
-    payloadSha256,
-  ].join("\n");
-  const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    amzDate,
-    credentialScope,
-    hashHex(canonicalRequest),
-  ].join("\n");
-  const signingKey = getSignatureKey(secretKey, dateStamp);
-  const signature = hmac(signingKey, stringToSign, "hex") as string;
-  headers.authorization = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-  return {
-    url: `${parsed.origin}${canonicalUri}`,
-    canonicalUri,
-    headers,
-  };
 }
 
 function normalizeKeyPrefix(prefix: string): string {
@@ -177,14 +76,6 @@ async function gzipBackupIndex(
   };
 }
 
-async function readResponseText(response: Response): Promise<string> {
-  try {
-    return await response.text();
-  } catch {
-    return "";
-  }
-}
-
 async function putObjectFile({
   config,
   key,
@@ -198,30 +89,20 @@ async function putObjectFile({
   sha256: string;
   bytes: number;
 }): Promise<void> {
-  const { url, headers } = signedObjectHeaders({
-    method: "PUT",
-    endpoint: config.endpoint,
-    accessKey: config.access_key_id,
-    secretKey: config.secret_access_key,
-    bucket: config.bucket,
+  await putR2ObjectFromFile({
+    auth: {
+      endpoint: config.endpoint,
+      accessKey: config.access_key_id,
+      secretKey: config.secret_access_key,
+      bucket: config.bucket,
+      region: "auto",
+    },
     key,
+    filePath,
     payloadSha256: sha256,
+    contentLength: bytes,
     contentType: "application/gzip",
   });
-  const response = await fetch(url, {
-    method: "PUT",
-    headers: {
-      ...headers,
-      "content-length": `${bytes}`,
-    },
-    body: createReadStream(filePath) as any,
-    duplex: "half",
-  } as any);
-  if (!response.ok) {
-    throw new Error(
-      `backup index object upload failed (${response.status}): ${await readResponseText(response)}`,
-    );
-  }
 }
 
 async function getObjectFile({
@@ -233,37 +114,17 @@ async function getObjectFile({
   key: string;
   outputPath: string;
 }): Promise<{ sha256: string; bytes: number }> {
-  const { url, headers } = signedObjectHeaders({
-    method: "GET",
-    endpoint: config.endpoint,
-    accessKey: config.access_key_id,
-    secretKey: config.secret_access_key,
-    bucket: config.bucket,
+  return await getR2ObjectToFile({
+    auth: {
+      endpoint: config.endpoint,
+      accessKey: config.access_key_id,
+      secretKey: config.secret_access_key,
+      bucket: config.bucket,
+      region: "auto",
+    },
     key,
-    payloadSha256: hashHex(""),
+    outputPath,
   });
-  const response = await fetch(url, {
-    method: "GET",
-    headers,
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(
-      `backup index object download failed (${response.status}): ${await readResponseText(response)}`,
-    );
-  }
-  const hash = createHash("sha256");
-  await pipeline(
-    Readable.fromWeb(response.body as any),
-    new Transform({
-      transform(chunk, _enc, callback) {
-        hash.update(chunk);
-        callback(null, chunk);
-      },
-    }),
-    createWriteStream(outputPath),
-  );
-  const { size: bytes } = await stat(outputPath);
-  return { sha256: hash.digest("hex"), bytes };
 }
 
 export async function uploadBackupIndexObject({

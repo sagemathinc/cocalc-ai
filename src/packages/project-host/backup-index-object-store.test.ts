@@ -3,15 +3,27 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProjectBackupIndexStoreConfig } from "@cocalc/conat/hub/api/hosts";
+import { getR2ObjectToFile, putR2ObjectFromFile } from "@cocalc/backend/r2";
 import {
   buildBackupIndexObjectKey,
   downloadBackupIndexObject,
   uploadBackupIndexObject,
 } from "./backup-index-object-store";
+
+jest.mock(
+  "@cocalc/backend/r2",
+  () => ({
+    __esModule: true,
+    putR2ObjectFromFile: jest.fn(),
+    getR2ObjectToFile: jest.fn(),
+  }),
+  { virtual: true },
+);
 
 jest.mock("@cocalc/backend/logger", () => {
   const factory = () => ({
@@ -39,15 +51,33 @@ describe("backup index object store", () => {
   };
 
   let tempDir: string;
-  let originalFetch: typeof fetch | undefined;
+  let objectBodies: Map<string, Buffer>;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "cocalc-backup-index-store-test-"));
-    originalFetch = global.fetch;
+    objectBodies = new Map();
+    (putR2ObjectFromFile as jest.Mock).mockImplementation(
+      async ({ key, filePath }: { key: string; filePath: string }) => {
+        objectBodies.set(key, await readFile(filePath));
+      },
+    );
+    (getR2ObjectToFile as jest.Mock).mockImplementation(
+      async ({ key, outputPath }: { key: string; outputPath: string }) => {
+        const body = objectBodies.get(key);
+        if (body == null) {
+          throw new Error(`missing object ${key}`);
+        }
+        await writeFile(outputPath, body);
+        return {
+          sha256: createHash("sha256").update(body).digest("hex"),
+          bytes: body.length,
+        };
+      },
+    );
   });
 
   afterEach(async () => {
-    global.fetch = originalFetch as typeof fetch;
+    jest.resetAllMocks();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -67,19 +97,6 @@ describe("backup index object store", () => {
     const inputPath = join(tempDir, "input.sqlite");
     const outputPath = join(tempDir, "output.sqlite");
     await writeFile(inputPath, "sqlite-test-payload", "utf8");
-    let uploadedBody = Buffer.alloc(0);
-    global.fetch = jest.fn(async (_url: string, init?: RequestInit) => {
-      if (init?.method === "PUT") {
-        const body = init.body as AsyncIterable<Buffer>;
-        const chunks: Buffer[] = [];
-        for await (const chunk of body) {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        }
-        uploadedBody = Buffer.concat(chunks);
-        return new Response(null, { status: 200 });
-      }
-      return new Response(uploadedBody, { status: 200 });
-    }) as typeof fetch;
 
     const uploaded = await uploadBackupIndexObject({
       config,
@@ -91,6 +108,7 @@ describe("backup index object store", () => {
     expect(uploaded.object_bytes).toBeGreaterThan(0);
     expect(uploaded.sqlite_bytes).toBe((await readFile(inputPath)).byteLength);
     expect(uploaded.sha256).toHaveLength(64);
+    expect(putR2ObjectFromFile).toHaveBeenCalled();
 
     await downloadBackupIndexObject({
       config,
@@ -100,5 +118,6 @@ describe("backup index object store", () => {
     });
 
     expect(await readFile(outputPath, "utf8")).toBe("sqlite-test-payload");
+    expect(getR2ObjectToFile).toHaveBeenCalled();
   });
 });
