@@ -197,6 +197,35 @@ describe("git commit drawer merge commit formatting", () => {
     expect(onSave).toHaveBeenCalledWith("edited locally");
   });
 
+  it("saves the private review note on shift-enter", () => {
+    const onPersistDraft = jest.fn();
+    const onSave = jest.fn();
+
+    render(
+      React.createElement(ReviewNoteEditor, {
+        historyId: "git-review-note:test",
+        value: "existing",
+        committedValue: "existing",
+        fontSize: 14,
+        saving: false,
+        disabled: false,
+        onPersistDraft,
+        onCancel: jest.fn(),
+        onSave,
+      }),
+    );
+
+    act(() => {
+      latestMarkdownInputProps.onChange("save me");
+    });
+    act(() => {
+      latestMarkdownInputProps.onShiftEnter("save me");
+    });
+
+    expect(onPersistDraft).toHaveBeenCalledWith("save me");
+    expect(onSave).toHaveBeenCalledWith("save me");
+  });
+
   it("does not persist a private review note when cancel wins after blur ordering", () => {
     const onPersistDraft = jest.fn();
     const onCancel = jest.fn();

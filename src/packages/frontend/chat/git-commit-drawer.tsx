@@ -1238,6 +1238,11 @@ export function ReviewNoteEditor({
         value={localValue}
         onChange={update}
         onBlur={flush}
+        onShiftEnter={(next) => {
+          skipNextUnmountFlush();
+          flush(next, { force: true });
+          onSave(next);
+        }}
         placeholder="Private review note (not sent to agent)"
         fontSize={Math.max(13, fontSize)}
         autoGrow
