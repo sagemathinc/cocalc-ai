@@ -37,6 +37,7 @@ export async function openFileInProject({
     path: cleanPath,
     foreground: !!foreground,
     foreground_project: !!foreground_project,
+    wait_for_ready: !!foreground || !!foreground_project,
   });
   return { ok: true };
 }

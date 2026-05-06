@@ -53,6 +53,9 @@ export interface OpenFileOpts {
   fragmentId?: FragmentId; // optional URI fragment identifier that describes position in this document to jump to when we actually open it, which could be long in the future, e.g., due to shift+click to open a background tab.  Inspiration from https://en.wikipedia.org/wiki/URI_fragment
   foreground?: boolean;
   foreground_project?: boolean;
+  // if false, return once the loading tab exists and continue the remaining
+  // sync identity / project availability work in the background.
+  wait_for_ready?: boolean;
   chat?: boolean;
   chat_width?: number;
   ignore_kiosk?: boolean;
@@ -94,10 +97,15 @@ type SyncIdentityFs = {
 
 const SYNC_IDENTITY_RETRY_START_MS = 150;
 const SYNC_IDENTITY_RETRY_MAX_MS = 1500;
+const PROJECT_OPEN_RETRY_START_MS = 500;
+const PROJECT_OPEN_RETRY_MAX_MS = 5000;
 
 export function isTransientSyncIdentityResolutionError(err: unknown): boolean {
-  const message = `${err}`.toLowerCase();
+  const message = `${err}`.trim().toLowerCase();
   return (
+    message === "closed" ||
+    message.endsWith(": closed") ||
+    message.includes('not emitted before "closed"') ||
     message.includes("file server not initialized") ||
     message.includes("not initialized") ||
     message.includes("socket has been disconnected") ||
@@ -117,6 +125,56 @@ export function isTransientSyncIdentityResolutionError(err: unknown): boolean {
 
 export function isCancelledSyncIdentityResolutionError(err: unknown): boolean {
   return `${err}`.includes("canonical sync identity open was cancelled");
+}
+
+export function isTransientProjectOpenError(err: unknown): boolean {
+  const message = `${err}`.trim().toLowerCase();
+  return (
+    message.includes("timeout") ||
+    message.includes("waiting for") ||
+    message.includes("project host id unavailable") ||
+    message.includes("project is not running") ||
+    message.includes("project not running") ||
+    message.includes("unable to route") ||
+    message.includes("project-host") ||
+    message.includes("project host")
+  );
+}
+
+export function isCancelledProjectOpenRetryError(err: unknown): boolean {
+  return `${err}`.includes("project open retry was cancelled");
+}
+
+export async function ensureProjectIsOpenWithRetry(
+  actions: Pick<ProjectActions, "ensureProjectIsOpen">,
+  {
+    foreground_project = true,
+    isOpen = () => true,
+  }: {
+    foreground_project?: boolean;
+    isOpen?: () => boolean;
+  } = {},
+): Promise<void> {
+  await until(
+    async () => {
+      if (!isOpen()) {
+        throw new Error("project open retry was cancelled");
+      }
+      try {
+        await actions.ensureProjectIsOpen(foreground_project);
+        return true;
+      } catch (err) {
+        if (!isTransientProjectOpenError(err)) {
+          throw err;
+        }
+        return false;
+      }
+    },
+    {
+      start: PROJECT_OPEN_RETRY_START_MS,
+      max: PROJECT_OPEN_RETRY_MAX_MS,
+    },
+  );
 }
 
 function shouldSuppressArchivedOpenError(project_id: string): boolean {
@@ -218,6 +276,7 @@ export async function open_file(
 
   const foreground = opts.foreground ?? true;
   const foreground_project = opts.foreground_project ?? foreground;
+  const wait_for_ready = opts.wait_for_ready ?? foreground;
   opts = defaults(opts, {
     path: required,
     ext: undefined,
@@ -225,6 +284,7 @@ export async function open_file(
     fragmentId: undefined,
     foreground,
     foreground_project,
+    wait_for_ready,
     chat: undefined,
     chat_width: undefined,
     ignore_kiosk: false,
@@ -330,153 +390,176 @@ export async function open_file(
     return;
   }
 
-  let syncPath: string;
-  try {
-    syncPath = await resolveSyncPathWithRetry(
-      actions.fs() as SyncIdentityFs,
-      displayPath,
-      projectHome,
-      {
-        isOpen: tabIsOpened,
-      },
-    );
-  } catch (err) {
-    if (isCancelledSyncIdentityResolutionError(err)) {
-      return;
-    }
-    if (!alreadyOpened && actions.open_files?.has(displayPath)) {
-      actions.open_files.delete(displayPath);
-      redux.getActions("page").save_session();
-    }
-    if (shouldSuppressArchivedOpenError(actions.project_id)) {
-      return;
-    }
-    alert_message({
-      type: "error",
-      message: `Cannot safely open "${displayPath}" because canonical sync identity resolution failed: ${err}`,
-      timeout: 10,
-    });
-    return;
-  }
-  if (!tabIsOpened()) {
-    return;
-  }
-  if (actions.open_files != null) {
-    actions.open_files.set(displayPath, "sync_path", syncPath);
-    actions.open_files.set(displayPath, "display_path", displayPath);
-  }
-  // If this path resolves to a sync identity that is already open in this browser,
-  // don't keep a second tab with the same realtime session key.
-  const alreadyOpenAliasPath = alreadyOpened
-    ? undefined
-    : findOpenDisplayPathForSyncPath(actions, syncPath, displayPath);
-  if (alreadyOpenAliasPath != null) {
-    if (actions.open_files?.has(displayPath)) {
-      actions.open_files.delete(displayPath);
-    }
-    redux.getActions("page").save_session();
-    if (opts.foreground) {
-      actions.foreground_project(opts.change_history);
-      actions.set_active_tab(path_to_tab(alreadyOpenAliasPath), {
-        change_history: opts.change_history,
+  const continueOpen = async (): Promise<void> => {
+    let syncPath: string;
+    try {
+      syncPath = await resolveSyncPathWithRetry(
+        actions.fs() as SyncIdentityFs,
+        displayPath,
+        projectHome,
+        {
+          isOpen: tabIsOpened,
+        },
+      );
+    } catch (err) {
+      if (isCancelledSyncIdentityResolutionError(err)) {
+        return;
+      }
+      if (!alreadyOpened && actions.open_files?.has(displayPath)) {
+        actions.open_files.delete(displayPath);
+        redux.getActions("page").save_session();
+      }
+      if (shouldSuppressArchivedOpenError(actions.project_id)) {
+        return;
+      }
+      alert_message({
+        type: "error",
+        message: `Cannot safely open "${displayPath}" because canonical sync identity resolution failed: ${err}`,
+        timeout: 10,
       });
+      return;
     }
-    if (opts.chat) {
-      actions.open_chat({ path: alreadyOpenAliasPath });
-    }
-    if (opts.fragmentId != null) {
-      actions.gotoFragment(alreadyOpenAliasPath, opts.fragmentId);
-    }
-    alert_message({
-      type: "info",
-      message: `"${displayPath}" is already open as "${alreadyOpenAliasPath}". Switched to that tab.`,
-      timeout: 4,
-    });
-    return;
-  }
-  // Editor selection must use the user-facing file path extension.
-  // syncPath may be canonicalized to backend identities, which are not
-  // necessarily editor extensions.
-  let ext = opts.ext ?? filename_extension(displayPath).toLowerCase();
-
-  let store = actions.get_store();
-  if (store == null) {
-    return;
-  }
-
-  // Wait for the project to start opening.
-  try {
-    await actions.ensureProjectIsOpen(opts.foreground_project);
     if (!tabIsOpened()) {
       return;
     }
-  } catch (err) {
-    actions.set_activity({
-      id: uuid(),
-      error: `Error opening file '${displayPath}' (error ensuring project is open) -- ${err}`,
-    });
-    return;
-  }
-  if (!tabIsOpened()) {
-    return;
-  }
+    if (actions.open_files != null) {
+      actions.open_files.set(displayPath, "sync_path", syncPath);
+      actions.open_files.set(displayPath, "display_path", displayPath);
+    }
+    // If this path resolves to a sync identity that is already open in this browser,
+    // don't keep a second tab with the same realtime session key.
+    const alreadyOpenAliasPath = alreadyOpened
+      ? undefined
+      : findOpenDisplayPathForSyncPath(actions, syncPath, displayPath);
+    if (alreadyOpenAliasPath != null) {
+      if (actions.open_files?.has(displayPath)) {
+        actions.open_files.delete(displayPath);
+      }
+      redux.getActions("page").save_session();
+      if (opts.foreground) {
+        actions.foreground_project(opts.change_history);
+        actions.set_active_tab(path_to_tab(alreadyOpenAliasPath), {
+          change_history: opts.change_history,
+        });
+      }
+      if (opts.chat) {
+        actions.open_chat({ path: alreadyOpenAliasPath });
+      }
+      if (opts.fragmentId != null) {
+        actions.gotoFragment(alreadyOpenAliasPath, opts.fragmentId);
+      }
+      alert_message({
+        type: "info",
+        message: `"${displayPath}" is already open as "${alreadyOpenAliasPath}". Switched to that tab.`,
+        timeout: 4,
+      });
+      return;
+    }
+    // Editor selection must use the user-facing file path extension.
+    // syncPath may be canonicalized to backend identities, which are not
+    // necessarily editor extensions.
+    let ext = opts.ext ?? filename_extension(displayPath).toLowerCase();
 
-  if (ext === "sagews") {
-    await open_sagews_worksheet(actions, opts);
-    return;
-  }
-
-  get_side_chat_state(actions.project_id, opts);
-
-  store = actions.get_store(); // because async stuff happened above.
-  if (store == undefined) {
-    return;
-  }
-
-  // Only generate the editor component if we don't have it already.
-  if (store.get("open_files") == null || actions.open_files == null) {
-    // project is closing
-    return;
-  }
-
-  if (!alreadyOpened) {
-    // Add it to open files
-    actions.open_files.set(displayPath, "ext", ext);
-    actions.open_files.set(displayPath, "component", {});
-    actions.open_files.set(displayPath, "chat_width", opts.chat_width);
-    actions.open_files.set(displayPath, "sync_path", syncPath);
-    actions.open_files.set(displayPath, "display_path", displayPath);
-    if (opts.chat) {
-      actions.open_chat({ path: displayPath });
+    let store = actions.get_store();
+    if (store == null) {
+      return;
     }
 
-    redux.getActions("page").save_session();
-  }
+    // Wait for the project to start opening.
+    try {
+      await ensureProjectIsOpenWithRetry(actions, {
+        foreground_project: opts.foreground_project,
+        isOpen: tabIsOpened,
+      });
+      if (!tabIsOpened()) {
+        return;
+      }
+    } catch (err) {
+      if (isCancelledProjectOpenRetryError(err)) {
+        return;
+      }
+      actions.set_activity({
+        id: uuid(),
+        error: `Error opening file '${displayPath}' (error ensuring project is open) -- ${err}`,
+      });
+      return;
+    }
+    if (!tabIsOpened()) {
+      return;
+    }
 
-  actions.open_files.set(displayPath, "fragmentId", opts.fragmentId ?? "");
+    if (ext === "sagews") {
+      await open_sagews_worksheet(actions, opts);
+      return;
+    }
 
-  void opts.explicit;
+    get_side_chat_state(actions.project_id, opts);
 
-  if (!tabIsOpened()) {
+    store = actions.get_store(); // because async stuff happened above.
+    if (store == undefined) {
+      return;
+    }
+
+    // Only generate the editor component if we don't have it already.
+    if (store.get("open_files") == null || actions.open_files == null) {
+      // project is closing
+      return;
+    }
+
+    if (!alreadyOpened) {
+      // Add it to open files
+      actions.open_files.set(displayPath, "ext", ext);
+      actions.open_files.set(displayPath, "component", {});
+      actions.open_files.set(displayPath, "chat_width", opts.chat_width);
+      actions.open_files.set(displayPath, "sync_path", syncPath);
+      actions.open_files.set(displayPath, "display_path", displayPath);
+      if (opts.chat) {
+        actions.open_chat({ path: displayPath });
+      }
+
+      redux.getActions("page").save_session();
+    }
+
+    actions.open_files.set(displayPath, "fragmentId", opts.fragmentId ?? "");
+
+    void opts.explicit;
+
+    if (!tabIsOpened()) {
+      return;
+    }
+
+    if (opts.foreground) {
+      actions.foreground_project(opts.change_history);
+      const tab = path_to_tab(displayPath);
+      actions.set_active_tab(tab, {
+        change_history: opts.change_history,
+      });
+    } else if (PRELOAD_BACKGROUND_TABS) {
+      await actions.initFileRedux(syncPath);
+    }
+
+    if (alreadyOpened && opts.fragmentId) {
+      // when file already opened we have to explicitly do this, since
+      // it doesn't happen in response to foregrounding the file the
+      // first time.
+      actions.gotoFragment(displayPath, opts.fragmentId);
+    }
+  };
+
+  if (!opts.wait_for_ready) {
+    void continueOpen().catch((err) => {
+      if (!tabIsOpened()) {
+        return;
+      }
+      actions.set_activity({
+        id: uuid(),
+        error: `Error opening file '${displayPath}' -- ${err}`,
+      });
+    });
     return;
   }
 
-  if (opts.foreground) {
-    actions.foreground_project(opts.change_history);
-    const tab = path_to_tab(displayPath);
-    actions.set_active_tab(tab, {
-      change_history: opts.change_history,
-    });
-  } else if (PRELOAD_BACKGROUND_TABS) {
-    await actions.initFileRedux(syncPath);
-  }
-
-  if (alreadyOpened && opts.fragmentId) {
-    // when file already opened we have to explicitly do this, since
-    // it doesn't happen in response to foregrounding the file the
-    // first time.
-    actions.gotoFragment(displayPath, opts.fragmentId);
-  }
+  await continueOpen();
 }
 
 function toAbsoluteOpenPath(path: string, projectHome: string): string {

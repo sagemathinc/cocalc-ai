@@ -375,4 +375,19 @@ describe("NavigatorShell keyboard suppression", () => {
       }),
     ).toBe(false);
   });
+
+  it("retries transient closed filesystem errors after startup", () => {
+    expect(
+      isNavigatorChatInitRetryable({
+        error: "Error: closed",
+        projectState: "running",
+      }),
+    ).toBe(true);
+    expect(
+      isNavigatorChatInitRetryable({
+        error: 'Error: once: "info" not emitted before "closed"',
+        projectState: "running",
+      }),
+    ).toBe(true);
+  });
 });

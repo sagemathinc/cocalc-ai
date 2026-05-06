@@ -3,7 +3,9 @@ import { fromJS } from "immutable";
 import {
   applyWorkspaceSelectionForForegroundOpen,
   canonicalPath,
+  ensureProjectIsOpenWithRetry,
   findOpenDisplayPathForSyncPath,
+  isTransientProjectOpenError,
   isTransientSyncIdentityResolutionError,
   log_file_open,
   log_opened_time,
@@ -17,6 +19,55 @@ import * as workspaceSelectionRuntime from "./workspaces/selection-runtime";
 import { termPath } from "@cocalc/util/terminal/names";
 import { redux } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: any) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function makeOpenFilesHarness() {
+  const openFilesState = new Map<string, Record<string, any>>();
+  const open_files = {
+    has(path: string) {
+      return openFilesState.has(path);
+    },
+    set(path: string, key: string, value: any) {
+      const entry = openFilesState.get(path) ?? {};
+      entry[key] = value;
+      openFilesState.set(path, entry);
+    },
+    delete(path: string) {
+      openFilesState.delete(path);
+    },
+  };
+  const store = {
+    get(key: string) {
+      if (key === "open_files") {
+        return {
+          has: (path: string) => openFilesState.has(path),
+          forEach: (cb: (value: any, key: string) => void) => {
+            openFilesState.forEach((value, key) => cb(value, key));
+          },
+          getIn: (path: [string, string]) =>
+            openFilesState.get(path[0])?.[path[1]],
+        };
+      }
+      return undefined;
+    },
+    getIn(path: [string, string, string]) {
+      if (path[0] !== "open_files") {
+        return undefined;
+      }
+      return openFilesState.get(path[1])?.[path[2]];
+    },
+  };
+  return { open_files, openFilesState, store };
+}
 
 describe("canonicalPath", () => {
   const HOME = "/home/wstein/work";
@@ -142,10 +193,31 @@ describe("isTransientSyncIdentityResolutionError", () => {
     ).toBe(true);
   });
 
+  it("treats closed filesystem client errors as retryable", () => {
+    expect(isTransientSyncIdentityResolutionError(new Error("closed"))).toBe(
+      true,
+    );
+    expect(
+      isTransientSyncIdentityResolutionError(
+        new Error('once: "info" not emitted before "closed"'),
+      ),
+    ).toBe(true);
+  });
+
   it("does not treat permanent support failures as retryable", () => {
     expect(
       isTransientSyncIdentityResolutionError(
         new Error("canonicalSyncIdentityPath unavailable"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not misclassify unrelated errors that merely mention a closed filename", () => {
+    expect(
+      isTransientSyncIdentityResolutionError(
+        new Error(
+          "backend returned invalid canonical sync identity for '/root/closed.txt'",
+        ),
       ),
     ).toBe(false);
   });
@@ -188,6 +260,19 @@ describe("resolveSyncPathWithRetry", () => {
     expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(2);
   });
 
+  it("retries transient closed-client failures until canonical identity resolution succeeds", async () => {
+    const fs = {
+      canonicalSyncIdentityPath: jest
+        .fn()
+        .mockRejectedValueOnce(new Error("closed"))
+        .mockResolvedValue("/root/file.txt"),
+    };
+    await expect(
+      resolveSyncPathWithRetry(fs, "/root/file.txt", HOME),
+    ).resolves.toBe("/root/file.txt");
+    expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(2);
+  });
+
   it("stops retrying when the open is cancelled", async () => {
     const fs = {
       canonicalSyncIdentityPath: jest
@@ -210,6 +295,68 @@ describe("resolveSyncPathWithRetry", () => {
       resolveSyncPathWithRetry(fs, "/root/file.txt", HOME),
     ).rejects.toThrow("boom");
     expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("isTransientProjectOpenError", () => {
+  it("treats project-open timeouts as retryable", () => {
+    expect(isTransientProjectOpenError(new Error("timeout -- 30000 ms"))).toBe(
+      true,
+    );
+    expect(
+      isTransientProjectOpenError(
+        new Error("project is not running. Please try again in a moment"),
+      ),
+    ).toBe(true);
+    expect(
+      isTransientProjectOpenError(
+        new Error(
+          "unable to route 'filesystem' to project-host for project p; project host id unavailable",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat permanent project-open failures as retryable", () => {
+    expect(isTransientProjectOpenError(new Error("permission denied"))).toBe(
+      false,
+    );
+  });
+});
+
+describe("ensureProjectIsOpenWithRetry", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("retries transient project-open failures until the project opens", async () => {
+    const actions = {
+      ensureProjectIsOpen: jest
+        .fn()
+        .mockRejectedValueOnce(new Error("timeout -- 30000 ms"))
+        .mockResolvedValue(undefined),
+    };
+    await expect(
+      ensureProjectIsOpenWithRetry(actions, {
+        foreground_project: true,
+      }),
+    ).resolves.toBeUndefined();
+    expect(actions.ensureProjectIsOpen).toHaveBeenCalledTimes(2);
+    expect(actions.ensureProjectIsOpen).toHaveBeenNthCalledWith(1, true);
+  });
+
+  it("stops retrying when the tab is closed", async () => {
+    const actions = {
+      ensureProjectIsOpen: jest
+        .fn()
+        .mockRejectedValue(new Error("project is not running")),
+    };
+    let open = true;
+    const promise = ensureProjectIsOpenWithRetry(actions, {
+      isOpen: () => open,
+    });
+    open = false;
+    await expect(promise).rejects.toThrow("cancelled");
   });
 });
 
@@ -449,5 +596,85 @@ describe("open_file workspaceSelection passthrough", () => {
       kind: "workspace",
       workspace_id: "w1",
     });
+  });
+});
+
+describe("open_file wait_for_ready", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("returns immediately for background opens and continues readiness work in the background", async () => {
+    const path = "/home/user/background.txt";
+    const syncIdentity = deferred<string>();
+    const ensureProjectIsOpen = jest.fn().mockResolvedValue(undefined);
+    const openProject = jest.fn();
+    const saveSession = jest.fn();
+    const { open_files, openFilesState, store } = makeOpenFilesHarness();
+
+    jest.spyOn(redux as any, "getStore").mockImplementation((name: string) => {
+      if (name === "page") {
+        return { get: jest.fn().mockReturnValue(false) };
+      }
+      return undefined;
+    });
+    jest
+      .spyOn(redux as any, "getActions")
+      .mockImplementation((name: string) => {
+        if (name === "projects") {
+          return { open_project: openProject };
+        }
+        if (name === "page") {
+          return { save_session: saveSession };
+        }
+        return {};
+      });
+
+    const actions = {
+      project_id: "project-1",
+      get_store: () => store,
+      open_files,
+      fs: () => ({
+        canonicalSyncIdentityPath: jest
+          .fn()
+          .mockReturnValue(syncIdentity.promise),
+      }),
+      ensureProjectIsOpen,
+      open_in_new_browser_window: jest.fn(),
+      foreground_project: jest.fn(),
+      set_active_tab: jest.fn(),
+      initFileRedux: jest.fn(),
+      gotoFragment: jest.fn(),
+      open_chat: jest.fn(),
+      set_activity: jest.fn(),
+    } as any;
+
+    const openPromise = open_file(actions, {
+      path,
+      foreground: false,
+      foreground_project: false,
+      wait_for_ready: false,
+      change_history: false,
+    });
+    let resolved = false;
+    void openPromise.then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+
+    expect(resolved).toBe(true);
+
+    expect(openFilesState.get(path)?.component).toEqual({});
+    expect(ensureProjectIsOpen).not.toHaveBeenCalled();
+
+    syncIdentity.resolve(path);
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(ensureProjectIsOpen).toHaveBeenCalledWith(false);
+    expect(openFilesState.get(path)?.sync_path).toBe(path);
+    expect(openFilesState.get(path)?.ext).toBe("txt");
+    expect(saveSession).toHaveBeenCalled();
   });
 });

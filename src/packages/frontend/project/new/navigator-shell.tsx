@@ -112,6 +112,9 @@ export function isNavigatorChatInitRetryable({
     return normalizedState !== "running";
   }
   return (
+    normalizedError === "error: closed" ||
+    normalizedError.endsWith(": closed") ||
+    normalizedError.includes('before "closed"') ||
     normalizedError.includes("file server not initialized") ||
     normalizedError.includes("canonical sync identity resolution failed") ||
     normalizedError.includes("project host id unavailable") ||
