@@ -193,7 +193,10 @@ type ResetOpenFileRuntimeAfterHostResetOpts = {
   getComponent: (path: string) => any;
   setComponent: (path: string, component: any) => void;
   removeRuntime: (syncPath: string) => Promise<void> | void;
-  rebootstrapPath?: (path: string) => Promise<void> | void;
+  rebootstrapPath?: (
+    path: string,
+    opts?: { noFocus?: boolean },
+  ) => Promise<void> | void;
 };
 
 export async function resetOpenFileRuntimeAfterHostReset({
@@ -231,8 +234,17 @@ export async function resetOpenFileRuntimeAfterHostReset({
     activeProjectTab.startsWith("editor-")
       ? misc.tab_to_path(activeProjectTab)
       : undefined;
-  if (activePath != null && openFiles.has(activePath)) {
-    await rebootstrapPath?.(activePath);
+  const pathsToRebootstrap =
+    activePath != null && openFiles.has(activePath)
+      ? [
+          activePath,
+          ...openFiles.keySeq().filter((path) => path !== activePath),
+        ]
+      : openFiles.keySeq().toArray();
+  for (const path of pathsToRebootstrap) {
+    await rebootstrapPath?.(path, {
+      noFocus: path !== activePath,
+    });
   }
 }
 
@@ -2913,8 +2925,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       removeRuntime: async (syncPath) => {
         await project_file.remove(syncPath, this.redux, this.project_id);
       },
-      rebootstrapPath: async (path) => {
-        this.ensureOpenFileComponent(path);
+      rebootstrapPath: async (path, opts) => {
+        this.ensureOpenFileComponent(path, opts);
       },
     });
     void (async () => {
@@ -2950,8 +2962,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         removeRuntime: async (path) => {
           await project_file.remove(path, this.redux, this.project_id);
         },
-        rebootstrapPath: async (path) => {
-          this.ensureOpenFileComponent(path);
+        rebootstrapPath: async (path, opts) => {
+          this.ensureOpenFileComponent(path, opts);
         },
       });
       return true;

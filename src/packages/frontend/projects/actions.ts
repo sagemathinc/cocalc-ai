@@ -201,6 +201,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private static ARCHIVE_RPC_TIMEOUT_MS = 30_000;
   private static REALTIME_FEED_BATCH_MS = 50;
   private static CREATE_PROJECT_FEED_WAIT_TIMEOUT_S = 5;
+  private static MOVE_TRANSITION_GRACE_MS = 5 * 60_000;
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
@@ -223,6 +224,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   > = Object.create(null);
   private pendingProjectFeedRemovals: Record<string, number | undefined> =
+    Object.create(null);
+  private recentProjectHostTransitionUntil: Record<string, number> =
+    Object.create(null);
+  private recentHostInfoLookupFailureAt: Record<string, number> =
     Object.create(null);
 
   _init() {
@@ -307,9 +312,25 @@ export class ProjectsActions extends Actions<ProjectsState> {
       if (next) {
         this.setState({ host_info: next } as ProjectsState);
       }
+      delete this.recentHostInfoLookupFailureAt[host_id];
       return next?.get(host_id);
     } catch (err) {
-      console.warn("ensure_host_info failed", { host_id, err: `${err}` });
+      const errString = `${err}`;
+      const isHostMissing = errString.includes("host not found");
+      const previousFailureAt = this.recentHostInfoLookupFailureAt[host_id];
+      if (
+        !isHostMissing ||
+        previousFailureAt == null ||
+        now - previousFailureAt >= ProjectsActions.HOST_INFO_TTL_MS
+      ) {
+        console.warn("ensure_host_info failed", {
+          host_id,
+          err: errString,
+        });
+      }
+      if (isHostMissing) {
+        this.recentHostInfoLookupFailureAt[host_id] = now;
+      }
       return;
     }
   });
@@ -579,6 +600,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (project?.get(PROJECTION_ONLY_FIELD) !== true) {
           continue;
         }
+        if (this.shouldRetainOpenProjectDuringMoveTransition(project_id)) {
+          continue;
+        }
         project_map = project_map.delete(project_id);
         changed = true;
         if (this.isProjectOpen(project_id)) {
@@ -591,6 +615,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
             project.get(PROJECTION_ONLY_FIELD) === true &&
             !seenProjectedIds.has(project_id)
           ) {
+            if (this.shouldRetainOpenProjectDuringMoveTransition(project_id)) {
+              continue;
+            }
             project_map = project_map.delete(project_id);
             changed = true;
             if (this.isProjectOpen(project_id)) {
@@ -919,10 +946,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       if (!project_map.has(project_id)) {
         continue;
       }
-      if (
-        this.isProjectOpen(project_id) &&
-        this.isProjectMoveInProgress(project_id)
-      ) {
+      if (this.shouldRetainOpenProjectDuringMoveTransition(project_id)) {
         continue;
       }
       project_map = project_map.delete(project_id);
@@ -1147,6 +1171,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     ) {
       return;
     }
+    this.noteProjectHostTransition(project_id);
     webapp_client.conat_client.releaseProjectHostRouting({ project_id });
     webapp_client.conat_client.refreshProjectHostRouting({
       source_host_id,
@@ -1181,6 +1206,38 @@ export class ProjectsActions extends Actions<ProjectsState> {
     return (store.get("open_projects")?.indexOf?.(project_id) ?? -1) != -1;
   };
 
+  private noteProjectHostTransition(project_id: string): void {
+    const nextDeadline = Date.now() + ProjectsActions.MOVE_TRANSITION_GRACE_MS;
+    const previousDeadline = this.recentProjectHostTransitionUntil[project_id];
+    if (previousDeadline == null || previousDeadline < nextDeadline) {
+      this.recentProjectHostTransitionUntil[project_id] = nextDeadline;
+    }
+  }
+
+  private isProjectInRecentHostTransition(project_id: string): boolean {
+    const deadline = this.recentProjectHostTransitionUntil[project_id];
+    if (deadline == null) {
+      return false;
+    }
+    if (deadline <= Date.now()) {
+      delete this.recentProjectHostTransitionUntil[project_id];
+      return false;
+    }
+    return true;
+  }
+
+  private shouldRetainOpenProjectDuringMoveTransition(
+    project_id: string,
+  ): boolean {
+    if (!this.isProjectOpen(project_id)) {
+      return false;
+    }
+    return (
+      this.isProjectMoveInProgress(project_id) ||
+      this.isProjectInRecentHostTransition(project_id)
+    );
+  }
+
   private isProjectMoveInProgress(project_id: string): boolean {
     const projectStore = this.redux.getProjectStore?.(project_id);
     const moveLro = projectStore?.get?.("move_lro");
@@ -1195,7 +1252,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (status == null) {
       return true;
     }
-    return !isTerminal(status);
+    if (!isTerminal(status)) {
+      return true;
+    }
+    const updatedAt =
+      moveLro.getIn?.(["summary", "updated_at"]) ??
+      summary?.updated_at ??
+      summary?.get?.("updated_at") ??
+      moveLro.getIn?.(["summary", "finished_at"]) ??
+      summary?.finished_at ??
+      summary?.get?.("finished_at") ??
+      moveLro.get("updated_at");
+    const updatedMs = eventTimeMs(updatedAt);
+    return (
+      updatedMs != null &&
+      updatedMs + ProjectsActions.MOVE_TRANSITION_GRACE_MS > Date.now()
+    );
   }
 
   private setProjectOpen = (project_id: string): void => {
@@ -2140,6 +2212,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     const applySuccessfulMove = () => {
       actions.setState({ control_error: "" });
+      this.noteProjectHostTransition(logInfo.project_id);
       const previous_host_id =
         logInfo.source_host_id ||
         (store.getIn(["project_map", logInfo.project_id, "host_id"]) as

@@ -3,7 +3,7 @@ import { Map as ImmutableMap } from "immutable";
 import { resetOpenFileRuntimeAfterHostReset } from "./project_actions";
 
 describe("ProjectActions host restart file runtime reset", () => {
-  it("clears all open file components, removes each sync runtime once, and reboots the active editor", async () => {
+  it("clears all open file components, removes each sync runtime once, and reboots all open files with the active editor first", async () => {
     const openFiles = ImmutableMap<string, any>({
       "/display-a.ipynb": ImmutableMap({
         component: { redux_name: "old-a", Editor: "EditorA", other: true },
@@ -58,10 +58,14 @@ describe("ProjectActions host restart file runtime reset", () => {
       ["/display-a.ipynb"],
       ["/display-b.ipynb"],
     ]);
-    expect(rebootstrapPath).toHaveBeenCalledWith("/display-b.ipynb");
+    expect(rebootstrapPath.mock.calls).toEqual([
+      ["/display-b.ipynb", { noFocus: false }],
+      ["/display-a.ipynb", { noFocus: true }],
+      ["/same-sync.txt", { noFocus: true }],
+    ]);
   });
 
-  it("does not reboot when the active tab is not an editor", async () => {
+  it("reboots open files without stealing focus when the active tab is not an editor", async () => {
     const openFiles = ImmutableMap<string, any>({
       "/notes.md": ImmutableMap({
         component: { redux_name: "old", Editor: "Editor" },
@@ -84,6 +88,8 @@ describe("ProjectActions host restart file runtime reset", () => {
       rebootstrapPath,
     });
 
-    expect(rebootstrapPath).not.toHaveBeenCalled();
+    expect(rebootstrapPath).toHaveBeenCalledWith("/notes.md", {
+      noFocus: true,
+    });
   });
 });
