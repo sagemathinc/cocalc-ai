@@ -1,6 +1,7 @@
 import {
   cleanupBrokenNamedEditorRuntime,
   hasUsableNamedEditorRuntime,
+  teardownNamedEditorRuntime,
 } from "./project_actions";
 
 describe("ProjectActions editor runtime recovery", () => {
@@ -76,5 +77,50 @@ describe("ProjectActions editor runtime recovery", () => {
     expect(close).not.toHaveBeenCalled();
     expect(removeActions).not.toHaveBeenCalled();
     expect(removeStore).not.toHaveBeenCalled();
+  });
+
+  it("tears down a healthy named runtime directly", () => {
+    const close = jest.fn();
+    const removeActions = jest.fn();
+    const removeStore = jest.fn();
+    teardownNamedEditorRuntime({
+      runtimeName: "editor-1",
+      getStore: () => ({}),
+      getActions: () => ({
+        close,
+        isClosed: () => false,
+      }),
+      removeActions,
+      removeStore,
+    });
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(removeActions).toHaveBeenCalledWith("editor-1");
+    expect(removeStore).toHaveBeenCalledWith("editor-1");
+  });
+
+  it("tears down time-travel companions with the main runtime", () => {
+    const close = jest.fn();
+    const ttClose = jest.fn();
+    const removeActions = jest.fn();
+    const removeStore = jest.fn();
+    teardownNamedEditorRuntime({
+      runtimeName: "editor-1",
+      getStore: (name) => (name === "editor-1" ? {} : undefined),
+      getActions: () => ({
+        close,
+        timeTravelActions: {
+          name: "tt-1",
+          close: ttClose,
+        },
+      }),
+      removeActions,
+      removeStore,
+    });
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(ttClose).toHaveBeenCalledTimes(1);
+    expect(removeActions.mock.calls).toEqual([["tt-1"], ["editor-1"]]);
+    expect(removeStore.mock.calls).toEqual([["tt-1"], ["editor-1"]]);
   });
 });

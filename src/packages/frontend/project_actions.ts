@@ -123,6 +123,10 @@ import { MoveOpsManager } from "@cocalc/frontend/project/move-ops";
 import { StartOpsManager } from "@cocalc/frontend/project/start-ops";
 import { isCollaboratorRealtimeAccessError } from "@cocalc/frontend/project/collaborator-realtime";
 import { canUseCollaboratorProjectRealtime } from "@cocalc/frontend/project/realtime-access";
+import {
+  closeProjectSyncDocs,
+  ensureProjectSyncDocTracking,
+} from "@cocalc/frontend/project/syncdoc-runtime";
 import { getFileTemplate } from "./project/templates";
 import { isBackupsPath } from "@cocalc/util/consts/backups";
 import {
@@ -171,6 +175,8 @@ const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
 
+ensureProjectSyncDocTracking();
+
 function isRecoverableFilesystemClientError(err: unknown): boolean {
   const message = `${err}`.toLowerCase();
   return (
@@ -192,6 +198,7 @@ type ResetOpenFileRuntimeAfterHostResetOpts = {
   getSyncPath: (path: string) => string;
   getComponent: (path: string) => any;
   setComponent: (path: string, component: any) => void;
+  removeNamedRuntime?: (runtimeName: string) => Promise<void> | void;
   removeRuntime: (syncPath: string) => Promise<void> | void;
   rebootstrapPath?: (
     path: string,
@@ -205,16 +212,25 @@ export async function resetOpenFileRuntimeAfterHostReset({
   getSyncPath,
   getComponent,
   setComponent,
+  removeNamedRuntime,
   removeRuntime,
   rebootstrapPath,
 }: ResetOpenFileRuntimeAfterHostResetOpts): Promise<void> {
   if (openFiles == null || openFiles.size === 0) {
     return;
   }
+  const runtimeNames: string[] = [];
+  const seenRuntimeNames = new Set<string>();
   const syncPaths: string[] = [];
   const seenSyncPaths = new Set<string>();
   openFiles.forEach((_value, path) => {
     const current = getComponent(path) ?? {};
+    const runtimeName =
+      typeof current.redux_name === "string" ? current.redux_name : undefined;
+    if (runtimeName != null && !seenRuntimeNames.has(runtimeName)) {
+      seenRuntimeNames.add(runtimeName);
+      runtimeNames.push(runtimeName);
+    }
     setComponent(path, {
       ...current,
       redux_name: undefined,
@@ -226,6 +242,9 @@ export async function resetOpenFileRuntimeAfterHostReset({
       syncPaths.push(syncPath);
     }
   });
+  for (const runtimeName of runtimeNames) {
+    await removeNamedRuntime?.(runtimeName);
+  }
   for (const syncPath of syncPaths) {
     await removeRuntime(syncPath);
   }
@@ -302,6 +321,48 @@ export function cleanupBrokenNamedEditorRuntime({
   } catch (_err) {
     // Ignore close failures here and continue cleanup; this path is already
     // recovering from a broken editor runtime after host transition.
+  }
+  if (actions != null) {
+    removeActions(runtimeName);
+  }
+  if (store != null) {
+    removeStore(runtimeName);
+  }
+}
+
+type TeardownNamedEditorRuntimeOpts = NamedEditorRuntimeLookup & {
+  removeStore: (name: string) => void;
+  removeActions: (name: string) => void;
+};
+
+export function teardownNamedEditorRuntime({
+  runtimeName,
+  getStore,
+  getActions,
+  removeStore,
+  removeActions,
+}: TeardownNamedEditorRuntimeOpts): void {
+  if (runtimeName == null) {
+    return;
+  }
+  const actions = getActions(runtimeName);
+  const store = getStore(runtimeName);
+  try {
+    actions?.close?.();
+  } catch (_err) {
+    // Ignore teardown failures and continue cleanup.
+  }
+  const timeTravelActions = actions?.timeTravelActions;
+  if (timeTravelActions != null) {
+    try {
+      timeTravelActions.close?.();
+    } catch (_err) {
+      // Ignore teardown failures and continue cleanup.
+    }
+    if (typeof timeTravelActions.name === "string") {
+      removeActions(timeTravelActions.name);
+      removeStore(timeTravelActions.name);
+    }
   }
   if (actions != null) {
     removeActions(runtimeName);
@@ -2996,22 +3057,34 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     delete this.projectStatusSub;
     const store = this.get_store();
     const hasProjectLogLoaded = store?.get("project_log") != null;
-    void resetOpenFileRuntimeAfterHostReset({
-      openFiles: store?.get("open_files"),
-      activeProjectTab: store?.get("active_project_tab"),
-      getSyncPath: (path) => this.get_sync_path(path),
-      getComponent: (path) => this.open_files?.get(path, "component"),
-      setComponent: (path, component) =>
-        this.open_files?.set(path, "component", component),
-      removeRuntime: async (syncPath) => {
-        await project_file.remove(syncPath, this.redux, this.project_id, {
-          force: true,
-        });
-      },
-      rebootstrapPath: async (path, opts) => {
-        this.ensureOpenFileComponent(path, opts);
-      },
-    });
+    void (async () => {
+      await closeProjectSyncDocs(this.project_id);
+      await resetOpenFileRuntimeAfterHostReset({
+        openFiles: store?.get("open_files"),
+        activeProjectTab: store?.get("active_project_tab"),
+        getSyncPath: (path) => this.get_sync_path(path),
+        getComponent: (path) => this.open_files?.get(path, "component"),
+        setComponent: (path, component) =>
+          this.open_files?.set(path, "component", component),
+        removeNamedRuntime: async (runtimeName) => {
+          teardownNamedEditorRuntime({
+            runtimeName,
+            getStore: (name) => this.redux.getStore(name),
+            getActions: (name) => this.redux.getActions(name),
+            removeStore: (name) => this.redux.removeStore(name),
+            removeActions: (name) => this.redux.removeActions(name),
+          });
+        },
+        removeRuntime: async (syncPath) => {
+          await project_file.remove(syncPath, this.redux, this.project_id, {
+            force: true,
+          });
+        },
+        rebootstrapPath: async (path, opts) => {
+          this.ensureOpenFileComponent(path, opts);
+        },
+      });
+    })();
     void (async () => {
       await this.resetProjectLogStream();
       if (hasProjectLogLoaded) {
@@ -3035,6 +3108,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       if (matchingOpenFiles.size === 0) {
         return false;
       }
+      await closeProjectSyncDocs(this.project_id);
       await resetOpenFileRuntimeAfterHostReset({
         openFiles: matchingOpenFiles,
         activeProjectTab: store?.get("active_project_tab"),
@@ -3042,6 +3116,15 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         getComponent: (path) => this.open_files?.get(path, "component"),
         setComponent: (path, component) =>
           this.open_files?.set(path, "component", component),
+        removeNamedRuntime: async (runtimeName) => {
+          teardownNamedEditorRuntime({
+            runtimeName,
+            getStore: (name) => this.redux.getStore(name),
+            getActions: (name) => this.redux.getActions(name),
+            removeStore: (name) => this.redux.removeStore(name),
+            removeActions: (name) => this.redux.removeActions(name),
+          });
+        },
         removeRuntime: async (path) => {
           await project_file.remove(path, this.redux, this.project_id, {
             force: true,
