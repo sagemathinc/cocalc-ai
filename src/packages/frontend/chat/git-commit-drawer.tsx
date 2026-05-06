@@ -1182,6 +1182,60 @@ type MarkdownHistoryInputProps = ComponentProps<typeof MarkdownInput> & {
   historyId: string;
 };
 
+function normalizeGitReviewEditorIdPart(
+  value?: string | null,
+  fallback = "none",
+): string {
+  const normalized = `${value ?? ""}`.trim();
+  return normalized || fallback;
+}
+
+export function buildGitReviewEditorScope({
+  accountId,
+  commitSha,
+}: {
+  accountId?: string | null;
+  commitSha?: string | null;
+}): string {
+  const normalizedCommit =
+    normalizeCommitSha(commitSha ?? undefined) ?? commitSha;
+  return [
+    "git-review",
+    "account",
+    normalizeGitReviewEditorIdPart(accountId, "anonymous"),
+    "commit",
+    normalizeGitReviewEditorIdPart(normalizedCommit, "none"),
+  ].join(":");
+}
+
+export function buildGitReviewNoteEditorId(scope: string): string {
+  return `${scope}:note`;
+}
+
+export function buildGitInlineDraftEditorId({
+  scope,
+  filePath,
+  anchorId,
+}: {
+  scope: string;
+  filePath: string;
+  anchorId: string;
+}): string {
+  return `${scope}:inline-draft:${filePath}:${anchorId}`;
+}
+
+export function buildGitInlineEditEditorId({
+  scope,
+  filePath,
+  commentId,
+}: {
+  scope: string;
+  filePath: string;
+  commentId: string;
+}): string {
+  return `${scope}:inline-edit:${filePath}:${commentId}`;
+}
+
 export function MarkdownHistoryInput({
   historyId: _historyId,
   saveDebounceMs = 0,
@@ -1389,8 +1443,7 @@ export function ReviewNoteEditor({
 }
 
 function InlineDraftCommentEditor({
-  filePath,
-  anchorId,
+  historyId,
   value,
   fontSize,
   loading,
@@ -1398,8 +1451,7 @@ function InlineDraftCommentEditor({
   onCancel,
   onSave,
 }: {
-  filePath: string;
-  anchorId: string;
+  historyId: string;
   value: string;
   fontSize: number;
   loading: boolean;
@@ -1422,8 +1474,8 @@ function InlineDraftCommentEditor({
   return (
     <>
       <MarkdownHistoryInput
-        historyId={`git-inline-draft:${filePath}:${anchorId}`}
-        cacheId={`git-inline-draft:${filePath}:${anchorId}`}
+        historyId={historyId}
+        cacheId={historyId}
         value={localValue}
         onChange={update}
         onBlur={flush}
@@ -1486,8 +1538,7 @@ function InlineDraftCommentEditor({
 }
 
 function InlineEditCommentEditor({
-  filePath,
-  commentId,
+  historyId,
   value,
   fontSize,
   loading,
@@ -1495,8 +1546,7 @@ function InlineEditCommentEditor({
   onCancel,
   onSave,
 }: {
-  filePath: string;
-  commentId: string;
+  historyId: string;
   value: string;
   fontSize: number;
   loading: boolean;
@@ -1519,8 +1569,8 @@ function InlineEditCommentEditor({
   return (
     <>
       <MarkdownHistoryInput
-        historyId={`git-inline-edit:${filePath}:${commentId}`}
-        cacheId={`git-inline-edit:${filePath}:${commentId}`}
+        historyId={historyId}
+        cacheId={historyId}
         value={localValue}
         onChange={update}
         onBlur={flush}
@@ -1582,6 +1632,7 @@ export const DiffBlock = memo(function DiffBlock({
   languageHint,
   fontSize,
   editorTheme,
+  editorHistoryScope = buildGitReviewEditorScope({}),
   comments,
   showResolvedComments,
   commentEnabled,
@@ -1610,6 +1661,7 @@ export const DiffBlock = memo(function DiffBlock({
   languageHint: string;
   fontSize: number;
   editorTheme?: string | null;
+  editorHistoryScope?: string;
   comments: GitReviewCommentV2[];
   showResolvedComments: boolean;
   commentEnabled: boolean;
@@ -1852,8 +1904,11 @@ export const DiffBlock = memo(function DiffBlock({
                       {isEditing ? (
                         <InlineEditCommentEditor
                           key={comment.id}
-                          filePath={filePath}
-                          commentId={comment.id}
+                          historyId={buildGitInlineEditEditorId({
+                            scope: editorHistoryScope,
+                            filePath,
+                            commentId: comment.id,
+                          })}
                           value={activeEditingBody}
                           fontSize={commentFontSize}
                           loading={pendingKey === `edit:${comment.id}`}
@@ -1945,8 +2000,11 @@ export const DiffBlock = memo(function DiffBlock({
                 </Typography.Text>
                 <InlineDraftCommentEditor
                   key={anchorId}
-                  filePath={filePath}
-                  anchorId={anchorId}
+                  historyId={buildGitInlineDraftEditorId({
+                    scope: editorHistoryScope,
+                    filePath,
+                    anchorId,
+                  })}
                   value={activeDraftBody}
                   fontSize={commentFontSize}
                   loading={pendingKey === `create:${anchorId}`}
@@ -1975,6 +2033,7 @@ const DiffFileSection = memo(function DiffFileSection({
   showResolvedComments,
   isHeadSelected,
   visibleLineLimit,
+  editorHistoryScope,
   onOpenFile,
   onShowMoreLines,
   activeDraftAnchorId,
@@ -2005,6 +2064,7 @@ const DiffFileSection = memo(function DiffFileSection({
   showResolvedComments: boolean;
   isHeadSelected: boolean;
   visibleLineLimit: number;
+  editorHistoryScope: string;
   onOpenFile: (filePath: string) => Promise<void>;
   onShowMoreLines: (sectionId: string) => void;
   activeDraftAnchorId?: string;
@@ -2095,6 +2155,7 @@ const DiffFileSection = memo(function DiffFileSection({
         languageHint={languageHint}
         fontSize={fontSize}
         editorTheme={editorTheme}
+        editorHistoryScope={editorHistoryScope}
         comments={fileComments}
         showResolvedComments={showResolvedComments}
         commentEnabled={!isHeadSelected}
@@ -3938,6 +3999,18 @@ export function GitCommitDrawer({
     () => normalizeCommitSha(commit),
     [commit],
   );
+  const reviewEditorScope = useMemo(
+    () =>
+      buildGitReviewEditorScope({
+        accountId,
+        commitSha: reviewStateCommit ?? currentReviewCommit,
+      }),
+    [accountId, reviewStateCommit, currentReviewCommit],
+  );
+  const reviewNoteHistoryId = useMemo(
+    () => buildGitReviewNoteEditorId(reviewEditorScope),
+    [reviewEditorScope],
+  );
   const hasTrackedHeadChanges = useMemo(
     () => headStatusEntries.some((entry) => entry.tracked),
     [headStatusEntries],
@@ -4550,8 +4623,8 @@ export function GitCommitDrawer({
             </div>
             {reviewNoteEditing ? (
               <ReviewNoteEditor
-                historyId={`git-review-note:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
-                key={`git-review-note-edit:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
+                historyId={reviewNoteHistoryId}
+                key={reviewNoteHistoryId}
                 value={reviewNoteDraft}
                 committedValue={reviewNote}
                 fontSize={fontSize}
@@ -4940,6 +5013,7 @@ export function GitCommitDrawer({
                         index={idx}
                         fontSize={fontSize}
                         editorTheme={editorTheme}
+                        editorHistoryScope={reviewEditorScope}
                         fileComments={fileComments}
                         showResolvedComments={showResolvedComments}
                         isHeadSelected={isHeadSelected}

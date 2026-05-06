@@ -1,8 +1,12 @@
 import React, { useState } from "react";
 import {
+  buildGitInlineDraftEditorId,
+  buildGitInlineEditEditorId,
   buildGitDiffFindMatches,
+  buildGitReviewEditorScope,
   filterGitReviewLogEntries,
   buildGitReviewFileSectionId,
+  buildGitReviewNoteEditorId,
   captureGitDiffScrollAnchor,
   commentAnchorKey,
   DiffBlock,
@@ -119,6 +123,64 @@ describe("git commit drawer merge commit formatting", () => {
     expect(latestMarkdownInputProps.saveDebounceMs).toBe(0);
     expect(latestMarkdownInputProps.undoMode).toBe("local");
     expect(latestMarkdownInputProps.redoMode).toBe("local");
+  });
+
+  it("scopes git review editor cache ids by both account and commit", () => {
+    const accountAScope = buildGitReviewEditorScope({
+      accountId: "acct-a",
+      commitSha: "abc1234",
+    });
+    const accountBScope = buildGitReviewEditorScope({
+      accountId: "acct-b",
+      commitSha: "abc1234",
+    });
+    const otherCommitScope = buildGitReviewEditorScope({
+      accountId: "acct-a",
+      commitSha: "def5678",
+    });
+
+    expect(buildGitReviewNoteEditorId(accountAScope)).not.toBe(
+      buildGitReviewNoteEditorId(accountBScope),
+    );
+    expect(
+      buildGitInlineDraftEditorId({
+        scope: accountAScope,
+        filePath: "src/example.ts",
+        anchorId: "new:17",
+      }),
+    ).not.toBe(
+      buildGitInlineDraftEditorId({
+        scope: accountBScope,
+        filePath: "src/example.ts",
+        anchorId: "new:17",
+      }),
+    );
+    expect(
+      buildGitInlineDraftEditorId({
+        scope: accountAScope,
+        filePath: "src/example.ts",
+        anchorId: "new:17",
+      }),
+    ).not.toBe(
+      buildGitInlineDraftEditorId({
+        scope: otherCommitScope,
+        filePath: "src/example.ts",
+        anchorId: "new:17",
+      }),
+    );
+    expect(
+      buildGitInlineEditEditorId({
+        scope: accountAScope,
+        filePath: "src/example.ts",
+        commentId: "comment-1",
+      }),
+    ).not.toBe(
+      buildGitInlineEditEditorId({
+        scope: accountBScope,
+        filePath: "src/example.ts",
+        commentId: "comment-1",
+      }),
+    );
   });
 
   it("treats missing review state as unknown instead of not reviewed", () => {
