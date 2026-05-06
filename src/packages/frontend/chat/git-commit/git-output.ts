@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+// Focus: git CLI argument construction and parsing of git show/log/status output into drawer-friendly data.
+
 import type {
   GitLogEntry,
   GitShowFile,

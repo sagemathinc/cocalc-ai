@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+// Focus: shared structural types used across git commit drawer parsing, diff rendering, and review state.
+
 import type { GitReviewCommentSide } from "../git-review-store";
 
 export type GitShowFile = {

@@ -75,6 +75,10 @@ import {
   parseGitStatusOutput,
 } from "./git-commit/git-output";
 import {
+  resolveGitReviewSaveCompletion,
+  resolveGitReviewSaveState,
+} from "./git-commit/review-state";
+import {
   captureGitDiffScrollAnchor,
   matchGitDrawerScrollCommand,
   restoreGitDiffScrollAnchor,
@@ -97,6 +101,7 @@ export {
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
 };
+export { resolveGitReviewSaveCompletion, resolveGitReviewSaveState };
 
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
@@ -293,71 +298,6 @@ export function resolveGitCommitSearchChange({
   return {
     search: nextSearch,
     preserveSearchOnAutoClear: false,
-  };
-}
-
-export function resolveGitReviewSaveState({
-  next = {},
-  draft,
-  reviewed,
-  reviewNote,
-  reviewNoteDraft,
-  reviewComments,
-}: {
-  next?: Partial<Pick<GitReviewRecordV2, "reviewed" | "note" | "comments">>;
-  draft?: {
-    reviewed: boolean;
-    note: string;
-    comments?: Record<string, GitReviewCommentV2>;
-  };
-  reviewed: boolean;
-  reviewNote: string;
-  reviewNoteDraft: string;
-  reviewComments?: Record<string, GitReviewCommentV2>;
-}): {
-  reviewed: boolean;
-  note: string;
-  comments: Record<string, GitReviewCommentV2>;
-} {
-  const draftComments = draft?.comments;
-  return {
-    reviewed: next.reviewed ?? draft?.reviewed ?? reviewed,
-    note: next.note ?? draft?.note ?? reviewNoteDraft ?? reviewNote,
-    comments:
-      next.comments ??
-      (draftComments && Object.keys(draftComments).length > 0
-        ? draftComments
-        : (reviewComments ?? {})),
-  };
-}
-
-export function resolveGitReviewSaveCompletion({
-  payload,
-  sent,
-  current,
-}: {
-  payload: Pick<GitReviewRecordV2, "reviewed" | "note">;
-  sent: {
-    reviewed: boolean;
-    note: string;
-  };
-  current: {
-    reviewed: boolean;
-    noteDraft: string;
-  };
-}): {
-  reviewed: boolean;
-  reviewNote: string;
-  reviewNoteDraft: string;
-  reviewDirty: boolean;
-} {
-  const reviewedChangedSinceSave = current.reviewed !== sent.reviewed;
-  const noteChangedSinceSave = current.noteDraft !== sent.note;
-  return {
-    reviewed: reviewedChangedSinceSave ? current.reviewed : payload.reviewed,
-    reviewNote: payload.note,
-    reviewNoteDraft: noteChangedSinceSave ? current.noteDraft : payload.note,
-    reviewDirty: reviewedChangedSinceSave || noteChangedSinceSave,
   };
 }
 

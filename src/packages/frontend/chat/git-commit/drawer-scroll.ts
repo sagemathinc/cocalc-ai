@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+// Focus: drawer-local keyboard scrolling and diff-anchor capture/restore for stable navigation inside the review UI.
+
 import type { GitDiffScrollAnchor } from "./types";
 
 const DRAWER_LINE_SCROLL_PX = 40;
