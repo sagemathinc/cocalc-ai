@@ -61,6 +61,25 @@ function clearSummaries(): void {
   notify("change");
 }
 
+async function reconnectRealtimeFeedForCurrentAccount(): Promise<void> {
+  if (listeners.size === 0) {
+    closeRealtimeFeed();
+    return;
+  }
+  if (!webapp_client.is_signed_in()) {
+    closeRealtimeFeed();
+    return;
+  }
+  if (getAccountId() == null) {
+    return;
+  }
+  closeRealtimeFeed();
+  // Reconnects can miss summary updates while the transport is down.
+  // Force scoped consumers to re-bootstrap from the source of truth.
+  notify("reset");
+  await ensureRealtimeFeedForCurrentAccount();
+}
+
 async function ensureRealtimeFeedForCurrentAccount(): Promise<void> {
   if (listeners.size === 0) {
     closeRealtimeFeed();
@@ -119,7 +138,7 @@ function installHooks(): void {
   }
   hooksInstalled = true;
   signedInListener = () => {
-    void ensureRealtimeFeedForCurrentAccount();
+    void reconnectRealtimeFeedForCurrentAccount();
   };
   signedOutListener = () => {
     closeRealtimeFeed();
@@ -130,7 +149,7 @@ function installHooks(): void {
     clearSummaries();
   };
   conatConnectedListener = () => {
-    void ensureRealtimeFeedForCurrentAccount();
+    void reconnectRealtimeFeedForCurrentAccount();
   };
   webapp_client.on("signed_in", signedInListener);
   webapp_client.on("signed_out", signedOutListener);

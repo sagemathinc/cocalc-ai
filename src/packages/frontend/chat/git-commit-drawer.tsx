@@ -159,6 +159,25 @@ export {
   shouldCaptureGitDrawerFindShortcut,
 };
 
+export function shouldRefreshGitReviewStateOnReconnect(opts: {
+  open: boolean;
+  accountId?: string | null;
+  commit?: string;
+  reviewLoading: boolean;
+  reviewSaving: boolean;
+}): boolean {
+  if (!opts.open || opts.reviewLoading || opts.reviewSaving) {
+    return false;
+  }
+  if (!opts.accountId) {
+    return false;
+  }
+  if (isHeadCommit(opts.commit)) {
+    return false;
+  }
+  return normalizeCommitSha(opts.commit) != null;
+}
+
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
 const HEAD_REF = "HEAD";
 const DEFAULT_CONTEXT_LINES = 3;
@@ -885,6 +904,32 @@ export function GitCommitDrawer({
       }
     })();
   }, [open, accountId, commit, reviewReloadCounter]);
+
+  useEffect(() => {
+    if (
+      !shouldRefreshGitReviewStateOnReconnect({
+        open,
+        accountId,
+        commit,
+        reviewLoading,
+        reviewSaving,
+      })
+    ) {
+      return;
+    }
+    const refreshReviewState = () => {
+      setReviewReloadCounter((n) => n + 1);
+    };
+    webapp_client.conat_client.on?.("connected", refreshReviewState);
+    webapp_client.on?.("signed_in", refreshReviewState);
+    return () => {
+      webapp_client.conat_client.removeListener?.(
+        "connected",
+        refreshReviewState,
+      );
+      webapp_client.removeListener?.("signed_in", refreshReviewState);
+    };
+  }, [open, accountId, commit, reviewLoading, reviewSaving]);
 
   const exportReviewData = useCallback(async () => {
     if (!accountId) {

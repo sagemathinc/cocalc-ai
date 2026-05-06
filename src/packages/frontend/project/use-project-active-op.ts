@@ -28,19 +28,6 @@ export function useProjectActiveOperation(
       ? true
       : document.visibilityState === "visible",
   );
-  useEffect(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-    const updateVisibility = () => {
-      setIsVisible(document.visibilityState === "visible");
-    };
-    updateVisibility();
-    document.addEventListener("visibilitychange", updateVisibility);
-    return () => {
-      document.removeEventListener("visibilitychange", updateVisibility);
-    };
-  }, []);
   const fetchActiveOp = useCallback(async (project_id0: string) => {
     try {
       return await webapp_client.conat_client.hub.projects.getProjectActiveOperation(
@@ -80,6 +67,23 @@ export function useProjectActiveOperation(
   );
 
   useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const updateVisibility = () => {
+      const visible = document.visibilityState === "visible";
+      setIsVisible(visible);
+      if (visible && project_id) {
+        refresh();
+      }
+    };
+    document.addEventListener("visibilitychange", updateVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", updateVisibility);
+    };
+  }, [project_id, refresh]);
+
+  useEffect(() => {
     if (!shouldPoll) {
       return;
     }
@@ -88,6 +92,19 @@ export function useProjectActiveOperation(
     }, POLL_MS);
     return () => window.clearInterval(timer);
   }, [refresh, shouldPoll]);
+
+  useEffect(() => {
+    if (!project_id || !isVisible) {
+      return;
+    }
+    const handleReconnect = () => {
+      refresh();
+    };
+    webapp_client.conat_client.on?.("connected", handleReconnect);
+    return () => {
+      webapp_client.conat_client.removeListener?.("connected", handleReconnect);
+    };
+  }, [isVisible, project_id, refresh]);
 
   return {
     activeOp,
