@@ -1523,7 +1523,7 @@ export async function moveProjectToHost(
     }
     progress({
       step: "placement",
-      message: "updating workspace placement",
+      message: "updating project placement",
       detail: { dest_host_id: context.dest_host_id },
     });
     try {
