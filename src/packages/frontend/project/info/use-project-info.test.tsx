@@ -62,6 +62,16 @@ async function flush() {
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("useProjectInfo", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -170,5 +180,60 @@ describe("useProjectInfo", () => {
     );
     expect(latest?.info).toBeNull();
     expect(latest?.disconnected).toBe(true);
+  });
+
+  it("ignores stale info responses from a previously selected project", async () => {
+    const pendingProject1 = deferred<{ client: string }>();
+    const info2 = {
+      timestamp: 2,
+      processes: { 2: { pid: 2 } },
+      cgroup: null,
+      disk_usage: null,
+    };
+    projectConat
+      .mockReturnValueOnce(pendingProject1.promise)
+      .mockResolvedValueOnce({ client: "project-2" });
+    getProjectInfo.mockResolvedValueOnce(info2);
+
+    let latest: ReturnType<typeof useProjectInfo> | undefined;
+    const { rerender } = render(
+      <TestComponent
+        projectId="project-1"
+        onValue={(value) => {
+          latest = value;
+        }}
+      />,
+    );
+    await flush();
+
+    rerender(
+      <TestComponent
+        projectId="project-2"
+        onValue={(value) => {
+          latest = value;
+        }}
+      />,
+    );
+    await flush();
+
+    expect(latest?.info).toEqual(info2);
+    expect(latest?.disconnected).toBe(false);
+
+    pendingProject1.resolve({ client: "project-1" });
+    getProjectInfo.mockResolvedValueOnce({
+      timestamp: 1,
+      processes: { 1: { pid: 1 } },
+      cgroup: null,
+      disk_usage: null,
+    });
+    await flush();
+
+    expect(latest?.info).toEqual(info2);
+    expect(projectConat.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        project_id: "project-1",
+        caller: "useProjectInfo",
+      }),
+    );
   });
 });
