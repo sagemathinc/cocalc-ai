@@ -73,6 +73,33 @@ describe("shared account dkv cache", () => {
     }
   });
 
+  it("drops cached dkvs on signed out even for the same account", async () => {
+    const first = new FakeDkv();
+    const second = new FakeDkv();
+    dkvMock.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+
+    const { getSharedAccountDkv, resetSharedAccountDkvCacheForTests } =
+      await import("./account-dkv");
+    try {
+      const initial = await getSharedAccountDkv({
+        account_id: "account-1",
+        name: "bookmarks",
+      });
+      webappClient.emit("signed_out");
+      const reopened = await getSharedAccountDkv({
+        account_id: "account-1",
+        name: "bookmarks",
+      });
+
+      expect(initial).toBe(first);
+      expect(first.close).toHaveBeenCalled();
+      expect(reopened).toBe(second);
+      expect(dkvMock).toHaveBeenCalledTimes(2);
+    } finally {
+      resetSharedAccountDkvCacheForTests();
+    }
+  });
+
   it("recreates a shared dkv after the cached instance closes", async () => {
     const first = new FakeDkv();
     const second = new FakeDkv();

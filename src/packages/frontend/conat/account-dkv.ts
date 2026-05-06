@@ -21,6 +21,7 @@ const sharedDkvInFlight = new Map<string, Promise<DKV<any>>>();
 
 let sessionListenersInitialized = false;
 let signedInListener: ((mesg: { account_id?: string }) => void) | undefined;
+let signedOutListener: (() => void) | undefined;
 let rememberMeFailedListener: (() => void) | undefined;
 
 function cacheKey({ account_id, name }: { account_id: string; name: string }) {
@@ -84,10 +85,14 @@ function ensureSessionListeners() {
     }
     closeSharedDkvs((entry) => entry.account_id !== account_id);
   };
+  signedOutListener = () => {
+    closeSharedDkvs();
+  };
   rememberMeFailedListener = () => {
     closeSharedDkvs();
   };
   webapp_client.on?.("signed_in", signedInListener);
+  webapp_client.on?.("signed_out", signedOutListener);
   webapp_client.on?.("remember_me_failed", rememberMeFailedListener);
 }
 
@@ -96,6 +101,10 @@ export function resetSharedAccountDkvCacheForTests() {
   if (signedInListener != null) {
     webapp_client.removeListener?.("signed_in", signedInListener);
     signedInListener = undefined;
+  }
+  if (signedOutListener != null) {
+    webapp_client.removeListener?.("signed_out", signedOutListener);
+    signedOutListener = undefined;
   }
   if (rememberMeFailedListener != null) {
     webapp_client.removeListener?.(
