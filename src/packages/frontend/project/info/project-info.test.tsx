@@ -4,7 +4,7 @@
  */
 
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { ProjectInfo } from "./project-info";
 
 const useProjectInfo = jest.fn();
@@ -79,12 +79,15 @@ jest.mock("./full", () => ({
   Full: ({
     project_id,
     project_state,
+    show_long_loading,
   }: {
     project_id: string;
     project_state?: string;
+    show_long_loading?: boolean;
   }) => (
     <div data-testid="project-info-full">
-      {project_id}:{project_state ?? "none"}
+      {project_id}:{project_state ?? "none"}:
+      {show_long_loading ? "long" : "short"}
     </div>
   ),
 }));
@@ -109,6 +112,10 @@ describe("ProjectInfo", () => {
     useActions.mockReturnValue(undefined);
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it("honors the explicit project_id prop instead of the ambient context id", () => {
     render(<ProjectInfo project_id="prop-project" />);
 
@@ -119,7 +126,7 @@ describe("ProjectInfo", () => {
       project_id: "prop-project",
     });
     expect(screen.getByTestId("project-info-full")).toHaveTextContent(
-      "prop-project:none",
+      "prop-project:none:short",
     );
   });
 
@@ -150,14 +157,34 @@ describe("ProjectInfo", () => {
     const { rerender } = render(<ProjectInfo project_id="project-1" />);
     await waitFor(() =>
       expect(screen.getByTestId("project-info-full")).toHaveTextContent(
-        "project-1:starting",
+        "project-1:starting:short",
       ),
     );
 
     rerender(<ProjectInfo project_id="project-2" />);
     await waitFor(() =>
       expect(screen.getByTestId("project-info-full")).toHaveTextContent(
-        "project-2:running",
+        "project-2:running:short",
+      ),
+    );
+  });
+
+  it("resets the long-loading timer when switching projects", async () => {
+    jest.useFakeTimers();
+
+    const { rerender } = render(<ProjectInfo project_id="project-1" />);
+
+    act(() => {
+      jest.advanceTimersByTime(30000);
+    });
+    expect(screen.getByTestId("project-info-full")).toHaveTextContent(
+      "project-1:none:long",
+    );
+
+    rerender(<ProjectInfo project_id="project-2" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("project-info-full")).toHaveTextContent(
+        "project-2:none:short",
       ),
     );
   });
