@@ -34,12 +34,21 @@ describe("shouldRenderMoveStatus", () => {
     ).toBe(false);
   });
 
-  it("keeps successful move operations visible until dismissed", () => {
+  it("only shows successful move operations when this session requires reopen", () => {
     expect(
       shouldRenderMoveStatus({
         op_id: "move-5",
         summary: { status: "succeeded" } as any,
       }),
+    ).toBe(false);
+    expect(
+      shouldRenderMoveStatus(
+        {
+          op_id: "move-5b",
+          summary: { status: "succeeded" } as any,
+        },
+        true,
+      ),
     ).toBe(true);
     expect(
       shouldRenderMoveStatus({

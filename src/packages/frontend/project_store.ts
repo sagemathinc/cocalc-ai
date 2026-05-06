@@ -90,6 +90,7 @@ export interface ProjectStoreState {
   copy_ops?: immutable.Map<string, any>;
   start_lro?: immutable.Map<string, any>;
   move_lro?: immutable.Map<string, any>;
+  move_reopen_required?: boolean;
   open_snapshot_schedule?: boolean;
   open_restore_snapshot?: boolean;
   open_backup_schedule?: boolean;

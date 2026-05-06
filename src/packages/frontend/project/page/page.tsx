@@ -126,7 +126,11 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   const moveLro = useTypedRedux({ project_id }, "move_lro")?.toJS() as
     | MoveLroState
     | undefined;
-  const moveStatusVisible = shouldRenderMoveStatus(moveLro);
+  const moveReopenRequired = !!useTypedRedux(
+    { project_id },
+    "move_reopen_required",
+  );
+  const moveStatusVisible = shouldRenderMoveStatus(moveLro, moveReopenRequired);
   const hostUnavailable = !!host_id && hostOperational.state === "unavailable";
   const lifecycle = useMemo(
     () =>

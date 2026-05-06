@@ -1172,6 +1172,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       return;
     }
     this.noteProjectHostTransition(project_id);
+    redux
+      .getProjectActions(project_id)
+      ?.setState?.({ move_reopen_required: true });
     webapp_client.conat_client.releaseProjectHostRouting({ project_id });
     webapp_client.conat_client.refreshProjectHostRouting({
       source_host_id,
