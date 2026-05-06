@@ -14,6 +14,7 @@ let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let assertBayAcceptsProjectOwnershipMock: jest.Mock;
 let getMembershipUsageStatusForAccountMock: jest.Mock;
 let peekCachedMembershipUsageStatusForAccountMock: jest.Mock;
+let resolveProjectBackupRepoAssignmentMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
@@ -121,6 +122,12 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   })),
 }));
 
+jest.mock("@cocalc/server/project-backup", () => ({
+  __esModule: true,
+  resolveProjectBackupRepoAssignment: (...args: any[]) =>
+    resolveProjectBackupRepoAssignmentMock(...args),
+}));
+
 describe("projects.createProject clone routing", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -150,6 +157,9 @@ describe("projects.createProject clone routing", () => {
       async () => undefined,
     );
     assertBayAcceptsProjectOwnershipMock = jest.fn(async () => undefined);
+    resolveProjectBackupRepoAssignmentMock = jest.fn(async () => ({
+      backup_repo_id: null,
+    }));
     resolveHostBayMock = jest.fn(async () => null);
     hostConnectionGetMock = jest.fn();
     hostControlCreateProjectMock = jest.fn(async () => ({
@@ -183,7 +193,7 @@ describe("projects.createProject clone routing", () => {
       }
       if (
         sql.includes(
-          "SELECT host_id, region, rootfs_image, rootfs_image_id, owning_bay_id FROM projects WHERE project_id=$1",
+          "SELECT host_id, region, rootfs_image, rootfs_image_id, owning_bay_id, backup_repo_id FROM projects WHERE project_id=$1",
         )
       ) {
         expect(params).toEqual([SOURCE_PROJECT_ID]);
@@ -195,6 +205,7 @@ describe("projects.createProject clone routing", () => {
               rootfs_image: "buildpack-deps:noble-scm",
               rootfs_image_id: "official-cocalc-base",
               owning_bay_id: "bay-3",
+              backup_repo_id: null,
             },
           ],
         };

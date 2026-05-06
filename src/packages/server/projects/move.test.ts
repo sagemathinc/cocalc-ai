@@ -18,6 +18,7 @@ let assertPortableProjectRootfsMock: jest.Mock;
 let resolveHostConnectionMock: jest.Mock;
 let getProjectBackupAssignmentStateMock: jest.Mock;
 let ensureProjectBackupRepoForRegionMock: jest.Mock;
+let resolveProjectBackupRepoAssignmentMock: jest.Mock;
 let setProjectBackupRepoIdMock: jest.Mock;
 let setProjectBackupRegionMock: jest.Mock;
 let purgeProjectBackupsForRepoMock: jest.Mock;
@@ -101,6 +102,8 @@ jest.mock("../project-backup", () => ({
     getProjectBackupAssignmentStateMock(...args),
   ensureProjectBackupRepoForRegion: (...args: any[]) =>
     ensureProjectBackupRepoForRegionMock(...args),
+  resolveProjectBackupRepoAssignment: (...args: any[]) =>
+    resolveProjectBackupRepoAssignmentMock(...args),
   setProjectBackupRepoId: (...args: any[]) =>
     setProjectBackupRepoIdMock(...args),
   setProjectBackupRegion: (...args: any[]) =>
@@ -319,6 +322,12 @@ describe("moveProjectToHost", () => {
     }));
     ensureProjectBackupRepoForRegionMock = jest.fn(async () => ({
       backup_repo_id: "77777777-7777-4777-8777-777777777777",
+    }));
+    resolveProjectBackupRepoAssignmentMock = jest.fn(async (opts: any) => ({
+      backup_repo_id:
+        opts?.backup_repo_id ??
+        opts?.preferred_backup_repo_id ??
+        "77777777-7777-4777-8777-777777777777",
     }));
     setProjectBackupRepoIdMock = jest.fn(async () => undefined);
     setProjectBackupRegionMock = jest.fn(async () => undefined);
@@ -624,12 +633,9 @@ describe("moveProjectToHost", () => {
       ),
     ).resolves.toBeUndefined();
 
-    expect(ensureProjectBackupRepoForRegionMock).toHaveBeenCalledWith({
-      region: "weur",
-    });
-    expect(setProjectBackupRepoIdMock).toHaveBeenCalledWith({
+    expect(resolveProjectBackupRepoAssignmentMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
-      backup_repo_id: "77777777-7777-4777-8777-777777777777",
+      project_region: "weur",
     });
     expect(setProjectBackupRegionMock).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
@@ -790,13 +796,14 @@ describe("moveProjectToHost", () => {
       }),
     ).rejects.toThrow(/destination backup failed/);
 
-    expect(setProjectBackupRepoIdMock).toHaveBeenNthCalledWith(1, {
+    expect(resolveProjectBackupRepoAssignmentMock).toHaveBeenNthCalledWith(1, {
       project_id: PROJECT_ID,
-      backup_repo_id: "77777777-7777-4777-8777-777777777777",
+      project_region: "weur",
     });
-    expect(setProjectBackupRepoIdMock).toHaveBeenNthCalledWith(2, {
+    expect(resolveProjectBackupRepoAssignmentMock).toHaveBeenNthCalledWith(2, {
       project_id: PROJECT_ID,
       backup_repo_id: "66666666-6666-4666-8666-666666666666",
+      project_region: "wnam",
     });
     expect(setProjectBackupRegionMock).not.toHaveBeenCalled();
     expect(savePlacementMock).toHaveBeenNthCalledWith(1, PROJECT_ID, {

@@ -16,6 +16,7 @@ let appendProjectOutboxEventForProjectMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let assertBayAcceptsProjectOwnershipMock: jest.Mock;
 let getMembershipUsageStatusForAccountMock: jest.Mock;
+let resolveProjectBackupRepoAssignmentMock: jest.Mock;
 let poolConnectMock: jest.Mock;
 let releaseMock: jest.Mock;
 
@@ -53,12 +54,24 @@ jest.mock("@cocalc/server/bay-registry", () => ({
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
+  getLogger: jest.fn(() => ({
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  })),
   default: jest.fn(() => ({
     debug: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
   })),
+}));
+
+jest.mock("@cocalc/server/project-backup", () => ({
+  __esModule: true,
+  resolveProjectBackupRepoAssignment: (...args: any[]) =>
+    resolveProjectBackupRepoAssignmentMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -146,6 +159,9 @@ describe("projects.createProject start LRO", () => {
       async () => undefined,
     );
     assertBayAcceptsProjectOwnershipMock = jest.fn(async () => undefined);
+    resolveProjectBackupRepoAssignmentMock = jest.fn(async () => ({
+      backup_repo_id: null,
+    }));
     getMembershipUsageStatusForAccountMock = jest.fn(async () => ({
       total_storage_bytes: 0,
     }));
