@@ -17,6 +17,7 @@ import {
 } from "@cocalc/server/conat/project-host-assignment";
 import { getCurrentProjectRootfsBinding } from "@cocalc/server/projects/rootfs-state";
 import { assertCanRestoreProvisionedProjectStorage } from "@cocalc/server/membership/project-limits";
+import { cancelStaleProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
 import { mapCloudRegionToR2Region, parseR2Region } from "@cocalc/util/consts";
 import { getRoutedHostControlClient } from "./client";
@@ -522,6 +523,7 @@ export async function startProjectOnHost(
     return;
   }
   const task = (async () => {
+    await cancelStaleProjectStartLros({ project_id });
     const snapshot = await getProjectStateSnapshot(project_id);
     const activeStartLro =
       snapshot.state === "starting"

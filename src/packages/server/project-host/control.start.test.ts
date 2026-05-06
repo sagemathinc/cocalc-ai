@@ -20,6 +20,7 @@ let releaseMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let getCurrentProjectRootfsBindingMock: jest.Mock;
 let assertCanRestoreProvisionedProjectStorageMock: jest.Mock;
+let cancelStaleProjectStartLrosMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -105,6 +106,12 @@ jest.mock("@cocalc/server/membership/project-limits", () => ({
     assertCanRestoreProvisionedProjectStorageMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/start-lro-cleanup", () => ({
+  __esModule: true,
+  cancelStaleProjectStartLros: (...args: any[]) =>
+    cancelStaleProjectStartLrosMock(...args),
+}));
+
 describe("startProjectOnHost placement", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -127,6 +134,7 @@ describe("startProjectOnHost placement", () => {
     assertCanRestoreProvisionedProjectStorageMock = jest.fn(
       async () => undefined,
     );
+    cancelStaleProjectStartLrosMock = jest.fn(async () => 0);
     releaseMock = jest.fn();
     resolveHostBayMock = jest.fn(async (host_id: string) => ({
       bay_id: host_id === "host-2" ? "bay-7" : "bay-0",
