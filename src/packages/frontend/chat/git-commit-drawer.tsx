@@ -484,6 +484,41 @@ export function resolveGitCommitSearchChange({
   };
 }
 
+export function resolveGitReviewSaveState({
+  next = {},
+  draft,
+  reviewed,
+  reviewNote,
+  reviewNoteDraft,
+  reviewComments,
+}: {
+  next?: Partial<Pick<GitReviewRecordV2, "reviewed" | "note" | "comments">>;
+  draft?: {
+    reviewed: boolean;
+    note: string;
+    comments?: Record<string, GitReviewCommentV2>;
+  };
+  reviewed: boolean;
+  reviewNote: string;
+  reviewNoteDraft: string;
+  reviewComments?: Record<string, GitReviewCommentV2>;
+}): {
+  reviewed: boolean;
+  note: string;
+  comments: Record<string, GitReviewCommentV2>;
+} {
+  const draftComments = draft?.comments;
+  return {
+    reviewed: next.reviewed ?? draft?.reviewed ?? reviewed,
+    note: next.note ?? draft?.note ?? reviewNoteDraft ?? reviewNote,
+    comments:
+      next.comments ??
+      (draftComments && Object.keys(draftComments).length > 0
+        ? draftComments
+        : (reviewComments ?? {})),
+  };
+}
+
 interface GitCommitDrawerProps {
   projectId?: string;
   sourcePath?: string;
@@ -2874,9 +2909,17 @@ export function GitCommitDrawer({
       if (!accountId || !commit || isHeadCommit(commit)) return;
       const normalizedCommit = normalizeCommitSha(commit);
       if (!normalizedCommit) return;
-      const nextReviewed = next.reviewed ?? reviewed;
-      const nextNote = next.note ?? reviewNote;
-      const nextComments = next.comments ?? reviewRecord?.comments ?? {};
+      const resolved = resolveGitReviewSaveState({
+        next,
+        draft: loadReviewDraft(normalizedCommit),
+        reviewed,
+        reviewNote,
+        reviewNoteDraft,
+        reviewComments: reviewRecord?.comments,
+      });
+      const nextReviewed = resolved.reviewed;
+      const nextNote = resolved.note;
+      const nextComments = resolved.comments;
       const isActiveCommit = activeReviewCommitRef.current === normalizedCommit;
       if (isActiveCommit) {
         setReviewSaving(true);
@@ -2917,6 +2960,9 @@ export function GitCommitDrawer({
           [normalizedCommit]: payload.reviewed,
         }));
         if (activeReviewCommitRef.current === normalizedCommit) {
+          setReviewed(payload.reviewed);
+          setReviewNote(payload.note);
+          setReviewNoteDraft(payload.note);
           setReviewRecord(payload);
           setReviewUpdatedAt(payload.updated_at);
           setReviewDirty(false);
@@ -2932,7 +2978,7 @@ export function GitCommitDrawer({
         }
       }
     },
-    [accountId, commit, reviewed, reviewNote, reviewRecord],
+    [accountId, commit, reviewed, reviewNote, reviewNoteDraft, reviewRecord],
   );
 
   const allInlineComments = useMemo(
@@ -2973,19 +3019,32 @@ export function GitCommitDrawer({
       if (!accountId || !commit || isHeadCommit(commit)) return;
       const normalizedCommit = normalizeCommitSha(commit);
       if (!normalizedCommit) return;
-      const current = reviewRecord?.comments ?? {};
+      const latestDraft = loadReviewDraft(normalizedCommit);
+      const resolved = resolveGitReviewSaveState({
+        draft: latestDraft,
+        reviewed,
+        reviewNote,
+        reviewNoteDraft,
+        reviewComments: reviewRecord?.comments,
+      });
+      const current = resolved.comments;
       const next = mutate({ ...current });
       saveReviewDraft(normalizedCommit, {
-        reviewed: Boolean(reviewed),
-        note: `${reviewNote ?? ""}`,
+        reviewed: resolved.reviewed,
+        note: resolved.note,
         comments: next,
       });
-      await saveReview({ comments: next, reviewed, note: reviewNote });
+      await saveReview({
+        comments: next,
+        reviewed: resolved.reviewed,
+        note: resolved.note,
+      });
     },
     [
       accountId,
       commit,
       reviewRecord?.comments,
+      reviewNoteDraft,
       reviewNote,
       reviewed,
       saveReview,
@@ -3340,9 +3399,16 @@ export function GitCommitDrawer({
       if (commit) {
         const normalizedCommit = normalizeCommitSha(commit);
         if (normalizedCommit) {
+          const resolved = resolveGitReviewSaveState({
+            draft: loadReviewDraft(normalizedCommit),
+            reviewed,
+            reviewNote,
+            reviewNoteDraft,
+            reviewComments: reviewRecord?.comments,
+          });
           saveReviewDraft(normalizedCommit, {
-            reviewed: Boolean(reviewed),
-            note: `${reviewNote ?? ""}`,
+            reviewed: resolved.reviewed,
+            note: resolved.note,
             comments: nextComments,
           });
         }

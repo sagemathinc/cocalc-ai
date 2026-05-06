@@ -14,6 +14,7 @@ import {
   isGitDiffFindTargetRendered,
   MarkdownHistoryInput,
   ReviewNoteEditor,
+  resolveGitReviewSaveState,
   buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
@@ -224,6 +225,29 @@ describe("git commit drawer merge commit formatting", () => {
 
     expect(onPersistDraft).toHaveBeenCalledWith("save me");
     expect(onSave).toHaveBeenCalledWith("save me");
+  });
+
+  it("prefers the latest draft note when another review action saves", () => {
+    expect(
+      resolveGitReviewSaveState({
+        draft: {
+          reviewed: false,
+          note: "newer draft note",
+          comments: {},
+        },
+        next: {
+          reviewed: true,
+        },
+        reviewed: false,
+        reviewNote: "older committed note",
+        reviewNoteDraft: "stale render note",
+        reviewComments: {},
+      }),
+    ).toEqual({
+      reviewed: true,
+      note: "newer draft note",
+      comments: {},
+    });
   });
 
   it("does not persist a private review note when cancel wins after blur ordering", () => {
