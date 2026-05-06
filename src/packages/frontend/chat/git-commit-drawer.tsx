@@ -1211,6 +1211,7 @@ function useBufferedMarkdownValue({
   const syncedValueRef = useRef(value);
   const skipUnmountFlushRef = useRef(false);
   const skipNextBlurFlushRef = useRef(false);
+  const pendingActionBlurRecoveryRef = useRef(false);
 
   useEffect(() => {
     localValueRef.current = localValue;
@@ -1222,6 +1223,7 @@ function useBufferedMarkdownValue({
     syncedValueRef.current = value;
     skipUnmountFlushRef.current = false;
     skipNextBlurFlushRef.current = false;
+    pendingActionBlurRecoveryRef.current = false;
   }, [value]);
 
   const flush = useCallback(
@@ -1230,6 +1232,7 @@ function useBufferedMarkdownValue({
         skipNextBlurFlushRef.current = false;
         return;
       }
+      pendingActionBlurRecoveryRef.current = false;
       const resolved = nextValue ?? localValueRef.current;
       if (resolved === syncedValueRef.current) return;
       syncedValueRef.current = resolved;
@@ -1255,16 +1258,30 @@ function useBufferedMarkdownValue({
     skipUnmountFlushRef.current = true;
   }, []);
 
-  const skipNextBlurFlush = useCallback(() => {
+  const prepareForActionFocus = useCallback(() => {
     skipNextBlurFlushRef.current = true;
+    pendingActionBlurRecoveryRef.current = true;
   }, []);
+
+  const markActionHandled = useCallback(() => {
+    pendingActionBlurRecoveryRef.current = false;
+  }, []);
+
+  const recoverPendingActionBlur = useCallback(() => {
+    if (!pendingActionBlurRecoveryRef.current) return;
+    pendingActionBlurRecoveryRef.current = false;
+    skipNextBlurFlushRef.current = false;
+    flush(undefined, { force: true });
+  }, [flush]);
 
   return {
     localValue,
     update,
     flush,
     skipNextUnmountFlush,
-    skipNextBlurFlush,
+    prepareForActionFocus,
+    markActionHandled,
+    recoverPendingActionBlur,
   };
 }
 
@@ -1289,11 +1306,18 @@ export function ReviewNoteEditor({
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
-  const { localValue, update, flush, skipNextUnmountFlush, skipNextBlurFlush } =
-    useBufferedMarkdownValue({
-      value,
-      onChange: onPersistDraft,
-    });
+  const {
+    localValue,
+    update,
+    flush,
+    skipNextUnmountFlush,
+    prepareForActionFocus,
+    markActionHandled,
+    recoverPendingActionBlur,
+  } = useBufferedMarkdownValue({
+    value,
+    onChange: onPersistDraft,
+  });
   const dirty = localValue !== committedValue;
   return (
     <>
@@ -1331,9 +1355,11 @@ export function ReviewNoteEditor({
         <Button
           size="small"
           disabled={disabled}
-          onMouseDown={skipNextBlurFlush}
-          onFocus={skipNextBlurFlush}
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
             onCancel();
           }}
@@ -1344,9 +1370,11 @@ export function ReviewNoteEditor({
           size="small"
           type="primary"
           disabled={!dirty || saving || disabled}
-          onMouseDown={skipNextBlurFlush}
-          onFocus={skipNextBlurFlush}
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
             flush(localValue, { force: true });
             onSave(localValue);
@@ -1378,11 +1406,18 @@ function InlineDraftCommentEditor({
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
-  const { localValue, update, flush, skipNextUnmountFlush, skipNextBlurFlush } =
-    useBufferedMarkdownValue({
-      value,
-      onChange,
-    });
+  const {
+    localValue,
+    update,
+    flush,
+    skipNextUnmountFlush,
+    prepareForActionFocus,
+    markActionHandled,
+    recoverPendingActionBlur,
+  } = useBufferedMarkdownValue({
+    value,
+    onChange,
+  });
   return (
     <>
       <MarkdownHistoryInput
@@ -1416,9 +1451,11 @@ function InlineDraftCommentEditor({
       >
         <Button
           size="small"
-          onMouseDown={skipNextBlurFlush}
-          onFocus={skipNextBlurFlush}
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
             onCancel();
           }}
@@ -1428,9 +1465,11 @@ function InlineDraftCommentEditor({
         <Button
           size="small"
           type="primary"
-          onMouseDown={skipNextBlurFlush}
-          onFocus={skipNextBlurFlush}
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
             flush(localValue, { force: true });
             onSave(localValue);
@@ -1464,11 +1503,18 @@ function InlineEditCommentEditor({
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
-  const { localValue, update, flush, skipNextUnmountFlush, skipNextBlurFlush } =
-    useBufferedMarkdownValue({
-      value,
-      onChange,
-    });
+  const {
+    localValue,
+    update,
+    flush,
+    skipNextUnmountFlush,
+    prepareForActionFocus,
+    markActionHandled,
+    recoverPendingActionBlur,
+  } = useBufferedMarkdownValue({
+    value,
+    onChange,
+  });
   return (
     <>
       <MarkdownHistoryInput
@@ -1495,9 +1541,11 @@ function InlineEditCommentEditor({
       <Space.Compact size="small">
         <Button
           size="small"
-          onMouseDown={skipNextBlurFlush}
-          onFocus={skipNextBlurFlush}
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
             onCancel();
           }}
@@ -1507,9 +1555,11 @@ function InlineEditCommentEditor({
         <Button
           size="small"
           type="primary"
-          onMouseDown={skipNextBlurFlush}
-          onFocus={skipNextBlurFlush}
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
             flush(localValue, { force: true });
             onSave(localValue);

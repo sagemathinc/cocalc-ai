@@ -349,6 +349,41 @@ describe("git commit drawer merge commit formatting", () => {
     expect(onCancel).toHaveBeenCalled();
   });
 
+  it("persists a private review note if action-button focus is abandoned", () => {
+    const onPersistDraft = jest.fn();
+
+    const rendered = render(
+      React.createElement(ReviewNoteEditor, {
+        historyId: "git-review-note:test",
+        value: "existing",
+        committedValue: "existing",
+        fontSize: 14,
+        saving: false,
+        disabled: false,
+        onPersistDraft,
+        onCancel: jest.fn(),
+        onSave: jest.fn(),
+      }),
+    );
+
+    act(() => {
+      latestMarkdownInputProps.onChange("keep me");
+    });
+
+    const cancelButton = rendered.getByText("Cancel");
+    act(() => {
+      fireEvent.focus(cancelButton);
+    });
+    act(() => {
+      latestMarkdownInputProps.onBlur("keep me");
+    });
+    act(() => {
+      fireEvent.blur(cancelButton);
+    });
+
+    expect(onPersistDraft).toHaveBeenCalledWith("keep me");
+  });
+
   it("does not re-commit diff blocks on unrelated parent state changes", () => {
     const renders: number[] = [];
     const originalType = (DiffBlock as any).type;
