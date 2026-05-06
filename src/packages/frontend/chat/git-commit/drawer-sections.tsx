@@ -46,6 +46,7 @@ import type { GitReviewCommentV2 } from "../git-review-store";
 
 const CARD_BORDER_COLOR = "#d9d9d9";
 const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.06)";
+export const GIT_DIFF_LIST_FOOTER_SPACER_HEIGHT = 72;
 
 type GitCommitDrawerTitleProps = {
   nonRepoError: string;
@@ -1121,11 +1122,27 @@ function DiffVirtualizedList({
       ref={virtuosoRef}
       customScrollParent={drawerScrollParent ?? undefined}
       data={files}
+      components={{
+        Footer: GitDiffListFooterSpacer,
+      }}
       computeItemKey={(idx, file) =>
         buildGitReviewFileSectionId(file.path, idx)
       }
       increaseViewportBy={1200}
       itemContent={itemContent}
+    />
+  );
+}
+
+export function GitDiffListFooterSpacer() {
+  return (
+    <div
+      aria-hidden="true"
+      data-testid="git-diff-list-footer-spacer"
+      style={{
+        height: GIT_DIFF_LIST_FOOTER_SPACER_HEIGHT,
+        pointerEvents: "none",
+      }}
     />
   );
 }
