@@ -72,4 +72,30 @@ describe("shared account dkv cache", () => {
       resetSharedAccountDkvCacheForTests();
     }
   });
+
+  it("recreates a shared dkv after the cached instance closes", async () => {
+    const first = new FakeDkv();
+    const second = new FakeDkv();
+    dkvMock.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+
+    const { getSharedAccountDkv, resetSharedAccountDkvCacheForTests } =
+      await import("./account-dkv");
+    try {
+      const initial = await getSharedAccountDkv({
+        account_id: "account-1",
+        name: "bookmarks",
+      });
+      first.emit("closed");
+      const reopened = await getSharedAccountDkv({
+        account_id: "account-1",
+        name: "bookmarks",
+      });
+
+      expect(initial).toBe(first);
+      expect(reopened).toBe(second);
+      expect(dkvMock).toHaveBeenCalledTimes(2);
+    } finally {
+      resetSharedAccountDkvCacheForTests();
+    }
+  });
 });

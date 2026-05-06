@@ -37,7 +37,11 @@ const akvMock = jest.fn(({ account_id, name }: any) => {
 const dkvMock = jest.fn(async ({ account_id, name }: any) => {
   const store = getStore(account_id, name);
   return {
+    get: (key: string) => store.get(key),
     getAll: () => Object.fromEntries(store.entries()),
+    set: (key: string, value: any) => {
+      store.set(key, value);
+    },
     setMany: (obj: Record<string, any>) => {
       for (const [key, value] of Object.entries(obj)) {
         if (value === undefined) {
@@ -67,6 +71,10 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 
 describe("git review import/export", () => {
   beforeEach(() => {
+    const {
+      resetSharedAccountDkvCacheForTests,
+    } = require("@cocalc/frontend/conat/account-dkv");
+    resetSharedAccountDkvCacheForTests?.();
     stores.clear();
     akvMock.mockClear();
     dkvMock.mockClear();
@@ -107,6 +115,35 @@ describe("git review import/export", () => {
       "bbb2222",
       "aaa1111",
     ]);
+  });
+
+  it("loads current review records from the shared v2 dkv without falling back to legacy akv", async () => {
+    const store = getStore("acct-1", "cocalc-git-review-v2");
+    store.set("commit:abc1234", {
+      version: 2,
+      account_id: "acct-1",
+      commit_sha: "abc1234",
+      reviewed: true,
+      note: "persisted v2 review",
+      comments: {},
+      created_at: 10,
+      updated_at: 100,
+      revision: 2,
+    });
+
+    await expect(
+      loadReviewRecord({
+        accountId: "acct-1",
+        commitSha: "abc1234",
+      }),
+    ).resolves.toMatchObject({
+      account_id: "acct-1",
+      commit_sha: "abc1234",
+      reviewed: true,
+      note: "persisted v2 review",
+    });
+    expect(dkvMock).toHaveBeenCalled();
+    expect(akvMock).not.toHaveBeenCalled();
   });
 
   it("imports newer review records and rewrites them to the current account", async () => {
