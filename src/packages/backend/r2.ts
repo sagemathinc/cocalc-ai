@@ -25,9 +25,15 @@ export interface R2ObjectStoreAuth {
   region?: string;
 }
 
-type SignedRequest = {
+export type R2RequestMethod = "GET" | "PUT" | "POST" | "DELETE";
+
+type R2QueryValue = string | number | boolean | undefined;
+
+export type SignedR2Request = {
   parsed: URL;
+  url: string;
   canonicalUri: string;
+  canonicalQuery: string;
   headers: Record<string, string>;
 };
 
@@ -115,7 +121,19 @@ function canonicalizePath(bucket: string, key: string): string {
   return `/${parts.map(encodeRfc3986).join("/")}`;
 }
 
-function hashHex(data: string | Buffer): string {
+function canonicalizeQuery(
+  query: Record<string, R2QueryValue> | undefined,
+): string {
+  const entries = Object.entries(query ?? {})
+    .filter(([, value]) => value != null)
+    .map(([key, value]) => [encodeRfc3986(key), encodeRfc3986(`${value}`)])
+    .sort(([aKey, aValue], [bKey, bValue]) =>
+      aKey === bKey ? aValue.localeCompare(bValue) : aKey.localeCompare(bKey),
+    );
+  return entries.map(([key, value]) => `${key}=${value}`).join("&");
+}
+
+export function sha256Hex(data: string | Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
@@ -140,19 +158,23 @@ function getSignatureKey(
   return hmac(kService, "aws4_request") as Buffer;
 }
 
-function signRequest({
+export function signR2Request({
   auth,
   method,
-  key,
+  key = "",
   payloadSha256,
+  query,
   extraHeaders = {},
+  bucketInPath = true,
 }: {
   auth: R2ObjectStoreAuth;
-  method: "GET" | "PUT";
-  key: string;
+  method: R2RequestMethod;
+  key?: string;
   payloadSha256: string;
+  query?: Record<string, R2QueryValue>;
   extraHeaders?: Record<string, string | number | undefined>;
-}): SignedRequest {
+  bucketInPath?: boolean;
+}): SignedR2Request {
   const parsed = new URL(auth.endpoint);
   if (parsed.protocol !== "https:") {
     throw new Error("R2 endpoint must use https");
@@ -162,7 +184,9 @@ function signRequest({
       ? parsed.pathname.replace(/\/+$/, "")
       : "";
   const host = parsed.host;
-  const canonicalUri = `${endpointPath}${canonicalizePath(auth.bucket, key)}`;
+  const bucketPath = bucketInPath ? canonicalizePath(auth.bucket, key) : "/";
+  const canonicalUri = `${endpointPath}${bucketPath}`;
+  const canonicalQuery = canonicalizeQuery(query);
   const region = auth.region ?? "auto";
   const service = "s3";
   const now = new Date();
@@ -185,7 +209,7 @@ function signRequest({
   const canonicalRequest = [
     method,
     canonicalUri,
-    "",
+    canonicalQuery,
     canonicalHeaders,
     signedHeaders,
     payloadSha256,
@@ -195,7 +219,7 @@ function signRequest({
     "AWS4-HMAC-SHA256",
     amzDate,
     credentialScope,
-    hashHex(canonicalRequest),
+    sha256Hex(canonicalRequest),
   ].join("\n");
   const signingKey = getSignatureKey(
     auth.secretKey,
@@ -205,7 +229,13 @@ function signRequest({
   );
   const signature = hmac(signingKey, stringToSign, "hex") as string;
   headers.authorization = `AWS4-HMAC-SHA256 Credential=${auth.accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-  return { parsed, canonicalUri, headers };
+  return {
+    parsed,
+    url: `${parsed.origin}${canonicalUri}${canonicalQuery ? `?${canonicalQuery}` : ""}`,
+    canonicalUri,
+    canonicalQuery,
+    headers,
+  };
 }
 
 function createHttpStatusError(
@@ -227,8 +257,8 @@ async function sendRequest({
   createBodyStream,
   label,
 }: {
-  method: "GET" | "PUT";
-  signed: SignedRequest;
+  method: R2RequestMethod;
+  signed: SignedR2Request;
   body?: Buffer;
   createBodyStream?: () => NodeJS.ReadableStream;
   label: string;
@@ -243,7 +273,9 @@ async function sendRequest({
             protocol: signed.parsed.protocol,
             host: signed.parsed.hostname,
             port: signed.parsed.port ? Number(signed.parsed.port) : undefined,
-            path: signed.canonicalUri,
+            path: signed.canonicalQuery
+              ? `${signed.canonicalUri}?${signed.canonicalQuery}`
+              : signed.canonicalUri,
             headers: signed.headers,
             family,
           },
@@ -286,6 +318,66 @@ async function sendRequest({
   throw new Error(`unreachable request state for ${label}`);
 }
 
+export async function sendR2Request({
+  auth,
+  method,
+  key = "",
+  query,
+  payload,
+  payloadSha256,
+  extraHeaders = {},
+  createBodyStream,
+  bucketInPath = true,
+  label,
+}: {
+  auth: R2ObjectStoreAuth;
+  method: R2RequestMethod;
+  key?: string;
+  query?: Record<string, R2QueryValue>;
+  payload?: Buffer | string;
+  payloadSha256?: string;
+  extraHeaders?: Record<string, string | number | undefined>;
+  createBodyStream?: () => NodeJS.ReadableStream;
+  bucketInPath?: boolean;
+  label: string;
+}): Promise<RequestResponse> {
+  const bodyBuffer =
+    payload == null
+      ? undefined
+      : Buffer.isBuffer(payload)
+        ? payload
+        : Buffer.from(payload);
+  return await retryOperation({
+    label,
+    maxAttempts: OBJECT_IO_MAX_ATTEMPTS,
+    baseDelayMs: OBJECT_IO_RETRY_BASE_DELAY_MS,
+    isRetryable: isRetryableObjectIoError,
+    fn: async () => {
+      const signed = signR2Request({
+        auth,
+        method,
+        key,
+        query,
+        payloadSha256:
+          payloadSha256 ?? sha256Hex(bodyBuffer == null ? "" : bodyBuffer),
+        extraHeaders,
+        bucketInPath,
+      });
+      const response = await sendRequest({
+        method,
+        signed,
+        body: bodyBuffer,
+        createBodyStream,
+        label,
+      });
+      if (response.statusCode === 429 || response.statusCode >= 500) {
+        throw createHttpStatusError(response.statusCode, response.body);
+      }
+      return response;
+    },
+  });
+}
+
 function shouldUseCurlForUpload(filePath?: string): boolean {
   return (
     !!filePath &&
@@ -318,7 +410,7 @@ export async function putR2ObjectFromFile({
     isRetryable: isRetryableObjectIoError,
     fn: async () => {
       const bytes = contentLength ?? (await stat(filePath)).size;
-      const signed = signRequest({
+      const signed = signR2Request({
         auth,
         method: "PUT",
         key,
@@ -395,11 +487,11 @@ export async function getR2ObjectToFile({
         requestAttempt <= REQUEST_MAX_ATTEMPTS;
         requestAttempt += 1
       ) {
-        const signed = signRequest({
+        const signed = signR2Request({
           auth,
           method: "GET",
           key,
-          payloadSha256: hashHex(""),
+          payloadSha256: sha256Hex(""),
         });
         const hash = createHash("sha256");
         let bytes = 0;
@@ -465,4 +557,223 @@ export async function getR2ObjectToFile({
       throw new Error(`unreachable request state for R2 GET ${key}`);
     },
   });
+}
+
+export async function putR2ObjectFromBuffer({
+  auth,
+  key,
+  body,
+  contentType,
+  cacheControl,
+}: {
+  auth: R2ObjectStoreAuth;
+  key: string;
+  body: Buffer | string;
+  contentType?: string;
+  cacheControl?: string;
+}): Promise<void> {
+  const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body);
+  const response = await sendR2Request({
+    auth,
+    method: "PUT",
+    key,
+    payload: buffer,
+    extraHeaders: {
+      "content-type": contentType,
+      "cache-control": cacheControl,
+      "content-length": buffer.length,
+    },
+    label: `R2 PUT ${key}`,
+  });
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw createHttpStatusError(response.statusCode, response.body);
+  }
+}
+
+export async function getR2ObjectBuffer({
+  auth,
+  key,
+}: {
+  auth: R2ObjectStoreAuth;
+  key: string;
+}): Promise<Buffer | undefined> {
+  const response = await sendR2Request({
+    auth,
+    method: "GET",
+    key,
+    payloadSha256: sha256Hex(""),
+    label: `R2 GET ${key}`,
+  });
+  if (response.statusCode === 404) {
+    return undefined;
+  }
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw createHttpStatusError(response.statusCode, response.body);
+  }
+  return response.body;
+}
+
+export async function copyR2Object({
+  auth,
+  sourceKey,
+  destKey,
+}: {
+  auth: R2ObjectStoreAuth;
+  sourceKey: string;
+  destKey: string;
+}): Promise<void> {
+  const response = await sendR2Request({
+    auth,
+    method: "PUT",
+    key: destKey,
+    payload: "",
+    extraHeaders: {
+      "x-amz-copy-source": canonicalizePath(auth.bucket, sourceKey),
+      "content-length": 0,
+    },
+    label: `R2 COPY ${sourceKey} -> ${destKey}`,
+  });
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw createHttpStatusError(response.statusCode, response.body);
+  }
+}
+
+function decodeXmlEntity(text: string): string {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function extractXmlTag(xml: string, tag: string): string | null {
+  const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+  return match ? decodeXmlEntity(match[1]) : null;
+}
+
+function extractXmlTags(xml: string, tag: string): string[] {
+  const matches = xml.matchAll(
+    new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "g"),
+  );
+  const values: string[] = [];
+  for (const match of matches) {
+    if (match[1] != null) {
+      values.push(decodeXmlEntity(match[1]));
+    }
+  }
+  return values;
+}
+
+export async function listR2ObjectKeys({
+  auth,
+  prefix,
+}: {
+  auth: R2ObjectStoreAuth;
+  prefix?: string;
+}): Promise<string[]> {
+  const keys: string[] = [];
+  let continuationToken: string | undefined;
+  while (true) {
+    const response = await sendR2Request({
+      auth,
+      method: "GET",
+      key: "",
+      query: {
+        "list-type": "2",
+        "encoding-type": "url",
+        ...(prefix ? { prefix } : {}),
+        ...(continuationToken
+          ? { "continuation-token": continuationToken }
+          : {}),
+      },
+      payloadSha256: sha256Hex(""),
+      label: `R2 LIST ${prefix ?? ""}`,
+    });
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw createHttpStatusError(response.statusCode, response.body);
+    }
+    const xml = response.body.toString("utf8");
+    keys.push(
+      ...extractXmlTags(xml, "Key").map((key) => decodeURIComponent(key)),
+    );
+    const isTruncated = extractXmlTag(xml, "IsTruncated") === "true";
+    if (!isTruncated) {
+      return keys;
+    }
+    continuationToken =
+      extractXmlTag(xml, "NextContinuationToken") ?? undefined;
+    if (!continuationToken) {
+      throw new Error("R2 object list truncated without continuation token");
+    }
+  }
+}
+
+export async function deleteR2Object({
+  auth,
+  key,
+  acceptMissing = true,
+}: {
+  auth: R2ObjectStoreAuth;
+  key: string;
+  acceptMissing?: boolean;
+}): Promise<void> {
+  const response = await sendR2Request({
+    auth,
+    method: "DELETE",
+    key,
+    payloadSha256: sha256Hex(""),
+    label: `R2 DELETE ${key}`,
+  });
+  if (
+    response.statusCode === 204 ||
+    response.statusCode === 200 ||
+    response.statusCode === 202 ||
+    (acceptMissing && response.statusCode === 404)
+  ) {
+    return;
+  }
+  throw createHttpStatusError(response.statusCode, response.body);
+}
+
+function parseBucketNamesFromListBucketsXml(xml: string): string[] {
+  const scope = /<Buckets>([\s\S]*?)<\/Buckets>/i.exec(xml)?.[1] ?? xml;
+  const names: string[] = [];
+  const re = /<Name>([^<]+)<\/Name>/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(scope)) != null) {
+    const name = `${match[1] ?? ""}`.trim();
+    if (name) names.push(name);
+  }
+  return [...new Set(names)];
+}
+
+export async function listR2BucketsViaS3({
+  endpoint,
+  accessKey,
+  secretKey,
+  region = "auto",
+}: {
+  endpoint: string;
+  accessKey: string;
+  secretKey: string;
+  region?: string;
+}): Promise<string[]> {
+  const response = await sendR2Request({
+    auth: {
+      endpoint,
+      accessKey,
+      secretKey,
+      bucket: "",
+      region,
+    },
+    method: "GET",
+    bucketInPath: false,
+    payloadSha256: sha256Hex(""),
+    label: "R2 LIST BUCKETS",
+  });
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw createHttpStatusError(response.statusCode, response.body);
+  }
+  return parseBucketNamesFromListBucketsXml(response.body.toString("utf8"));
 }

@@ -1,7 +1,13 @@
 import getLogger from "@cocalc/backend/logger";
-import { createHash, createHmac } from "node:crypto";
-import { createReadStream } from "node:fs";
-import https from "node:https";
+import {
+  deleteR2Object,
+  listR2BucketsViaS3,
+  listR2ObjectKeys,
+  putR2ObjectFromBuffer,
+  putR2ObjectFromFile,
+  sha256Hex,
+  signR2Request,
+} from "@cocalc/backend/r2";
 
 const logger = getLogger("server:project-backup:r2");
 
@@ -111,130 +117,6 @@ export async function createBucket(
   );
 }
 
-function hashHex(data: string | Buffer): string {
-  return createHash("sha256").update(data).digest("hex");
-}
-
-function hmac(
-  key: string | Buffer,
-  data: string,
-  encoding?: "hex",
-): Buffer | string {
-  const hash = createHmac("sha256", key).update(data, "utf8");
-  return encoding ? hash.digest(encoding) : hash.digest();
-}
-
-function getSignatureKey(secret: string, dateStamp: string): Buffer {
-  const kDate = hmac(`AWS4${secret}`, dateStamp) as Buffer;
-  const kRegion = hmac(kDate, "auto") as Buffer;
-  const kService = hmac(kRegion, "s3") as Buffer;
-  return hmac(kService, "aws4_request") as Buffer;
-}
-
-function toAmzDate(now: Date): string {
-  return now.toISOString().replace(/[:-]|\.\d{3}/g, "");
-}
-
-function encodeRfc3986(str: string): string {
-  return encodeURIComponent(str).replace(
-    /[!'()*]/g,
-    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-}
-
-function canonicalizeObjectPath(bucket: string, key: string): string {
-  const parts = [bucket, ...`${key ?? ""}`.split("/").filter(Boolean)];
-  return `/${parts.map(encodeRfc3986).join("/")}`;
-}
-
-function canonicalizeQuery(query?: Record<string, string | undefined>): string {
-  const entries = Object.entries(query ?? {})
-    .filter(([, value]) => value != null)
-    .map(([key, value]) => [encodeRfc3986(key), encodeRfc3986(`${value}`)])
-    .sort(([aKey, aValue], [bKey, bValue]) =>
-      aKey === bKey ? aValue.localeCompare(bValue) : aKey.localeCompare(bKey),
-    );
-  return entries.map(([key, value]) => `${key}=${value}`).join("&");
-}
-
-function signedObjectHeaders({
-  method = "PUT",
-  endpoint,
-  accessKey,
-  secretKey,
-  bucket,
-  key,
-  payloadSha256,
-  contentType,
-  cacheControl,
-  query,
-}: {
-  method?: "PUT" | "GET" | "DELETE";
-  endpoint: string;
-  accessKey: string;
-  secretKey: string;
-  bucket: string;
-  key: string;
-  payloadSha256: string;
-  contentType?: string;
-  cacheControl?: string;
-  query?: Record<string, string | undefined>;
-}): {
-  url: string;
-  canonicalUri: string;
-  headers: Record<string, string>;
-} {
-  const parsed = new URL(endpoint);
-  if (parsed.protocol !== "https:") {
-    throw new Error("R2 endpoint must use https");
-  }
-  const host = parsed.host;
-  const canonicalUri = canonicalizeObjectPath(bucket, key);
-  const canonicalQuery = canonicalizeQuery(query);
-  const now = new Date();
-  const amzDate = toAmzDate(now);
-  const dateStamp = amzDate.slice(0, 8);
-  const headers: Record<string, string> = {
-    host,
-    "x-amz-content-sha256": payloadSha256,
-    "x-amz-date": amzDate,
-  };
-  if (contentType) {
-    headers["content-type"] = contentType;
-  }
-  if (cacheControl) {
-    headers["cache-control"] = cacheControl;
-  }
-  const signedHeaderNames = Object.keys(headers).sort();
-  const canonicalHeaders = signedHeaderNames
-    .map((name) => `${name}:${String(headers[name]).trim()}\n`)
-    .join("");
-  const signedHeaders = signedHeaderNames.join(";");
-  const canonicalRequest = [
-    method,
-    canonicalUri,
-    canonicalQuery,
-    canonicalHeaders,
-    signedHeaders,
-    payloadSha256,
-  ].join("\n");
-  const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    amzDate,
-    credentialScope,
-    hashHex(canonicalRequest),
-  ].join("\n");
-  const signingKey = getSignatureKey(secretKey, dateStamp);
-  const signature = hmac(signingKey, stringToSign, "hex") as string;
-  headers.authorization = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-  return {
-    url: `${parsed.origin}${canonicalUri}${canonicalQuery ? `?${canonicalQuery}` : ""}`,
-    canonicalUri,
-    headers,
-  };
-}
-
 export function issueSignedObjectDownload({
   endpoint,
   accessKey,
@@ -248,14 +130,17 @@ export function issueSignedObjectDownload({
   bucket: string;
   key: string;
 }): { url: string; headers: Record<string, string> } {
-  const { url, headers } = signedObjectHeaders({
+  const { url, headers } = signR2Request({
+    auth: {
+      endpoint,
+      accessKey,
+      secretKey,
+      bucket,
+      region: "auto",
+    },
     method: "GET",
-    endpoint,
-    accessKey,
-    secretKey,
-    bucket,
     key,
-    payloadSha256: hashHex(""),
+    payloadSha256: sha256Hex(""),
   });
   const { host: _host, ...requestHeaders } = headers;
   return { url, headers: requestHeaders };
@@ -280,16 +165,21 @@ export function issueSignedObjectUpload({
   cacheControl?: string;
   unsignedPayload?: boolean;
 }): { url: string; headers: Record<string, string> } {
-  const { url, headers } = signedObjectHeaders({
+  const { url, headers } = signR2Request({
+    auth: {
+      endpoint,
+      accessKey,
+      secretKey,
+      bucket,
+      region: "auto",
+    },
     method: "PUT",
-    endpoint,
-    accessKey,
-    secretKey,
-    bucket,
     key,
-    payloadSha256: unsignedPayload ? "UNSIGNED-PAYLOAD" : hashHex(""),
-    contentType,
-    cacheControl,
+    payloadSha256: unsignedPayload ? "UNSIGNED-PAYLOAD" : sha256Hex(""),
+    extraHeaders: {
+      "content-type": contentType,
+      "cache-control": cacheControl,
+    },
   });
   const { host: _host, ...requestHeaders } = headers;
   return { url, headers: requestHeaders };
@@ -318,51 +208,20 @@ export async function uploadObjectFromFile({
   contentType?: string;
   cacheControl?: string;
 }): Promise<void> {
-  const { url, canonicalUri, headers } = signedObjectHeaders({
-    method: "PUT",
-    endpoint,
-    accessKey,
-    secretKey,
-    bucket,
+  await putR2ObjectFromFile({
+    auth: {
+      endpoint,
+      accessKey,
+      secretKey,
+      bucket,
+      region: "auto",
+    },
     key,
+    filePath,
     payloadSha256: artifactSha256,
+    contentLength: artifactBytes,
     contentType,
     cacheControl,
-  });
-  const parsed = new URL(url);
-  await new Promise<void>((resolve, reject) => {
-    const req = https.request(
-      {
-        method: "PUT",
-        protocol: parsed.protocol,
-        host: parsed.hostname,
-        port: parsed.port ? Number(parsed.port) : undefined,
-        path: canonicalUri,
-        headers: {
-          ...headers,
-          "content-length": artifactBytes,
-        },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk) =>
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-        );
-        res.on("end", () => {
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            resolve();
-            return;
-          }
-          reject(
-            new Error(
-              `R2 PUT failed (${res.statusCode}): ${Buffer.concat(chunks).toString("utf8")}`,
-            ),
-          );
-        });
-      },
-    );
-    req.on("error", reject);
-    createReadStream(filePath).on("error", reject).pipe(req);
   });
 }
 
@@ -385,80 +244,19 @@ export async function uploadObjectFromBuffer({
   contentType?: string;
   cacheControl?: string;
 }): Promise<void> {
-  const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body);
-  const { url, canonicalUri, headers } = signedObjectHeaders({
-    method: "PUT",
-    endpoint,
-    accessKey,
-    secretKey,
-    bucket,
+  await putR2ObjectFromBuffer({
+    auth: {
+      endpoint,
+      accessKey,
+      secretKey,
+      bucket,
+      region: "auto",
+    },
     key,
-    payloadSha256: hashHex(buffer),
+    body,
     contentType,
     cacheControl,
   });
-  const parsed = new URL(url);
-  await new Promise<void>((resolve, reject) => {
-    const req = https.request(
-      {
-        method: "PUT",
-        protocol: parsed.protocol,
-        host: parsed.hostname,
-        port: parsed.port ? Number(parsed.port) : undefined,
-        path: canonicalUri,
-        headers: {
-          ...headers,
-          "content-length": buffer.length,
-        },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk) =>
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-        );
-        res.on("end", () => {
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            resolve();
-            return;
-          }
-          reject(
-            new Error(
-              `R2 PUT failed (${res.statusCode}): ${Buffer.concat(chunks).toString("utf8")}`,
-            ),
-          );
-        });
-      },
-    );
-    req.on("error", reject);
-    req.end(buffer);
-  });
-}
-
-function decodeXmlEntity(text: string): string {
-  return text
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&");
-}
-
-function extractXmlTag(xml: string, tag: string): string | null {
-  const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
-  return match ? decodeXmlEntity(match[1]) : null;
-}
-
-function extractXmlTags(xml: string, tag: string): string[] {
-  const matches = xml.matchAll(
-    new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "g"),
-  );
-  const values: string[] = [];
-  for (const match of matches) {
-    if (match[1] != null) {
-      values.push(decodeXmlEntity(match[1]));
-    }
-  }
-  return values;
 }
 
 export async function listObjects({
@@ -474,47 +272,16 @@ export async function listObjects({
   bucket: string;
   prefix?: string;
 }): Promise<string[]> {
-  const keys: string[] = [];
-  let continuationToken: string | undefined;
-  while (true) {
-    const { url, headers } = signedObjectHeaders({
-      method: "GET",
+  return await listR2ObjectKeys({
+    auth: {
       endpoint,
       accessKey,
       secretKey,
       bucket,
-      key: "",
-      payloadSha256: hashHex(""),
-      query: {
-        "list-type": "2",
-        "encoding-type": "url",
-        ...(prefix ? { prefix } : {}),
-        ...(continuationToken
-          ? { "continuation-token": continuationToken }
-          : {}),
-      },
-    });
-    const { host: _host, ...requestHeaders } = headers;
-    const response = await fetch(url, { headers: requestHeaders });
-    if (!response.ok) {
-      throw new Error(
-        `R2 object list failed (${response.status}): ${response.statusText || "unknown error"}`,
-      );
-    }
-    const xml = await response.text();
-    keys.push(
-      ...extractXmlTags(xml, "Key").map((key) => decodeURIComponent(key)),
-    );
-    const isTruncated = extractXmlTag(xml, "IsTruncated") === "true";
-    if (!isTruncated) {
-      return keys;
-    }
-    continuationToken =
-      extractXmlTag(xml, "NextContinuationToken") ?? undefined;
-    if (!continuationToken) {
-      throw new Error("R2 object list truncated without continuation token");
-    }
-  }
+      region: "auto",
+    },
+    prefix,
+  });
 }
 
 export async function deleteObject({
@@ -530,153 +297,17 @@ export async function deleteObject({
   bucket: string;
   key: string;
 }): Promise<void> {
-  const { url, canonicalUri, headers } = signedObjectHeaders({
-    method: "DELETE",
-    endpoint,
-    accessKey,
-    secretKey,
-    bucket,
-    key,
-    payloadSha256: hashHex(""),
-  });
-  const parsed = new URL(url);
-  await new Promise<void>((resolve, reject) => {
-    const req = https.request(
-      {
-        method: "DELETE",
-        protocol: parsed.protocol,
-        host: parsed.hostname,
-        port: parsed.port ? Number(parsed.port) : undefined,
-        path: canonicalUri,
-        headers,
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk) =>
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-        );
-        res.on("end", () => {
-          if (
-            res.statusCode &&
-            (res.statusCode === 204 ||
-              res.statusCode === 200 ||
-              res.statusCode === 202 ||
-              res.statusCode === 404)
-          ) {
-            resolve();
-            return;
-          }
-          reject(
-            new Error(
-              `R2 DELETE failed (${res.statusCode}): ${Buffer.concat(chunks).toString("utf8")}`,
-            ),
-          );
-        });
-      },
-    );
-    req.on("error", reject);
-    req.end();
-  });
-}
-
-function parseBucketNamesFromListBucketsXml(xml: string): string[] {
-  const scope = /<Buckets>([\s\S]*?)<\/Buckets>/i.exec(xml)?.[1] ?? xml;
-  const names: string[] = [];
-  const re = /<Name>([^<]+)<\/Name>/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(scope)) != null) {
-    const name = `${match[1] ?? ""}`.trim();
-    if (name) names.push(name);
-  }
-  return [...new Set(names)];
-}
-
-async function listBucketsViaS3({
-  endpoint,
-  accessKey,
-  secretKey,
-}: {
-  endpoint: string;
-  accessKey: string;
-  secretKey: string;
-}): Promise<string[]> {
-  const parsed = new URL(endpoint);
-  if (parsed.protocol !== "https:") {
-    throw new Error("R2 endpoint must use https");
-  }
-  const host = parsed.host;
-  const method = "GET";
-  const canonicalUri = "/";
-  const now = new Date();
-  const amzDate = toAmzDate(now);
-  const dateStamp = amzDate.slice(0, 8);
-  const payloadHash = hashHex("");
-  const headers = {
-    host,
-    "x-amz-content-sha256": payloadHash,
-    "x-amz-date": amzDate,
-  };
-  const signedHeaderNames = Object.keys(headers).sort();
-  const canonicalHeaders = signedHeaderNames
-    .map((name) => `${name}:${String((headers as any)[name]).trim()}\n`)
-    .join("");
-  const signedHeaders = signedHeaderNames.join(";");
-  const canonicalRequest = [
-    method,
-    canonicalUri,
-    "",
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash,
-  ].join("\n");
-  const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    amzDate,
-    credentialScope,
-    hashHex(canonicalRequest),
-  ].join("\n");
-  const signingKey = getSignatureKey(secretKey, dateStamp);
-  const signature = hmac(signingKey, stringToSign, "hex") as string;
-  const authorization = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-
-  const response = await new Promise<{ statusCode?: number; body: string }>(
-    (resolve, reject) => {
-      const req = https.request(
-        {
-          method,
-          protocol: parsed.protocol,
-          host: parsed.hostname,
-          port: parsed.port ? Number(parsed.port) : undefined,
-          path: canonicalUri,
-          headers: {
-            ...headers,
-            authorization,
-          },
-        },
-        (res) => {
-          const chunks: Buffer[] = [];
-          res.on("data", (chunk) =>
-            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
-          );
-          res.on("end", () => {
-            resolve({
-              statusCode: res.statusCode,
-              body: Buffer.concat(chunks).toString("utf8"),
-            });
-          });
-        },
-      );
-      req.on("error", reject);
-      req.end();
+  await deleteR2Object({
+    auth: {
+      endpoint,
+      accessKey,
+      secretKey,
+      bucket,
+      region: "auto",
     },
-  );
-
-  const code = response.statusCode ?? 0;
-  if (code < 200 || code >= 300) {
-    throw new Error(`s3 list buckets failed (${code}): ${response.body}`);
-  }
-  return parseBucketNamesFromListBucketsXml(response.body);
+    key,
+    acceptMissing: true,
+  });
 }
 
 function clean(v?: string): string | undefined {
@@ -750,7 +381,7 @@ export async function testR2Credentials(
     result.s3 = { ok: false, error: "missing endpoint" };
   } else {
     try {
-      s3Buckets = await listBucketsViaS3({
+      s3Buckets = await listR2BucketsViaS3({
         endpoint,
         accessKey,
         secretKey,
