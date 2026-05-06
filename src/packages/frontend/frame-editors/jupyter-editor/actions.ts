@@ -110,8 +110,8 @@ export class JupyterEditorActions extends BaseActions<JupyterEditorState> {
       clearTimeout(this.syncConsoleTimer);
       this.syncConsoleTimer = undefined;
     }
-    this.close_jupyter_actions();
     super.close();
+    this.close_jupyter_actions();
   }
 
   private init_new_frame(): void {
