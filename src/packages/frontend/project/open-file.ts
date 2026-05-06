@@ -96,8 +96,11 @@ const SYNC_IDENTITY_RETRY_START_MS = 150;
 const SYNC_IDENTITY_RETRY_MAX_MS = 1500;
 
 export function isTransientSyncIdentityResolutionError(err: unknown): boolean {
-  const message = `${err}`.toLowerCase();
+  const message = `${err}`.trim().toLowerCase();
   return (
+    message === "closed" ||
+    message.endsWith(": closed") ||
+    message.includes('not emitted before "closed"') ||
     message.includes("file server not initialized") ||
     message.includes("not initialized") ||
     message.includes("socket has been disconnected") ||

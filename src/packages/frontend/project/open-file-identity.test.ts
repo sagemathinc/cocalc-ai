@@ -142,10 +142,31 @@ describe("isTransientSyncIdentityResolutionError", () => {
     ).toBe(true);
   });
 
+  it("treats closed filesystem client errors as retryable", () => {
+    expect(
+      isTransientSyncIdentityResolutionError(new Error("closed")),
+    ).toBe(true);
+    expect(
+      isTransientSyncIdentityResolutionError(
+        new Error('once: "info" not emitted before "closed"'),
+      ),
+    ).toBe(true);
+  });
+
   it("does not treat permanent support failures as retryable", () => {
     expect(
       isTransientSyncIdentityResolutionError(
         new Error("canonicalSyncIdentityPath unavailable"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not misclassify unrelated errors that merely mention a closed filename", () => {
+    expect(
+      isTransientSyncIdentityResolutionError(
+        new Error(
+          "backend returned invalid canonical sync identity for '/root/closed.txt'",
+        ),
       ),
     ).toBe(false);
   });
@@ -180,6 +201,19 @@ describe("resolveSyncPathWithRetry", () => {
             "unable to route 'filesystem' to project-host for project project-1",
           ),
         )
+        .mockResolvedValue("/root/file.txt"),
+    };
+    await expect(
+      resolveSyncPathWithRetry(fs, "/root/file.txt", HOME),
+    ).resolves.toBe("/root/file.txt");
+    expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries transient closed-client failures until canonical identity resolution succeeds", async () => {
+    const fs = {
+      canonicalSyncIdentityPath: jest
+        .fn()
+        .mockRejectedValueOnce(new Error("closed"))
         .mockResolvedValue("/root/file.txt"),
     };
     await expect(
