@@ -94,6 +94,8 @@ type SyncIdentityFs = {
 
 const SYNC_IDENTITY_RETRY_START_MS = 150;
 const SYNC_IDENTITY_RETRY_MAX_MS = 1500;
+const PROJECT_OPEN_RETRY_START_MS = 500;
+const PROJECT_OPEN_RETRY_MAX_MS = 5000;
 
 export function isTransientSyncIdentityResolutionError(err: unknown): boolean {
   const message = `${err}`.trim().toLowerCase();
@@ -120,6 +122,56 @@ export function isTransientSyncIdentityResolutionError(err: unknown): boolean {
 
 export function isCancelledSyncIdentityResolutionError(err: unknown): boolean {
   return `${err}`.includes("canonical sync identity open was cancelled");
+}
+
+export function isTransientProjectOpenError(err: unknown): boolean {
+  const message = `${err}`.trim().toLowerCase();
+  return (
+    message.includes("timeout") ||
+    message.includes("waiting for") ||
+    message.includes("project host id unavailable") ||
+    message.includes("project is not running") ||
+    message.includes("project not running") ||
+    message.includes("unable to route") ||
+    message.includes("project-host") ||
+    message.includes("project host")
+  );
+}
+
+export function isCancelledProjectOpenRetryError(err: unknown): boolean {
+  return `${err}`.includes("project open retry was cancelled");
+}
+
+export async function ensureProjectIsOpenWithRetry(
+  actions: Pick<ProjectActions, "ensureProjectIsOpen">,
+  {
+    foreground_project = true,
+    isOpen = () => true,
+  }: {
+    foreground_project?: boolean;
+    isOpen?: () => boolean;
+  } = {},
+): Promise<void> {
+  await until(
+    async () => {
+      if (!isOpen()) {
+        throw new Error("project open retry was cancelled");
+      }
+      try {
+        await actions.ensureProjectIsOpen(foreground_project);
+        return true;
+      } catch (err) {
+        if (!isTransientProjectOpenError(err)) {
+          throw err;
+        }
+        return false;
+      }
+    },
+    {
+      start: PROJECT_OPEN_RETRY_START_MS,
+      max: PROJECT_OPEN_RETRY_MAX_MS,
+    },
+  );
 }
 
 function shouldSuppressArchivedOpenError(project_id: string): boolean {
@@ -409,11 +461,17 @@ export async function open_file(
 
   // Wait for the project to start opening.
   try {
-    await actions.ensureProjectIsOpen(opts.foreground_project);
+    await ensureProjectIsOpenWithRetry(actions, {
+      foreground_project: opts.foreground_project,
+      isOpen: tabIsOpened,
+    });
     if (!tabIsOpened()) {
       return;
     }
   } catch (err) {
+    if (isCancelledProjectOpenRetryError(err)) {
+      return;
+    }
     actions.set_activity({
       id: uuid(),
       error: `Error opening file '${displayPath}' (error ensuring project is open) -- ${err}`,

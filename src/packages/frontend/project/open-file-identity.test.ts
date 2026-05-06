@@ -3,7 +3,9 @@ import { fromJS } from "immutable";
 import {
   applyWorkspaceSelectionForForegroundOpen,
   canonicalPath,
+  ensureProjectIsOpenWithRetry,
   findOpenDisplayPathForSyncPath,
+  isTransientProjectOpenError,
   isTransientSyncIdentityResolutionError,
   log_file_open,
   log_opened_time,
@@ -244,6 +246,68 @@ describe("resolveSyncPathWithRetry", () => {
       resolveSyncPathWithRetry(fs, "/root/file.txt", HOME),
     ).rejects.toThrow("boom");
     expect(fs.canonicalSyncIdentityPath).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("isTransientProjectOpenError", () => {
+  it("treats project-open timeouts as retryable", () => {
+    expect(
+      isTransientProjectOpenError(new Error("timeout -- 30000 ms")),
+    ).toBe(true);
+    expect(
+      isTransientProjectOpenError(
+        new Error("project is not running. Please try again in a moment"),
+      ),
+    ).toBe(true);
+    expect(
+      isTransientProjectOpenError(
+        new Error(
+          "unable to route 'filesystem' to project-host for project p; project host id unavailable",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat permanent project-open failures as retryable", () => {
+    expect(
+      isTransientProjectOpenError(new Error("permission denied")),
+    ).toBe(false);
+  });
+});
+
+describe("ensureProjectIsOpenWithRetry", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("retries transient project-open failures until the project opens", async () => {
+    const actions = {
+      ensureProjectIsOpen: jest
+        .fn()
+        .mockRejectedValueOnce(new Error("timeout -- 30000 ms"))
+        .mockResolvedValue(undefined),
+    };
+    await expect(
+      ensureProjectIsOpenWithRetry(actions, {
+        foreground_project: true,
+      }),
+    ).resolves.toBeUndefined();
+    expect(actions.ensureProjectIsOpen).toHaveBeenCalledTimes(2);
+    expect(actions.ensureProjectIsOpen).toHaveBeenNthCalledWith(1, true);
+  });
+
+  it("stops retrying when the tab is closed", async () => {
+    const actions = {
+      ensureProjectIsOpen: jest
+        .fn()
+        .mockRejectedValue(new Error("project is not running")),
+    };
+    let open = true;
+    const promise = ensureProjectIsOpenWithRetry(actions, {
+      isOpen: () => open,
+    });
+    open = false;
+    await expect(promise).rejects.toThrow("cancelled");
   });
 });
 
