@@ -45,10 +45,10 @@ describe("account_project_index projector", () => {
     await getPool().query(
       `INSERT INTO projects
         (project_id, title, description, users, state, host_id, owning_bay_id,
-         created, last_edited, last_active)
+         created, last_edited, last_backup, last_active)
        VALUES
         ($1, 'Projected Project', 'from outbox',
-         $2::JSONB, $3::JSONB, $4, $5, NOW(), NOW(), $6::JSONB)`,
+         $2::JSONB, $3::JSONB, $4, $5, $6, $7, $8, $9::JSONB)`,
       [
         PROJECT_ID,
         JSON.stringify({
@@ -58,6 +58,9 @@ describe("account_project_index projector", () => {
         JSON.stringify({ state: "running" }),
         HOST_ID,
         LOCAL_BAY_ID,
+        new Date("2026-04-03T22:50:00.000Z"),
+        new Date("2026-04-03T23:10:00.000Z"),
+        new Date("2026-04-03T23:10:00.000Z"),
         JSON.stringify({
           [ACCOUNT_LOCAL]: "2026-04-03T23:30:00.000Z",
           [ACCOUNT_OTHER]: "2026-04-03T23:20:00.000Z",
@@ -205,7 +208,7 @@ describe("account_project_index projector", () => {
 
     const firstRows = await getPool().query(
       `SELECT account_id, project_id, owning_bay_id, host_id, title, description,
-              is_hidden, last_opened_at
+              is_hidden, last_opened_at, last_edited, last_backup
          FROM account_project_index
         ORDER BY account_id`,
       [],
@@ -220,6 +223,8 @@ describe("account_project_index projector", () => {
         description: "from outbox",
         is_hidden: false,
         last_opened_at: null,
+        last_edited: new Date("2026-04-03T23:10:00.000Z"),
+        last_backup: new Date("2026-04-03T23:10:00.000Z"),
       },
     ]);
 
@@ -395,5 +400,37 @@ describe("account_project_index projector", () => {
       [PROJECT_ID],
     );
     expect(remainingRows.rows).toHaveLength(0);
+  });
+
+  it("uses the outbox event time for projected feed events during delayed drains", async () => {
+    await seedBaseRows();
+    await appendProjectOutboxEventForProject({
+      event_type: "project.created",
+      project_id: PROJECT_ID,
+      default_bay_id: LOCAL_BAY_ID,
+    });
+    await getPool().query(
+      `UPDATE project_events_outbox
+          SET created_at = $2
+        WHERE project_id = $1
+          AND event_type = 'project.created'`,
+      [PROJECT_ID, new Date("2026-04-03T23:00:00.000Z")],
+    );
+
+    await expect(
+      drainAccountProjectIndexProjection({
+        bay_id: LOCAL_BAY_ID,
+        limit: 10,
+        dry_run: false,
+      }),
+    ).resolves.toMatchObject({
+      feed_events: [
+        expect.objectContaining({
+          type: "project.upsert",
+          account_id: ACCOUNT_LOCAL,
+          ts: Date.parse("2026-04-03T23:00:00.000Z"),
+        }),
+      ],
+    });
   });
 });

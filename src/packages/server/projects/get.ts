@@ -89,7 +89,17 @@ export default async function getProjects({
   }
   const pool = getPool();
   const { rows } = await pool.query(
-    `SELECT project_id, title, description, name FROM projects WHERE DELETED IS NOT true AND users ? $1 AND (users#>>'{${account_id},hide}')::BOOLEAN IS NOT TRUE ORDER BY last_edited DESC LIMIT $2`,
+    `SELECT project_id, title, description, name
+       FROM projects
+      WHERE deleted IS NOT TRUE
+        AND users ? $1
+        AND COALESCE(
+          users #>> ARRAY[$1::TEXT, 'group']::TEXT[],
+          ''
+        ) IN ('owner', 'collaborator')
+        AND (users#>>'{${account_id},hide}')::BOOLEAN IS NOT TRUE
+      ORDER BY last_edited DESC
+      LIMIT $2`,
     [account_id, limit],
   );
   return rows;

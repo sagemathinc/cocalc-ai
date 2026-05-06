@@ -1,14 +1,19 @@
 import React, { useState } from "react";
 import {
+  buildGitDiffFindMatches,
   filterGitReviewLogEntries,
   buildGitReviewFileSectionId,
   captureGitDiffScrollAnchor,
+  commentAnchorKey,
   DiffBlock,
   diffLineNumberColumnWidth,
+  getGitDiffFindVisibleLineLimitUpdate,
   getNextRenderedDiffLineLimit,
   getRenderedDiffLineLimit,
   getCommitReviewIndicatorState,
+  isGitDiffFindTargetRendered,
   MarkdownHistoryInput,
+  ReviewNoteEditor,
   buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
@@ -17,6 +22,8 @@ import {
   resolveGitCommitSearchChange,
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
+  scrollGitDrawerElementIntoView,
+  shouldCaptureGitDrawerFindShortcut,
 } from "../git-commit-drawer";
 import { act, fireEvent, render } from "@testing-library/react";
 
@@ -149,6 +156,47 @@ describe("git commit drawer merge commit formatting", () => {
     expect(onModeChange).toHaveBeenCalledWith("markdown");
   });
 
+  it("buffers private review note typing until blur or save", () => {
+    const onPersistDraft = jest.fn();
+    const onCancel = jest.fn();
+    const onSave = jest.fn();
+
+    const rendered = render(
+      React.createElement(ReviewNoteEditor, {
+        historyId: "git-review-note:test",
+        value: "existing",
+        committedValue: "existing",
+        fontSize: 14,
+        saving: false,
+        disabled: false,
+        onPersistDraft,
+        onCancel,
+        onSave,
+      }),
+    );
+
+    expect(latestMarkdownInputProps).toBeTruthy();
+
+    act(() => {
+      latestMarkdownInputProps.onChange("edited locally");
+    });
+
+    expect(latestMarkdownInputProps.value).toBe("edited locally");
+    expect(onPersistDraft).not.toHaveBeenCalled();
+
+    act(() => {
+      latestMarkdownInputProps.onBlur("edited locally");
+    });
+    expect(onPersistDraft).toHaveBeenCalledWith("edited locally");
+
+    const saveButton = rendered.getByText("Save note");
+    act(() => {
+      saveButton.click();
+    });
+    expect(onPersistDraft).toHaveBeenLastCalledWith("edited locally");
+    expect(onSave).toHaveBeenCalledWith("edited locally");
+  });
+
   it("does not re-commit diff blocks on unrelated parent state changes", () => {
     const renders: number[] = [];
     const originalType = (DiffBlock as any).type;
@@ -207,8 +255,12 @@ describe("git commit drawer merge commit formatting", () => {
     };
 
     try {
-      const rendered = render(
-        React.createElement(DiffBlock, {
+      function Harness() {
+        const [draftAnchorId, setDraftAnchorId] = useState<string | undefined>(
+          undefined,
+        );
+        const [draftValue, setDraftValue] = useState("");
+        return React.createElement(DiffBlock, {
           filePath: "src/example.ts",
           lines: stableDiffLines,
           languageHint: "ts",
@@ -216,12 +268,27 @@ describe("git commit drawer merge commit formatting", () => {
           comments: stableComments,
           showResolvedComments: false,
           commentEnabled: true,
+          activeDraftAnchorId: draftAnchorId,
+          activeDraftBody: draftValue,
+          onOpenDraft: (anchor: any) => {
+            setDraftAnchorId(commentAnchorKey(anchor));
+            setDraftValue((current) =>
+              draftAnchorId === commentAnchorKey(anchor) ? current : "",
+            );
+          },
+          onDraftBodyChange: setDraftValue,
+          onCancelDraft: () => {
+            setDraftAnchorId(undefined);
+            setDraftValue("");
+          },
           onCreateComment: noopAsync,
           onUpdateComment: noopAsync,
           onResolveComment: noopAsync,
           onReopenComment: noopAsync,
-        }),
-      );
+        });
+      }
+
+      const rendered = render(React.createElement(Harness));
       expect(renders).toHaveLength(1);
 
       const line = rendered.container.querySelector("[data-git-anchor-id]");
@@ -234,13 +301,137 @@ describe("git commit drawer merge commit formatting", () => {
       act(() => {
         rendered.getAllByTitle("Add inline comment")[0].click();
       });
-      expect(renders).toHaveLength(2);
       expect(latestMarkdownInputProps).toBeTruthy();
 
       act(() => {
         latestMarkdownInputProps.onChange("draft text");
       });
+      expect(latestMarkdownInputProps.value).toBe("draft text");
+    } finally {
+      (DiffBlock as any).type = originalType;
+    }
+  });
 
+  it("preserves inline draft text across diff block remounts", () => {
+    function Harness() {
+      const [visible, setVisible] = useState(true);
+      const [draftAnchorId, setDraftAnchorId] = useState<string | undefined>(
+        undefined,
+      );
+      const [draftValue, setDraftValue] = useState("");
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(
+          "button",
+          { onClick: () => setVisible((v) => !v) },
+          "toggle",
+        ),
+        visible
+          ? React.createElement(DiffBlock, {
+              filePath: "src/example.ts",
+              lines: stableDiffLines,
+              languageHint: "ts",
+              fontSize: 14,
+              comments: stableComments,
+              showResolvedComments: false,
+              commentEnabled: true,
+              activeDraftAnchorId: draftAnchorId,
+              activeDraftBody: draftValue,
+              onOpenDraft: (anchor: any) => {
+                setDraftAnchorId(commentAnchorKey(anchor));
+                setDraftValue((current) =>
+                  draftAnchorId === commentAnchorKey(anchor) ? current : "",
+                );
+              },
+              onDraftBodyChange: setDraftValue,
+              onCancelDraft: () => {
+                setDraftAnchorId(undefined);
+                setDraftValue("");
+              },
+              onCreateComment: noopAsync,
+              onUpdateComment: noopAsync,
+              onResolveComment: noopAsync,
+              onReopenComment: noopAsync,
+            })
+          : null,
+      );
+    }
+
+    const rendered = render(React.createElement(Harness));
+    act(() => {
+      rendered.getAllByTitle("Add inline comment")[0].click();
+    });
+    expect(latestMarkdownInputProps).toBeTruthy();
+
+    act(() => {
+      latestMarkdownInputProps.onChange("persist me");
+    });
+    expect(latestMarkdownInputProps.value).toBe("persist me");
+
+    act(() => {
+      rendered.getByText("toggle").click();
+    });
+    act(() => {
+      rendered.getByText("toggle").click();
+    });
+
+    expect(latestMarkdownInputProps).toBeTruthy();
+    expect(latestMarkdownInputProps.value).toBe("persist me");
+  });
+
+  it("does not re-render the whole diff block on inline draft typing", () => {
+    const renders: number[] = [];
+    const originalType = (DiffBlock as any).type;
+    (DiffBlock as any).type = function WrappedDiffBlock(props: any) {
+      renders.push(Date.now());
+      return originalType(props);
+    };
+
+    try {
+      function Harness() {
+        const [draftAnchorId, setDraftAnchorId] = useState<string | undefined>(
+          undefined,
+        );
+        const [draftValue, setDraftValue] = useState("");
+        return React.createElement(DiffBlock, {
+          filePath: "src/example.ts",
+          lines: stableDiffLines,
+          languageHint: "ts",
+          fontSize: 14,
+          comments: stableComments,
+          showResolvedComments: false,
+          commentEnabled: true,
+          activeDraftAnchorId: draftAnchorId,
+          activeDraftBody: draftValue,
+          onOpenDraft: (anchor: any) => {
+            setDraftAnchorId(commentAnchorKey(anchor));
+            setDraftValue("");
+          },
+          onDraftBodyChange: setDraftValue,
+          onCancelDraft: () => {
+            setDraftAnchorId(undefined);
+            setDraftValue("");
+          },
+          onCreateComment: noopAsync,
+          onUpdateComment: noopAsync,
+          onResolveComment: noopAsync,
+          onReopenComment: noopAsync,
+        });
+      }
+
+      const rendered = render(React.createElement(Harness));
+      act(() => {
+        rendered.getAllByTitle("Add inline comment")[0].click();
+      });
+      expect(renders).toHaveLength(2);
+      expect(latestMarkdownInputProps).toBeTruthy();
+
+      act(() => {
+        latestMarkdownInputProps.onChange("typed locally");
+      });
+
+      expect(latestMarkdownInputProps.value).toBe("typed locally");
       expect(renders).toHaveLength(2);
     } finally {
       (DiffBlock as any).type = originalType;
@@ -273,6 +464,169 @@ describe("git commit drawer merge commit formatting", () => {
     expect(buildGitReviewFileSectionId("src/example.ts", 0)).not.toBe(
       buildGitReviewFileSectionId("src/example.ts", 1),
     );
+  });
+
+  it("builds file and line matches for drawer-local diff search", () => {
+    expect(
+      buildGitDiffFindMatches({
+        query: "widget",
+        data: {
+          files: [
+            {
+              path: "src/widget.ts",
+              lines: ["@@ -1 +1 @@", "-old widget", "+new widget"],
+            },
+            {
+              path: "src/other.ts",
+              lines: ["context only"],
+            },
+          ],
+        } as any,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "file",
+        fileIndex: 0,
+        preview: "src/widget.ts",
+      }),
+      expect.objectContaining({
+        kind: "line",
+        fileIndex: 0,
+        lineIndex: 1,
+        preview: "-old widget",
+      }),
+      expect.objectContaining({
+        kind: "line",
+        fileIndex: 0,
+        lineIndex: 2,
+        preview: "+new widget",
+      }),
+    ]);
+  });
+
+  it("tracks active diff-find render readiness per target file only", () => {
+    const data = {
+      files: [
+        {
+          path: "src/alpha.ts",
+          lines: Array.from({ length: 600 }, (_, idx) => `alpha ${idx}`),
+        },
+        {
+          path: "src/beta.ts",
+          lines: Array.from({ length: 600 }, (_, idx) => `beta ${idx}`),
+        },
+      ],
+    } as any;
+    const activeLineMatch = {
+      id: "line:0:450",
+      kind: "line",
+      fileIndex: 0,
+      lineIndex: 450,
+      preview: "alpha 450",
+    } as const;
+    const alphaSectionId = buildGitReviewFileSectionId("src/alpha.ts", 0);
+    const betaSectionId = buildGitReviewFileSectionId("src/beta.ts", 1);
+
+    expect(
+      isGitDiffFindTargetRendered({
+        data,
+        match: activeLineMatch,
+        visibleDiffLinesByFile: {},
+      }),
+    ).toBe(false);
+
+    expect(
+      isGitDiffFindTargetRendered({
+        data,
+        match: activeLineMatch,
+        visibleDiffLinesByFile: {
+          [betaSectionId]: 520,
+        },
+      }),
+    ).toBe(false);
+
+    expect(
+      isGitDiffFindTargetRendered({
+        data,
+        match: activeLineMatch,
+        visibleDiffLinesByFile: {
+          [alphaSectionId]: 451,
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("expands hidden diff-find line matches in their own file", () => {
+    const data = {
+      files: [
+        {
+          path: "src/alpha.ts",
+          lines: Array.from({ length: 600 }, (_, idx) => `alpha ${idx}`),
+        },
+        {
+          path: "src/beta.ts",
+          lines: Array.from({ length: 600 }, (_, idx) => `beta ${idx}`),
+        },
+      ],
+    } as any;
+    const activeLineMatch = {
+      id: "line:0:450",
+      kind: "line",
+      fileIndex: 0,
+      lineIndex: 450,
+      preview: "alpha 450",
+    } as const;
+    const visibleLineMatch = {
+      id: "line:0:120",
+      kind: "line",
+      fileIndex: 0,
+      lineIndex: 120,
+      preview: "alpha 120",
+    } as const;
+    const alphaSectionId = buildGitReviewFileSectionId("src/alpha.ts", 0);
+    const betaSectionId = buildGitReviewFileSectionId("src/beta.ts", 1);
+
+    expect(
+      getGitDiffFindVisibleLineLimitUpdate({
+        data,
+        match: visibleLineMatch,
+        visibleDiffLinesByFile: {},
+      }),
+    ).toBeUndefined();
+
+    expect(
+      getGitDiffFindVisibleLineLimitUpdate({
+        data,
+        match: activeLineMatch,
+        visibleDiffLinesByFile: {},
+      }),
+    ).toEqual({
+      sectionId: alphaSectionId,
+      neededLimit: 451,
+    });
+
+    expect(
+      getGitDiffFindVisibleLineLimitUpdate({
+        data,
+        match: activeLineMatch,
+        visibleDiffLinesByFile: {
+          [betaSectionId]: 520,
+        },
+      }),
+    ).toEqual({
+      sectionId: alphaSectionId,
+      neededLimit: 451,
+    });
+
+    expect(
+      getGitDiffFindVisibleLineLimitUpdate({
+        data,
+        match: activeLineMatch,
+        visibleDiffLinesByFile: {
+          [alphaSectionId]: 451,
+        },
+      }),
+    ).toBeUndefined();
   });
 
   it("filters the commit list down to unreviewed commits when requested", () => {
@@ -387,6 +741,45 @@ describe("git commit drawer merge commit formatting", () => {
     ).toBeUndefined();
   });
 
+  it("does not hijack ctrl/cmd-f from editable targets", () => {
+    const input = document.createElement("input");
+    const editor = document.createElement("div");
+    editor.setAttribute("contenteditable", "true");
+
+    expect(
+      shouldCaptureGitDrawerFindShortcut({
+        key: "f",
+        altKey: false,
+        ctrlKey: true,
+        metaKey: false,
+        target: input,
+        activeElement: input,
+      } as any),
+    ).toBe(false);
+
+    expect(
+      shouldCaptureGitDrawerFindShortcut({
+        key: "F",
+        altKey: false,
+        ctrlKey: false,
+        metaKey: true,
+        target: editor,
+        activeElement: editor,
+      } as any),
+    ).toBe(false);
+
+    expect(
+      shouldCaptureGitDrawerFindShortcut({
+        key: "f",
+        altKey: false,
+        ctrlKey: true,
+        metaKey: false,
+        target: document.createElement("div"),
+        activeElement: document.body,
+      } as any),
+    ).toBe(true);
+  });
+
   it("scrolls the git review drawer by line, page, and top commands", () => {
     const node = {
       scrollTop: 200,
@@ -458,5 +851,33 @@ describe("git commit drawer merge commit formatting", () => {
       }),
     ).toBe(true);
     expect(node.scrollTop).toBe(240);
+  });
+
+  it("scrolls drawer targets with drawer-owned start and center math", () => {
+    const node = {
+      scrollTop: 200,
+      scrollHeight: 2000,
+      clientHeight: 400,
+      getBoundingClientRect: () => ({ top: 100, bottom: 500 }),
+    } as any;
+    const target = {
+      getBoundingClientRect: () => ({ top: 340, bottom: 380, height: 40 }),
+    } as any;
+
+    expect(
+      scrollGitDrawerElementIntoView(node, target, {
+        block: "start",
+        offsetTop: 16,
+      }),
+    ).toBe(true);
+    expect(node.scrollTop).toBe(424);
+
+    node.scrollTop = 200;
+    expect(
+      scrollGitDrawerElementIntoView(node, target, {
+        block: "center",
+      }),
+    ).toBe(true);
+    expect(node.scrollTop).toBe(260);
   });
 });

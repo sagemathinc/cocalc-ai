@@ -74,6 +74,10 @@ function parseDate(value: unknown): Date | null {
   return date;
 }
 
+function eventTimestampMs(value: unknown): number {
+  return parseDate(value)?.getTime() ?? Date.now();
+}
+
 function sortKeyForAccount(
   payload: ProjectOutboxPayload,
   account_id: string,
@@ -133,8 +137,10 @@ export async function computeAccountProjectFeedEvents(opts: {
   bay_id: string;
   payload: ProjectOutboxPayload;
   previous_local_account_ids?: string[];
+  event_ts?: string | Date | number | null;
 }): Promise<AccountFeedEvent[]> {
   const { db, bay_id, payload } = opts;
+  const ts = eventTimestampMs(opts.event_ts);
   const previousLocalAccountIds =
     opts.previous_local_account_ids ??
     Array.from((await existingLastOpenedAt(db, payload.project_id)).keys());
@@ -153,7 +159,7 @@ export async function computeAccountProjectFeedEvents(opts: {
   for (const account_id of removedAccountIds) {
     feed_events.push({
       type: "project.remove",
-      ts: Date.now(),
+      ts,
       account_id,
       project_id: payload.project_id,
       reason: "membership_removed",
@@ -162,7 +168,7 @@ export async function computeAccountProjectFeedEvents(opts: {
   for (const account_id of currentLocalAccountIds) {
     feed_events.push({
       type: "project.upsert",
-      ts: Date.now(),
+      ts,
       account_id,
       project: projectRowForFeed({ payload, account_id }),
     });
@@ -187,6 +193,7 @@ function projectRowForFeed(opts: {
     state: payload.state_summary ?? {},
     last_active: payload.last_activity_by_account ?? {},
     last_edited: payload.last_edited_at ?? null,
+    last_backup: payload.last_backup_at ?? null,
     deleted: !!payload.deleted,
   };
 }
@@ -216,6 +223,7 @@ async function applyProjectEventToAccountProjectIndex(opts: {
     bay_id,
     payload,
     previous_local_account_ids: Array.from(lastOpenedByAccount.keys()),
+    event_ts: event.created_at,
   });
   const currentLocalAccountIds = feed_events
     .filter(
@@ -238,10 +246,10 @@ async function applyProjectEventToAccountProjectIndex(opts: {
     await db.query(
       `INSERT INTO account_project_index
          (account_id, project_id, owning_bay_id, host_id, title, description,
-          theme, users_summary, state_summary, last_activity_at, last_opened_at,
-          is_hidden, sort_key, updated_at)
+          theme, users_summary, state_summary, last_edited, last_backup, last_activity_at,
+          last_opened_at, is_hidden, sort_key, updated_at)
        VALUES
-         ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, $13, NOW())`,
+         ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, $13, $14, $15, NOW())`,
       [
         account_id,
         payload.project_id,
@@ -252,6 +260,8 @@ async function applyProjectEventToAccountProjectIndex(opts: {
         JSON.stringify(payload.theme ?? {}),
         JSON.stringify(payload.users_summary ?? {}),
         JSON.stringify(payload.state_summary ?? {}),
+        parseDate(payload.last_edited_at),
+        parseDate(payload.last_backup_at),
         last_activity_at,
         lastOpenedByAccount.get(account_id) ?? null,
         !!payload.users_summary?.[account_id]?.hide,

@@ -134,15 +134,12 @@ type ProjectIndexBootstrapRow = {
   theme?: Record<string, any> | null;
   users_summary?: Record<string, any> | null;
   state_summary?: Record<string, any> | null;
+  last_edited?: string | Date | null;
+  last_backup?: string | Date | null;
   last_activity_at?: string | Date | null;
   sort_key?: string | Date | null;
   updated_at?: string | Date | null;
   is_hidden?: boolean | null;
-};
-
-type ProjectBackupBootstrapRow = {
-  project_id: string;
-  last_backup?: string | Date | null;
 };
 
 function readMaybeImmutable(value: any, key: string): any {
@@ -464,6 +461,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
                 theme: null,
                 users_summary: null,
                 state_summary: null,
+                last_edited: null,
+                last_backup: null,
                 last_activity_at: null,
                 sort_key: null,
                 updated_at: null,
@@ -484,9 +483,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
       let project_map = store.get("project_map") ?? Map<string, any>();
       let changed = false;
       const seenProjectedIds = new globalThis.Set<string>();
+      const hiddenProjectedIds = new globalThis.Set<string>();
       const projectsToClose: string[] = [];
       for (const row of rows as ProjectIndexBootstrapRow[]) {
-        if (row?.is_hidden === true || !row?.project_id) {
+        if (!row?.project_id) {
+          continue;
+        }
+        if (row.is_hidden === true) {
+          hiddenProjectedIds.add(row.project_id);
           continue;
         }
         seenProjectedIds.add(row.project_id);
@@ -504,12 +508,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
           owning_bay_id: `${row.owning_bay_id ?? ""}`.trim() || DEFAULT_BAY_ID,
           users: row.users_summary ?? {},
           state: row.state_summary ?? {},
+          last_edited: dateOrNull(row.last_edited)?.toISOString() ?? null,
+          last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
           last_active:
             row.last_activity_at == null
               ? {}
               : { [account_id]: row.last_activity_at },
-          last_edited:
-            dateOrNull(row.sort_key ?? row.updated_at)?.toISOString() ?? null,
           deleted: false,
         });
         let nextProject = currentProject.mergeDeep(projectedRecord);
@@ -539,7 +543,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (
           this.shouldPreserveNewerLocalLastEdited({
             currentProject,
-            incomingLastEdited: row.sort_key ?? row.updated_at,
+            incomingLastEdited: row.last_edited ?? undefined,
           })
         ) {
           nextProject = nextProject.set(
@@ -550,7 +554,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         if (
           this.shouldPreserveNewerLocalLastBackup({
             currentProject,
-            incomingLastBackup: undefined,
+            incomingLastBackup: row.last_backup ?? undefined,
           })
         ) {
           nextProject = nextProject.set(
@@ -569,6 +573,17 @@ export class ProjectsActions extends Actions<ProjectsState> {
         }
         project_map = project_map.set(row.project_id, nextProject);
         changed = true;
+      }
+      for (const project_id of hiddenProjectedIds) {
+        const project = project_map.get(project_id);
+        if (project?.get(PROJECTION_ONLY_FIELD) !== true) {
+          continue;
+        }
+        project_map = project_map.delete(project_id);
+        changed = true;
+        if (this.isProjectOpen(project_id)) {
+          projectsToClose.push(project_id);
+        }
       }
       if (rows.length < PROJECTED_PROJECT_BOOTSTRAP_LIMIT) {
         for (const [project_id, project] of project_map) {
@@ -592,43 +607,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
           this.set_project_closed(project_id);
         }
         return;
-      }
-      try {
-        const backupResp = await webapp_client.async_query({
-          query: {
-            projects: [
-              {
-                project_id: null,
-                last_backup: null,
-              },
-            ],
-          },
-          options: [{ limit: PROJECTED_PROJECT_BOOTSTRAP_LIMIT }],
-        });
-        const backupRows = backupResp?.query?.projects;
-        if (Array.isArray(backupRows)) {
-          for (const row of backupRows as ProjectBackupBootstrapRow[]) {
-            if (!row?.project_id || !project_map.has(row.project_id)) {
-              continue;
-            }
-            const currentProject =
-              project_map.get(row.project_id) ?? Map<string, any>();
-            if (
-              this.shouldPreserveNewerLocalLastBackup({
-                currentProject,
-                incomingLastBackup: row.last_backup,
-              })
-            ) {
-              continue;
-            }
-            project_map = project_map.setIn(
-              [row.project_id, "last_backup"],
-              dateOrNull(row.last_backup),
-            );
-          }
-        }
-      } catch (err) {
-        console.warn("project backup bootstrap failed", err);
       }
       if (changed) {
         this.setState({ project_map } as ProjectsState);
@@ -1013,10 +991,12 @@ export class ProjectsActions extends Actions<ProjectsState> {
     snapshot: Map<string, any> | undefined,
     opts?: {
       mergeIntoExisting?: boolean;
+      removeMissingProjectIds?: string[];
     },
   ): void {
     const incomingProjectMap = snapshot ?? Map<string, any>();
     const currentProjectMap = store.get("project_map") ?? Map<string, any>();
+    const projectsToClose = new globalThis.Set<string>();
     let project_map = opts?.mergeIntoExisting
       ? currentProjectMap
       : incomingProjectMap.map((project) =>
@@ -1029,6 +1009,21 @@ export class ProjectsActions extends Actions<ProjectsState> {
           !incomingProjectMap.has(project_id)
         ) {
           project_map = project_map.set(project_id, currentProject);
+        } else if (this.isProjectOpen(project_id)) {
+          projectsToClose.add(project_id);
+        }
+      }
+    }
+    if (opts?.mergeIntoExisting && opts.removeMissingProjectIds != null) {
+      for (const project_id of opts.removeMissingProjectIds) {
+        if (
+          !incomingProjectMap.has(project_id) &&
+          currentProjectMap.get(project_id)?.get(PROJECTION_ONLY_FIELD) !== true
+        ) {
+          project_map = project_map.remove(project_id);
+          if (this.isProjectOpen(project_id)) {
+            projectsToClose.add(project_id);
+          }
         }
       }
     }
@@ -1072,6 +1067,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       project_map = project_map.set(project_id, nextProject);
     }
     this.setState({ project_map } as ProjectsState);
+    for (const project_id of projectsToClose) {
+      this.set_project_closed(project_id);
+    }
   }
 
   private async bootstrapCreatedProjectDirectly(
@@ -1180,7 +1178,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   }
 
   private isProjectOpen = (project_id: string): boolean => {
-    return store.get("open_projects").indexOf(project_id) != -1;
+    return (store.get("open_projects")?.indexOf?.(project_id) ?? -1) != -1;
   };
 
   private isProjectMoveInProgress(project_id: string): boolean {

@@ -51,6 +51,10 @@ function parseDate(value: unknown): Date | null {
   return Number.isFinite(date.getTime()) ? date : null;
 }
 
+function eventTimestampMs(value: unknown): number {
+  return parseDate(value)?.getTime() ?? Date.now();
+}
+
 function visibleAccountIdsFromUsers(
   users_summary: Record<string, any>,
 ): string[] {
@@ -80,6 +84,7 @@ function buildProjectFeedRow(opts: {
     state: payload.state_summary ?? {},
     last_active: payload.last_activity_by_account ?? {},
     last_edited: payload.last_edited_at ?? null,
+    last_backup: payload.last_backup_at ?? null,
     deleted:
       !!payload.deleted ||
       !VISIBLE_PROJECT_GROUPS.has(
@@ -158,10 +163,10 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
   await getPool().query(
     `INSERT INTO account_project_index
        (account_id, project_id, owning_bay_id, host_id, title, description,
-        theme, users_summary, state_summary, last_activity_at, last_opened_at,
-        is_hidden, sort_key, updated_at)
+        theme, users_summary, state_summary, last_edited, last_backup, last_activity_at,
+        last_opened_at, is_hidden, sort_key, updated_at)
      VALUES
-       ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, NULL, $11, $12, $13)
+       ($1, $2, $3, $4, $5, $6, $7::JSONB, $8::JSONB, $9::JSONB, $10, $11, $12, NULL, $13, $14, $15)
      ON CONFLICT (account_id, project_id)
      DO UPDATE SET
        owning_bay_id = EXCLUDED.owning_bay_id,
@@ -171,6 +176,8 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
        theme = EXCLUDED.theme,
        users_summary = EXCLUDED.users_summary,
        state_summary = EXCLUDED.state_summary,
+       last_edited = EXCLUDED.last_edited,
+       last_backup = EXCLUDED.last_backup,
        last_activity_at = EXCLUDED.last_activity_at,
        is_hidden = EXCLUDED.is_hidden,
        sort_key = EXCLUDED.sort_key,
@@ -185,6 +192,8 @@ export async function applyAccountProjectFeedUpsertOnHomeBay(
       JSON.stringify(event.project.theme ?? {}),
       JSON.stringify(event.project.users ?? {}),
       JSON.stringify(event.project.state ?? {}),
+      parseDate(event.project.last_edited) ?? null,
+      parseDate(event.project.last_backup) ?? null,
       last_activity_at,
       !!event.project.users?.[event.account_id]?.hide,
       sortKeyForFeedProject({
@@ -220,6 +229,7 @@ async function forwardRemoteProjectFeedEventsBestEffort(opts: {
   bay_id: string;
   payload: ProjectOutboxPayload;
   previousVisibleAccountIds: string[];
+  event_ts?: string | Date | number | null;
 }): Promise<void> {
   if (!isMultiBayCluster()) {
     return;
@@ -240,7 +250,7 @@ async function forwardRemoteProjectFeedEventsBestEffort(opts: {
   const currentVisibleSet = new Set(currentVisible);
   const fabric = getInterBayFabricClient();
   const remoteClients = new Map<string, InterBayAccountProjectFeedApi>();
-  const ts = Date.now();
+  const ts = eventTimestampMs(opts.event_ts);
   for (const account_id of impacted) {
     const dest_bay = byAccountId.get(account_id);
     if (!dest_bay || dest_bay === opts.bay_id) {
@@ -300,8 +310,9 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
   let collaboratorFeedEvents: AccountFeedEvent[] = [];
   let payload: ProjectOutboxPayload | undefined;
   let previousVisibleAccountIds: string[] = [];
+  let latestEvent: ProjectOutboxEventRow | null = null;
   try {
-    const latestEvent = await loadLatestProjectOutboxEvent({
+    latestEvent = await loadLatestProjectOutboxEvent({
       db: client,
       project_id: opts.project_id,
     });
@@ -316,6 +327,7 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
       db: client,
       bay_id,
       payload,
+      event_ts: latestEvent?.created_at,
     });
     previousVisibleAccountIds =
       latestEvent == null
@@ -353,6 +365,7 @@ export async function publishProjectAccountFeedEventsBestEffort(opts: {
       bay_id,
       payload,
       previousVisibleAccountIds,
+      event_ts: latestEvent?.created_at,
     });
   }
   for (const event of collaboratorFeedEvents) {

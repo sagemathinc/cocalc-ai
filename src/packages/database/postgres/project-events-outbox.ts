@@ -30,6 +30,7 @@ export interface ProjectOutboxPayload {
   last_activity_by_account: Record<string, any>;
   created_at: string | null;
   last_edited_at: string | null;
+  last_backup_at?: string | null;
   deleted: boolean;
 }
 
@@ -96,6 +97,7 @@ export async function loadProjectOutboxPayload(opts: {
        COALESCE(last_active, '{}'::JSONB) AS last_activity_by_account,
        created AS created_at,
        last_edited AS last_edited_at,
+       last_backup AS last_backup_at,
        COALESCE(deleted, FALSE) AS deleted
      FROM projects
      WHERE project_id = $1
@@ -116,6 +118,7 @@ export async function loadProjectOutboxPayload(opts: {
       last_activity_by_account: Record<string, any> | null;
       created_at: Date | null;
       last_edited_at: Date | null;
+      last_backup_at: Date | null;
       deleted: boolean | null;
     }>;
   };
@@ -136,6 +139,7 @@ export async function loadProjectOutboxPayload(opts: {
     last_activity_by_account: row.last_activity_by_account ?? {},
     created_at: isoString(row.created_at),
     last_edited_at: isoString(row.last_edited_at),
+    last_backup_at: isoString(row.last_backup_at),
     deleted: !!row.deleted,
   };
 }

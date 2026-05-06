@@ -127,7 +127,7 @@ describe("disk usage history chart helpers", () => {
 describe("disk usage backup status helpers", () => {
   it("describes a successful backup with an absolute timestamp", () => {
     const summary = describeLastBackup("2026-05-05T18:00:00.000Z");
-    expect(summary.label).toBe("Backed up");
+    expect(summary.label).toBe("Backups");
     expect(summary.date?.toISOString()).toBe("2026-05-05T18:00:00.000Z");
     expect(summary.absolute).toBeTruthy();
   });
