@@ -4,26 +4,30 @@
 /*
  * publish-r2.js
  *
- * Uploads a build artifact to Cloudflare R2 (S3-compatible) using SigV4.
+ * Uploads a build artifact to Cloudflare R2.
  * - Uploads the file and a sibling .sha256 file.
- * - Optionally writes a "latest" manifest JSON (url, sha256, size, built_at, os, arch, version, message).
+ * - Optionally writes a "latest" manifest JSON (url, sha256, size, built_at,
+ *   os, arch, version, message).
  * - Can also copy an existing object (e.g., staging -> latest) without
  *   uploading a new file.
  *
  * Required env:
  *   COCALC_R2_ACCOUNT_ID, COCALC_R2_ACCESS_KEY_ID, COCALC_R2_SECRET_ACCESS_KEY,
  *   COCALC_R2_BUCKET
- *   COCALC_R2_PUBLIC_BASE_URL (serving domain for public URLs, e.g., https://software.cocalc.ai)
+ *   COCALC_R2_PUBLIC_BASE_URL (serving domain for public URLs, e.g.,
+ *   https://software.cocalc.ai)
  *
  * Optional env:
  *   COCALC_R2_PREFIX, COCALC_R2_LATEST_KEY,
  *   COCALC_R2_VERSIONS_KEY, COCALC_R2_VERSIONS_LIMIT,
  *   COCALC_R2_CACHE_CONTROL, COCALC_R2_LATEST_CACHE_CONTROL,
- *   COCALC_R2_COPY_FROM, COCALC_R2_COPY_TO
+ *   COCALC_R2_COPY_FROM, COCALC_R2_COPY_TO, COCALC_R2_ENDPOINT,
+ *   COCALC_R2_REGION
  *
  * Examples:
  *   node publish-r2.js --file ./artifact.tar.xz --bucket cocalc-artifacts \
- *     --prefix software/project-host/0.1.7 --latest-key software/project-host/latest-linux-amd64.json \
+ *     --prefix software/project-host/0.1.7 \
+ *     --latest-key software/project-host/latest-linux-amd64.json \
  *     --os linux --arch amd64 --version 0.1.7
  *   node publish-r2.js --bucket cocalc-artifacts \
  *     --copy-from software/project-host/staging.json \
@@ -31,20 +35,12 @@
  */
 
 const crypto = require("node:crypto");
-const childProcess = require("node:child_process");
 const fs = require("node:fs");
-const https = require("node:https");
 const path = require("node:path");
-const util = require("node:util");
-const REQUEST_MAX_ATTEMPTS = 4;
-const REQUEST_RETRY_BASE_DELAY_MS = 1000;
-const UPLOAD_MAX_ATTEMPTS = 3;
-const UPLOAD_RETRY_BASE_DELAY_MS = 5000;
-const execFile = util.promisify(childProcess.execFile);
 
 function usage() {
   console.error(
-    "Usage: publish-r2.js --file <path> --bucket <bucket> [--key <key>] [--prefix <prefix>] [--public-base-url <url>] [--latest-key <key>] [--versions-key <key>] [--versions-limit <n>] [--os <os>] [--arch <arch>] [--version <semver>] [--message <text>] [--cache-control <value>] [--latest-cache-control <value>] [--copy-from <key> --copy-to <key>]",
+    "Usage: publish-r2.js --file <path> --bucket <bucket> [--key <key>] [--prefix <prefix>] [--public-base-url <url>] [--latest-key <key>] [--versions-key <key>] [--versions-limit <n>] [--os <os>] [--arch <arch>] [--version <semver>] [--message <text>] [--cache-control <value>] [--latest-cache-control <value>] [--endpoint <url>] [--region <name>] [--copy-from <key> --copy-to <key>]",
   );
   process.exit(2);
 }
@@ -66,141 +62,32 @@ function parseArgs(argv) {
   return args;
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function retryOperation({
-  label,
-  maxAttempts,
-  baseDelayMs,
-  isRetryable,
-  fn,
-}) {
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      return await fn(attempt);
-    } catch (err) {
-      if (attempt === maxAttempts || !isRetryable(err)) {
-        throw err;
-      }
-      const waitMs = baseDelayMs * attempt;
-      process.stderr.write(
-        `warning: ${label} failed on attempt ${attempt}/${maxAttempts}: ${err.message || err}; retrying in ${waitMs}ms\n`,
-      );
-      await delay(waitMs);
-    }
+function loadBackendR2() {
+  try {
+    return require("@cocalc/backend/r2");
+  } catch (err) {
+    const detail = `${err?.message || err}`.trim();
+    throw new Error(
+      `failed to load @cocalc/backend/r2. Build @cocalc/backend first, then retry. ${detail}`,
+    );
   }
-  throw new Error(`unreachable retry state for ${label}`);
 }
 
-function isRetryableRequestError(err) {
-  const code = err?.code;
-  if (
-    code === "ECONNRESET" ||
-    code === "EPIPE" ||
-    code === "ETIMEDOUT" ||
-    code === "ENETUNREACH" ||
-    code === "EHOSTUNREACH" ||
-    code === "UND_ERR_SOCKET"
-  ) {
-    return true;
-  }
-  const message = `${err?.message || err || ""}`;
-  return (
-    /bad record mac/i.test(message) ||
-    /socket hang up/i.test(message) ||
-    /Client network socket disconnected/i.test(message)
-  );
-}
+const {
+  copyR2Object,
+  getR2ObjectBuffer,
+  putR2ObjectFromBuffer,
+  putR2ObjectFromFile,
+} = loadBackendR2();
 
-async function sendRequest({
-  method,
-  host,
-  path,
-  headers,
-  body,
-  createBodyStream,
-  label,
-}) {
-  for (let attempt = 1; attempt <= REQUEST_MAX_ATTEMPTS; attempt += 1) {
-    const family = attempt >= 2 ? 4 : undefined;
-    try {
-      return await new Promise((resolve, reject) => {
-        let bodyStream;
-        const req = https.request(
-          {
-            method,
-            host,
-            path,
-            headers,
-            family,
-          },
-          (res) => {
-            const chunks = [];
-            res.on("data", (chunk) => chunks.push(chunk));
-            res.on("end", () => {
-              resolve({
-                statusCode: res.statusCode ?? 0,
-                body: Buffer.concat(chunks),
-              });
-            });
-          },
-        );
-        req.on("error", reject);
-        if (body != null) {
-          req.write(body);
-          req.end();
-          return;
-        }
-        if (createBodyStream) {
-          bodyStream = createBodyStream();
-          bodyStream.on("error", (err) => req.destroy(err));
-          req.on("close", () => bodyStream.destroy());
-          bodyStream.pipe(req);
-          return;
-        }
-        req.end();
-      });
-    } catch (err) {
-      if (attempt === REQUEST_MAX_ATTEMPTS || !isRetryableRequestError(err)) {
-        throw err;
-      }
-      const waitMs = REQUEST_RETRY_BASE_DELAY_MS * attempt;
-      process.stderr.write(
-        `warning: ${label} failed on attempt ${attempt}/${REQUEST_MAX_ATTEMPTS}: ${err.message || err}; retrying in ${waitMs}ms${attempt === 1 ? " with IPv4" : ""}\n`,
-      );
-      await delay(waitMs);
-    }
-  }
-  throw new Error(`unreachable request state for ${label}`);
-}
-
-function encodeRfc3986(str) {
-  return encodeURIComponent(str).replace(
-    /[!'()*]/g,
-    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
-  );
-}
-
-function canonicalizePath(bucket, key) {
-  const parts = [bucket, ...key.split("/").filter(Boolean)];
-  return `/${parts.map(encodeRfc3986).join("/")}`;
-}
-
-function hashHex(data) {
-  return crypto.createHash("sha256").update(data).digest("hex");
-}
-
-function hmac(key, data, encoding) {
-  return crypto.createHmac("sha256", key).update(data, "utf8").digest(encoding);
-}
-
-function getSignatureKey(secret, dateStamp, region, service) {
-  const kDate = hmac(`AWS4${secret}`, dateStamp);
-  const kRegion = hmac(kDate, region);
-  const kService = hmac(kRegion, service);
-  return hmac(kService, "aws4_request");
+function createAuth({ endpoint, accessKey, secretKey, bucket, region }) {
+  return {
+    endpoint,
+    accessKey,
+    secretKey,
+    bucket,
+    region,
+  };
 }
 
 function joinKey(prefix, filename) {
@@ -276,14 +163,6 @@ function extractVersion(raw) {
   return match ? match[1] : null;
 }
 
-function shouldUseCurlForUpload(filePath) {
-  return (
-    !!filePath &&
-    process.platform === "darwin" &&
-    process.env.COCALC_R2_DISABLE_CURL_UPLOAD !== "1"
-  );
-}
-
 async function hashFile(filePath) {
   return await new Promise((resolve, reject) => {
     const hash = crypto.createHash("sha256");
@@ -295,11 +174,7 @@ async function hashFile(filePath) {
 }
 
 async function putObject({
-  host,
-  region,
-  accessKey,
-  secretKey,
-  bucket,
+  auth,
   key,
   body,
   filePath,
@@ -307,235 +182,38 @@ async function putObject({
   contentType,
   cacheControl,
   payloadHash,
-  createBodyStream,
 }) {
-  const method = "PUT";
-  const service = "s3";
-  const now = new Date();
-  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
-  const dateStamp = amzDate.slice(0, 8);
-  const effectivePayloadHash = payloadHash ?? hashHex(body == null ? "" : body);
-  const headers = {
-    host,
-    "x-amz-content-sha256": effectivePayloadHash,
-    "x-amz-date": amzDate,
-  };
-  if (contentType) {
-    headers["content-type"] = contentType;
-  }
-  if (cacheControl) {
-    headers["cache-control"] = cacheControl;
-  }
-
-  const signedHeaderNames = Object.keys(headers).sort();
-  const canonicalHeaders = signedHeaderNames
-    .map((name) => `${name}:${String(headers[name]).trim()}\n`)
-    .join("");
-  const signedHeaders = signedHeaderNames.join(";");
-  const canonicalUri = canonicalizePath(bucket, key);
-  const canonicalRequest = [
-    method,
-    canonicalUri,
-    "",
-    canonicalHeaders,
-    signedHeaders,
-    effectivePayloadHash,
-  ].join("\n");
-  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    amzDate,
-    credentialScope,
-    hashHex(canonicalRequest),
-  ].join("\n");
-  const signingKey = getSignatureKey(secretKey, dateStamp, region, service);
-  const signature = hmac(signingKey, stringToSign, "hex");
-  const authorization = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-
-  const requestHeaders = {
-    ...headers,
-    authorization,
-    "content-length": contentLength ?? Buffer.byteLength(body),
-  };
-
-  if (shouldUseCurlForUpload(filePath)) {
-    const args = [
-      "--fail-with-body",
-      "--silent",
-      "--show-error",
-      "--http1.1",
-      "--ipv4",
-      "--retry",
-      "4",
-      "--retry-all-errors",
-      "--retry-delay",
-      "1",
-      "--request",
-      method,
-      "--upload-file",
+  if (filePath) {
+    await putR2ObjectFromFile({
+      auth,
+      key,
       filePath,
-    ];
-    for (const [name, value] of Object.entries(requestHeaders)) {
-      args.push("-H", `${name}: ${value}`);
-    }
-    args.push(`https://${host}${canonicalUri}`);
-    try {
-      await execFile("curl", args, {
-        maxBuffer: 10 * 1024 * 1024,
-      });
-      return;
-    } catch (err) {
-      const detail =
-        `${err?.stderr || err?.stdout || err?.message || err}`.trim();
-      throw new Error(detail || `curl upload failed for ${key}`);
-    }
+      payloadSha256: payloadHash,
+      contentLength,
+      contentType,
+      cacheControl,
+    });
+    return;
   }
-
-  const response = await sendRequest({
-    method,
-    host,
-    path: canonicalUri,
-    headers: requestHeaders,
+  await putR2ObjectFromBuffer({
+    auth,
+    key,
     body,
-    createBodyStream,
-    label: `R2 PUT ${key}`,
+    contentType,
+    cacheControl,
   });
-  if (response.statusCode >= 200 && response.statusCode < 300) {
-    return;
-  }
-  throw new Error(
-    `R2 PUT failed (${response.statusCode}): ${response.body.toString("utf8")}`,
-  );
 }
 
-async function copyObject({
-  host,
-  region,
-  accessKey,
-  secretKey,
-  bucket,
-  sourceKey,
-  destKey,
-}) {
-  const method = "PUT";
-  const service = "s3";
-  const now = new Date();
-  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
-  const dateStamp = amzDate.slice(0, 8);
-  const payloadHash = hashHex("");
-  const copySource = canonicalizePath(bucket, sourceKey);
-  const headers = {
-    host,
-    "x-amz-content-sha256": payloadHash,
-    "x-amz-date": amzDate,
-    "x-amz-copy-source": copySource,
-  };
-
-  const signedHeaderNames = Object.keys(headers).sort();
-  const canonicalHeaders = signedHeaderNames
-    .map((name) => `${name}:${String(headers[name]).trim()}\n`)
-    .join("");
-  const signedHeaders = signedHeaderNames.join(";");
-  const canonicalUri = canonicalizePath(bucket, destKey);
-  const canonicalRequest = [
-    method,
-    canonicalUri,
-    "",
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash,
-  ].join("\n");
-  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    amzDate,
-    credentialScope,
-    hashHex(canonicalRequest),
-  ].join("\n");
-  const signingKey = getSignatureKey(secretKey, dateStamp, region, service);
-  const signature = hmac(signingKey, stringToSign, "hex");
-  const authorization = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-
-  const requestHeaders = {
-    ...headers,
-    authorization,
-    "content-length": 0,
-  };
-
-  const response = await sendRequest({
-    method,
-    host,
-    path: canonicalUri,
-    headers: requestHeaders,
-    label: `R2 COPY ${sourceKey} -> ${destKey}`,
+async function copyObject({ auth, sourceKey, destKey }) {
+  await copyR2Object({
+    auth,
+    sourceKey,
+    destKey,
   });
-  if (response.statusCode >= 200 && response.statusCode < 300) {
-    return;
-  }
-  throw new Error(
-    `R2 COPY failed (${response.statusCode}): ${response.body.toString("utf8")}`,
-  );
 }
 
-async function getObject({ host, region, accessKey, secretKey, bucket, key }) {
-  const method = "GET";
-  const service = "s3";
-  const now = new Date();
-  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
-  const dateStamp = amzDate.slice(0, 8);
-  const payloadHash = hashHex("");
-  const headers = {
-    host,
-    "x-amz-content-sha256": payloadHash,
-    "x-amz-date": amzDate,
-  };
-
-  const signedHeaderNames = Object.keys(headers).sort();
-  const canonicalHeaders = signedHeaderNames
-    .map((name) => `${name}:${String(headers[name]).trim()}\n`)
-    .join("");
-  const signedHeaders = signedHeaderNames.join(";");
-  const canonicalUri = canonicalizePath(bucket, key);
-  const canonicalRequest = [
-    method,
-    canonicalUri,
-    "",
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash,
-  ].join("\n");
-  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
-  const stringToSign = [
-    "AWS4-HMAC-SHA256",
-    amzDate,
-    credentialScope,
-    hashHex(canonicalRequest),
-  ].join("\n");
-  const signingKey = getSignatureKey(secretKey, dateStamp, region, service);
-  const signature = hmac(signingKey, stringToSign, "hex");
-  const authorization = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-
-  const requestHeaders = {
-    ...headers,
-    authorization,
-  };
-
-  const response = await sendRequest({
-    method,
-    host,
-    path: canonicalUri,
-    headers: requestHeaders,
-    label: `R2 GET ${key}`,
-  });
-  if (response.statusCode === 404) {
-    return undefined;
-  }
-  if (response.statusCode >= 200 && response.statusCode < 300) {
-    return response.body;
-  }
-  throw new Error(
-    `R2 GET failed (${response.statusCode}): ${response.body.toString("utf8")}`,
-  );
+async function getObject({ auth, key }) {
+  return await getR2ObjectBuffer({ auth, key });
 }
 
 async function main() {
@@ -553,18 +231,26 @@ async function main() {
     );
   }
 
+  const endpoint =
+    args.endpoint ||
+    process.env.COCALC_R2_ENDPOINT ||
+    `https://${accountId}.r2.cloudflarestorage.com`;
   const region = args.region || process.env.COCALC_R2_REGION || "auto";
+  const auth = createAuth({
+    endpoint,
+    accessKey,
+    secretKey,
+    bucket,
+    region,
+  });
+  const host = new URL(endpoint).host;
+
   if (copyFrom || copyTo) {
     if (!copyFrom || !copyTo) {
       throw new Error("copy-from and copy-to must both be set");
     }
-    const host = `${accountId}.r2.cloudflarestorage.com`;
     await copyObject({
-      host,
-      region,
-      accessKey,
-      secretKey,
-      bucket,
+      auth,
       sourceKey: copyFrom,
       destKey: copyTo,
     });
@@ -610,7 +296,6 @@ async function main() {
     `${args.message || process.env.COCALC_R2_MESSAGE || ""}`.trim() ||
     undefined;
 
-  const host = `${accountId}.r2.cloudflarestorage.com`;
   const contentType =
     args["content-type"] ||
     process.env.COCALC_R2_CONTENT_TYPE ||
@@ -619,35 +304,19 @@ async function main() {
   const fileStat = fs.statSync(filePath);
   const fileHash = await hashFile(filePath);
 
-  await retryOperation({
-    label: `artifact upload ${key}`,
-    maxAttempts: UPLOAD_MAX_ATTEMPTS,
-    baseDelayMs: UPLOAD_RETRY_BASE_DELAY_MS,
-    isRetryable: isRetryableRequestError,
-    fn: async () =>
-      await putObject({
-        host,
-        region,
-        accessKey,
-        secretKey,
-        bucket,
-        key,
-        filePath,
-        contentLength: fileStat.size,
-        contentType,
-        cacheControl,
-        payloadHash: fileHash,
-        createBodyStream: () => fs.createReadStream(filePath),
-      }),
+  await putObject({
+    auth,
+    key,
+    filePath,
+    contentLength: fileStat.size,
+    contentType,
+    cacheControl,
+    payloadHash: fileHash,
   });
 
   const shaBody = Buffer.from(`${fileHash}  ${filename}\n`, "utf8");
   await putObject({
-    host,
-    region,
-    accessKey,
-    secretKey,
-    bucket,
+    auth,
     key: `${key}.sha256`,
     body: shaBody,
     contentType: "text/plain",
@@ -679,11 +348,7 @@ async function main() {
     }
     const manifestBody = Buffer.from(JSON.stringify(manifest, null, 2));
     await putObject({
-      host,
-      region,
-      accessKey,
-      secretKey,
-      bucket,
+      auth,
       key: latestKey,
       body: manifestBody,
       contentType: "application/json",
@@ -696,11 +361,7 @@ async function main() {
         let previous = [];
         try {
           const existingBody = await getObject({
-            host,
-            region,
-            accessKey,
-            secretKey,
-            bucket,
+            auth,
             key: versionsKey,
           });
           if (existingBody) {
@@ -740,11 +401,7 @@ async function main() {
         if (!index.arch) delete index.arch;
         const versionsBody = Buffer.from(JSON.stringify(index, null, 2));
         await putObject({
-          host,
-          region,
-          accessKey,
-          secretKey,
-          bucket,
+          auth,
           key: versionsKey,
           body: versionsBody,
           contentType: "application/json",
