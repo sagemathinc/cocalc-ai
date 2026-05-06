@@ -216,6 +216,29 @@ Suggested fields:
 - `purchase_id`
 - `metadata`
 
+### Package amendments
+
+Course and team packages must support seat-count increases during the active
+term.
+
+V1 rule:
+
+- a package can be expanded by buying additional seats
+- the added seats use the same per-seat price for that package / term
+- there is no prorating logic
+- there is no retroactive recalculation of earlier seats
+
+Implementation-wise, this can be represented either by:
+
+- increasing `seat_count` on the package and attaching another purchase, or
+- a small `membership_package_adjustments` table
+
+The important product rule is simpler than the storage model:
+
+- "add 5 more students"
+- charge 5 more seats at the ordinary package seat price
+- do not introduce prorated complexity
+
 ### New table: `membership_package_assignments`
 
 This is needed to support reserved seats before the recipient account exists and
@@ -371,6 +394,9 @@ An instructor or institution buys a `course` package:
 - seat count: number of students
 - term: course duration
 
+If enrollment grows later, they can buy more seats for the same package without
+any prorating logic.
+
 Then the instructor assigns seats to course student projects.
 
 Assignment creates:
@@ -401,6 +427,9 @@ A paying account buys a `team` package:
 
 - fixed seat count
 - fixed membership class, likely `member` or `pro`
+
+If the team grows, the owner can add more seats later at the same seat price
+without prorating.
 
 Then they assign seats to specific accounts.
 

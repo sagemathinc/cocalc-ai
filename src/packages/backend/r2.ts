@@ -4,7 +4,7 @@
  */
 
 import { createHash, createHmac } from "node:crypto";
-import childProcess from "node:child_process";
+import { execFile as execFileCb } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import https from "node:https";
@@ -15,7 +15,7 @@ const REQUEST_MAX_ATTEMPTS = 4;
 const REQUEST_RETRY_BASE_DELAY_MS = 1000;
 const OBJECT_IO_MAX_ATTEMPTS = 3;
 const OBJECT_IO_RETRY_BASE_DELAY_MS = 5000;
-const execFile = promisify(childProcess.execFile);
+const execFile = promisify(execFileCb);
 
 export interface R2ObjectStoreAuth {
   endpoint: string;
