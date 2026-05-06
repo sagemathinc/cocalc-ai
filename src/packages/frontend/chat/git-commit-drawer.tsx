@@ -1134,7 +1134,7 @@ export function MarkdownHistoryInput({
   );
 }
 
-function useBufferedInlineMarkdownValue({
+function useBufferedMarkdownValue({
   value,
   onChange,
 }: {
@@ -1192,6 +1192,88 @@ function useBufferedInlineMarkdownValue({
   };
 }
 
+export function ReviewNoteEditor({
+  historyId,
+  value,
+  committedValue,
+  fontSize,
+  saving,
+  disabled,
+  onPersistDraft,
+  onCancel,
+  onSave,
+}: {
+  historyId: string;
+  value: string;
+  committedValue: string;
+  fontSize: number;
+  saving: boolean;
+  disabled: boolean;
+  onPersistDraft: (value: string) => void;
+  onCancel: () => void;
+  onSave: (value: string) => void;
+}) {
+  const { localValue, update, flush, skipNextUnmountFlush } =
+    useBufferedMarkdownValue({
+      value,
+      onChange: onPersistDraft,
+    });
+  const dirty = localValue !== committedValue;
+  return (
+    <>
+      <MarkdownHistoryInput
+        historyId={historyId}
+        cacheId={historyId}
+        value={localValue}
+        onChange={update}
+        onBlur={flush}
+        placeholder="Private review note (not sent to agent)"
+        fontSize={Math.max(13, fontSize)}
+        autoGrow
+        autoGrowMaxHeight={220}
+        hideHelp
+        minimal
+        compact
+        enableMentions={false}
+        enableUpload={true}
+      />
+      <div
+        style={{
+          marginTop: 8,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          gap: 8,
+          flexWrap: "wrap",
+        }}
+      >
+        <Button
+          size="small"
+          disabled={disabled}
+          onClick={() => {
+            skipNextUnmountFlush();
+            onCancel();
+          }}
+        >
+          Cancel
+        </Button>
+        <Button
+          size="small"
+          type="primary"
+          disabled={!dirty || saving || disabled}
+          onClick={() => {
+            skipNextUnmountFlush();
+            flush(localValue);
+            onSave(localValue);
+          }}
+        >
+          Save note
+        </Button>
+      </div>
+    </>
+  );
+}
+
 function InlineDraftCommentEditor({
   filePath,
   anchorId,
@@ -1212,7 +1294,7 @@ function InlineDraftCommentEditor({
   onSave: (value: string) => void;
 }) {
   const { localValue, update, flush, skipNextUnmountFlush } =
-    useBufferedInlineMarkdownValue({
+    useBufferedMarkdownValue({
       value,
       onChange,
     });
@@ -1294,7 +1376,7 @@ function InlineEditCommentEditor({
   onSave: (value: string) => void;
 }) {
   const { localValue, update, flush, skipNextUnmountFlush } =
-    useBufferedInlineMarkdownValue({
+    useBufferedMarkdownValue({
       value,
       onChange,
     });
@@ -1999,7 +2081,6 @@ export function GitCommitDrawer({
   const [reviewDeleteAllOpen, setReviewDeleteAllOpen] = useState(false);
   const [reviewDeleteAllConfirmValue, setReviewDeleteAllConfirmValue] =
     useState("");
-  const noteDirty = reviewNoteDraft !== reviewNote;
   const reviewLoadTokenRef = useRef(0);
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
   const preserveCommitSearchOnAutoClearRef = useRef(false);
@@ -3257,7 +3338,7 @@ export function GitCommitDrawer({
     if (!normalizedCommit) return;
     if (reviewStateCommit !== normalizedCommit) return;
     if (reviewLoading || reviewSaving) return;
-    if (!reviewDirty && !noteDirty) return;
+    if (!reviewDirty) return;
     saveReviewDraft(normalizedCommit, {
       reviewed: Boolean(reviewed),
       note: `${reviewNoteDraft ?? ""}`,
@@ -3269,7 +3350,6 @@ export function GitCommitDrawer({
     reviewLoading,
     reviewSaving,
     reviewDirty,
-    noteDirty,
     reviewStateCommit,
     reviewed,
     reviewNoteDraft,
@@ -4186,11 +4266,12 @@ export function GitCommitDrawer({
             <div
               style={{
                 display: "flex",
-                alignItems: "center",
+                alignItems: "flex-start",
                 justifyContent: "space-between",
                 gap: 10,
                 marginBottom: 8,
                 flexWrap: "wrap",
+                overflow: "visible",
               }}
             >
               <Checkbox
@@ -4198,6 +4279,13 @@ export function GitCommitDrawer({
                 disabled={
                   reviewLoading || reviewSaving || !commit || isHeadSelected
                 }
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  alignSelf: "flex-start",
+                  minHeight: 22,
+                  lineHeight: "20px",
+                }}
                 onChange={(e) => {
                   const next = e.target.checked;
                   setReviewed(next);
@@ -4236,11 +4324,17 @@ export function GitCommitDrawer({
               </div>
             </div>
             {reviewNoteEditing ? (
-              <MarkdownHistoryInput
+              <ReviewNoteEditor
                 historyId={`git-review-note:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
                 key={`git-review-note-edit:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
                 value={reviewNoteDraft}
-                onChange={(value) => {
+                committedValue={reviewNote}
+                fontSize={fontSize}
+                saving={reviewSaving}
+                disabled={
+                  reviewLoading || isHeadSelected || !currentReviewCommit
+                }
+                onPersistDraft={(value) => {
                   if (reviewLoading || isHeadSelected || !currentReviewCommit)
                     return;
                   if (activeReviewCommitRef.current !== currentReviewCommit)
@@ -4253,15 +4347,18 @@ export function GitCommitDrawer({
                     comments: reviewRecord?.comments ?? {},
                   });
                 }}
-                placeholder="Private review note (not sent to agent)"
-                fontSize={Math.max(13, fontSize)}
-                autoGrow
-                autoGrowMaxHeight={220}
-                hideHelp
-                minimal
-                compact
-                enableMentions={false}
-                enableUpload={true}
+                onCancel={() => {
+                  setReviewNoteDraft(reviewNote);
+                  setReviewNoteEditing(false);
+                }}
+                onSave={(nextNote) => {
+                  if (!currentReviewCommit) return;
+                  setReviewNote(nextNote);
+                  setReviewNoteDraft(nextNote);
+                  setReviewDirty(true);
+                  setReviewNoteEditing(false);
+                  void saveReview({ note: nextNote, reviewed });
+                }}
               />
             ) : (
               <div
@@ -4310,43 +4407,7 @@ export function GitCommitDrawer({
                   ? ` · ${inlineComments.length} inline comments`
                   : ""}
               </div>
-              {reviewNoteEditing ? (
-                <Space.Compact size="small">
-                  <Button
-                    size="small"
-                    disabled={
-                      reviewSaving || !currentReviewCommit || isHeadSelected
-                    }
-                    onClick={() => {
-                      setReviewNoteDraft(reviewNote);
-                      setReviewNoteEditing(false);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    size="small"
-                    type="primary"
-                    disabled={
-                      !noteDirty ||
-                      reviewSaving ||
-                      !currentReviewCommit ||
-                      isHeadSelected ||
-                      reviewStateCommit !== currentReviewCommit
-                    }
-                    onClick={() => {
-                      if (!currentReviewCommit) return;
-                      const nextNote = reviewNoteDraft;
-                      setReviewNote(nextNote);
-                      setReviewDirty(true);
-                      setReviewNoteEditing(false);
-                      void saveReview({ note: nextNote, reviewed });
-                    }}
-                  >
-                    Save note
-                  </Button>
-                </Space.Compact>
-              ) : (
+              {!reviewNoteEditing ? (
                 <Button
                   size="small"
                   disabled={
@@ -4359,7 +4420,7 @@ export function GitCommitDrawer({
                 >
                   Edit
                 </Button>
-              )}
+              ) : null}
             </div>
             <div
               style={{

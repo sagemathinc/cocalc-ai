@@ -13,6 +13,7 @@ import {
   getCommitReviewIndicatorState,
   isGitDiffFindTargetRendered,
   MarkdownHistoryInput,
+  ReviewNoteEditor,
   buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
@@ -153,6 +154,47 @@ describe("git commit drawer merge commit formatting", () => {
       latestMarkdownInputProps.onModeChange("markdown");
     });
     expect(onModeChange).toHaveBeenCalledWith("markdown");
+  });
+
+  it("buffers private review note typing until blur or save", () => {
+    const onPersistDraft = jest.fn();
+    const onCancel = jest.fn();
+    const onSave = jest.fn();
+
+    const rendered = render(
+      React.createElement(ReviewNoteEditor, {
+        historyId: "git-review-note:test",
+        value: "existing",
+        committedValue: "existing",
+        fontSize: 14,
+        saving: false,
+        disabled: false,
+        onPersistDraft,
+        onCancel,
+        onSave,
+      }),
+    );
+
+    expect(latestMarkdownInputProps).toBeTruthy();
+
+    act(() => {
+      latestMarkdownInputProps.onChange("edited locally");
+    });
+
+    expect(latestMarkdownInputProps.value).toBe("edited locally");
+    expect(onPersistDraft).not.toHaveBeenCalled();
+
+    act(() => {
+      latestMarkdownInputProps.onBlur("edited locally");
+    });
+    expect(onPersistDraft).toHaveBeenCalledWith("edited locally");
+
+    const saveButton = rendered.getByText("Save note");
+    act(() => {
+      saveButton.click();
+    });
+    expect(onPersistDraft).toHaveBeenLastCalledWith("edited locally");
+    expect(onSave).toHaveBeenCalledWith("edited locally");
   });
 
   it("does not re-commit diff blocks on unrelated parent state changes", () => {
