@@ -43,8 +43,15 @@ jest.mock("@cocalc/conat/project/project-info", () => ({
   get: (...args) => getProjectInfo(...args),
 }));
 
-function TestComponent() {
-  useProjectInfo({ project_id: "project-1" });
+function TestComponent({
+  projectId = "project-1",
+  onValue,
+}: {
+  projectId?: string;
+  onValue?: (value: ReturnType<typeof useProjectInfo>) => void;
+}) {
+  const value = useProjectInfo({ project_id: projectId });
+  onValue?.(value);
   return null;
 }
 
@@ -117,5 +124,51 @@ describe("useProjectInfo", () => {
 
     expect(projectConat).toHaveBeenCalledTimes(2);
     expect(getProjectInfo).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears stale info when switching projects and the next load fails", async () => {
+    const info1 = {
+      timestamp: 1,
+      processes: { 1: { pid: 1 } },
+      cgroup: null,
+      disk_usage: null,
+    };
+    projectConat
+      .mockResolvedValueOnce({ client: "project-1" })
+      .mockRejectedValueOnce(new Error("closed"));
+    getProjectInfo.mockResolvedValueOnce(info1);
+    let latest: ReturnType<typeof useProjectInfo> | undefined;
+
+    const { rerender } = render(
+      <TestComponent
+        projectId="project-1"
+        onValue={(value) => {
+          latest = value;
+        }}
+      />,
+    );
+    await flush();
+
+    expect(latest?.info).toEqual(info1);
+    expect(latest?.disconnected).toBe(false);
+
+    rerender(
+      <TestComponent
+        projectId="project-2"
+        onValue={(value) => {
+          latest = value;
+        }}
+      />,
+    );
+    await flush();
+
+    expect(projectConat.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        project_id: "project-2",
+        caller: "useProjectInfo",
+      }),
+    );
+    expect(latest?.info).toBeNull();
+    expect(latest?.disconnected).toBe(true);
   });
 });

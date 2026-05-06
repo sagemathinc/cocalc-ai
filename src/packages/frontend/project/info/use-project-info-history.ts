@@ -7,7 +7,7 @@ import {
   getHistory,
   type ProjectInfoHistory,
 } from "@cocalc/conat/project/project-info";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 function isVisible(): boolean {
@@ -30,7 +30,7 @@ export default function useProjectInfoHistory({
   error: string;
   refresh: () => Promise<void>;
 } {
-  const start = useMemo(() => Date.now(), []);
+  const startRef = useRef(Date.now());
   const [history, setHistory] = useState<ProjectInfoHistory | null>(null);
   const [error, setError] = useState<string>("");
   const [visible, setVisible] = useState<boolean>(isVisible());
@@ -49,11 +49,17 @@ export default function useProjectInfoHistory({
       setHistory(value);
       setError("");
     } catch (err) {
-      if (Date.now() - start > intervalVisible * 2.1) {
+      if (Date.now() - startRef.current > intervalVisible * 2.1) {
         setError(`Unable to load process history: ${err}`);
       }
     }
-  }, [project_id, minutes, start, intervalVisible]);
+  }, [project_id, minutes, intervalVisible]);
+
+  useEffect(() => {
+    startRef.current = Date.now();
+    setHistory(null);
+    setError("");
+  }, [project_id, minutes]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;

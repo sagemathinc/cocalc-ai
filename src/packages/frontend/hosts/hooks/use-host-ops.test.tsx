@@ -156,10 +156,58 @@ describe("useHostOps", () => {
         finished_at: new Date("2026-04-17T12:02:00Z"),
       }),
     ];
-    listener?.("change");
+    act(() => {
+      listener?.("change");
+    });
     await flush();
 
     expect(listLro).toHaveBeenCalledTimes(1);
     expect(latest?.hostOps["host-1"]?.summary?.op_id).toBe("op-2");
+  });
+
+  it("clears stale host ops when the visible host list becomes empty", async () => {
+    const host = {
+      id: "host-1",
+      deleted: false,
+      status: "running",
+      last_action_status: null,
+    };
+    summaries = [
+      makeSummary({
+        op_id: "op-1",
+        updated_at: new Date("2026-04-17T12:01:00Z"),
+      }),
+    ];
+    const listLro = jest.fn(async () => summaries);
+    const getLroStream = jest.fn();
+    let latest: ReturnType<typeof useHostOps> | undefined;
+
+    const { rerender } = render(
+      <TestComponent
+        hosts={[host]}
+        listLro={listLro}
+        getLroStream={getLroStream}
+        onChange={(value) => {
+          latest = value;
+        }}
+      />,
+    );
+
+    await flush();
+    expect(latest?.hostOps["host-1"]?.summary?.op_id).toBe("op-1");
+
+    rerender(
+      <TestComponent
+        hosts={[]}
+        listLro={listLro}
+        getLroStream={getLroStream}
+        onChange={(value) => {
+          latest = value;
+        }}
+      />,
+    );
+    await flush();
+
+    expect(latest?.hostOps).toEqual({});
   });
 });

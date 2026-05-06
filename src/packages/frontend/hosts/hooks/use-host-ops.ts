@@ -309,6 +309,7 @@ export function useHostOps({
           force || now - lastFullRefreshRef.current > HOST_LRO_FULL_REFRESH_MS;
         const idsToCheck = shouldFull ? ids : candidates;
         if (!idsToCheck.length) {
+          syncFromSummaryCache();
           return;
         }
         if (shouldFull) {
