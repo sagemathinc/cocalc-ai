@@ -42,6 +42,7 @@ import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-loc
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { resolveProjectBackupRepoAssignment } from "@cocalc/server/project-backup";
 import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 
@@ -304,6 +305,7 @@ export default async function createProject(opts: CreateProjectOptions) {
     };
   }
 
+  let preferredBackupRepoId: string | null = null;
   if (src_project_id) {
     if (!account_id) {
       throw Error("user must be a collaborator on src_project_id");
@@ -314,7 +316,7 @@ export default async function createProject(opts: CreateProjectOptions) {
     });
     // keep the clone on the same project-host as the source unless explicitly overridden
     const { rows } = await pool.query(
-      "SELECT host_id, region, rootfs_image, rootfs_image_id, owning_bay_id FROM projects WHERE project_id=$1",
+      "SELECT host_id, region, rootfs_image, rootfs_image_id, owning_bay_id, backup_repo_id FROM projects WHERE project_id=$1",
       [src_project_id],
     );
     if (!host_id && rows[0]?.host_id) {
@@ -336,6 +338,7 @@ export default async function createProject(opts: CreateProjectOptions) {
       projectOwningBayId =
         `${rows[0].owning_bay_id}`.trim() || projectOwningBayId;
     }
+    preferredBackupRepoId = rows[0]?.backup_repo_id ?? null;
     // create filesystem for new project as a clone.
     // Route clone to the host that owns the source project.
     const client = await getProjectFileServerClient({
@@ -490,6 +493,23 @@ export default async function createProject(opts: CreateProjectOptions) {
           `failed to initialize workspace on host ${host_id} (status=${hostStatus ?? "unknown"}): ${err}`,
         );
       }
+    }
+  }
+
+  if (src_project_id && preferredBackupRepoId) {
+    try {
+      await resolveProjectBackupRepoAssignment({
+        project_id,
+        project_region: projectRegion,
+        preferred_backup_repo_id: preferredBackupRepoId,
+      });
+    } catch (err) {
+      log.warn("createProject: clone backup shard preassignment failed", {
+        project_id,
+        src_project_id,
+        preferred_backup_repo_id: preferredBackupRepoId,
+        err: `${err}`,
+      });
     }
   }
 

@@ -112,6 +112,27 @@ export function registerAdminCommand(
       },
     );
 
+  admin
+    .command("backup-shards")
+    .description(
+      "show project backup shard state and load (admin-only; seed-backed in multi-bay mode)",
+    )
+    .option("--region <region>", "restrict to a single backup region")
+    .action(
+      async (
+        opts: {
+          region?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin backup-shards", async (ctx) => {
+          return await ctx.hub.system.getProjectBackupShards({
+            region: opts.region?.trim() || undefined,
+          });
+        });
+      },
+    );
+
   adminUser
     .command("create")
     .description("create an account (admin only)")

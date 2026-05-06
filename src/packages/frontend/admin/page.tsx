@@ -16,6 +16,7 @@ import { RootfsAdmin } from "./rootfs";
 import { NewsAdminPage } from "./news/page";
 import { BayOpsAdmin } from "./bay-ops";
 import { ManagedEgressAdminOverview } from "./managed-egress-overview";
+import { ProjectBackupShardsAdmin } from "./project-backup-shards";
 import {
   getAdminUrlPath,
   normalizeAdminRoute,
@@ -167,6 +168,15 @@ export function AdminPage({
         </div>
       ),
       children: <BayOpsAdmin />,
+    },
+    {
+      key: "project-backup-shards",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="database" style={{ marginRight: "8px" }} /> Backup Shards
+        </div>
+      ),
+      children: <ProjectBackupShardsAdmin />,
     },
     {
       key: "software-licenses",

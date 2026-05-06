@@ -70,7 +70,10 @@ import {
   testR2Credentials as testR2Credentials0,
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
-import { getProjectBackupInfrastructureStatus } from "@cocalc/server/project-backup";
+import {
+  getProjectBackupInfrastructureStatus,
+  getProjectBackupShardAdminStatus,
+} from "@cocalc/server/project-backup";
 import {
   getBayBackupStatus as getBayBackupStatus0,
   runBayBackup as runBayBackup0,
@@ -150,8 +153,10 @@ import type {
   BayLoadInfo,
   BayLoadParallelOpsStatus,
   BayLoadProjectionStatus,
+  ProjectBackupShardAdminStatus,
 } from "@cocalc/conat/hub/api/system";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import { getClusterConfig } from "@cocalc/server/cluster-config";
 
 const logger = getLogger("server:conat:api:system");
 // Non-serializable capability used only by trusted in-process inter-bay handlers.
@@ -713,6 +718,31 @@ export async function getBayBackups({
     backup_admission: backupAdmission,
     backup_execution: backupExecution,
   };
+}
+
+export async function getProjectBackupShards({
+  account_id,
+  region,
+}: {
+  account_id?: string;
+  region?: string | null;
+}): Promise<ProjectBackupShardAdminStatus> {
+  await assertAdmin(account_id);
+  const cluster = getClusterConfig();
+  if (
+    cluster.role === "attached" &&
+    cluster.seed_bay_id &&
+    cluster.seed_bay_id !== getConfiguredBayId()
+  ) {
+    return await getInterBayBridge()
+      .hostConnection(cluster.seed_bay_id, { timeout_ms: 30_000 })
+      .getSeedProjectBackupShards({
+        region: region ?? null,
+      });
+  }
+  return await getProjectBackupShardAdminStatus({
+    region,
+  });
 }
 
 export async function runBayBackup({

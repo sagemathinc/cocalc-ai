@@ -38,6 +38,7 @@ export const system = {
   setBayProjectOwnershipAdmission: authFirstRequireAccount,
   getBayLoad: authFirst,
   getBayBackups: authFirst,
+  getProjectBackupShards: authFirst,
   runBayBackup: authFirst,
   runBayRestore: authFirst,
   runBayRestoreTest: authFirst,
@@ -445,6 +446,41 @@ export interface BayBackupsProjectsStatus {
   provisioned_needs_backup: number;
   never_backed_up: number;
   latest_last_backup_at: string | null;
+}
+
+export interface ProjectBackupShardAdminRepoInfo {
+  id: string;
+  region: string | null;
+  bucket_id: string | null;
+  bucket_name: string | null;
+  root: string | null;
+  status: string | null;
+  assigned_project_count: number;
+  project_cap: number;
+  available_project_slots: number;
+  created: string | null;
+  updated: string | null;
+}
+
+export interface ProjectBackupShardAdminRegionInfo {
+  region: string;
+  total_repos: number;
+  active_repos: number;
+  sealed_repos: number;
+  draining_repos: number;
+  disabled_repos: number;
+  assigned_projects: number;
+  active_capacity_projects: number;
+  active_available_project_slots: number;
+}
+
+export interface ProjectBackupShardAdminStatus {
+  checked_at: string;
+  active_shards_per_region: number;
+  projects_per_shard: number;
+  authoritative_bay_id: string;
+  regions: ProjectBackupShardAdminRegionInfo[];
+  repos: ProjectBackupShardAdminRepoInfo[];
 }
 
 export interface BayBackupsPostgresStatus {
@@ -963,6 +999,11 @@ export interface System {
     account_id?: string;
     bay_id?: string;
   }) => Promise<BayBackupsInfo>;
+
+  getProjectBackupShards: (opts?: {
+    account_id?: string;
+    region?: string | null;
+  }) => Promise<ProjectBackupShardAdminStatus>;
 
   runBayBackup: (opts?: {
     account_id?: string;
