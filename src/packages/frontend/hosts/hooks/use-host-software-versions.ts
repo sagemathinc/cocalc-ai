@@ -121,7 +121,15 @@ export function useHostSoftwareVersions(
   }, [artifacts, enabled, hub, hubSourceBaseUrl]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      refreshTokenRef.current += 1;
+      setLoading(false);
+      setConfigured({});
+      setConfiguredError(undefined);
+      setHubVersions({});
+      setHubError(undefined);
+      return;
+    }
     refresh().catch((err) => {
       console.error("failed to load host software versions", err);
       if (refreshTokenRef.current >= 0) {
