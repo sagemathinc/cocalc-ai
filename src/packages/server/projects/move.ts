@@ -31,10 +31,9 @@ import {
   waitForCompletion as waitForLroCompletion,
 } from "@cocalc/conat/lro/client";
 import {
-  ensureProjectBackupRepoForRegion,
   getProjectBackupAssignmentState,
+  resolveProjectBackupRepoAssignment,
   setProjectBackupRegion,
-  setProjectBackupRepoId,
 } from "../project-backup";
 import {
   makeOfflineMoveConfirmationPayload,
@@ -931,8 +930,9 @@ async function performBackupRegionCutover({
 
   const state = await getProjectBackupAssignmentState(context.project_id);
   const previous_backup_repo_id = state.backup_repo_id ?? null;
-  const target = await ensureProjectBackupRepoForRegion({
-    region: context.dest_region,
+  const target = await resolveProjectBackupRepoAssignment({
+    project_id: context.project_id,
+    project_region: context.dest_region,
   });
   const next_backup_repo_id = target.backup_repo_id ?? null;
   if (!next_backup_repo_id) {
@@ -940,11 +940,6 @@ async function performBackupRegionCutover({
       `unable to provision destination backup repo for region ${context.dest_region}`,
     );
   }
-
-  await setProjectBackupRepoId({
-    project_id: context.project_id,
-    backup_repo_id: next_backup_repo_id,
-  });
 
   if (previous_backup_repo_id) {
     try {
@@ -955,8 +950,9 @@ async function performBackupRegionCutover({
         dest_host_id: context.dest_host_id,
         err,
       });
-      await setProjectBackupRepoId({
+      await resolveProjectBackupRepoAssignment({
         project_id: context.project_id,
+        project_region: context.project_region,
         backup_repo_id: previous_backup_repo_id,
       });
       throw err;
@@ -1014,8 +1010,9 @@ async function performBackupRegionCutover({
       region: context.dest_region,
     });
   } catch (err) {
-    await setProjectBackupRepoId({
+    await resolveProjectBackupRepoAssignment({
       project_id: context.project_id,
+      project_region: context.project_region,
       backup_repo_id: previous_backup_repo_id,
     });
     if (previous_backup_repo_id) {

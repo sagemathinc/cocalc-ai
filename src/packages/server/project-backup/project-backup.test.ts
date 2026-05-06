@@ -11,7 +11,13 @@ let settings: Record<string, any> = {};
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: jest.fn(() => ({ query: queryMock })),
+  default: jest.fn(() => ({
+    query: queryMock,
+    connect: jest.fn(async () => ({
+      query: queryMock,
+      release: jest.fn(),
+    })),
+  })),
 }));
 
 jest.mock("@cocalc/backend/data", () => ({
@@ -35,6 +41,13 @@ const HOST_ID = "11111111-1111-1111-1111-111111111111";
 const PROJECT_ID = "22222222-2222-2222-2222-222222222222";
 const BUCKET_ID = "33333333-3333-3333-3333-333333333333";
 const REPO_ID = "44444444-4444-4444-4444-444444444444";
+const REPO_IDS = [
+  REPO_ID,
+  "55555555-4444-4444-4444-444444444444",
+  "66666666-4444-4444-4444-444444444444",
+  "77777777-4444-4444-4444-444444444444",
+  "88888888-4444-4444-4444-444444444444",
+];
 const BACKUP_ID = "backup-123";
 
 function bucketRow(name = "cocalc-backups-wnam") {
@@ -65,6 +78,25 @@ function repoRow(overrides: Record<string, any> = {}) {
     updated: overrides.updated ?? new Date("2026-01-01T00:00:00Z"),
     assigned_project_count: overrides.assigned_project_count ?? 0,
   };
+}
+
+function repoStateRows(): any[] {
+  if (settings.repos) {
+    return settings.repos;
+  }
+  if (!settings.active_repo && !settings.backup_repo_id) {
+    settings.repos = [];
+    return settings.repos;
+  }
+  settings.repos = [repoRow()];
+  return settings.repos;
+}
+
+function assignmentState() {
+  if (!settings.project_backup_assignments) {
+    settings.project_backup_assignments = {};
+  }
+  return settings.project_backup_assignments;
 }
 
 function backupIndexRow(overrides: Record<string, any> = {}) {
@@ -119,6 +151,17 @@ describe("project-backup", () => {
         hostConnection: jest.fn(() => ({
           getSeedBackupConfig: (...args: any[]) =>
             seedBackupConfigMock(...args),
+          resolveSeedBackupRepoAssignment: jest.fn(async () => ({
+            backup_repo_id: REPO_ID,
+          })),
+          getSeedProjectBackupShards: jest.fn(async () => ({
+            checked_at: new Date().toISOString(),
+            active_shards_per_region: 4,
+            projects_per_shard: 500,
+            authoritative_bay_id: "bay-0",
+            regions: [],
+            repos: [],
+          })),
         })),
       })),
     }));
@@ -133,6 +176,9 @@ describe("project-backup", () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS project_backup_repos") ||
+        sql.includes(
+          "CREATE TABLE IF NOT EXISTS project_backup_repo_assignments",
+        ) ||
         sql.includes("CREATE TABLE IF NOT EXISTS project_backup_indexes") ||
         sql.includes(
           "ALTER TABLE projects ADD COLUMN IF NOT EXISTS backup_repo_id",
@@ -144,10 +190,21 @@ describe("project-backup", () => {
         sql.includes(
           "CREATE INDEX IF NOT EXISTS projects_backup_repo_id_idx",
         ) ||
+        sql.includes(
+          "CREATE INDEX IF NOT EXISTS project_backup_repo_assignments_",
+        ) ||
         sql.includes("CREATE INDEX IF NOT EXISTS project_backup_indexes_") ||
         sql.includes(
           "CREATE UNIQUE INDEX IF NOT EXISTS project_backup_indexes_",
         )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql === "BEGIN" ||
+        sql === "COMMIT" ||
+        sql === "ROLLBACK" ||
+        sql.includes("pg_advisory_xact_lock")
       ) {
         return { rows: [] };
       }
@@ -193,24 +250,98 @@ describe("project-backup", () => {
         return { rows: [] };
       }
       if (
+        sql.includes("FROM project_backup_repo_assignments") &&
+        sql.includes("WHERE project_id=$1")
+      ) {
+        const row = assignmentState()[params?.[0] ?? PROJECT_ID];
+        return { rows: row ? [row] : [] };
+      }
+      if (
         sql.includes("FROM project_backup_repos") &&
         sql.includes("WHERE id=$1")
       ) {
-        return settings.backup_repo_id ? { rows: [repoRow()] } : { rows: [] };
+        const repo = repoStateRows().find((row: any) => row.id === params?.[0]);
+        return repo ? { rows: [repo] } : { rows: [] };
       }
       if (sql.includes("FROM project_backup_repos r")) {
-        return settings.active_repo ? { rows: [repoRow()] } : { rows: [] };
+        const region = params?.[0] ?? settings.project_region ?? "wnam";
+        let repos = repoStateRows().filter((row: any) => row.region === region);
+        if (sql.includes("ANY(")) {
+          const statuses = params?.[1] ?? [];
+          repos = repos.filter((row: any) =>
+            statuses.includes(row.status ?? "active"),
+          );
+        }
+        const counts = Object.values(assignmentState()).reduce(
+          (map: Record<string, number>, row: any) => {
+            map[row.backup_repo_id] = (map[row.backup_repo_id] ?? 0) + 1;
+            return map;
+          },
+          {},
+        );
+        return {
+          rows: repos.map((row: any) => ({
+            ...row,
+            assigned_project_count:
+              counts[row.id] ?? row.assigned_project_count ?? 0,
+          })),
+        };
       }
       if (
         sql.startsWith(
           "SELECT COUNT(*)::INTEGER AS count FROM project_backup_repos",
         )
       ) {
-        return { rows: [{ count: settings.project_backup_repo_count ?? 0 }] };
+        return {
+          rows: [
+            {
+              count:
+                settings.repos == null
+                  ? (settings.project_backup_repo_count ?? 0)
+                  : repoStateRows().length,
+            },
+          ],
+        };
       }
       if (sql.startsWith("INSERT INTO project_backup_repos")) {
-        settings.backup_repo_id = REPO_ID;
-        return { rows: [repoRow()] };
+        const nextIndex = repoStateRows().length;
+        const repo = repoRow({
+          id: REPO_IDS[nextIndex] ?? REPO_ID,
+          region: params?.[0] ?? settings.project_region ?? "wnam",
+          bucket_id: params?.[1] ?? BUCKET_ID,
+          root:
+            params?.[2] ??
+            `rustic/shared-${settings.project_region ?? "wnam"}-${String(nextIndex + 1).padStart(4, "0")}`,
+          secret: params?.[3] ?? settings.repo_secret ?? "repo-secret",
+          status: params?.[4] ?? "active",
+        });
+        repoStateRows().push(repo);
+        settings.backup_repo_id = repo.id;
+        return { rows: [repo] };
+      }
+      if (sql.startsWith("UPDATE project_backup_repos")) {
+        const ids = new Set(params?.[0] ?? []);
+        for (const row of repoStateRows()) {
+          if (ids.has(row.id)) {
+            row.status = params?.[1] ?? row.status;
+          }
+        }
+        return { rows: [] };
+      }
+      if (sql.startsWith("INSERT INTO project_backup_repo_assignments")) {
+        assignmentState()[params?.[0] ?? PROJECT_ID] = {
+          project_id: params?.[0] ?? PROJECT_ID,
+          region: params?.[1] ?? settings.project_region ?? "wnam",
+          backup_repo_id: params?.[2] ?? REPO_ID,
+          created: new Date("2026-01-01T00:00:00Z"),
+          updated: new Date("2026-01-01T00:00:00Z"),
+        };
+        settings.backup_repo_id = params?.[2] ?? REPO_ID;
+        return { rows: [] };
+      }
+      if (sql.startsWith("DELETE FROM project_backup_repo_assignments")) {
+        delete assignmentState()[params?.[0] ?? PROJECT_ID];
+        return { rows: [] };
       }
       if (sql.startsWith("UPDATE projects SET backup_repo_id=$2")) {
         settings.backup_repo_id = params?.[1] ?? REPO_ID;
@@ -369,6 +500,13 @@ describe("project-backup", () => {
           : false,
       ),
     ).toBe(true);
+    expect(settings.repos).toHaveLength(4);
+    expect(settings.repos.map((repo: any) => repo.root)).toEqual([
+      "rustic/shared-wnam-0001",
+      "rustic/shared-wnam-0002",
+      "rustic/shared-wnam-0003",
+      "rustic/shared-wnam-0004",
+    ]);
     expect(result.toml).toContain('root = "rustic/shared-wnam-0001"');
   });
 

@@ -639,6 +639,8 @@ export type HostConnectionMethod =
   | "get-backup-config"
   | "get-project-owner-effective-limits"
   | "get-seed-backup-config"
+  | "resolve-seed-backup-repo-assignment"
+  | "get-seed-project-backup-shards"
   | "record-project-backup"
   | "record-project-backup-index"
   | "get-project-backup-indexes"
@@ -848,6 +850,7 @@ export interface InterBayHostConnectionApi {
     project_id: string;
     project_region?: string | null;
     backup_repo_id?: string | null;
+    preferred_backup_repo_id?: string | null;
   }) => Promise<{
     toml: string;
     ttl_seconds: number;
@@ -861,6 +864,44 @@ export interface InterBayHostConnectionApi {
       key_prefix: string;
       compression: "gzip";
     } | null;
+  }>;
+  resolveSeedBackupRepoAssignment: (opts: {
+    project_id: string;
+    project_region?: string | null;
+    backup_repo_id?: string | null;
+    preferred_backup_repo_id?: string | null;
+  }) => Promise<{
+    backup_repo_id: string | null;
+  }>;
+  getSeedProjectBackupShards: (opts?: { region?: string | null }) => Promise<{
+    checked_at: string;
+    active_shards_per_region: number;
+    projects_per_shard: number;
+    authoritative_bay_id: string;
+    regions: Array<{
+      region: string;
+      total_repos: number;
+      active_repos: number;
+      sealed_repos: number;
+      draining_repos: number;
+      disabled_repos: number;
+      assigned_projects: number;
+      active_capacity_projects: number;
+      active_available_project_slots: number;
+    }>;
+    repos: Array<{
+      id: string;
+      region: string | null;
+      bucket_id: string | null;
+      bucket_name: string | null;
+      root: string | null;
+      status: string | null;
+      assigned_project_count: number;
+      project_cap: number;
+      available_project_slots: number;
+      created: string | null;
+      updated: string | null;
+    }>;
   }>;
   recordProjectBackup: (
     opts: Parameters<Hosts["recordProjectBackup"]>[0],
@@ -969,6 +1010,14 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "getSeedBackupConfig",
     method: "get-seed-backup-config",
+  },
+  {
+    name: "resolveSeedBackupRepoAssignment",
+    method: "resolve-seed-backup-repo-assignment",
+  },
+  {
+    name: "getSeedProjectBackupShards",
+    method: "get-seed-project-backup-shards",
   },
   {
     name: "recordProjectBackup",

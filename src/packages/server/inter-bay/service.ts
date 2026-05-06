@@ -148,7 +148,11 @@ import {
   syncProjectBackupIndexesLocal,
   deleteProjectBackupIndexLocal,
 } from "@cocalc/server/conat/api/hosts";
-import { getSeedProjectBackupConfig } from "@cocalc/server/project-backup";
+import {
+  getProjectBackupShardAdminStatus,
+  getSeedProjectBackupConfig,
+  resolveProjectBackupRepoAssignment,
+} from "@cocalc/server/project-backup";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   acceptHostRehome,
@@ -820,11 +824,29 @@ async function startHostConnectionService(): Promise<void> {
       project_id,
       project_region,
       backup_repo_id,
+      preferred_backup_repo_id,
     }) =>
       await getSeedProjectBackupConfig({
         project_id,
         project_region,
         backup_repo_id,
+        preferred_backup_repo_id,
+      }),
+    resolveSeedBackupRepoAssignment: async ({
+      project_id,
+      project_region,
+      backup_repo_id,
+      preferred_backup_repo_id,
+    }) =>
+      await resolveProjectBackupRepoAssignment({
+        project_id,
+        project_region,
+        backup_repo_id,
+        preferred_backup_repo_id,
+      }),
+    getSeedProjectBackupShards: async (opts = {}) =>
+      await getProjectBackupShardAdminStatus({
+        region: opts.region,
       }),
     getProjectOwnerEffectiveLimits: async ({ host_id, project_id }) =>
       await getProjectOwnerEffectiveLimitsLocal({

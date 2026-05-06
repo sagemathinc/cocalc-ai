@@ -31,6 +31,11 @@ const BUCKET_PURPOSE = "project-backups";
 const BUCKET_LIST_CACHE_MS = 30 * 1000;
 const BUCKET_VERIFY_TTL_MS = 10 * 60 * 1000;
 const PROJECT_BACKUP_REPO_STATUS_ACTIVE = "active";
+const PROJECT_BACKUP_REPO_STATUS_SEALED = "sealed";
+const PROJECT_BACKUP_REPO_STATUS_DRAINING = "draining";
+const PROJECT_BACKUP_REPO_STATUS_DISABLED = "disabled";
+const PROJECT_BACKUP_ACTIVE_SHARDS_PER_REGION = 4;
+const PROJECT_BACKUP_PROJECTS_PER_SHARD = 500;
 const PROJECT_BACKUP_INDEX_STATUS_COMPLETE = "complete";
 const PROJECT_BACKUP_INDEX_STATUS_FAILED = "failed";
 const PROJECT_BACKUP_INDEX_STORAGE_BACKEND = "r2-object-store";
@@ -53,6 +58,11 @@ function normalizeLocation(value: string | null | undefined): string | null {
 function pool() {
   return getPool();
 }
+
+type PoolClient = {
+  query: <T = any>(sql: string, params?: any[]) => Promise<{ rows: T[] }>;
+  release: () => void;
+};
 
 async function getSiteSetting(name: string): Promise<string | undefined> {
   const settings = await getServerSettings();
@@ -107,6 +117,14 @@ type ProjectBackupRepoRow = {
   created: Date | null;
   updated: Date | null;
   assigned_project_count?: number | null;
+};
+
+type ProjectBackupRepoAssignmentRow = {
+  project_id: string;
+  region: string;
+  backup_repo_id: string;
+  created: Date | null;
+  updated: Date | null;
 };
 
 type ProjectBackupIndexRow = {
@@ -175,6 +193,41 @@ export interface ProjectBackupInfrastructureStatus {
   };
 }
 
+export interface ProjectBackupShardAdminRepoInfo {
+  id: string;
+  region: string | null;
+  bucket_id: string | null;
+  bucket_name: string | null;
+  root: string | null;
+  status: string | null;
+  assigned_project_count: number;
+  project_cap: number;
+  available_project_slots: number;
+  created: string | null;
+  updated: string | null;
+}
+
+export interface ProjectBackupShardAdminRegionInfo {
+  region: string;
+  total_repos: number;
+  active_repos: number;
+  sealed_repos: number;
+  draining_repos: number;
+  disabled_repos: number;
+  assigned_projects: number;
+  active_capacity_projects: number;
+  active_available_project_slots: number;
+}
+
+export interface ProjectBackupShardAdminStatus {
+  checked_at: string;
+  active_shards_per_region: number;
+  projects_per_shard: number;
+  authoritative_bay_id: string;
+  regions: ProjectBackupShardAdminRegionInfo[];
+  repos: ProjectBackupShardAdminRepoInfo[];
+}
+
 let projectBackupRepoSchemaReady: Promise<void> | undefined;
 let projectBackupIndexSchemaReady: Promise<void> | undefined;
 
@@ -193,6 +246,15 @@ async function ensureProjectBackupRepoSchema(): Promise<void> {
           updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
+      await pool().query(`
+        CREATE TABLE IF NOT EXISTS project_backup_repo_assignments (
+          project_id UUID PRIMARY KEY,
+          region TEXT NOT NULL,
+          backup_repo_id UUID NOT NULL,
+          created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
       await pool().query(
         "ALTER TABLE projects ADD COLUMN IF NOT EXISTS backup_repo_id UUID",
       );
@@ -204,6 +266,12 @@ async function ensureProjectBackupRepoSchema(): Promise<void> {
       );
       await pool().query(
         "CREATE INDEX IF NOT EXISTS project_backup_repos_bucket_idx ON project_backup_repos(bucket_id)",
+      );
+      await pool().query(
+        "CREATE INDEX IF NOT EXISTS project_backup_repo_assignments_region_idx ON project_backup_repo_assignments(region)",
+      );
+      await pool().query(
+        "CREATE INDEX IF NOT EXISTS project_backup_repo_assignments_repo_idx ON project_backup_repo_assignments(backup_repo_id)",
       );
       await pool().query(
         "CREATE UNIQUE INDEX IF NOT EXISTS project_backup_repos_bucket_root_idx ON project_backup_repos(bucket_id, root)",
@@ -303,11 +371,46 @@ async function loadProjectBackupRepoById(
   return rows[0] ?? null;
 }
 
-async function selectActiveProjectBackupRepoForRegion(
+function normalizeBackupRegion(region?: string | null): string {
+  return (
+    parseR2Region(region) ??
+    mapCloudRegionToR2Region(region ?? DEFAULT_R2_REGION)
+  );
+}
+
+function nextSharedRepoRoot(region: string, existingCount: number): string {
+  const serial = String(existingCount + 1).padStart(4, "0");
+  return `${DEFAULT_SHARED_REPO_ROOT_PREFIX}-${region}-${serial}`;
+}
+
+async function loadProjectBackupRepoAssignmentTx(
+  client: PoolClient,
+  project_id: string,
+): Promise<ProjectBackupRepoAssignmentRow | null> {
+  const { rows } = await client.query<ProjectBackupRepoAssignmentRow>(
+    `SELECT project_id, region, backup_repo_id, created, updated
+     FROM project_backup_repo_assignments
+     WHERE project_id=$1
+     LIMIT 1`,
+    [project_id],
+  );
+  return rows[0] ?? null;
+}
+
+async function listProjectBackupReposForRegionTx(
+  client: PoolClient,
   region: string,
-): Promise<ProjectBackupRepoRow | null> {
-  await ensureProjectBackupRepoSchema();
-  const { rows } = await pool().query<ProjectBackupRepoRow>(
+  statuses?: string[],
+): Promise<ProjectBackupRepoRow[]> {
+  const filters: string[] = ["r.region=$1"];
+  const params: any[] = [region];
+  if (statuses?.length) {
+    params.push(statuses);
+    filters.push(
+      `COALESCE(r.status, '${PROJECT_BACKUP_REPO_STATUS_ACTIVE}') = ANY($${params.length}::text[])`,
+    );
+  }
+  const { rows } = await client.query<ProjectBackupRepoRow>(
     `SELECT
       r.id,
       r.region,
@@ -317,11 +420,11 @@ async function selectActiveProjectBackupRepoForRegion(
       r.status,
       r.created,
       r.updated,
-      COUNT(p.project_id)::INTEGER AS assigned_project_count
+      COUNT(a.project_id)::INTEGER AS assigned_project_count
     FROM project_backup_repos r
-    LEFT JOIN projects p ON p.backup_repo_id = r.id
-    WHERE r.region=$1
-      AND COALESCE(r.status, $2) = $2
+    LEFT JOIN project_backup_repo_assignments a
+      ON a.backup_repo_id = r.id
+    WHERE ${filters.join(" AND ")}
     GROUP BY
       r.id,
       r.region,
@@ -331,35 +434,64 @@ async function selectActiveProjectBackupRepoForRegion(
       r.status,
       r.created,
       r.updated
-    ORDER BY COUNT(p.project_id) ASC, r.created ASC, r.id ASC
+    ORDER BY COUNT(a.project_id) ASC, r.created ASC, r.id ASC`,
+    params,
+  );
+  return rows;
+}
+
+async function loadProjectBackupRepoByIdTx(
+  client: PoolClient,
+  id: string,
+): Promise<ProjectBackupRepoRow | null> {
+  const { rows } = await client.query<ProjectBackupRepoRow>(
+    `SELECT
+      r.id,
+      r.region,
+      r.bucket_id,
+      r.root,
+      r.secret,
+      r.status,
+      r.created,
+      r.updated,
+      COUNT(a.project_id)::INTEGER AS assigned_project_count
+    FROM project_backup_repos r
+    LEFT JOIN project_backup_repo_assignments a
+      ON a.backup_repo_id = r.id
+    WHERE r.id=$1
+    GROUP BY
+      r.id,
+      r.region,
+      r.bucket_id,
+      r.root,
+      r.secret,
+      r.status,
+      r.created,
+      r.updated
     LIMIT 1`,
-    [region, PROJECT_BACKUP_REPO_STATUS_ACTIVE],
+    [id],
   );
   return rows[0] ?? null;
 }
 
-function nextSharedRepoRoot(region: string, existingCount: number): string {
-  const serial = String(existingCount + 1).padStart(4, "0");
-  return `${DEFAULT_SHARED_REPO_ROOT_PREFIX}-${region}-${serial}`;
-}
-
-async function createProjectBackupRepo({
+async function createProjectBackupRepoTx({
+  client,
   region,
   bucket,
 }: {
+  client: PoolClient;
   region: string;
   bucket: BucketRow;
 }): Promise<ProjectBackupRepoRow> {
-  await ensureProjectBackupRepoSchema();
   const masterKey = await getBackupMasterKey();
   const sharedSecret = randomBytes(32).toString("base64url");
   const encryptedSecret = encryptBackupSecret(sharedSecret, masterKey);
-  const { rows: existing } = await pool().query<{ count: number }>(
+  const { rows: existing } = await client.query<{ count: number }>(
     "SELECT COUNT(*)::INTEGER AS count FROM project_backup_repos WHERE region=$1",
     [region],
   );
   const root = nextSharedRepoRoot(region, existing[0]?.count ?? 0);
-  const { rows } = await pool().query<ProjectBackupRepoRow>(
+  const { rows } = await client.query<ProjectBackupRepoRow>(
     `INSERT INTO project_backup_repos
       (id, region, bucket_id, root, secret, status, created, updated)
     VALUES
@@ -388,24 +520,156 @@ async function createProjectBackupRepo({
   return row;
 }
 
-async function getOrCreateProjectBackupRepoForRegion(
+async function withProjectBackupRegionAssignmentLock<T>(
   region: string,
-): Promise<{ repo: ProjectBackupRepoRow; bucket: BucketRow } | null> {
-  const existing = await selectActiveProjectBackupRepoForRegion(region);
-  if (existing?.bucket_id) {
-    const bucket = await loadBucketById(existing.bucket_id);
-    if (bucket) {
-      await ensureExistingBucketRowIsUsable({
-        bucket,
-        fallbackRegion: region,
-      });
-      return { repo: existing, bucket };
-    }
+  run: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  await ensureProjectBackupRepoSchema();
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", [
+      `project-backup-shards:${region}`,
+    ]);
+    const result = await run(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw err;
+  } finally {
+    client.release();
   }
+}
+
+async function ensureActiveProjectBackupReposForRegionTx({
+  client,
+  region,
+  bucket,
+}: {
+  client: PoolClient;
+  region: string;
+  bucket: BucketRow;
+}): Promise<ProjectBackupRepoRow[]> {
+  let active = await listProjectBackupReposForRegionTx(client, region, [
+    PROJECT_BACKUP_REPO_STATUS_ACTIVE,
+  ]);
+  while (active.length < PROJECT_BACKUP_ACTIVE_SHARDS_PER_REGION) {
+    await createProjectBackupRepoTx({ client, region, bucket });
+    active = await listProjectBackupReposForRegionTx(client, region, [
+      PROJECT_BACKUP_REPO_STATUS_ACTIVE,
+    ]);
+  }
+  return active;
+}
+
+async function sealProjectBackupReposTx(
+  client: PoolClient,
+  repo_ids: string[],
+): Promise<void> {
+  const ids = (repo_ids ?? []).filter(Boolean);
+  if (!ids.length) return;
+  await client.query(
+    `UPDATE project_backup_repos
+     SET status=$2, updated=NOW()
+     WHERE id = ANY($1::uuid[])`,
+    [ids, PROJECT_BACKUP_REPO_STATUS_SEALED],
+  );
+}
+
+function projectBackupRepoHasCapacity(repo: ProjectBackupRepoRow): boolean {
+  return (
+    Number(repo.assigned_project_count ?? 0) < PROJECT_BACKUP_PROJECTS_PER_SHARD
+  );
+}
+
+async function selectProjectBackupRepoForAssignmentLocal({
+  project_id,
+  project_region,
+  backup_repo_id,
+  preferred_backup_repo_id,
+}: {
+  project_id: string;
+  project_region: string;
+  backup_repo_id?: string | null;
+  preferred_backup_repo_id?: string | null;
+}): Promise<{ repo: ProjectBackupRepoRow; bucket: BucketRow } | null> {
+  const region = normalizeBackupRegion(project_region);
   const bucket = await getOrCreateBucketForRegion(region);
   if (!bucket) return null;
-  const repo = await createProjectBackupRepo({ region, bucket });
-  return { repo, bucket };
+  await ensureExistingBucketRowIsUsable({
+    bucket,
+    fallbackRegion: region,
+  });
+  return await withProjectBackupRegionAssignmentLock(region, async (client) => {
+    const existingAssignment = await loadProjectBackupRepoAssignmentTx(
+      client,
+      project_id,
+    );
+    if (
+      existingAssignment?.backup_repo_id &&
+      existingAssignment.region === region
+    ) {
+      const existingRepo = await loadProjectBackupRepoByIdTx(
+        client,
+        existingAssignment.backup_repo_id,
+      );
+      if (existingRepo) {
+        return { repo: existingRepo, bucket };
+      }
+    }
+
+    if (backup_repo_id) {
+      const existingRepo = await loadProjectBackupRepoByIdTx(
+        client,
+        backup_repo_id,
+      );
+      if (
+        existingRepo &&
+        normalizeBackupRegion(existingRepo.region) === region
+      ) {
+        return { repo: existingRepo, bucket };
+      }
+    }
+
+    let active = await ensureActiveProjectBackupReposForRegionTx({
+      client,
+      region,
+      bucket,
+    });
+    let activeWithCapacity = active.filter(projectBackupRepoHasCapacity);
+    if (!activeWithCapacity.length) {
+      await sealProjectBackupReposTx(
+        client,
+        active
+          .filter((repo) => !projectBackupRepoHasCapacity(repo))
+          .map((repo) => repo.id),
+      );
+      active = await ensureActiveProjectBackupReposForRegionTx({
+        client,
+        region,
+        bucket,
+      });
+      activeWithCapacity = active.filter(projectBackupRepoHasCapacity);
+    }
+
+    if (preferred_backup_repo_id) {
+      const preferred = activeWithCapacity.find(
+        (repo) => repo.id === preferred_backup_repo_id,
+      );
+      if (preferred) {
+        return { repo: preferred, bucket };
+      }
+    }
+
+    const candidate = activeWithCapacity[0];
+    if (!candidate) {
+      return null;
+    }
+    return { repo: candidate, bucket };
+  });
 }
 
 async function listBucketsCached(
@@ -712,12 +976,25 @@ export async function getProjectBackupAssignmentState(
 
 async function assignProjectBackupRepo({
   project_id,
+  region,
   repo,
 }: {
   project_id: string;
+  region: string;
   repo: ProjectBackupRepoRow;
 }): Promise<void> {
   await ensureProjectBackupRepoSchema();
+  const normalizedRegion = normalizeBackupRegion(region);
+  await pool().query(
+    `INSERT INTO project_backup_repo_assignments
+      (project_id, region, backup_repo_id, created, updated)
+     VALUES ($1,$2,$3,NOW(),NOW())
+     ON CONFLICT (project_id) DO UPDATE SET
+       region = EXCLUDED.region,
+       backup_repo_id = EXCLUDED.backup_repo_id,
+       updated = NOW()`,
+    [project_id, normalizedRegion, repo.id],
+  );
   await pool().query(
     "UPDATE projects SET backup_repo_id=$2 WHERE project_id=$1",
     [project_id, repo.id],
@@ -738,10 +1015,88 @@ export async function setProjectBackupRepoId({
     throw new Error("invalid backup_repo_id");
   }
   await ensureProjectBackupRepoSchema();
+  if (backup_repo_id) {
+    const repo = await loadProjectBackupRepoById(backup_repo_id);
+    if (repo) {
+      await pool().query(
+        `INSERT INTO project_backup_repo_assignments
+          (project_id, region, backup_repo_id, created, updated)
+         VALUES ($1,$2,$3,NOW(),NOW())
+         ON CONFLICT (project_id) DO UPDATE SET
+           region = EXCLUDED.region,
+           backup_repo_id = EXCLUDED.backup_repo_id,
+           updated = NOW()`,
+        [project_id, normalizeBackupRegion(repo.region), backup_repo_id],
+      );
+    }
+  } else {
+    await pool().query(
+      "DELETE FROM project_backup_repo_assignments WHERE project_id=$1",
+      [project_id],
+    );
+  }
   await pool().query(
     "UPDATE projects SET backup_repo_id=$2 WHERE project_id=$1",
     [project_id, backup_repo_id],
   );
+}
+
+export async function resolveProjectBackupRepoAssignment({
+  project_id,
+  project_region,
+  backup_repo_id,
+  preferred_backup_repo_id,
+}: {
+  project_id: string;
+  project_region?: string | null;
+  backup_repo_id?: string | null;
+  preferred_backup_repo_id?: string | null;
+}): Promise<{ backup_repo_id: string | null }> {
+  if (!project_id || !isValidUUID(project_id)) {
+    throw new Error("invalid project_id");
+  }
+  if (backup_repo_id && !isValidUUID(backup_repo_id)) {
+    throw new Error("invalid backup_repo_id");
+  }
+  if (preferred_backup_repo_id && !isValidUUID(preferred_backup_repo_id)) {
+    throw new Error("invalid preferred_backup_repo_id");
+  }
+  const region = normalizeBackupRegion(project_region);
+  if (shouldUseSeedManagedProjectBackups()) {
+    const cluster = getClusterConfig();
+    const { getInterBayBridge } =
+      await import("@cocalc/server/inter-bay/bridge");
+    const result = await getInterBayBridge()
+      .hostConnection(cluster.seed_bay_id, { timeout_ms: 30_000 })
+      .resolveSeedBackupRepoAssignment({
+        project_id,
+        project_region: region,
+        backup_repo_id,
+        preferred_backup_repo_id,
+      });
+    await pool().query(
+      "UPDATE projects SET backup_repo_id=$2 WHERE project_id=$1 AND backup_repo_id IS DISTINCT FROM $2",
+      [project_id, result.backup_repo_id],
+    );
+    return result;
+  }
+  const assigned = await selectProjectBackupRepoForAssignmentLocal({
+    project_id,
+    project_region: region,
+    backup_repo_id,
+    preferred_backup_repo_id,
+  });
+  if (!assigned?.repo) {
+    return { backup_repo_id: null };
+  }
+  await assignProjectBackupRepo({
+    project_id,
+    region,
+    repo: assigned.repo,
+  });
+  return {
+    backup_repo_id: assigned.repo.id,
+  };
 }
 
 export async function ensureProjectBackupRepoForRegion({
@@ -749,12 +1104,24 @@ export async function ensureProjectBackupRepoForRegion({
 }: {
   region: string;
 }): Promise<{ backup_repo_id: string | null }> {
-  const normalized =
-    parseR2Region(region) ??
-    mapCloudRegionToR2Region(region ?? DEFAULT_R2_REGION);
-  const assigned = await getOrCreateProjectBackupRepoForRegion(normalized);
+  const normalized = normalizeBackupRegion(region);
+  const bucket = await getOrCreateBucketForRegion(normalized);
+  if (!bucket) {
+    return { backup_repo_id: null };
+  }
+  const assigned = await withProjectBackupRegionAssignmentLock(
+    normalized,
+    async (client) => {
+      const active = await ensureActiveProjectBackupReposForRegionTx({
+        client,
+        region: normalized,
+        bucket,
+      });
+      return active[0] ?? null;
+    },
+  );
   return {
-    backup_repo_id: assigned?.repo?.id ?? null,
+    backup_repo_id: assigned?.id ?? null,
   };
 }
 
@@ -973,14 +1340,17 @@ async function getProjectBackupIndexBucket({
   }
   if (!repo) {
     const projectRegion = await resolveProjectRegion(project_id, null);
-    const assigned = await getOrCreateProjectBackupRepoForRegion(projectRegion);
-    if (!assigned?.repo) {
+    const resolved = await resolveProjectBackupRepoAssignment({
+      project_id,
+      project_region: projectRegion,
+      backup_repo_id: assignment.backup_repo_id,
+    });
+    if (!resolved.backup_repo_id) {
       return null;
     }
-    repo = assigned.repo;
-    await assignProjectBackupRepo({ project_id, repo });
+    repo = await loadProjectBackupRepoById(resolved.backup_repo_id);
   }
-  if (!repo.bucket_id) {
+  if (!repo || !repo.bucket_id) {
     return null;
   }
   return await loadBucketById(repo.bucket_id);
@@ -1395,10 +1765,12 @@ async function getSeedManagedProjectBackupConfig({
   project_id,
   project_region,
   backup_repo_id,
+  preferred_backup_repo_id,
 }: {
   project_id: string;
   project_region: string;
   backup_repo_id?: string | null;
+  preferred_backup_repo_id?: string | null;
 }): Promise<{
   toml: string;
   ttl_seconds: number;
@@ -1413,6 +1785,7 @@ async function getSeedManagedProjectBackupConfig({
       project_id,
       project_region,
       backup_repo_id,
+      preferred_backup_repo_id,
     });
   if (config.backup_repo_id && config.toml) {
     await pool().query(
@@ -1427,10 +1800,12 @@ export async function getSeedProjectBackupConfig({
   project_id,
   project_region,
   backup_repo_id,
+  preferred_backup_repo_id,
 }: {
   project_id: string;
   project_region?: string | null;
   backup_repo_id?: string | null;
+  preferred_backup_repo_id?: string | null;
 }): Promise<{
   toml: string;
   ttl_seconds: number;
@@ -1443,24 +1818,22 @@ export async function getSeedProjectBackupConfig({
   if (backup_repo_id && !isValidUUID(backup_repo_id)) {
     throw new Error("invalid backup_repo_id");
   }
-  const region =
-    parseR2Region(project_region) ??
-    mapCloudRegionToR2Region(project_region ?? DEFAULT_R2_REGION);
-  if (backup_repo_id) {
-    const repo = await loadProjectBackupRepoById(backup_repo_id);
-    if (repo) {
-      return await buildBackupConfigFromRepo({
-        repo,
-        fallbackRegion: region,
-      });
-    }
+  const region = normalizeBackupRegion(project_region);
+  const resolved = await resolveProjectBackupRepoAssignment({
+    project_id,
+    project_region: region,
+    backup_repo_id,
+    preferred_backup_repo_id,
+  });
+  if (!resolved.backup_repo_id) {
+    return { toml: "", ttl_seconds: 0, backup_repo_id: null };
   }
-  const assigned = await getOrCreateProjectBackupRepoForRegion(region);
-  if (!assigned?.repo) {
+  const repo = await loadProjectBackupRepoById(resolved.backup_repo_id);
+  if (!repo) {
     return { toml: "", ttl_seconds: 0, backup_repo_id: null };
   }
   return await buildBackupConfigFromRepo({
-    repo: assigned.repo,
+    repo,
     fallbackRegion: region,
   });
 }
@@ -1540,22 +1913,26 @@ export async function getBackupConfig({
     }
   }
 
-  const assigned = await getOrCreateProjectBackupRepoForRegion(projectR2Region);
-  if (!assigned?.bucket || !assigned.repo.root) {
+  const resolved = await resolveProjectBackupRepoAssignment({
+    project_id,
+    project_region: projectR2Region,
+    backup_repo_id: assignment.backup_repo_id,
+  });
+  if (!resolved.backup_repo_id) {
     return { toml: "", ttl_seconds: 0 };
   }
-  await assignProjectBackupRepo({ project_id, repo: assigned.repo });
-  const toml = await buildTomlForBucket({
-    bucket: assigned.bucket,
-    password: await getProjectBackupRepoSecret(assigned.repo),
-    root: assigned.repo.root,
+  const repo = await loadProjectBackupRepoById(resolved.backup_repo_id);
+  if (!repo) {
+    return { toml: "", ttl_seconds: 0 };
+  }
+  const config = await buildBackupConfigFromRepo({
+    repo,
+    fallbackRegion: projectR2Region,
   });
   return {
-    toml,
-    ttl_seconds: toml ? DEFAULT_BACKUP_TTL_SECONDS : 0,
-    index_store: await buildBackupIndexStoreConfigForBucket({
-      bucket: assigned.bucket,
-    }),
+    toml: config.toml,
+    ttl_seconds: config.ttl_seconds,
+    index_store: config.index_store,
   };
 }
 
@@ -1689,16 +2066,14 @@ export async function getProjectBackupInfrastructureStatus({
           b.name AS bucket_name,
           r.root,
           r.status,
-          COUNT(p.project_id)::INTEGER AS assigned_project_count,
+          COUNT(a.project_id)::INTEGER AS assigned_project_count,
           r.created,
           r.updated
         FROM project_backup_repos r
         LEFT JOIN buckets b
           ON b.id = r.bucket_id
-        LEFT JOIN projects p
-          ON p.backup_repo_id = r.id
-         AND p.deleted IS NOT true
-         AND COALESCE(p.owning_bay_id, $1) = $1
+        LEFT JOIN project_backup_repo_assignments a
+          ON a.backup_repo_id = r.id
         GROUP BY
           r.id,
           r.region,
@@ -1710,7 +2085,6 @@ export async function getProjectBackupInfrastructureStatus({
           r.updated
         ORDER BY r.region ASC NULLS LAST, r.created ASC, r.id ASC
       `,
-      [bay_id],
     ),
     pool().query<{
       total_projects: number | string | null;
@@ -1854,6 +2228,120 @@ export async function getProjectBackupInfrastructureStatus({
       ),
       latest_last_backup_at: asIso(projectRow?.latest_last_backup_at),
     },
+  };
+}
+
+export async function getProjectBackupShardAdminStatus({
+  region,
+}: {
+  region?: string | null;
+} = {}): Promise<ProjectBackupShardAdminStatus> {
+  await ensureProjectBackupRepoSchema();
+  const normalizedRegion = region ? normalizeBackupRegion(region) : null;
+  const { rows } = await pool().query<{
+    id: string;
+    region: string | null;
+    bucket_id: string | null;
+    bucket_name: string | null;
+    root: string | null;
+    status: string | null;
+    assigned_project_count: number | string | null;
+    created: Date | null;
+    updated: Date | null;
+  }>(
+    `
+      SELECT
+        r.id,
+        r.region,
+        r.bucket_id,
+        b.name AS bucket_name,
+        r.root,
+        r.status,
+        COUNT(a.project_id)::INTEGER AS assigned_project_count,
+        r.created,
+        r.updated
+      FROM project_backup_repos r
+      LEFT JOIN buckets b
+        ON b.id = r.bucket_id
+      LEFT JOIN project_backup_repo_assignments a
+        ON a.backup_repo_id = r.id
+      WHERE ($1::text IS NULL OR r.region = $1)
+      GROUP BY
+        r.id,
+        r.region,
+        r.bucket_id,
+        b.name,
+        r.root,
+        r.status,
+        r.created,
+        r.updated
+      ORDER BY r.region ASC NULLS LAST, r.created ASC, r.id ASC
+    `,
+    [normalizedRegion],
+  );
+  const repos: ProjectBackupShardAdminRepoInfo[] = rows.map((row) => {
+    const assigned_project_count = Math.max(
+      0,
+      Number(row.assigned_project_count ?? 0) || 0,
+    );
+    return {
+      id: row.id,
+      region: row.region ?? null,
+      bucket_id: row.bucket_id ?? null,
+      bucket_name: row.bucket_name ?? null,
+      root: row.root ?? null,
+      status: row.status ?? null,
+      assigned_project_count,
+      project_cap: PROJECT_BACKUP_PROJECTS_PER_SHARD,
+      available_project_slots: Math.max(
+        0,
+        PROJECT_BACKUP_PROJECTS_PER_SHARD - assigned_project_count,
+      ),
+      created: asIso(row.created),
+      updated: asIso(row.updated),
+    };
+  });
+  const byRegion = new Map<string, ProjectBackupShardAdminRegionInfo>();
+  for (const repo of repos) {
+    const regionKey = repo.region ?? "unknown";
+    let summary = byRegion.get(regionKey);
+    if (!summary) {
+      summary = {
+        region: regionKey,
+        total_repos: 0,
+        active_repos: 0,
+        sealed_repos: 0,
+        draining_repos: 0,
+        disabled_repos: 0,
+        assigned_projects: 0,
+        active_capacity_projects: 0,
+        active_available_project_slots: 0,
+      };
+      byRegion.set(regionKey, summary);
+    }
+    summary.total_repos += 1;
+    summary.assigned_projects += repo.assigned_project_count;
+    if (!repo.status || repo.status === PROJECT_BACKUP_REPO_STATUS_ACTIVE) {
+      summary.active_repos += 1;
+      summary.active_capacity_projects += PROJECT_BACKUP_PROJECTS_PER_SHARD;
+      summary.active_available_project_slots += repo.available_project_slots;
+    } else if (repo.status === PROJECT_BACKUP_REPO_STATUS_SEALED) {
+      summary.sealed_repos += 1;
+    } else if (repo.status === PROJECT_BACKUP_REPO_STATUS_DRAINING) {
+      summary.draining_repos += 1;
+    } else if (repo.status === PROJECT_BACKUP_REPO_STATUS_DISABLED) {
+      summary.disabled_repos += 1;
+    }
+  }
+  return {
+    checked_at: new Date().toISOString(),
+    active_shards_per_region: PROJECT_BACKUP_ACTIVE_SHARDS_PER_REGION,
+    projects_per_shard: PROJECT_BACKUP_PROJECTS_PER_SHARD,
+    authoritative_bay_id: getConfiguredBayId(),
+    regions: Array.from(byRegion.values()).sort((a, b) =>
+      a.region.localeCompare(b.region),
+    ),
+    repos,
   };
 }
 
