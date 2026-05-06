@@ -61,7 +61,7 @@ import {
 import "./git-commit-drawer.css";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
-const MAX_GIT_SHOW_LINES = 10_000;
+const MAX_GIT_SHOW_LINES = 20_000;
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
 const HEAD_REF = "HEAD";
