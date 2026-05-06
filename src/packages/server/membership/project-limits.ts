@@ -19,11 +19,20 @@ import { humanSize } from "@cocalc/util/misc";
 import { getEffectiveMembershipUsageLimits } from "./effective-limits";
 import { resolveMembershipForAccount } from "./resolve";
 import {
+  getProjectUsageAccountId,
+  getUsageProjectCountForAccount,
+} from "./project-usage";
+import {
   getMembershipUsageStatusForAccount,
   peekCachedMembershipUsageStatusForAccount,
 } from "./usage-status";
 
 const log = getLogger("server:membership:project-limits");
+
+export {
+  getProjectOwnerAccountId,
+  getProjectUsageAccountId,
+} from "./project-usage";
 
 export const DEFAULT_MAX_SNAPSHOTS_PER_PROJECT = 250;
 export const DEFAULT_MAX_BACKUPS_PER_PROJECT = 30;
@@ -31,35 +40,7 @@ export const DEFAULT_MAX_BACKUPS_PER_PROJECT = 30;
 export async function getOwnedProjectCountForAccount(
   account_id: string,
 ): Promise<number> {
-  const { rows } = await getPool("medium").query<{ count: string | number }>(
-    `
-      SELECT COUNT(*)::BIGINT AS count
-      FROM projects
-      WHERE deleted IS NULL
-        AND COALESCE(users -> $1::text ->> 'group', '') = 'owner'
-    `,
-    [account_id],
-  );
-  const count = Number(rows[0]?.count ?? 0);
-  return Number.isFinite(count) && count >= 0 ? count : 0;
-}
-
-export async function getProjectOwnerAccountId(
-  project_id: string,
-): Promise<string | undefined> {
-  const { rows } = await getPool("medium").query<{ account_id: string }>(
-    `
-      SELECT account_id_text::text AS account_id
-      FROM projects
-      CROSS JOIN LATERAL jsonb_each(COALESCE(users, '{}'::jsonb)) AS u(account_id_text, user_data)
-      WHERE project_id = $1
-        AND deleted IS NULL
-        AND COALESCE(u.user_data ->> 'group', '') = 'owner'
-      LIMIT 1
-    `,
-    [project_id],
-  );
-  return `${rows[0]?.account_id ?? ""}`.trim() || undefined;
+  return await getUsageProjectCountForAccount(account_id);
 }
 
 async function getProjectStorageQuotaFallbackBytes(
@@ -206,7 +187,7 @@ async function getProjectOwnerLimit({
   fallback: number;
   extract: (resolution: MembershipResolution) => number | undefined;
 }): Promise<number> {
-  const account_id = await getProjectOwnerAccountId(project_id);
+  const account_id = await getProjectUsageAccountId(project_id);
   if (!account_id) {
     return fallback;
   }
@@ -261,7 +242,7 @@ export async function assertCanOwnAdditionalProject({
   const owned = await getOwnedProjectCountForAccount(account_id);
   if (owned >= max_projects) {
     throw new Error(
-      `owned project limit reached (${owned}/${max_projects}); delete a project or upgrade membership`,
+      `project limit reached (${owned}/${max_projects}); delete a project or upgrade membership`,
     );
   }
 }
@@ -375,7 +356,7 @@ export async function assertProjectOwnerCanIncreaseAccountStorage({
   project_id: string;
   resolution?: MembershipResolution;
 }): Promise<void> {
-  const account_id = await getProjectOwnerAccountId(project_id);
+  const account_id = await getProjectUsageAccountId(project_id);
   if (!account_id) {
     return;
   }
@@ -395,7 +376,7 @@ export async function assertCanRestoreProvisionedProjectStorage({
   resolution?: MembershipResolution;
 }): Promise<void> {
   const owner_account_id =
-    account_id ?? (await getProjectOwnerAccountId(project_id));
+    account_id ?? (await getProjectUsageAccountId(project_id));
   if (!owner_account_id) {
     return;
   }

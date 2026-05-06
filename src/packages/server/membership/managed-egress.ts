@@ -15,6 +15,12 @@ import type {
   ManagedEgressHistoryPoint,
   ManagedEgressProjectSummary,
 } from "@cocalc/conat/hub/api/purchases";
+import { getProjectUsageAccountId } from "./project-usage";
+
+export {
+  getProjectOwnerAccountId,
+  getProjectUsageAccountId,
+} from "./project-usage";
 
 const TABLE = "account_managed_egress_events";
 
@@ -84,24 +90,6 @@ async function ensureSchema(): Promise<void> {
   await ensuredSchema;
 }
 
-export async function getProjectOwnerAccountId(
-  project_id: string,
-): Promise<string | undefined> {
-  const { rows } = await getPool("medium").query<{ account_id: string }>(
-    `
-      SELECT owner.key AS account_id
-      FROM projects,
-           LATERAL jsonb_each(COALESCE(users, '{}'::jsonb)) AS owner(key, value)
-      WHERE project_id = $1
-        AND deleted IS NULL
-        AND owner.value ->> 'group' = 'owner'
-      LIMIT 1
-    `,
-    [project_id],
-  );
-  return rows[0]?.account_id;
-}
-
 export async function recordManagedProjectEgress(opts: {
   account_id?: string;
   project_id?: string;
@@ -118,7 +106,7 @@ export async function recordManagedProjectEgress(opts: {
   const account_id =
     `${opts.account_id ?? ""}`.trim() ||
     (`${opts.project_id ?? ""}`.trim()
-      ? await getProjectOwnerAccountId(opts.project_id!)
+      ? await getProjectUsageAccountId(opts.project_id!)
       : undefined);
   if (!account_id) {
     return { recorded: false };

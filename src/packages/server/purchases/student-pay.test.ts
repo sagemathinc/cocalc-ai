@@ -47,8 +47,19 @@ describe("test studentPay behaves at it should in various scenarios", () => {
   it("configures course pay, then fails because user isn't the student", async () => {
     const pool = getPool();
     await pool.query(
-      `UPDATE projects SET course='{"account_id":"${account_id}"}' WHERE project_id=$1`,
-      [project_id],
+      `UPDATE projects
+       SET course=$2::jsonb
+       WHERE project_id=$1`,
+      [
+        project_id,
+        JSON.stringify({
+          type: "student",
+          account_id,
+          project_id,
+          path: ".course",
+          datastore: false,
+        }),
+      ],
     );
     expect.assertions(1);
     try {
@@ -98,11 +109,12 @@ describe("test studentPay behaves at it should in various scenarios", () => {
     // paid field is set
     const pool = getPool();
     const { rows } = await pool.query(
-      "SELECT course FROM projects WHERE project_id=$1",
+      "SELECT course, usage_account_id FROM projects WHERE project_id=$1",
       [project_id],
     );
     const { course } = rows[0];
     expect(course.paid.length).toBeGreaterThanOrEqual(10);
+    expect(rows[0].usage_account_id).toBe(account_id);
     const paid = dayjs(course.paid);
     // paid timestamp is close to now
     expect(Math.abs(paid.diff(dayjs()))).toBeLessThanOrEqual(5000);
@@ -112,6 +124,20 @@ describe("test studentPay behaves at it should in various scenarios", () => {
       [purchase_id],
     );
     expect(x.rows[0].description?.type).toBe("student-pay");
+
+    const grants = await pool.query(
+      `SELECT membership_class, source, purchase_id
+       FROM membership_grants
+       WHERE account_id=$1`,
+      [account_id],
+    );
+    expect(grants.rows).toEqual([
+      {
+        membership_class: "student",
+        source: "student-pay",
+        purchase_id,
+      },
+    ]);
   });
 
   it("try to pay again and DO NOT get an error that already paid -- it's an idempotent and just doesn't charge user. Allowing this avoids some annoying race condition.", async () => {

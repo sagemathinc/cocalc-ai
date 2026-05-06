@@ -60,6 +60,7 @@ import {
 } from "@cocalc/server/project-host/placement";
 import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/project-host/auto-grow";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { getProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
 import {
   enqueueCloudVmWork,
   listCloudVmLog,
@@ -982,19 +983,8 @@ export async function getProjectOwnerEffectiveLimitsLocal({
   if (!project_id) {
     throw new Error("project_id must be specified");
   }
-  const { rows } = await pool().query<{ account_id: string }>(
-    `
-      SELECT account_id_text::text AS account_id
-      FROM projects
-      CROSS JOIN LATERAL jsonb_each(COALESCE(users, '{}'::jsonb)) AS u(account_id_text, user_data)
-      WHERE project_id = $1
-        AND deleted IS NULL
-        AND COALESCE(u.user_data ->> 'group', '') = 'owner'
-      LIMIT 1
-    `,
-    [project_id],
-  );
-  const account_id = `${rows[0]?.account_id ?? ""}`.trim();
+  const account_id =
+    `${(await getProjectUsageAccountId(project_id)) ?? ""}`.trim();
   if (!account_id) {
     return {};
   }

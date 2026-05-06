@@ -8,6 +8,7 @@ const getDiskQuotaMock = jest.fn();
 const clientCloseMock = jest.fn();
 const getManagedEgressUsageForAccountMock = jest.fn();
 const getRecentManagedEgressEventsForAccountMock = jest.fn();
+const listUsageProjectsForAccountMock = jest.fn();
 const conatWithProjectRoutingForAccountMock = jest.fn(() => ({
   close: clientCloseMock,
 }));
@@ -35,6 +36,11 @@ jest.mock("./managed-egress", () => ({
     getRecentManagedEgressEventsForAccountMock(...args),
 }));
 
+jest.mock("./project-usage", () => ({
+  listUsageProjectsForAccount: (...args: any[]) =>
+    listUsageProjectsForAccountMock(...args),
+}));
+
 describe("getMembershipUsageStatusForAccount", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -46,16 +52,15 @@ describe("getMembershipUsageStatusForAccount", () => {
       managed_egress_categories_7d_bytes: {},
     });
     getRecentManagedEgressEventsForAccountMock.mockResolvedValue([]);
+    listUsageProjectsForAccountMock.mockResolvedValue([]);
   });
 
   it("aggregates owned project storage and compares against configured limits", async () => {
-    queryMock.mockResolvedValue({
-      rows: [
-        { project_id: "project-1", host_id: "host-1", provisioned: true },
-        { project_id: "project-2", host_id: "host-2", provisioned: true },
-        { project_id: "project-3", host_id: null, provisioned: false },
-      ],
-    });
+    listUsageProjectsForAccountMock.mockResolvedValue([
+      { project_id: "project-1", host_id: "host-1", provisioned: true },
+      { project_id: "project-2", host_id: "host-2", provisioned: true },
+      { project_id: "project-3", host_id: null, provisioned: false },
+    ]);
     getDiskQuotaMock
       .mockResolvedValueOnce({ used: 100, size: 1000 })
       .mockResolvedValueOnce({ used: 250, size: 1000 });
@@ -105,12 +110,10 @@ describe("getMembershipUsageStatusForAccount", () => {
   });
 
   it("tracks sampling failures without failing the whole status call", async () => {
-    queryMock.mockResolvedValue({
-      rows: [
-        { project_id: "project-1", host_id: "host-1", provisioned: true },
-        { project_id: "project-2", host_id: "host-2", provisioned: true },
-      ],
-    });
+    listUsageProjectsForAccountMock.mockResolvedValue([
+      { project_id: "project-1", host_id: "host-1", provisioned: true },
+      { project_id: "project-2", host_id: "host-2", provisioned: true },
+    ]);
     getDiskQuotaMock
       .mockResolvedValueOnce({ used: 64, size: 1000 })
       .mockRejectedValueOnce(new Error("route failed"));
@@ -135,13 +138,11 @@ describe("getMembershipUsageStatusForAccount", () => {
   });
 
   it("ignores unprovisioned projects for active storage sampling", async () => {
-    queryMock.mockResolvedValue({
-      rows: [
-        { project_id: "project-1", host_id: "host-1", provisioned: true },
-        { project_id: "project-2", host_id: "host-2", provisioned: false },
-        { project_id: "project-3", host_id: null, provisioned: false },
-      ],
-    });
+    listUsageProjectsForAccountMock.mockResolvedValue([
+      { project_id: "project-1", host_id: "host-1", provisioned: true },
+      { project_id: "project-2", host_id: "host-2", provisioned: false },
+      { project_id: "project-3", host_id: null, provisioned: false },
+    ]);
     getDiskQuotaMock.mockResolvedValueOnce({ used: 64, size: 1000 });
 
     const { getMembershipUsageStatusForAccount } =
@@ -163,9 +164,7 @@ describe("getMembershipUsageStatusForAccount", () => {
   });
 
   it("includes managed egress usage and category breakdowns", async () => {
-    queryMock.mockResolvedValue({
-      rows: [],
-    });
+    listUsageProjectsForAccountMock.mockResolvedValue([]);
     getManagedEgressUsageForAccountMock.mockResolvedValue({
       managed_egress_5h_bytes: 123,
       managed_egress_7d_bytes: 456,
@@ -235,9 +234,7 @@ describe("getMembershipUsageStatusForAccount", () => {
   });
 
   it("uses canonical effective limits when provided on the resolution", async () => {
-    queryMock.mockResolvedValue({
-      rows: [],
-    });
+    listUsageProjectsForAccountMock.mockResolvedValue([]);
 
     const { getMembershipUsageStatusForAccount } =
       await import("./usage-status");
@@ -276,9 +273,9 @@ describe("getMembershipUsageStatusForAccount", () => {
   });
 
   it("reuses a recent usage-status result for the same account and limits", async () => {
-    queryMock.mockResolvedValue({
-      rows: [{ project_id: "project-1", host_id: "host-1", provisioned: true }],
-    });
+    listUsageProjectsForAccountMock.mockResolvedValue([
+      { project_id: "project-1", host_id: "host-1", provisioned: true },
+    ]);
     getDiskQuotaMock.mockResolvedValue({ used: 64, size: 1000 });
 
     const { getMembershipUsageStatusForAccount } =
@@ -309,9 +306,7 @@ describe("getMembershipUsageStatusForAccount", () => {
   });
 
   it("does not reuse cached usage when the effective limits change", async () => {
-    queryMock.mockResolvedValue({
-      rows: [],
-    });
+    listUsageProjectsForAccountMock.mockResolvedValue([]);
     getManagedEgressUsageForAccountMock
       .mockResolvedValueOnce({
         managed_egress_5h_bytes: 0,

@@ -9,6 +9,7 @@ import { resolveMembershipForAccount } from "./resolve";
 import {
   createTestAccount,
   createTestAdminAssignedMembership,
+  createTestMembershipGrant,
   createTestMembershipTier,
   createTestMembershipSubscription,
 } from "@cocalc/server/purchases/test-data";
@@ -55,6 +56,19 @@ describe("resolveMembershipForAccount", () => {
     expect(result.source).toBe("admin");
   });
 
+  it("returns a granted membership when no subscription or admin assignment exists", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await createTestMembershipGrant(account_id, {
+      membership_class: lowTier,
+      source: "student-pay",
+    });
+    const result = await resolveMembershipForAccount(account_id);
+    expect(result.class).toBe(lowTier);
+    expect(result.source).toBe("grant");
+    expect(result.grant_source).toBe("student-pay");
+  });
+
   it("picks the highest priority tier across subscription and admin", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);
@@ -74,6 +88,22 @@ describe("resolveMembershipForAccount", () => {
     await createTestAdminAssignedMembership(account_id, {
       membership_class: lowTier,
     });
+    const result = await resolveMembershipForAccount(account_id);
+    expect(result.class).toBe(highTier);
+    expect(result.source).toBe("subscription");
+  });
+
+  it("picks the highest priority tier across grants, subscriptions, and admin assignments", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await createTestMembershipGrant(account_id, {
+      membership_class: lowTier,
+      source: "course-seat",
+    });
+    await createTestAdminAssignedMembership(account_id, {
+      membership_class: lowTier,
+    });
+    await createTestMembershipSubscription(account_id, { class: highTier });
     const result = await resolveMembershipForAccount(account_id);
     expect(result.class).toBe(highTier);
     expect(result.source).toBe("subscription");

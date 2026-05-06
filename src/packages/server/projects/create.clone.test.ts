@@ -314,10 +314,30 @@ describe("projects.createProject clone routing", () => {
         return { rows: [], rowCount: null };
       }
       if (
-        sql.includes("SELECT COUNT(*)::BIGINT AS count") &&
-        sql.includes("COALESCE(users -> $1::text ->> 'group', '') = 'owner'")
+        sql.includes("SELECT") &&
+        sql.includes("p.project_id") &&
+        sql.includes("FROM projects AS p")
       ) {
-        return { rows: [{ count: "2" }] };
+        return {
+          rows: [
+            {
+              project_id: "project-1",
+              host_id: null,
+              provisioned: false,
+              owner_account_id: ACCOUNT_ID,
+              usage_account_id: null,
+              course: null,
+            },
+            {
+              project_id: "project-2",
+              host_id: null,
+              provisioned: false,
+              owner_account_id: ACCOUNT_ID,
+              usage_account_id: null,
+              course: null,
+            },
+          ],
+        };
       }
       if (
         sql.includes(
@@ -346,7 +366,7 @@ describe("projects.createProject clone routing", () => {
         account_id: ACCOUNT_ID,
         start: false,
       }),
-    ).rejects.toThrow("owned project limit reached (2/2)");
+    ).rejects.toThrow("project limit reached (2/2)");
   });
 
   it("blocks clone creation when the owner already reached the hard total storage cap", async () => {
