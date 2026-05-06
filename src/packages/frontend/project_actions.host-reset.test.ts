@@ -26,9 +26,7 @@ describe("ProjectActions host restart file runtime reset", () => {
     const setComponent = jest.fn((path: string, component: any) => {
       components.set(path, component);
     });
-    const removeNamedRuntime = jest.fn().mockResolvedValue(undefined);
     const removeRuntime = jest.fn().mockResolvedValue(undefined);
-    const beforeRebootstrap = jest.fn().mockResolvedValue(undefined);
     const rebootstrapPath = jest.fn().mockResolvedValue(undefined);
 
     await resetOpenFileRuntimeAfterHostReset({
@@ -38,9 +36,7 @@ describe("ProjectActions host restart file runtime reset", () => {
         path === "/same-sync.txt" ? "/display-a.ipynb" : path,
       getComponent: (path) => components.get(path),
       setComponent,
-      removeNamedRuntime,
       removeRuntime,
-      beforeRebootstrap,
       rebootstrapPath,
     });
 
@@ -58,16 +54,10 @@ describe("ProjectActions host restart file runtime reset", () => {
       redux_name: undefined,
       Editor: undefined,
     });
-    expect(removeNamedRuntime.mock.calls).toEqual([
-      ["old-a"],
-      ["old-b"],
-      ["old-c"],
-    ]);
     expect(removeRuntime.mock.calls).toEqual([
       ["/display-a.ipynb"],
       ["/display-b.ipynb"],
     ]);
-    expect(beforeRebootstrap).toHaveBeenCalledTimes(1);
     expect(rebootstrapPath.mock.calls).toEqual([
       ["/display-b.ipynb", { noFocus: false }],
       ["/display-a.ipynb", { noFocus: true }],
@@ -94,9 +84,7 @@ describe("ProjectActions host restart file runtime reset", () => {
       setComponent: (path, component) => {
         components.set(path, component);
       },
-      removeNamedRuntime: jest.fn(),
       removeRuntime: jest.fn(),
-      beforeRebootstrap: jest.fn(),
       rebootstrapPath,
     });
 

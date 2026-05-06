@@ -1177,10 +1177,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       source_host_id,
       dest_host_id,
     });
-    redux.getProjectActions(project_id)?.resetProjectHostRuntime?.({
-      source_host_id,
-      dest_host_id,
-    });
+    redux.getProjectActions(project_id)?.resetProjectHostRuntime?.();
     // Do not force a global reconnect here. A move can succeed before the
     // projected account feed catches up, and reconnecting eagerly risks
     // rehydrating stale host placement into project_map.
