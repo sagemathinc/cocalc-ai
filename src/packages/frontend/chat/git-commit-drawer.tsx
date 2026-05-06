@@ -75,6 +75,19 @@ import {
   parseGitStatusOutput,
 } from "./git-commit/git-output";
 import {
+  buildGitDiffFindMatches,
+  getGitDiffFindVisibleLineLimitUpdate,
+  getNextRenderedDiffLineLimit,
+  getRenderedDiffLineLimit,
+  isGitDiffFindTargetRendered,
+  RENDERED_DIFF_LINES_INCREMENT,
+} from "./git-commit/diff-find";
+import {
+  buildGitReviewFileSectionId,
+  buildGitReviewLineElementId,
+  hashGitCommitValue,
+} from "./git-commit/ids";
+import {
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
 } from "./git-commit/review-state";
@@ -95,7 +108,14 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 export { buildGitLogArgs, buildGitShowArgs };
 export {
+  buildGitDiffFindMatches,
+  buildGitReviewFileSectionId,
+  buildGitReviewLineElementId,
   captureGitDiffScrollAnchor,
+  getGitDiffFindVisibleLineLimitUpdate,
+  getNextRenderedDiffLineLimit,
+  getRenderedDiffLineLimit,
+  isGitDiffFindTargetRendered,
   matchGitDrawerScrollCommand,
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
@@ -126,8 +146,6 @@ const DIFF_FILE_HEADER_TEXT = COLORS.GRAY_D;
 const DIFF_FILE_HEADER_SECONDARY = COLORS.GRAY_M;
 const DELETE_ALL_REVIEWS_CONFIRM_TEXT = "delete all";
 const EMPTY_GIT_REVIEW_COMMENTS: GitReviewCommentV2[] = [];
-const INITIAL_RENDERED_DIFF_LINES = 300;
-const RENDERED_DIFF_LINES_INCREMENT = 200;
 
 export function getCommitReviewIndicatorState(
   reviewedByCommit: Record<string, boolean>,
@@ -138,130 +156,6 @@ export function getCommitReviewIndicatorState(
     reviewed: known ? Boolean(reviewedByCommit[hash]) : false,
     known,
   };
-}
-
-function countCaseInsensitiveMatches(text: string, needle: string): number {
-  const haystack = `${text ?? ""}`.toLowerCase();
-  const normalizedNeedle = `${needle ?? ""}`.trim().toLowerCase();
-  if (!haystack || !normalizedNeedle) return 0;
-  let count = 0;
-  let start = 0;
-  while (start <= haystack.length - normalizedNeedle.length) {
-    const idx = haystack.indexOf(normalizedNeedle, start);
-    if (idx === -1) break;
-    count += 1;
-    start = idx + normalizedNeedle.length;
-  }
-  return count;
-}
-
-export function buildGitDiffFindMatches({
-  data,
-  query,
-}: {
-  data?: Pick<GitShowParsed, "files">;
-  query: string;
-}): GitDiffFindMatch[] {
-  const normalizedQuery = `${query ?? ""}`.trim();
-  if (!normalizedQuery || !data?.files?.length) return [];
-  const matches: GitDiffFindMatch[] = [];
-  for (const [fileIndex, file] of data.files.entries()) {
-    if (countCaseInsensitiveMatches(file.path, normalizedQuery) > 0) {
-      matches.push({
-        id: `file:${fileIndex}`,
-        kind: "file",
-        fileIndex,
-        preview: file.path,
-      });
-    }
-    for (const [lineIndex, line] of file.lines.entries()) {
-      if (countCaseInsensitiveMatches(line, normalizedQuery) === 0) continue;
-      matches.push({
-        id: `line:${fileIndex}:${lineIndex}`,
-        kind: "line",
-        fileIndex,
-        lineIndex,
-        preview: line,
-      });
-    }
-  }
-  return matches;
-}
-
-export function getRenderedDiffLineLimit(requested?: number): number {
-  const value = Number(requested);
-  if (!Number.isFinite(value) || value <= 0) {
-    return INITIAL_RENDERED_DIFF_LINES;
-  }
-  return Math.max(INITIAL_RENDERED_DIFF_LINES, Math.floor(value));
-}
-
-export function getNextRenderedDiffLineLimit(current?: number): number {
-  return getRenderedDiffLineLimit(current) + RENDERED_DIFF_LINES_INCREMENT;
-}
-
-export function buildGitReviewFileSectionId(
-  path: string,
-  index: number,
-): string {
-  return `git-review-file-${index}-${hashString(path).slice(0, 12)}`;
-}
-
-export function buildGitReviewLineElementId({
-  filePath,
-  fileIndex,
-  lineIndex,
-}: {
-  filePath: string;
-  fileIndex: number;
-  lineIndex: number;
-}): string {
-  return `git-review-line-${fileIndex}-${lineIndex}-${hashString(filePath).slice(0, 12)}`;
-}
-
-export function isGitDiffFindTargetRendered({
-  data,
-  match,
-  visibleDiffLinesByFile,
-}: {
-  data?: Pick<GitShowParsed, "files">;
-  match?: GitDiffFindMatch;
-  visibleDiffLinesByFile: Record<string, number>;
-}): boolean {
-  if (!data || !match) return false;
-  const file = data.files?.[match.fileIndex];
-  if (!file) return false;
-  if (match.kind === "file" || typeof match.lineIndex !== "number") {
-    return true;
-  }
-  const sectionId = buildGitReviewFileSectionId(file.path, match.fileIndex);
-  const visibleLineLimit = getRenderedDiffLineLimit(
-    visibleDiffLinesByFile[sectionId],
-  );
-  return match.lineIndex < visibleLineLimit;
-}
-
-export function getGitDiffFindVisibleLineLimitUpdate({
-  data,
-  match,
-  visibleDiffLinesByFile,
-}: {
-  data?: Pick<GitShowParsed, "files">;
-  match?: GitDiffFindMatch;
-  visibleDiffLinesByFile: Record<string, number>;
-}): { sectionId: string; neededLimit: number } | undefined {
-  if (!data || !match || typeof match.lineIndex !== "number") return;
-  const file = data.files?.[match.fileIndex];
-  if (!file) return;
-  const sectionId = buildGitReviewFileSectionId(file.path, match.fileIndex);
-  const neededLimit = getRenderedDiffLineLimit(match.lineIndex + 1);
-  const currentVisibleLimit = getRenderedDiffLineLimit(
-    visibleDiffLinesByFile[sectionId],
-  );
-  if (currentVisibleLimit >= neededLimit) {
-    return;
-  }
-  return { sectionId, neededLimit };
 }
 
 export function filterGitReviewLogEntries({
@@ -470,14 +364,6 @@ function resolveOpenPath(
   return `${prefix}/${filePath}`.replace(/\/+/g, "/");
 }
 
-function hashString(value: string): string {
-  let hash = 5381;
-  for (let i = 0; i < value.length; i++) {
-    hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
-  }
-  return (hash >>> 0).toString(16);
-}
-
 function parseHunkStarts(
   line: string,
 ): { oldStart: number; newStart: number } | undefined {
@@ -504,7 +390,7 @@ function buildDiffLineMetas(lines: string[]): DiffLineMeta[] {
       oldLine = starts?.oldStart;
       newLine = starts?.newStart;
       hunkHeader = line;
-      hunkHash = hashString(line);
+      hunkHash = hashGitCommitValue(line);
       return {
         raw: line,
         isCode,
@@ -1838,7 +1724,7 @@ export function GitCommitDrawer({
   const scrollStorageId = useMemo(() => {
     const commitKey = `${commit ?? HEAD_REF}`.toLowerCase();
     const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${cwd}|${commitKey}`;
-    return hashString(raw);
+    return hashGitCommitValue(raw);
   }, [projectId, sourcePath, cwd, commit]);
 
   useEffect(() => {
