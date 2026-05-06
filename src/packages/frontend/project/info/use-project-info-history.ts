@@ -35,15 +35,6 @@ export default function useProjectInfoHistory({
   const [error, setError] = useState<string>("");
   const [visible, setVisible] = useState<boolean>(isVisible());
 
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const onVisibilityChange = () => setVisible(isVisible());
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, []);
-
   const update = useCallback(async () => {
     try {
       const client = await webapp_client.conat_client.projectConat({
@@ -64,11 +55,37 @@ export default function useProjectInfoHistory({
     }
   }, [project_id, minutes, start, intervalVisible]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVisibilityChange = () => {
+      const nextVisible = isVisible();
+      setVisible(nextVisible);
+      if (nextVisible) {
+        void update();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [update]);
+
   useInterval(update, visible ? intervalVisible : intervalHidden);
 
   useEffect(() => {
     void update();
   }, [project_id, minutes, update]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const onConnected = () => {
+      void update();
+    };
+    webapp_client.conat_client.on?.("connected", onConnected);
+    return () => {
+      webapp_client.conat_client.removeListener?.("connected", onConnected);
+    };
+  }, [update, visible]);
 
   return { history, error, refresh: update };
 }
