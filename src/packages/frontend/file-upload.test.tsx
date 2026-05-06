@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { BlobUpload } from "./file-upload";
 
 let latestDropzone: any;
@@ -101,5 +101,36 @@ describe("BlobUpload", () => {
     expect(error).toHaveBeenCalledWith({}, "missing project_id or account_id", {
       responseText: "missing project_id or account_id",
     });
+  });
+
+  it("does not rerender when close_preview is called with no visible files", () => {
+    const closePreviewRef = {
+      current: null as null | ((removeAll?: boolean) => void),
+    };
+    const renderSpy = jest.fn();
+
+    function Marker() {
+      renderSpy();
+      return <div>body</div>;
+    }
+
+    render(
+      <BlobUpload
+        show_upload={false}
+        project_id=""
+        close_preview_ref={closePreviewRef}
+      >
+        <Marker />
+      </BlobUpload>,
+    );
+
+    expect(typeof closePreviewRef.current).toBe("function");
+    renderSpy.mockClear();
+
+    act(() => {
+      closePreviewRef.current?.(true);
+    });
+
+    expect(renderSpy).not.toHaveBeenCalled();
   });
 });

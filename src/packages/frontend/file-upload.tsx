@@ -306,7 +306,7 @@ export function FileUploadWrapper({
         dropzone.current.removeAllFiles();
       } catch (_) {}
     }
-    set_files([]);
+    set_files((prev) => (prev.length === 0 ? prev : []));
   }
   if (close_preview_ref != null) {
     close_preview_ref.current = close_preview;

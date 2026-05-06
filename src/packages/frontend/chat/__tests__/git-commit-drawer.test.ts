@@ -13,6 +13,7 @@ import {
   getCommitReviewIndicatorState,
   isGitDiffFindTargetRendered,
   MarkdownHistoryInput,
+  ReviewNoteEditor,
   buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
@@ -153,6 +154,47 @@ describe("git commit drawer merge commit formatting", () => {
       latestMarkdownInputProps.onModeChange("markdown");
     });
     expect(onModeChange).toHaveBeenCalledWith("markdown");
+  });
+
+  it("buffers private review note typing until blur or save", () => {
+    const onPersistDraft = jest.fn();
+    const onCancel = jest.fn();
+    const onSave = jest.fn();
+
+    const rendered = render(
+      React.createElement(ReviewNoteEditor, {
+        historyId: "git-review-note:test",
+        value: "existing",
+        committedValue: "existing",
+        fontSize: 14,
+        saving: false,
+        disabled: false,
+        onPersistDraft,
+        onCancel,
+        onSave,
+      }),
+    );
+
+    expect(latestMarkdownInputProps).toBeTruthy();
+
+    act(() => {
+      latestMarkdownInputProps.onChange("edited locally");
+    });
+
+    expect(latestMarkdownInputProps.value).toBe("edited locally");
+    expect(onPersistDraft).not.toHaveBeenCalled();
+
+    act(() => {
+      latestMarkdownInputProps.onBlur("edited locally");
+    });
+    expect(onPersistDraft).toHaveBeenCalledWith("edited locally");
+
+    const saveButton = rendered.getByText("Save note");
+    act(() => {
+      saveButton.click();
+    });
+    expect(onPersistDraft).toHaveBeenLastCalledWith("edited locally");
+    expect(onSave).toHaveBeenCalledWith("edited locally");
   });
 
   it("does not re-commit diff blocks on unrelated parent state changes", () => {
@@ -336,6 +378,64 @@ describe("git commit drawer merge commit formatting", () => {
 
     expect(latestMarkdownInputProps).toBeTruthy();
     expect(latestMarkdownInputProps.value).toBe("persist me");
+  });
+
+  it("does not re-render the whole diff block on inline draft typing", () => {
+    const renders: number[] = [];
+    const originalType = (DiffBlock as any).type;
+    (DiffBlock as any).type = function WrappedDiffBlock(props: any) {
+      renders.push(Date.now());
+      return originalType(props);
+    };
+
+    try {
+      function Harness() {
+        const [draftAnchorId, setDraftAnchorId] = useState<string | undefined>(
+          undefined,
+        );
+        const [draftValue, setDraftValue] = useState("");
+        return React.createElement(DiffBlock, {
+          filePath: "src/example.ts",
+          lines: stableDiffLines,
+          languageHint: "ts",
+          fontSize: 14,
+          comments: stableComments,
+          showResolvedComments: false,
+          commentEnabled: true,
+          activeDraftAnchorId: draftAnchorId,
+          activeDraftBody: draftValue,
+          onOpenDraft: (anchor: any) => {
+            setDraftAnchorId(commentAnchorKey(anchor));
+            setDraftValue("");
+          },
+          onDraftBodyChange: setDraftValue,
+          onCancelDraft: () => {
+            setDraftAnchorId(undefined);
+            setDraftValue("");
+          },
+          onCreateComment: noopAsync,
+          onUpdateComment: noopAsync,
+          onResolveComment: noopAsync,
+          onReopenComment: noopAsync,
+        });
+      }
+
+      const rendered = render(React.createElement(Harness));
+      act(() => {
+        rendered.getAllByTitle("Add inline comment")[0].click();
+      });
+      expect(renders).toHaveLength(2);
+      expect(latestMarkdownInputProps).toBeTruthy();
+
+      act(() => {
+        latestMarkdownInputProps.onChange("typed locally");
+      });
+
+      expect(latestMarkdownInputProps.value).toBe("typed locally");
+      expect(renders).toHaveLength(2);
+    } finally {
+      (DiffBlock as any).type = originalType;
+    }
   });
 
   it("sizes diff line number gutters using ch units for wide line numbers", () => {
