@@ -67,8 +67,9 @@ const pt_stats_init = {
 } as const;
 
 export const ProjectInfo: React.FC<Props> = React.memo(
-  ({ mode = "full", wrap }: Props) => {
-    const { project_id } = useProjectContext();
+  ({ project_id: projectIdProp, mode = "full", wrap }: Props) => {
+    const { project_id: contextProjectId } = useProjectContext();
+    const project_id = projectIdProp ?? contextProjectId;
     const intl = useIntl();
     const projectLabel = intl.formatMessage(labels.project);
     const {
