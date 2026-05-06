@@ -1145,6 +1145,7 @@ function useBufferedMarkdownValue({
   const localValueRef = useRef(localValue);
   const syncedValueRef = useRef(value);
   const skipUnmountFlushRef = useRef(false);
+  const skipNextBlurFlushRef = useRef(false);
 
   useEffect(() => {
     localValueRef.current = localValue;
@@ -1155,10 +1156,15 @@ function useBufferedMarkdownValue({
     localValueRef.current = value;
     syncedValueRef.current = value;
     skipUnmountFlushRef.current = false;
+    skipNextBlurFlushRef.current = false;
   }, [value]);
 
   const flush = useCallback(
-    (nextValue?: string) => {
+    (nextValue?: string, opts?: { force?: boolean }) => {
+      if (!opts?.force && skipNextBlurFlushRef.current) {
+        skipNextBlurFlushRef.current = false;
+        return;
+      }
       const resolved = nextValue ?? localValueRef.current;
       if (resolved === syncedValueRef.current) return;
       syncedValueRef.current = resolved;
@@ -1184,11 +1190,16 @@ function useBufferedMarkdownValue({
     skipUnmountFlushRef.current = true;
   }, []);
 
+  const skipNextBlurFlush = useCallback(() => {
+    skipNextBlurFlushRef.current = true;
+  }, []);
+
   return {
     localValue,
     update,
     flush,
     skipNextUnmountFlush,
+    skipNextBlurFlush,
   };
 }
 
@@ -1213,7 +1224,7 @@ export function ReviewNoteEditor({
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
-  const { localValue, update, flush, skipNextUnmountFlush } =
+  const { localValue, update, flush, skipNextUnmountFlush, skipNextBlurFlush } =
     useBufferedMarkdownValue({
       value,
       onChange: onPersistDraft,
@@ -1250,6 +1261,7 @@ export function ReviewNoteEditor({
         <Button
           size="small"
           disabled={disabled}
+          onMouseDown={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
             onCancel();
@@ -1261,9 +1273,10 @@ export function ReviewNoteEditor({
           size="small"
           type="primary"
           disabled={!dirty || saving || disabled}
+          onMouseDown={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
-            flush(localValue);
+            flush(localValue, { force: true });
             onSave(localValue);
           }}
         >
@@ -1293,7 +1306,7 @@ function InlineDraftCommentEditor({
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
-  const { localValue, update, flush, skipNextUnmountFlush } =
+  const { localValue, update, flush, skipNextUnmountFlush, skipNextBlurFlush } =
     useBufferedMarkdownValue({
       value,
       onChange,
@@ -1331,6 +1344,7 @@ function InlineDraftCommentEditor({
       >
         <Button
           size="small"
+          onMouseDown={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
             onCancel();
@@ -1341,9 +1355,10 @@ function InlineDraftCommentEditor({
         <Button
           size="small"
           type="primary"
+          onMouseDown={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
-            flush(localValue);
+            flush(localValue, { force: true });
             onSave(localValue);
           }}
           disabled={!localValue.trim()}
@@ -1375,7 +1390,7 @@ function InlineEditCommentEditor({
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
-  const { localValue, update, flush, skipNextUnmountFlush } =
+  const { localValue, update, flush, skipNextUnmountFlush, skipNextBlurFlush } =
     useBufferedMarkdownValue({
       value,
       onChange,
@@ -1406,6 +1421,7 @@ function InlineEditCommentEditor({
       <Space.Compact size="small">
         <Button
           size="small"
+          onMouseDown={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
             onCancel();
@@ -1416,9 +1432,10 @@ function InlineEditCommentEditor({
         <Button
           size="small"
           type="primary"
+          onMouseDown={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
-            flush(localValue);
+            flush(localValue, { force: true });
             onSave(localValue);
           }}
           disabled={!localValue.trim()}
