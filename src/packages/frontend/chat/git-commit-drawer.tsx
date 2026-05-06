@@ -45,6 +45,7 @@ import {
   importReviewBundle,
   loadReviewRecord,
   loadReviewDraft,
+  mergeRecordWithDraft,
   type GitReviewCommentSide,
   type GitReviewCommentV2,
   normalizeCommitSha,
@@ -481,6 +482,71 @@ export function resolveGitCommitSearchChange({
   return {
     search: nextSearch,
     preserveSearchOnAutoClear: false,
+  };
+}
+
+export function resolveGitReviewSaveState({
+  next = {},
+  draft,
+  reviewed,
+  reviewNote,
+  reviewNoteDraft,
+  reviewComments,
+}: {
+  next?: Partial<Pick<GitReviewRecordV2, "reviewed" | "note" | "comments">>;
+  draft?: {
+    reviewed: boolean;
+    note: string;
+    comments?: Record<string, GitReviewCommentV2>;
+  };
+  reviewed: boolean;
+  reviewNote: string;
+  reviewNoteDraft: string;
+  reviewComments?: Record<string, GitReviewCommentV2>;
+}): {
+  reviewed: boolean;
+  note: string;
+  comments: Record<string, GitReviewCommentV2>;
+} {
+  const draftComments = draft?.comments;
+  return {
+    reviewed: next.reviewed ?? draft?.reviewed ?? reviewed,
+    note: next.note ?? draft?.note ?? reviewNoteDraft ?? reviewNote,
+    comments:
+      next.comments ??
+      (draftComments && Object.keys(draftComments).length > 0
+        ? draftComments
+        : (reviewComments ?? {})),
+  };
+}
+
+export function resolveGitReviewSaveCompletion({
+  payload,
+  sent,
+  current,
+}: {
+  payload: Pick<GitReviewRecordV2, "reviewed" | "note">;
+  sent: {
+    reviewed: boolean;
+    note: string;
+  };
+  current: {
+    reviewed: boolean;
+    noteDraft: string;
+  };
+}): {
+  reviewed: boolean;
+  reviewNote: string;
+  reviewNoteDraft: string;
+  reviewDirty: boolean;
+} {
+  const reviewedChangedSinceSave = current.reviewed !== sent.reviewed;
+  const noteChangedSinceSave = current.noteDraft !== sent.note;
+  return {
+    reviewed: reviewedChangedSinceSave ? current.reviewed : payload.reviewed,
+    reviewNote: payload.note,
+    reviewNoteDraft: noteChangedSinceSave ? current.noteDraft : payload.note,
+    reviewDirty: reviewedChangedSinceSave || noteChangedSinceSave,
   };
 }
 
@@ -1116,6 +1182,60 @@ type MarkdownHistoryInputProps = ComponentProps<typeof MarkdownInput> & {
   historyId: string;
 };
 
+function normalizeGitReviewEditorIdPart(
+  value?: string | null,
+  fallback = "none",
+): string {
+  const normalized = `${value ?? ""}`.trim();
+  return normalized || fallback;
+}
+
+export function buildGitReviewEditorScope({
+  accountId,
+  commitSha,
+}: {
+  accountId?: string | null;
+  commitSha?: string | null;
+}): string {
+  const normalizedCommit =
+    normalizeCommitSha(commitSha ?? undefined) ?? commitSha;
+  return [
+    "git-review",
+    "account",
+    normalizeGitReviewEditorIdPart(accountId, "anonymous"),
+    "commit",
+    normalizeGitReviewEditorIdPart(normalizedCommit, "none"),
+  ].join(":");
+}
+
+export function buildGitReviewNoteEditorId(scope: string): string {
+  return `${scope}:note`;
+}
+
+export function buildGitInlineDraftEditorId({
+  scope,
+  filePath,
+  anchorId,
+}: {
+  scope: string;
+  filePath: string;
+  anchorId: string;
+}): string {
+  return `${scope}:inline-draft:${filePath}:${anchorId}`;
+}
+
+export function buildGitInlineEditEditorId({
+  scope,
+  filePath,
+  commentId,
+}: {
+  scope: string;
+  filePath: string;
+  commentId: string;
+}): string {
+  return `${scope}:inline-edit:${filePath}:${commentId}`;
+}
+
 export function MarkdownHistoryInput({
   historyId: _historyId,
   saveDebounceMs = 0,
@@ -1145,6 +1265,8 @@ function useBufferedMarkdownValue({
   const localValueRef = useRef(localValue);
   const syncedValueRef = useRef(value);
   const skipUnmountFlushRef = useRef(false);
+  const skipNextBlurFlushRef = useRef(false);
+  const pendingActionBlurRecoveryRef = useRef(false);
 
   useEffect(() => {
     localValueRef.current = localValue;
@@ -1155,10 +1277,17 @@ function useBufferedMarkdownValue({
     localValueRef.current = value;
     syncedValueRef.current = value;
     skipUnmountFlushRef.current = false;
+    skipNextBlurFlushRef.current = false;
+    pendingActionBlurRecoveryRef.current = false;
   }, [value]);
 
   const flush = useCallback(
-    (nextValue?: string) => {
+    (nextValue?: string, opts?: { force?: boolean }) => {
+      if (!opts?.force && skipNextBlurFlushRef.current) {
+        skipNextBlurFlushRef.current = false;
+        return;
+      }
+      pendingActionBlurRecoveryRef.current = false;
       const resolved = nextValue ?? localValueRef.current;
       if (resolved === syncedValueRef.current) return;
       syncedValueRef.current = resolved;
@@ -1184,11 +1313,30 @@ function useBufferedMarkdownValue({
     skipUnmountFlushRef.current = true;
   }, []);
 
+  const prepareForActionFocus = useCallback(() => {
+    skipNextBlurFlushRef.current = true;
+    pendingActionBlurRecoveryRef.current = true;
+  }, []);
+
+  const markActionHandled = useCallback(() => {
+    pendingActionBlurRecoveryRef.current = false;
+  }, []);
+
+  const recoverPendingActionBlur = useCallback(() => {
+    if (!pendingActionBlurRecoveryRef.current) return;
+    pendingActionBlurRecoveryRef.current = false;
+    skipNextBlurFlushRef.current = false;
+    flush(undefined, { force: true });
+  }, [flush]);
+
   return {
     localValue,
     update,
     flush,
     skipNextUnmountFlush,
+    prepareForActionFocus,
+    markActionHandled,
+    recoverPendingActionBlur,
   };
 }
 
@@ -1213,11 +1361,18 @@ export function ReviewNoteEditor({
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
-  const { localValue, update, flush, skipNextUnmountFlush } =
-    useBufferedMarkdownValue({
-      value,
-      onChange: onPersistDraft,
-    });
+  const {
+    localValue,
+    update,
+    flush,
+    skipNextUnmountFlush,
+    prepareForActionFocus,
+    markActionHandled,
+    recoverPendingActionBlur,
+  } = useBufferedMarkdownValue({
+    value,
+    onChange: onPersistDraft,
+  });
   const dirty = localValue !== committedValue;
   return (
     <>
@@ -1227,6 +1382,11 @@ export function ReviewNoteEditor({
         value={localValue}
         onChange={update}
         onBlur={flush}
+        onShiftEnter={(next) => {
+          skipNextUnmountFlush();
+          flush(next, { force: true });
+          onSave(next);
+        }}
         placeholder="Private review note (not sent to agent)"
         fontSize={Math.max(13, fontSize)}
         autoGrow
@@ -1250,7 +1410,11 @@ export function ReviewNoteEditor({
         <Button
           size="small"
           disabled={disabled}
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
             onCancel();
           }}
@@ -1261,9 +1425,13 @@ export function ReviewNoteEditor({
           size="small"
           type="primary"
           disabled={!dirty || saving || disabled}
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
-            flush(localValue);
+            flush(localValue, { force: true });
             onSave(localValue);
           }}
         >
@@ -1275,8 +1443,7 @@ export function ReviewNoteEditor({
 }
 
 function InlineDraftCommentEditor({
-  filePath,
-  anchorId,
+  historyId,
   value,
   fontSize,
   loading,
@@ -1284,8 +1451,7 @@ function InlineDraftCommentEditor({
   onCancel,
   onSave,
 }: {
-  filePath: string;
-  anchorId: string;
+  historyId: string;
   value: string;
   fontSize: number;
   loading: boolean;
@@ -1293,16 +1459,23 @@ function InlineDraftCommentEditor({
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
-  const { localValue, update, flush, skipNextUnmountFlush } =
-    useBufferedMarkdownValue({
-      value,
-      onChange,
-    });
+  const {
+    localValue,
+    update,
+    flush,
+    skipNextUnmountFlush,
+    prepareForActionFocus,
+    markActionHandled,
+    recoverPendingActionBlur,
+  } = useBufferedMarkdownValue({
+    value,
+    onChange,
+  });
   return (
     <>
       <MarkdownHistoryInput
-        historyId={`git-inline-draft:${filePath}:${anchorId}`}
-        cacheId={`git-inline-draft:${filePath}:${anchorId}`}
+        historyId={historyId}
+        cacheId={historyId}
         value={localValue}
         onChange={update}
         onBlur={flush}
@@ -1331,7 +1504,11 @@ function InlineDraftCommentEditor({
       >
         <Button
           size="small"
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
             onCancel();
           }}
@@ -1341,9 +1518,13 @@ function InlineDraftCommentEditor({
         <Button
           size="small"
           type="primary"
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
-            flush(localValue);
+            flush(localValue, { force: true });
             onSave(localValue);
           }}
           disabled={!localValue.trim()}
@@ -1357,8 +1538,7 @@ function InlineDraftCommentEditor({
 }
 
 function InlineEditCommentEditor({
-  filePath,
-  commentId,
+  historyId,
   value,
   fontSize,
   loading,
@@ -1366,8 +1546,7 @@ function InlineEditCommentEditor({
   onCancel,
   onSave,
 }: {
-  filePath: string;
-  commentId: string;
+  historyId: string;
   value: string;
   fontSize: number;
   loading: boolean;
@@ -1375,16 +1554,23 @@ function InlineEditCommentEditor({
   onCancel: () => void;
   onSave: (value: string) => void;
 }) {
-  const { localValue, update, flush, skipNextUnmountFlush } =
-    useBufferedMarkdownValue({
-      value,
-      onChange,
-    });
+  const {
+    localValue,
+    update,
+    flush,
+    skipNextUnmountFlush,
+    prepareForActionFocus,
+    markActionHandled,
+    recoverPendingActionBlur,
+  } = useBufferedMarkdownValue({
+    value,
+    onChange,
+  });
   return (
     <>
       <MarkdownHistoryInput
-        historyId={`git-inline-edit:${filePath}:${commentId}`}
-        cacheId={`git-inline-edit:${filePath}:${commentId}`}
+        historyId={historyId}
+        cacheId={historyId}
         value={localValue}
         onChange={update}
         onBlur={flush}
@@ -1406,7 +1592,11 @@ function InlineEditCommentEditor({
       <Space.Compact size="small">
         <Button
           size="small"
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
             onCancel();
           }}
@@ -1416,9 +1606,13 @@ function InlineEditCommentEditor({
         <Button
           size="small"
           type="primary"
+          onMouseDown={prepareForActionFocus}
+          onFocus={prepareForActionFocus}
+          onBlur={recoverPendingActionBlur}
           onClick={() => {
+            markActionHandled();
             skipNextUnmountFlush();
-            flush(localValue);
+            flush(localValue, { force: true });
             onSave(localValue);
           }}
           disabled={!localValue.trim()}
@@ -1438,6 +1632,7 @@ export const DiffBlock = memo(function DiffBlock({
   languageHint,
   fontSize,
   editorTheme,
+  editorHistoryScope = buildGitReviewEditorScope({}),
   comments,
   showResolvedComments,
   commentEnabled,
@@ -1466,6 +1661,7 @@ export const DiffBlock = memo(function DiffBlock({
   languageHint: string;
   fontSize: number;
   editorTheme?: string | null;
+  editorHistoryScope?: string;
   comments: GitReviewCommentV2[];
   showResolvedComments: boolean;
   commentEnabled: boolean;
@@ -1708,8 +1904,11 @@ export const DiffBlock = memo(function DiffBlock({
                       {isEditing ? (
                         <InlineEditCommentEditor
                           key={comment.id}
-                          filePath={filePath}
-                          commentId={comment.id}
+                          historyId={buildGitInlineEditEditorId({
+                            scope: editorHistoryScope,
+                            filePath,
+                            commentId: comment.id,
+                          })}
                           value={activeEditingBody}
                           fontSize={commentFontSize}
                           loading={pendingKey === `edit:${comment.id}`}
@@ -1801,8 +2000,11 @@ export const DiffBlock = memo(function DiffBlock({
                 </Typography.Text>
                 <InlineDraftCommentEditor
                   key={anchorId}
-                  filePath={filePath}
-                  anchorId={anchorId}
+                  historyId={buildGitInlineDraftEditorId({
+                    scope: editorHistoryScope,
+                    filePath,
+                    anchorId,
+                  })}
                   value={activeDraftBody}
                   fontSize={commentFontSize}
                   loading={pendingKey === `create:${anchorId}`}
@@ -1831,6 +2033,7 @@ const DiffFileSection = memo(function DiffFileSection({
   showResolvedComments,
   isHeadSelected,
   visibleLineLimit,
+  editorHistoryScope,
   onOpenFile,
   onShowMoreLines,
   activeDraftAnchorId,
@@ -1861,6 +2064,7 @@ const DiffFileSection = memo(function DiffFileSection({
   showResolvedComments: boolean;
   isHeadSelected: boolean;
   visibleLineLimit: number;
+  editorHistoryScope: string;
   onOpenFile: (filePath: string) => Promise<void>;
   onShowMoreLines: (sectionId: string) => void;
   activeDraftAnchorId?: string;
@@ -1951,6 +2155,7 @@ const DiffFileSection = memo(function DiffFileSection({
         languageHint={languageHint}
         fontSize={fontSize}
         editorTheme={editorTheme}
+        editorHistoryScope={editorHistoryScope}
         comments={fileComments}
         showResolvedComments={showResolvedComments}
         commentEnabled={!isHeadSelected}
@@ -2083,6 +2288,8 @@ export function GitCommitDrawer({
     useState("");
   const reviewLoadTokenRef = useRef(0);
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
+  const reviewNoteDraftRef = useRef(reviewNoteDraft);
+  const reviewedRef = useRef(reviewed);
   const preserveCommitSearchOnAutoClearRef = useRef(false);
   const reviewImportInputRef = useRef<HTMLInputElement | null>(null);
   const diffFindInputRef = useRef<any>(null);
@@ -2111,6 +2318,14 @@ export function GitCommitDrawer({
     if (override) return override;
     return containingPath(sourcePath ?? ".") || ".";
   }, [sourcePath, cwdOverride]);
+
+  useEffect(() => {
+    reviewNoteDraftRef.current = reviewNoteDraft;
+  }, [reviewNoteDraft]);
+
+  useEffect(() => {
+    reviewedRef.current = reviewed;
+  }, [reviewed]);
   const scrollStorageId = useMemo(() => {
     const commitKey = `${commit ?? HEAD_REF}`.toLowerCase();
     const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${cwd}|${commitKey}`;
@@ -2591,7 +2806,7 @@ export function GitCommitDrawer({
     const applyReset = (nextCommit?: string) => {
       const normalizedNext = normalizeCommitSha(nextCommit);
       const draft = normalizedNext
-        ? loadReviewDraft(normalizedNext)
+        ? loadReviewDraft(normalizedNext, accountId)
         : undefined;
       setReviewLoading(false);
       setReviewError("");
@@ -2846,9 +3061,22 @@ export function GitCommitDrawer({
       if (!accountId || !commit || isHeadCommit(commit)) return;
       const normalizedCommit = normalizeCommitSha(commit);
       if (!normalizedCommit) return;
-      const nextReviewed = next.reviewed ?? reviewed;
-      const nextNote = next.note ?? reviewNote;
-      const nextComments = next.comments ?? reviewRecord?.comments ?? {};
+      const latestDraft = loadReviewDraft(normalizedCommit, accountId);
+      const resolved = resolveGitReviewSaveState({
+        next,
+        draft: latestDraft,
+        reviewed,
+        reviewNote,
+        reviewNoteDraft,
+        reviewComments: reviewRecord?.comments,
+      });
+      const nextReviewed = resolved.reviewed;
+      const nextNote = resolved.note;
+      const nextComments = resolved.comments;
+      const sentState = {
+        reviewed: Boolean(nextReviewed),
+        note: `${nextNote ?? ""}`,
+      };
       const isActiveCommit = activeReviewCommitRef.current === normalizedCommit;
       if (isActiveCommit) {
         setReviewSaving(true);
@@ -2868,30 +3096,51 @@ export function GitCommitDrawer({
             updated_at: Date.now(),
             revision: 1,
           } as GitReviewRecordV2);
-        const payload = await saveReviewRecord({
-          ...base,
-          account_id: accountId,
-          commit_sha: normalizedCommit,
-          reviewed: Boolean(nextReviewed),
-          note: `${nextNote ?? ""}`,
-          comments: nextComments,
-          last_submitted_at:
-            typeof next.last_submitted_at === "number"
-              ? next.last_submitted_at
-              : base.last_submitted_at,
-          last_submission_turn_id:
-            typeof next.last_submission_turn_id === "string"
-              ? next.last_submission_turn_id
-              : base.last_submission_turn_id,
-        });
+        const payload = await saveReviewRecord(
+          {
+            ...base,
+            account_id: accountId,
+            commit_sha: normalizedCommit,
+            reviewed: Boolean(nextReviewed),
+            note: `${nextNote ?? ""}`,
+            comments: nextComments,
+            last_submitted_at:
+              typeof next.last_submitted_at === "number"
+                ? next.last_submitted_at
+                : base.last_submitted_at,
+            last_submission_turn_id:
+              typeof next.last_submission_turn_id === "string"
+                ? next.last_submission_turn_id
+                : base.last_submission_turn_id,
+          },
+          {
+            clearDraftThroughRevision: latestDraft?.revision,
+          },
+        );
         setReviewedByCommit((prev) => ({
           ...prev,
           [normalizedCommit]: payload.reviewed,
         }));
         if (activeReviewCommitRef.current === normalizedCommit) {
-          setReviewRecord(payload);
-          setReviewUpdatedAt(payload.updated_at);
-          setReviewDirty(false);
+          const mergedPayload =
+            mergeRecordWithDraft(
+              payload,
+              loadReviewDraft(normalizedCommit, accountId),
+            ) ?? payload;
+          const completion = resolveGitReviewSaveCompletion({
+            payload: mergedPayload,
+            sent: sentState,
+            current: {
+              reviewed: reviewedRef.current,
+              noteDraft: reviewNoteDraftRef.current,
+            },
+          });
+          setReviewed(completion.reviewed);
+          setReviewNote(completion.reviewNote);
+          setReviewNoteDraft(completion.reviewNoteDraft);
+          setReviewRecord(mergedPayload);
+          setReviewUpdatedAt(mergedPayload.updated_at);
+          setReviewDirty(completion.reviewDirty);
           setReviewError("");
         }
       } catch (err) {
@@ -2904,7 +3153,7 @@ export function GitCommitDrawer({
         }
       }
     },
-    [accountId, commit, reviewed, reviewNote, reviewRecord],
+    [accountId, commit, reviewed, reviewNote, reviewNoteDraft, reviewRecord],
   );
 
   const allInlineComments = useMemo(
@@ -2945,19 +3194,36 @@ export function GitCommitDrawer({
       if (!accountId || !commit || isHeadCommit(commit)) return;
       const normalizedCommit = normalizeCommitSha(commit);
       if (!normalizedCommit) return;
-      const current = reviewRecord?.comments ?? {};
-      const next = mutate({ ...current });
-      saveReviewDraft(normalizedCommit, {
-        reviewed: Boolean(reviewed),
-        note: `${reviewNote ?? ""}`,
-        comments: next,
+      const latestDraft = loadReviewDraft(normalizedCommit, accountId);
+      const resolved = resolveGitReviewSaveState({
+        draft: latestDraft,
+        reviewed,
+        reviewNote,
+        reviewNoteDraft,
+        reviewComments: reviewRecord?.comments,
       });
-      await saveReview({ comments: next, reviewed, note: reviewNote });
+      const current = resolved.comments;
+      const next = mutate({ ...current });
+      saveReviewDraft(
+        normalizedCommit,
+        {
+          reviewed: resolved.reviewed,
+          note: resolved.note,
+          comments: next,
+        },
+        accountId,
+      );
+      await saveReview({
+        comments: next,
+        reviewed: resolved.reviewed,
+        note: resolved.note,
+      });
     },
     [
       accountId,
       commit,
       reviewRecord?.comments,
+      reviewNoteDraft,
       reviewNote,
       reviewed,
       saveReview,
@@ -3312,11 +3578,22 @@ export function GitCommitDrawer({
       if (commit) {
         const normalizedCommit = normalizeCommitSha(commit);
         if (normalizedCommit) {
-          saveReviewDraft(normalizedCommit, {
-            reviewed: Boolean(reviewed),
-            note: `${reviewNote ?? ""}`,
-            comments: nextComments,
+          const resolved = resolveGitReviewSaveState({
+            draft: loadReviewDraft(normalizedCommit, accountId),
+            reviewed,
+            reviewNote,
+            reviewNoteDraft,
+            reviewComments: reviewRecord?.comments,
           });
+          saveReviewDraft(
+            normalizedCommit,
+            {
+              reviewed: resolved.reviewed,
+              note: resolved.note,
+              comments: nextComments,
+            },
+            accountId,
+          );
         }
       }
       await saveReview({
@@ -3333,19 +3610,24 @@ export function GitCommitDrawer({
   };
 
   useEffect(() => {
-    if (!open || !commit || isHeadCommit(commit)) return;
+    if (!open || !accountId || !commit || isHeadCommit(commit)) return;
     const normalizedCommit = normalizeCommitSha(commit);
     if (!normalizedCommit) return;
     if (reviewStateCommit !== normalizedCommit) return;
     if (reviewLoading || reviewSaving) return;
     if (!reviewDirty) return;
-    saveReviewDraft(normalizedCommit, {
-      reviewed: Boolean(reviewed),
-      note: `${reviewNoteDraft ?? ""}`,
-      comments: reviewRecord?.comments ?? {},
-    });
+    saveReviewDraft(
+      normalizedCommit,
+      {
+        reviewed: Boolean(reviewed),
+        note: `${reviewNoteDraft ?? ""}`,
+        comments: reviewRecord?.comments ?? {},
+      },
+      accountId,
+    );
   }, [
     open,
+    accountId,
     commit,
     reviewLoading,
     reviewSaving,
@@ -3716,6 +3998,18 @@ export function GitCommitDrawer({
   const currentReviewCommit = useMemo(
     () => normalizeCommitSha(commit),
     [commit],
+  );
+  const reviewEditorScope = useMemo(
+    () =>
+      buildGitReviewEditorScope({
+        accountId,
+        commitSha: reviewStateCommit ?? currentReviewCommit,
+      }),
+    [accountId, reviewStateCommit, currentReviewCommit],
+  );
+  const reviewNoteHistoryId = useMemo(
+    () => buildGitReviewNoteEditorId(reviewEditorScope),
+    [reviewEditorScope],
   );
   const hasTrackedHeadChanges = useMemo(
     () => headStatusEntries.some((entry) => entry.tracked),
@@ -4277,7 +4571,11 @@ export function GitCommitDrawer({
               <Checkbox
                 checked={reviewed}
                 disabled={
-                  reviewLoading || reviewSaving || !commit || isHeadSelected
+                  reviewLoading ||
+                  reviewSaving ||
+                  !accountId ||
+                  !commit ||
+                  isHeadSelected
                 }
                 style={{
                   display: "inline-flex",
@@ -4325,27 +4623,39 @@ export function GitCommitDrawer({
             </div>
             {reviewNoteEditing ? (
               <ReviewNoteEditor
-                historyId={`git-review-note:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
-                key={`git-review-note-edit:${reviewStateCommit ?? currentReviewCommit ?? "none"}`}
+                historyId={reviewNoteHistoryId}
+                key={reviewNoteHistoryId}
                 value={reviewNoteDraft}
                 committedValue={reviewNote}
                 fontSize={fontSize}
                 saving={reviewSaving}
                 disabled={
-                  reviewLoading || isHeadSelected || !currentReviewCommit
+                  reviewLoading ||
+                  !accountId ||
+                  isHeadSelected ||
+                  !currentReviewCommit
                 }
                 onPersistDraft={(value) => {
-                  if (reviewLoading || isHeadSelected || !currentReviewCommit)
+                  if (
+                    reviewLoading ||
+                    !accountId ||
+                    isHeadSelected ||
+                    !currentReviewCommit
+                  )
                     return;
                   if (activeReviewCommitRef.current !== currentReviewCommit)
                     return;
                   setReviewNoteDraft(value);
                   setReviewDirty(true);
-                  saveReviewDraft(currentReviewCommit, {
-                    reviewed: Boolean(reviewed),
-                    note: `${value ?? ""}`,
-                    comments: reviewRecord?.comments ?? {},
-                  });
+                  saveReviewDraft(
+                    currentReviewCommit,
+                    {
+                      reviewed: Boolean(reviewed),
+                      note: `${value ?? ""}`,
+                      comments: reviewRecord?.comments ?? {},
+                    },
+                    accountId,
+                  );
                 }}
                 onCancel={() => {
                   setReviewNoteDraft(reviewNote);
@@ -4411,7 +4721,10 @@ export function GitCommitDrawer({
                 <Button
                   size="small"
                   disabled={
-                    reviewSaving || !currentReviewCommit || isHeadSelected
+                    reviewSaving ||
+                    !accountId ||
+                    !currentReviewCommit ||
+                    isHeadSelected
                   }
                   onClick={() => {
                     setReviewNoteDraft(reviewNote);
@@ -4700,6 +5013,7 @@ export function GitCommitDrawer({
                         index={idx}
                         fontSize={fontSize}
                         editorTheme={editorTheme}
+                        editorHistoryScope={reviewEditorScope}
                         fileComments={fileComments}
                         showResolvedComments={showResolvedComments}
                         isHeadSelected={isHeadSelected}

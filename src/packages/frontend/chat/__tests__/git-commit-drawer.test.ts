@@ -1,8 +1,12 @@
 import React, { useState } from "react";
 import {
+  buildGitInlineDraftEditorId,
+  buildGitInlineEditEditorId,
   buildGitDiffFindMatches,
+  buildGitReviewEditorScope,
   filterGitReviewLogEntries,
   buildGitReviewFileSectionId,
+  buildGitReviewNoteEditorId,
   captureGitDiffScrollAnchor,
   commentAnchorKey,
   DiffBlock,
@@ -14,6 +18,8 @@ import {
   isGitDiffFindTargetRendered,
   MarkdownHistoryInput,
   ReviewNoteEditor,
+  resolveGitReviewSaveCompletion,
+  resolveGitReviewSaveState,
   buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
@@ -119,6 +125,64 @@ describe("git commit drawer merge commit formatting", () => {
     expect(latestMarkdownInputProps.redoMode).toBe("local");
   });
 
+  it("scopes git review editor cache ids by both account and commit", () => {
+    const accountAScope = buildGitReviewEditorScope({
+      accountId: "acct-a",
+      commitSha: "abc1234",
+    });
+    const accountBScope = buildGitReviewEditorScope({
+      accountId: "acct-b",
+      commitSha: "abc1234",
+    });
+    const otherCommitScope = buildGitReviewEditorScope({
+      accountId: "acct-a",
+      commitSha: "def5678",
+    });
+
+    expect(buildGitReviewNoteEditorId(accountAScope)).not.toBe(
+      buildGitReviewNoteEditorId(accountBScope),
+    );
+    expect(
+      buildGitInlineDraftEditorId({
+        scope: accountAScope,
+        filePath: "src/example.ts",
+        anchorId: "new:17",
+      }),
+    ).not.toBe(
+      buildGitInlineDraftEditorId({
+        scope: accountBScope,
+        filePath: "src/example.ts",
+        anchorId: "new:17",
+      }),
+    );
+    expect(
+      buildGitInlineDraftEditorId({
+        scope: accountAScope,
+        filePath: "src/example.ts",
+        anchorId: "new:17",
+      }),
+    ).not.toBe(
+      buildGitInlineDraftEditorId({
+        scope: otherCommitScope,
+        filePath: "src/example.ts",
+        anchorId: "new:17",
+      }),
+    );
+    expect(
+      buildGitInlineEditEditorId({
+        scope: accountAScope,
+        filePath: "src/example.ts",
+        commentId: "comment-1",
+      }),
+    ).not.toBe(
+      buildGitInlineEditEditorId({
+        scope: accountBScope,
+        filePath: "src/example.ts",
+        commentId: "comment-1",
+      }),
+    );
+  });
+
   it("treats missing review state as unknown instead of not reviewed", () => {
     expect(getCommitReviewIndicatorState({}, "abc1234")).toEqual({
       reviewed: false,
@@ -195,6 +259,191 @@ describe("git commit drawer merge commit formatting", () => {
     });
     expect(onPersistDraft).toHaveBeenLastCalledWith("edited locally");
     expect(onSave).toHaveBeenCalledWith("edited locally");
+  });
+
+  it("saves the private review note on shift-enter", () => {
+    const onPersistDraft = jest.fn();
+    const onSave = jest.fn();
+
+    render(
+      React.createElement(ReviewNoteEditor, {
+        historyId: "git-review-note:test",
+        value: "existing",
+        committedValue: "existing",
+        fontSize: 14,
+        saving: false,
+        disabled: false,
+        onPersistDraft,
+        onCancel: jest.fn(),
+        onSave,
+      }),
+    );
+
+    act(() => {
+      latestMarkdownInputProps.onChange("save me");
+    });
+    act(() => {
+      latestMarkdownInputProps.onShiftEnter("save me");
+    });
+
+    expect(onPersistDraft).toHaveBeenCalledWith("save me");
+    expect(onSave).toHaveBeenCalledWith("save me");
+  });
+
+  it("prefers the latest draft note when another review action saves", () => {
+    expect(
+      resolveGitReviewSaveState({
+        draft: {
+          reviewed: false,
+          note: "newer draft note",
+          comments: {},
+        },
+        next: {
+          reviewed: true,
+        },
+        reviewed: false,
+        reviewNote: "older committed note",
+        reviewNoteDraft: "stale render note",
+        reviewComments: {},
+      }),
+    ).toEqual({
+      reviewed: true,
+      note: "newer draft note",
+      comments: {},
+    });
+  });
+
+  it("preserves a newer in-memory draft when an older save completes", () => {
+    expect(
+      resolveGitReviewSaveCompletion({
+        payload: {
+          reviewed: true,
+          note: "saved note",
+        },
+        sent: {
+          reviewed: true,
+          note: "saved note",
+        },
+        current: {
+          reviewed: true,
+          noteDraft: "newer local draft",
+        },
+      }),
+    ).toEqual({
+      reviewed: true,
+      reviewNote: "saved note",
+      reviewNoteDraft: "newer local draft",
+      reviewDirty: true,
+    });
+  });
+
+  it("does not persist a private review note when cancel wins after blur ordering", () => {
+    const onPersistDraft = jest.fn();
+    const onCancel = jest.fn();
+
+    const rendered = render(
+      React.createElement(ReviewNoteEditor, {
+        historyId: "git-review-note:test",
+        value: "existing",
+        committedValue: "existing",
+        fontSize: 14,
+        saving: false,
+        disabled: false,
+        onPersistDraft,
+        onCancel,
+        onSave: jest.fn(),
+      }),
+    );
+
+    act(() => {
+      latestMarkdownInputProps.onChange("discard me");
+    });
+
+    const cancelButton = rendered.getByText("Cancel");
+    act(() => {
+      fireEvent.mouseDown(cancelButton);
+    });
+    act(() => {
+      latestMarkdownInputProps.onBlur("discard me");
+    });
+    act(() => {
+      cancelButton.click();
+    });
+
+    expect(onPersistDraft).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalled();
+  });
+
+  it("does not persist a private review note when keyboard focus moves to cancel first", () => {
+    const onPersistDraft = jest.fn();
+    const onCancel = jest.fn();
+
+    const rendered = render(
+      React.createElement(ReviewNoteEditor, {
+        historyId: "git-review-note:test",
+        value: "existing",
+        committedValue: "existing",
+        fontSize: 14,
+        saving: false,
+        disabled: false,
+        onPersistDraft,
+        onCancel,
+        onSave: jest.fn(),
+      }),
+    );
+
+    act(() => {
+      latestMarkdownInputProps.onChange("discard me");
+    });
+
+    const cancelButton = rendered.getByText("Cancel");
+    act(() => {
+      fireEvent.focus(cancelButton);
+    });
+    act(() => {
+      latestMarkdownInputProps.onBlur("discard me");
+    });
+    act(() => {
+      cancelButton.click();
+    });
+
+    expect(onPersistDraft).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalled();
+  });
+
+  it("persists a private review note if action-button focus is abandoned", () => {
+    const onPersistDraft = jest.fn();
+
+    const rendered = render(
+      React.createElement(ReviewNoteEditor, {
+        historyId: "git-review-note:test",
+        value: "existing",
+        committedValue: "existing",
+        fontSize: 14,
+        saving: false,
+        disabled: false,
+        onPersistDraft,
+        onCancel: jest.fn(),
+        onSave: jest.fn(),
+      }),
+    );
+
+    act(() => {
+      latestMarkdownInputProps.onChange("keep me");
+    });
+
+    const cancelButton = rendered.getByText("Cancel");
+    act(() => {
+      fireEvent.focus(cancelButton);
+    });
+    act(() => {
+      latestMarkdownInputProps.onBlur("keep me");
+    });
+    act(() => {
+      fireEvent.blur(cancelButton);
+    });
+
+    expect(onPersistDraft).toHaveBeenCalledWith("keep me");
   });
 
   it("does not re-commit diff blocks on unrelated parent state changes", () => {
