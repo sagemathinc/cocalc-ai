@@ -106,6 +106,9 @@ jest.mock("@cocalc/frontend/i18n", () => ({
 }));
 
 jest.mock("./../membership-purchase-modal", () => () => null);
+jest.mock("./../membership-package-manager", () => () => (
+  <div>membership-package-manager</div>
+));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
