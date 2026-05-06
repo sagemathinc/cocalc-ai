@@ -147,6 +147,9 @@ describe("ProjectsActions move flow", () => {
       source_host_id: "host-old",
       dest_host_id: "host-new",
     });
+    expect(projectActions.setState).toHaveBeenCalledWith({
+      move_reopen_required: true,
+    });
     expect(projectActions.resetProjectHostRuntime).toHaveBeenCalled();
   });
 });
