@@ -268,6 +268,21 @@ export function clearReviewDraft(commitSha?: string): void {
   }
 }
 
+export function clearReviewDraftThroughRevision(
+  commitSha: string,
+  revision?: number,
+): void {
+  if (typeof revision !== "number" || !Number.isFinite(revision)) {
+    clearReviewDraft(commitSha);
+    return;
+  }
+  const current = loadReviewDraft(commitSha);
+  if (current && (current.revision ?? 0) > revision) {
+    return;
+  }
+  clearReviewDraft(commitSha);
+}
+
 export function mergeRecordWithDraft(
   record: GitReviewRecordV2 | undefined,
   draft: GitReviewDraftV2 | undefined,
@@ -343,6 +358,9 @@ export async function loadReviewRecord({
 
 export async function saveReviewRecord(
   record: GitReviewRecordV2,
+  opts?: {
+    clearDraftThroughRevision?: number;
+  },
 ): Promise<GitReviewRecordV2> {
   const accountId = `${record.account_id ?? ""}`.trim();
   const commitSha = normalizeCommitSha(record.commit_sha);
@@ -364,7 +382,7 @@ export async function saveReviewRecord(
     revision: Math.max(1, (record.revision ?? 0) + 1),
   };
   await kv.set(key, payload);
-  clearReviewDraft(commitSha);
+  clearReviewDraftThroughRevision(commitSha, opts?.clearDraftThroughRevision);
   return payload;
 }
 

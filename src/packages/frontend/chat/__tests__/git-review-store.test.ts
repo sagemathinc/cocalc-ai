@@ -1,6 +1,9 @@
 /** @jest-environment jsdom */
 
 import {
+  loadReviewDraft,
+  saveReviewDraft,
+  saveReviewRecord,
   deleteAllReviewRecords,
   exportReviewBundle,
   importReviewBundle,
@@ -206,5 +209,45 @@ describe("git review import/export", () => {
     expect(
       localStorage.getItem("cocalc:git-review:draft:v2:commit:aaa1111"),
     ).toBe(null);
+  });
+
+  it("does not clear a newer local draft when an older save finishes", async () => {
+    saveReviewDraft("aaa1111", {
+      reviewed: false,
+      note: "older draft",
+      comments: {},
+    });
+    const olderDraft = loadReviewDraft("aaa1111");
+    expect(olderDraft?.revision).toBe(1);
+
+    saveReviewDraft("aaa1111", {
+      reviewed: true,
+      note: "newer draft",
+      comments: {},
+    });
+    expect(loadReviewDraft("aaa1111")?.revision).toBe(2);
+
+    await saveReviewRecord(
+      {
+        version: 2,
+        account_id: "acct-4",
+        commit_sha: "aaa1111",
+        reviewed: false,
+        note: "saved record",
+        comments: {},
+        created_at: 10,
+        updated_at: 10,
+        revision: 1,
+      },
+      {
+        clearDraftThroughRevision: olderDraft?.revision,
+      },
+    );
+
+    expect(loadReviewDraft("aaa1111")).toMatchObject({
+      reviewed: true,
+      note: "newer draft",
+      revision: 2,
+    });
   });
 });

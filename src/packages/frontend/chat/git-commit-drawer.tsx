@@ -45,6 +45,7 @@ import {
   importReviewBundle,
   loadReviewRecord,
   loadReviewDraft,
+  mergeRecordWithDraft,
   type GitReviewCommentSide,
   type GitReviewCommentV2,
   normalizeCommitSha,
@@ -2999,9 +3000,10 @@ export function GitCommitDrawer({
       if (!accountId || !commit || isHeadCommit(commit)) return;
       const normalizedCommit = normalizeCommitSha(commit);
       if (!normalizedCommit) return;
+      const latestDraft = loadReviewDraft(normalizedCommit);
       const resolved = resolveGitReviewSaveState({
         next,
-        draft: loadReviewDraft(normalizedCommit),
+        draft: latestDraft,
         reviewed,
         reviewNote,
         reviewNoteDraft,
@@ -3033,29 +3035,37 @@ export function GitCommitDrawer({
             updated_at: Date.now(),
             revision: 1,
           } as GitReviewRecordV2);
-        const payload = await saveReviewRecord({
-          ...base,
-          account_id: accountId,
-          commit_sha: normalizedCommit,
-          reviewed: Boolean(nextReviewed),
-          note: `${nextNote ?? ""}`,
-          comments: nextComments,
-          last_submitted_at:
-            typeof next.last_submitted_at === "number"
-              ? next.last_submitted_at
-              : base.last_submitted_at,
-          last_submission_turn_id:
-            typeof next.last_submission_turn_id === "string"
-              ? next.last_submission_turn_id
-              : base.last_submission_turn_id,
-        });
+        const payload = await saveReviewRecord(
+          {
+            ...base,
+            account_id: accountId,
+            commit_sha: normalizedCommit,
+            reviewed: Boolean(nextReviewed),
+            note: `${nextNote ?? ""}`,
+            comments: nextComments,
+            last_submitted_at:
+              typeof next.last_submitted_at === "number"
+                ? next.last_submitted_at
+                : base.last_submitted_at,
+            last_submission_turn_id:
+              typeof next.last_submission_turn_id === "string"
+                ? next.last_submission_turn_id
+                : base.last_submission_turn_id,
+          },
+          {
+            clearDraftThroughRevision: latestDraft?.revision,
+          },
+        );
         setReviewedByCommit((prev) => ({
           ...prev,
           [normalizedCommit]: payload.reviewed,
         }));
         if (activeReviewCommitRef.current === normalizedCommit) {
+          const mergedPayload =
+            mergeRecordWithDraft(payload, loadReviewDraft(normalizedCommit)) ??
+            payload;
           const completion = resolveGitReviewSaveCompletion({
-            payload,
+            payload: mergedPayload,
             sent: sentState,
             current: {
               reviewed: reviewedRef.current,
@@ -3065,8 +3075,8 @@ export function GitCommitDrawer({
           setReviewed(completion.reviewed);
           setReviewNote(completion.reviewNote);
           setReviewNoteDraft(completion.reviewNoteDraft);
-          setReviewRecord(payload);
-          setReviewUpdatedAt(payload.updated_at);
+          setReviewRecord(mergedPayload);
+          setReviewUpdatedAt(mergedPayload.updated_at);
           setReviewDirty(completion.reviewDirty);
           setReviewError("");
         }
