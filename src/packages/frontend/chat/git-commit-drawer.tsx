@@ -1267,6 +1267,7 @@ export function ReviewNoteEditor({
           size="small"
           disabled={disabled}
           onMouseDown={skipNextBlurFlush}
+          onFocus={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
             onCancel();
@@ -1279,6 +1280,7 @@ export function ReviewNoteEditor({
           type="primary"
           disabled={!dirty || saving || disabled}
           onMouseDown={skipNextBlurFlush}
+          onFocus={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
             flush(localValue, { force: true });
@@ -1350,6 +1352,7 @@ function InlineDraftCommentEditor({
         <Button
           size="small"
           onMouseDown={skipNextBlurFlush}
+          onFocus={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
             onCancel();
@@ -1361,6 +1364,7 @@ function InlineDraftCommentEditor({
           size="small"
           type="primary"
           onMouseDown={skipNextBlurFlush}
+          onFocus={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
             flush(localValue, { force: true });
@@ -1427,6 +1431,7 @@ function InlineEditCommentEditor({
         <Button
           size="small"
           onMouseDown={skipNextBlurFlush}
+          onFocus={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
             onCancel();
@@ -1438,6 +1443,7 @@ function InlineEditCommentEditor({
           size="small"
           type="primary"
           onMouseDown={skipNextBlurFlush}
+          onFocus={skipNextBlurFlush}
           onClick={() => {
             skipNextUnmountFlush();
             flush(localValue, { force: true });
