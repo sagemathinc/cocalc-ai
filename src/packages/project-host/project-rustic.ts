@@ -71,6 +71,14 @@ function isUnsupportedCommandError(
   command: ProjectRusticCommand,
   stderr: string,
 ): boolean {
+  if (
+    command === "project-rustic-backup" &&
+    stderr.includes("SECURITY_DENY") &&
+    stderr.includes("project-rustic-backup-bad-args") &&
+    stderr.includes("detail=--parent")
+  ) {
+    return true;
+  }
   return (
     stderr.includes("SECURITY_DENY") &&
     stderr.includes("unsupported-command") &&
@@ -121,6 +129,7 @@ export async function projectRusticBackup({
   host,
   timeoutMs,
   tags,
+  parent,
   progress,
 }: {
   src: string;
@@ -128,6 +137,7 @@ export async function projectRusticBackup({
   host: string;
   timeoutMs: number;
   tags?: string[];
+  parent?: string;
   progress?: (update: RusticProgressUpdate) => void;
 }): Promise<{
   time: Date;
@@ -138,9 +148,10 @@ export async function projectRusticBackup({
     .map((tag) => tag.trim())
     .filter((tag) => tag.length > 0)
     .flatMap((tag) => ["--tag", tag]);
+  const parentArgs = parent ? ["--parent", parent] : [];
   const { stdout } = await runProjectRustic({
     command: "project-rustic-backup",
-    args: [src, repoProfile, host, ...tagArgs],
+    args: [src, repoProfile, host, ...tagArgs, ...parentArgs],
     timeoutMs,
     onProgress: progress,
   });

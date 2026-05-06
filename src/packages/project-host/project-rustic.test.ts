@@ -37,6 +37,7 @@ describe("project rustic wrapper", () => {
       host: "project-1",
       timeoutMs: 90_000,
       tags: ["xattr", "rootfs"],
+      parent: "snap-parent",
     });
 
     expect(result.id).toBe("backup-id");
@@ -56,6 +57,8 @@ describe("project rustic wrapper", () => {
           "xattr",
           "--tag",
           "rootfs",
+          "--parent",
+          "snap-parent",
         ],
         timeout: 90,
       }),
@@ -108,6 +111,25 @@ describe("project rustic wrapper", () => {
         repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
         host: "project-1",
         timeoutMs: 30_000,
+      }),
+    ).rejects.toBeInstanceOf(ProjectRusticUnsupportedError);
+  });
+
+  it("treats old wrappers that reject --parent as unsupported", async () => {
+    mockedExecuteCode.mockResolvedValue({
+      type: "blocking",
+      stdout: "",
+      stderr: "SECURITY_DENY code=project-rustic-backup-bad-args detail=--parent",
+      exit_code: 2,
+    } as any);
+
+    await expect(
+      projectRusticBackup({
+        src: "/mnt/cocalc/project-1/.snapshots/temp",
+        repoProfile: "/mnt/cocalc/data/secrets/rustic/project-1.toml",
+        host: "project-1",
+        timeoutMs: 30_000,
+        parent: "snap-parent",
       }),
     ).rejects.toBeInstanceOf(ProjectRusticUnsupportedError);
   });

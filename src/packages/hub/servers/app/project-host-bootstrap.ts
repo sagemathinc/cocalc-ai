@@ -29,6 +29,8 @@ function extractToken(req: Request): string | undefined {
 function resolveBootstrapPyPath(): string | undefined {
   const candidates: Array<string | undefined> = [
     process.env.COCALC_BOOTSTRAP_PY,
+    join(process.cwd(), "packages/server/cloud/bootstrap/bootstrap.py"),
+    join(process.cwd(), "src/packages/server/cloud/bootstrap/bootstrap.py"),
     process.env.COCALC_BUNDLE_DIR
       ? join(
           process.env.COCALC_BUNDLE_DIR,
@@ -37,8 +39,6 @@ function resolveBootstrapPyPath(): string | undefined {
           "bootstrap.py",
         )
       : undefined,
-    join(process.cwd(), "packages/server/cloud/bootstrap/bootstrap.py"),
-    join(process.cwd(), "src/packages/server/cloud/bootstrap/bootstrap.py"),
     join(__dirname, "../../../../server/cloud/bootstrap/bootstrap.py"),
   ];
   for (const candidate of candidates) {

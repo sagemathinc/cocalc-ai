@@ -118,7 +118,7 @@ describe("moveProjectToHost", () => {
   const DEST_HOST_ID = "33333333-3333-4333-8333-333333333333";
   const SOURCE_HOST_NAME = "Source Host";
   const DEST_HOST_NAME = "Destination Host";
-  const MOVE_SENTINEL_PATH = ".local/share/cocalc/move-sentinel.json";
+  const MOVE_SENTINEL_PATH = ".move-sentinel.json";
 
   let postTimeoutState: {
     host_id: string | null;

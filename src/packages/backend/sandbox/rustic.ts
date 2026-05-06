@@ -222,6 +222,7 @@ const whitelist = {
     "--json": true,
     "--long": true,
     "--quiet": true,
+    "--parent": validate.str,
     "-h": true,
     "--help": true,
     "--glob": validate.str,

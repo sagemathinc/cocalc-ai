@@ -1184,6 +1184,24 @@ async function getRemoteProjectBackupIndexes(
   });
 }
 
+async function getLatestKnownBackupId(
+  project_id: string,
+): Promise<string | undefined> {
+  const directIndexStore = await getBackupIndexStoreConfig(project_id).catch(
+    () => null,
+  );
+  if (!directIndexStore) {
+    return undefined;
+  }
+  const records = await getRemoteProjectBackupIndexes(project_id);
+  for (let i = records.length - 1; i >= 0; i--) {
+    if (records[i].status === "complete" && records[i].backup_id) {
+      return records[i].backup_id;
+    }
+  }
+  return undefined;
+}
+
 async function syncRemoteProjectBackupIndexes({
   project_id,
   backup_ids,
@@ -3004,9 +3022,11 @@ async function createBackup({
           }
           const vol = await getVolume(project_id);
           vol.fs.rusticRepo = await resolveRusticRepo(project_id);
+          const parent = await getLatestKnownBackupId(project_id);
           try {
             return await vol.rustic.backup({
               tags,
+              parent,
               progress,
               index: {
                 project_id,
@@ -3019,6 +3039,7 @@ async function createBackup({
                   host,
                   timeoutMs: timeout,
                   tags,
+                  parent,
                   progress,
                 }),
             });
@@ -3035,6 +3056,7 @@ async function createBackup({
             );
             return await vol.rustic.backup({
               tags,
+              parent,
               progress,
               index: {
                 project_id,
