@@ -4,6 +4,7 @@ import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 const REVIEW_STORE_V2 = "cocalc-git-review-v2";
 const REVIEW_STORE_V1 = "cocalc-commit-review-v1";
 const REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:";
+const LEGACY_REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:commit:";
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
 const REVIEW_EXPORT_KIND = "cocalc-git-review-export-v1";
 
@@ -81,7 +82,7 @@ export function makeReviewKey(commitSha?: string): string | undefined {
 function makeDraftStoragePrefix(accountId?: string): string {
   const normalizedAccountId = `${accountId ?? ""}`.trim();
   if (!normalizedAccountId) {
-    return `${REVIEW_DRAFT_STORAGE_PREFIX}commit:`;
+    return LEGACY_REVIEW_DRAFT_STORAGE_PREFIX;
   }
   return `${REVIEW_DRAFT_STORAGE_PREFIX}account:${normalizedAccountId}:commit:`;
 }
@@ -93,6 +94,12 @@ function makeDraftKey(
   const normalized = normalizeCommitSha(commitSha);
   if (!normalized) return undefined;
   return `${makeDraftStoragePrefix(accountId)}${normalized}`;
+}
+
+function makeLegacyDraftKey(commitSha?: string): string | undefined {
+  const normalized = normalizeCommitSha(commitSha);
+  if (!normalized) return undefined;
+  return `${LEGACY_REVIEW_DRAFT_STORAGE_PREFIX}${normalized}`;
 }
 
 function emptyRecord({
@@ -224,15 +231,8 @@ async function getReviewBulkStore(accountId: string) {
   });
 }
 
-export function loadReviewDraft(
-  commitSha?: string,
-  accountId?: string,
-): GitReviewDraftV2 | undefined {
-  const key = makeDraftKey(commitSha, accountId);
-  if (!key) return undefined;
+function parseStoredReviewDraft(raw: string): GitReviewDraftV2 | undefined {
   try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return undefined;
     const parsed = JSON.parse(raw) as Partial<GitReviewDraftV2>;
     return {
       reviewed: Boolean(parsed.reviewed),
@@ -242,6 +242,32 @@ export function loadReviewDraft(
         typeof parsed.updated_at === "number" ? parsed.updated_at : Date.now(),
       revision: typeof parsed.revision === "number" ? parsed.revision : 1,
     };
+  } catch {
+    return undefined;
+  }
+}
+
+export function loadReviewDraft(
+  commitSha?: string,
+  accountId?: string,
+): GitReviewDraftV2 | undefined {
+  const key = makeDraftKey(commitSha, accountId);
+  if (!key) return undefined;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      return parseStoredReviewDraft(raw);
+    }
+    if (!accountId) return undefined;
+    const legacyKey = makeLegacyDraftKey(commitSha);
+    if (!legacyKey) return undefined;
+    const legacyRaw = localStorage.getItem(legacyKey);
+    if (!legacyRaw) return undefined;
+    const legacyDraft = parseStoredReviewDraft(legacyRaw);
+    if (!legacyDraft) return undefined;
+    localStorage.setItem(key, JSON.stringify(legacyDraft));
+    localStorage.removeItem(legacyKey);
+    return legacyDraft;
   } catch {
     return undefined;
   }
@@ -266,6 +292,12 @@ export function saveReviewDraft(
   };
   try {
     localStorage.setItem(key, JSON.stringify(next));
+    if (accountId) {
+      const legacyKey = makeLegacyDraftKey(commitSha);
+      if (legacyKey && legacyKey !== key) {
+        localStorage.removeItem(legacyKey);
+      }
+    }
   } catch {
     // ignore localStorage write failures
   }
@@ -276,6 +308,12 @@ export function clearReviewDraft(commitSha?: string, accountId?: string): void {
   if (!key) return;
   try {
     localStorage.removeItem(key);
+    if (accountId) {
+      const legacyKey = makeLegacyDraftKey(commitSha);
+      if (legacyKey && legacyKey !== key) {
+        localStorage.removeItem(legacyKey);
+      }
+    }
   } catch {
     // ignore localStorage delete failures
   }
@@ -367,10 +405,15 @@ export async function loadReviewRecord({
     name: REVIEW_STORE_V1,
   });
   const legacy = await kvV1.get(normalizedCommit);
+  const draft = loadReviewDraft(normalizedCommit, accountId);
   if (!legacy) {
     return mergeRecordWithDraft(
-      emptyRecord({ accountId, commitSha: normalizedCommit }),
-      loadReviewDraft(normalizedCommit, accountId),
+      emptyRecord({
+        accountId,
+        commitSha: normalizedCommit,
+        now: draft?.updated_at ?? Date.now(),
+      }),
+      draft,
     );
   }
   const now = Date.now();
@@ -386,10 +429,7 @@ export async function loadReviewRecord({
     revision: 1,
   };
   await kvV2.set(key, migrated);
-  return mergeRecordWithDraft(
-    migrated,
-    loadReviewDraft(normalizedCommit, accountId),
-  );
+  return mergeRecordWithDraft(migrated, draft);
 }
 
 export async function saveReviewRecord(

@@ -250,6 +250,64 @@ describe("git review import/export", () => {
     });
   });
 
+  it("loads draft-only review state when no persisted record exists yet", async () => {
+    saveReviewDraft(
+      "eee5555",
+      {
+        reviewed: true,
+        note: "draft-only note",
+        comments: {},
+      },
+      "acct-9",
+    );
+
+    await expect(
+      loadReviewRecord({
+        accountId: "acct-9",
+        commitSha: "eee5555",
+      }),
+    ).resolves.toMatchObject({
+      account_id: "acct-9",
+      commit_sha: "eee5555",
+      reviewed: true,
+      note: "draft-only note",
+    });
+  });
+
+  it("migrates legacy unscoped drafts into account-scoped storage on load", async () => {
+    localStorage.setItem(
+      "cocalc:git-review:draft:v2:commit:ddd4444",
+      JSON.stringify({
+        reviewed: true,
+        note: "legacy draft",
+        comments: {},
+        updated_at: 444,
+        revision: 7,
+      }),
+    );
+
+    await expect(
+      loadReviewRecord({
+        accountId: "acct-8",
+        commitSha: "ddd4444",
+      }),
+    ).resolves.toMatchObject({
+      account_id: "acct-8",
+      commit_sha: "ddd4444",
+      reviewed: true,
+      note: "legacy draft",
+    });
+
+    expect(
+      localStorage.getItem("cocalc:git-review:draft:v2:commit:ddd4444"),
+    ).toBe(null);
+    expect(loadReviewDraft("ddd4444", "acct-8")).toMatchObject({
+      reviewed: true,
+      note: "legacy draft",
+      revision: 7,
+    });
+  });
+
   it("deletes all persisted reviews and local drafts for the account", async () => {
     const store = getStore("acct-3", "cocalc-git-review-v2");
     store.set("commit:aaa1111", {
