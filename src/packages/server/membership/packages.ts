@@ -665,6 +665,13 @@ export async function assignMembershipPackageSeat(
     },
     client,
   );
+  const project_id = `${metadata?.project_id ?? ""}`.trim();
+  if (pkg.kind === "course" && isValidUUID(project_id)) {
+    await pool.query(
+      "UPDATE projects SET usage_account_id=$2 WHERE project_id=$1",
+      [project_id, account_id],
+    );
+  }
 
   return {
     id: assignment_id,
@@ -700,6 +707,7 @@ export async function revokeMembershipPackageSeat(
   if (!assignment) {
     return false;
   }
+  const pkg = await getMembershipPackage({ package_id, client });
   await pool.query(
     `
       UPDATE membership_package_assignments
@@ -719,5 +727,12 @@ export async function revokeMembershipPackageSeat(
     `,
     [package_id, account_id, assignment.id],
   );
+  const project_id = `${assignment.metadata?.project_id ?? ""}`.trim();
+  if (pkg?.kind === "course" && isValidUUID(project_id)) {
+    await pool.query(
+      "UPDATE projects SET usage_account_id=NULL WHERE project_id=$1 AND usage_account_id=$2",
+      [project_id, account_id],
+    );
+  }
   return true;
 }

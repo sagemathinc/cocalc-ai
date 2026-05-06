@@ -54,7 +54,11 @@ export function ConfigurationPanel({ name, project_id, settings }: Props) {
     >
       <Row>
         <Col md={12} style={{ padding: "15px 15px 15px 0" }}>
-          <UpgradeConfiguration settings={settings} actions={actions} />
+          <UpgradeConfiguration
+            settings={settings}
+            actions={actions}
+            project_id={project_id}
+          />
           <br />
           <TitleAndDescription
             actions={actions}
@@ -105,7 +109,7 @@ export function ConfigurationPanel({ name, project_id, settings }: Props) {
   );
 }
 
-export function UpgradeConfiguration({ settings, actions }) {
+export function UpgradeConfiguration({ settings, actions, project_id }) {
   const is_commercial = useTypedRedux("customize", "is_commercial");
 
   return (
@@ -120,7 +124,13 @@ export function UpgradeConfiguration({ settings, actions }) {
         </>
       }
     >
-      {is_commercial && <StudentPay actions={actions} settings={settings} />}
+      {is_commercial && (
+        <StudentPay
+          actions={actions}
+          settings={settings}
+          project_id={project_id}
+        />
+      )}
     </Card>
   );
 }

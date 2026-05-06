@@ -20,11 +20,14 @@ export interface SyncDBRecordBase {
 export interface SyncDBRecordSettings {
   table: string;
   allow_collabs?: boolean;
+  institute_pay?: boolean;
   mirror_config?: boolean;
   mirror_config_path?: string;
+  payCost?: number;
   student_project_functionality?: StudentProjectFunctionality;
   student_project_rootfs_image?: string;
   student_project_rootfs_image_id?: string;
+  student_pay?: boolean;
   shared_project_id?: string;
   pay?: string;
   payInfo?: PurchaseInfo;

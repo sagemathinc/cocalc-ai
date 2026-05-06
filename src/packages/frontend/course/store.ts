@@ -260,7 +260,12 @@ export class CourseStore extends Store<CourseState> {
 
   public get_pay(): string | Date {
     const settings = this.get("settings");
-    if (settings == null || !settings.get("student_pay")) return "";
+    if (
+      settings == null ||
+      !(settings.get("student_pay") || settings.get("institute_pay"))
+    ) {
+      return "";
+    }
     const pay = settings.get("pay");
     if (!pay) return "";
     return pay;
@@ -268,7 +273,12 @@ export class CourseStore extends Store<CourseState> {
 
   public get_payInfo(): PurchaseInfo | null {
     const settings = this.get("settings");
-    if (settings == null || !settings.get("student_pay")) return null;
+    if (
+      settings == null ||
+      !(settings.get("student_pay") || settings.get("institute_pay"))
+    ) {
+      return null;
+    }
     const payInfo = settings.get("payInfo")?.toJS();
     if (!payInfo) return null;
     // merge in defaults for backward compat if e.g., no version set

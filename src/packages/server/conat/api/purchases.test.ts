@@ -14,6 +14,7 @@ const listMembershipPackageDetailsForOwnerMock = jest.fn();
 const resolveMembershipPackageQuoteMock = jest.fn();
 const assignMembershipPackageSeatMock = jest.fn();
 const revokeMembershipPackageSeatMock = jest.fn();
+const purchaseMembershipPackageMock = jest.fn();
 
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
   __esModule: true,
@@ -56,6 +57,11 @@ jest.mock("@cocalc/server/membership/packages", () => ({
 
 jest.mock("@cocalc/server/ai/usage-status", () => ({
   getAIUsageStatus: jest.fn(),
+}));
+
+jest.mock("@cocalc/server/purchases/membership-package", () => ({
+  __esModule: true,
+  default: (...args: any[]) => purchaseMembershipPackageMock(...args),
 }));
 
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
@@ -286,6 +292,41 @@ describe("purchases membership packages", () => {
       metadata: null,
     });
     expect(result.id).toBe("assignment-1");
+  });
+
+  it("purchases a course package for the owner", async () => {
+    purchaseMembershipPackageMock.mockResolvedValue({
+      package_id: "package-1",
+      purchase_id: 17,
+    });
+
+    const { purchaseMembershipPackage } = await import("./purchases");
+    const result = await purchaseMembershipPackage({
+      account_id: "owner-1",
+      kind: "course",
+      seat_count: 5,
+      course_project_id: "course-project-1",
+    });
+
+    expect(purchaseMembershipPackageMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+      product: {
+        type: "membership-package",
+        kind: "course",
+        membership_class: "",
+        seat_count: 5,
+        interval: undefined,
+        package_id: undefined,
+        course_project_id: "course-project-1",
+        starts_at: undefined,
+        expires_at: undefined,
+        metadata: undefined,
+      },
+    });
+    expect(result).toEqual({
+      package_id: "package-1",
+      purchase_id: 17,
+    });
   });
 
   it("revokes a package seat for the owner", async () => {

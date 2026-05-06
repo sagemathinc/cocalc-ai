@@ -149,4 +149,62 @@ describe("membership packages", () => {
     expect(quote.seat_price).toBe(17.5);
     expect(quote.total_price).toBe(87.5);
   });
+
+  it("updates project usage attribution when assigning and revoking a course seat", async () => {
+    const owner_account_id = uuid();
+    const student_account_id = uuid();
+    const project_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(student_account_id);
+
+    await getPool("medium").query(
+      `INSERT INTO projects (project_id, title, users, last_edited, usage_account_id)
+       VALUES ($1, $2, $3::jsonb, NOW(), NULL)`,
+      [
+        project_id,
+        "Student Project",
+        JSON.stringify({
+          [owner_account_id]: { group: "owner" },
+        }),
+      ],
+    );
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "course",
+      membership_class: "student",
+      seat_count: 1,
+      metadata: {
+        course_project_id: uuid(),
+        interval: "month",
+        seat_price: 25,
+      },
+    });
+
+    await assignMembershipPackageSeat({
+      package_id,
+      account_id: student_account_id,
+      assigned_by_account_id: owner_account_id,
+      metadata: {
+        project_id,
+      },
+    });
+
+    const assignedUsage = await getPool().query(
+      "SELECT usage_account_id::text AS usage_account_id FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    expect(assignedUsage.rows[0]?.usage_account_id).toBe(student_account_id);
+
+    await revokeMembershipPackageSeat({
+      package_id,
+      account_id: student_account_id,
+    });
+
+    const revokedUsage = await getPool().query(
+      "SELECT usage_account_id::text AS usage_account_id FROM projects WHERE project_id=$1",
+      [project_id],
+    );
+    expect(revokedUsage.rows[0]?.usage_account_id).toBeNull();
+  });
 });

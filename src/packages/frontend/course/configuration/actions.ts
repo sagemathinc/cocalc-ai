@@ -65,7 +65,15 @@ export class ConfigurationActions {
   };
 
   set_pay_choice = (type: "student" | "institute", value: boolean): void => {
-    this.set({ [type + "_pay"]: value, table: "settings" });
+    if (value) {
+      this.set({
+        student_pay: type === "student",
+        institute_pay: type === "institute",
+        table: "settings",
+      });
+    } else {
+      this.set({ [type + "_pay"]: value, table: "settings" });
+    }
     if (type == "student") {
       if (!value) {
         this.setStudentPay({ when: "" });

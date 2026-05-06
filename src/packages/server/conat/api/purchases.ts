@@ -21,6 +21,7 @@ import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import type { MoneyValue } from "@cocalc/util/money";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import type { MembershipPackageProduct } from "@cocalc/util/db-schema/shopping-cart-items";
+import purchaseMembershipPackage0 from "@cocalc/server/purchases/membership-package";
 
 export { getBalance };
 
@@ -107,6 +108,59 @@ export async function getMembershipPackageQuote({
     }
   }
   return await resolveMembershipPackageQuote0(product);
+}
+
+export async function purchaseMembershipPackage({
+  account_id,
+  package_id,
+  kind,
+  membership_class,
+  seat_count,
+  interval,
+  course_project_id,
+  starts_at,
+  expires_at,
+  metadata,
+}: {
+  account_id?: string;
+  package_id?: string;
+  kind?;
+  membership_class?: string;
+  seat_count?: number;
+  interval?: "month" | "year";
+  course_project_id?: string;
+  starts_at?: Date | string;
+  expires_at?: Date | string;
+  metadata?: Record<string, unknown> | null;
+}) {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  const product: MembershipPackageProduct = {
+    type: "membership-package",
+    kind,
+    membership_class: membership_class ?? "",
+    seat_count: seat_count ?? 0,
+    interval,
+    package_id,
+    course_project_id,
+    starts_at,
+    expires_at,
+    metadata: metadata ?? undefined,
+  };
+  if (package_id) {
+    const pkg = await getMembershipPackage({ package_id });
+    if (!pkg) {
+      throw Error("membership package not found");
+    }
+    if (pkg.owner_account_id !== account_id && !(await isAdmin(account_id))) {
+      throw Error("must own membership package");
+    }
+  }
+  return await purchaseMembershipPackage0({
+    account_id,
+    product,
+  });
 }
 
 export async function getMembershipPackages({

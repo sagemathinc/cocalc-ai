@@ -40,6 +40,9 @@ export const RESUME_SUBSCRIPTION = "resume-subscription";
 // change membership tiers directly in-app
 export const MEMBERSHIP_CHANGE = "membership-change";
 
+// purchase or expand a membership package directly in-app
+export const MEMBERSHIP_PACKAGE_PURCHASE = "membership-package-purchase";
+
 // purchase account credit vouchers directly
 export const VOUCHER_PURCHASE = "voucher-purchase";
 
