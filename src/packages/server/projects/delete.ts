@@ -7,6 +7,10 @@ import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/pr
 import { assertProjectNotRehoming } from "@cocalc/database/postgres/project-rehome-fence";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import {
+  releaseProjectBackupRepoAssignment,
+  resolveProjectBackupRepoAssignment,
+} from "@cocalc/server/project-backup";
 
 const log = getLogger("server:projects:delete");
 
@@ -70,6 +74,16 @@ export async function setProjectDeleted({
 
   const pool = getPool();
   const client = await pool.connect();
+  let backup_repo_id: string | null = null;
+  let project_region: string | null = null;
+  let assignmentAction:
+    | { type: "release" }
+    | {
+        type: "restore";
+        backup_repo_id: string;
+        project_region?: string | null;
+      }
+    | null = null;
   try {
     await client.query("BEGIN");
     await assertProjectNotRehoming({
@@ -77,12 +91,32 @@ export async function setProjectDeleted({
       project_id,
       action: deleted ? "delete project" : "undelete project",
     });
-    const result = await client.query(
-      "UPDATE projects SET deleted=$2 WHERE project_id=$1",
+    const result = await client.query<{
+      backup_repo_id: string | null;
+      region: string | null;
+    }>(
+      "UPDATE projects SET deleted=$2 WHERE project_id=$1 RETURNING backup_repo_id, region",
       [project_id, deleted],
     );
     if ((result.rowCount ?? 0) === 0) {
       throw Error("project not found");
+    }
+    backup_repo_id = result.rows[0]?.backup_repo_id ?? null;
+    project_region = result.rows[0]?.region ?? null;
+    if (deleted) {
+      assignmentAction = { type: "release" };
+      await releaseProjectBackupRepoAssignment({ project_id });
+    } else if (backup_repo_id) {
+      assignmentAction = {
+        type: "restore",
+        backup_repo_id,
+        project_region,
+      };
+      await resolveProjectBackupRepoAssignment({
+        project_id,
+        project_region,
+        backup_repo_id,
+      });
     }
     await appendProjectOutboxEventForProject({
       db: client,
@@ -93,6 +127,29 @@ export async function setProjectDeleted({
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
+    if (assignmentAction?.type === "release" && backup_repo_id) {
+      try {
+        await resolveProjectBackupRepoAssignment({
+          project_id,
+          project_region,
+          backup_repo_id,
+        });
+      } catch (restoreErr) {
+        log.warn("failed to restore backup shard assignment after rollback", {
+          project_id,
+          err: `${restoreErr}`,
+        });
+      }
+    } else if (assignmentAction?.type === "restore") {
+      try {
+        await releaseProjectBackupRepoAssignment({ project_id });
+      } catch (releaseErr) {
+        log.warn("failed to release backup shard assignment after rollback", {
+          project_id,
+          err: `${releaseErr}`,
+        });
+      }
+    }
     throw err;
   } finally {
     client.release();

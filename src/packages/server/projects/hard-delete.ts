@@ -14,6 +14,8 @@ import {
 import {
   getDeletedProjectBackupConfigForDeletion,
   getProjectBackupConfigForDeletion,
+  releaseProjectBackupRepoAssignment,
+  resolveProjectBackupRepoAssignment,
 } from "@cocalc/server/project-backup";
 import { isValidUUID } from "@cocalc/util/misc";
 
@@ -35,6 +37,7 @@ type ProjectRow = {
   description: string | null;
   users: any;
   host_id: string | null;
+  region: string | null;
   backup_repo_id: string | null;
   created: Date | null;
   last_edited: Date | null;
@@ -193,6 +196,7 @@ async function loadProject(project_id: string): Promise<ProjectRow | null> {
         description,
         users,
         host_id,
+        region,
         backup_repo_id,
         created,
         last_edited
@@ -891,25 +895,53 @@ export async function hardDeleteProject({
     message: "purging database records",
     detail: { project_id },
   });
-  const purged_tables = await purgeProjectRows({
-    project,
-    deleted_by: account_id,
-    backup: backupDeleteResult,
-    backup_retention_days: purgeBackupsImmediately ? 0 : retentionDays,
-    backup_purge_due_at: backupPurgeDueAt,
-    backup_purge_status: backupPurgeStatus,
-    backups_purged_at: backupsPurgedAt,
-  });
+  let backupAssignmentReleased = false;
+  try {
+    if (project.backup_repo_id) {
+      await releaseProjectBackupRepoAssignment({
+        project_id: project.project_id,
+      });
+      backupAssignmentReleased = true;
+    }
+    const purged_tables = await purgeProjectRows({
+      project,
+      deleted_by: account_id,
+      backup: backupDeleteResult,
+      backup_retention_days: purgeBackupsImmediately ? 0 : retentionDays,
+      backup_purge_due_at: backupPurgeDueAt,
+      backup_purge_status: backupPurgeStatus,
+      backups_purged_at: backupsPurgedAt,
+    });
 
-  await progress({
-    step: "done",
-    message: "workspace permanently deleted",
-    detail: { project_id },
-  });
-  return {
-    project_id,
-    host_id: project.host_id,
-    backup,
-    purged_tables,
-  };
+    await progress({
+      step: "done",
+      message: "workspace permanently deleted",
+      detail: { project_id },
+    });
+    return {
+      project_id,
+      host_id: project.host_id,
+      backup,
+      purged_tables,
+    };
+  } catch (err) {
+    if (backupAssignmentReleased && project.backup_repo_id) {
+      try {
+        await resolveProjectBackupRepoAssignment({
+          project_id: project.project_id,
+          project_region: project.region,
+          backup_repo_id: project.backup_repo_id,
+        });
+      } catch (restoreErr) {
+        log.warn(
+          "failed to restore backup shard assignment after hard delete failure",
+          {
+            project_id: project.project_id,
+            err: `${restoreErr}`,
+          },
+        );
+      }
+    }
+    throw err;
+  }
 }
