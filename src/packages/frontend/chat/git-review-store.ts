@@ -3,7 +3,7 @@ import { getSharedAccountDkv } from "@cocalc/frontend/conat/account-dkv";
 
 const REVIEW_STORE_V2 = "cocalc-git-review-v2";
 const REVIEW_STORE_V1 = "cocalc-commit-review-v1";
-const REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:commit:";
+const REVIEW_DRAFT_STORAGE_PREFIX = "cocalc:git-review:draft:v2:";
 const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
 const REVIEW_EXPORT_KIND = "cocalc-git-review-export-v1";
 
@@ -78,10 +78,21 @@ export function makeReviewKey(commitSha?: string): string | undefined {
   return `commit:${normalized}`;
 }
 
-function makeDraftKey(commitSha?: string): string | undefined {
+function makeDraftStoragePrefix(accountId?: string): string {
+  const normalizedAccountId = `${accountId ?? ""}`.trim();
+  if (!normalizedAccountId) {
+    return `${REVIEW_DRAFT_STORAGE_PREFIX}commit:`;
+  }
+  return `${REVIEW_DRAFT_STORAGE_PREFIX}account:${normalizedAccountId}:commit:`;
+}
+
+function makeDraftKey(
+  commitSha?: string,
+  accountId?: string,
+): string | undefined {
   const normalized = normalizeCommitSha(commitSha);
   if (!normalized) return undefined;
-  return `${REVIEW_DRAFT_STORAGE_PREFIX}${normalized}`;
+  return `${makeDraftStoragePrefix(accountId)}${normalized}`;
 }
 
 function emptyRecord({
@@ -215,8 +226,9 @@ async function getReviewBulkStore(accountId: string) {
 
 export function loadReviewDraft(
   commitSha?: string,
+  accountId?: string,
 ): GitReviewDraftV2 | undefined {
-  const key = makeDraftKey(commitSha);
+  const key = makeDraftKey(commitSha, accountId);
   if (!key) return undefined;
   try {
     const raw = localStorage.getItem(key);
@@ -240,10 +252,11 @@ export function saveReviewDraft(
   draft: Pick<GitReviewDraftV2, "reviewed" | "note"> & {
     comments?: Record<string, GitReviewCommentV2>;
   },
+  accountId?: string,
 ): void {
-  const key = makeDraftKey(commitSha);
+  const key = makeDraftKey(commitSha, accountId);
   if (!key) return;
-  const prev = loadReviewDraft(commitSha);
+  const prev = loadReviewDraft(commitSha, accountId);
   const next: GitReviewDraftV2 = {
     reviewed: Boolean(draft.reviewed),
     note: `${draft.note ?? ""}`,
@@ -258,8 +271,8 @@ export function saveReviewDraft(
   }
 }
 
-export function clearReviewDraft(commitSha?: string): void {
-  const key = makeDraftKey(commitSha);
+export function clearReviewDraft(commitSha?: string, accountId?: string): void {
+  const key = makeDraftKey(commitSha, accountId);
   if (!key) return;
   try {
     localStorage.removeItem(key);
@@ -271,31 +284,33 @@ export function clearReviewDraft(commitSha?: string): void {
 export function clearReviewDraftThroughRevision(
   commitSha: string,
   revision?: number,
+  accountId?: string,
 ): void {
   if (typeof revision !== "number" || !Number.isFinite(revision)) {
-    clearReviewDraft(commitSha);
+    clearReviewDraft(commitSha, accountId);
     return;
   }
-  const current = loadReviewDraft(commitSha);
+  const current = loadReviewDraft(commitSha, accountId);
   if (current && (current.revision ?? 0) > revision) {
     return;
   }
-  clearReviewDraft(commitSha);
+  clearReviewDraft(commitSha, accountId);
 }
 
 export function clearReviewDraftThroughUpdatedAt(
   commitSha: string,
   updatedAt?: number,
+  accountId?: string,
 ): void {
   if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
-    clearReviewDraft(commitSha);
+    clearReviewDraft(commitSha, accountId);
     return;
   }
-  const current = loadReviewDraft(commitSha);
+  const current = loadReviewDraft(commitSha, accountId);
   if (current && (current.updated_at ?? 0) >= updatedAt) {
     return;
   }
-  clearReviewDraft(commitSha);
+  clearReviewDraft(commitSha, accountId);
 }
 
 export function mergeRecordWithDraft(
@@ -341,7 +356,10 @@ export async function loadReviewRecord({
     commitSha: normalizedCommit,
   });
   if (current) {
-    return mergeRecordWithDraft(current, loadReviewDraft(normalizedCommit));
+    return mergeRecordWithDraft(
+      current,
+      loadReviewDraft(normalizedCommit, accountId),
+    );
   }
   const cn = webapp_client.conat_client.conat();
   const kvV1 = cn.sync.akv<LegacyCommitReviewRecord>({
@@ -352,7 +370,7 @@ export async function loadReviewRecord({
   if (!legacy) {
     return mergeRecordWithDraft(
       emptyRecord({ accountId, commitSha: normalizedCommit }),
-      loadReviewDraft(normalizedCommit),
+      loadReviewDraft(normalizedCommit, accountId),
     );
   }
   const now = Date.now();
@@ -368,7 +386,10 @@ export async function loadReviewRecord({
     revision: 1,
   };
   await kvV2.set(key, migrated);
-  return mergeRecordWithDraft(migrated, loadReviewDraft(normalizedCommit));
+  return mergeRecordWithDraft(
+    migrated,
+    loadReviewDraft(normalizedCommit, accountId),
+  );
 }
 
 export async function saveReviewRecord(
@@ -397,7 +418,11 @@ export async function saveReviewRecord(
     revision: Math.max(1, (record.revision ?? 0) + 1),
   };
   await kv.set(key, payload);
-  clearReviewDraftThroughRevision(commitSha, opts?.clearDraftThroughRevision);
+  clearReviewDraftThroughRevision(
+    commitSha,
+    opts?.clearDraftThroughRevision,
+    accountId,
+  );
   return payload;
 }
 
@@ -490,7 +515,11 @@ export async function importReviewBundle({
       revision: Math.max(record.revision ?? 1, existing?.revision ?? 1),
     };
     pending[key] = nextRecord;
-    clearReviewDraftThroughUpdatedAt(record.commit_sha, nextRecord.updated_at);
+    clearReviewDraftThroughUpdatedAt(
+      record.commit_sha,
+      nextRecord.updated_at,
+      normalizedAccountId,
+    );
     imported += 1;
   }
   if (imported > 0) {
@@ -504,12 +533,13 @@ export async function importReviewBundle({
   };
 }
 
-function clearAllReviewDrafts(): void {
+function clearAllReviewDrafts(accountId?: string): void {
   try {
     const keys: string[] = [];
+    const prefix = makeDraftStoragePrefix(accountId);
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
-      if (key?.startsWith(REVIEW_DRAFT_STORAGE_PREFIX)) {
+      if (key?.startsWith(prefix)) {
         keys.push(key);
       }
     }
@@ -535,7 +565,7 @@ export async function deleteAllReviewRecords({
     key.startsWith("commit:"),
   );
   if (reviewKeys.length === 0) {
-    clearAllReviewDrafts();
+    clearAllReviewDrafts(normalizedAccountId);
     return { deleted: 0 };
   }
 
@@ -546,7 +576,7 @@ export async function deleteAllReviewRecords({
   kv.setMany(tombstones);
   await kv.flush();
 
-  clearAllReviewDrafts();
+  clearAllReviewDrafts(normalizedAccountId);
 
   return { deleted: reviewKeys.length };
 }

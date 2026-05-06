@@ -2745,7 +2745,7 @@ export function GitCommitDrawer({
     const applyReset = (nextCommit?: string) => {
       const normalizedNext = normalizeCommitSha(nextCommit);
       const draft = normalizedNext
-        ? loadReviewDraft(normalizedNext)
+        ? loadReviewDraft(normalizedNext, accountId)
         : undefined;
       setReviewLoading(false);
       setReviewError("");
@@ -3000,7 +3000,7 @@ export function GitCommitDrawer({
       if (!accountId || !commit || isHeadCommit(commit)) return;
       const normalizedCommit = normalizeCommitSha(commit);
       if (!normalizedCommit) return;
-      const latestDraft = loadReviewDraft(normalizedCommit);
+      const latestDraft = loadReviewDraft(normalizedCommit, accountId);
       const resolved = resolveGitReviewSaveState({
         next,
         draft: latestDraft,
@@ -3062,8 +3062,10 @@ export function GitCommitDrawer({
         }));
         if (activeReviewCommitRef.current === normalizedCommit) {
           const mergedPayload =
-            mergeRecordWithDraft(payload, loadReviewDraft(normalizedCommit)) ??
-            payload;
+            mergeRecordWithDraft(
+              payload,
+              loadReviewDraft(normalizedCommit, accountId),
+            ) ?? payload;
           const completion = resolveGitReviewSaveCompletion({
             payload: mergedPayload,
             sent: sentState,
@@ -3131,7 +3133,7 @@ export function GitCommitDrawer({
       if (!accountId || !commit || isHeadCommit(commit)) return;
       const normalizedCommit = normalizeCommitSha(commit);
       if (!normalizedCommit) return;
-      const latestDraft = loadReviewDraft(normalizedCommit);
+      const latestDraft = loadReviewDraft(normalizedCommit, accountId);
       const resolved = resolveGitReviewSaveState({
         draft: latestDraft,
         reviewed,
@@ -3141,11 +3143,15 @@ export function GitCommitDrawer({
       });
       const current = resolved.comments;
       const next = mutate({ ...current });
-      saveReviewDraft(normalizedCommit, {
-        reviewed: resolved.reviewed,
-        note: resolved.note,
-        comments: next,
-      });
+      saveReviewDraft(
+        normalizedCommit,
+        {
+          reviewed: resolved.reviewed,
+          note: resolved.note,
+          comments: next,
+        },
+        accountId,
+      );
       await saveReview({
         comments: next,
         reviewed: resolved.reviewed,
@@ -3512,17 +3518,21 @@ export function GitCommitDrawer({
         const normalizedCommit = normalizeCommitSha(commit);
         if (normalizedCommit) {
           const resolved = resolveGitReviewSaveState({
-            draft: loadReviewDraft(normalizedCommit),
+            draft: loadReviewDraft(normalizedCommit, accountId),
             reviewed,
             reviewNote,
             reviewNoteDraft,
             reviewComments: reviewRecord?.comments,
           });
-          saveReviewDraft(normalizedCommit, {
-            reviewed: resolved.reviewed,
-            note: resolved.note,
-            comments: nextComments,
-          });
+          saveReviewDraft(
+            normalizedCommit,
+            {
+              reviewed: resolved.reviewed,
+              note: resolved.note,
+              comments: nextComments,
+            },
+            accountId,
+          );
         }
       }
       await saveReview({
@@ -3545,13 +3555,18 @@ export function GitCommitDrawer({
     if (reviewStateCommit !== normalizedCommit) return;
     if (reviewLoading || reviewSaving) return;
     if (!reviewDirty) return;
-    saveReviewDraft(normalizedCommit, {
-      reviewed: Boolean(reviewed),
-      note: `${reviewNoteDraft ?? ""}`,
-      comments: reviewRecord?.comments ?? {},
-    });
+    saveReviewDraft(
+      normalizedCommit,
+      {
+        reviewed: Boolean(reviewed),
+        note: `${reviewNoteDraft ?? ""}`,
+        comments: reviewRecord?.comments ?? {},
+      },
+      accountId,
+    );
   }, [
     open,
+    accountId,
     commit,
     reviewLoading,
     reviewSaving,
@@ -4547,11 +4562,15 @@ export function GitCommitDrawer({
                     return;
                   setReviewNoteDraft(value);
                   setReviewDirty(true);
-                  saveReviewDraft(currentReviewCommit, {
-                    reviewed: Boolean(reviewed),
-                    note: `${value ?? ""}`,
-                    comments: reviewRecord?.comments ?? {},
-                  });
+                  saveReviewDraft(
+                    currentReviewCommit,
+                    {
+                      reviewed: Boolean(reviewed),
+                      note: `${value ?? ""}`,
+                      comments: reviewRecord?.comments ?? {},
+                    },
+                    accountId,
+                  );
                 }}
                 onCancel={() => {
                   setReviewNoteDraft(reviewNote);

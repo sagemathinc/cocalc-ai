@@ -2,6 +2,7 @@
 
 import {
   loadReviewDraft,
+  loadReviewRecord,
   saveReviewDraft,
   saveReviewRecord,
   deleteAllReviewRecords,
@@ -168,12 +169,16 @@ describe("git review import/export", () => {
   });
 
   it("does not clear a newer local draft when importing an older remote review", async () => {
-    saveReviewDraft("bbb2222", {
-      reviewed: false,
-      note: "newer local draft",
-      comments: {},
-    });
-    const draftBeforeImport = loadReviewDraft("bbb2222");
+    saveReviewDraft(
+      "bbb2222",
+      {
+        reviewed: false,
+        note: "newer local draft",
+        comments: {},
+      },
+      "acct-5",
+    );
+    const draftBeforeImport = loadReviewDraft("bbb2222", "acct-5");
     expect(draftBeforeImport?.note).toBe("newer local draft");
 
     const result = await importReviewBundle({
@@ -201,10 +206,47 @@ describe("git review import/export", () => {
       skipped: 0,
       total: 1,
     });
-    expect(loadReviewDraft("bbb2222")).toMatchObject({
+    expect(loadReviewDraft("bbb2222", "acct-5")).toMatchObject({
       note: "newer local draft",
       reviewed: false,
       revision: draftBeforeImport?.revision,
+    });
+  });
+
+  it("does not merge one account's local draft into another account's review", async () => {
+    const accountTwoStore = getStore("acct-7", "cocalc-git-review-v2");
+    accountTwoStore.set("commit:ccc3333", {
+      version: 2,
+      account_id: "acct-7",
+      commit_sha: "ccc3333",
+      reviewed: false,
+      note: "acct-7 persisted note",
+      comments: {},
+      created_at: 30,
+      updated_at: 300,
+      revision: 1,
+    });
+
+    saveReviewDraft(
+      "ccc3333",
+      {
+        reviewed: true,
+        note: "acct-6 private draft",
+        comments: {},
+      },
+      "acct-6",
+    );
+
+    await expect(
+      loadReviewRecord({
+        accountId: "acct-7",
+        commitSha: "ccc3333",
+      }),
+    ).resolves.toMatchObject({
+      account_id: "acct-7",
+      commit_sha: "ccc3333",
+      reviewed: false,
+      note: "acct-7 persisted note",
     });
   });
 
@@ -233,9 +275,14 @@ describe("git review import/export", () => {
       revision: 2,
     });
     store.set("misc:key", { ignore: true });
-    localStorage.setItem(
-      "cocalc:git-review:draft:v2:commit:aaa1111",
-      JSON.stringify({ note: "draft" }),
+    saveReviewDraft(
+      "aaa1111",
+      {
+        reviewed: false,
+        note: "draft",
+        comments: {},
+      },
+      "acct-3",
     );
 
     await expect(
@@ -247,26 +294,32 @@ describe("git review import/export", () => {
     expect(store.get("commit:aaa1111")).toBeUndefined();
     expect(store.get("commit:bbb2222")).toBeUndefined();
     expect(store.get("misc:key")).toEqual({ ignore: true });
-    expect(
-      localStorage.getItem("cocalc:git-review:draft:v2:commit:aaa1111"),
-    ).toBe(null);
+    expect(loadReviewDraft("aaa1111", "acct-3")).toBeUndefined();
   });
 
   it("does not clear a newer local draft when an older save finishes", async () => {
-    saveReviewDraft("aaa1111", {
-      reviewed: false,
-      note: "older draft",
-      comments: {},
-    });
-    const olderDraft = loadReviewDraft("aaa1111");
+    saveReviewDraft(
+      "aaa1111",
+      {
+        reviewed: false,
+        note: "older draft",
+        comments: {},
+      },
+      "acct-4",
+    );
+    const olderDraft = loadReviewDraft("aaa1111", "acct-4");
     expect(olderDraft?.revision).toBe(1);
 
-    saveReviewDraft("aaa1111", {
-      reviewed: true,
-      note: "newer draft",
-      comments: {},
-    });
-    expect(loadReviewDraft("aaa1111")?.revision).toBe(2);
+    saveReviewDraft(
+      "aaa1111",
+      {
+        reviewed: true,
+        note: "newer draft",
+        comments: {},
+      },
+      "acct-4",
+    );
+    expect(loadReviewDraft("aaa1111", "acct-4")?.revision).toBe(2);
 
     await saveReviewRecord(
       {
@@ -285,7 +338,7 @@ describe("git review import/export", () => {
       },
     );
 
-    expect(loadReviewDraft("aaa1111")).toMatchObject({
+    expect(loadReviewDraft("aaa1111", "acct-4")).toMatchObject({
       reviewed: true,
       note: "newer draft",
       revision: 2,
