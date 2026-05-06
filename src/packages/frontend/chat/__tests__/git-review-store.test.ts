@@ -167,6 +167,47 @@ describe("git review import/export", () => {
     });
   });
 
+  it("does not clear a newer local draft when importing an older remote review", async () => {
+    saveReviewDraft("bbb2222", {
+      reviewed: false,
+      note: "newer local draft",
+      comments: {},
+    });
+    const draftBeforeImport = loadReviewDraft("bbb2222");
+    expect(draftBeforeImport?.note).toBe("newer local draft");
+
+    const result = await importReviewBundle({
+      accountId: "acct-5",
+      payload: {
+        version: 1,
+        records: [
+          {
+            version: 2,
+            account_id: "old-account",
+            commit_sha: "bbb2222",
+            reviewed: true,
+            note: "older imported review",
+            comments: {},
+            created_at: 20,
+            updated_at: (draftBeforeImport?.updated_at ?? Date.now()) - 1,
+            revision: 2,
+          },
+        ],
+      },
+    });
+
+    expect(result).toEqual({
+      imported: 1,
+      skipped: 0,
+      total: 1,
+    });
+    expect(loadReviewDraft("bbb2222")).toMatchObject({
+      note: "newer local draft",
+      reviewed: false,
+      revision: draftBeforeImport?.revision,
+    });
+  });
+
   it("deletes all persisted reviews and local drafts for the account", async () => {
     const store = getStore("acct-3", "cocalc-git-review-v2");
     store.set("commit:aaa1111", {

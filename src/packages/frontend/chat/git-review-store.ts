@@ -283,6 +283,21 @@ export function clearReviewDraftThroughRevision(
   clearReviewDraft(commitSha);
 }
 
+export function clearReviewDraftThroughUpdatedAt(
+  commitSha: string,
+  updatedAt?: number,
+): void {
+  if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
+    clearReviewDraft(commitSha);
+    return;
+  }
+  const current = loadReviewDraft(commitSha);
+  if (current && (current.updated_at ?? 0) >= updatedAt) {
+    return;
+  }
+  clearReviewDraft(commitSha);
+}
+
 export function mergeRecordWithDraft(
   record: GitReviewRecordV2 | undefined,
   draft: GitReviewDraftV2 | undefined,
@@ -475,7 +490,7 @@ export async function importReviewBundle({
       revision: Math.max(record.revision ?? 1, existing?.revision ?? 1),
     };
     pending[key] = nextRecord;
-    clearReviewDraft(record.commit_sha);
+    clearReviewDraftThroughUpdatedAt(record.commit_sha, nextRecord.updated_at);
     imported += 1;
   }
   if (imported > 0) {
