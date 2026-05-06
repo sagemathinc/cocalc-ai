@@ -13,9 +13,11 @@ const mockTransactionClient = jest.fn() as jest.MockedFunction<
   typeof getTransactionClient
 >;
 const mockComputeCost = jest.fn() as jest.MockedFunction<typeof computeCost>;
+const mockResolveMembershipPackageQuote = jest.fn();
 
 import { getTransactionClient } from "@cocalc/database/pool";
 import getCart from "@cocalc/server/shopping/cart/get";
+import { resolveMembershipPackageQuote } from "@cocalc/server/membership/packages";
 import { computeCost } from "@cocalc/util/purchases/store/compute-cost";
 import { uuid } from "@cocalc/util/misc";
 import { CashVoucherCostProps } from "@cocalc/util/upgrades/shopping";
@@ -36,6 +38,11 @@ jest.mock("@cocalc/database/pool", () => ({
 jest.mock("@cocalc/util/purchases/store/compute-cost", () => ({
   __esModule: true,
   computeCost: mockComputeCost,
+}));
+jest.mock("@cocalc/server/membership/packages", () => ({
+  __esModule: true,
+  resolveMembershipPackageQuote: (...args: any[]) =>
+    mockResolveMembershipPackageQuote(...args),
 }));
 jest.mock("@cocalc/server/shopping/cart/get", () => ({
   __esModule: true,
@@ -282,6 +289,42 @@ describe("shopping-cart-checkout", () => {
       // Assert
       //
       expect(total).toEqual(3.0);
+    });
+
+    it("computes package seat costs using the resolved package quote", async () => {
+      const testCart = [
+        {
+          product: "membership-package",
+          checked: true,
+          description: {
+            type: "membership-package",
+            kind: "team",
+            membership_class: "member",
+            seat_count: 3,
+            interval: "month",
+          },
+        },
+      ] as any[];
+
+      mockGetCart.mockResolvedValue(testCart);
+      mockResolveMembershipPackageQuote.mockResolvedValue({
+        kind: "team",
+        membership_class: "member",
+        seat_count: 3,
+        seat_price: 12.5,
+        total_price: 37.5,
+        interval: "month",
+      });
+
+      const { total, cart } = await sut.getCheckoutCart(account_id);
+
+      expect(resolveMembershipPackageQuote).toBeDefined();
+      expect(mockResolveMembershipPackageQuote).toHaveBeenCalledWith(
+        testCart[0].description,
+      );
+      expect(total).toEqual(37.5);
+      expect(cart[0].cost.cost).toEqual(37.5);
+      expect(cart[0].cost.quantity).toEqual(3);
     });
   });
 });

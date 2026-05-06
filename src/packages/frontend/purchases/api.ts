@@ -14,6 +14,13 @@ import type {
 import LRU from "lru-cache";
 import type { Subscription } from "@cocalc/util/db-schema/subscriptions";
 import type { Interval, Statement } from "@cocalc/util/db-schema/statements";
+import type {
+  MembershipClass,
+  MembershipPackageAssignment,
+  MembershipPackageDetails,
+  MembershipPackageKind,
+  MembershipPackageQuote,
+} from "@cocalc/conat/hub/api/purchases";
 import { hoursInInterval } from "@cocalc/util/stripe/timecalcs";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
 import type {
@@ -420,6 +427,43 @@ export async function applyMembershipChange(opts: {
   MembershipChangeQuote & { subscription_id: number; purchase_id: number }
 > {
   return await api("purchases/membership-change", opts);
+}
+
+export async function getMembershipPackageQuote(opts: {
+  package_id?: string;
+  kind?: MembershipPackageKind;
+  membership_class?: MembershipClass;
+  seat_count: number;
+  interval?: "month" | "year";
+  course_project_id?: string;
+  starts_at?: Date | string;
+  expires_at?: Date | string;
+  metadata?: Record<string, unknown> | null;
+}): Promise<MembershipPackageQuote> {
+  return await api("purchases/get-membership-package-quote", opts);
+}
+
+export async function getMembershipPackages(
+  opts: {
+    user_account_id?: string;
+  } = {},
+): Promise<MembershipPackageDetails[]> {
+  return await api("purchases/get-membership-packages", opts);
+}
+
+export async function assignMembershipPackageSeat(opts: {
+  package_id: string;
+  target_account_id: string;
+  metadata?: Record<string, unknown> | null;
+}): Promise<MembershipPackageAssignment> {
+  return await api("purchases/assign-membership-package-seat", opts);
+}
+
+export async function revokeMembershipPackageSeat(opts: {
+  package_id: string;
+  target_account_id: string;
+}): Promise<{ revoked: boolean }> {
+  return await api("purchases/revoke-membership-package-seat", opts);
 }
 
 // get your own min balance

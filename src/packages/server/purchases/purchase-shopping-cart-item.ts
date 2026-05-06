@@ -18,6 +18,12 @@ import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import getLogger from "@cocalc/backend/logger";
 import createSubscription from "./create-subscription";
 import createVouchers from "@cocalc/server/vouchers/create-vouchers";
+import {
+  addMembershipPackageSeats,
+  createMembershipPackage,
+  resolveMembershipPackageQuote,
+  setMembershipPackagePurchaseId,
+} from "@cocalc/server/membership/packages";
 import dayjs from "dayjs";
 import { computeMembershipPricing } from "@cocalc/server/membership/tiers";
 
@@ -37,6 +43,8 @@ export default async function purchaseShoppingCartItem(
     await purchaseVoucherShoppingCartItem(item, client, credit_id);
   } else if (item.product == "membership") {
     await purchaseMembershipShoppingCartItem(item, client);
+  } else if (item.product == "membership-package") {
+    await purchaseMembershipPackageShoppingCartItem(item, client);
   } else {
     throw Error(`unsupported product type '${item.product}'`);
   }
@@ -148,6 +156,83 @@ async function purchaseMembershipShoppingCartItem(item, client: PoolClient) {
     "purchaseMembershipShoppingCartItem -- created membership subscription",
     { subscription_id, purchase_id },
   );
+
+  await markItemPurchased(item, client);
+}
+
+async function purchaseMembershipPackageShoppingCartItem(
+  item,
+  client: PoolClient,
+) {
+  logger.debug("purchaseMembershipPackageShoppingCartItem", item);
+  const { description } = item;
+  if (description?.type != "membership-package") {
+    throw Error("product type must be 'membership-package'");
+  }
+
+  const quote = await resolveMembershipPackageQuote(description, client);
+  let package_id = `${description.package_id ?? ""}`.trim();
+  const expandingExistingPackage = !!package_id;
+
+  if (expandingExistingPackage) {
+    await addMembershipPackageSeats(
+      {
+        package_id,
+        seat_count: quote.seat_count,
+      },
+      client,
+    );
+  } else {
+    package_id = await createMembershipPackage(
+      {
+        owner_account_id: item.account_id,
+        kind: quote.kind,
+        membership_class: quote.membership_class,
+        seat_count: quote.seat_count,
+        starts_at: quote.starts_at,
+        expires_at: quote.expires_at,
+        metadata: quote.metadata ?? null,
+      },
+      client,
+    );
+  }
+
+  const purchase_id = await createPurchase({
+    account_id: item.account_id,
+    cost: quote.total_price,
+    unrounded_cost: quote.total_price,
+    service: "membership",
+    description: {
+      type: "membership-package",
+      package_id,
+      kind: quote.kind,
+      membership_class: quote.membership_class,
+      seat_count: quote.seat_count,
+      seat_price: quote.seat_price,
+      total_price: quote.total_price,
+      starts_at: quote.starts_at,
+      expires_at: quote.expires_at,
+      interval: quote.interval,
+      expanded_existing_package: expandingExistingPackage,
+      metadata: quote.metadata ?? null,
+    },
+    tag: expandingExistingPackage
+      ? "membership-package-expand"
+      : "membership-package-purchase",
+    period_start: quote.starts_at,
+    period_end: quote.expires_at,
+    client,
+  });
+
+  if (!expandingExistingPackage) {
+    await setMembershipPackagePurchaseId(
+      {
+        package_id,
+        purchase_id,
+      },
+      client,
+    );
+  }
 
   await markItemPurchased(item, client);
 }

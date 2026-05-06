@@ -185,3 +185,45 @@ export async function createTestMembershipGrant(
     ],
   );
 }
+
+export async function createTestMembershipPackage(opts: {
+  owner_account_id: string;
+  kind: "course" | "team" | "domain" | "site";
+  membership_class: MembershipClass;
+  seat_count: number;
+  purchase_id?: number | null;
+  starts_at?: Date | null;
+  expires_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  const pool = getPool("medium");
+  const id = uuid();
+  await pool.query(
+    `INSERT INTO membership_packages (
+      id,
+      owner_account_id,
+      kind,
+      membership_class,
+      seat_count,
+      purchase_id,
+      starts_at,
+      expires_at,
+      metadata,
+      created,
+      updated
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::JSONB,NOW(),NOW())`,
+    [
+      id,
+      opts.owner_account_id,
+      opts.kind,
+      opts.membership_class,
+      opts.seat_count,
+      opts.purchase_id ?? null,
+      opts.starts_at ?? new Date(),
+      opts.expires_at ?? null,
+      opts.metadata ?? null,
+    ],
+  );
+  return id;
+}

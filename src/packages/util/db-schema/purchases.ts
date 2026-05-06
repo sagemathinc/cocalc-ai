@@ -76,6 +76,21 @@ export interface Membership {
   assigned_by?: string;
 }
 
+export interface MembershipPackagePurchase {
+  type: "membership-package";
+  package_id: string;
+  kind: string;
+  membership_class: MembershipClass;
+  seat_count: number;
+  seat_price: MoneyValue;
+  total_price: MoneyValue;
+  starts_at?: Date | string;
+  expires_at?: Date | string;
+  interval?: "month" | "year";
+  expanded_existing_package?: boolean;
+  metadata?: Record<string, unknown> | null;
+}
+
 export interface StudentPayPurchase {
   type: "student-pay";
   info: PurchaseInfo;
@@ -119,6 +134,7 @@ export type Description =
   | Credit
   | Refund
   | Membership
+  | MembershipPackagePurchase
   | StudentPayPurchase
   | Voucher;
 

@@ -1,6 +1,7 @@
 import { authFirst } from "./util";
 import type { MoneyValue } from "@cocalc/util/money";
 export type MembershipClass = string;
+export type MembershipPackageKind = "course" | "team" | "domain" | "site";
 
 export type MembershipEgressPolicy =
   | "metered-shared-hosts"
@@ -65,6 +66,52 @@ export interface MembershipDetails {
   selected: MembershipResolution;
   candidates: MembershipCandidate[];
   usage_status?: MembershipUsageStatus;
+}
+
+export interface MembershipPackageQuote {
+  package_id?: string;
+  kind: MembershipPackageKind;
+  membership_class: MembershipClass;
+  seat_count: number;
+  seat_price: number;
+  total_price: number;
+  starts_at?: Date;
+  expires_at?: Date;
+  interval?: "month" | "year";
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface MembershipPackageAssignment {
+  id: string;
+  package_id: string;
+  account_id: string;
+  assigned_by_account_id?: string | null;
+  assigned_at?: Date;
+  revoked_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+  grant_id?: string | null;
+  grant_source?: string | null;
+  grant_purchase_id?: number | null;
+}
+
+export interface MembershipPackageRecord {
+  id: string;
+  owner_account_id: string;
+  kind: MembershipPackageKind;
+  membership_class: MembershipClass;
+  seat_count: number;
+  purchase_id?: number | null;
+  starts_at?: Date;
+  expires_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date;
+  updated?: Date;
+}
+
+export interface MembershipPackageDetails extends MembershipPackageRecord {
+  active_assignment_count: number;
+  available_seat_count: number;
+  assignments: MembershipPackageAssignment[];
 }
 
 export interface MembershipUsageStatus {
@@ -231,6 +278,33 @@ export interface Purchases {
     user_account_id?: string;
     refresh_usage_status?: boolean;
   }) => Promise<MembershipDetails>;
+  getMembershipPackageQuote: (opts?: {
+    account_id?: string;
+    package_id?: string;
+    kind?: MembershipPackageKind;
+    membership_class?: MembershipClass;
+    seat_count?: number;
+    interval?: "month" | "year";
+    course_project_id?: string;
+    starts_at?: Date | string;
+    expires_at?: Date | string;
+    metadata?: Record<string, unknown> | null;
+  }) => Promise<MembershipPackageQuote>;
+  getMembershipPackages: (opts?: {
+    account_id?: string;
+    user_account_id?: string;
+  }) => Promise<MembershipPackageDetails[]>;
+  assignMembershipPackageSeat: (opts?: {
+    account_id?: string;
+    package_id?: string;
+    target_account_id?: string;
+    metadata?: Record<string, unknown> | null;
+  }) => Promise<MembershipPackageAssignment>;
+  revokeMembershipPackageSeat: (opts?: {
+    account_id?: string;
+    package_id?: string;
+    target_account_id?: string;
+  }) => Promise<{ revoked: boolean }>;
   getAIUsage: (opts?: { account_id?: string }) => Promise<AIUsageStatus>;
   getManagedEgressHistory: (
     opts?: ManagedEgressHistoryQuery,
@@ -248,6 +322,10 @@ export const purchases = {
   getMinBalance: authFirst,
   getMembership: authFirst,
   getMembershipDetails: authFirst,
+  getMembershipPackageQuote: authFirst,
+  getMembershipPackages: authFirst,
+  assignMembershipPackageSeat: authFirst,
+  revokeMembershipPackageSeat: authFirst,
   getAIUsage: authFirst,
   getManagedEgressHistory: authFirst,
   getManagedEgressAdminOverview: authFirst,
