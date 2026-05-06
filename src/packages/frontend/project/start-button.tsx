@@ -21,7 +21,6 @@ import {
   A,
   Icon,
   ProjectState,
-  TimeElapsed,
   Tooltip,
   VisibleMDLG,
 } from "@cocalc/frontend/components";
@@ -32,7 +31,6 @@ import { useAllowedFreeProjectToRun } from "./client-side-throttle";
 import { useProjectContext } from "./context";
 import { DOC_TRIAL } from "./project-banner";
 import { lite } from "@cocalc/frontend/lite";
-import Bootlog from "./bootlog";
 import type { StartLroState } from "./start-ops";
 import type { MoveLroState } from "./move-ops";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
@@ -55,13 +53,6 @@ const STYLE: CSSProperties = {
   textAlign: "center",
   color: COLORS.GRAY_M,
 } as const;
-
-function toTimestamp(value?: Date | string | null): number | undefined {
-  if (!value) return undefined;
-  const date = new Date(value as any);
-  const ts = date.getTime();
-  return Number.isFinite(ts) ? ts : undefined;
-}
 
 export function StartButton({
   minimal,
@@ -121,14 +112,8 @@ export function StartButton({
       startLro.summary.status === "queued" ||
       startLro.summary.status === "running");
   const startLroSummary = startLro?.summary;
-  const startLroStatus = startLroSummary?.status
-    ? capitalize(startLroSummary.status)
-    : undefined;
   const startLroError = `${startLroSummary?.error ?? ""}`.trim();
   const startFailed = startLroSummary?.status === "failed" && !!startLroError;
-  const startLroStartTs = startLroSummary
-    ? toTimestamp(startLroSummary.started_at ?? startLroSummary.created_at)
-    : undefined;
   const moveActive =
     moveLro != null &&
     (!moveLro.summary ||
@@ -315,41 +300,6 @@ export function StartButton({
                   </div>
                 )}
                 {render_not_allowed()}
-                {(starting || startFailed) && (
-                  <div style={{ background: "white" }}>
-                    {startLroSummary && (
-                      <div style={{ fontSize: "12px", color: COLORS.GRAY_M }}>
-                        LRO: {startLroStatus ?? "Unknown"}
-                        {startLroStartTs != null && (
-                          <>
-                            {" "}
-                            &middot;{" "}
-                            <TimeElapsed
-                              start_ts={startLroStartTs}
-                              longform={false}
-                            />
-                          </>
-                        )}
-                      </div>
-                    )}
-                    <Bootlog
-                      style={{
-                        border: "1px solid #ddd",
-                        padding: "15px",
-                        boxShadow: "5px 5px 5px grey",
-                      }}
-                      lro={
-                        startLroSummary
-                          ? {
-                              op_id: startLroSummary.op_id,
-                              scope_type: startLroSummary.scope_type,
-                              scope_id: startLroSummary.scope_id,
-                            }
-                          : undefined
-                      }
-                    />
-                  </div>
-                )}
               </div>
             }
           >
