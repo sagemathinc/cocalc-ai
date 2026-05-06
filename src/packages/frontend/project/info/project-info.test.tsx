@@ -4,7 +4,7 @@
  */
 
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { ProjectInfo } from "./project-info";
 
 const useProjectInfo = jest.fn();
@@ -76,8 +76,16 @@ jest.mock("./flyout", () => ({
 }));
 
 jest.mock("./full", () => ({
-  Full: ({ project_id }: { project_id: string }) => (
-    <div data-testid="project-info-full">{project_id}</div>
+  Full: ({
+    project_id,
+    project_state,
+  }: {
+    project_id: string;
+    project_state?: string;
+  }) => (
+    <div data-testid="project-info-full">
+      {project_id}:{project_state ?? "none"}
+    </div>
   ),
 }));
 
@@ -111,7 +119,46 @@ describe("ProjectInfo", () => {
       project_id: "prop-project",
     });
     expect(screen.getByTestId("project-info-full")).toHaveTextContent(
-      "prop-project",
+      "prop-project:none",
+    );
+  });
+
+  it("updates project-derived state when switching explicit project ids", async () => {
+    const projectMap = {
+      get: (id: string) =>
+        ({
+          "project-1": {
+            getIn: () => "starting",
+          },
+          "project-2": {
+            getIn: () => "running",
+          },
+        })[id],
+    };
+    useTypedRedux.mockImplementation((arg0, arg1) => {
+      if (arg0 === "projects" && arg1 === "project_map") {
+        return projectMap;
+      }
+      if (arg1 === "status") {
+        return {
+          get: (key: string) => (key === "start_ts" ? 123 : undefined),
+        };
+      }
+      return undefined;
+    });
+
+    const { rerender } = render(<ProjectInfo project_id="project-1" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("project-info-full")).toHaveTextContent(
+        "project-1:starting",
+      ),
+    );
+
+    rerender(<ProjectInfo project_id="project-2" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("project-info-full")).toHaveTextContent(
+        "project-2:running",
+      ),
     );
   });
 });

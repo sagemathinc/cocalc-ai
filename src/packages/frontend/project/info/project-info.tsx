@@ -103,7 +103,7 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     // this is @cocalc/conn/project-status/types::ProjectStatus
     const project_status = useTypedRedux({ project_id }, "status");
     const project_map = useTypedRedux("projects", "project_map");
-    const [project, set_project] = useState(project_map?.get(project_id));
+    const project = project_map?.get(project_id);
     const [project_state, set_project_state] = useState<string | undefined>();
     const [start_ts, set_start_ts] = useState<number | undefined>(undefined);
     const [ptree, set_ptree] = useState<ProcessRow[] | undefined>(undefined);
@@ -118,13 +118,12 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     );
     const [show_long_loading, set_show_long_loading] = useState(false);
 
-    React.useMemo(() => {
-      if (project_map == null) return;
-      set_project(project_map.get(project_id));
-    }, [project_map]);
-
     React.useEffect(() => {
-      if (project == null) return;
+      if (project == null) {
+        set_start_ts(undefined);
+        set_project_state(undefined);
+        return;
+      }
       set_start_ts(project_status?.get("start_ts") as any);
       set_project_state(project.getIn(["state", "state"]) as any);
     }, [project, project_status]);
