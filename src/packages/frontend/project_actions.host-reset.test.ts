@@ -28,6 +28,7 @@ describe("ProjectActions host restart file runtime reset", () => {
     });
     const removeNamedRuntime = jest.fn().mockResolvedValue(undefined);
     const removeRuntime = jest.fn().mockResolvedValue(undefined);
+    const beforeRebootstrap = jest.fn().mockResolvedValue(undefined);
     const rebootstrapPath = jest.fn().mockResolvedValue(undefined);
 
     await resetOpenFileRuntimeAfterHostReset({
@@ -39,6 +40,7 @@ describe("ProjectActions host restart file runtime reset", () => {
       setComponent,
       removeNamedRuntime,
       removeRuntime,
+      beforeRebootstrap,
       rebootstrapPath,
     });
 
@@ -65,6 +67,7 @@ describe("ProjectActions host restart file runtime reset", () => {
       ["/display-a.ipynb"],
       ["/display-b.ipynb"],
     ]);
+    expect(beforeRebootstrap).toHaveBeenCalledTimes(1);
     expect(rebootstrapPath.mock.calls).toEqual([
       ["/display-b.ipynb", { noFocus: false }],
       ["/display-a.ipynb", { noFocus: true }],
@@ -93,6 +96,7 @@ describe("ProjectActions host restart file runtime reset", () => {
       },
       removeNamedRuntime: jest.fn(),
       removeRuntime: jest.fn(),
+      beforeRebootstrap: jest.fn(),
       rebootstrapPath,
     });
 

@@ -200,6 +200,7 @@ type ResetOpenFileRuntimeAfterHostResetOpts = {
   setComponent: (path: string, component: any) => void;
   removeNamedRuntime?: (runtimeName: string) => Promise<void> | void;
   removeRuntime: (syncPath: string) => Promise<void> | void;
+  beforeRebootstrap?: () => Promise<void> | void;
   rebootstrapPath?: (
     path: string,
     opts?: { noFocus?: boolean },
@@ -214,6 +215,7 @@ export async function resetOpenFileRuntimeAfterHostReset({
   setComponent,
   removeNamedRuntime,
   removeRuntime,
+  beforeRebootstrap,
   rebootstrapPath,
 }: ResetOpenFileRuntimeAfterHostResetOpts): Promise<void> {
   if (openFiles == null || openFiles.size === 0) {
@@ -248,6 +250,7 @@ export async function resetOpenFileRuntimeAfterHostReset({
   for (const syncPath of syncPaths) {
     await removeRuntime(syncPath);
   }
+  await beforeRebootstrap?.();
   const activePath =
     typeof activeProjectTab === "string" &&
     activeProjectTab.startsWith("editor-")
@@ -370,6 +373,64 @@ export function teardownNamedEditorRuntime({
   if (store != null) {
     removeStore(runtimeName);
   }
+}
+
+type WaitForProjectHostRoutingAfterMoveOpts = {
+  project_id: string;
+  source_host_id?: string;
+  dest_host_id?: string;
+  getProjectHostId: (project_id: string) => string | undefined;
+  hasHostInfo: (host_id: string) => boolean;
+  ensureHostInfo: (host_id: string, force?: boolean) => Promise<any> | any;
+  resolveRoutedClient: () => Promise<any>;
+  startDelayMs?: number;
+  maxDelayMs?: number;
+  maxWaitMs?: number;
+};
+
+export async function waitForProjectHostRoutingAfterMove({
+  project_id,
+  source_host_id,
+  dest_host_id,
+  getProjectHostId,
+  hasHostInfo,
+  ensureHostInfo,
+  resolveRoutedClient,
+  startDelayMs = 50,
+  maxDelayMs = 250,
+  maxWaitMs = 5000,
+}: WaitForProjectHostRoutingAfterMoveOpts): Promise<void> {
+  if (
+    !dest_host_id ||
+    (source_host_id != null && source_host_id === dest_host_id)
+  ) {
+    return;
+  }
+  let forcedHostInfoRefresh = false;
+  await retry_until_success({
+    f: async () => {
+      const currentHostId = getProjectHostId(project_id);
+      if (currentHostId !== dest_host_id) {
+        throw Error(
+          `project host routing still points at ${
+            currentHostId ?? "none"
+          }, waiting for ${dest_host_id}`,
+        );
+      }
+      if (!hasHostInfo(dest_host_id)) {
+        await ensureHostInfo(dest_host_id, !forcedHostInfoRefresh);
+        forcedHostInfoRefresh = true;
+      }
+      if (!hasHostInfo(dest_host_id)) {
+        throw Error(`host info for ${dest_host_id} not loaded yet`);
+      }
+      await resolveRoutedClient();
+    },
+    start_delay: startDelayMs,
+    max_delay: maxDelayMs,
+    max_time: maxWaitMs,
+    desc: `waitForProjectHostRoutingAfterMove(${project_id})`,
+  });
 }
 
 function selectOpenFilesForSyncPath({
@@ -3050,7 +3111,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.filesystemPromise = undefined;
   };
 
-  resetProjectHostRuntime = () => {
+  resetProjectHostRuntime = ({
+    source_host_id,
+    dest_host_id,
+  }: {
+    source_host_id?: string;
+    dest_host_id?: string;
+  } = {}) => {
     this.clearFilesystemClient();
     disconnect_from_project(this.project_id);
     this.projectStatusSub?.close();
@@ -3078,6 +3145,30 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         removeRuntime: async (syncPath) => {
           await project_file.remove(syncPath, this.redux, this.project_id, {
             force: true,
+          });
+        },
+        beforeRebootstrap: async () => {
+          await waitForProjectHostRoutingAfterMove({
+            project_id: this.project_id,
+            source_host_id,
+            dest_host_id,
+            getProjectHostId: (project_id) =>
+              redux
+                .getStore("projects")
+                ?.get("project_map")
+                ?.getIn([project_id, "host_id"]) as string | undefined,
+            hasHostInfo: (host_id) =>
+              redux.getStore("projects")?.get("host_info")?.has(host_id) ??
+              false,
+            ensureHostInfo: (host_id, force) =>
+              redux.getActions("projects")?.ensure_host_info(host_id, force),
+            resolveRoutedClient: async () => {
+              await webapp_client.conat_client.projectConat({
+                project_id: this.project_id,
+                caller: "resetProjectHostRuntime",
+                requireRouting: true,
+              });
+            },
           });
         },
         rebootstrapPath: async (path, opts) => {
