@@ -130,9 +130,10 @@ export const ProjectInfo: React.FC<Props> = React.memo(
 
     // used in render_not_loading_info()
     React.useEffect(() => {
+      set_show_long_loading(false);
       const timer = setTimeout(() => set_show_long_loading(true), 30000);
       return () => clearTimeout(timer);
-    }, []);
+    }, [project_id]);
 
     function update_top(info: ProjectInfoType) {
       // this shouldn't be the case, but somehow I saw this happening once
