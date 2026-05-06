@@ -34,11 +34,20 @@ describe("shouldRenderMoveStatus", () => {
     ).toBe(false);
   });
 
-  it("hides successful move operations", () => {
+  it("keeps successful move operations visible until dismissed", () => {
     expect(
       shouldRenderMoveStatus({
         op_id: "move-5",
         summary: { status: "succeeded" } as any,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRenderMoveStatus({
+        op_id: "move-6",
+        summary: {
+          status: "succeeded",
+          dismissed_at: "2026-05-06T15:00:00.000Z",
+        } as any,
       }),
     ).toBe(false);
     expect(shouldRenderMoveStatus(undefined)).toBe(false);

@@ -26,6 +26,7 @@ import {
   clampProgressPercent,
   formatProgressDetail,
 } from "../explorer/lro-timeline-utils";
+import { reopenProjectAfterMove } from "./move-reopen";
 
 const MOVE_PHASES = [
   { key: "validate", label: "Validate move request" },
@@ -88,6 +89,9 @@ function currentPhaseText(moveLro: MoveLroState): string {
 }
 
 function phaseIndex(moveLro: MoveLroState): number {
+  if (moveLro.summary?.status === "succeeded") {
+    return MOVE_PHASES.length - 1;
+  }
   const phase = moveLro.last_progress?.phase;
   if (!phase) return 0;
   const idx = MOVE_PHASES.findIndex((entry) => entry.key === phase);
@@ -199,6 +203,7 @@ export default function MoveInProgress({
   const { actions } = useProjectContext();
   const [canceling, setCanceling] = useState<boolean>(false);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [reopening, setReopening] = useState<boolean>(false);
   const [opError, setOpError] = useState<string>("");
   const [copied, setCopied] = useState<boolean>(false);
 
@@ -206,6 +211,7 @@ export default function MoveInProgress({
   const canCancel = status != null && !LRO_TERMINAL_STATUSES.has(status);
   const canDismiss =
     status != null && LRO_DISMISSABLE_STATUSES.has(status as any);
+  const moveCompleted = status === "succeeded";
   const phaseText = currentPhaseText(moveLro);
   const percent = progressPercent(moveLro);
   const phaseIdx = phaseIndex(moveLro);
@@ -295,6 +301,30 @@ export default function MoveInProgress({
   ]);
 
   const renderStatusAlert = () => {
+    if (status === "succeeded") {
+      return (
+        <Alert
+          showIcon
+          type="success"
+          title="Project move complete"
+          description={
+            <Space orientation="vertical" size={8} style={{ width: "100%" }}>
+              <div>
+                The project is now running on{" "}
+                <strong>{destHostText ?? "the destination host"}</strong>.
+              </div>
+              <div>
+                Reopening reconnects this browser session to the destination
+                host and restores your previous tabs there.
+              </div>
+              <div>
+                This does not move data again. The move has already completed.
+              </div>
+            </Space>
+          }
+        />
+      );
+    }
     if (status === "failed") {
       return (
         <Alert
@@ -464,32 +494,56 @@ export default function MoveInProgress({
             </Button>
           </Space>
           <Space wrap>
-            <Button
-              size="large"
-              loading={refreshing}
-              onClick={async () => {
-                setRefreshing(true);
-                try {
-                  actions?.trackMoveOp({
-                    op_id: moveLro.op_id,
-                    scope_type: "project",
-                    scope_id: project_id,
-                  });
-                  const projectActions = redux.getActions("projects");
-                  for (const host_id of [sourceHostId, destHostId]) {
-                    if (!host_id) continue;
-                    await projectActions?.ensure_host_info(host_id, true);
+            {moveCompleted ? (
+              <Button
+                size="large"
+                type="primary"
+                loading={reopening}
+                onClick={async () => {
+                  setOpError("");
+                  setReopening(true);
+                  try {
+                    await reopenProjectAfterMove({
+                      project_id,
+                      op_id: moveLro.op_id,
+                    });
+                  } catch (err) {
+                    setOpError(`${err}`);
+                  } finally {
+                    setReopening(false);
                   }
-                } catch (err) {
-                  setOpError(`${err}`);
-                } finally {
-                  setRefreshing(false);
-                }
-              }}
-            >
-              <Icon name="refresh" /> Refresh status
-            </Button>
-            {canCancel ? (
+                }}
+              >
+                <Icon name="external-link" /> Reopen project on destination host
+              </Button>
+            ) : (
+              <Button
+                size="large"
+                loading={refreshing}
+                onClick={async () => {
+                  setRefreshing(true);
+                  try {
+                    actions?.trackMoveOp({
+                      op_id: moveLro.op_id,
+                      scope_type: "project",
+                      scope_id: project_id,
+                    });
+                    const projectActions = redux.getActions("projects");
+                    for (const host_id of [sourceHostId, destHostId]) {
+                      if (!host_id) continue;
+                      await projectActions?.ensure_host_info(host_id, true);
+                    }
+                  } catch (err) {
+                    setOpError(`${err}`);
+                  } finally {
+                    setRefreshing(false);
+                  }
+                }}
+              >
+                <Icon name="refresh" /> Refresh status
+              </Button>
+            )}
+            {!moveCompleted && canCancel ? (
               <Popconfirm
                 title="Cancel this project move?"
                 okText="Cancel move"
@@ -517,7 +571,7 @@ export default function MoveInProgress({
                 </Button>
               </Popconfirm>
             ) : null}
-            {canDismiss ? (
+            {!moveCompleted && canDismiss ? (
               <Button
                 size="large"
                 onClick={() => actions?.dismissMoveLro(moveLro.op_id)}
