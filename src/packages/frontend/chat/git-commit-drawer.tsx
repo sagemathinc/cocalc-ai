@@ -3,23 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  Alert,
-  Button,
-  Checkbox,
-  Dropdown,
-  Drawer,
-  Empty,
-  Input,
-  Modal,
-  Select,
-  Space,
-  Spin,
-  Switch,
-  Typography,
-  type MenuProps,
-} from "antd";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { Checkbox, Drawer, Spin, Alert, type MenuProps } from "antd";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import type {
   CommentAnchor,
@@ -38,7 +22,6 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { redux } from "@cocalc/frontend/app-framework";
-import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { containingPath } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -77,7 +60,7 @@ import {
   getRenderedDiffLineLimit,
   isGitDiffFindTargetRendered,
 } from "./git-commit/diff-find";
-import { DiffBlock, DiffFileSection } from "./git-commit/diff-components";
+import { DiffBlock } from "./git-commit/diff-components";
 import {
   commentAnchorKey,
   diffLineNumberColumnWidth,
@@ -108,6 +91,17 @@ import {
   ReviewNoteEditor,
 } from "./git-commit/review-editors";
 import {
+  DeleteAllReviewsModal,
+  GitChangedFilesPanel,
+  GitCommitDetailsPanel,
+  GitCommitDrawerTitle,
+  GitDiffFilesPanel,
+  GitEmptyCommitDiff,
+  GitHeadCommitPanel,
+  GitRepoBootstrapPanel,
+  GitReviewPanel,
+} from "./git-commit/drawer-sections";
+import {
   captureGitDiffScrollAnchor,
   matchGitDrawerScrollCommand,
   restoreGitDiffScrollAnchor,
@@ -120,13 +114,11 @@ import {
   isEditableEventTarget,
   isMergeCommitSummary,
   isNotGitRepoError,
-  parseDateSafe,
   resolveOpenPath,
   shouldCaptureGitDrawerFindShortcut,
-  splitCommitMessage,
 } from "./git-commit/utils";
 import "./git-commit-drawer.css";
-import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import type { VirtuosoHandle } from "react-virtuoso";
 
 export { buildGitLogArgs, buildGitShowArgs };
 export {
@@ -169,10 +161,7 @@ const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
   value,
   label: `Context ${value}`,
 }));
-const CARD_BORDER_COLOR = "#d9d9d9";
-const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.06)";
 const DELETE_ALL_REVIEWS_CONFIRM_TEXT = "delete all";
-const EMPTY_GIT_REVIEW_COMMENTS: GitReviewCommentV2[] = [];
 
 interface GitCommitDrawerProps {
   projectId?: string;
@@ -2107,162 +2096,49 @@ export function GitCommitDrawer({
   return (
     <Drawer
       title={
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            width: "100%",
-            flexWrap: "wrap",
-          }}
-        >
-          {!nonRepoError ? (
-            <>
-              <Select
-                showSearch
-                size="small"
-                value={commit}
-                searchValue={commitSearch}
-                options={logOptions}
-                onChange={handleCommitChange}
-                onSearch={handleCommitSearch}
-                placeholder="git log"
-                style={{ minWidth: 280, flex: "1 1 360px", maxWidth: 620 }}
-                optionFilterProp="search"
-              />
-              <Checkbox
-                checked={showOnlyUnreviewedCommits}
-                onChange={(evt) =>
-                  setShowOnlyUnreviewedCommits(evt.target.checked)
+        <GitCommitDrawerTitle
+          nonRepoError={nonRepoError}
+          commit={commit}
+          commitSearch={commitSearch}
+          logOptions={logOptions}
+          onCommitChange={handleCommitChange}
+          onCommitSearch={handleCommitSearch}
+          showOnlyUnreviewedCommits={showOnlyUnreviewedCommits}
+          onToggleShowOnlyUnreviewed={setShowOnlyUnreviewedCommits}
+          diffFindInputRef={diffFindInputRef}
+          diffFindQuery={diffFindQuery}
+          onDiffFindQueryChange={setDiffFindQuery}
+          onNextDiffFindMatch={goToNextDiffFindMatch}
+          onPreviousDiffFindMatch={goToPreviousDiffFindMatch}
+          diffFindMatchesLength={diffFindMatches.length}
+          activeDiffFindMatchIndex={activeDiffFindMatchIndex}
+          canGoNewer={canGoNewer}
+          canGoOlder={canGoOlder}
+          onGoNewer={goNewer}
+          onGoOlder={goOlder}
+          canFindInChat={canFindInChat}
+          findInChatEnabled={findInChatEnabled}
+          onFindInChat={
+            !commit || !onFindInChat
+              ? undefined
+              : () => {
+                  void onFindInChat(commit);
                 }
-                style={{ whiteSpace: "nowrap" }}
-              >
-                Only unreviewed
-              </Checkbox>
-              <Space.Compact size="small">
-                <Input
-                  ref={diffFindInputRef}
-                  size="small"
-                  allowClear
-                  value={diffFindQuery}
-                  placeholder="Find in diff"
-                  style={{ width: 220 }}
-                  onChange={(evt) => setDiffFindQuery(evt.target.value)}
-                  onPressEnter={(evt) => {
-                    if ((evt as any)?.shiftKey) {
-                      goToPreviousDiffFindMatch();
-                    } else {
-                      goToNextDiffFindMatch();
-                    }
-                  }}
-                />
-                <Button
-                  size="small"
-                  disabled={diffFindMatches.length === 0}
-                  onClick={goToPreviousDiffFindMatch}
-                >
-                  Prev
-                </Button>
-                <Button
-                  size="small"
-                  disabled={diffFindMatches.length === 0}
-                  onClick={goToNextDiffFindMatch}
-                >
-                  Next
-                </Button>
-              </Space.Compact>
-              {diffFindQuery.trim() ? (
-                <Typography.Text
-                  type="secondary"
-                  style={{ fontSize: 12, whiteSpace: "nowrap" }}
-                >
-                  {diffFindMatches.length === 0
-                    ? "0 matches"
-                    : `${activeDiffFindMatchIndex + 1} / ${diffFindMatches.length}`}
-                </Typography.Text>
-              ) : null}
-              <Space.Compact size="small">
-                <Tooltip title="Newer commit (shortcut: k)">
-                  <span style={{ display: "inline-flex" }}>
-                    <Button
-                      size="small"
-                      onClick={goNewer}
-                      disabled={!canGoNewer}
-                    >
-                      Newer
-                    </Button>
-                  </span>
-                </Tooltip>
-                <Tooltip title="Older commit (shortcut: j)">
-                  <span style={{ display: "inline-flex" }}>
-                    <Button
-                      size="small"
-                      onClick={goOlder}
-                      disabled={!canGoOlder}
-                    >
-                      Older
-                    </Button>
-                  </span>
-                </Tooltip>
-              </Space.Compact>
-              {canFindInChat ? (
-                <Button
-                  size="small"
-                  disabled={!findInChatEnabled}
-                  onClick={() => {
-                    if (!commit || !onFindInChat) return;
-                    void onFindInChat(commit);
-                  }}
-                >
-                  Find in chat
-                </Button>
-              ) : null}
-            </>
-          ) : (
-            <Typography.Text strong style={{ marginRight: "auto" }}>
-              Git browser
-            </Typography.Text>
-          )}
-          <div
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              marginLeft: "auto",
-            }}
-          >
-            <Tooltip title="Context lines around changes. Shortcuts: [ decrease, ] increase">
-              <Select
-                size="small"
-                value={contextLines}
-                options={CONTEXT_OPTIONS}
-                onChange={(value) => {
-                  const node = scrollRef.current;
-                  pendingScrollRestoreRef.current = node?.scrollTop ?? null;
-                  pendingContextAnchorRef.current = node
-                    ? (captureGitDiffScrollAnchor(node) ?? null)
-                    : null;
-                  setContextLines(value);
-                }}
-                style={{ width: 120 }}
-              />
-            </Tooltip>
-            <Dropdown
-              trigger={["click"]}
-              menu={{
-                items: reviewMenuItems,
-                onClick: handleReviewMenuClick,
-              }}
-            >
-              <Button
-                size="small"
-                loading={reviewTransferBusy}
-                icon={<Icon name="ellipsis" />}
-                aria-label="Review actions"
-              />
-            </Dropdown>
-          </div>
-        </div>
+          }
+          contextLines={contextLines}
+          contextOptions={CONTEXT_OPTIONS}
+          onContextChange={(value) => {
+            const node = scrollRef.current;
+            pendingScrollRestoreRef.current = node?.scrollTop ?? null;
+            pendingContextAnchorRef.current = node
+              ? (captureGitDiffScrollAnchor(node) ?? null)
+              : null;
+            setContextLines(value);
+          }}
+          reviewMenuItems={reviewMenuItems}
+          onReviewMenuClick={handleReviewMenuClick}
+          reviewTransferBusy={reviewTransferBusy}
+        />
       }
       placement="right"
       size={drawerSize}
@@ -2278,55 +2154,21 @@ export function GitCommitDrawer({
       destroyOnHidden
       styles={{ body: { padding: 0, overflow: "hidden" } }}
     >
-      <Modal
+      <DeleteAllReviewsModal
         open={reviewDeleteAllOpen}
-        title="Delete all git reviews?"
-        destroyOnHidden
-        okText="Delete all reviews"
-        okButtonProps={{
-          danger: true,
-          disabled:
-            reviewTransferBusy ||
-            reviewDeleteAllConfirmValue.trim().toLowerCase() !==
-              DELETE_ALL_REVIEWS_CONFIRM_TEXT,
-        }}
-        cancelButtonProps={{ disabled: reviewTransferBusy }}
-        confirmLoading={reviewTransferBusy}
+        busy={reviewTransferBusy}
+        confirmText={DELETE_ALL_REVIEWS_CONFIRM_TEXT}
+        confirmValue={reviewDeleteAllConfirmValue}
+        onConfirmValueChange={setReviewDeleteAllConfirmValue}
         onCancel={() => {
           if (reviewTransferBusy) return;
           setReviewDeleteAllOpen(false);
           setReviewDeleteAllConfirmValue("");
         }}
-        onOk={() => {
+        onDelete={() => {
           void deleteAllReviewData();
         }}
-      >
-        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
-          <Typography.Text>
-            This will permanently delete all of your saved git review notes,
-            review status, and inline review comments on this CoCalc server.
-          </Typography.Text>
-          <Typography.Text type="secondary">
-            Type <code>{DELETE_ALL_REVIEWS_CONFIRM_TEXT}</code> to confirm.
-          </Typography.Text>
-          <Input
-            value={reviewDeleteAllConfirmValue}
-            autoFocus
-            placeholder={DELETE_ALL_REVIEWS_CONFIRM_TEXT}
-            onChange={(evt) => setReviewDeleteAllConfirmValue(evt.target.value)}
-            onPressEnter={() => {
-              if (
-                reviewTransferBusy ||
-                reviewDeleteAllConfirmValue.trim().toLowerCase() !==
-                  DELETE_ALL_REVIEWS_CONFIRM_TEXT
-              ) {
-                return;
-              }
-              void deleteAllReviewData();
-            }}
-          />
-        </Space>
-      </Modal>
+      />
       <input
         ref={reviewImportInputRef}
         type="file"
@@ -2356,433 +2198,118 @@ export function GitCommitDrawer({
           />
         ) : null}
         {nonRepoError ? (
-          <div
-            style={{
-              border: `1px solid ${CARD_BORDER_COLOR}`,
-              borderRadius: 8,
-              padding: 12,
-              marginBottom: 12,
-              background: "#fff",
-              boxShadow: CARD_SHADOW,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
+          <GitRepoBootstrapPanel
+            cwd={cwd}
+            error={nonRepoError}
+            busy={repoBootstrapBusy}
+            canAskAgent={Boolean(onRequestAgentTurn)}
+            onInitialize={() => {
+              void initializeGitRepo();
             }}
-          >
-            <Typography.Text strong>
-              This folder is not a git repository.
-            </Typography.Text>
-            <Typography.Text
-              type="secondary"
-              style={{ whiteSpace: "pre-wrap" }}
-            >
-              {nonRepoError}
-            </Typography.Text>
-            <Typography.Text type="secondary">
-              Path: <code>{cwd}</code>
-            </Typography.Text>
-            <Space wrap>
-              <Button
-                type="primary"
-                onClick={() => void initializeGitRepo()}
-                loading={repoBootstrapBusy}
-              >
-                Initialize Git Repo
-              </Button>
-              <Button
-                onClick={() => void requestAgentRepoSetup()}
-                disabled={!onRequestAgentTurn}
-                loading={repoBootstrapBusy}
-              >
-                Ask Agent to Set Up Repo
-              </Button>
-            </Space>
-          </div>
+            onAskAgent={() => {
+              void requestAgentRepoSetup();
+            }}
+          />
         ) : isHeadSelected ? (
-          <div
-            style={{
-              border: `1px solid ${CARD_BORDER_COLOR}`,
-              borderRadius: 8,
-              borderLeft: `4px solid ${COLORS.BLUE}`,
-              padding: 12,
-              marginBottom: 12,
-              background: "#fff",
-              boxShadow: CARD_SHADOW,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
+          <GitHeadCommitPanel
+            message={headCommitMessage}
+            busy={headCommitBusy}
+            error={headCommitError}
+            hasTrackedChanges={hasTrackedHeadChanges}
+            headStatusError={headStatusError}
+            headStatusLoading={headStatusLoading}
+            headStatusEntries={headStatusEntries}
+            headStatusAction={headStatusAction}
+            onMessageChange={setHeadCommitMessage}
+            onCommitWithSummary={() => {
+              void requestAgentCommit({ includeSummary: true });
             }}
-          >
-            <div style={{ fontWeight: 600 }}>Commit changes</div>
-            <Input.TextArea
-              value={headCommitMessage}
-              disabled={headCommitBusy}
-              placeholder="or leave blank to let the agent write the message"
-              autoSize={{ minRows: 2, maxRows: 6 }}
-              onChange={(e) => setHeadCommitMessage(e.target.value)}
-            />
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Button
-                size="small"
-                type="primary"
-                onClick={() =>
-                  void requestAgentCommit({ includeSummary: true })
-                }
-                disabled={headCommitBusy || !hasTrackedHeadChanges}
-              >
-                Commit with AI Summary
-              </Button>
-              <Button
-                size="small"
-                onClick={() => void doHeadCommit()}
-                disabled={!hasTrackedHeadChanges}
-              >
-                Commit
-              </Button>
-              <Button
-                size="small"
-                onClick={() => setHeadCommitMessage("")}
-                disabled={headCommitBusy || headCommitMessage.length === 0}
-              >
-                Clear
-              </Button>
-            </div>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Commit uses all tracked changes only (`git commit -a`). Untracked
-              files are excluded.
-            </Typography.Text>
-            {!hasTrackedHeadChanges ? (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                No tracked changes are currently available for one-click commit.
-              </Typography.Text>
-            ) : null}
-            {headCommitError ? (
-              <Alert type="error" showIcon title={headCommitError} />
-            ) : null}
-
-            <div style={{ fontWeight: 600 }}>Uncommitted files</div>
-            {headStatusError ? (
-              <Alert type="warning" showIcon title={headStatusError} />
-            ) : null}
-            {headStatusLoading ? (
-              <div style={{ padding: "12px 0", textAlign: "center" }}>
-                <Spin size="small" />
-              </div>
-            ) : null}
-            {!headStatusLoading && headStatusEntries.length === 0 ? (
-              <Typography.Text type="secondary">
-                No uncommitted changes.
-              </Typography.Text>
-            ) : null}
-            {!headStatusLoading && headStatusEntries.length > 0
-              ? headStatusEntries.map((entry) => {
-                  return (
-                    <div
-                      key={`${entry.statusCode}:${entry.path}`}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 8,
-                        border: `1px solid ${COLORS.GRAY_LL}`,
-                        borderRadius: 6,
-                        padding: "6px 8px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          minWidth: 0,
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <Button
-                          type="link"
-                          size="small"
-                          style={{ padding: 0, fontFamily: "monospace" }}
-                          onClick={() => void openFile(entry.path)}
-                        >
-                          {entry.displayPath}
-                        </Button>
-                        <Typography.Text
-                          type="secondary"
-                          style={{ fontSize: 11 }}
-                        >
-                          {entry.statusLabel}
-                          {!entry.tracked ? " (not included by Commit)" : ""}
-                        </Typography.Text>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <Typography.Text code style={{ marginBottom: 0 }}>
-                          {entry.statusCode}
-                        </Typography.Text>
-                        {!entry.tracked ? (
-                          <Space.Compact size="small">
-                            <Button
-                              size="small"
-                              onClick={() => void addUntrackedFile(entry.path)}
-                              loading={headStatusAction === `add:${entry.path}`}
-                              disabled={Boolean(headStatusAction)}
-                            >
-                              Add
-                            </Button>
-                            <Button
-                              size="small"
-                              onClick={() =>
-                                void ignoreUntrackedFile(entry.path)
-                              }
-                              loading={
-                                headStatusAction === `ignore:${entry.path}`
-                              }
-                              disabled={Boolean(headStatusAction)}
-                            >
-                              Ignore
-                            </Button>
-                          </Space.Compact>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })
-              : null}
-          </div>
+            onCommit={() => {
+              void doHeadCommit();
+            }}
+            onClearMessage={() => setHeadCommitMessage("")}
+            onOpenFile={(path) => {
+              void openFile(path);
+            }}
+            onAddUntrackedFile={(path) => {
+              void addUntrackedFile(path);
+            }}
+            onIgnoreUntrackedFile={(path) => {
+              void ignoreUntrackedFile(path);
+            }}
+          />
         ) : (
-          <div
-            style={{
-              border: `1px solid ${CARD_BORDER_COLOR}`,
-              borderRadius: 8,
-              borderLeft: `4px solid ${COLORS.BLUE}`,
-              padding: 12,
-              marginBottom: 12,
-              background: "#fff",
-              boxShadow: CARD_SHADOW,
+          <GitReviewPanel
+            reviewed={reviewed}
+            reviewLoading={reviewLoading}
+            reviewSaving={reviewSaving}
+            reviewUpdatedAt={reviewUpdatedAt}
+            accountId={accountId}
+            currentReviewCommit={currentReviewCommit}
+            isHeadSelected={isHeadSelected}
+            reviewNoteEditing={reviewNoteEditing}
+            reviewNote={reviewNote}
+            reviewNoteDraft={reviewNoteDraft}
+            reviewNoteHistoryId={reviewNoteHistoryId}
+            fontSize={fontSize}
+            editorTheme={editorTheme}
+            reviewError={reviewError}
+            inlineCommentCount={inlineComments.length}
+            resolvedInlineCount={resolvedInlineCount}
+            showResolvedComments={showResolvedComments}
+            onToggleReviewed={(next) => {
+              setReviewed(next);
+              setReviewDirty(true);
+              void saveReview({ reviewed: next });
             }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-                gap: 10,
-                marginBottom: 8,
-                flexWrap: "wrap",
-                overflow: "visible",
-              }}
-            >
-              <Checkbox
-                checked={reviewed}
-                disabled={
-                  reviewLoading ||
-                  reviewSaving ||
-                  !accountId ||
-                  !commit ||
-                  isHeadSelected
-                }
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  alignSelf: "flex-start",
-                  minHeight: 22,
-                  lineHeight: "20px",
-                }}
-                onChange={(e) => {
-                  const next = e.target.checked;
-                  setReviewed(next);
-                  setReviewDirty(true);
-                  void saveReview({ reviewed: next });
-                }}
-              >
-                <span style={{ fontWeight: 600 }}>Reviewed</span>
-              </Checkbox>
-              <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
-                <Space size={8} align="center">
-                  {resolvedInlineCount > 0 ? (
-                    <>
-                      <Typography.Text
-                        type="secondary"
-                        style={{ fontSize: 12 }}
-                      >
-                        Show resolved
-                      </Typography.Text>
-                      <Switch
-                        size="small"
-                        checked={showResolvedComments}
-                        onChange={setShowResolvedComments}
-                      />
-                    </>
-                  ) : null}
-                  <span>
-                    {reviewSaving ? "Saving..." : null}
-                    {!reviewSaving && reviewUpdatedAt ? (
-                      <>
-                        Updated <TimeAgo date={new Date(reviewUpdatedAt)} />
-                      </>
-                    ) : null}
-                  </span>
-                </Space>
-              </div>
-            </div>
-            {reviewNoteEditing ? (
-              <ReviewNoteEditor
-                historyId={reviewNoteHistoryId}
-                key={reviewNoteHistoryId}
-                value={reviewNoteDraft}
-                committedValue={reviewNote}
-                fontSize={fontSize}
-                saving={reviewSaving}
-                disabled={
-                  reviewLoading ||
-                  !accountId ||
-                  isHeadSelected ||
-                  !currentReviewCommit
-                }
-                onPersistDraft={(value) => {
-                  if (
-                    reviewLoading ||
-                    !accountId ||
-                    isHeadSelected ||
-                    !currentReviewCommit
-                  )
-                    return;
-                  if (activeReviewCommitRef.current !== currentReviewCommit)
-                    return;
-                  setReviewNoteDraft(value);
-                  setReviewDirty(true);
-                  saveReviewDraft(
-                    currentReviewCommit,
-                    {
-                      reviewed: Boolean(reviewed),
-                      note: `${value ?? ""}`,
-                      comments: reviewRecord?.comments ?? {},
-                    },
-                    accountId,
-                  );
-                }}
-                onCancel={() => {
-                  setReviewNoteDraft(reviewNote);
-                  setReviewNoteEditing(false);
-                }}
-                onSave={(nextNote) => {
-                  if (!currentReviewCommit) return;
-                  setReviewNote(nextNote);
-                  setReviewNoteDraft(nextNote);
-                  setReviewDirty(true);
-                  setReviewNoteEditing(false);
-                  void saveReview({ note: nextNote, reviewed });
-                }}
-              />
-            ) : (
-              <div
-                style={{
-                  border: `1px solid ${COLORS.GRAY_LL}`,
-                  borderRadius: 6,
-                  padding: "8px 10px",
-                  background: "#fff",
-                  minHeight: 40,
-                }}
-              >
-                {reviewNote?.trim() ? (
-                  <StaticMarkdown
-                    value={reviewNote}
-                    style={{ fontSize: Math.max(13, fontSize) }}
-                    editorTheme={editorTheme}
-                  />
-                ) : (
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    No private review note yet.
-                  </Typography.Text>
-                )}
-              </div>
-            )}
-            <Typography.Text
-              type="secondary"
-              style={{ fontSize: 12, marginTop: 6 }}
-            >
-              This note and the Reviewed checkbox are private state only. They
-              are not sent to the agent.
-            </Typography.Text>
-            <div
-              style={{
-                marginTop: 8,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "flex-start",
-                gap: 8,
-                flexWrap: "wrap",
-              }}
-            >
-              <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
-                {reviewError ||
-                  (reviewLoading ? "Loading review state..." : "")}
-                {!reviewError && !reviewLoading && inlineComments.length > 0
-                  ? ` · ${inlineComments.length} inline comments`
-                  : ""}
-              </div>
-              {!reviewNoteEditing ? (
-                <Button
-                  size="small"
-                  disabled={
-                    reviewSaving ||
-                    !accountId ||
-                    !currentReviewCommit ||
-                    isHeadSelected
-                  }
-                  onClick={() => {
-                    setReviewNoteDraft(reviewNote);
-                    setReviewNoteEditing(true);
-                  }}
-                >
-                  Edit
-                </Button>
-              ) : null}
-            </div>
-            <div
-              style={{
-                marginTop: 8,
-                border: `1px solid ${COLORS.GRAY_LL}`,
-                borderRadius: 6,
-                background: "#fff",
-                padding: "8px 10px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 8,
-                flexWrap: "wrap",
-              }}
-            >
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Send only draft inline diff comments (created with the{" "}
-                <code>+</code> buttons in the patch below).
-              </Typography.Text>
-              <Space.Compact size="small">
-                <Button
-                  size="small"
-                  type="primary"
-                  disabled={
-                    actionableInlineComments.length === 0 ||
-                    reviewSubmitBusy ||
-                    reviewSaving ||
-                    !onRequestAgentTurn
-                  }
-                  loading={reviewSubmitBusy}
-                  onClick={() => void sendInlineReviewToAgent()}
-                >
-                  {`Send inline comments to agent${
-                    actionableInlineComments.length > 0
-                      ? ` (${actionableInlineComments.length})`
-                      : ""
-                  }`}
-                </Button>
-              </Space.Compact>
-            </div>
-          </div>
+            onToggleShowResolvedComments={setShowResolvedComments}
+            onPersistReviewNoteDraft={(value) => {
+              if (
+                reviewLoading ||
+                !accountId ||
+                isHeadSelected ||
+                !currentReviewCommit
+              ) {
+                return;
+              }
+              if (activeReviewCommitRef.current !== currentReviewCommit) {
+                return;
+              }
+              setReviewNoteDraft(value);
+              setReviewDirty(true);
+              saveReviewDraft(
+                currentReviewCommit,
+                {
+                  reviewed: Boolean(reviewed),
+                  note: `${value ?? ""}`,
+                  comments: reviewRecord?.comments ?? {},
+                },
+                accountId,
+              );
+            }}
+            onStartEditingReviewNote={() => {
+              setReviewNoteDraft(reviewNote);
+              setReviewNoteEditing(true);
+            }}
+            onCancelReviewNote={() => {
+              setReviewNoteDraft(reviewNote);
+              setReviewNoteEditing(false);
+            }}
+            onSaveReviewNote={(nextNote) => {
+              if (!currentReviewCommit) return;
+              setReviewNote(nextNote);
+              setReviewNoteDraft(nextNote);
+              setReviewDirty(true);
+              setReviewNoteEditing(false);
+              void saveReview({ note: nextNote, reviewed });
+            }}
+            actionableInlineCommentCount={actionableInlineComments.length}
+            reviewSubmitBusy={reviewSubmitBusy}
+            canRequestAgentTurn={Boolean(onRequestAgentTurn)}
+            onSendInlineReviewToAgent={() => {
+              void sendInlineReviewToAgent();
+            }}
+          />
         )}
         {loading ? (
           <div style={{ padding: "32px 0", textAlign: "center" }}>
@@ -2799,276 +2326,63 @@ export function GitCommitDrawer({
         ) : null}
         {!loading && !error && data ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {data.summaryLines.length
-              ? (() => {
-                  const summary = data.summary;
-                  const rows: Array<{
-                    label: string;
-                    value?: string;
-                    asDate?: boolean;
-                    monospace?: boolean;
-                  }> = [
-                    {
-                      label: "Commit",
-                      value:
-                        summary.commit ??
-                        (isHeadSelected ? HEAD_REF : (commit ?? "")),
-                      monospace: true,
-                    },
-                    { label: "Author", value: summary.author },
-                    {
-                      label: "Author Date",
-                      value: summary.authorDate,
-                      asDate: true,
-                    },
-                    { label: "Committer", value: summary.committer },
-                    {
-                      label: "Commit Date",
-                      value: summary.commitDate,
-                      asDate: true,
-                    },
-                  ].filter((row) => Boolean(`${row.value ?? ""}`.trim()));
-                  const commitMessage = splitCommitMessage(summary.message);
-                  return (
-                    <div
-                      style={{
-                        border: `1px solid ${CARD_BORDER_COLOR}`,
-                        borderRadius: 8,
-                        borderLeft: `4px solid ${COLORS.BLUE}`,
-                        padding: "10px 12px",
-                        background: "#fff",
-                        boxShadow: CARD_SHADOW,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 10,
-                      }}
-                    >
-                      <Typography.Text strong style={{ fontSize: 13 }}>
-                        Commit details
-                      </Typography.Text>
-                      {rows.length ? (
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "120px 1fr",
-                            columnGap: 12,
-                            rowGap: 6,
-                          }}
-                        >
-                          {rows.map((row) => (
-                            <div
-                              key={`${row.label}:${row.value ?? ""}`}
-                              style={{ display: "contents" }}
-                            >
-                              <Typography.Text
-                                type="secondary"
-                                style={{ fontSize: 12 }}
-                              >
-                                {row.label}
-                              </Typography.Text>
-                              <Typography.Text
-                                style={{
-                                  fontSize: 12,
-                                  fontFamily: row.monospace
-                                    ? "monospace"
-                                    : undefined,
-                                  overflowWrap: "anywhere",
-                                }}
-                              >
-                                {row.asDate
-                                  ? (() => {
-                                      const parsed = parseDateSafe(row.value);
-                                      return parsed ? (
-                                        <TimeAgo date={parsed} />
-                                      ) : (
-                                        row.value
-                                      );
-                                    })()
-                                  : row.value}
-                              </Typography.Text>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      {summary.message ? (
-                        <div
-                          style={{
-                            borderTop: `1px solid ${COLORS.GRAY_LL}`,
-                            paddingTop: 10,
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: commitMessage.body ? 8 : 0,
-                          }}
-                        >
-                          {commitMessage.subject ? (
-                            <Typography.Text
-                              strong
-                              style={{
-                                fontSize: Math.max(13, fontSize),
-                                lineHeight: 1.55,
-                                overflowWrap: "anywhere",
-                              }}
-                            >
-                              {commitMessage.subject}
-                            </Typography.Text>
-                          ) : null}
-                          {commitMessage.body ? (
-                            <StaticMarkdown
-                              value={
-                                isMergeCommitSummary(summary)
-                                  ? (formatMergeCommitBodyMarkdown(
-                                      commitMessage.body,
-                                    ) ?? commitMessage.body)
-                                  : commitMessage.body
-                              }
-                              style={{
-                                fontSize: Math.max(13, fontSize),
-                                lineHeight: 1.55,
-                              }}
-                              editorTheme={editorTheme}
-                            />
-                          ) : null}
-                        </div>
-                      ) : summary.extraHeaderLines.length ? (
-                        <Typography.Paragraph
-                          style={{
-                            marginBottom: 0,
-                            fontFamily: "monospace",
-                            whiteSpace: "pre-wrap",
-                            fontSize: Math.max(11, fontSize - 1),
-                          }}
-                        >
-                          {summary.extraHeaderLines.join("\n")}
-                        </Typography.Paragraph>
-                      ) : null}
-                    </div>
-                  );
-                })()
-              : null}
+            {data.summaryLines.length ? (
+              <GitCommitDetailsPanel
+                summary={data.summary}
+                commit={commit}
+                isHeadSelected={isHeadSelected}
+                fontSize={fontSize}
+                editorTheme={editorTheme}
+                headRefLabel={HEAD_REF}
+              />
+            ) : null}
             {data.files.length === 0 ? (
-              <Empty description="No file changes in this commit." />
+              <GitEmptyCommitDiff />
             ) : (
               <>
-                <div
-                  style={{
-                    marginBottom: 18,
-                    padding: "10px 12px",
-                    border: `1px solid ${CARD_BORDER_COLOR}`,
-                    borderRadius: 10,
-                    background: "white",
-                    boxShadow: CARD_SHADOW,
+                <GitChangedFilesPanel
+                  files={data.files}
+                  inlineCommentsByFile={inlineCommentsByFile}
+                  onOpenFileDiff={scrollToDiffFile}
+                />
+                <GitDiffFilesPanel
+                  files={data.files}
+                  drawerScrollParent={drawerScrollParent}
+                  virtuosoRef={virtuosoRef}
+                  fontSize={fontSize}
+                  editorTheme={editorTheme}
+                  reviewEditorScope={reviewEditorScope}
+                  inlineCommentsByFile={inlineCommentsByFile}
+                  showResolvedComments={showResolvedComments}
+                  isHeadSelected={isHeadSelected}
+                  visibleDiffLinesByFile={visibleDiffLinesByFile}
+                  onOpenFile={openFile}
+                  onShowMoreLines={(nextSectionId) => {
+                    setVisibleDiffLinesByFile((prev) => ({
+                      ...prev,
+                      [nextSectionId]: getNextRenderedDiffLineLimit(
+                        prev[nextSectionId],
+                      ),
+                    }));
                   }}
-                >
-                  <Typography.Text
-                    strong
-                    style={{ display: "block", marginBottom: 10 }}
-                  >
-                    Changed files
-                  </Typography.Text>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 8,
-                    }}
-                  >
-                    {data.files.map((file, idx) => {
-                      const sectionId = buildGitReviewFileSectionId(
-                        file.path,
-                        idx,
-                      );
-                      const fileComments =
-                        inlineCommentsByFile.get(file.path) ??
-                        EMPTY_GIT_REVIEW_COMMENTS;
-                      return (
-                        <Button
-                          key={`file-index-${sectionId}`}
-                          size="small"
-                          style={{
-                            fontFamily: "monospace",
-                            maxWidth: "100%",
-                          }}
-                          onClick={() => scrollToDiffFile(idx)}
-                        >
-                          {file.path}
-                          {fileComments.length > 0
-                            ? ` (${fileComments.length})`
-                            : ""}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <Virtuoso
-                  ref={virtuosoRef}
-                  customScrollParent={drawerScrollParent ?? undefined}
-                  data={data.files}
-                  computeItemKey={(idx, file) =>
-                    buildGitReviewFileSectionId(file.path, idx)
-                  }
-                  increaseViewportBy={1200}
-                  itemContent={(idx, file) => {
-                    const sectionId = buildGitReviewFileSectionId(
-                      file.path,
-                      idx,
-                    );
-                    const fileComments =
-                      inlineCommentsByFile.get(file.path) ??
-                      EMPTY_GIT_REVIEW_COMMENTS;
-                    return (
-                      <DiffFileSection
-                        file={file}
-                        index={idx}
-                        fontSize={fontSize}
-                        editorTheme={editorTheme}
-                        editorHistoryScope={reviewEditorScope}
-                        fileComments={fileComments}
-                        showResolvedComments={showResolvedComments}
-                        isHeadSelected={isHeadSelected}
-                        visibleLineLimit={getRenderedDiffLineLimit(
-                          visibleDiffLinesByFile[sectionId],
-                        )}
-                        onOpenFile={openFile}
-                        onShowMoreLines={(nextSectionId) => {
-                          setVisibleDiffLinesByFile((prev) => ({
-                            ...prev,
-                            [nextSectionId]: getNextRenderedDiffLineLimit(
-                              prev[nextSectionId],
-                            ),
-                          }));
-                        }}
-                        activeDraftAnchorId={activeDraftAnchorId}
-                        activeDraftBody={activeInlineDraftBody}
-                        activeEditingId={activeInlineEditId}
-                        activeEditingBody={activeInlineEditBody}
-                        pendingKey={inlineCommentPendingKey}
-                        onOpenDraft={openInlineDraft}
-                        onDraftBodyChange={setActiveInlineDraftBody}
-                        onCancelDraft={cancelInlineDraft}
-                        onOpenEdit={openInlineEdit}
-                        onEditingBodyChange={setActiveInlineEditBody}
-                        onCancelEdit={cancelInlineEdit}
-                        onCreateComment={submitInlineDraft}
-                        onUpdateComment={submitInlineEdit}
-                        onResolveComment={handleResolveInlineComment}
-                        onReopenComment={handleReopenInlineComment}
-                        matchedFindCount={diffFindMeta.counts.get(idx) ?? 0}
-                        matchedLineIndexes={diffFindMeta.matchedLineIndexes.get(
-                          idx,
-                        )}
-                        activeFindMatchKind={
-                          activeDiffFindMatch?.fileIndex === idx
-                            ? activeDiffFindMatch.kind
-                            : undefined
-                        }
-                        activeFindLineIndex={
-                          activeDiffFindMatch?.fileIndex === idx
-                            ? activeDiffFindMatch.lineIndex
-                            : undefined
-                        }
-                      />
-                    );
-                  }}
+                  activeDraftAnchorId={activeDraftAnchorId}
+                  activeDraftBody={activeInlineDraftBody}
+                  activeEditingId={activeInlineEditId}
+                  activeEditingBody={activeInlineEditBody}
+                  pendingKey={inlineCommentPendingKey}
+                  onOpenDraft={openInlineDraft}
+                  onDraftBodyChange={setActiveInlineDraftBody}
+                  onCancelDraft={cancelInlineDraft}
+                  onOpenEdit={openInlineEdit}
+                  onEditingBodyChange={setActiveInlineEditBody}
+                  onCancelEdit={cancelInlineEdit}
+                  onCreateComment={submitInlineDraft}
+                  onUpdateComment={submitInlineEdit}
+                  onResolveComment={handleResolveInlineComment}
+                  onReopenComment={handleReopenInlineComment}
+                  diffFindMatchCounts={diffFindMeta.counts}
+                  diffFindMatchedLineIndexes={diffFindMeta.matchedLineIndexes}
+                  activeDiffFindMatch={activeDiffFindMatch}
                 />
               </>
             )}
