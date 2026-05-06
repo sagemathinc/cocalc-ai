@@ -1,19 +1,25 @@
+import { EventEmitter } from "events";
 import { render } from "@testing-library/react";
 import { useProjectActiveOperation } from "./use-project-active-op";
 
 jest.useFakeTimers();
 
-jest.mock("@cocalc/frontend/webapp-client", () => ({
-  webapp_client: {
-    conat_client: {
-      hub: {
-        projects: {
-          getProjectActiveOperation: jest.fn(),
-        },
+jest.mock("@cocalc/frontend/webapp-client", () => {
+  const { EventEmitter } = require("events");
+  const conatClient = Object.assign(new EventEmitter(), {
+    removeListener: EventEmitter.prototype.removeListener,
+    hub: {
+      projects: {
+        getProjectActiveOperation: jest.fn(),
       },
     },
-  },
-}));
+  });
+  return {
+    webapp_client: {
+      conat_client: conatClient,
+    },
+  };
+});
 
 jest.mock("./use-project-field", () => ({
   createProjectFieldState: jest.fn(() => ({ field: "active_op" })),
@@ -25,12 +31,13 @@ const { webapp_client } = jest.requireMock(
   "@cocalc/frontend/webapp-client",
 ) as {
   webapp_client: {
-    conat_client: {
+    conat_client: EventEmitter & {
       hub: {
         projects: {
           getProjectActiveOperation: jest.Mock;
         };
       };
+      removeListener: typeof EventEmitter.prototype.removeListener;
     };
   };
 };
@@ -58,6 +65,7 @@ function PollingTestComponent({ pollWhile }: { pollWhile?: boolean }) {
 describe("useProjectActiveOperation", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    webapp_client.conat_client.removeAllListeners();
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
       value: "visible",
@@ -161,5 +169,37 @@ describe("useProjectActiveOperation", () => {
     jest.advanceTimersByTime(8_000);
 
     expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes once when conat reconnects even if polling is idle", () => {
+    const refresh = jest.fn();
+    useProjectField.mockReturnValue({
+      value: null,
+      refresh,
+      setValue: jest.fn(),
+    });
+
+    render(<PollingTestComponent pollWhile={false} />);
+    webapp_client.conat_client.emit("connected");
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh on reconnect while the tab is hidden", () => {
+    const refresh = jest.fn();
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    useProjectField.mockReturnValue({
+      value: null,
+      refresh,
+      setValue: jest.fn(),
+    });
+
+    render(<PollingTestComponent pollWhile={false} />);
+    webapp_client.conat_client.emit("connected");
+
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

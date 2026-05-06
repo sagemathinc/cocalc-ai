@@ -89,6 +89,19 @@ export function useProjectActiveOperation(
     return () => window.clearInterval(timer);
   }, [refresh, shouldPoll]);
 
+  useEffect(() => {
+    if (!project_id || !isVisible) {
+      return;
+    }
+    const handleReconnect = () => {
+      refresh();
+    };
+    webapp_client.conat_client.on?.("connected", handleReconnect);
+    return () => {
+      webapp_client.conat_client.removeListener?.("connected", handleReconnect);
+    };
+  }, [isVisible, project_id, refresh]);
+
   return {
     activeOp,
     refresh,
