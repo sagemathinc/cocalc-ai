@@ -120,6 +120,7 @@ import {
   shouldCaptureGitDrawerFindShortcut,
 } from "./git-commit/utils";
 import "./git-commit-drawer.css";
+import type { ReactNode } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 
 export { buildGitLogArgs, buildGitShowArgs };
@@ -183,6 +184,7 @@ interface GitCommitDrawerProps {
   }) => void | Promise<void>;
   onFindInChat?: (query: string) => void | Promise<void>;
   onOpenActivityLog?: () => void;
+  reviewSubmissionHelpText?: ReactNode;
 }
 
 async function runGitCommand({
@@ -217,6 +219,7 @@ export function GitCommitDrawer({
   onDirectCommitLogged,
   onFindInChat,
   onOpenActivityLog,
+  reviewSubmissionHelpText,
 }: GitCommitDrawerProps) {
   const accountId = useTypedRedux("account", "account_id");
   const editorTheme = useEffectiveEditorThemeForPath(projectId, sourcePath);
@@ -2311,6 +2314,7 @@ export function GitCommitDrawer({
             actionableInlineCommentCount={actionableInlineComments.length}
             reviewSubmitBusy={reviewSubmitBusy}
             canRequestAgentTurn={Boolean(onRequestAgentTurn)}
+            reviewSubmissionHelpText={reviewSubmissionHelpText}
             onSendInlineReviewToAgent={() => {
               void sendInlineReviewToAgent();
             }}

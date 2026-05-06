@@ -561,6 +561,7 @@ type GitReviewPanelProps = {
   actionableInlineCommentCount: number;
   reviewSubmitBusy: boolean;
   canRequestAgentTurn: boolean;
+  reviewSubmissionHelpText?: ReactNode;
   onSendInlineReviewToAgent: () => void;
 };
 
@@ -591,8 +592,29 @@ export function GitReviewPanel({
   actionableInlineCommentCount,
   reviewSubmitBusy,
   canRequestAgentTurn,
+  reviewSubmissionHelpText,
   onSendInlineReviewToAgent,
 }: GitReviewPanelProps) {
+  const submitDisabled =
+    actionableInlineCommentCount === 0 ||
+    reviewSubmitBusy ||
+    reviewSaving ||
+    !canRequestAgentTurn;
+  const submitButton = (
+    <Button
+      size="small"
+      type="primary"
+      disabled={submitDisabled}
+      loading={reviewSubmitBusy}
+      onClick={onSendInlineReviewToAgent}
+    >
+      {`Send inline comments to agent${
+        actionableInlineCommentCount > 0
+          ? ` (${actionableInlineCommentCount})`
+          : ""
+      }`}
+    </Button>
+  );
   return (
     <div
       style={{
@@ -755,25 +777,19 @@ export function GitReviewPanel({
           Send only draft inline diff comments (created with the <code>+</code>{" "}
           buttons in the patch below).
         </Typography.Text>
+        {reviewSubmissionHelpText && !canRequestAgentTurn ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {reviewSubmissionHelpText}
+          </Typography.Text>
+        ) : null}
         <Space.Compact size="small">
-          <Button
-            size="small"
-            type="primary"
-            disabled={
-              actionableInlineCommentCount === 0 ||
-              reviewSubmitBusy ||
-              reviewSaving ||
-              !canRequestAgentTurn
-            }
-            loading={reviewSubmitBusy}
-            onClick={onSendInlineReviewToAgent}
-          >
-            {`Send inline comments to agent${
-              actionableInlineCommentCount > 0
-                ? ` (${actionableInlineCommentCount})`
-                : ""
-            }`}
-          </Button>
+          {reviewSubmissionHelpText && !canRequestAgentTurn ? (
+            <Tooltip title={reviewSubmissionHelpText}>
+              <span style={{ display: "inline-flex" }}>{submitButton}</span>
+            </Tooltip>
+          ) : (
+            submitButton
+          )}
         </Space.Compact>
       </div>
     </div>
