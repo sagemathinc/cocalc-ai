@@ -14,6 +14,8 @@ import { uuid } from "@cocalc/util/misc";
 import { resolveMembershipForAccount } from "./resolve";
 import {
   assignMembershipPackageSeat,
+  claimMembershipPackageSeat,
+  listClaimableMembershipPackagesForAccount,
   listMembershipPackageDetailsForOwner,
   resolveMembershipPackageQuote,
   revokeMembershipPackageSeat,
@@ -27,6 +29,20 @@ afterAll(after);
 
 describe("membership packages", () => {
   const teamTier = `team-tier-${uuid()}`;
+
+  async function markVerifiedEmail(account_id: string, email_address: string) {
+    await getPool().query(
+      `UPDATE accounts
+       SET email_address=$2,
+           email_address_verified=$3::jsonb
+       WHERE account_id=$1`,
+      [
+        account_id,
+        email_address,
+        { [email_address]: new Date().toISOString() },
+      ],
+    );
+  }
 
   beforeAll(async () => {
     await createTestMembershipTier({
@@ -206,5 +222,93 @@ describe("membership packages", () => {
       [project_id],
     );
     expect(revokedUsage.rows[0]?.usage_account_id).toBeNull();
+  });
+
+  it("reserves a seat by email and lets the verified account claim it later", async () => {
+    const owner_account_id = uuid();
+    const invited_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(invited_account_id);
+    await markVerifiedEmail(invited_account_id, "student@example.com");
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 1,
+      metadata: {
+        interval: "month",
+        seat_price: 20,
+      },
+    });
+
+    const reserved = await assignMembershipPackageSeat({
+      package_id,
+      email_address: "student@example.com",
+      assigned_by_account_id: owner_account_id,
+    });
+    expect(reserved.email_address).toBe("student@example.com");
+    expect(reserved.account_id).toBeUndefined();
+    expect(reserved.grant_id).toBeUndefined();
+
+    const claimables = await listClaimableMembershipPackagesForAccount({
+      account_id: invited_account_id,
+    });
+    expect(claimables).toHaveLength(1);
+    expect(claimables[0].reason).toBe("email-assignment");
+    expect(claimables[0].matched_email_address).toBe("student@example.com");
+
+    const claimed = await claimMembershipPackageSeat({
+      package_id,
+      account_id: invited_account_id,
+    });
+    expect(claimed.account_id).toBe(invited_account_id);
+    expect(claimed.email_address).toBe("student@example.com");
+    expect(claimed.grant_source).toBe("team-seat");
+
+    const membership = await resolveMembershipForAccount(invited_account_id);
+    expect(membership.class).toBe(teamTier);
+    expect(membership.source).toBe("grant");
+  });
+
+  it("lets a verified domain claim a site seat without a preassignment", async () => {
+    const owner_account_id = uuid();
+    const site_user_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(site_user_account_id);
+    await markVerifiedEmail(site_user_account_id, "ada@example.edu");
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "site",
+      membership_class: teamTier,
+      seat_count: 3,
+      metadata: {
+        interval: "year",
+        seat_price: 100,
+        allowed_domains: ["example.edu"],
+      },
+    });
+
+    const claimables = await listClaimableMembershipPackagesForAccount({
+      account_id: site_user_account_id,
+    });
+    expect(claimables).toHaveLength(1);
+    expect(claimables[0]).toMatchObject({
+      package_id,
+      reason: "domain-match",
+      matched_email_address: "ada@example.edu",
+    });
+
+    const claimed = await claimMembershipPackageSeat({
+      package_id,
+      account_id: site_user_account_id,
+    });
+    expect(claimed.account_id).toBe(site_user_account_id);
+    expect(claimed.email_address).toBe("ada@example.edu");
+
+    const membership = await resolveMembershipForAccount(site_user_account_id);
+    expect(membership.class).toBe(teamTier);
+    expect(membership.grant_source).toBe("site-license");
   });
 });

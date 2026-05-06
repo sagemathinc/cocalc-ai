@@ -27,6 +27,8 @@ import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
 import Payments from "@cocalc/frontend/purchases/payments";
 import {
   assignMembershipPackageSeat,
+  claimMembershipPackageSeat,
+  getClaimableMembershipPackages,
   getMembershipPackageQuote,
   getMembershipPackages,
   isPurchaseAllowed,
@@ -37,6 +39,7 @@ import {
 import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
+  ClaimableMembershipPackage,
   MembershipClass,
   MembershipPackageAssignment,
   MembershipPackageDetails,
@@ -44,7 +47,11 @@ import type {
   MembershipPackageQuote,
 } from "@cocalc/conat/hub/api/purchases";
 import { MEMBERSHIP_PACKAGE_PURCHASE } from "@cocalc/util/db-schema/purchases";
-import { capitalize, currency } from "@cocalc/util/misc";
+import {
+  capitalize,
+  currency,
+  is_valid_email_address as isValidEmailAddress,
+} from "@cocalc/util/misc";
 import { moneyRound2Up, toDecimal } from "@cocalc/util/money";
 import type { LineItem } from "@cocalc/util/stripe/types";
 
@@ -67,6 +74,10 @@ interface PackageUserSearchResult {
   first_name?: string;
   last_name?: string;
   email_address?: string;
+}
+
+interface ClaimableMembershipPackagesPanelProps {
+  onChanged?: () => void;
 }
 
 function toTime(value?: Date | null): number {
@@ -140,6 +151,9 @@ function getAccountDisplayName(
     { first_name?: string; last_name?: string } | undefined
   >,
 ): string {
+  if (!assignment.account_id) {
+    return assignment.email_address ?? "Pending email claim";
+  }
   const name = names[assignment.account_id];
   const fullName = `${name?.first_name ?? ""} ${name?.last_name ?? ""}`.trim();
   return fullName || assignment.account_id;
@@ -152,10 +166,137 @@ function getAccountSecondaryLabel(
     { first_name?: string; last_name?: string } | undefined
   >,
 ): string | undefined {
+  if (!assignment.account_id) {
+    return "Reserved by email";
+  }
   const name = names[assignment.account_id];
   const fullName = `${name?.first_name ?? ""} ${name?.last_name ?? ""}`.trim();
   if (!fullName) return;
   return assignment.account_id;
+}
+
+function getClaimReasonLabel(
+  claimablePackage: ClaimableMembershipPackage,
+): string {
+  return claimablePackage.reason === "email-assignment"
+    ? `Assigned to verified email ${claimablePackage.matched_email_address}`
+    : `Verified domain match via ${claimablePackage.matched_email_address}`;
+}
+
+export function ClaimableMembershipPackagesPanel({
+  onChanged,
+}: ClaimableMembershipPackagesPanelProps) {
+  const account_id = useTypedRedux("account", "account_id");
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
+  const [claimingPackageId, setClaimingPackageId] = useState<string>("");
+  const [claimables, setClaimables] = useState<ClaimableMembershipPackage[]>(
+    [],
+  );
+
+  async function refreshClaimables() {
+    if (!account_id) {
+      setClaimables([]);
+      setLoading(false);
+      setError("");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      setClaimables(await getClaimableMembershipPackages());
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refreshClaimables();
+  }, [account_id]);
+
+  if (!account_id) {
+    return null;
+  }
+
+  return (
+    <div>
+      <Text strong>Claim memberships</Text>
+      <Paragraph type="secondary" style={{ marginTop: "6px" }}>
+        If a seat was reserved for one of your verified email addresses, or if
+        your verified domain matches an available institutional package, you can
+        claim that membership here.
+      </Paragraph>
+      {loading ? <Loading /> : null}
+      {error ? (
+        <Alert type="error" title={error} style={{ marginBottom: 12 }} />
+      ) : null}
+      {!loading && !error && claimables.length === 0 ? (
+        <Alert
+          type="info"
+          showIcon
+          title="No claimable memberships right now"
+          description="Verify the relevant email address first if you expect a reserved team, site, or domain seat to appear here."
+        />
+      ) : null}
+      {!loading && claimables.length > 0 ? (
+        <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+          {claimables.map((claimablePackage) => (
+            <Card
+              key={`${claimablePackage.package_id}-${claimablePackage.reason}-${claimablePackage.assignment_id ?? "open"}`}
+              size="small"
+              title={
+                <Space wrap>
+                  <span>{`${getPackageKindLabel(claimablePackage.kind)} package`}</span>
+                  <Tag color="blue">
+                    {capitalize(claimablePackage.membership_class)}
+                  </Tag>
+                </Space>
+              }
+              extra={
+                <Button
+                  type="primary"
+                  loading={claimingPackageId === claimablePackage.package_id}
+                  onClick={async () => {
+                    setClaimingPackageId(claimablePackage.package_id);
+                    setError("");
+                    try {
+                      await claimMembershipPackageSeat({
+                        package_id: claimablePackage.package_id,
+                      });
+                      await refreshClaimables();
+                      onChanged?.();
+                    } catch (err) {
+                      setError(`${err}`);
+                    } finally {
+                      setClaimingPackageId("");
+                    }
+                  }}
+                >
+                  Claim seat
+                </Button>
+              }
+            >
+              <Descriptions size="small" column={1}>
+                <Descriptions.Item label="Eligibility">
+                  {getClaimReasonLabel(claimablePackage)}
+                </Descriptions.Item>
+                <Descriptions.Item label="Available seats">
+                  {claimablePackage.available_seat_count}
+                </Descriptions.Item>
+                {claimablePackage.expires_at ? (
+                  <Descriptions.Item label="Expires">
+                    <TimeAgo date={claimablePackage.expires_at} />
+                  </Descriptions.Item>
+                ) : null}
+              </Descriptions>
+            </Card>
+          ))}
+        </Space>
+      ) : null}
+    </div>
+  );
 }
 
 export function MembershipPackageManager({ tiers, onChanged }: Props) {
@@ -299,10 +440,11 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
             onAssignSeat={(membershipPackage) =>
               setAssignmentTarget(membershipPackage)
             }
-            onRevokeSeat={async (membershipPackage, account_id) => {
+            onRevokeSeat={async (membershipPackage, assignment) => {
               await revokeMembershipPackageSeat({
                 package_id: membershipPackage.id,
-                target_account_id: account_id,
+                target_account_id: assignment.account_id ?? undefined,
+                target_email_address: assignment.email_address ?? undefined,
               });
               await handleChanged();
             }}
@@ -317,10 +459,11 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
             onAssignSeat={(membershipPackage) =>
               setAssignmentTarget(membershipPackage)
             }
-            onRevokeSeat={async (membershipPackage, account_id) => {
+            onRevokeSeat={async (membershipPackage, assignment) => {
               await revokeMembershipPackageSeat({
                 package_id: membershipPackage.id,
-                target_account_id: account_id,
+                target_account_id: assignment.account_id ?? undefined,
+                target_email_address: assignment.email_address ?? undefined,
               });
               await handleChanged();
             }}
@@ -371,7 +514,7 @@ function PackageGroup({
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
     membershipPackage: MembershipPackageDetails,
-    account_id: string,
+    assignment: MembershipPackageAssignment,
   ) => Promise<void>;
 }) {
   if (membershipPackages.length === 0) {
@@ -428,7 +571,7 @@ function MembershipPackageCard({
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
     membershipPackage: MembershipPackageDetails,
-    account_id: string,
+    assignment: MembershipPackageAssignment,
   ) => Promise<void>;
 }) {
   const [revokingAccountId, setRevokingAccountId] = useState<string>("");
@@ -538,14 +681,16 @@ function MembershipPackageCard({
                 <Button
                   danger
                   size="small"
-                  loading={revokingAccountId === assignment.account_id}
+                  loading={
+                    revokingAccountId ===
+                    (assignment.account_id ?? assignment.email_address ?? "")
+                  }
                   onClick={async () => {
-                    setRevokingAccountId(assignment.account_id);
+                    setRevokingAccountId(
+                      assignment.account_id ?? assignment.email_address ?? "",
+                    );
                     try {
-                      await onRevokeSeat(
-                        membershipPackage,
-                        assignment.account_id,
-                      );
+                      await onRevokeSeat(membershipPackage, assignment);
                     } finally {
                       setRevokingAccountId("");
                     }
@@ -929,7 +1074,7 @@ function AssignMembershipSeatModal({
   const [searching, setSearching] = useState<boolean>(false);
   const [results, setResults] = useState<PackageUserSearchResult[]>([]);
   const [searchError, setSearchError] = useState<string>("");
-  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
+  const [selectedTarget, setSelectedTarget] = useState<string>("");
   const [assigning, setAssigning] = useState<boolean>(false);
   const activeAccountIds = useMemo(
     () =>
@@ -940,6 +1085,16 @@ function AssignMembershipSeatModal({
       ),
     [membershipPackage],
   );
+  const activeEmailAddresses = useMemo(
+    () =>
+      new Set(
+        membershipPackage?.assignments
+          .filter(isActiveAssignment)
+          .map((assignment) => assignment.email_address?.toLowerCase())
+          .filter((value): value is string => !!value) ?? [],
+      ),
+    [membershipPackage],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -947,7 +1102,7 @@ function AssignMembershipSeatModal({
     setSearching(false);
     setResults([]);
     setSearchError("");
-    setSelectedAccountId("");
+    setSelectedTarget("");
     setAssigning(false);
   }, [open, membershipPackage?.id]);
 
@@ -970,16 +1125,29 @@ function AssignMembershipSeatModal({
           (result): result is PackageUserSearchResult =>
             typeof result?.account_id === "string" &&
             result.account_id.length > 0 &&
-            !activeAccountIds.has(result.account_id),
+            !activeAccountIds.has(result.account_id) &&
+            !activeEmailAddresses.has(
+              result.email_address?.toLowerCase() ?? "",
+            ),
         )
         .slice(0, 20);
       setResults(next);
       if (next.length === 0) {
-        setSelectedAccountId("");
+        const normalizedEmail = query.trim().toLowerCase();
+        if (
+          isValidEmailAddress(normalizedEmail) &&
+          !activeEmailAddresses.has(normalizedEmail)
+        ) {
+          setSelectedTarget(`email:${normalizedEmail}`);
+        } else {
+          setSelectedTarget("");
+        }
       } else if (
-        !next.some((result) => result.account_id === selectedAccountId)
+        !next.some(
+          (result) => `account:${result.account_id}` === selectedTarget,
+        )
       ) {
-        setSelectedAccountId(next[0].account_id);
+        setSelectedTarget(`account:${next[0].account_id}`);
       }
     } catch (err) {
       setSearchError(`${err}`);
@@ -990,14 +1158,21 @@ function AssignMembershipSeatModal({
   }
 
   async function assign() {
-    if (!membershipPackage || !selectedAccountId) return;
+    if (!membershipPackage || !selectedTarget) return;
     setAssigning(true);
     setSearchError("");
     try {
-      await assignMembershipPackageSeat({
-        package_id: membershipPackage.id,
-        target_account_id: selectedAccountId,
-      });
+      if (selectedTarget.startsWith("account:")) {
+        await assignMembershipPackageSeat({
+          package_id: membershipPackage.id,
+          target_account_id: selectedTarget.slice("account:".length),
+        });
+      } else if (selectedTarget.startsWith("email:")) {
+        await assignMembershipPackageSeat({
+          package_id: membershipPackage.id,
+          target_email_address: selectedTarget.slice("email:".length),
+        });
+      }
       await onAssigned();
     } catch (err) {
       setSearchError(`${err}`);
@@ -1012,16 +1187,18 @@ function AssignMembershipSeatModal({
       onCancel={onClose}
       onOk={assign}
       okText="Assign seat"
-      okButtonProps={{ disabled: !selectedAccountId, loading: assigning }}
+      okButtonProps={{ disabled: !selectedTarget, loading: assigning }}
       destroyOnHidden
       title={`Assign ${membershipPackage ? getPackageKindLabel(membershipPackage.kind).toLowerCase() : "package"} seat`}
     >
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         {membershipPackage ? (
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-            Search for an existing account, then assign a seat from the{" "}
+            Search for an existing account or enter an exact email address to
+            reserve a seat from the{" "}
             {getPackageKindLabel(membershipPackage.kind).toLowerCase()} package.
-            Unclaimed email-only assignments are not part of this first cut yet.
+            Reserved email seats appear as claimable memberships once that user
+            verifies the address on their account.
           </Paragraph>
         ) : null}
         {searchError ? (
@@ -1045,8 +1222,8 @@ function AssignMembershipSeatModal({
         {searching ? <Spin /> : null}
         {results.length > 0 ? (
           <Radio.Group
-            value={selectedAccountId}
-            onChange={(e) => setSelectedAccountId(e.target.value)}
+            value={selectedTarget}
+            onChange={(e) => setSelectedTarget(e.target.value)}
             style={{ width: "100%" }}
           >
             <Space
@@ -1060,7 +1237,7 @@ function AssignMembershipSeatModal({
                 return (
                   <Radio
                     key={result.account_id}
-                    value={result.account_id}
+                    value={`account:${result.account_id}`}
                     style={{ width: "100%" }}
                   >
                     <Space orientation="vertical" size={0}>
@@ -1075,12 +1252,37 @@ function AssignMembershipSeatModal({
             </Space>
           </Radio.Group>
         ) : null}
+        {!searching &&
+        query.trim() &&
+        results.length === 0 &&
+        !searchError &&
+        isValidEmailAddress(query.trim().toLowerCase()) &&
+        !activeEmailAddresses.has(query.trim().toLowerCase()) ? (
+          <Radio.Group
+            value={selectedTarget}
+            onChange={(e) => setSelectedTarget(e.target.value)}
+            style={{ width: "100%" }}
+          >
+            <Radio value={`email:${query.trim().toLowerCase()}`}>
+              <Space orientation="vertical" size={0}>
+                <Text>{query.trim().toLowerCase()}</Text>
+                <Text type="secondary">
+                  Reserve this seat by email until the user verifies it
+                </Text>
+              </Space>
+            </Radio>
+          </Radio.Group>
+        ) : null}
         {!searching && query.trim() && results.length === 0 && !searchError ? (
           <Alert
             type="info"
             showIcon
-            title="No matching accounts found"
-            description="Team, site, and domain seats can currently only be assigned to existing CoCalc accounts."
+            title="No matching existing account found"
+            description={
+              isValidEmailAddress(query.trim().toLowerCase())
+                ? "You can still reserve the seat by email above."
+                : "Search by name or exact email address."
+            }
           />
         ) : null}
       </Space>

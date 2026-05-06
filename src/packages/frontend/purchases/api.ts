@@ -15,6 +15,7 @@ import LRU from "lru-cache";
 import type { Subscription } from "@cocalc/util/db-schema/subscriptions";
 import type { Interval, Statement } from "@cocalc/util/db-schema/statements";
 import type {
+  ClaimableMembershipPackage,
   MembershipClass,
   MembershipPackageAssignment,
   MembershipPackageDetails,
@@ -467,7 +468,8 @@ export async function getMembershipPackages(
 
 export async function assignMembershipPackageSeat(opts: {
   package_id: string;
-  target_account_id: string;
+  target_account_id?: string;
+  target_email_address?: string;
   metadata?: Record<string, unknown> | null;
 }): Promise<MembershipPackageAssignment> {
   return await api("purchases/assign-membership-package-seat", opts);
@@ -475,9 +477,22 @@ export async function assignMembershipPackageSeat(opts: {
 
 export async function revokeMembershipPackageSeat(opts: {
   package_id: string;
-  target_account_id: string;
+  target_account_id?: string;
+  target_email_address?: string;
 }): Promise<{ revoked: boolean }> {
   return await api("purchases/revoke-membership-package-seat", opts);
+}
+
+export async function getClaimableMembershipPackages(): Promise<
+  ClaimableMembershipPackage[]
+> {
+  return await api("purchases/get-claimable-membership-packages");
+}
+
+export async function claimMembershipPackageSeat(opts: {
+  package_id: string;
+}): Promise<MembershipPackageAssignment> {
+  return await api("purchases/claim-membership-package-seat", opts);
 }
 
 // get your own min balance

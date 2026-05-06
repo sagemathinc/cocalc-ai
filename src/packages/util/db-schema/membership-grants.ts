@@ -217,6 +217,7 @@ Table({
     pg_indexes: [
       "package_id",
       "account_id",
+      "email_address",
       "assigned_by_account_id",
       "assigned_at",
       "revoked_at",
@@ -228,6 +229,7 @@ Table({
           id: null,
           package_id: null,
           account_id: null,
+          email_address: null,
           assigned_by_account_id: null,
           assigned_at: null,
           revoked_at: null,
@@ -243,6 +245,7 @@ Table({
           id: null,
           package_id: null,
           account_id: null,
+          email_address: null,
           assigned_by_account_id: null,
           assigned_at: null,
           revoked_at: null,
@@ -262,8 +265,12 @@ Table({
     },
     account_id: {
       type: "uuid",
-      desc: "Account assigned to the seat.",
+      desc: "Account assigned to the seat, if the seat has been claimed by an account.",
       render: { type: "account" },
+    },
+    email_address: {
+      type: "string",
+      desc: "Optional email address reserved for this seat before it is claimed by an account.",
     },
     assigned_by_account_id: {
       type: "uuid",

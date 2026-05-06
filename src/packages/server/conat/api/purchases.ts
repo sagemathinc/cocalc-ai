@@ -12,7 +12,9 @@ import {
 } from "@cocalc/server/membership/resolve";
 import {
   assignMembershipPackageSeat as assignMembershipPackageSeat0,
+  claimMembershipPackageSeat as claimMembershipPackageSeat0,
   getMembershipPackage,
+  listClaimableMembershipPackagesForAccount,
   listMembershipPackageDetailsForOwner,
   resolveMembershipPackageQuote as resolveMembershipPackageQuote0,
   revokeMembershipPackageSeat as revokeMembershipPackageSeat0,
@@ -188,11 +190,13 @@ export async function assignMembershipPackageSeat({
   account_id,
   package_id,
   target_account_id,
+  target_email_address,
   metadata,
 }: {
   account_id?: string;
   package_id?: string;
   target_account_id?: string;
+  target_email_address?: string;
   metadata?: Record<string, unknown> | null;
 }) {
   if (!account_id) {
@@ -201,8 +205,11 @@ export async function assignMembershipPackageSeat({
   if (!package_id) {
     throw Error("package_id required");
   }
-  if (!target_account_id) {
-    throw Error("target_account_id required");
+  if (!target_account_id && !target_email_address) {
+    throw Error("target_account_id or target_email_address required");
+  }
+  if (target_account_id && target_email_address) {
+    throw Error("specify only one target");
   }
   const pkg = await getMembershipPackage({ package_id });
   if (!pkg) {
@@ -214,6 +221,7 @@ export async function assignMembershipPackageSeat({
   return await assignMembershipPackageSeat0({
     package_id,
     account_id: target_account_id,
+    email_address: target_email_address,
     assigned_by_account_id: account_id,
     metadata: metadata ?? null,
   });
@@ -223,10 +231,12 @@ export async function revokeMembershipPackageSeat({
   account_id,
   package_id,
   target_account_id,
+  target_email_address,
 }: {
   account_id?: string;
   package_id?: string;
   target_account_id?: string;
+  target_email_address?: string;
 }) {
   if (!account_id) {
     throw Error("account_id required");
@@ -234,8 +244,11 @@ export async function revokeMembershipPackageSeat({
   if (!package_id) {
     throw Error("package_id required");
   }
-  if (!target_account_id) {
-    throw Error("target_account_id required");
+  if (!target_account_id && !target_email_address) {
+    throw Error("target_account_id or target_email_address required");
+  }
+  if (target_account_id && target_email_address) {
+    throw Error("specify only one target");
   }
   const pkg = await getMembershipPackage({ package_id });
   if (!pkg) {
@@ -248,8 +261,41 @@ export async function revokeMembershipPackageSeat({
     revoked: await revokeMembershipPackageSeat0({
       package_id,
       account_id: target_account_id,
+      email_address: target_email_address,
     }),
   };
+}
+
+export async function getClaimableMembershipPackages({
+  account_id,
+}: {
+  account_id?: string;
+}) {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  return await listClaimableMembershipPackagesForAccount({
+    account_id,
+  });
+}
+
+export async function claimMembershipPackageSeat({
+  account_id,
+  package_id,
+}: {
+  account_id?: string;
+  package_id?: string;
+}) {
+  if (!account_id) {
+    throw Error("account_id required");
+  }
+  if (!package_id) {
+    throw Error("package_id required");
+  }
+  return await claimMembershipPackageSeat0({
+    package_id,
+    account_id,
+  });
 }
 
 export async function getAIUsage({ account_id }) {

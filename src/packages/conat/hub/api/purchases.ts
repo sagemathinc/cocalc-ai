@@ -84,7 +84,8 @@ export interface MembershipPackageQuote {
 export interface MembershipPackageAssignment {
   id: string;
   package_id: string;
-  account_id: string;
+  account_id?: string | null;
+  email_address?: string | null;
   assigned_by_account_id?: string | null;
   assigned_at?: Date;
   revoked_at?: Date | null;
@@ -92,6 +93,20 @@ export interface MembershipPackageAssignment {
   grant_id?: string | null;
   grant_source?: string | null;
   grant_purchase_id?: number | null;
+}
+
+export interface ClaimableMembershipPackage {
+  package_id: string;
+  assignment_id?: string;
+  kind: MembershipPackageKind;
+  membership_class: MembershipClass;
+  owner_account_id: string;
+  starts_at?: Date;
+  expires_at?: Date | null;
+  available_seat_count: number;
+  matched_email_address: string;
+  reason: "email-assignment" | "domain-match";
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface MembershipPackageRecord {
@@ -310,13 +325,22 @@ export interface Purchases {
     account_id?: string;
     package_id?: string;
     target_account_id?: string;
+    target_email_address?: string;
     metadata?: Record<string, unknown> | null;
   }) => Promise<MembershipPackageAssignment>;
   revokeMembershipPackageSeat: (opts?: {
     account_id?: string;
     package_id?: string;
     target_account_id?: string;
+    target_email_address?: string;
   }) => Promise<{ revoked: boolean }>;
+  getClaimableMembershipPackages: (opts?: {
+    account_id?: string;
+  }) => Promise<ClaimableMembershipPackage[]>;
+  claimMembershipPackageSeat: (opts?: {
+    account_id?: string;
+    package_id?: string;
+  }) => Promise<MembershipPackageAssignment>;
   getAIUsage: (opts?: { account_id?: string }) => Promise<AIUsageStatus>;
   getManagedEgressHistory: (
     opts?: ManagedEgressHistoryQuery,
@@ -339,6 +363,8 @@ export const purchases = {
   getMembershipPackages: authFirst,
   assignMembershipPackageSeat: authFirst,
   revokeMembershipPackageSeat: authFirst,
+  getClaimableMembershipPackages: authFirst,
+  claimMembershipPackageSeat: authFirst,
   getAIUsage: authFirst,
   getManagedEgressHistory: authFirst,
   getManagedEgressAdminOverview: authFirst,

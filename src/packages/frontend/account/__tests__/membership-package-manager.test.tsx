@@ -1,8 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { MembershipPackageManager } from "../membership-package-manager";
+import {
+  ClaimableMembershipPackagesPanel,
+  MembershipPackageManager,
+} from "../membership-package-manager";
 
 const getMembershipPackages = jest.fn();
+const getClaimableMembershipPackages = jest.fn();
+const claimMembershipPackageSeat = jest.fn();
 const getMembershipPackageQuote = jest.fn();
 const isPurchaseAllowed = jest.fn();
 const purchaseMembershipPackage = jest.fn();
@@ -43,6 +48,10 @@ jest.mock("@cocalc/frontend/purchases/stripe-payment", () => (props: any) => (
 
 jest.mock("@cocalc/frontend/purchases/api", () => ({
   getMembershipPackages: (...args: any[]) => getMembershipPackages(...args),
+  getClaimableMembershipPackages: (...args: any[]) =>
+    getClaimableMembershipPackages(...args),
+  claimMembershipPackageSeat: (...args: any[]) =>
+    claimMembershipPackageSeat(...args),
   getMembershipPackageQuote: (...args: any[]) =>
     getMembershipPackageQuote(...args),
   isPurchaseAllowed: (...args: any[]) => isPurchaseAllowed(...args),
@@ -84,6 +93,7 @@ describe("MembershipPackageManager", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     accountId = "owner-1";
+    getClaimableMembershipPackages.mockResolvedValue([]);
     processPaymentIntents.mockResolvedValue({ count: 0 });
     getNames.mockResolvedValue({
       "user-1": { first_name: "Grace", last_name: "Hopper" },
@@ -235,6 +245,103 @@ describe("MembershipPackageManager", () => {
         package_id: "team-1",
         target_account_id: "user-2",
       });
+    });
+  });
+
+  it("reserves a seat by email when no account exists yet", async () => {
+    getMembershipPackages.mockResolvedValue([
+      {
+        id: "team-1",
+        owner_account_id: "owner-1",
+        kind: "team",
+        membership_class: "member",
+        seat_count: 5,
+        active_assignment_count: 0,
+        available_seat_count: 5,
+        assignments: [],
+        metadata: { interval: "month", seat_price: 10 },
+      },
+    ]);
+    userSearch.mockResolvedValue([]);
+    assignMembershipPackageSeat.mockResolvedValue({
+      id: "assignment-2",
+      package_id: "team-1",
+      email_address: "newuser@example.com",
+      assigned_at: new Date(),
+    });
+
+    render(<MembershipPackageManager tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Assign seat").length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByText("Assign seat")[0]);
+    fireEvent.change(
+      screen.getByPlaceholderText("Search by name or exact email address"),
+      { target: { value: "newuser@example.com" } },
+    );
+    fireEvent.click(screen.getByText("Search"));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /Reserve this seat by email until the user verifies it/i,
+        ),
+      ).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getAllByText("Assign seat")[1]);
+
+    await waitFor(() => {
+      expect(assignMembershipPackageSeat).toHaveBeenCalledWith({
+        package_id: "team-1",
+        target_email_address: "newuser@example.com",
+      });
+    });
+  });
+});
+
+describe("ClaimableMembershipPackagesPanel", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    accountId = "account-1";
+  });
+
+  it("claims a package for the signed-in account", async () => {
+    getClaimableMembershipPackages.mockResolvedValue([
+      {
+        package_id: "site-1",
+        kind: "site",
+        membership_class: "member",
+        owner_account_id: "owner-1",
+        available_seat_count: 3,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+      },
+    ]);
+    claimMembershipPackageSeat.mockResolvedValue({
+      id: "assignment-1",
+      package_id: "site-1",
+      account_id: "account-1",
+    });
+
+    render(<ClaimableMembershipPackagesPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Claim memberships")).toBeTruthy();
+      expect(
+        screen.getByText(/Verified domain match via ada@example.edu/i),
+      ).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Claim seat"));
+
+    await waitFor(() => {
+      expect(claimMembershipPackageSeat).toHaveBeenCalledWith({
+        package_id: "site-1",
+      });
+      expect(getClaimableMembershipPackages).toHaveBeenCalledTimes(2);
     });
   });
 });

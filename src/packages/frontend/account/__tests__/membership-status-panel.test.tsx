@@ -106,9 +106,12 @@ jest.mock("@cocalc/frontend/i18n", () => ({
 }));
 
 jest.mock("./../membership-purchase-modal", () => () => null);
-jest.mock("./../membership-package-manager", () => () => (
-  <div>membership-package-manager</div>
-));
+jest.mock("./../membership-package-manager", () => ({
+  MembershipPackageManager: () => <div>membership-package-manager</div>,
+  ClaimableMembershipPackagesPanel: () => (
+    <div>claimable-membership-packages-panel</div>
+  ),
+}));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {

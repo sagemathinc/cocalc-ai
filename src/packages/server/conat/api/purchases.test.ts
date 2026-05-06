@@ -14,6 +14,8 @@ const listMembershipPackageDetailsForOwnerMock = jest.fn();
 const resolveMembershipPackageQuoteMock = jest.fn();
 const assignMembershipPackageSeatMock = jest.fn();
 const revokeMembershipPackageSeatMock = jest.fn();
+const listClaimableMembershipPackagesForAccountMock = jest.fn();
+const claimMembershipPackageSeatMock = jest.fn();
 const purchaseMembershipPackageMock = jest.fn();
 
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
@@ -53,6 +55,10 @@ jest.mock("@cocalc/server/membership/packages", () => ({
     assignMembershipPackageSeatMock(...args),
   revokeMembershipPackageSeat: (...args: any[]) =>
     revokeMembershipPackageSeatMock(...args),
+  listClaimableMembershipPackagesForAccount: (...args: any[]) =>
+    listClaimableMembershipPackagesForAccountMock(...args),
+  claimMembershipPackageSeat: (...args: any[]) =>
+    claimMembershipPackageSeatMock(...args),
 }));
 
 jest.mock("@cocalc/server/ai/usage-status", () => ({
@@ -294,6 +300,38 @@ describe("purchases membership packages", () => {
     expect(result.id).toBe("assignment-1");
   });
 
+  it("assigns a package seat by reserved email for the owner", async () => {
+    getMembershipPackageMock.mockResolvedValue({
+      id: "package-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "member",
+      seat_count: 3,
+    });
+    assignMembershipPackageSeatMock.mockResolvedValue({
+      id: "assignment-1",
+      package_id: "package-1",
+      email_address: "student@example.com",
+      assigned_by_account_id: "owner-1",
+    });
+
+    const { assignMembershipPackageSeat } = await import("./purchases");
+    const result = await assignMembershipPackageSeat({
+      account_id: "owner-1",
+      package_id: "package-1",
+      target_email_address: "student@example.com",
+    });
+
+    expect(assignMembershipPackageSeatMock).toHaveBeenCalledWith({
+      package_id: "package-1",
+      account_id: undefined,
+      email_address: "student@example.com",
+      assigned_by_account_id: "owner-1",
+      metadata: null,
+    });
+    expect(result.email_address).toBe("student@example.com");
+  });
+
   it("purchases a course package for the owner", async () => {
     purchaseMembershipPackageMock.mockResolvedValue({
       package_id: "package-1",
@@ -349,8 +387,53 @@ describe("purchases membership packages", () => {
     expect(revokeMembershipPackageSeatMock).toHaveBeenCalledWith({
       package_id: "package-1",
       account_id: "student-1",
+      email_address: undefined,
     });
     expect(result).toEqual({ revoked: true });
+  });
+
+  it("loads claimable packages for the signed-in account", async () => {
+    listClaimableMembershipPackagesForAccountMock.mockResolvedValue([
+      {
+        package_id: "package-1",
+        kind: "site",
+        membership_class: "member",
+        owner_account_id: "owner-1",
+        available_seat_count: 4,
+        matched_email_address: "ada@example.edu",
+        reason: "domain-match",
+      },
+    ]);
+
+    const { getClaimableMembershipPackages } = await import("./purchases");
+    const result = await getClaimableMembershipPackages({
+      account_id: "account-1",
+    });
+
+    expect(listClaimableMembershipPackagesForAccountMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+    });
+    expect(result).toHaveLength(1);
+  });
+
+  it("claims a membership package seat for the signed-in account", async () => {
+    claimMembershipPackageSeatMock.mockResolvedValue({
+      id: "assignment-1",
+      package_id: "package-1",
+      account_id: "account-1",
+    });
+
+    const { claimMembershipPackageSeat } = await import("./purchases");
+    const result = await claimMembershipPackageSeat({
+      account_id: "account-1",
+      package_id: "package-1",
+    });
+
+    expect(claimMembershipPackageSeatMock).toHaveBeenCalledWith({
+      package_id: "package-1",
+      account_id: "account-1",
+    });
+    expect(result.account_id).toBe("account-1");
   });
 });
 
