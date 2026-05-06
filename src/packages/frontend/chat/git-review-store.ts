@@ -573,13 +573,19 @@ export async function importReviewBundle({
   };
 }
 
-function clearAllReviewDrafts(accountId?: string): void {
+function clearAllReviewDrafts(
+  accountId?: string,
+  opts?: { includeLegacy?: boolean },
+): void {
   try {
     const keys: string[] = [];
-    const prefix = makeDraftStoragePrefix(accountId);
+    const prefixes = [makeDraftStoragePrefix(accountId)];
+    if (opts?.includeLegacy) {
+      prefixes.push(LEGACY_REVIEW_DRAFT_STORAGE_PREFIX);
+    }
     for (let i = 0; i < localStorage.length; i += 1) {
       const key = localStorage.key(i);
-      if (key?.startsWith(prefix)) {
+      if (key && prefixes.some((prefix) => key.startsWith(prefix))) {
         keys.push(key);
       }
     }
@@ -605,7 +611,7 @@ export async function deleteAllReviewRecords({
     key.startsWith("commit:"),
   );
   if (reviewKeys.length === 0) {
-    clearAllReviewDrafts(normalizedAccountId);
+    clearAllReviewDrafts(normalizedAccountId, { includeLegacy: true });
     return { deleted: 0 };
   }
 
@@ -616,7 +622,7 @@ export async function deleteAllReviewRecords({
   kv.setMany(tombstones);
   await kv.flush();
 
-  clearAllReviewDrafts(normalizedAccountId);
+  clearAllReviewDrafts(normalizedAccountId, { includeLegacy: true });
 
   return { deleted: reviewKeys.length };
 }

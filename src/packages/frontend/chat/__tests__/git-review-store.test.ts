@@ -342,6 +342,10 @@ describe("git review import/export", () => {
       },
       "acct-3",
     );
+    localStorage.setItem(
+      "cocalc:git-review:draft:v2:commit:legacy999",
+      JSON.stringify({ note: "legacy draft" }),
+    );
 
     await expect(
       deleteAllReviewRecords({ accountId: "acct-3" }),
@@ -353,6 +357,9 @@ describe("git review import/export", () => {
     expect(store.get("commit:bbb2222")).toBeUndefined();
     expect(store.get("misc:key")).toEqual({ ignore: true });
     expect(loadReviewDraft("aaa1111", "acct-3")).toBeUndefined();
+    expect(
+      localStorage.getItem("cocalc:git-review:draft:v2:commit:legacy999"),
+    ).toBe(null);
   });
 
   it("does not clear a newer local draft when an older save finishes", async () => {
