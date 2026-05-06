@@ -216,7 +216,15 @@ function sanitizeReviewRecord(
   };
 }
 
-async function getReviewStore(accountId: string) {
+function getReviewStore(accountId: string) {
+  const cn = webapp_client.conat_client.conat();
+  return cn.sync.akv<GitReviewRecordV2>({
+    account_id: accountId,
+    name: REVIEW_STORE_V2,
+  });
+}
+
+async function getReviewBulkStore(accountId: string) {
   return await getSharedAccountDkv<GitReviewRecordV2>({
     account_id: accountId,
     name: REVIEW_STORE_V2,
@@ -382,8 +390,8 @@ export async function loadReviewRecord({
   const normalizedCommit = normalizeCommitSha(commitSha);
   const key = makeReviewKey(commitSha);
   if (!normalizedCommit || !key) return undefined;
-  const kvV2 = await getReviewStore(accountId);
-  const current = sanitizeReviewRecord(kvV2.get(key), {
+  const kvV2 = getReviewStore(accountId);
+  const current = sanitizeReviewRecord(await kvV2.get(key), {
     accountId,
     commitSha: normalizedCommit,
   });
@@ -438,7 +446,7 @@ export async function saveReviewRecord(
   if (!accountId || !commitSha || !key) {
     throw new Error("invalid review record");
   }
-  const kv = await getReviewStore(accountId);
+  const kv = getReviewStore(accountId);
   const now = Date.now();
   const payload: GitReviewRecordV2 = {
     ...record,
@@ -451,8 +459,7 @@ export async function saveReviewRecord(
     updated_at: now,
     revision: Math.max(1, (record.revision ?? 0) + 1),
   };
-  kv.set(key, payload);
-  await kv.save();
+  await kv.set(key, payload);
   clearReviewDraftThroughRevision(
     commitSha,
     opts?.clearDraftThroughRevision,
@@ -470,7 +477,7 @@ export async function exportReviewBundle({
   if (!normalizedAccountId) {
     throw new Error("account id is required to export git reviews");
   }
-  const kv = await getReviewStore(normalizedAccountId);
+  const kv = await getReviewBulkStore(normalizedAccountId);
   const records = Object.entries(kv.getAll())
     .filter(([key]) => key.startsWith("commit:"))
     .map(([, value]) =>
@@ -517,7 +524,7 @@ export async function importReviewBundle({
     throw new Error("account id is required to import git reviews");
   }
   const rawRecords = extractImportedReviewRecords(payload);
-  const kv = await getReviewStore(normalizedAccountId);
+  const kv = await getReviewBulkStore(normalizedAccountId);
   const existingAll = kv.getAll();
   const pending: Record<string, GitReviewRecordV2> = {};
   let imported = 0;
@@ -601,7 +608,7 @@ export async function deleteAllReviewRecords({
   if (!normalizedAccountId) {
     throw new Error("account id is required to delete git reviews");
   }
-  const kv = await getReviewStore(normalizedAccountId);
+  const kv = await getReviewBulkStore(normalizedAccountId);
   const reviewKeys = Object.keys(kv.getAll()).filter((key) =>
     key.startsWith("commit:"),
   );
