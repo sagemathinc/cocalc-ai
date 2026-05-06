@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { useProjectActiveOperation } from "./use-project-active-op";
 
 jest.useFakeTimers();
@@ -201,5 +201,30 @@ describe("useProjectActiveOperation", () => {
     webapp_client.conat_client.emit("connected");
 
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("refreshes once when a hidden tab becomes visible", () => {
+    const refresh = jest.fn();
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    useProjectField.mockReturnValue({
+      value: null,
+      refresh,
+      setValue: jest.fn(),
+    });
+
+    render(<PollingTestComponent pollWhile={false} />);
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 });
