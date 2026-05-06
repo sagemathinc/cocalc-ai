@@ -227,6 +227,37 @@ export function splitCompletedCodexTurnNotifications({
   return { remainingWatches, completedNotifications };
 }
 
+export function appendCompletedCodexTurnNotifications({
+  existing,
+  incoming,
+}: {
+  existing: readonly CompletedCodexTurnNotification[];
+  incoming: readonly CompletedCodexTurnNotification[];
+}): CompletedCodexTurnNotification[] {
+  const seenThreadKeys = new Set(
+    existing.map((notification) => notification.threadKey),
+  );
+  const seenExactKeys = new Set(
+    existing.map(
+      (notification) =>
+        `${notification.threadKey}:${notification.newestMessageDate ?? ""}`,
+    ),
+  );
+  const next = [...existing];
+  for (const notification of incoming) {
+    const exactKey = `${notification.threadKey}:${notification.newestMessageDate ?? ""}`;
+    if (
+      seenThreadKeys.has(notification.threadKey) ||
+      seenExactKeys.has(exactKey)
+    )
+      continue;
+    seenThreadKeys.add(notification.threadKey);
+    seenExactKeys.add(exactKey);
+    next.push(notification);
+  }
+  return next;
+}
+
 function buildChatThreadCompletionSnapshots({
   actions,
   acpState,
@@ -1155,22 +1186,12 @@ export function ChatPanel({
       });
     if (completedNotifications.length === 0) return;
     setCodexTurnNotificationWatches(remainingWatches);
-    setCompletedCodexTurnNotifications((prev) => {
-      const seen = new Set(
-        prev.map(
-          (notification) =>
-            `${notification.threadKey}:${notification.newestMessageDate ?? ""}`,
-        ),
-      );
-      const next = [...prev];
-      for (const notification of completedNotifications) {
-        const key = `${notification.threadKey}:${notification.newestMessageDate ?? ""}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        next.push(notification);
-      }
-      return next;
-    });
+    setCompletedCodexTurnNotifications((prev) =>
+      appendCompletedCodexTurnNotifications({
+        existing: prev,
+        incoming: completedNotifications,
+      }),
+    );
   }, [actions, acpState, codexTurnNotificationWatches, messages]);
 
   useEffect(() => {

@@ -1,5 +1,6 @@
 import * as immutable from "immutable";
 import {
+  appendCompletedCodexTurnNotifications,
   getLatestThreadMessageDate,
   hasActiveAcpTurnForComposer,
   latestThreadAcpInterrupted,
@@ -320,5 +321,90 @@ describe("splitCompletedCodexTurnNotifications", () => {
       remainingWatches: [],
       completedNotifications: [],
     });
+  });
+});
+
+describe("appendCompletedCodexTurnNotifications", () => {
+  it("skips adding more notifications for a thread that already has one queued", () => {
+    expect(
+      appendCompletedCodexTurnNotifications({
+        existing: [
+          {
+            threadKey: "thread-1",
+            threadId: "thread-1",
+            threadLabel: "Thread 1",
+            newestMessageDate: "101",
+          },
+        ],
+        incoming: [
+          {
+            threadKey: "thread-1",
+            threadId: "thread-1",
+            threadLabel: "Thread 1",
+            newestMessageDate: "202",
+          },
+          {
+            threadKey: "thread-2",
+            threadId: "thread-2",
+            threadLabel: "Thread 2",
+            newestMessageDate: "303",
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        threadKey: "thread-1",
+        threadId: "thread-1",
+        threadLabel: "Thread 1",
+        newestMessageDate: "101",
+      },
+      {
+        threadKey: "thread-2",
+        threadId: "thread-2",
+        threadLabel: "Thread 2",
+        newestMessageDate: "303",
+      },
+    ]);
+  });
+
+  it("deduplicates exact repeated notifications while still allowing other threads", () => {
+    expect(
+      appendCompletedCodexTurnNotifications({
+        existing: [],
+        incoming: [
+          {
+            threadKey: "thread-1",
+            threadId: "thread-1",
+            threadLabel: "Thread 1",
+            newestMessageDate: "101",
+          },
+          {
+            threadKey: "thread-1",
+            threadId: "thread-1",
+            threadLabel: "Thread 1",
+            newestMessageDate: "101",
+          },
+          {
+            threadKey: "thread-2",
+            threadId: "thread-2",
+            threadLabel: "Thread 2",
+            newestMessageDate: "202",
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        threadKey: "thread-1",
+        threadId: "thread-1",
+        threadLabel: "Thread 1",
+        newestMessageDate: "101",
+      },
+      {
+        threadKey: "thread-2",
+        threadId: "thread-2",
+        threadLabel: "Thread 2",
+        newestMessageDate: "202",
+      },
+    ]);
   });
 });
