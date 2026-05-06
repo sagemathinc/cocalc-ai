@@ -45,6 +45,11 @@ async function api(endpoint: string, args?: object, noThrottle?: boolean) {
   return await api0(endpoint, args);
 }
 
+async function getPurchasesHubRpc() {
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return webapp_client.conat_client.hub.purchases;
+}
+
 // We cache some results below using this cache, since they are general settings
 // that rarely change, and it is nice to not have to worry about how often
 // we call them.
@@ -441,7 +446,7 @@ export async function getMembershipPackageQuote(opts: {
   expires_at?: Date | string;
   metadata?: Record<string, unknown> | null;
 }): Promise<MembershipPackageQuote> {
-  return await api("purchases/get-membership-package-quote", opts);
+  return await (await getPurchasesHubRpc()).getMembershipPackageQuote(opts);
 }
 
 export async function purchaseMembershipPackage(opts: {
@@ -455,7 +460,7 @@ export async function purchaseMembershipPackage(opts: {
   expires_at?: Date | string;
   metadata?: Record<string, unknown> | null;
 }): Promise<{ package_id: string; purchase_id: number }> {
-  return await api("purchases/purchase-membership-package", opts);
+  return await (await getPurchasesHubRpc()).purchaseMembershipPackage(opts);
 }
 
 export async function getMembershipPackages(
@@ -463,7 +468,7 @@ export async function getMembershipPackages(
     user_account_id?: string;
   } = {},
 ): Promise<MembershipPackageDetails[]> {
-  return await api("purchases/get-membership-packages", opts);
+  return await (await getPurchasesHubRpc()).getMembershipPackages(opts);
 }
 
 export async function assignMembershipPackageSeat(opts: {
@@ -472,7 +477,7 @@ export async function assignMembershipPackageSeat(opts: {
   target_email_address?: string;
   metadata?: Record<string, unknown> | null;
 }): Promise<MembershipPackageAssignment> {
-  return await api("purchases/assign-membership-package-seat", opts);
+  return await (await getPurchasesHubRpc()).assignMembershipPackageSeat(opts);
 }
 
 export async function revokeMembershipPackageSeat(opts: {
@@ -480,19 +485,19 @@ export async function revokeMembershipPackageSeat(opts: {
   target_account_id?: string;
   target_email_address?: string;
 }): Promise<{ revoked: boolean }> {
-  return await api("purchases/revoke-membership-package-seat", opts);
+  return await (await getPurchasesHubRpc()).revokeMembershipPackageSeat(opts);
 }
 
 export async function getClaimableMembershipPackages(): Promise<
   ClaimableMembershipPackage[]
 > {
-  return await api("purchases/get-claimable-membership-packages");
+  return await (await getPurchasesHubRpc()).getClaimableMembershipPackages({});
 }
 
 export async function claimMembershipPackageSeat(opts: {
   package_id: string;
 }): Promise<MembershipPackageAssignment> {
-  return await api("purchases/claim-membership-package-seat", opts);
+  return await (await getPurchasesHubRpc()).claimMembershipPackageSeat(opts);
 }
 
 // get your own min balance
