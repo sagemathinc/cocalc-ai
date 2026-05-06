@@ -3,13 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-const getProjectOwnerAccountIdMock = jest.fn();
+const getProjectUsageAccountIdMock = jest.fn();
 const getManagedEgressUsageForAccountMock = jest.fn();
 const resolveMembershipForAccountMock = jest.fn();
 
 jest.mock("./managed-egress", () => ({
-  getProjectOwnerAccountId: (...args: any[]) =>
-    getProjectOwnerAccountIdMock(...args),
+  getProjectUsageAccountId: (...args: any[]) =>
+    getProjectUsageAccountIdMock(...args),
   getManagedEgressUsageForAccount: (...args: any[]) =>
     getManagedEgressUsageForAccountMock(...args),
 }));
@@ -24,8 +24,8 @@ describe("getManagedProjectEgressPolicy", () => {
     jest.clearAllMocks();
   });
 
-  it("allows managed egress when no owner can be resolved", async () => {
-    getProjectOwnerAccountIdMock.mockResolvedValue(undefined);
+  it("allows managed egress when no usage account can be resolved", async () => {
+    getProjectUsageAccountIdMock.mockResolvedValue(undefined);
     const { getManagedProjectEgressPolicy } =
       await import("./managed-egress-policy");
     await expect(
@@ -42,7 +42,7 @@ describe("getManagedProjectEgressPolicy", () => {
   });
 
   it("blocks managed egress when the 5-hour window is already over limit", async () => {
-    getProjectOwnerAccountIdMock.mockResolvedValue("account-1");
+    getProjectUsageAccountIdMock.mockResolvedValue("account-1");
     resolveMembershipForAccountMock.mockResolvedValue({
       class: "pro",
       source: "subscription",
@@ -117,7 +117,7 @@ describe("getManagedProjectEgressPolicy", () => {
       managed_egress_5h_bytes: 200,
       managed_egress_7d_bytes: 300,
     });
-    expect(getProjectOwnerAccountIdMock).not.toHaveBeenCalled();
+    expect(getProjectUsageAccountIdMock).not.toHaveBeenCalled();
     expect(resolveMembershipForAccountMock).toHaveBeenCalledWith(
       "collaborator-1",
     );
@@ -161,6 +161,6 @@ describe("getManagedProjectEgressPolicy", () => {
       managed_egress_5h_bytes: 200,
       managed_egress_7d_bytes: 300,
     });
-    expect(getProjectOwnerAccountIdMock).not.toHaveBeenCalled();
+    expect(getProjectUsageAccountIdMock).not.toHaveBeenCalled();
   });
 });

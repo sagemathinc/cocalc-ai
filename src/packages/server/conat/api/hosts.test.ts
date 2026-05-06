@@ -66,6 +66,7 @@ let getHostOwnerBaySshIdentityMock: jest.Mock;
 let getProviderContextMock: jest.Mock;
 let siteUrlMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
+let getProjectUsageAccountIdMock: jest.Mock;
 let fetchMock: jest.Mock;
 let getBackupConfigLocalInternalMock: jest.Mock;
 let recordProjectBackupLocalInternalMock: jest.Mock;
@@ -357,6 +358,16 @@ jest.mock("@cocalc/server/project-backup", () => ({
     recordProjectBackupLocalInternalMock(...args),
 }));
 
+jest.mock("@cocalc/server/membership/project-usage", () => ({
+  __esModule: true,
+  getProjectUsageAccountId: (...args: any[]) =>
+    getProjectUsageAccountIdMock(...args),
+  getProjectOwnerAccountId: jest.fn(),
+  getUsageProjectCountForAccount: jest.fn(),
+  listUsageProjectsForAccount: jest.fn(),
+  setProjectUsageAccountId: jest.fn(),
+}));
+
 const HOST_ID = "host-123";
 const ACCOUNT_ID = "acct-123";
 
@@ -408,6 +419,7 @@ beforeEach(() => {
   }));
   siteUrlMock = jest.fn(async () => "https://hub.example.test");
   getServerSettingsMock = jest.fn(async () => ({}));
+  getProjectUsageAccountIdMock = jest.fn(async () => undefined);
   fetchMock = jest.fn();
   global.fetch = fetchMock as any;
   hostConnectionGetMock = jest.fn();
@@ -3175,12 +3187,9 @@ describe("hosts.resolveHostConnection", () => {
   });
 
   it("returns project owner effective limits locally for host callers", async () => {
-    queryMock = jest.fn(async (sql: string, params?: any[]) => {
-      if (sql.includes("FROM projects")) {
-        expect(params).toEqual([REMOTE_PROJECT_ID]);
-        return { rows: [{ account_id: "owner-1" }] };
-      }
-      return { rows: [] };
+    getProjectUsageAccountIdMock = jest.fn(async (project_id: string) => {
+      expect(project_id).toBe(REMOTE_PROJECT_ID);
+      return "owner-1";
     });
     resolveMembershipForAccountMock = jest.fn(async () => ({
       effective_limits: {

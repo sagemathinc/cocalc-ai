@@ -47,6 +47,7 @@ import "./ai-log";
 import "./lti";
 import "./mentions";
 import "./admin-assigned-memberships";
+import "./membership-grants";
 import "./membership-tiers";
 import "./messages";
 import "./news";

@@ -36,20 +36,28 @@ export interface MembershipEntitlements {
 
 export interface MembershipResolution {
   class: MembershipClass;
-  source: "subscription" | "admin" | "free";
+  source: "subscription" | "admin" | "grant" | "free";
   entitlements: MembershipEntitlements;
   effective_limits?: MembershipEffectiveLimits;
   subscription_id?: number;
+  grant_id?: string;
+  grant_source?: string;
+  grant_package_id?: string;
+  grant_purchase_id?: number;
   expires?: Date;
 }
 
 export interface MembershipCandidate {
   class: MembershipClass;
-  source: "subscription" | "admin";
+  source: "subscription" | "admin" | "grant";
   priority: number;
   entitlements: MembershipEntitlements;
   effective_limits?: MembershipEffectiveLimits;
   subscription_id?: number;
+  grant_id?: string;
+  grant_source?: string;
+  grant_package_id?: string;
+  grant_purchase_id?: number;
   expires?: Date;
 }
 

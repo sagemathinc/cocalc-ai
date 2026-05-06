@@ -24,6 +24,8 @@ import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-loc
 import getConn from "@cocalc/server/stripe/connection";
 import { isValidUUID } from "@cocalc/util/misc";
 import { url } from "@cocalc/server/messages/send";
+import { createMembershipGrant } from "@cocalc/server/membership/grants";
+import { setProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
 
 const logger = getLogger("purchases:student-pay");
 
@@ -119,6 +121,29 @@ export default async function studentPay({
       noCheck: true,
       client,
     });
+    await createMembershipGrant(
+      {
+        account_id,
+        membership_class: "student",
+        source: "student-pay",
+        purchase_id,
+        starts_at: purchaseInfo.start,
+        expires_at: purchaseInfo.end,
+        metadata: {
+          project_id,
+          course_project_id: currentCourse.project_id,
+          course_path: currentCourse.path,
+        },
+      },
+      client,
+    );
+    await setProjectUsageAccountId(
+      {
+        project_id,
+        account_id,
+      },
+      client,
+    );
     await client.query("COMMIT");
 
     return { purchase_id };

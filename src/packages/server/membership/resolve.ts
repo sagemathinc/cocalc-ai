@@ -12,6 +12,7 @@ import {
   getMembershipTierMap,
   MembershipTierRecord,
 } from "./tiers";
+import { listActiveMembershipGrantsForAccount } from "./grants";
 import getLogger from "@cocalc/backend/logger";
 import { normalizeMembershipEffectiveLimits } from "./effective-limits";
 import { getMembershipUsageStatusForAccount } from "./usage-status";
@@ -48,7 +49,7 @@ async function buildMembershipCandidates(
   tiers: Record<string, MembershipTierRecord>,
 ): Promise<MembershipCandidate[]> {
   const pool = getPool("medium");
-  const [subResult, adminResult] = await Promise.all([
+  const [subResult, adminResult, grants] = await Promise.all([
     pool.query(
       `SELECT id, metadata, current_period_end, status
        FROM subscriptions
@@ -68,6 +69,7 @@ async function buildMembershipCandidates(
        LIMIT 1`,
       [account_id],
     ),
+    listActiveMembershipGrantsForAccount(account_id),
   ]);
 
   const candidates: MembershipCandidate[] = [];
@@ -105,6 +107,25 @@ async function buildMembershipCandidates(
     });
   }
 
+  for (const grant of grants) {
+    const membershipClass = grant.membership_class as MembershipClass;
+    const tier =
+      tiers[membershipClass] ??
+      (await getMembershipTierById({ id: membershipClass }));
+    candidates.push({
+      class: membershipClass,
+      source: "grant",
+      priority: tier?.priority ?? 0,
+      entitlements: tierToEntitlements(tier),
+      effective_limits: normalizeMembershipEffectiveLimits(tier?.usage_limits),
+      grant_id: grant.id,
+      grant_source: grant.source,
+      grant_package_id: grant.package_id ?? undefined,
+      grant_purchase_id: grant.purchase_id ?? undefined,
+      expires: grant.expires_at ? new Date(grant.expires_at) : undefined,
+    });
+  }
+
   return candidates;
 }
 
@@ -126,16 +147,29 @@ function pickBestMembership(
 ): MembershipResolution {
   if (candidates.length > 0) {
     const sourceRank = {
-      subscription: 2,
-      admin: 1,
+      subscription: 3,
+      admin: 2,
+      grant: 1,
     } as const;
     const best = candidates.reduce((current, candidate) => {
       if (!current) return candidate;
       if (candidate.priority > current.priority) return candidate;
       if (candidate.priority < current.priority) return current;
-      return sourceRank[candidate.source] > sourceRank[current.source]
-        ? candidate
-        : current;
+      if (sourceRank[candidate.source] > sourceRank[current.source]) {
+        return candidate;
+      }
+      if (sourceRank[candidate.source] < sourceRank[current.source]) {
+        return current;
+      }
+      const candidateExpires = candidate.expires
+        ? new Date(candidate.expires).valueOf()
+        : -Infinity;
+      const currentExpires = current.expires
+        ? new Date(current.expires).valueOf()
+        : -Infinity;
+      if (candidateExpires > currentExpires) return candidate;
+      if (candidateExpires < currentExpires) return current;
+      return current;
     }, candidates[0]);
     return {
       class: best.class,
@@ -143,6 +177,10 @@ function pickBestMembership(
       entitlements: best.entitlements,
       effective_limits: best.effective_limits,
       subscription_id: best.subscription_id,
+      grant_id: best.grant_id,
+      grant_source: best.grant_source,
+      grant_package_id: best.grant_package_id,
+      grant_purchase_id: best.grant_purchase_id,
       expires: best.expires,
     };
   }

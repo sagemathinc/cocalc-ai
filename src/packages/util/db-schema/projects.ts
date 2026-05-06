@@ -55,6 +55,7 @@ Table({
       "deleted", // in various queries we quickly fiter deleted projects
       "host_id", // project-host placement lookup
       "owning_bay_id", // owning control-plane bay lookup
+      "usage_account_id", // membership usage, storage, and egress attribution
     ],
 
     crm_indexes: ["last_edited"],
@@ -410,6 +411,11 @@ Table({
       type: "uuid",
       desc: "Shared project backup repository id used for this project's backups.",
       render: { type: "text", editable: false },
+    },
+    usage_account_id: {
+      type: "uuid",
+      desc: "Optional account id that should be charged membership usage, storage, and managed egress for this project.",
+      render: { type: "account", editable: false },
     },
   },
 });

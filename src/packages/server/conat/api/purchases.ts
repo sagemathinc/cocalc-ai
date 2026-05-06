@@ -4,7 +4,7 @@ import {
   getManagedEgressAdminHistory as getManagedEgressAdminHistory0,
   getManagedEgressAdminOverview as getManagedEgressAdminOverview0,
   getManagedEgressHistoryForAccount,
-  getProjectOwnerAccountId,
+  getProjectUsageAccountId,
 } from "@cocalc/server/membership/managed-egress";
 import {
   resolveMembershipDetailsForAccount,
@@ -85,12 +85,12 @@ export async function getManagedEgressHistory({
   }
   const normalizedProjectId = `${project_id ?? ""}`.trim() || undefined;
   if (normalizedProjectId) {
-    const owner = await getProjectOwnerAccountId(normalizedProjectId);
-    if (!owner) {
+    const usageAccountId = await getProjectUsageAccountId(normalizedProjectId);
+    if (!usageAccountId) {
       throw Error("project not found");
     }
-    if (owner !== targetId) {
-      throw Error("project is not owned by target account");
+    if (usageAccountId !== targetId) {
+      throw Error("project is not attributed to target account");
     }
   }
   return await getManagedEgressHistoryForAccount({

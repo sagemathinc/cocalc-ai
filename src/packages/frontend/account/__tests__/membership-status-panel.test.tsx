@@ -247,7 +247,7 @@ describe("MembershipStatusPanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/over the hard total storage cap/i)).toBeTruthy();
-      expect(screen.getByText(/over the owned project limit/i)).toBeTruthy();
+      expect(screen.getByText(/over the project limit/i)).toBeTruthy();
       expect(
         screen.getByText(/only partially sampled from your projects/i),
       ).toBeTruthy();

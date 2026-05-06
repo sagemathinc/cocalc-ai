@@ -6,7 +6,7 @@
 const getManagedEgressHistoryForAccountMock = jest.fn();
 const getManagedEgressAdminHistoryMock = jest.fn();
 const getManagedEgressAdminOverviewMock = jest.fn();
-const getProjectOwnerAccountIdMock = jest.fn();
+const getProjectUsageAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
 const resolveMembershipDetailsForAccountMock = jest.fn();
 
@@ -27,8 +27,8 @@ jest.mock("@cocalc/server/membership/managed-egress", () => ({
     getManagedEgressAdminHistoryMock(...args),
   getManagedEgressAdminOverview: (...args: any[]) =>
     getManagedEgressAdminOverviewMock(...args),
-  getProjectOwnerAccountId: (...args: any[]) =>
-    getProjectOwnerAccountIdMock(...args),
+  getProjectUsageAccountId: (...args: any[]) =>
+    getProjectUsageAccountIdMock(...args),
 }));
 
 jest.mock("@cocalc/server/membership/resolve", () => ({
@@ -96,7 +96,7 @@ describe("purchases.getManagedEgressHistory", () => {
   });
 
   it("rejects project filters that do not belong to the target account", async () => {
-    getProjectOwnerAccountIdMock.mockResolvedValue("other-account");
+    getProjectUsageAccountIdMock.mockResolvedValue("other-account");
 
     const { getManagedEgressHistory } = await import("./purchases");
     await expect(
@@ -104,12 +104,12 @@ describe("purchases.getManagedEgressHistory", () => {
         account_id: "account-1",
         project_id: "project-1",
       }),
-    ).rejects.toThrow("project is not owned by target account");
+    ).rejects.toThrow("project is not attributed to target account");
   });
 
   it("allows admins to inspect another account's project-scoped history", async () => {
     isAdminMock.mockResolvedValue(true);
-    getProjectOwnerAccountIdMock.mockResolvedValue("account-2");
+    getProjectUsageAccountIdMock.mockResolvedValue("account-2");
     getManagedEgressHistoryForAccountMock.mockResolvedValue({
       account_id: "account-2",
       project_id: "project-9",

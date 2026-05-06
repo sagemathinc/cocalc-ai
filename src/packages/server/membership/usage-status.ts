@@ -4,7 +4,6 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
-import getPool from "@cocalc/database/pool";
 import TTL from "@isaacs/ttlcache";
 import {
   getDiskQuota,
@@ -20,18 +19,16 @@ import {
   getRecentManagedEgressEventsForAccount,
 } from "./managed-egress";
 import { getEffectiveMembershipUsageLimits } from "./effective-limits";
+import {
+  listUsageProjectsForAccount,
+  type ProjectUsageRow,
+} from "./project-usage";
 
 const log = getLogger("server:membership:usage-status");
 
 const STORAGE_SAMPLE_CONCURRENCY = 8;
 const STORAGE_SAMPLE_TIMEOUT_MS = 5_000;
 const MEMBERSHIP_USAGE_STATUS_CACHE_TTL_MS = 60_000;
-
-type OwnedProjectRow = {
-  project_id: string;
-  host_id: string | null;
-  provisioned: boolean | null;
-};
 
 const membershipUsageStatusCache = new TTL<string, MembershipUsageStatus>({
   ttl: MEMBERSHIP_USAGE_STATUS_CACHE_TTL_MS,
@@ -95,20 +92,10 @@ export function peekCachedMembershipUsageStatusForAccount({
   );
 }
 
-async function listOwnedProjects(
+async function listAttributedProjects(
   account_id: string,
-): Promise<OwnedProjectRow[]> {
-  const { rows } = await getPool("medium").query<OwnedProjectRow>(
-    `
-      SELECT project_id, host_id, provisioned
-      FROM projects
-      WHERE deleted IS NULL
-        AND COALESCE(users -> $1::text ->> 'group', '') = 'owner'
-      ORDER BY project_id
-    `,
-    [account_id],
-  );
-  return rows;
+): Promise<ProjectUsageRow[]> {
+  return await listUsageProjectsForAccount(account_id);
 }
 
 async function sampleProjectStorageBytes({
@@ -151,8 +138,8 @@ export async function getMembershipUsageStatusForAccount({
 
   const load = (async (): Promise<MembershipUsageStatus> => {
     const effectiveLimits = getEffectiveMembershipUsageLimits(resolution);
-    const ownedProjects = await listOwnedProjects(account_id);
-    const provisionedRows = ownedProjects.filter(
+    const attributedProjects = await listAttributedProjects(account_id);
+    const provisionedRows = attributedProjects.filter(
       (row) => !!row.host_id && row.provisioned !== false,
     );
     const client = conatWithProjectRoutingForAccount({ account_id });
@@ -184,7 +171,7 @@ export async function getMembershipUsageStatusForAccount({
             sampled_project_count += 1;
           } else {
             measurement_error_count += 1;
-            log.debug("unable to sample owned project storage", {
+            log.debug("unable to sample attributed project storage", {
               account_id,
               err: `${result.reason ?? ""}`,
             });
@@ -199,7 +186,7 @@ export async function getMembershipUsageStatusForAccount({
       }
     }
 
-    const owned_project_count = ownedProjects.length;
+    const owned_project_count = attributedProjects.length;
     const unsampled_project_count = Math.max(
       provisionedRows.length - sampled_project_count,
       0,
