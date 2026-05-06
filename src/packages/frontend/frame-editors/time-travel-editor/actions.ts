@@ -89,8 +89,10 @@ export interface TimeTravelState extends CodeEditorState {
   has_full_history: boolean;
   docpath: string;
   docext: string;
-  // true if in a git repo
+  // true if this file has git history
   git?: boolean;
+  // true if this file lives in a git repo
+  git_repo?: boolean;
   //frame_states: Map<string, any>; // todo: really map from frame_id to FrameState as immutable map.
   // timetravel has own error state
   error: string;
@@ -725,6 +727,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
 
       const git_versions = List<number>(this.gitCommits.map((x) => x.version));
       this.setState({
+        git_repo: true,
         git: this.gitCommits.length > 0,
         git_versions,
       });
@@ -732,7 +735,7 @@ export class TimeTravelActions extends CodeEditorActions<TimeTravelState> {
     } catch (_err) {
       // Do NOT report error -- instead, disable git mode.  This should
       // happen if the file is not in a git repo.
-      this.setState({ git: false });
+      this.setState({ git: false, git_repo: false });
       return;
     }
   };

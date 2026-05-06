@@ -11,6 +11,7 @@ import { debounce } from "lodash";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { AccountState } from "@cocalc/frontend/account/types";
 import { useAsyncEffect, useEditorRedux } from "@cocalc/frontend/app-framework";
+import { AsyncComponent } from "@cocalc/frontend/misc/async-component";
 import { Loading, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import { lite } from "@cocalc/frontend/lite";
@@ -28,8 +29,17 @@ import { OpenFile } from "./open-file";
 import { OpenSnapshots } from "./open-snapshots";
 import { RangeSlider } from "./range-slider";
 import { RevertFile } from "./revert-file";
+import {
+  resolveTimeTravelGitBrowserCommitHash,
+  TIME_TRAVEL_GIT_REVIEW_SUBMISSION_HELP,
+} from "./git-browser";
 import { Version, VersionRange } from "./version";
 import { HAS_SPECIAL_VIEWER, Viewer } from "./viewer";
+
+const GitCommitDrawer = AsyncComponent(
+  async () =>
+    (await import("@cocalc/frontend/chat/git-commit-drawer")).GitCommitDrawer,
+);
 
 interface Props {
   actions: TimeTravelActions;
@@ -66,6 +76,7 @@ export function TimeTravel(props: Props) {
   const docpath = useEditor("docpath");
   const docext = useEditor("docext");
   const git = !!useEditor("git");
+  const gitRepo = !!useEditor("git_repo");
 
   const [doc, setDoc] = useState<(() => Document | undefined) | undefined>(
     undefined,
@@ -103,6 +114,7 @@ export function TimeTravel(props: Props) {
   );
   const [showCommitRange, setShowCommitRange] = useState<boolean>(false);
   const [showChangedFiles, setShowChangedFiles] = useState<boolean>(false);
+  const [showGitBrowser, setShowGitBrowser] = useState<boolean>(false);
   const [sourceLoading, setSourceLoading] = useState<boolean>(false);
   const [logMode, setLogMode] = useState<boolean>(() => {
     const saved = props.desc?.get("logMode");
@@ -281,6 +293,19 @@ export function TimeTravel(props: Props) {
     if (!gitMode || !changesMode) return [];
     return props.actions.gitCommitRange(version0, version1);
   }, [props.actions, gitMode, changesMode, version0, version1]);
+
+  const gitBrowserCommitHash = useMemo(
+    () =>
+      resolveTimeTravelGitBrowserCommitHash({
+        gitMode,
+        changesMode,
+        version,
+        version0,
+        version1,
+        gitCommit: props.actions.gitCommit,
+      }),
+    [props.actions, gitMode, changesMode, version, version0, version1],
+  );
 
   useEffect(() => {
     saveState(props.actions, {
@@ -1054,6 +1079,36 @@ export function TimeTravel(props: Props) {
     );
   };
 
+  const renderGitBrowserButton = () => {
+    if (!gitRepo || docpath == null) {
+      return null;
+    }
+    return (
+      <Tooltip title="Open the full git commit browser for this repository">
+        <Button size="small" onClick={() => setShowGitBrowser(true)}>
+          Git Browser
+        </Button>
+      </Tooltip>
+    );
+  };
+
+  const renderGitBrowserDrawer = () => {
+    if (!gitRepo || docpath == null) {
+      return null;
+    }
+    return (
+      <GitCommitDrawer
+        projectId={props.project_id}
+        sourcePath={docpath}
+        commitHash={gitBrowserCommitHash}
+        open={showGitBrowser}
+        onClose={() => setShowGitBrowser(false)}
+        fontSize={props.font_size}
+        reviewSubmissionHelpText={TIME_TRAVEL_GIT_REVIEW_SUBMISSION_HELP}
+      />
+    );
+  };
+
   const renderControls = () => {
     const activeVersionCount = activeVersions?.size ?? 0;
     return (
@@ -1086,6 +1141,7 @@ export function TimeTravel(props: Props) {
           <Space.Compact>{renderModeSelectors()}</Space.Compact>
           {renderCommitsInRangeButton()}
           {renderGitChangedFilesButton()}
+          {renderGitBrowserButton()}
           {(gitMode || snapshotsMode || backupsMode) && (
             <Tooltip
               title={
@@ -1261,6 +1317,7 @@ export function TimeTravel(props: Props) {
       {renderControls()}
       {renderCommitRangeModal()}
       {renderGitChangedFilesModal()}
+      {renderGitBrowserDrawer()}
       {renderTimeSelect()}
       <ShowError
         style={{ margin: "5px 15px" }}

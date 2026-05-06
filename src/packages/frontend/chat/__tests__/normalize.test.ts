@@ -199,6 +199,49 @@ describe("handleSyncDBChange", () => {
     expect(store.state.acpState?.get("message:msg-queued")).toBe("queue");
   });
 
+  it("renders queued thread-state as queue even when the chat row says running", () => {
+    const store = new MockStore();
+    const date = new Date("2024-01-02T03:04:05.000Z");
+    const threadState = {
+      event: "chat-thread-state",
+      sender_id: "__thread_state__",
+      date,
+      thread_id: "thread-queued",
+      active_message_id: "msg-queued",
+      state: "queued",
+    };
+    const chatRecord = {
+      event: "chat",
+      sender_id: "user-1",
+      date: "2024-01-02T03:04:04.000Z",
+      message_id: "msg-queued",
+      thread_id: "thread-queued",
+      acp_state: "running",
+      history: [],
+      editing: {},
+      feedback: {},
+      schema_version: CURRENT_CHAT_MESSAGE_VERSION,
+    };
+    const syncdb = new MockSyncDB([threadState, chatRecord]);
+
+    handleSyncDBChange({
+      syncdb,
+      store,
+      changes: [
+        { event: "chat-thread-state", sender_id: "__thread_state__", date },
+        {
+          event: "chat",
+          sender_id: "user-1",
+          date: "2024-01-02T03:04:04.000Z",
+          message_id: "msg-queued",
+          thread_id: "thread-queued",
+        },
+      ],
+    });
+    expect(store.state.acpState?.get("thread:thread-queued")).toBe("queue");
+    expect(store.state.acpState?.get("message:msg-queued")).toBe("queue");
+  });
+
   it("uses full primary key fields for chat-row incremental lookups", () => {
     const store = new MockStore();
     const date = "2024-01-02T03:04:05.000Z";

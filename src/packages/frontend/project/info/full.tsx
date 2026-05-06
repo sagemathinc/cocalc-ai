@@ -44,6 +44,10 @@ import {
   ProjectProblems,
   SignalButtons,
 } from "./components";
+import {
+  sparklineHoverPlacement,
+  sparklineTooltipBoxStyle,
+} from "./sparkline-tooltip";
 import { CGroupInfo, DUState, PTStats, ProcessRow } from "./types";
 import {
   DETAILS_BTN_TEXT,
@@ -156,28 +160,6 @@ function nearestSparklineIndex(
   return bestIndex;
 }
 
-function sparklineHoverPlacement(xFraction: number): {
-  left: string;
-  transform: string;
-} {
-  if (xFraction <= 0.18) {
-    return {
-      left: `${xFraction * 100}%`,
-      transform: "translate(0, calc(-100% - 14px))",
-    };
-  }
-  if (xFraction >= 0.82) {
-    return {
-      left: `${xFraction * 100}%`,
-      transform: "translate(-100%, calc(-100% - 14px))",
-    };
-  }
-  return {
-    left: `${xFraction * 100}%`,
-    transform: "translate(-50%, calc(-100% - 14px))",
-  };
-}
-
 function HistoryCard({
   title,
   values,
@@ -281,13 +263,14 @@ function HistoryCard({
               borderRadius: "8px",
               boxShadow: "0 6px 18px rgba(15, 23, 42, 0.16)",
               color: COLORS.GRAY_D,
-              left: hoverPlacement.left,
-              maxWidth: "220px",
+              ...sparklineTooltipBoxStyle({
+                placement: hoverPlacement,
+                maxWidth: 220,
+              }),
               padding: "8px 10px",
               pointerEvents: "none",
               position: "absolute",
               top: `${(hoveredPoint.y / height) * 100}%`,
-              transform: hoverPlacement.transform,
               zIndex: 1,
             }}
           >
@@ -433,13 +416,14 @@ function MiniTrend({
             borderRadius: "8px",
             boxShadow: "0 6px 18px rgba(15, 23, 42, 0.16)",
             color: COLORS.GRAY_D,
-            left: hoverPlacement.left,
-            maxWidth: "240px",
+            ...sparklineTooltipBoxStyle({
+              placement: hoverPlacement,
+              maxWidth: 240,
+            }),
             padding: "8px 10px",
             pointerEvents: "none",
             position: "absolute",
             top: `${(hoveredPoint.y / height) * 100}%`,
-            transform: hoverPlacement.transform,
             whiteSpace: "normal",
             zIndex: 2,
           }}
