@@ -248,6 +248,69 @@ export async function resetOpenFileRuntimeAfterHostReset({
   }
 }
 
+type NamedEditorRuntimeLookup = {
+  runtimeName?: string;
+  getStore: (name: string) => any;
+  getActions: (name: string) => any;
+};
+
+export function hasUsableNamedEditorRuntime({
+  runtimeName,
+  getStore,
+  getActions,
+}: NamedEditorRuntimeLookup): boolean {
+  if (runtimeName == null) {
+    return false;
+  }
+  const actions = getActions(runtimeName);
+  if (
+    actions != null &&
+    typeof actions.isClosed === "function" &&
+    actions.isClosed()
+  ) {
+    return false;
+  }
+  return getStore(runtimeName) != null;
+}
+
+type CleanupBrokenNamedEditorRuntimeOpts = NamedEditorRuntimeLookup & {
+  removeStore: (name: string) => void;
+  removeActions: (name: string) => void;
+};
+
+export function cleanupBrokenNamedEditorRuntime({
+  runtimeName,
+  getStore,
+  getActions,
+  removeStore,
+  removeActions,
+}: CleanupBrokenNamedEditorRuntimeOpts): void {
+  if (runtimeName == null) {
+    return;
+  }
+  const actions = getActions(runtimeName);
+  const store = getStore(runtimeName);
+  const isClosed =
+    actions != null &&
+    typeof actions.isClosed === "function" &&
+    actions.isClosed();
+  if (actions != null && store != null && !isClosed) {
+    return;
+  }
+  try {
+    actions?.close?.();
+  } catch (_err) {
+    // Ignore close failures here and continue cleanup; this path is already
+    // recovering from a broken editor runtime after host transition.
+  }
+  if (actions != null) {
+    removeActions(runtimeName);
+  }
+  if (store != null) {
+    removeStore(runtimeName);
+  }
+}
+
 function selectOpenFilesForSyncPath({
   openFiles,
   targetSyncPath,
@@ -1676,20 +1739,23 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       path: string,
       ext?: string, // use this extension even instead of path's extension.
     ): Promise<string | undefined> => {
-      const cur = redux.getEditorActions(this.project_id, path);
-      if (cur != null) {
-        return cur.name;
-      }
-      const staleName = redux_name(this.project_id, path);
-      const staleActions: any = redux.getActions(staleName);
+      const runtimeName = redux_name(this.project_id, path);
       if (
-        staleActions != null &&
-        typeof staleActions.isClosed === "function" &&
-        staleActions.isClosed()
+        hasUsableNamedEditorRuntime({
+          runtimeName,
+          getStore: (name) => redux.getStore(name),
+          getActions: (name) => redux.getActions(name),
+        })
       ) {
-        redux.removeActions(staleName);
-        redux.removeStore(staleName);
+        return runtimeName;
       }
+      cleanupBrokenNamedEditorRuntime({
+        runtimeName,
+        getStore: (name) => redux.getStore(name),
+        getActions: (name) => redux.getActions(name),
+        removeStore: (name) => redux.removeStore(name),
+        removeActions: (name) => redux.removeActions(name),
+      });
       // LAZY IMPORT, so that editors are only available
       // when you are going to use them.  Helps with code splitting.
       await import("./editors/register-all");
@@ -1733,13 +1799,28 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (info == null) {
       return;
     }
-    if (info.redux_name != null && info.Editor != null) {
+    if (
+      info.Editor != null &&
+      (info.redux_name == null ||
+        hasUsableNamedEditorRuntime({
+          runtimeName: info.redux_name,
+          getStore: (name) => redux.getStore(name),
+          getActions: (name) => redux.getActions(name),
+        }))
+    ) {
       if (!opts.noFocus) {
         this.show_file(path);
       }
       return;
     }
     if (this.open_files == null) return;
+    if (info.redux_name != null || info.Editor != null) {
+      this.open_files.set(path, "component", {
+        ...info,
+        redux_name: undefined,
+        Editor: undefined,
+      });
+    }
     void (async () => {
       try {
         const syncPath = this.get_sync_path(path);
