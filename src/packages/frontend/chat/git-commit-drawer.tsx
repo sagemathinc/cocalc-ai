@@ -23,6 +23,18 @@ import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
 import { memo, type ComponentProps } from "react";
+import type {
+  CommentAnchor,
+  DiffLineMeta,
+  DrawerScrollState,
+  GitDiffFindMatch,
+  GitDiffScrollAnchor,
+  GitLogEntry,
+  GitShowFile,
+  GitShowParsed,
+  GitShowSummary,
+  HeadStatusEntry,
+} from "./git-commit/types";
 import {
   useCallback,
   useEffect,
@@ -171,12 +183,6 @@ export function runGitDrawerScrollCommand(
   return true;
 }
 
-type GitDiffScrollAnchor = {
-  anchorId?: string;
-  hunkHash?: string;
-  offsetTop: number;
-};
-
 function getGitDiffAnchorElements(
   node: Pick<HTMLDivElement, "querySelectorAll">,
 ): HTMLElement[] {
@@ -285,39 +291,6 @@ export function scrollGitDrawerElementIntoView(
   node.scrollTop = nextTop;
   return true;
 }
-
-type GitShowFile = {
-  path: string;
-  lines: string[];
-};
-
-type GitShowSummary = {
-  commit?: string;
-  author?: string;
-  authorDate?: string;
-  committer?: string;
-  commitDate?: string;
-  message: string;
-  extraHeaderLines: string[];
-};
-
-type GitShowParsed = {
-  summaryLines: string[];
-  summary: GitShowSummary;
-  files: GitShowFile[];
-  repoRoot?: string;
-  linesTruncated: boolean;
-  originalLineCount: number;
-  shownLineCount: number;
-};
-
-export type GitDiffFindMatch = {
-  id: string;
-  kind: "file" | "line";
-  fileIndex: number;
-  lineIndex?: number;
-  preview: string;
-};
 
 function countCaseInsensitiveMatches(text: string, needle: string): number {
   const haystack = `${text ?? ""}`.toLowerCase();
@@ -443,11 +416,6 @@ export function getGitDiffFindVisibleLineLimitUpdate({
   return { sectionId, neededLimit };
 }
 
-type GitLogEntry = {
-  hash: string;
-  subject: string;
-};
-
 export function filterGitReviewLogEntries({
   entries,
   reviewedByCommit,
@@ -566,42 +534,6 @@ interface GitCommitDrawerProps {
   onFindInChat?: (query: string) => void | Promise<void>;
   onOpenActivityLog?: () => void;
 }
-
-type HeadStatusEntry = {
-  path: string;
-  displayPath: string;
-  statusCode: string;
-  statusLabel: string;
-  tracked: boolean;
-};
-
-type DiffLineMeta = {
-  raw: string;
-  isCode: boolean;
-  prefix: string;
-  body: string;
-  oldLineNumber?: number;
-  newLineNumber?: number;
-  hunkHeader?: string;
-  hunkHash?: string;
-  side?: GitReviewCommentSide;
-  lineNumber?: number;
-  commentable: boolean;
-};
-
-type CommentAnchor = {
-  filePath: string;
-  side: GitReviewCommentSide;
-  line: number;
-  hunk_header?: string;
-  hunk_hash?: string;
-  snippet?: string;
-};
-
-type DrawerScrollState = {
-  entries: Record<string, { top: number; updated_at: number }>;
-  order: string[];
-};
 
 function parseCommitHash(commitHash?: string): string | undefined {
   const trimmed = `${commitHash ?? ""}`.trim();
