@@ -31,6 +31,7 @@ import {
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
+  shouldRefreshGitReviewStateOnReconnect,
   shouldCaptureGitDrawerFindShortcut,
 } from "../git-commit-drawer";
 import { act, fireEvent, render } from "@testing-library/react";
@@ -224,6 +225,63 @@ describe("git commit drawer merge commit formatting", () => {
         known: true,
       },
     );
+  });
+
+  it("refreshes git review state on reconnect only for editable persisted commits", () => {
+    expect(
+      shouldRefreshGitReviewStateOnReconnect({
+        open: true,
+        accountId: "acct-1",
+        commit: "abc1234",
+        reviewLoading: false,
+        reviewSaving: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRefreshGitReviewStateOnReconnect({
+        open: true,
+        accountId: "acct-1",
+        commit: "HEAD",
+        reviewLoading: false,
+        reviewSaving: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshGitReviewStateOnReconnect({
+        open: false,
+        accountId: "acct-1",
+        commit: "abc1234",
+        reviewLoading: false,
+        reviewSaving: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshGitReviewStateOnReconnect({
+        open: true,
+        accountId: "",
+        commit: "abc1234",
+        reviewLoading: false,
+        reviewSaving: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshGitReviewStateOnReconnect({
+        open: true,
+        accountId: "acct-1",
+        commit: "abc1234",
+        reviewLoading: true,
+        reviewSaving: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRefreshGitReviewStateOnReconnect({
+        open: true,
+        accountId: "acct-1",
+        commit: "abc1234",
+        reviewLoading: false,
+        reviewSaving: true,
+      }),
+    ).toBe(false);
   });
 
   it("preserves onModeChange forwarding for git review note/comment editors", () => {
