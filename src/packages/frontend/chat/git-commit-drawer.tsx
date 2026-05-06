@@ -3,26 +3,15 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  Alert,
-  Button,
-  Checkbox,
-  Dropdown,
-  Drawer,
-  Empty,
-  Input,
-  Modal,
-  Select,
-  Space,
-  Spin,
-  Switch,
-  Typography,
-  type MenuProps,
-} from "antd";
-import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
-import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import { Checkbox, Drawer, Spin, Alert, type MenuProps } from "antd";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";
-import { memo, type ComponentProps } from "react";
+import type {
+  CommentAnchor,
+  GitDiffScrollAnchor,
+  GitLogEntry,
+  GitShowParsed,
+  HeadStatusEntry,
+} from "./git-commit/types";
 import {
   useCallback,
   useEffect,
@@ -33,10 +22,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { redux } from "@cocalc/frontend/app-framework";
-import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
-import { filenameMode } from "@cocalc/frontend/file-associations";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { backtickSequence } from "@cocalc/frontend/markdown/util";
 import { containingPath } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import {
@@ -46,7 +32,6 @@ import {
   loadReviewRecord,
   loadReviewDraft,
   mergeRecordWithDraft,
-  type GitReviewCommentSide,
   type GitReviewCommentV2,
   normalizeCommitSha,
   saveReviewDraft,
@@ -55,500 +40,128 @@ import {
 } from "./git-review-store";
 import { buildAgentCommitPrompt } from "./git-commit-prompt";
 import {
-  highlightPrismLines,
-  isDiffContentLine,
-  languageHintFromPath,
-} from "./diff-prism";
+  buildGitLogArgs,
+  buildGitShowArgs,
+  MAX_GIT_SHOW_LINES,
+  parseGitLogOutput,
+  parseGitShowOutput,
+  parseGitStatusOutput,
+} from "./git-commit/git-output";
+import {
+  filterGitReviewLogEntries,
+  isHeadCommit,
+  parseCommitHash,
+  resolveGitCommitSearchChange,
+} from "./git-commit/commit-selection";
+import {
+  buildGitDiffFindMatches,
+  getGitDiffFindVisibleLineLimitUpdate,
+  getNextRenderedDiffLineLimit,
+  getRenderedDiffLineLimit,
+  isGitDiffFindTargetRendered,
+} from "./git-commit/diff-find";
+import { DiffBlock } from "./git-commit/diff-components";
+import {
+  commentAnchorKey,
+  diffLineNumberColumnWidth,
+  makeCommentId,
+} from "./git-commit/diff-lines";
+import {
+  clampDrawerSize,
+  persistDrawerScrollPosition,
+  persistDrawerSize,
+  readDrawerScrollPosition,
+  readDrawerSize,
+} from "./git-commit/drawer-storage";
+import {
+  buildGitReviewFileSectionId,
+  buildGitReviewLineElementId,
+  hashGitCommitValue,
+} from "./git-commit/ids";
+import {
+  resolveGitReviewSaveCompletion,
+  resolveGitReviewSaveState,
+} from "./git-commit/review-state";
+import {
+  buildGitInlineDraftEditorId,
+  buildGitInlineEditEditorId,
+  buildGitReviewEditorScope,
+  buildGitReviewNoteEditorId,
+  MarkdownHistoryInput,
+  ReviewNoteEditor,
+} from "./git-commit/review-editors";
+import {
+  DeleteAllReviewsModal,
+  GitChangedFilesPanel,
+  GitCommitDetailsPanel,
+  GitCommitDrawerTitle,
+  GitDiffFilesPanel,
+  GitEmptyCommitDiff,
+  GitHeadCommitPanel,
+  GitRepoBootstrapPanel,
+  GitReviewPanel,
+} from "./git-commit/drawer-sections";
+import {
+  captureGitDiffScrollAnchor,
+  matchGitDrawerScrollCommand,
+  restoreGitDiffScrollAnchor,
+  runGitDrawerScrollCommand,
+  scrollGitDrawerElementIntoView,
+} from "./git-commit/drawer-scroll";
+import {
+  formatMergeCommitBodyMarkdown,
+  getCommitReviewIndicatorState,
+  isEditableEventTarget,
+  isMergeCommitSummary,
+  isNotGitRepoError,
+  resolveOpenPath,
+  shouldCaptureGitDrawerFindShortcut,
+} from "./git-commit/utils";
 import "./git-commit-drawer.css";
-import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import type { VirtuosoHandle } from "react-virtuoso";
 
-const MAX_GIT_SHOW_LINES = 20_000;
+export { buildGitLogArgs, buildGitShowArgs };
+export {
+  buildGitDiffFindMatches,
+  buildGitReviewFileSectionId,
+  buildGitReviewLineElementId,
+  captureGitDiffScrollAnchor,
+  commentAnchorKey,
+  diffLineNumberColumnWidth,
+  DiffBlock,
+  getGitDiffFindVisibleLineLimitUpdate,
+  getNextRenderedDiffLineLimit,
+  getRenderedDiffLineLimit,
+  isGitDiffFindTargetRendered,
+  MarkdownHistoryInput,
+  matchGitDrawerScrollCommand,
+  ReviewNoteEditor,
+  restoreGitDiffScrollAnchor,
+  runGitDrawerScrollCommand,
+  scrollGitDrawerElementIntoView,
+};
+export { filterGitReviewLogEntries, resolveGitCommitSearchChange };
+export { resolveGitReviewSaveCompletion, resolveGitReviewSaveState };
+export {
+  buildGitInlineDraftEditorId,
+  buildGitInlineEditEditorId,
+  buildGitReviewEditorScope,
+  buildGitReviewNoteEditorId,
+  formatMergeCommitBodyMarkdown,
+  getCommitReviewIndicatorState,
+  isMergeCommitSummary,
+  shouldCaptureGitDrawerFindShortcut,
+};
+
 const MAX_GIT_SHOW_OUTPUT_BYTES = 4_000_000;
-const COMMIT_HASH_RE = /^[0-9a-f]{7,40}$/i;
 const HEAD_REF = "HEAD";
 const DEFAULT_CONTEXT_LINES = 3;
-const GIT_LOG_FETCH_COUNT = 750;
 const GIT_LOG_WINDOW_SIZE = 250;
-const DRAWER_SIZE_STORAGE_KEY = "cocalc:chat:gitCommitDrawerSize";
-const DRAWER_SCROLL_STORAGE_KEY = "cocalc:chat:gitCommitDrawerScroll:v1";
-const MAX_DRAWER_SCROLL_ENTRIES = 50;
-const DEFAULT_DRAWER_SIZE = 920;
-const MIN_DRAWER_SIZE = 520;
-const MAX_DRAWER_SIZE = 1800;
-const DRAWER_LINE_SCROLL_PX = 40;
 const CONTEXT_OPTIONS = [3, 10, 30].map((value) => ({
   value,
   label: `Context ${value}`,
 }));
-const CARD_BORDER_COLOR = "#d9d9d9";
-const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.06)";
-const DIFF_FILE_HEADER_BACKGROUND = COLORS.GRAY_LLL;
-const DIFF_FILE_HEADER_BORDER = COLORS.GRAY_LL;
-const DIFF_FILE_HEADER_TEXT = COLORS.GRAY_D;
-const DIFF_FILE_HEADER_SECONDARY = COLORS.GRAY_M;
 const DELETE_ALL_REVIEWS_CONFIRM_TEXT = "delete all";
-const EMPTY_GIT_REVIEW_COMMENTS: GitReviewCommentV2[] = [];
-const INITIAL_RENDERED_DIFF_LINES = 300;
-const RENDERED_DIFF_LINES_INCREMENT = 200;
-
-export function getCommitReviewIndicatorState(
-  reviewedByCommit: Record<string, boolean>,
-  hash: string,
-): { reviewed: boolean; known: boolean } {
-  const known = Object.prototype.hasOwnProperty.call(reviewedByCommit, hash);
-  return {
-    reviewed: known ? Boolean(reviewedByCommit[hash]) : false,
-    known,
-  };
-}
-
-export type GitDrawerScrollCommand =
-  | "lineDown"
-  | "lineUp"
-  | "pageDown"
-  | "pageUp"
-  | "top";
-
-export function matchGitDrawerScrollCommand(
-  evt: Pick<
-    KeyboardEvent,
-    "key" | "shiftKey" | "altKey" | "ctrlKey" | "metaKey"
-  >,
-): GitDrawerScrollCommand | undefined {
-  if (evt.altKey || evt.ctrlKey || evt.metaKey) return;
-  switch (evt.key) {
-    case "ArrowDown":
-      return "lineDown";
-    case "ArrowUp":
-      return "lineUp";
-    case "PageDown":
-      return "pageDown";
-    case "PageUp":
-      return "pageUp";
-    case "Home":
-      return "top";
-    case " ":
-    case "Spacebar":
-      return evt.shiftKey ? "pageUp" : "pageDown";
-    default:
-      return;
-  }
-}
-
-export function runGitDrawerScrollCommand(
-  node: Pick<HTMLDivElement, "scrollTop" | "scrollHeight" | "clientHeight">,
-  command: GitDrawerScrollCommand,
-): boolean {
-  const maxTop = Math.max(0, node.scrollHeight - node.clientHeight);
-  const pageStep = Math.max(
-    DRAWER_LINE_SCROLL_PX,
-    Math.round(node.clientHeight * 0.9),
-  );
-  const current = node.scrollTop;
-  let next = current;
-  switch (command) {
-    case "lineDown":
-      next += DRAWER_LINE_SCROLL_PX;
-      break;
-    case "lineUp":
-      next -= DRAWER_LINE_SCROLL_PX;
-      break;
-    case "pageDown":
-      next += pageStep;
-      break;
-    case "pageUp":
-      next -= pageStep;
-      break;
-    case "top":
-      next = 0;
-      break;
-  }
-  const clamped = Math.max(0, Math.min(maxTop, next));
-  if (clamped === current) {
-    return false;
-  }
-  node.scrollTop = clamped;
-  return true;
-}
-
-type GitDiffScrollAnchor = {
-  anchorId?: string;
-  hunkHash?: string;
-  offsetTop: number;
-};
-
-function getGitDiffAnchorElements(
-  node: Pick<HTMLDivElement, "querySelectorAll">,
-): HTMLElement[] {
-  return Array.from(
-    node.querySelectorAll<HTMLElement>(
-      "[data-git-anchor-id],[data-git-hunk-hash]",
-    ),
-  );
-}
-
-export function captureGitDiffScrollAnchor(
-  node: Pick<
-    HTMLDivElement,
-    "querySelectorAll" | "getBoundingClientRect" | "clientHeight"
-  >,
-): GitDiffScrollAnchor | undefined {
-  const elements = getGitDiffAnchorElements(node);
-  if (!elements.length) return undefined;
-  const containerRect = node.getBoundingClientRect();
-  const midpoint = containerRect.top + node.clientHeight / 2;
-  const visible = elements.filter((element) => {
-    const rect = element.getBoundingClientRect();
-    return rect.bottom > containerRect.top && rect.top < containerRect.bottom;
-  });
-  const candidates = visible.length ? visible : elements;
-  let best: HTMLElement | undefined;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (const element of candidates) {
-    const rect = element.getBoundingClientRect();
-    const distance = Math.abs(rect.top - midpoint);
-    if (distance < bestDistance) {
-      best = element;
-      bestDistance = distance;
-    }
-  }
-  if (!best) return undefined;
-  const rect = best.getBoundingClientRect();
-  return {
-    anchorId: best.dataset.gitAnchorId || undefined,
-    hunkHash: best.dataset.gitHunkHash || undefined,
-    offsetTop: rect.top - containerRect.top,
-  };
-}
-
-export function restoreGitDiffScrollAnchor(
-  node: Pick<
-    HTMLDivElement,
-    | "scrollTop"
-    | "scrollHeight"
-    | "clientHeight"
-    | "querySelectorAll"
-    | "getBoundingClientRect"
-  >,
-  anchor?: GitDiffScrollAnchor | null,
-): boolean {
-  if (!anchor) return false;
-  const elements = getGitDiffAnchorElements(node);
-  if (!elements.length) return false;
-  let target =
-    elements.find(
-      (element) =>
-        !!anchor.anchorId && element.dataset.gitAnchorId === anchor.anchorId,
-    ) ??
-    elements.find(
-      (element) =>
-        !!anchor.hunkHash && element.dataset.gitHunkHash === anchor.hunkHash,
-    );
-  if (!target) return false;
-  const containerRect = node.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  const rawTop =
-    node.scrollTop + (targetRect.top - containerRect.top) - anchor.offsetTop;
-  const maxTop = Math.max(0, node.scrollHeight - node.clientHeight);
-  node.scrollTop = Math.max(0, Math.min(maxTop, rawTop));
-  return true;
-}
-
-export function scrollGitDrawerElementIntoView(
-  node: Pick<
-    HTMLDivElement,
-    "scrollTop" | "scrollHeight" | "clientHeight" | "getBoundingClientRect"
-  >,
-  target: Pick<HTMLElement, "getBoundingClientRect">,
-  opts: {
-    block: "start" | "center";
-    offsetTop?: number;
-  },
-): boolean {
-  const containerRect = node.getBoundingClientRect();
-  const targetRect = target.getBoundingClientRect();
-  let rawTop =
-    node.scrollTop +
-    (targetRect.top - containerRect.top) -
-    Math.max(0, opts.offsetTop ?? 0);
-  if (opts.block === "center") {
-    rawTop =
-      node.scrollTop +
-      (targetRect.top - containerRect.top) -
-      Math.max(0, (node.clientHeight - targetRect.height) / 2);
-  }
-  const maxTop = Math.max(0, node.scrollHeight - node.clientHeight);
-  const nextTop = Math.max(0, Math.min(maxTop, rawTop));
-  if (Math.abs(nextTop - node.scrollTop) < 1) {
-    return false;
-  }
-  node.scrollTop = nextTop;
-  return true;
-}
-
-type GitShowFile = {
-  path: string;
-  lines: string[];
-};
-
-type GitShowSummary = {
-  commit?: string;
-  author?: string;
-  authorDate?: string;
-  committer?: string;
-  commitDate?: string;
-  message: string;
-  extraHeaderLines: string[];
-};
-
-type GitShowParsed = {
-  summaryLines: string[];
-  summary: GitShowSummary;
-  files: GitShowFile[];
-  repoRoot?: string;
-  linesTruncated: boolean;
-  originalLineCount: number;
-  shownLineCount: number;
-};
-
-export type GitDiffFindMatch = {
-  id: string;
-  kind: "file" | "line";
-  fileIndex: number;
-  lineIndex?: number;
-  preview: string;
-};
-
-function countCaseInsensitiveMatches(text: string, needle: string): number {
-  const haystack = `${text ?? ""}`.toLowerCase();
-  const normalizedNeedle = `${needle ?? ""}`.trim().toLowerCase();
-  if (!haystack || !normalizedNeedle) return 0;
-  let count = 0;
-  let start = 0;
-  while (start <= haystack.length - normalizedNeedle.length) {
-    const idx = haystack.indexOf(normalizedNeedle, start);
-    if (idx === -1) break;
-    count += 1;
-    start = idx + normalizedNeedle.length;
-  }
-  return count;
-}
-
-export function buildGitDiffFindMatches({
-  data,
-  query,
-}: {
-  data?: Pick<GitShowParsed, "files">;
-  query: string;
-}): GitDiffFindMatch[] {
-  const normalizedQuery = `${query ?? ""}`.trim();
-  if (!normalizedQuery || !data?.files?.length) return [];
-  const matches: GitDiffFindMatch[] = [];
-  for (const [fileIndex, file] of data.files.entries()) {
-    if (countCaseInsensitiveMatches(file.path, normalizedQuery) > 0) {
-      matches.push({
-        id: `file:${fileIndex}`,
-        kind: "file",
-        fileIndex,
-        preview: file.path,
-      });
-    }
-    for (const [lineIndex, line] of file.lines.entries()) {
-      if (countCaseInsensitiveMatches(line, normalizedQuery) === 0) continue;
-      matches.push({
-        id: `line:${fileIndex}:${lineIndex}`,
-        kind: "line",
-        fileIndex,
-        lineIndex,
-        preview: line,
-      });
-    }
-  }
-  return matches;
-}
-
-export function getRenderedDiffLineLimit(requested?: number): number {
-  const value = Number(requested);
-  if (!Number.isFinite(value) || value <= 0) {
-    return INITIAL_RENDERED_DIFF_LINES;
-  }
-  return Math.max(INITIAL_RENDERED_DIFF_LINES, Math.floor(value));
-}
-
-export function getNextRenderedDiffLineLimit(current?: number): number {
-  return getRenderedDiffLineLimit(current) + RENDERED_DIFF_LINES_INCREMENT;
-}
-
-export function buildGitReviewFileSectionId(
-  path: string,
-  index: number,
-): string {
-  return `git-review-file-${index}-${hashString(path).slice(0, 12)}`;
-}
-
-export function buildGitReviewLineElementId({
-  filePath,
-  fileIndex,
-  lineIndex,
-}: {
-  filePath: string;
-  fileIndex: number;
-  lineIndex: number;
-}): string {
-  return `git-review-line-${fileIndex}-${lineIndex}-${hashString(filePath).slice(0, 12)}`;
-}
-
-export function isGitDiffFindTargetRendered({
-  data,
-  match,
-  visibleDiffLinesByFile,
-}: {
-  data?: Pick<GitShowParsed, "files">;
-  match?: GitDiffFindMatch;
-  visibleDiffLinesByFile: Record<string, number>;
-}): boolean {
-  if (!data || !match) return false;
-  const file = data.files?.[match.fileIndex];
-  if (!file) return false;
-  if (match.kind === "file" || typeof match.lineIndex !== "number") {
-    return true;
-  }
-  const sectionId = buildGitReviewFileSectionId(file.path, match.fileIndex);
-  const visibleLineLimit = getRenderedDiffLineLimit(
-    visibleDiffLinesByFile[sectionId],
-  );
-  return match.lineIndex < visibleLineLimit;
-}
-
-export function getGitDiffFindVisibleLineLimitUpdate({
-  data,
-  match,
-  visibleDiffLinesByFile,
-}: {
-  data?: Pick<GitShowParsed, "files">;
-  match?: GitDiffFindMatch;
-  visibleDiffLinesByFile: Record<string, number>;
-}): { sectionId: string; neededLimit: number } | undefined {
-  if (!data || !match || typeof match.lineIndex !== "number") return;
-  const file = data.files?.[match.fileIndex];
-  if (!file) return;
-  const sectionId = buildGitReviewFileSectionId(file.path, match.fileIndex);
-  const neededLimit = getRenderedDiffLineLimit(match.lineIndex + 1);
-  const currentVisibleLimit = getRenderedDiffLineLimit(
-    visibleDiffLinesByFile[sectionId],
-  );
-  if (currentVisibleLimit >= neededLimit) {
-    return;
-  }
-  return { sectionId, neededLimit };
-}
-
-type GitLogEntry = {
-  hash: string;
-  subject: string;
-};
-
-export function filterGitReviewLogEntries({
-  entries,
-  reviewedByCommit,
-  onlyUnreviewed,
-}: {
-  entries: GitLogEntry[];
-  reviewedByCommit: Record<string, boolean>;
-  onlyUnreviewed: boolean;
-}): GitLogEntry[] {
-  if (!onlyUnreviewed) return entries;
-  return entries.filter((entry) => reviewedByCommit[entry.hash] !== true);
-}
-
-export function resolveGitCommitSearchChange({
-  currentSearch,
-  nextSearch,
-  preserveSearchOnAutoClear,
-}: {
-  currentSearch: string;
-  nextSearch: string;
-  preserveSearchOnAutoClear: boolean;
-}): {
-  search: string;
-  preserveSearchOnAutoClear: boolean;
-} {
-  if (preserveSearchOnAutoClear && nextSearch === "") {
-    return {
-      search: currentSearch,
-      preserveSearchOnAutoClear: false,
-    };
-  }
-  return {
-    search: nextSearch,
-    preserveSearchOnAutoClear: false,
-  };
-}
-
-export function resolveGitReviewSaveState({
-  next = {},
-  draft,
-  reviewed,
-  reviewNote,
-  reviewNoteDraft,
-  reviewComments,
-}: {
-  next?: Partial<Pick<GitReviewRecordV2, "reviewed" | "note" | "comments">>;
-  draft?: {
-    reviewed: boolean;
-    note: string;
-    comments?: Record<string, GitReviewCommentV2>;
-  };
-  reviewed: boolean;
-  reviewNote: string;
-  reviewNoteDraft: string;
-  reviewComments?: Record<string, GitReviewCommentV2>;
-}): {
-  reviewed: boolean;
-  note: string;
-  comments: Record<string, GitReviewCommentV2>;
-} {
-  const draftComments = draft?.comments;
-  return {
-    reviewed: next.reviewed ?? draft?.reviewed ?? reviewed,
-    note: next.note ?? draft?.note ?? reviewNoteDraft ?? reviewNote,
-    comments:
-      next.comments ??
-      (draftComments && Object.keys(draftComments).length > 0
-        ? draftComments
-        : (reviewComments ?? {})),
-  };
-}
-
-export function resolveGitReviewSaveCompletion({
-  payload,
-  sent,
-  current,
-}: {
-  payload: Pick<GitReviewRecordV2, "reviewed" | "note">;
-  sent: {
-    reviewed: boolean;
-    note: string;
-  };
-  current: {
-    reviewed: boolean;
-    noteDraft: string;
-  };
-}): {
-  reviewed: boolean;
-  reviewNote: string;
-  reviewNoteDraft: string;
-  reviewDirty: boolean;
-} {
-  const reviewedChangedSinceSave = current.reviewed !== sent.reviewed;
-  const noteChangedSinceSave = current.noteDraft !== sent.note;
-  return {
-    reviewed: reviewedChangedSinceSave ? current.reviewed : payload.reviewed,
-    reviewNote: payload.note,
-    reviewNoteDraft: noteChangedSinceSave ? current.noteDraft : payload.note,
-    reviewDirty: reviewedChangedSinceSave || noteChangedSinceSave,
-  };
-}
 
 interface GitCommitDrawerProps {
   projectId?: string;
@@ -565,54 +178,6 @@ interface GitCommitDrawerProps {
   }) => void | Promise<void>;
   onFindInChat?: (query: string) => void | Promise<void>;
   onOpenActivityLog?: () => void;
-}
-
-type HeadStatusEntry = {
-  path: string;
-  displayPath: string;
-  statusCode: string;
-  statusLabel: string;
-  tracked: boolean;
-};
-
-type DiffLineMeta = {
-  raw: string;
-  isCode: boolean;
-  prefix: string;
-  body: string;
-  oldLineNumber?: number;
-  newLineNumber?: number;
-  hunkHeader?: string;
-  hunkHash?: string;
-  side?: GitReviewCommentSide;
-  lineNumber?: number;
-  commentable: boolean;
-};
-
-type CommentAnchor = {
-  filePath: string;
-  side: GitReviewCommentSide;
-  line: number;
-  hunk_header?: string;
-  hunk_hash?: string;
-  snippet?: string;
-};
-
-type DrawerScrollState = {
-  entries: Record<string, { top: number; updated_at: number }>;
-  order: string[];
-};
-
-function parseCommitHash(commitHash?: string): string | undefined {
-  const trimmed = `${commitHash ?? ""}`.trim();
-  if (!trimmed) return undefined;
-  if (trimmed.toUpperCase() === HEAD_REF) return HEAD_REF;
-  if (!COMMIT_HASH_RE.test(trimmed)) return undefined;
-  return trimmed.toLowerCase();
-}
-
-function isHeadCommit(commit?: string): boolean {
-  return `${commit ?? ""}`.toUpperCase() === HEAD_REF;
 }
 
 async function runGitCommand({
@@ -634,1576 +199,6 @@ async function runGitCommand({
     timeout: 60,
   });
 }
-
-export function buildGitShowArgs({
-  isHeadSelected,
-  contextLines,
-  commit,
-}: {
-  isHeadSelected: boolean;
-  contextLines: number;
-  commit?: string;
-}): string[] {
-  if (isHeadSelected) {
-    return [
-      "-c",
-      "core.pager=cat",
-      "diff",
-      "--no-color",
-      "--patch",
-      `-U${contextLines}`,
-      "HEAD",
-    ];
-  }
-  return [
-    "-c",
-    "core.pager=cat",
-    "show",
-    "--no-color",
-    "--patch",
-    `-U${contextLines}`,
-    "--format=fuller",
-    `${commit ?? ""}`,
-  ];
-}
-
-export function buildGitLogArgs(): string[] {
-  return [
-    "log",
-    "--no-merges",
-    `-n${GIT_LOG_FETCH_COUNT}`,
-    "--format=%H%x09%s",
-    "--date-order",
-  ];
-}
-
-function parseGitShowOutput(stdout: string, repoRoot?: string): GitShowParsed {
-  const allLines = `${stdout ?? ""}`.split(/\r?\n/);
-  const linesTruncated = allLines.length > MAX_GIT_SHOW_LINES;
-  const lines = linesTruncated
-    ? allLines.slice(0, MAX_GIT_SHOW_LINES)
-    : allLines;
-  const files: GitShowFile[] = [];
-  const summaryLines: string[] = [];
-  let currentFile: GitShowFile | undefined;
-
-  const pushCurrent = () => {
-    if (!currentFile) return;
-    files.push(currentFile);
-    currentFile = undefined;
-  };
-
-  for (const line of lines) {
-    if (line.startsWith("diff --git ")) {
-      pushCurrent();
-      const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
-      const path = `${match?.[2] ?? match?.[1] ?? "unknown"}`.trim();
-      currentFile = { path, lines: [line] };
-      continue;
-    }
-    if (currentFile) {
-      currentFile.lines.push(line);
-    } else {
-      summaryLines.push(line);
-    }
-  }
-  pushCurrent();
-
-  return {
-    summaryLines,
-    summary: parseGitShowSummary(summaryLines),
-    files,
-    repoRoot,
-    linesTruncated,
-    originalLineCount: allLines.length,
-    shownLineCount: lines.length,
-  };
-}
-
-function parseGitShowSummary(summaryLines: string[]): GitShowSummary {
-  const parsed: GitShowSummary = {
-    message: "",
-    extraHeaderLines: [],
-  };
-  const messageLines: string[] = [];
-  let inMessage = false;
-  for (const line of summaryLines) {
-    if (inMessage) {
-      if (line.startsWith("    ")) {
-        messageLines.push(line.slice(4));
-      } else {
-        messageLines.push(line);
-      }
-      continue;
-    }
-    const commitMatch = /^commit\s+([0-9a-f]{7,40})/i.exec(line);
-    if (commitMatch) {
-      parsed.commit = `${commitMatch[1]}`.toLowerCase();
-      continue;
-    }
-    const authorMatch = /^Author:\s*(.+)$/i.exec(line);
-    if (authorMatch) {
-      parsed.author = `${authorMatch[1]}`.trim();
-      continue;
-    }
-    const authorDateMatch = /^AuthorDate:\s*(.+)$/i.exec(line);
-    if (authorDateMatch) {
-      parsed.authorDate = `${authorDateMatch[1]}`.trim();
-      continue;
-    }
-    const committerMatch = /^Commit:\s*(.+)$/i.exec(line);
-    if (committerMatch) {
-      parsed.committer = `${committerMatch[1]}`.trim();
-      continue;
-    }
-    const commitDateMatch = /^CommitDate:\s*(.+)$/i.exec(line);
-    if (commitDateMatch) {
-      parsed.commitDate = `${commitDateMatch[1]}`.trim();
-      continue;
-    }
-    const legacyDateMatch = /^Date:\s*(.+)$/i.exec(line);
-    if (legacyDateMatch && !parsed.authorDate) {
-      parsed.authorDate = `${legacyDateMatch[1]}`.trim();
-      continue;
-    }
-    if (line.trim() === "") {
-      if (
-        parsed.commit ||
-        parsed.author ||
-        parsed.authorDate ||
-        parsed.committer ||
-        parsed.commitDate
-      ) {
-        inMessage = true;
-      }
-      continue;
-    }
-    parsed.extraHeaderLines.push(line);
-  }
-  parsed.message = messageLines.join("\n").trimEnd();
-  return parsed;
-}
-
-function parseGitLogOutput(stdout: string): GitLogEntry[] {
-  const lines = `${stdout ?? ""}`
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length);
-  const entries: GitLogEntry[] = [];
-  for (const line of lines) {
-    const [hash, ...subjectParts] = line.split("\t");
-    const normalizedHash = `${hash ?? ""}`.trim().toLowerCase();
-    if (!COMMIT_HASH_RE.test(normalizedHash)) continue;
-    entries.push({
-      hash: normalizedHash,
-      subject: subjectParts.join("\t").trim(),
-    });
-  }
-  return entries;
-}
-
-function parseGitStatusOutput(stdout: string): HeadStatusEntry[] {
-  const lines = `${stdout ?? ""}`
-    .split(/\r?\n/)
-    .filter((line) => line.trim().length);
-  const entries: HeadStatusEntry[] = [];
-  for (const line of lines) {
-    if (line.startsWith("##")) continue;
-    if (line.length < 3) continue;
-    const status = line.slice(0, 2);
-    const rawPath = line.slice(3).trim();
-    if (!rawPath) continue;
-    const displayPath = rawPath.includes(" -> ")
-      ? rawPath.split(" -> ").pop()?.trim() || rawPath
-      : rawPath;
-    const primary = status.replace(/\s/g, "")[0] ?? "?";
-    const statusCode = status.trim() || "??";
-    const tracked = status !== "??";
-    const statusLabel =
-      status === "??"
-        ? "untracked"
-        : primary === "A"
-          ? "added"
-          : primary === "D"
-            ? "deleted"
-            : primary === "R"
-              ? "renamed"
-              : primary === "M"
-                ? "modified"
-                : "changed";
-    entries.push({
-      path: displayPath,
-      displayPath,
-      statusCode,
-      statusLabel,
-      tracked,
-    });
-  }
-  return entries;
-}
-
-function clampDrawerSize(size: number): number {
-  if (!Number.isFinite(size)) return DEFAULT_DRAWER_SIZE;
-  return Math.max(MIN_DRAWER_SIZE, Math.min(MAX_DRAWER_SIZE, Math.round(size)));
-}
-
-function readDrawerSize(): number {
-  try {
-    const raw = localStorage.getItem(DRAWER_SIZE_STORAGE_KEY);
-    if (!raw) return DEFAULT_DRAWER_SIZE;
-    const parsed = Number(raw);
-    return clampDrawerSize(parsed);
-  } catch {
-    return DEFAULT_DRAWER_SIZE;
-  }
-}
-
-function persistDrawerSize(size: number): void {
-  try {
-    localStorage.setItem(
-      DRAWER_SIZE_STORAGE_KEY,
-      String(clampDrawerSize(size)),
-    );
-  } catch {
-    // ignore
-  }
-}
-
-function normalizeDrawerScrollState(raw: unknown): DrawerScrollState {
-  const fallback: DrawerScrollState = { entries: {}, order: [] };
-  if (!raw || typeof raw !== "object") return fallback;
-  const record = raw as Record<string, unknown>;
-  const entriesRaw = record.entries;
-  const orderRaw = record.order;
-  const entries: DrawerScrollState["entries"] = {};
-  if (entriesRaw && typeof entriesRaw === "object") {
-    for (const [key, value] of Object.entries(
-      entriesRaw as Record<string, unknown>,
-    )) {
-      if (!key || !value || typeof value !== "object") continue;
-      const top = Number((value as Record<string, unknown>).top);
-      const updated = Number((value as Record<string, unknown>).updated_at);
-      if (!Number.isFinite(top) || top < 0) continue;
-      entries[key] = {
-        top: Math.round(top),
-        updated_at:
-          Number.isFinite(updated) && updated > 0
-            ? Math.round(updated)
-            : Date.now(),
-      };
-    }
-  }
-  const order = Array.isArray(orderRaw)
-    ? orderRaw
-        .map((x) => `${x ?? ""}`.trim())
-        .filter(
-          (x, i, arr) => !!x && arr.indexOf(x) === i && entries[x] != null,
-        )
-    : [];
-  for (const key of Object.keys(entries)) {
-    if (!order.includes(key)) order.push(key);
-  }
-  return { entries, order };
-}
-
-function readDrawerScrollState(): DrawerScrollState {
-  try {
-    const raw = localStorage.getItem(DRAWER_SCROLL_STORAGE_KEY);
-    if (!raw) return { entries: {}, order: [] };
-    return normalizeDrawerScrollState(JSON.parse(raw));
-  } catch {
-    return { entries: {}, order: [] };
-  }
-}
-
-function persistDrawerScrollState(state: DrawerScrollState): void {
-  try {
-    localStorage.setItem(DRAWER_SCROLL_STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    // ignore
-  }
-}
-
-function readDrawerScrollPosition(storageId: string): number | undefined {
-  if (!storageId) return undefined;
-  const entry = readDrawerScrollState().entries[storageId];
-  if (!entry) return undefined;
-  if (!Number.isFinite(entry.top) || entry.top < 0) return undefined;
-  return entry.top;
-}
-
-function persistDrawerScrollPosition(storageId: string, top: number): void {
-  if (!storageId) return;
-  if (!Number.isFinite(top) || top < 0) return;
-  const state = readDrawerScrollState();
-  const id = `${storageId}`.trim();
-  if (!id) return;
-  const now = Date.now();
-  state.entries[id] = { top: Math.round(top), updated_at: now };
-  const order = state.order.filter((x) => x !== id);
-  order.push(id);
-  while (order.length > MAX_DRAWER_SCROLL_ENTRIES) {
-    const drop = order.shift();
-    if (!drop) continue;
-    delete state.entries[drop];
-  }
-  state.order = order;
-  persistDrawerScrollState(state);
-}
-
-function resolveOpenPath(
-  repoRoot: string | undefined,
-  filePath: string,
-): string {
-  if (!filePath) return filePath;
-  if (filePath.startsWith("/")) return filePath;
-  if (!repoRoot) return filePath;
-  const prefix = repoRoot.endsWith("/") ? repoRoot.slice(0, -1) : repoRoot;
-  return `${prefix}/${filePath}`.replace(/\/+/g, "/");
-}
-
-function hashString(value: string): string {
-  let hash = 5381;
-  for (let i = 0; i < value.length; i++) {
-    hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
-  }
-  return (hash >>> 0).toString(16);
-}
-
-function parseHunkStarts(
-  line: string,
-): { oldStart: number; newStart: number } | undefined {
-  const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-  if (!m) return undefined;
-  const oldStart = Number(m[1]);
-  const newStart = Number(m[2]);
-  if (!Number.isFinite(oldStart) || !Number.isFinite(newStart))
-    return undefined;
-  return { oldStart, newStart };
-}
-
-function buildDiffLineMetas(lines: string[]): DiffLineMeta[] {
-  let oldLine: number | undefined;
-  let newLine: number | undefined;
-  let hunkHeader: string | undefined;
-  let hunkHash: string | undefined;
-  return lines.map((line) => {
-    const isCode = isDiffContentLine(line);
-    const prefix = isCode ? line[0] : "";
-    const body = isCode ? line.slice(1) : line;
-    if (line.startsWith("@@ ")) {
-      const starts = parseHunkStarts(line);
-      oldLine = starts?.oldStart;
-      newLine = starts?.newStart;
-      hunkHeader = line;
-      hunkHash = hashString(line);
-      return {
-        raw: line,
-        isCode,
-        prefix,
-        body,
-        hunkHeader,
-        hunkHash,
-        commentable: false,
-      };
-    }
-    let oldLineNumber: number | undefined;
-    let newLineNumber: number | undefined;
-    let side: GitReviewCommentSide | undefined;
-    let lineNumber: number | undefined;
-    if (isCode) {
-      if (prefix === "+") {
-        newLineNumber = newLine;
-        if (newLine != null) newLine += 1;
-        side = "new";
-        lineNumber = newLineNumber;
-      } else if (prefix === "-") {
-        oldLineNumber = oldLine;
-        if (oldLine != null) oldLine += 1;
-        side = "old";
-        lineNumber = oldLineNumber;
-      } else if (prefix === " ") {
-        oldLineNumber = oldLine;
-        newLineNumber = newLine;
-        if (oldLine != null) oldLine += 1;
-        if (newLine != null) newLine += 1;
-        side = "context";
-        lineNumber = newLineNumber ?? oldLineNumber;
-      }
-    }
-    return {
-      raw: line,
-      isCode,
-      prefix,
-      body,
-      oldLineNumber,
-      newLineNumber,
-      hunkHeader,
-      hunkHash,
-      side,
-      lineNumber,
-      commentable:
-        !!isCode &&
-        !!hunkHash &&
-        side != null &&
-        lineNumber != null &&
-        Number.isFinite(lineNumber),
-    };
-  });
-}
-
-function makeCommentAnchor(
-  meta: DiffLineMeta,
-  filePath: string,
-): CommentAnchor | undefined {
-  if (!meta.commentable || !meta.side || !meta.lineNumber) return undefined;
-  return {
-    filePath,
-    side: meta.side,
-    line: meta.lineNumber,
-    hunk_header: meta.hunkHeader,
-    hunk_hash: meta.hunkHash,
-    snippet: meta.body.slice(0, 240),
-  };
-}
-
-export function commentAnchorKey({
-  side,
-  line,
-  hunk_hash,
-}: {
-  side: GitReviewCommentSide;
-  line?: number;
-  hunk_hash?: string;
-}): string {
-  return `${side}:${line ?? 0}:${hunk_hash ?? ""}`;
-}
-
-function makeCommentId(): string {
-  const rand = Math.random().toString(36).slice(2, 10);
-  return `gitc-${Date.now().toString(36)}-${rand}`;
-}
-
-export function diffLineNumberColumnWidth(maxLine: number): string {
-  const safeMaxLine = Math.max(0, Math.floor(maxLine || 0));
-  const digits = Math.max(1, `${safeMaxLine}`.length);
-  const chars = Math.max(3, digits);
-  return `calc(${chars}ch + 12px)`;
-}
-
-function isEditableEventTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  const tag = target.tagName?.toLowerCase();
-  if (tag === "input" || tag === "textarea" || tag === "select") return true;
-  return Boolean(
-    target.closest(
-      [
-        '[contenteditable="true"]',
-        '[data-slate-editor="true"]',
-        ".slate-editor",
-        ".CodeMirror",
-        ".CodeMirror-code",
-        ".cm-editor",
-        ".cm-content",
-        '[role="textbox"]',
-      ].join(", "),
-    ),
-  );
-}
-
-export function shouldCaptureGitDrawerFindShortcut({
-  key,
-  altKey,
-  ctrlKey,
-  metaKey,
-  target,
-  activeElement,
-}: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "target"> & {
-  activeElement?: EventTarget | null;
-}): boolean {
-  if (!(metaKey || ctrlKey) || altKey) return false;
-  if (`${key ?? ""}`.toLowerCase() !== "f") return false;
-  if (
-    isEditableEventTarget(target ?? null) ||
-    isEditableEventTarget(activeElement ?? null)
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function isNotGitRepoError(message: string): boolean {
-  const text = `${message ?? ""}`.toLowerCase();
-  return (
-    text.includes("not a git repository") ||
-    text.includes("stopping at filesystem boundary")
-  );
-}
-
-function parseDateSafe(value?: string): Date | undefined {
-  if (!value) return undefined;
-  const d = new Date(value);
-  return Number.isFinite(d.valueOf()) ? d : undefined;
-}
-
-function splitCommitMessage(message?: string): {
-  subject?: string;
-  body?: string;
-} {
-  const raw = `${message ?? ""}`.replace(/\r\n/g, "\n");
-  if (!raw.trim()) return {};
-  const lines = raw.split("\n");
-  const subject = `${lines[0] ?? ""}`.trim();
-  const body = lines.slice(1).join("\n").replace(/^\n+/, "");
-  return {
-    subject: subject || undefined,
-    body: body.trim() ? body : undefined,
-  };
-}
-
-export function isMergeCommitSummary(summary?: GitShowSummary): boolean {
-  return (
-    summary?.extraHeaderLines?.some((line) =>
-      /^Merge:\s+/i.test(`${line ?? ""}`),
-    ) ?? false
-  );
-}
-
-export function formatMergeCommitBodyMarkdown(
-  body?: string,
-): string | undefined {
-  const text = `${body ?? ""}`.trim();
-  if (!text) return undefined;
-  const fence = backtickSequence(text);
-  return `${fence}\n${text}\n${fence}`;
-}
-
-type MarkdownHistoryInputProps = ComponentProps<typeof MarkdownInput> & {
-  historyId: string;
-};
-
-function normalizeGitReviewEditorIdPart(
-  value?: string | null,
-  fallback = "none",
-): string {
-  const normalized = `${value ?? ""}`.trim();
-  return normalized || fallback;
-}
-
-export function buildGitReviewEditorScope({
-  accountId,
-  commitSha,
-}: {
-  accountId?: string | null;
-  commitSha?: string | null;
-}): string {
-  const normalizedCommit =
-    normalizeCommitSha(commitSha ?? undefined) ?? commitSha;
-  return [
-    "git-review",
-    "account",
-    normalizeGitReviewEditorIdPart(accountId, "anonymous"),
-    "commit",
-    normalizeGitReviewEditorIdPart(normalizedCommit, "none"),
-  ].join(":");
-}
-
-export function buildGitReviewNoteEditorId(scope: string): string {
-  return `${scope}:note`;
-}
-
-export function buildGitInlineDraftEditorId({
-  scope,
-  filePath,
-  anchorId,
-}: {
-  scope: string;
-  filePath: string;
-  anchorId: string;
-}): string {
-  return `${scope}:inline-draft:${filePath}:${anchorId}`;
-}
-
-export function buildGitInlineEditEditorId({
-  scope,
-  filePath,
-  commentId,
-}: {
-  scope: string;
-  filePath: string;
-  commentId: string;
-}): string {
-  return `${scope}:inline-edit:${filePath}:${commentId}`;
-}
-
-export function MarkdownHistoryInput({
-  historyId: _historyId,
-  saveDebounceMs = 0,
-  ...props
-}: MarkdownHistoryInputProps) {
-  return (
-    <MarkdownInput
-      {...props}
-      saveDebounceMs={saveDebounceMs}
-      // Git review editors need immediate parent sync so local undo/redo never
-      // races against a stale debounced value flush, and undo/redo should stay
-      // local to the embedded editor in both backends.
-      undoMode="local"
-      redoMode="local"
-    />
-  );
-}
-
-function useBufferedMarkdownValue({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  const [localValue, setLocalValue] = useState(value);
-  const localValueRef = useRef(localValue);
-  const syncedValueRef = useRef(value);
-  const skipUnmountFlushRef = useRef(false);
-  const skipNextBlurFlushRef = useRef(false);
-  const pendingActionBlurRecoveryRef = useRef(false);
-
-  useEffect(() => {
-    localValueRef.current = localValue;
-  }, [localValue]);
-
-  useEffect(() => {
-    setLocalValue(value);
-    localValueRef.current = value;
-    syncedValueRef.current = value;
-    skipUnmountFlushRef.current = false;
-    skipNextBlurFlushRef.current = false;
-    pendingActionBlurRecoveryRef.current = false;
-  }, [value]);
-
-  const flush = useCallback(
-    (nextValue?: string, opts?: { force?: boolean }) => {
-      if (!opts?.force && skipNextBlurFlushRef.current) {
-        skipNextBlurFlushRef.current = false;
-        return;
-      }
-      pendingActionBlurRecoveryRef.current = false;
-      const resolved = nextValue ?? localValueRef.current;
-      if (resolved === syncedValueRef.current) return;
-      syncedValueRef.current = resolved;
-      onChange(resolved);
-    },
-    [onChange],
-  );
-
-  useEffect(() => {
-    return () => {
-      if (!skipUnmountFlushRef.current) {
-        flush();
-      }
-    };
-  }, [flush]);
-
-  const update = useCallback((nextValue: string) => {
-    localValueRef.current = nextValue;
-    setLocalValue(nextValue);
-  }, []);
-
-  const skipNextUnmountFlush = useCallback(() => {
-    skipUnmountFlushRef.current = true;
-  }, []);
-
-  const prepareForActionFocus = useCallback(() => {
-    skipNextBlurFlushRef.current = true;
-    pendingActionBlurRecoveryRef.current = true;
-  }, []);
-
-  const markActionHandled = useCallback(() => {
-    pendingActionBlurRecoveryRef.current = false;
-  }, []);
-
-  const recoverPendingActionBlur = useCallback(() => {
-    if (!pendingActionBlurRecoveryRef.current) return;
-    pendingActionBlurRecoveryRef.current = false;
-    skipNextBlurFlushRef.current = false;
-    flush(undefined, { force: true });
-  }, [flush]);
-
-  return {
-    localValue,
-    update,
-    flush,
-    skipNextUnmountFlush,
-    prepareForActionFocus,
-    markActionHandled,
-    recoverPendingActionBlur,
-  };
-}
-
-export function ReviewNoteEditor({
-  historyId,
-  value,
-  committedValue,
-  fontSize,
-  saving,
-  disabled,
-  onPersistDraft,
-  onCancel,
-  onSave,
-}: {
-  historyId: string;
-  value: string;
-  committedValue: string;
-  fontSize: number;
-  saving: boolean;
-  disabled: boolean;
-  onPersistDraft: (value: string) => void;
-  onCancel: () => void;
-  onSave: (value: string) => void;
-}) {
-  const {
-    localValue,
-    update,
-    flush,
-    skipNextUnmountFlush,
-    prepareForActionFocus,
-    markActionHandled,
-    recoverPendingActionBlur,
-  } = useBufferedMarkdownValue({
-    value,
-    onChange: onPersistDraft,
-  });
-  const dirty = localValue !== committedValue;
-  return (
-    <>
-      <MarkdownHistoryInput
-        historyId={historyId}
-        cacheId={historyId}
-        value={localValue}
-        onChange={update}
-        onBlur={flush}
-        onShiftEnter={(next) => {
-          skipNextUnmountFlush();
-          flush(next, { force: true });
-          onSave(next);
-        }}
-        placeholder="Private review note (not sent to agent)"
-        fontSize={Math.max(13, fontSize)}
-        autoGrow
-        autoGrowMaxHeight={220}
-        hideHelp
-        minimal
-        compact
-        enableMentions={false}
-        enableUpload={true}
-      />
-      <div
-        style={{
-          marginTop: 8,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "flex-start",
-          gap: 8,
-          flexWrap: "wrap",
-        }}
-      >
-        <Button
-          size="small"
-          disabled={disabled}
-          onMouseDown={prepareForActionFocus}
-          onFocus={prepareForActionFocus}
-          onBlur={recoverPendingActionBlur}
-          onClick={() => {
-            markActionHandled();
-            skipNextUnmountFlush();
-            onCancel();
-          }}
-        >
-          Cancel
-        </Button>
-        <Button
-          size="small"
-          type="primary"
-          disabled={!dirty || saving || disabled}
-          onMouseDown={prepareForActionFocus}
-          onFocus={prepareForActionFocus}
-          onBlur={recoverPendingActionBlur}
-          onClick={() => {
-            markActionHandled();
-            skipNextUnmountFlush();
-            flush(localValue, { force: true });
-            onSave(localValue);
-          }}
-        >
-          Save note
-        </Button>
-      </div>
-    </>
-  );
-}
-
-function InlineDraftCommentEditor({
-  historyId,
-  value,
-  fontSize,
-  loading,
-  onChange,
-  onCancel,
-  onSave,
-}: {
-  historyId: string;
-  value: string;
-  fontSize: number;
-  loading: boolean;
-  onChange: (value: string) => void;
-  onCancel: () => void;
-  onSave: (value: string) => void;
-}) {
-  const {
-    localValue,
-    update,
-    flush,
-    skipNextUnmountFlush,
-    prepareForActionFocus,
-    markActionHandled,
-    recoverPendingActionBlur,
-  } = useBufferedMarkdownValue({
-    value,
-    onChange,
-  });
-  return (
-    <>
-      <MarkdownHistoryInput
-        historyId={historyId}
-        cacheId={historyId}
-        value={localValue}
-        onChange={update}
-        onBlur={flush}
-        onShiftEnter={(next) => {
-          skipNextUnmountFlush();
-          flush(next);
-          onSave(next);
-        }}
-        placeholder="Add inline review comment..."
-        fontSize={fontSize}
-        autoGrow
-        autoGrowMaxHeight={220}
-        hideHelp
-        minimal
-        compact
-        enableMentions={false}
-        enableUpload={true}
-      />
-      <div
-        style={{
-          marginTop: 6,
-          display: "flex",
-          justifyContent: "flex-end",
-          gap: 8,
-        }}
-      >
-        <Button
-          size="small"
-          onMouseDown={prepareForActionFocus}
-          onFocus={prepareForActionFocus}
-          onBlur={recoverPendingActionBlur}
-          onClick={() => {
-            markActionHandled();
-            skipNextUnmountFlush();
-            onCancel();
-          }}
-        >
-          Cancel
-        </Button>
-        <Button
-          size="small"
-          type="primary"
-          onMouseDown={prepareForActionFocus}
-          onFocus={prepareForActionFocus}
-          onBlur={recoverPendingActionBlur}
-          onClick={() => {
-            markActionHandled();
-            skipNextUnmountFlush();
-            flush(localValue, { force: true });
-            onSave(localValue);
-          }}
-          disabled={!localValue.trim()}
-          loading={loading}
-        >
-          Add comment
-        </Button>
-      </div>
-    </>
-  );
-}
-
-function InlineEditCommentEditor({
-  historyId,
-  value,
-  fontSize,
-  loading,
-  onChange,
-  onCancel,
-  onSave,
-}: {
-  historyId: string;
-  value: string;
-  fontSize: number;
-  loading: boolean;
-  onChange: (value: string) => void;
-  onCancel: () => void;
-  onSave: (value: string) => void;
-}) {
-  const {
-    localValue,
-    update,
-    flush,
-    skipNextUnmountFlush,
-    prepareForActionFocus,
-    markActionHandled,
-    recoverPendingActionBlur,
-  } = useBufferedMarkdownValue({
-    value,
-    onChange,
-  });
-  return (
-    <>
-      <MarkdownHistoryInput
-        historyId={historyId}
-        cacheId={historyId}
-        value={localValue}
-        onChange={update}
-        onBlur={flush}
-        onShiftEnter={(next) => {
-          skipNextUnmountFlush();
-          flush(next);
-          onSave(next);
-        }}
-        placeholder="Edit inline review comment..."
-        fontSize={fontSize}
-        autoGrow
-        autoGrowMaxHeight={220}
-        hideHelp
-        minimal
-        compact
-        enableMentions={false}
-        enableUpload={true}
-      />
-      <Space.Compact size="small">
-        <Button
-          size="small"
-          onMouseDown={prepareForActionFocus}
-          onFocus={prepareForActionFocus}
-          onBlur={recoverPendingActionBlur}
-          onClick={() => {
-            markActionHandled();
-            skipNextUnmountFlush();
-            onCancel();
-          }}
-        >
-          Cancel
-        </Button>
-        <Button
-          size="small"
-          type="primary"
-          onMouseDown={prepareForActionFocus}
-          onFocus={prepareForActionFocus}
-          onBlur={recoverPendingActionBlur}
-          onClick={() => {
-            markActionHandled();
-            skipNextUnmountFlush();
-            flush(localValue, { force: true });
-            onSave(localValue);
-          }}
-          disabled={!localValue.trim()}
-          loading={loading}
-        >
-          Save
-        </Button>
-      </Space.Compact>
-    </>
-  );
-}
-
-export const DiffBlock = memo(function DiffBlock({
-  filePath,
-  fileIndex,
-  lines,
-  languageHint,
-  fontSize,
-  editorTheme,
-  editorHistoryScope = buildGitReviewEditorScope({}),
-  comments,
-  showResolvedComments,
-  commentEnabled,
-  commentDisabledMessage,
-  activeDraftAnchorId,
-  activeDraftBody = "",
-  activeEditingId,
-  activeEditingBody = "",
-  pendingKey = "",
-  onOpenDraft = () => {},
-  onDraftBodyChange = () => {},
-  onCancelDraft = () => {},
-  onOpenEdit = () => {},
-  onEditingBodyChange = () => {},
-  onCancelEdit = () => {},
-  onCreateComment,
-  onUpdateComment,
-  onResolveComment,
-  onReopenComment,
-  matchedLineIndexes,
-  activeMatchedLineIndex,
-}: {
-  filePath: string;
-  fileIndex?: number;
-  lines: string[];
-  languageHint: string;
-  fontSize: number;
-  editorTheme?: string | null;
-  editorHistoryScope?: string;
-  comments: GitReviewCommentV2[];
-  showResolvedComments: boolean;
-  commentEnabled: boolean;
-  commentDisabledMessage?: string;
-  activeDraftAnchorId?: string;
-  activeDraftBody?: string;
-  activeEditingId?: string;
-  activeEditingBody?: string;
-  pendingKey?: string;
-  onOpenDraft?: (anchor: CommentAnchor) => void;
-  onDraftBodyChange?: (value: string) => void;
-  onCancelDraft?: () => void;
-  onOpenEdit?: (comment: GitReviewCommentV2) => void;
-  onEditingBodyChange?: (value: string) => void;
-  onCancelEdit?: () => void;
-  onCreateComment: (anchor: CommentAnchor, body: string) => Promise<void>;
-  onUpdateComment: (id: string, body: string) => Promise<void>;
-  onResolveComment: (id: string) => Promise<void>;
-  onReopenComment: (id: string) => Promise<void>;
-  matchedLineIndexes?: Set<number>;
-  activeMatchedLineIndex?: number;
-}) {
-  const codeFontSize = Math.max(11, fontSize - 1);
-  const commentFontSize = Math.max(13, fontSize);
-  const commentFontFamily =
-    'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
-  const lineMetas = useMemo(() => buildDiffLineMetas(lines), [lines]);
-  const lineNumberWidth = useMemo(() => {
-    const maxLine = lineMetas.reduce((max, meta) => {
-      const oldVal =
-        typeof meta.oldLineNumber === "number" ? meta.oldLineNumber : 0;
-      const newVal =
-        typeof meta.newLineNumber === "number" ? meta.newLineNumber : 0;
-      return Math.max(max, oldVal, newVal);
-    }, 0);
-    return diffLineNumberColumnWidth(maxLine);
-  }, [lineMetas]);
-  const highlightedByLine = useMemo(
-    () => highlightPrismLines(lineMetas, languageHint),
-    [lineMetas, languageHint],
-  );
-  const commentsByAnchor = useMemo(() => {
-    const byAnchor = new Map<string, GitReviewCommentV2[]>();
-    for (const comment of comments) {
-      if (comment.status === "resolved" && !showResolvedComments) continue;
-      const key = commentAnchorKey(comment);
-      const existing = byAnchor.get(key) ?? [];
-      existing.push(comment);
-      byAnchor.set(key, existing);
-    }
-    return byAnchor;
-  }, [comments, showResolvedComments]);
-  const commentButtonSlotStyle = {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: 22,
-    minWidth: 22,
-    height: 22,
-  } as const;
-
-  const resolveComment = async (id: string) => {
-    await onResolveComment(id);
-  };
-
-  const reopenComment = async (id: string) => {
-    await onReopenComment(id);
-  };
-
-  return (
-    <div
-      className="cocalc-slate-code-block"
-      style={{
-        border: `1px solid ${COLORS.GRAY_L}`,
-        borderRadius: 6,
-        overflow: "hidden",
-        fontFamily: "monospace",
-        fontSize: codeFontSize,
-        padding: 0,
-        marginBottom: 0,
-      }}
-    >
-      {lineMetas.map((meta, idx) => {
-        const prefix = meta.raw[0];
-        const background =
-          prefix === "+" && !meta.raw.startsWith("+++ ")
-            ? "#e6ffed"
-            : prefix === "-" && !meta.raw.startsWith("--- ")
-              ? "#ffeef0"
-              : "transparent";
-        const html = highlightedByLine[idx] ?? "";
-        const anchor = makeCommentAnchor(meta, filePath);
-        const anchorId = anchor == null ? "" : commentAnchorKey(anchor);
-        const lineElementId = buildGitReviewLineElementId({
-          filePath,
-          fileIndex: fileIndex ?? 0,
-          lineIndex: idx,
-        });
-        const lineComments =
-          anchor == null ? [] : (commentsByAnchor.get(anchorId) ?? []);
-        const showDraft =
-          activeDraftAnchorId != null &&
-          activeDraftAnchorId !== "" &&
-          activeDraftAnchorId === anchorId;
-        const hasFindMatch = matchedLineIndexes?.has(idx) ?? false;
-        const isActiveFindMatch = activeMatchedLineIndex === idx;
-        return (
-          <div key={idx}>
-            <div
-              id={lineElementId}
-              className="cocalc-git-diff-line"
-              style={{
-                background,
-                padding: "2px 8px",
-                whiteSpace: "pre-wrap",
-                overflowWrap: "anywhere",
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 6,
-                boxShadow: isActiveFindMatch
-                  ? "inset 0 0 0 2px #faad14"
-                  : hasFindMatch
-                    ? "inset 0 0 0 1px #ffe58f"
-                    : undefined,
-              }}
-              data-git-anchor-id={anchorId || undefined}
-              data-git-hunk-hash={meta.hunkHash || undefined}
-            >
-              <div
-                style={{
-                  color: COLORS.GRAY_D,
-                  width: lineNumberWidth,
-                  minWidth: lineNumberWidth,
-                  maxWidth: lineNumberWidth,
-                  textAlign: "right",
-                  userSelect: "none",
-                  fontFamily: "monospace",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {meta.oldLineNumber ?? ""}
-              </div>
-              <div
-                style={{
-                  color: COLORS.GRAY_D,
-                  width: lineNumberWidth,
-                  minWidth: lineNumberWidth,
-                  maxWidth: lineNumberWidth,
-                  textAlign: "right",
-                  userSelect: "none",
-                  fontFamily: "monospace",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {meta.newLineNumber ?? ""}
-              </div>
-              {anchor ? (
-                <span
-                  style={commentButtonSlotStyle}
-                  className="cocalc-git-diff-line-comment-slot"
-                >
-                  <Button
-                    size="small"
-                    type="primary"
-                    className="cocalc-git-diff-line-comment-button"
-                    style={{
-                      padding: 0,
-                      minWidth: 22,
-                      width: 22,
-                      height: 22,
-                    }}
-                    onClick={() => {
-                      if (!commentEnabled) {
-                        alert_message({
-                          type: "info",
-                          message:
-                            commentDisabledMessage ??
-                            "Please commit first, then comment.",
-                          timeout: 4,
-                        });
-                        return;
-                      }
-                      onOpenDraft(anchor);
-                    }}
-                    title={
-                      commentEnabled
-                        ? "Add inline comment"
-                        : (commentDisabledMessage ??
-                          "Please commit first, then comment.")
-                    }
-                  >
-                    +
-                  </Button>
-                </span>
-              ) : (
-                <span style={commentButtonSlotStyle} />
-              )}
-              <div
-                className="cocalc-git-diff-line-text"
-                style={{ flex: 1 }}
-                dangerouslySetInnerHTML={{ __html: html }}
-              />
-            </div>
-            {lineComments.length > 0
-              ? lineComments.map((comment) => {
-                  const isEditing = activeEditingId === comment.id;
-                  return (
-                    <div
-                      key={comment.id}
-                      style={{
-                        margin: "0 8px 6px 92px",
-                        border: `1px solid #d9d9d9`,
-                        borderLeft: `4px solid ${COLORS.BLUE}`,
-                        borderRadius: 8,
-                        padding: "10px 12px",
-                        background: "#fff",
-                        boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-                        fontFamily: commentFontFamily,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                          marginBottom: 8,
-                        }}
-                      >
-                        <Typography.Text strong style={{ fontSize: 13 }}>
-                          Inline review comment
-                        </Typography.Text>
-                        <Typography.Text
-                          type="secondary"
-                          style={{ fontSize: 11 }}
-                        >
-                          {comment.side}:{comment.line ?? "?"}
-                        </Typography.Text>
-                      </div>
-                      {isEditing ? (
-                        <InlineEditCommentEditor
-                          key={comment.id}
-                          historyId={buildGitInlineEditEditorId({
-                            scope: editorHistoryScope,
-                            filePath,
-                            commentId: comment.id,
-                          })}
-                          value={activeEditingBody}
-                          fontSize={commentFontSize}
-                          loading={pendingKey === `edit:${comment.id}`}
-                          onChange={onEditingBodyChange}
-                          onCancel={onCancelEdit}
-                          onSave={(value) =>
-                            void onUpdateComment(comment.id, value)
-                          }
-                        />
-                      ) : (
-                        <StaticMarkdown
-                          value={comment.body_md}
-                          style={{
-                            fontSize: commentFontSize,
-                            fontFamily: commentFontFamily,
-                            lineHeight: 1.5,
-                          }}
-                          editorTheme={editorTheme}
-                        />
-                      )}
-                      <div
-                        style={{
-                          marginTop: 10,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                        }}
-                      >
-                        <Typography.Text
-                          type="secondary"
-                          style={{ fontSize: 11 }}
-                        >
-                          {comment.status === "resolved"
-                            ? "Resolved"
-                            : comment.status === "submitted"
-                              ? "Submitted"
-                              : "Draft"}
-                        </Typography.Text>
-                        {isEditing ? null : (
-                          <Space.Compact size="small">
-                            <Button
-                              size="small"
-                              onClick={() => onOpenEdit(comment)}
-                            >
-                              Edit
-                            </Button>
-                            {comment.status === "resolved" ? (
-                              <Button
-                                size="small"
-                                type="primary"
-                                onClick={() => void reopenComment(comment.id)}
-                                loading={pendingKey === `reopen:${comment.id}`}
-                              >
-                                Reopen
-                              </Button>
-                            ) : (
-                              <Button
-                                size="small"
-                                type="primary"
-                                onClick={() => void resolveComment(comment.id)}
-                                loading={pendingKey === `resolve:${comment.id}`}
-                              >
-                                Resolve
-                              </Button>
-                            )}
-                          </Space.Compact>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              : null}
-            {showDraft ? (
-              <div
-                style={{
-                  margin: "0 8px 8px 92px",
-                  border: `1px solid #d9d9d9`,
-                  borderLeft: `4px solid ${COLORS.BLUE}`,
-                  borderRadius: 8,
-                  padding: "10px 12px",
-                  background: "#fff",
-                  boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
-                  fontFamily: commentFontFamily,
-                }}
-              >
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  Add inline review comment
-                </Typography.Text>
-                <InlineDraftCommentEditor
-                  key={anchorId}
-                  historyId={buildGitInlineDraftEditorId({
-                    scope: editorHistoryScope,
-                    filePath,
-                    anchorId,
-                  })}
-                  value={activeDraftBody}
-                  fontSize={commentFontSize}
-                  loading={pendingKey === `create:${anchorId}`}
-                  onChange={onDraftBodyChange}
-                  onCancel={onCancelDraft}
-                  onSave={(value) => {
-                    if (!anchor) return;
-                    void onCreateComment(anchor, value);
-                  }}
-                />
-              </div>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
-});
-
-const DiffFileSection = memo(function DiffFileSection({
-  file,
-  index,
-  fontSize,
-  editorTheme,
-  fileComments,
-  showResolvedComments,
-  isHeadSelected,
-  visibleLineLimit,
-  editorHistoryScope,
-  onOpenFile,
-  onShowMoreLines,
-  activeDraftAnchorId,
-  activeDraftBody,
-  activeEditingId,
-  activeEditingBody,
-  pendingKey,
-  onOpenDraft,
-  onDraftBodyChange,
-  onCancelDraft,
-  onOpenEdit,
-  onEditingBodyChange,
-  onCancelEdit,
-  onCreateComment,
-  onUpdateComment,
-  onResolveComment,
-  onReopenComment,
-  matchedFindCount,
-  matchedLineIndexes,
-  activeFindMatchKind,
-  activeFindLineIndex,
-}: {
-  file: GitShowFile;
-  index: number;
-  fontSize: number;
-  editorTheme?: string | null;
-  fileComments: GitReviewCommentV2[];
-  showResolvedComments: boolean;
-  isHeadSelected: boolean;
-  visibleLineLimit: number;
-  editorHistoryScope: string;
-  onOpenFile: (filePath: string) => Promise<void>;
-  onShowMoreLines: (sectionId: string) => void;
-  activeDraftAnchorId?: string;
-  activeDraftBody: string;
-  activeEditingId?: string;
-  activeEditingBody: string;
-  pendingKey: string;
-  onOpenDraft: (anchor: CommentAnchor) => void;
-  onDraftBodyChange: (value: string) => void;
-  onCancelDraft: () => void;
-  onOpenEdit: (comment: GitReviewCommentV2) => void;
-  onEditingBodyChange: (value: string) => void;
-  onCancelEdit: () => void;
-  onCreateComment: (anchor: CommentAnchor, body: string) => Promise<void>;
-  onUpdateComment: (id: string, body: string) => Promise<void>;
-  onResolveComment: (id: string) => Promise<void>;
-  onReopenComment: (id: string) => Promise<void>;
-  matchedFindCount: number;
-  matchedLineIndexes?: Set<number>;
-  activeFindMatchKind?: GitDiffFindMatch["kind"];
-  activeFindLineIndex?: number;
-}) {
-  const languageHint = languageHintFromPath(file.path);
-  const sectionId = buildGitReviewFileSectionId(file.path, index);
-  const visibleLines = file.lines.slice(0, visibleLineLimit);
-  const remainingLineCount = Math.max(
-    0,
-    file.lines.length - visibleLines.length,
-  );
-  return (
-    <div id={sectionId} style={{ marginBottom: 18 }}>
-      <div
-        style={{
-          position: "sticky",
-          top: -16,
-          zIndex: 3,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-          flexWrap: "wrap",
-          marginBottom: 8,
-          padding: "8px 10px",
-          border: `1px solid ${
-            activeFindMatchKind === "file" ? "#faad14" : DIFF_FILE_HEADER_BORDER
-          }`,
-          borderRadius: 8,
-          background: DIFF_FILE_HEADER_BACKGROUND,
-          boxShadow:
-            activeFindMatchKind === "file"
-              ? "0 0 0 2px rgba(250, 173, 20, 0.18)"
-              : "0 1px 3px rgba(0,0,0,0.05)",
-        }}
-      >
-        <Button
-          type="link"
-          size="small"
-          style={{
-            padding: 0,
-            height: "auto",
-            fontFamily: "monospace",
-            fontWeight: 700,
-            fontSize: Math.max(13, fontSize),
-            color: DIFF_FILE_HEADER_TEXT,
-          }}
-          onClick={() => void onOpenFile(file.path)}
-        >
-          {file.path}
-        </Button>
-        <Typography.Text
-          style={{
-            fontSize: 11,
-            color: DIFF_FILE_HEADER_SECONDARY,
-          }}
-        >
-          {filenameMode(file.path, "text")}
-          {fileComments.length > 0 ? ` · ${fileComments.length} comments` : ""}
-          {matchedFindCount > 0 ? ` · ${matchedFindCount} matches` : ""}
-          {remainingLineCount > 0
-            ? ` · showing ${visibleLines.length.toLocaleString()} / ${file.lines.length.toLocaleString()} diff lines`
-            : ""}
-        </Typography.Text>
-      </div>
-      <DiffBlock
-        filePath={file.path}
-        fileIndex={index}
-        lines={visibleLines}
-        languageHint={languageHint}
-        fontSize={fontSize}
-        editorTheme={editorTheme}
-        editorHistoryScope={editorHistoryScope}
-        comments={fileComments}
-        showResolvedComments={showResolvedComments}
-        commentEnabled={!isHeadSelected}
-        commentDisabledMessage={
-          isHeadSelected ? "Please commit first, then comment." : undefined
-        }
-        activeDraftAnchorId={activeDraftAnchorId}
-        activeDraftBody={activeDraftBody}
-        activeEditingId={activeEditingId}
-        activeEditingBody={activeEditingBody}
-        pendingKey={pendingKey}
-        onOpenDraft={onOpenDraft}
-        onDraftBodyChange={onDraftBodyChange}
-        onCancelDraft={onCancelDraft}
-        onOpenEdit={onOpenEdit}
-        onEditingBodyChange={onEditingBodyChange}
-        onCancelEdit={onCancelEdit}
-        onCreateComment={onCreateComment}
-        onUpdateComment={onUpdateComment}
-        onResolveComment={onResolveComment}
-        onReopenComment={onReopenComment}
-        matchedLineIndexes={matchedLineIndexes}
-        activeMatchedLineIndex={activeFindLineIndex}
-      />
-      {remainingLineCount > 0 ? (
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            marginTop: 10,
-          }}
-        >
-          <Button onClick={() => onShowMoreLines(sectionId)}>
-            Show{" "}
-            {Math.min(
-              RENDERED_DIFF_LINES_INCREMENT,
-              remainingLineCount,
-            ).toLocaleString()}{" "}
-            more lines
-            {remainingLineCount > RENDERED_DIFF_LINES_INCREMENT
-              ? ` (${remainingLineCount.toLocaleString()} remaining)`
-              : ""}
-          </Button>
-        </div>
-      ) : null}
-    </div>
-  );
-});
 
 export function GitCommitDrawer({
   projectId,
@@ -2329,7 +324,7 @@ export function GitCommitDrawer({
   const scrollStorageId = useMemo(() => {
     const commitKey = `${commit ?? HEAD_REF}`.toLowerCase();
     const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${cwd}|${commitKey}`;
-    return hashString(raw);
+    return hashGitCommitValue(raw);
   }, [projectId, sourcePath, cwd, commit]);
 
   useEffect(() => {
@@ -2770,7 +765,9 @@ export function GitCommitDrawer({
       new Set(
         [...visibleLogEntries.map((entry) => entry.hash), commit].filter(
           (hash): hash is string =>
-            Boolean(hash) && COMMIT_HASH_RE.test(`${hash ?? ""}`),
+            Boolean(hash) &&
+            parseCommitHash(hash) != null &&
+            !isHeadCommit(hash),
         ),
       ),
     );
@@ -4099,162 +2096,49 @@ export function GitCommitDrawer({
   return (
     <Drawer
       title={
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            width: "100%",
-            flexWrap: "wrap",
-          }}
-        >
-          {!nonRepoError ? (
-            <>
-              <Select
-                showSearch
-                size="small"
-                value={commit}
-                searchValue={commitSearch}
-                options={logOptions}
-                onChange={handleCommitChange}
-                onSearch={handleCommitSearch}
-                placeholder="git log"
-                style={{ minWidth: 280, flex: "1 1 360px", maxWidth: 620 }}
-                optionFilterProp="search"
-              />
-              <Checkbox
-                checked={showOnlyUnreviewedCommits}
-                onChange={(evt) =>
-                  setShowOnlyUnreviewedCommits(evt.target.checked)
+        <GitCommitDrawerTitle
+          nonRepoError={nonRepoError}
+          commit={commit}
+          commitSearch={commitSearch}
+          logOptions={logOptions}
+          onCommitChange={handleCommitChange}
+          onCommitSearch={handleCommitSearch}
+          showOnlyUnreviewedCommits={showOnlyUnreviewedCommits}
+          onToggleShowOnlyUnreviewed={setShowOnlyUnreviewedCommits}
+          diffFindInputRef={diffFindInputRef}
+          diffFindQuery={diffFindQuery}
+          onDiffFindQueryChange={setDiffFindQuery}
+          onNextDiffFindMatch={goToNextDiffFindMatch}
+          onPreviousDiffFindMatch={goToPreviousDiffFindMatch}
+          diffFindMatchesLength={diffFindMatches.length}
+          activeDiffFindMatchIndex={activeDiffFindMatchIndex}
+          canGoNewer={canGoNewer}
+          canGoOlder={canGoOlder}
+          onGoNewer={goNewer}
+          onGoOlder={goOlder}
+          canFindInChat={canFindInChat}
+          findInChatEnabled={findInChatEnabled}
+          onFindInChat={
+            !commit || !onFindInChat
+              ? undefined
+              : () => {
+                  void onFindInChat(commit);
                 }
-                style={{ whiteSpace: "nowrap" }}
-              >
-                Only unreviewed
-              </Checkbox>
-              <Space.Compact size="small">
-                <Input
-                  ref={diffFindInputRef}
-                  size="small"
-                  allowClear
-                  value={diffFindQuery}
-                  placeholder="Find in diff"
-                  style={{ width: 220 }}
-                  onChange={(evt) => setDiffFindQuery(evt.target.value)}
-                  onPressEnter={(evt) => {
-                    if ((evt as any)?.shiftKey) {
-                      goToPreviousDiffFindMatch();
-                    } else {
-                      goToNextDiffFindMatch();
-                    }
-                  }}
-                />
-                <Button
-                  size="small"
-                  disabled={diffFindMatches.length === 0}
-                  onClick={goToPreviousDiffFindMatch}
-                >
-                  Prev
-                </Button>
-                <Button
-                  size="small"
-                  disabled={diffFindMatches.length === 0}
-                  onClick={goToNextDiffFindMatch}
-                >
-                  Next
-                </Button>
-              </Space.Compact>
-              {diffFindQuery.trim() ? (
-                <Typography.Text
-                  type="secondary"
-                  style={{ fontSize: 12, whiteSpace: "nowrap" }}
-                >
-                  {diffFindMatches.length === 0
-                    ? "0 matches"
-                    : `${activeDiffFindMatchIndex + 1} / ${diffFindMatches.length}`}
-                </Typography.Text>
-              ) : null}
-              <Space.Compact size="small">
-                <Tooltip title="Newer commit (shortcut: k)">
-                  <span style={{ display: "inline-flex" }}>
-                    <Button
-                      size="small"
-                      onClick={goNewer}
-                      disabled={!canGoNewer}
-                    >
-                      Newer
-                    </Button>
-                  </span>
-                </Tooltip>
-                <Tooltip title="Older commit (shortcut: j)">
-                  <span style={{ display: "inline-flex" }}>
-                    <Button
-                      size="small"
-                      onClick={goOlder}
-                      disabled={!canGoOlder}
-                    >
-                      Older
-                    </Button>
-                  </span>
-                </Tooltip>
-              </Space.Compact>
-              {canFindInChat ? (
-                <Button
-                  size="small"
-                  disabled={!findInChatEnabled}
-                  onClick={() => {
-                    if (!commit || !onFindInChat) return;
-                    void onFindInChat(commit);
-                  }}
-                >
-                  Find in chat
-                </Button>
-              ) : null}
-            </>
-          ) : (
-            <Typography.Text strong style={{ marginRight: "auto" }}>
-              Git browser
-            </Typography.Text>
-          )}
-          <div
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              marginLeft: "auto",
-            }}
-          >
-            <Tooltip title="Context lines around changes. Shortcuts: [ decrease, ] increase">
-              <Select
-                size="small"
-                value={contextLines}
-                options={CONTEXT_OPTIONS}
-                onChange={(value) => {
-                  const node = scrollRef.current;
-                  pendingScrollRestoreRef.current = node?.scrollTop ?? null;
-                  pendingContextAnchorRef.current = node
-                    ? (captureGitDiffScrollAnchor(node) ?? null)
-                    : null;
-                  setContextLines(value);
-                }}
-                style={{ width: 120 }}
-              />
-            </Tooltip>
-            <Dropdown
-              trigger={["click"]}
-              menu={{
-                items: reviewMenuItems,
-                onClick: handleReviewMenuClick,
-              }}
-            >
-              <Button
-                size="small"
-                loading={reviewTransferBusy}
-                icon={<Icon name="ellipsis" />}
-                aria-label="Review actions"
-              />
-            </Dropdown>
-          </div>
-        </div>
+          }
+          contextLines={contextLines}
+          contextOptions={CONTEXT_OPTIONS}
+          onContextChange={(value) => {
+            const node = scrollRef.current;
+            pendingScrollRestoreRef.current = node?.scrollTop ?? null;
+            pendingContextAnchorRef.current = node
+              ? (captureGitDiffScrollAnchor(node) ?? null)
+              : null;
+            setContextLines(value);
+          }}
+          reviewMenuItems={reviewMenuItems}
+          onReviewMenuClick={handleReviewMenuClick}
+          reviewTransferBusy={reviewTransferBusy}
+        />
       }
       placement="right"
       size={drawerSize}
@@ -4270,55 +2154,21 @@ export function GitCommitDrawer({
       destroyOnHidden
       styles={{ body: { padding: 0, overflow: "hidden" } }}
     >
-      <Modal
+      <DeleteAllReviewsModal
         open={reviewDeleteAllOpen}
-        title="Delete all git reviews?"
-        destroyOnHidden
-        okText="Delete all reviews"
-        okButtonProps={{
-          danger: true,
-          disabled:
-            reviewTransferBusy ||
-            reviewDeleteAllConfirmValue.trim().toLowerCase() !==
-              DELETE_ALL_REVIEWS_CONFIRM_TEXT,
-        }}
-        cancelButtonProps={{ disabled: reviewTransferBusy }}
-        confirmLoading={reviewTransferBusy}
+        busy={reviewTransferBusy}
+        confirmText={DELETE_ALL_REVIEWS_CONFIRM_TEXT}
+        confirmValue={reviewDeleteAllConfirmValue}
+        onConfirmValueChange={setReviewDeleteAllConfirmValue}
         onCancel={() => {
           if (reviewTransferBusy) return;
           setReviewDeleteAllOpen(false);
           setReviewDeleteAllConfirmValue("");
         }}
-        onOk={() => {
+        onDelete={() => {
           void deleteAllReviewData();
         }}
-      >
-        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
-          <Typography.Text>
-            This will permanently delete all of your saved git review notes,
-            review status, and inline review comments on this CoCalc server.
-          </Typography.Text>
-          <Typography.Text type="secondary">
-            Type <code>{DELETE_ALL_REVIEWS_CONFIRM_TEXT}</code> to confirm.
-          </Typography.Text>
-          <Input
-            value={reviewDeleteAllConfirmValue}
-            autoFocus
-            placeholder={DELETE_ALL_REVIEWS_CONFIRM_TEXT}
-            onChange={(evt) => setReviewDeleteAllConfirmValue(evt.target.value)}
-            onPressEnter={() => {
-              if (
-                reviewTransferBusy ||
-                reviewDeleteAllConfirmValue.trim().toLowerCase() !==
-                  DELETE_ALL_REVIEWS_CONFIRM_TEXT
-              ) {
-                return;
-              }
-              void deleteAllReviewData();
-            }}
-          />
-        </Space>
-      </Modal>
+      />
       <input
         ref={reviewImportInputRef}
         type="file"
@@ -4348,433 +2198,118 @@ export function GitCommitDrawer({
           />
         ) : null}
         {nonRepoError ? (
-          <div
-            style={{
-              border: `1px solid ${CARD_BORDER_COLOR}`,
-              borderRadius: 8,
-              padding: 12,
-              marginBottom: 12,
-              background: "#fff",
-              boxShadow: CARD_SHADOW,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
+          <GitRepoBootstrapPanel
+            cwd={cwd}
+            error={nonRepoError}
+            busy={repoBootstrapBusy}
+            canAskAgent={Boolean(onRequestAgentTurn)}
+            onInitialize={() => {
+              void initializeGitRepo();
             }}
-          >
-            <Typography.Text strong>
-              This folder is not a git repository.
-            </Typography.Text>
-            <Typography.Text
-              type="secondary"
-              style={{ whiteSpace: "pre-wrap" }}
-            >
-              {nonRepoError}
-            </Typography.Text>
-            <Typography.Text type="secondary">
-              Path: <code>{cwd}</code>
-            </Typography.Text>
-            <Space wrap>
-              <Button
-                type="primary"
-                onClick={() => void initializeGitRepo()}
-                loading={repoBootstrapBusy}
-              >
-                Initialize Git Repo
-              </Button>
-              <Button
-                onClick={() => void requestAgentRepoSetup()}
-                disabled={!onRequestAgentTurn}
-                loading={repoBootstrapBusy}
-              >
-                Ask Agent to Set Up Repo
-              </Button>
-            </Space>
-          </div>
+            onAskAgent={() => {
+              void requestAgentRepoSetup();
+            }}
+          />
         ) : isHeadSelected ? (
-          <div
-            style={{
-              border: `1px solid ${CARD_BORDER_COLOR}`,
-              borderRadius: 8,
-              borderLeft: `4px solid ${COLORS.BLUE}`,
-              padding: 12,
-              marginBottom: 12,
-              background: "#fff",
-              boxShadow: CARD_SHADOW,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
+          <GitHeadCommitPanel
+            message={headCommitMessage}
+            busy={headCommitBusy}
+            error={headCommitError}
+            hasTrackedChanges={hasTrackedHeadChanges}
+            headStatusError={headStatusError}
+            headStatusLoading={headStatusLoading}
+            headStatusEntries={headStatusEntries}
+            headStatusAction={headStatusAction}
+            onMessageChange={setHeadCommitMessage}
+            onCommitWithSummary={() => {
+              void requestAgentCommit({ includeSummary: true });
             }}
-          >
-            <div style={{ fontWeight: 600 }}>Commit changes</div>
-            <Input.TextArea
-              value={headCommitMessage}
-              disabled={headCommitBusy}
-              placeholder="or leave blank to let the agent write the message"
-              autoSize={{ minRows: 2, maxRows: 6 }}
-              onChange={(e) => setHeadCommitMessage(e.target.value)}
-            />
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Button
-                size="small"
-                type="primary"
-                onClick={() =>
-                  void requestAgentCommit({ includeSummary: true })
-                }
-                disabled={headCommitBusy || !hasTrackedHeadChanges}
-              >
-                Commit with AI Summary
-              </Button>
-              <Button
-                size="small"
-                onClick={() => void doHeadCommit()}
-                disabled={!hasTrackedHeadChanges}
-              >
-                Commit
-              </Button>
-              <Button
-                size="small"
-                onClick={() => setHeadCommitMessage("")}
-                disabled={headCommitBusy || headCommitMessage.length === 0}
-              >
-                Clear
-              </Button>
-            </div>
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              Commit uses all tracked changes only (`git commit -a`). Untracked
-              files are excluded.
-            </Typography.Text>
-            {!hasTrackedHeadChanges ? (
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                No tracked changes are currently available for one-click commit.
-              </Typography.Text>
-            ) : null}
-            {headCommitError ? (
-              <Alert type="error" showIcon title={headCommitError} />
-            ) : null}
-
-            <div style={{ fontWeight: 600 }}>Uncommitted files</div>
-            {headStatusError ? (
-              <Alert type="warning" showIcon title={headStatusError} />
-            ) : null}
-            {headStatusLoading ? (
-              <div style={{ padding: "12px 0", textAlign: "center" }}>
-                <Spin size="small" />
-              </div>
-            ) : null}
-            {!headStatusLoading && headStatusEntries.length === 0 ? (
-              <Typography.Text type="secondary">
-                No uncommitted changes.
-              </Typography.Text>
-            ) : null}
-            {!headStatusLoading && headStatusEntries.length > 0
-              ? headStatusEntries.map((entry) => {
-                  return (
-                    <div
-                      key={`${entry.statusCode}:${entry.path}`}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 8,
-                        border: `1px solid ${COLORS.GRAY_LL}`,
-                        borderRadius: 6,
-                        padding: "6px 8px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          minWidth: 0,
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <Button
-                          type="link"
-                          size="small"
-                          style={{ padding: 0, fontFamily: "monospace" }}
-                          onClick={() => void openFile(entry.path)}
-                        >
-                          {entry.displayPath}
-                        </Button>
-                        <Typography.Text
-                          type="secondary"
-                          style={{ fontSize: 11 }}
-                        >
-                          {entry.statusLabel}
-                          {!entry.tracked ? " (not included by Commit)" : ""}
-                        </Typography.Text>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                        }}
-                      >
-                        <Typography.Text code style={{ marginBottom: 0 }}>
-                          {entry.statusCode}
-                        </Typography.Text>
-                        {!entry.tracked ? (
-                          <Space.Compact size="small">
-                            <Button
-                              size="small"
-                              onClick={() => void addUntrackedFile(entry.path)}
-                              loading={headStatusAction === `add:${entry.path}`}
-                              disabled={Boolean(headStatusAction)}
-                            >
-                              Add
-                            </Button>
-                            <Button
-                              size="small"
-                              onClick={() =>
-                                void ignoreUntrackedFile(entry.path)
-                              }
-                              loading={
-                                headStatusAction === `ignore:${entry.path}`
-                              }
-                              disabled={Boolean(headStatusAction)}
-                            >
-                              Ignore
-                            </Button>
-                          </Space.Compact>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })
-              : null}
-          </div>
+            onCommit={() => {
+              void doHeadCommit();
+            }}
+            onClearMessage={() => setHeadCommitMessage("")}
+            onOpenFile={(path) => {
+              void openFile(path);
+            }}
+            onAddUntrackedFile={(path) => {
+              void addUntrackedFile(path);
+            }}
+            onIgnoreUntrackedFile={(path) => {
+              void ignoreUntrackedFile(path);
+            }}
+          />
         ) : (
-          <div
-            style={{
-              border: `1px solid ${CARD_BORDER_COLOR}`,
-              borderRadius: 8,
-              borderLeft: `4px solid ${COLORS.BLUE}`,
-              padding: 12,
-              marginBottom: 12,
-              background: "#fff",
-              boxShadow: CARD_SHADOW,
+          <GitReviewPanel
+            reviewed={reviewed}
+            reviewLoading={reviewLoading}
+            reviewSaving={reviewSaving}
+            reviewUpdatedAt={reviewUpdatedAt}
+            accountId={accountId}
+            currentReviewCommit={currentReviewCommit}
+            isHeadSelected={isHeadSelected}
+            reviewNoteEditing={reviewNoteEditing}
+            reviewNote={reviewNote}
+            reviewNoteDraft={reviewNoteDraft}
+            reviewNoteHistoryId={reviewNoteHistoryId}
+            fontSize={fontSize}
+            editorTheme={editorTheme}
+            reviewError={reviewError}
+            inlineCommentCount={inlineComments.length}
+            resolvedInlineCount={resolvedInlineCount}
+            showResolvedComments={showResolvedComments}
+            onToggleReviewed={(next) => {
+              setReviewed(next);
+              setReviewDirty(true);
+              void saveReview({ reviewed: next });
             }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-                gap: 10,
-                marginBottom: 8,
-                flexWrap: "wrap",
-                overflow: "visible",
-              }}
-            >
-              <Checkbox
-                checked={reviewed}
-                disabled={
-                  reviewLoading ||
-                  reviewSaving ||
-                  !accountId ||
-                  !commit ||
-                  isHeadSelected
-                }
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  alignSelf: "flex-start",
-                  minHeight: 22,
-                  lineHeight: "20px",
-                }}
-                onChange={(e) => {
-                  const next = e.target.checked;
-                  setReviewed(next);
-                  setReviewDirty(true);
-                  void saveReview({ reviewed: next });
-                }}
-              >
-                <span style={{ fontWeight: 600 }}>Reviewed</span>
-              </Checkbox>
-              <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
-                <Space size={8} align="center">
-                  {resolvedInlineCount > 0 ? (
-                    <>
-                      <Typography.Text
-                        type="secondary"
-                        style={{ fontSize: 12 }}
-                      >
-                        Show resolved
-                      </Typography.Text>
-                      <Switch
-                        size="small"
-                        checked={showResolvedComments}
-                        onChange={setShowResolvedComments}
-                      />
-                    </>
-                  ) : null}
-                  <span>
-                    {reviewSaving ? "Saving..." : null}
-                    {!reviewSaving && reviewUpdatedAt ? (
-                      <>
-                        Updated <TimeAgo date={new Date(reviewUpdatedAt)} />
-                      </>
-                    ) : null}
-                  </span>
-                </Space>
-              </div>
-            </div>
-            {reviewNoteEditing ? (
-              <ReviewNoteEditor
-                historyId={reviewNoteHistoryId}
-                key={reviewNoteHistoryId}
-                value={reviewNoteDraft}
-                committedValue={reviewNote}
-                fontSize={fontSize}
-                saving={reviewSaving}
-                disabled={
-                  reviewLoading ||
-                  !accountId ||
-                  isHeadSelected ||
-                  !currentReviewCommit
-                }
-                onPersistDraft={(value) => {
-                  if (
-                    reviewLoading ||
-                    !accountId ||
-                    isHeadSelected ||
-                    !currentReviewCommit
-                  )
-                    return;
-                  if (activeReviewCommitRef.current !== currentReviewCommit)
-                    return;
-                  setReviewNoteDraft(value);
-                  setReviewDirty(true);
-                  saveReviewDraft(
-                    currentReviewCommit,
-                    {
-                      reviewed: Boolean(reviewed),
-                      note: `${value ?? ""}`,
-                      comments: reviewRecord?.comments ?? {},
-                    },
-                    accountId,
-                  );
-                }}
-                onCancel={() => {
-                  setReviewNoteDraft(reviewNote);
-                  setReviewNoteEditing(false);
-                }}
-                onSave={(nextNote) => {
-                  if (!currentReviewCommit) return;
-                  setReviewNote(nextNote);
-                  setReviewNoteDraft(nextNote);
-                  setReviewDirty(true);
-                  setReviewNoteEditing(false);
-                  void saveReview({ note: nextNote, reviewed });
-                }}
-              />
-            ) : (
-              <div
-                style={{
-                  border: `1px solid ${COLORS.GRAY_LL}`,
-                  borderRadius: 6,
-                  padding: "8px 10px",
-                  background: "#fff",
-                  minHeight: 40,
-                }}
-              >
-                {reviewNote?.trim() ? (
-                  <StaticMarkdown
-                    value={reviewNote}
-                    style={{ fontSize: Math.max(13, fontSize) }}
-                    editorTheme={editorTheme}
-                  />
-                ) : (
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    No private review note yet.
-                  </Typography.Text>
-                )}
-              </div>
-            )}
-            <Typography.Text
-              type="secondary"
-              style={{ fontSize: 12, marginTop: 6 }}
-            >
-              This note and the Reviewed checkbox are private state only. They
-              are not sent to the agent.
-            </Typography.Text>
-            <div
-              style={{
-                marginTop: 8,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "flex-start",
-                gap: 8,
-                flexWrap: "wrap",
-              }}
-            >
-              <div style={{ color: COLORS.GRAY_D, fontSize: 12 }}>
-                {reviewError ||
-                  (reviewLoading ? "Loading review state..." : "")}
-                {!reviewError && !reviewLoading && inlineComments.length > 0
-                  ? ` · ${inlineComments.length} inline comments`
-                  : ""}
-              </div>
-              {!reviewNoteEditing ? (
-                <Button
-                  size="small"
-                  disabled={
-                    reviewSaving ||
-                    !accountId ||
-                    !currentReviewCommit ||
-                    isHeadSelected
-                  }
-                  onClick={() => {
-                    setReviewNoteDraft(reviewNote);
-                    setReviewNoteEditing(true);
-                  }}
-                >
-                  Edit
-                </Button>
-              ) : null}
-            </div>
-            <div
-              style={{
-                marginTop: 8,
-                border: `1px solid ${COLORS.GRAY_LL}`,
-                borderRadius: 6,
-                background: "#fff",
-                padding: "8px 10px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 8,
-                flexWrap: "wrap",
-              }}
-            >
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                Send only draft inline diff comments (created with the{" "}
-                <code>+</code> buttons in the patch below).
-              </Typography.Text>
-              <Space.Compact size="small">
-                <Button
-                  size="small"
-                  type="primary"
-                  disabled={
-                    actionableInlineComments.length === 0 ||
-                    reviewSubmitBusy ||
-                    reviewSaving ||
-                    !onRequestAgentTurn
-                  }
-                  loading={reviewSubmitBusy}
-                  onClick={() => void sendInlineReviewToAgent()}
-                >
-                  {`Send inline comments to agent${
-                    actionableInlineComments.length > 0
-                      ? ` (${actionableInlineComments.length})`
-                      : ""
-                  }`}
-                </Button>
-              </Space.Compact>
-            </div>
-          </div>
+            onToggleShowResolvedComments={setShowResolvedComments}
+            onPersistReviewNoteDraft={(value) => {
+              if (
+                reviewLoading ||
+                !accountId ||
+                isHeadSelected ||
+                !currentReviewCommit
+              ) {
+                return;
+              }
+              if (activeReviewCommitRef.current !== currentReviewCommit) {
+                return;
+              }
+              setReviewNoteDraft(value);
+              setReviewDirty(true);
+              saveReviewDraft(
+                currentReviewCommit,
+                {
+                  reviewed: Boolean(reviewed),
+                  note: `${value ?? ""}`,
+                  comments: reviewRecord?.comments ?? {},
+                },
+                accountId,
+              );
+            }}
+            onStartEditingReviewNote={() => {
+              setReviewNoteDraft(reviewNote);
+              setReviewNoteEditing(true);
+            }}
+            onCancelReviewNote={() => {
+              setReviewNoteDraft(reviewNote);
+              setReviewNoteEditing(false);
+            }}
+            onSaveReviewNote={(nextNote) => {
+              if (!currentReviewCommit) return;
+              setReviewNote(nextNote);
+              setReviewNoteDraft(nextNote);
+              setReviewDirty(true);
+              setReviewNoteEditing(false);
+              void saveReview({ note: nextNote, reviewed });
+            }}
+            actionableInlineCommentCount={actionableInlineComments.length}
+            reviewSubmitBusy={reviewSubmitBusy}
+            canRequestAgentTurn={Boolean(onRequestAgentTurn)}
+            onSendInlineReviewToAgent={() => {
+              void sendInlineReviewToAgent();
+            }}
+          />
         )}
         {loading ? (
           <div style={{ padding: "32px 0", textAlign: "center" }}>
@@ -4791,276 +2326,63 @@ export function GitCommitDrawer({
         ) : null}
         {!loading && !error && data ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {data.summaryLines.length
-              ? (() => {
-                  const summary = data.summary;
-                  const rows: Array<{
-                    label: string;
-                    value?: string;
-                    asDate?: boolean;
-                    monospace?: boolean;
-                  }> = [
-                    {
-                      label: "Commit",
-                      value:
-                        summary.commit ??
-                        (isHeadSelected ? HEAD_REF : (commit ?? "")),
-                      monospace: true,
-                    },
-                    { label: "Author", value: summary.author },
-                    {
-                      label: "Author Date",
-                      value: summary.authorDate,
-                      asDate: true,
-                    },
-                    { label: "Committer", value: summary.committer },
-                    {
-                      label: "Commit Date",
-                      value: summary.commitDate,
-                      asDate: true,
-                    },
-                  ].filter((row) => Boolean(`${row.value ?? ""}`.trim()));
-                  const commitMessage = splitCommitMessage(summary.message);
-                  return (
-                    <div
-                      style={{
-                        border: `1px solid ${CARD_BORDER_COLOR}`,
-                        borderRadius: 8,
-                        borderLeft: `4px solid ${COLORS.BLUE}`,
-                        padding: "10px 12px",
-                        background: "#fff",
-                        boxShadow: CARD_SHADOW,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 10,
-                      }}
-                    >
-                      <Typography.Text strong style={{ fontSize: 13 }}>
-                        Commit details
-                      </Typography.Text>
-                      {rows.length ? (
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "120px 1fr",
-                            columnGap: 12,
-                            rowGap: 6,
-                          }}
-                        >
-                          {rows.map((row) => (
-                            <div
-                              key={`${row.label}:${row.value ?? ""}`}
-                              style={{ display: "contents" }}
-                            >
-                              <Typography.Text
-                                type="secondary"
-                                style={{ fontSize: 12 }}
-                              >
-                                {row.label}
-                              </Typography.Text>
-                              <Typography.Text
-                                style={{
-                                  fontSize: 12,
-                                  fontFamily: row.monospace
-                                    ? "monospace"
-                                    : undefined,
-                                  overflowWrap: "anywhere",
-                                }}
-                              >
-                                {row.asDate
-                                  ? (() => {
-                                      const parsed = parseDateSafe(row.value);
-                                      return parsed ? (
-                                        <TimeAgo date={parsed} />
-                                      ) : (
-                                        row.value
-                                      );
-                                    })()
-                                  : row.value}
-                              </Typography.Text>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      {summary.message ? (
-                        <div
-                          style={{
-                            borderTop: `1px solid ${COLORS.GRAY_LL}`,
-                            paddingTop: 10,
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: commitMessage.body ? 8 : 0,
-                          }}
-                        >
-                          {commitMessage.subject ? (
-                            <Typography.Text
-                              strong
-                              style={{
-                                fontSize: Math.max(13, fontSize),
-                                lineHeight: 1.55,
-                                overflowWrap: "anywhere",
-                              }}
-                            >
-                              {commitMessage.subject}
-                            </Typography.Text>
-                          ) : null}
-                          {commitMessage.body ? (
-                            <StaticMarkdown
-                              value={
-                                isMergeCommitSummary(summary)
-                                  ? (formatMergeCommitBodyMarkdown(
-                                      commitMessage.body,
-                                    ) ?? commitMessage.body)
-                                  : commitMessage.body
-                              }
-                              style={{
-                                fontSize: Math.max(13, fontSize),
-                                lineHeight: 1.55,
-                              }}
-                              editorTheme={editorTheme}
-                            />
-                          ) : null}
-                        </div>
-                      ) : summary.extraHeaderLines.length ? (
-                        <Typography.Paragraph
-                          style={{
-                            marginBottom: 0,
-                            fontFamily: "monospace",
-                            whiteSpace: "pre-wrap",
-                            fontSize: Math.max(11, fontSize - 1),
-                          }}
-                        >
-                          {summary.extraHeaderLines.join("\n")}
-                        </Typography.Paragraph>
-                      ) : null}
-                    </div>
-                  );
-                })()
-              : null}
+            {data.summaryLines.length ? (
+              <GitCommitDetailsPanel
+                summary={data.summary}
+                commit={commit}
+                isHeadSelected={isHeadSelected}
+                fontSize={fontSize}
+                editorTheme={editorTheme}
+                headRefLabel={HEAD_REF}
+              />
+            ) : null}
             {data.files.length === 0 ? (
-              <Empty description="No file changes in this commit." />
+              <GitEmptyCommitDiff />
             ) : (
               <>
-                <div
-                  style={{
-                    marginBottom: 18,
-                    padding: "10px 12px",
-                    border: `1px solid ${CARD_BORDER_COLOR}`,
-                    borderRadius: 10,
-                    background: "white",
-                    boxShadow: CARD_SHADOW,
+                <GitChangedFilesPanel
+                  files={data.files}
+                  inlineCommentsByFile={inlineCommentsByFile}
+                  onOpenFileDiff={scrollToDiffFile}
+                />
+                <GitDiffFilesPanel
+                  files={data.files}
+                  drawerScrollParent={drawerScrollParent}
+                  virtuosoRef={virtuosoRef}
+                  fontSize={fontSize}
+                  editorTheme={editorTheme}
+                  reviewEditorScope={reviewEditorScope}
+                  inlineCommentsByFile={inlineCommentsByFile}
+                  showResolvedComments={showResolvedComments}
+                  isHeadSelected={isHeadSelected}
+                  visibleDiffLinesByFile={visibleDiffLinesByFile}
+                  onOpenFile={openFile}
+                  onShowMoreLines={(nextSectionId) => {
+                    setVisibleDiffLinesByFile((prev) => ({
+                      ...prev,
+                      [nextSectionId]: getNextRenderedDiffLineLimit(
+                        prev[nextSectionId],
+                      ),
+                    }));
                   }}
-                >
-                  <Typography.Text
-                    strong
-                    style={{ display: "block", marginBottom: 10 }}
-                  >
-                    Changed files
-                  </Typography.Text>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 8,
-                    }}
-                  >
-                    {data.files.map((file, idx) => {
-                      const sectionId = buildGitReviewFileSectionId(
-                        file.path,
-                        idx,
-                      );
-                      const fileComments =
-                        inlineCommentsByFile.get(file.path) ??
-                        EMPTY_GIT_REVIEW_COMMENTS;
-                      return (
-                        <Button
-                          key={`file-index-${sectionId}`}
-                          size="small"
-                          style={{
-                            fontFamily: "monospace",
-                            maxWidth: "100%",
-                          }}
-                          onClick={() => scrollToDiffFile(idx)}
-                        >
-                          {file.path}
-                          {fileComments.length > 0
-                            ? ` (${fileComments.length})`
-                            : ""}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <Virtuoso
-                  ref={virtuosoRef}
-                  customScrollParent={drawerScrollParent ?? undefined}
-                  data={data.files}
-                  computeItemKey={(idx, file) =>
-                    buildGitReviewFileSectionId(file.path, idx)
-                  }
-                  increaseViewportBy={1200}
-                  itemContent={(idx, file) => {
-                    const sectionId = buildGitReviewFileSectionId(
-                      file.path,
-                      idx,
-                    );
-                    const fileComments =
-                      inlineCommentsByFile.get(file.path) ??
-                      EMPTY_GIT_REVIEW_COMMENTS;
-                    return (
-                      <DiffFileSection
-                        file={file}
-                        index={idx}
-                        fontSize={fontSize}
-                        editorTheme={editorTheme}
-                        editorHistoryScope={reviewEditorScope}
-                        fileComments={fileComments}
-                        showResolvedComments={showResolvedComments}
-                        isHeadSelected={isHeadSelected}
-                        visibleLineLimit={getRenderedDiffLineLimit(
-                          visibleDiffLinesByFile[sectionId],
-                        )}
-                        onOpenFile={openFile}
-                        onShowMoreLines={(nextSectionId) => {
-                          setVisibleDiffLinesByFile((prev) => ({
-                            ...prev,
-                            [nextSectionId]: getNextRenderedDiffLineLimit(
-                              prev[nextSectionId],
-                            ),
-                          }));
-                        }}
-                        activeDraftAnchorId={activeDraftAnchorId}
-                        activeDraftBody={activeInlineDraftBody}
-                        activeEditingId={activeInlineEditId}
-                        activeEditingBody={activeInlineEditBody}
-                        pendingKey={inlineCommentPendingKey}
-                        onOpenDraft={openInlineDraft}
-                        onDraftBodyChange={setActiveInlineDraftBody}
-                        onCancelDraft={cancelInlineDraft}
-                        onOpenEdit={openInlineEdit}
-                        onEditingBodyChange={setActiveInlineEditBody}
-                        onCancelEdit={cancelInlineEdit}
-                        onCreateComment={submitInlineDraft}
-                        onUpdateComment={submitInlineEdit}
-                        onResolveComment={handleResolveInlineComment}
-                        onReopenComment={handleReopenInlineComment}
-                        matchedFindCount={diffFindMeta.counts.get(idx) ?? 0}
-                        matchedLineIndexes={diffFindMeta.matchedLineIndexes.get(
-                          idx,
-                        )}
-                        activeFindMatchKind={
-                          activeDiffFindMatch?.fileIndex === idx
-                            ? activeDiffFindMatch.kind
-                            : undefined
-                        }
-                        activeFindLineIndex={
-                          activeDiffFindMatch?.fileIndex === idx
-                            ? activeDiffFindMatch.lineIndex
-                            : undefined
-                        }
-                      />
-                    );
-                  }}
+                  activeDraftAnchorId={activeDraftAnchorId}
+                  activeDraftBody={activeInlineDraftBody}
+                  activeEditingId={activeInlineEditId}
+                  activeEditingBody={activeInlineEditBody}
+                  pendingKey={inlineCommentPendingKey}
+                  onOpenDraft={openInlineDraft}
+                  onDraftBodyChange={setActiveInlineDraftBody}
+                  onCancelDraft={cancelInlineDraft}
+                  onOpenEdit={openInlineEdit}
+                  onEditingBodyChange={setActiveInlineEditBody}
+                  onCancelEdit={cancelInlineEdit}
+                  onCreateComment={submitInlineDraft}
+                  onUpdateComment={submitInlineEdit}
+                  onResolveComment={handleResolveInlineComment}
+                  onReopenComment={handleReopenInlineComment}
+                  diffFindMatchCounts={diffFindMeta.counts}
+                  diffFindMatchedLineIndexes={diffFindMeta.matchedLineIndexes}
+                  activeDiffFindMatch={activeDiffFindMatch}
                 />
               </>
             )}
