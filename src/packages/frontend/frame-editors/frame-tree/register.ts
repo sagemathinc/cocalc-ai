@@ -198,11 +198,19 @@ function register(
     icon,
     ext,
 
-    remove(path: string, redux, project_id: string): string {
+    remove(
+      path: string,
+      redux,
+      project_id: string,
+      opts?: { force?: boolean },
+    ): string {
       const name = redux_name(project_id, path);
-      if (reference_count[name] != undefined) {
+      const force = opts?.force === true;
+      if (!force && reference_count[name] != undefined) {
         reference_count[name] -= 1;
         if (reference_count[name] > 0) return name;
+        delete reference_count[name];
+      } else if (force) {
         delete reference_count[name];
       }
       const actions = redux.getActions(name);

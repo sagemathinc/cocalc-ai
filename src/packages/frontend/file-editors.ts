@@ -62,9 +62,23 @@ interface FileEditorSpec {
     content?: string,
   ) => string; // returned string = redux name
   remove?:
-    | ((path: string, redux: any, project_id: string | undefined) => string) // returned string = redux name  or undefined if not using redux
-    | ((path: string, redux: any, project_id: string | undefined) => void);
+    | ((
+        path: string,
+        redux: any,
+        project_id: string | undefined,
+        opts?: RemoveEditorRuntimeOpts,
+      ) => string) // returned string = redux name  or undefined if not using redux
+    | ((
+        path: string,
+        redux: any,
+        project_id: string | undefined,
+        opts?: RemoveEditorRuntimeOpts,
+      ) => void);
   save?: (path: string, redux: any, project_id: string) => void;
+}
+
+export interface RemoveEditorRuntimeOpts {
+  force?: boolean;
 }
 
 const { file_editors, altExt } = getFileEditorRegistryState();
@@ -277,6 +291,7 @@ export async function remove(
   path: string,
   redux,
   project_id: string | undefined,
+  opts?: RemoveEditorRuntimeOpts,
 ): Promise<void> {
   if (path == null) {
     return; // TODO: remove when all typescript
@@ -312,7 +327,7 @@ export async function remove(
   await delay(0);
 
   if (typeof e.remove === "function") {
-    e.remove(path, redux, project_id);
+    e.remove(path, redux, project_id, opts);
     return;
   }
 }

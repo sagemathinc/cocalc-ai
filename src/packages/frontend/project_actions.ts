@@ -3004,7 +3004,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       setComponent: (path, component) =>
         this.open_files?.set(path, "component", component),
       removeRuntime: async (syncPath) => {
-        await project_file.remove(syncPath, this.redux, this.project_id);
+        await project_file.remove(syncPath, this.redux, this.project_id, {
+          force: true,
+        });
       },
       rebootstrapPath: async (path, opts) => {
         this.ensureOpenFileComponent(path, opts);
@@ -3041,7 +3043,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         setComponent: (path, component) =>
           this.open_files?.set(path, "component", component),
         removeRuntime: async (path) => {
-          await project_file.remove(path, this.redux, this.project_id);
+          await project_file.remove(path, this.redux, this.project_id, {
+            force: true,
+          });
         },
         rebootstrapPath: async (path, opts) => {
           this.ensureOpenFileComponent(path, opts);
