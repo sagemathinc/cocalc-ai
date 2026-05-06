@@ -954,6 +954,73 @@ describe("ProjectsActions realtime feed", () => {
     expect(setProjectClosedSpy).not.toHaveBeenCalled();
   });
 
+  it("does not close an open project when a transient remove lands right after a host change", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000012";
+    projectMap = ImmutableMap<string, any>([
+      [
+        projectId,
+        ImmutableMap({
+          host_id: "host-old",
+          title: "Moved Project",
+        }),
+      ],
+    ]);
+    openProjects = List([projectId]);
+    const resetProjectHostRuntime = jest.fn();
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+        if (state.projects.open_projects != null) {
+          openProjects = state.projects.open_projects;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+        resetProjectHostRuntime,
+      })),
+    } as any;
+    jest
+      .spyOn(appRedux, "getProjectActions")
+      .mockReturnValue({ resetProjectHostRuntime } as any);
+    const actions = new ProjectsActions("projects", redux);
+    const setProjectClosedSpy = jest.spyOn(actions, "set_project_closed");
+
+    actions._init();
+    await flush();
+
+    projectMap = projectMap.setIn([projectId, "host_id"], "host-new");
+    (actions as any).handleOpenProjectHostChange({
+      project_id: projectId,
+      source_host_id: "host-old",
+      dest_host_id: "host-new",
+    });
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.remove",
+      ts: Date.now(),
+      account_id: "acct-1",
+      project_id: projectId,
+    });
+    await flush();
+
+    expect(projectMap.getIn([projectId, "host_id"])).toBe("host-new");
+    expect(projectMap.has(projectId)).toBe(true);
+    expect(openProjects.includes(projectId)).toBe(true);
+    expect(resetProjectHostRuntime).toHaveBeenCalled();
+    expect(setProjectClosedSpy).not.toHaveBeenCalled();
+  });
+
   it("bootstraps remote shared projects from account_project_index on init", async () => {
     mockedWebappClient.async_query.mockResolvedValueOnce({
       query: {
@@ -1271,6 +1338,63 @@ describe("ProjectsActions realtime feed", () => {
 
     expect(projectMap.has(projectId)).toBe(false);
     expect(setProjectClosedSpy).toHaveBeenCalledWith(projectId);
+  });
+
+  it("keeps a projection-only open project during recent move-transition cleanup", async () => {
+    const projectId = "00000000-0000-4000-8000-000000000013";
+    projectMap = ImmutableMap<string, any>([
+      [
+        projectId,
+        ImmutableMap({
+          title: "Recently Moved Projection",
+          __projection_only: true,
+        }),
+      ],
+    ]);
+    openProjects = List([projectId]);
+    mockedWebappClient.async_query.mockResolvedValueOnce({
+      query: {
+        account_project_index: [],
+      },
+    });
+    const projectStore = ImmutableMap({
+      move_lro: ImmutableMap({
+        summary: {
+          status: "succeeded",
+          updated_at: new Date().toISOString(),
+        },
+      }),
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        return ImmutableMap();
+      }),
+      getProjectStore: jest.fn(() => projectStore),
+      _set_state: jest.fn((state) => {
+        if (state.projects.project_map != null) {
+          projectMap = state.projects.project_map;
+        }
+        if (state.projects.open_projects != null) {
+          openProjects = state.projects.open_projects;
+        }
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+    const setProjectClosedSpy = jest.spyOn(actions, "set_project_closed");
+
+    await (actions as any).loadProjectedProjectsForCurrentAccount("acct-1");
+
+    expect(projectMap.has(projectId)).toBe(true);
+    expect(openProjects.includes(projectId)).toBe(true);
+    expect(setProjectClosedSpy).not.toHaveBeenCalled();
   });
 
   it("keeps a newer local moved host when projected bootstrap rows are older", async () => {
