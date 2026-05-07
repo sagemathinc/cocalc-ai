@@ -311,6 +311,42 @@ function ensureFreshAuthCodeMethod(value: string): SecondFactorMethod {
   throw new Error("invalid second factor method");
 }
 
+function normalizeTotpIssuerHostname(value: string | undefined): string {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return "";
+  const withScheme =
+    raw.startsWith("http://") || raw.startsWith("https://")
+      ? raw
+      : `https://${raw}`;
+  try {
+    return new URL(withScheme).hostname.trim().toLowerCase();
+  } catch {
+    return raw
+      .replace(/^https?:\/\//i, "")
+      .replace(/\/.*$/, "")
+      .trim()
+      .toLowerCase();
+  }
+}
+
+function getTotpIssuer({
+  siteName,
+  dns,
+}: {
+  siteName?: string;
+  dns?: string;
+}): string {
+  const name = `${siteName ?? "CoCalc"}`.trim() || "CoCalc";
+  const hostname = normalizeTotpIssuerHostname(dns);
+  if (!hostname) {
+    return name;
+  }
+  if (name.toLowerCase().includes(hostname)) {
+    return name;
+  }
+  return `${name} (${hostname})`;
+}
+
 async function verifyFreshAuthInputs({
   account_id,
   current_password,
@@ -442,8 +478,11 @@ export async function startTwoFactorSetup({
   const factor_id = uuid();
   const secret = generateTotpSecret();
   const encrypted = await encryptFactorSecret(factor_id, secret);
-  const customize = await getCustomize(["siteName"]);
-  const issuer = `${customize.siteName ?? "CoCalc"}`.trim() || "CoCalc";
+  const customize = await getCustomize(["siteName", "dns"]);
+  const issuer = getTotpIssuer({
+    siteName: customize.siteName,
+    dns: customize.dns,
+  });
   const account_label = await getTotpAccountLabel(accountId);
 
   await withAccountRehomeWriteFence({

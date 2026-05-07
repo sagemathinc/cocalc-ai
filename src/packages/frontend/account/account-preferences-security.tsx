@@ -5,7 +5,6 @@
 
 import { lite } from "@cocalc/frontend/lite";
 import ApiKeys from "./settings/api-keys";
-import TwoFactorAuthSetting from "./settings/two-factor-auth";
 import GlobalSSHKeys from "./ssh-keys/global-ssh-keys";
 
 import type { IconName } from "@cocalc/frontend/components/icon";
@@ -16,7 +15,6 @@ export const KEYS_ICON_NAME: IconName = "key";
 export function AccountPreferencesSecurity() {
   return (
     <>
-      <TwoFactorAuthSetting />
       {!lite && <GlobalSSHKeys />}
       <ApiKeys />
     </>

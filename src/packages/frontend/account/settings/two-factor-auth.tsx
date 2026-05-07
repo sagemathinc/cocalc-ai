@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@cocalc/frontend/antd-bootstrap";
 import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
 import { SettingBox } from "@cocalc/frontend/components";
+import CopyButton from "@cocalc/frontend/components/copy-button";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
 
 type TwoFactorStatus = {
@@ -30,15 +31,19 @@ type SetupState = {
 
 function RecoveryCodesBlock({ codes }: { codes: string[] }) {
   if (!codes.length) return null;
+  const text = codes.join("\n");
   return (
     <Alert
       type="warning"
       showIcon
       message="Save these recovery codes now. Each code can be used once."
       description={
-        <pre style={{ margin: "12px 0 0 0", whiteSpace: "pre-wrap" }}>
-          {codes.join("\n")}
-        </pre>
+        <Space direction="vertical" size="small" style={{ width: "100%" }}>
+          <div>
+            <CopyButton value={text} />
+          </div>
+          <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{text}</pre>
+        </Space>
       }
     />
   );

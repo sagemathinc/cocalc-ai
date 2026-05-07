@@ -4,10 +4,17 @@
  */
 
 import { Alert, Checkbox, Input, Modal, Space } from "antd";
-import { React, useState } from "@cocalc/frontend/app-framework";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Button } from "@cocalc/frontend/antd-bootstrap";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
+import {
+  getSecondFactorPlaceholder,
+  inferSecondFactorInputMethod,
+} from "@cocalc/frontend/auth/second-factor-input";
+
+type TwoFactorStatus = {
+  enabled: boolean;
+};
 
 export function isFreshAuthRequiredError(err: unknown): boolean {
   const code = `${(err as any)?.code ?? ""}`.trim().toLowerCase();
@@ -25,23 +32,61 @@ export function FreshAuthModal({
   onSuccess: () => Promise<void>;
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
-  const [method, setMethod] = useState<"totp" | "recovery_code">("totp");
   const [code, setCode] = useState("");
   const [extended, setExtended] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [factorEnabled, setFactorEnabled] = useState<boolean | null>(null);
+  const inferredMethod = inferSecondFactorInputMethod(code);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadStatus() {
+      if (!open) {
+        return;
+      }
+      setError("");
+      setFactorEnabled(null);
+      try {
+        const status = await postAuthApi<TwoFactorStatus>({
+          endpoint: "auth/2fa/status",
+          body: {},
+        });
+        if (!cancelled) {
+          setFactorEnabled(!!status?.enabled);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(`${err}`);
+          setFactorEnabled(null);
+        }
+      }
+    }
+    void loadStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (factorEnabled !== true || inferredMethod !== "totp") {
+      setExtended(false);
+    }
+  }, [factorEnabled, inferredMethod]);
 
   async function submit() {
     setSaving(true);
     setError("");
     try {
+      const requireSecondFactor = factorEnabled === true;
       await postAuthApi({
         endpoint: "auth/fresh-auth",
         body: {
           current_password: currentPassword,
-          method,
-          code,
-          duration: extended ? "extended" : "default",
+          ...(requireSecondFactor
+            ? { method: inferredMethod, code: code.trim() }
+            : {}),
+          duration: requireSecondFactor && extended ? "extended" : "default",
         },
       });
       await onSuccess();
@@ -63,10 +108,22 @@ export function FreshAuthModal({
       onCancel={onCancel}
       onOk={submit}
       okText={saving ? "Verifying..." : "Verify"}
-      okButtonProps={{ disabled: saving || code.trim().length === 0 }}
+      okButtonProps={{
+        disabled:
+          saving ||
+          factorEnabled == null ||
+          (factorEnabled === true && code.trim().length === 0),
+      }}
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         {error ? <Alert type="error" showIcon message={error} /> : undefined}
+        {factorEnabled === false ? (
+          <Alert
+            type="info"
+            showIcon
+            message="This account does not have 2FA enabled. Only your current password is required."
+          />
+        ) : undefined}
         <div>
           <div>Current password</div>
           <Input.Password
@@ -75,34 +132,30 @@ export function FreshAuthModal({
             onChange={(e) => setCurrentPassword(e.target.value)}
           />
         </div>
-        <div>
-          <div style={{ marginBottom: "8px" }}>Second factor</div>
-          <Space wrap>
-            <Button
-              bsStyle={method === "totp" ? "primary" : undefined}
-              onClick={() => setMethod("totp")}
-            >
-              Authenticator code
-            </Button>
-            <Button
-              bsStyle={method === "recovery_code" ? "primary" : undefined}
-              onClick={() => setMethod("recovery_code")}
-            >
-              Recovery code
-            </Button>
-          </Space>
-        </div>
-        <div>
-          <Input
-            value={code}
-            autoComplete="one-time-code"
-            placeholder={method === "totp" ? "123456" : "ABCD-EFGH-IJKL"}
-            onChange={(e) => setCode(e.target.value)}
-            onPressEnter={submit}
-          />
-        </div>
+        {factorEnabled === true ? (
+          <>
+            <div>
+              <div style={{ marginBottom: "8px" }}>Second factor</div>
+              <Alert
+                type="info"
+                showIcon
+                message="Enter either the 6-digit authenticator code or one of your recovery codes."
+              />
+            </div>
+            <div>
+              <Input
+                value={code}
+                autoComplete="one-time-code"
+                placeholder={getSecondFactorPlaceholder(code)}
+                onChange={(e) => setCode(e.target.value)}
+                onPressEnter={submit}
+              />
+            </div>
+          </>
+        ) : undefined}
         <Checkbox
           checked={extended}
+          disabled={factorEnabled !== true || inferredMethod !== "totp"}
           onChange={(e) => setExtended(e.target.checked)}
         >
           Keep this verification active for 8 hours on this browser
@@ -117,15 +170,15 @@ export function useFreshAuthAction({
 }: {
   onUnhandledError?: (err: unknown) => void;
 } = {}) {
-  const [open, setOpen] = React.useState(false);
-  const pendingActionRef = React.useRef<null | (() => Promise<void>)>(null);
+  const [open, setOpen] = useState(false);
+  const pendingActionRef = useRef<null | (() => Promise<void>)>(null);
 
-  const cancelFreshAuth = React.useCallback(() => {
+  const cancelFreshAuth = useCallback(() => {
     pendingActionRef.current = null;
     setOpen(false);
   }, []);
 
-  const runFreshAuthAction = React.useCallback(
+  const runFreshAuthAction = useCallback(
     async (action: () => Promise<void>): Promise<boolean> => {
       try {
         await action();
@@ -142,7 +195,7 @@ export function useFreshAuthAction({
     [],
   );
 
-  const handleFreshAuthSuccess = React.useCallback(async () => {
+  const handleFreshAuthSuccess = useCallback(async () => {
     const action = pendingActionRef.current;
     pendingActionRef.current = null;
     if (!action) {
