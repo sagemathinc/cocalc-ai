@@ -79,6 +79,7 @@ import {
   hashGitCommitValue,
 } from "./git-commit/ids";
 import {
+  resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
 } from "./git-commit/review-state";
@@ -144,7 +145,11 @@ export {
   scrollGitDrawerElementIntoView,
 };
 export { filterGitReviewLogEntries, resolveGitCommitSearchChange };
-export { resolveGitReviewSaveCompletion, resolveGitReviewSaveState };
+export {
+  resolveGitReviewLoadFailure,
+  resolveGitReviewSaveCompletion,
+  resolveGitReviewSaveState,
+};
 export {
   buildGitInlineDraftEditorId,
   buildGitInlineEditEditorId,
@@ -890,12 +895,16 @@ export function GitCommitDrawer({
         setReviewError("");
       } catch (err) {
         if (reviewLoadTokenRef.current !== token) return;
-        setReviewError(`${err ?? "Unable to load review state."}`);
-        setReviewed(false);
-        setReviewNote("");
-        setReviewNoteDraft("");
+        const fallback = resolveGitReviewLoadFailure({
+          draft: loadReviewDraft(normalizedCommit, accountId),
+          error: err,
+        });
+        setReviewError(fallback.reviewError);
+        setReviewed(fallback.reviewed);
+        setReviewNote(fallback.reviewNote);
+        setReviewNoteDraft(fallback.reviewNoteDraft);
         setReviewNoteEditing(false);
-        setReviewUpdatedAt(undefined);
+        setReviewUpdatedAt(fallback.reviewUpdatedAt);
         setReviewDirty(false);
         setReviewRecord(undefined);
       } finally {

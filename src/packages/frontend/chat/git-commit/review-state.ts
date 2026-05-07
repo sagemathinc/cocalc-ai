@@ -74,3 +74,31 @@ export function resolveGitReviewSaveCompletion({
     reviewDirty: reviewedChangedSinceSave || noteChangedSinceSave,
   };
 }
+
+export function resolveGitReviewLoadFailure({
+  draft,
+  error,
+}: {
+  draft?: {
+    reviewed: boolean;
+    note: string;
+    updated_at?: number;
+  };
+  error: unknown;
+}): {
+  reviewError: string;
+  reviewed: boolean;
+  reviewNote: string;
+  reviewNoteDraft: string;
+  reviewUpdatedAt?: number;
+} {
+  const note = `${draft?.note ?? ""}`;
+  return {
+    reviewError: `${error ?? "Unable to load review state."}`,
+    reviewed: Boolean(draft?.reviewed),
+    reviewNote: note,
+    reviewNoteDraft: note,
+    reviewUpdatedAt:
+      typeof draft?.updated_at === "number" ? draft.updated_at : undefined,
+  };
+}

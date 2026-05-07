@@ -20,6 +20,7 @@ import {
   isGitDiffFindTargetRendered,
   MarkdownHistoryInput,
   ReviewNoteEditor,
+  resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
   buildGitLogArgs,
@@ -416,6 +417,25 @@ describe("git commit drawer merge commit formatting", () => {
       reviewNote: "saved note",
       reviewNoteDraft: "newer local draft",
       reviewDirty: true,
+    });
+  });
+
+  it("keeps a local review draft visible when persisted review loading fails", () => {
+    expect(
+      resolveGitReviewLoadFailure({
+        draft: {
+          reviewed: true,
+          note: "local draft note",
+          updated_at: 1234,
+        },
+        error: "closed",
+      }),
+    ).toEqual({
+      reviewError: "closed",
+      reviewed: true,
+      reviewNote: "local draft note",
+      reviewNoteDraft: "local draft note",
+      reviewUpdatedAt: 1234,
     });
   });
 
