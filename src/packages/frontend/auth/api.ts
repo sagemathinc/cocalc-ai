@@ -73,7 +73,11 @@ export async function postAuthApi<T = any>({
   });
   const json = await response.json();
   if (json?.error) {
-    throw new Error(`${json.error}`);
+    const err: any = new Error(`${json.error}`);
+    if (json?.code != null) {
+      err.code = json.code;
+    }
+    throw err;
   }
   return json;
 }

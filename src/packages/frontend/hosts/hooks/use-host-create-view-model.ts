@@ -18,6 +18,7 @@ export type HostCreateViewModel = {
     creating: boolean;
     onCreate: (vals: any) => Promise<boolean>;
     onCreated?: () => void;
+    runFreshAuthAction?: (action: () => Promise<void>) => Promise<boolean>;
   };
   provider: {
     providerOptions: Array<{ value: HostProvider; label: string }>;

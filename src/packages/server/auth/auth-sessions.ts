@@ -295,6 +295,35 @@ export async function getCurrentAuthSession({
   return row;
 }
 
+export async function getCurrentAuthSessionForSessionHash({
+  session_hash,
+  account_id,
+}: {
+  session_hash: string;
+  account_id: string;
+}): Promise<AccountAuthSessionRow> {
+  if (!isValidUUID(account_id)) {
+    throw new Error("invalid account_id");
+  }
+  const cleanedSessionHash = `${session_hash ?? ""}`.trim();
+  if (!cleanedSessionHash) {
+    throw new Error("browser sign-in is required");
+  }
+  const row = await ensureAuthSessionForRememberMeHash({
+    session_hash: cleanedSessionHash,
+  });
+  if (!row || row.account_id !== account_id) {
+    throw new Error("current browser session not found");
+  }
+  if (row.revoked_at) {
+    throw new Error("current browser session has been revoked");
+  }
+  if (row.expire && new Date(row.expire).valueOf() <= Date.now()) {
+    throw new Error("current browser session has expired");
+  }
+  return row;
+}
+
 export async function setCurrentSessionFreshAuth({
   req,
   account_id,
@@ -418,6 +447,30 @@ export async function requireFreshAuth({
   account_id: string;
 }): Promise<AccountAuthSessionRow> {
   const session = await getCurrentAuthSession({ req, account_id });
+  if (!session.fresh_auth_until) {
+    throw Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+  }
+  if (new Date(session.fresh_auth_until).valueOf() < Date.now()) {
+    throw Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+  }
+  return session;
+}
+
+export async function requireFreshAuthForSessionHash({
+  session_hash,
+  account_id,
+}: {
+  session_hash: string;
+  account_id: string;
+}): Promise<AccountAuthSessionRow> {
+  const session = await getCurrentAuthSessionForSessionHash({
+    session_hash,
+    account_id,
+  });
   if (!session.fresh_auth_until) {
     throw Object.assign(new Error("fresh auth is required"), {
       code: "fresh_auth_required",

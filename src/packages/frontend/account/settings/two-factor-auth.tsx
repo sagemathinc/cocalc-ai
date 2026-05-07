@@ -3,10 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Checkbox, Input, Modal, QRCode, Space, Typography } from "antd";
+import { Alert, Input, QRCode, Space, Typography } from "antd";
 import { useEffect, useState } from "react";
 
 import { Button } from "@cocalc/frontend/antd-bootstrap";
+import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
 import { SettingBox } from "@cocalc/frontend/components";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
 
@@ -40,103 +41,6 @@ function RecoveryCodesBlock({ codes }: { codes: string[] }) {
         </pre>
       }
     />
-  );
-}
-
-function FreshAuthModal({
-  open,
-  onCancel,
-  onSuccess,
-}: {
-  open: boolean;
-  onCancel: () => void;
-  onSuccess: () => Promise<void>;
-}) {
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [method, setMethod] = useState<"totp" | "recovery_code">("totp");
-  const [code, setCode] = useState("");
-  const [extended, setExtended] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  async function submit() {
-    setSaving(true);
-    setError("");
-    try {
-      await postAuthApi({
-        endpoint: "auth/fresh-auth",
-        body: {
-          current_password: currentPassword,
-          method,
-          code,
-          duration: extended ? "extended" : "default",
-        },
-      });
-      await onSuccess();
-      setCurrentPassword("");
-      setCode("");
-      setExtended(false);
-      onCancel();
-    } catch (err) {
-      setError(`${err}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Modal
-      open={open}
-      title="Confirm security action"
-      onCancel={onCancel}
-      onOk={submit}
-      okText={saving ? "Verifying..." : "Verify"}
-      okButtonProps={{ disabled: saving || code.trim().length === 0 }}
-    >
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-        {error ? <Alert type="error" showIcon message={error} /> : undefined}
-        <div>
-          <div>Current password</div>
-          <Input.Password
-            value={currentPassword}
-            placeholder="Leave blank if this account has no password"
-            onChange={(e) => setCurrentPassword(e.target.value)}
-          />
-        </div>
-        <div>
-          <div style={{ marginBottom: "8px" }}>Second factor</div>
-          <Space wrap>
-            <Button
-              bsStyle={method === "totp" ? "primary" : undefined}
-              onClick={() => setMethod("totp")}
-            >
-              Authenticator code
-            </Button>
-            <Button
-              bsStyle={method === "recovery_code" ? "primary" : undefined}
-              onClick={() => setMethod("recovery_code")}
-            >
-              Recovery code
-            </Button>
-          </Space>
-        </div>
-        <div>
-          <Input
-            value={code}
-            autoComplete="one-time-code"
-            placeholder={method === "totp" ? "123456" : "ABCD-EFGH-IJKL"}
-            onChange={(e) => setCode(e.target.value)}
-            onPressEnter={submit}
-          />
-        </div>
-        <Checkbox
-          checked={extended}
-          onChange={(e) => setExtended(e.target.checked)}
-        >
-          Keep this verification active for 8 hours on this browser
-        </Checkbox>
-      </Space>
-    </Modal>
   );
 }
 

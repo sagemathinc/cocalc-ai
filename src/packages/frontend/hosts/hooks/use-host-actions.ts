@@ -3,11 +3,15 @@ import type {
   HostLroResponse,
   HostSpotRecoveryPolicy,
 } from "@cocalc/conat/hub/api/hosts";
+import { isFreshAuthRequiredError } from "@cocalc/frontend/auth/fresh-auth";
 import type { HostDrainOptions } from "../types";
 
 type HubClient = {
   hosts: {
-    startHost: (opts: { id: string }) => Promise<HostLroResponse>;
+    startHost: (opts: {
+      id: string;
+      browser_id?: string;
+    }) => Promise<HostLroResponse>;
     stopHost: (opts: {
       id: string;
       skip_backups?: boolean;
@@ -48,6 +52,7 @@ type HubClient = {
     renameHost?: (opts: { id: string; name: string }) => Promise<unknown>;
     updateHostMachine?: (opts: {
       id: string;
+      browser_id?: string;
       cloud?: string;
       cpu?: number;
       ram_gb?: number;
@@ -76,6 +81,7 @@ type UseHostActionsOptions = {
   setHosts: React.Dispatch<React.SetStateAction<Host[]>>;
   refresh: () => Promise<Host[]>;
   onHostOp?: (host_id: string, op: HostLroResponse) => void;
+  browser_id?: string;
 };
 
 export const useHostActions = ({
@@ -83,6 +89,7 @@ export const useHostActions = ({
   setHosts,
   refresh,
   onHostOp,
+  browser_id,
 }: UseHostActionsOptions) => {
   const setStatus = async (
     id: string,
@@ -98,7 +105,7 @@ export const useHostActions = ({
         ),
       );
       if (action === "start") {
-        const op = await hub.hosts.startHost({ id });
+        const op = await hub.hosts.startHost({ id, browser_id });
         onHostOp?.(id, op);
       } else {
         const op = await hub.hosts.stopHost({
@@ -108,6 +115,14 @@ export const useHostActions = ({
         onHostOp?.(id, op);
       }
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        try {
+          await refresh();
+        } catch {
+          // ignore refresh errors while restoring optimistic UI state
+        }
+        throw err;
+      }
       console.error(err);
       return;
     }
@@ -131,6 +146,12 @@ export const useHostActions = ({
       const op = await hub.hosts.restartHost({ id, mode });
       onHostOp?.(id, op);
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        try {
+          await refresh();
+        } catch {}
+        throw err;
+      }
       console.error(err);
       return;
     }
@@ -150,6 +171,9 @@ export const useHostActions = ({
       onHostOp?.(id, op);
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       console.error(err);
     }
   };
@@ -169,6 +193,9 @@ export const useHostActions = ({
       onHostOp?.(id, op);
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       console.error(err);
     }
   };
@@ -190,6 +217,9 @@ export const useHostActions = ({
       );
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       console.error(err);
     }
   };
@@ -214,6 +244,9 @@ export const useHostActions = ({
       onHostOp?.(id, op);
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       console.error(err);
     }
   };
@@ -238,6 +271,9 @@ export const useHostActions = ({
       onHostOp?.(id, op);
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       console.error(err);
     }
   };
@@ -270,9 +306,12 @@ export const useHostActions = ({
       return;
     }
     try {
-      await hub.hosts.updateHostMachine({ id, ...opts });
+      await hub.hosts.updateHostMachine({ id, browser_id, ...opts });
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       console.error(err);
     }
   };
@@ -286,6 +325,9 @@ export const useHostActions = ({
       onHostOp?.(id, op);
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       console.error(err);
     }
   };
@@ -299,6 +341,9 @@ export const useHostActions = ({
       onHostOp?.(id, op);
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       console.error(err);
     }
   };

@@ -2,6 +2,10 @@ import { Button, Flex, Popconfirm, Space, Table, Tag } from "antd";
 import { ReactNode, useEffect, useState } from "react";
 
 import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
+import {
   getPaymentMethods,
   setDefaultPaymentMethod as setDefaultPaymentMethodUsingApi,
   deletePaymentMethod,
@@ -32,6 +36,9 @@ export default function PaymentMethods({
   const [hasMore, setHasMore] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const init = async ({ limit }) => {
     await loadMore({ paymentMethods: null, limit });
@@ -135,6 +142,7 @@ export default function PaymentMethods({
                   setDefaultPaymentMethod={setDefaultPaymentMethod}
                   paymentMethods={paymentMethods}
                   setPaymentMethods={setPaymentMethods}
+                  runFreshAuthAction={runFreshAuthAction}
                 />
               ),
               width: 200,
@@ -148,6 +156,7 @@ export default function PaymentMethods({
         />
       )}
       {balanceComponent}
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }
@@ -161,6 +170,7 @@ function PaymentMethodControls({
   setDefaultPaymentMethod,
   paymentMethods,
   setPaymentMethods,
+  runFreshAuthAction,
 }) {
   return (
     <Space>
@@ -173,10 +183,12 @@ function PaymentMethodControls({
               try {
                 setError("");
                 setLoading(true);
-                await setDefaultPaymentMethodUsingApi({
-                  default_payment_method: paymentMethod.id,
+                await runFreshAuthAction(async () => {
+                  await setDefaultPaymentMethodUsingApi({
+                    default_payment_method: paymentMethod.id,
+                  });
+                  setDefaultPaymentMethod(paymentMethod.id);
                 });
-                setDefaultPaymentMethod(paymentMethod.id);
               } catch (err) {
                 setError(`${err}`);
               } finally {
@@ -199,12 +211,14 @@ function PaymentMethodControls({
           try {
             setError("");
             setLoading(true);
-            await deletePaymentMethod({
-              payment_method: paymentMethod.id,
+            await runFreshAuthAction(async () => {
+              await deletePaymentMethod({
+                payment_method: paymentMethod.id,
+              });
+              setPaymentMethods(
+                paymentMethods.filter((x) => x.id != paymentMethod.id),
+              );
             });
-            setPaymentMethods(
-              paymentMethods.filter((x) => x.id != paymentMethod.id),
-            );
           } catch (err) {
             setError(`${err}`);
           } finally {

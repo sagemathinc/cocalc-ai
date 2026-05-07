@@ -24,6 +24,7 @@ import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getHubManagedEgressBlockedMessage } from "./managed-egress-runtime";
+import { recordBrowserAuthSession } from "./browser-auth-sessions";
 import {
   type CoCalcUser,
   type CoCalcUserType,
@@ -232,6 +233,11 @@ export async function getUser(
   if (!account_id) {
     throw Error("remember me cookie expired");
   }
+  recordBrowserAuthSession({
+    account_id,
+    browser_id: readBrowserId(socket),
+    session_hash: hash,
+  });
   const user = { account_id };
   assertHubInteractiveEgressAllowed(socket, user);
   return user;
