@@ -210,6 +210,7 @@ interface GitCommitDrawerProps {
   sourcePath?: string;
   cwdOverride?: string;
   commitHash?: string;
+  commitSelectionRequestToken?: number;
   open: boolean;
   onClose: () => void;
   fontSize?: number;
@@ -221,6 +222,26 @@ interface GitCommitDrawerProps {
   onFindInChat?: (query: string) => void | Promise<void>;
   onOpenActivityLog?: () => void;
   reviewSubmissionHelpText?: ReactNode;
+}
+
+export function resolveIncomingGitCommitSelection({
+  open,
+  currentSelectedCommit,
+  incomingCommit,
+  requestTokenChanged,
+}: {
+  open: boolean;
+  currentSelectedCommit?: string;
+  incomingCommit?: string;
+  requestTokenChanged: boolean;
+}): string | undefined {
+  if (!open) {
+    return currentSelectedCommit;
+  }
+  if (!requestTokenChanged && incomingCommit === currentSelectedCommit) {
+    return currentSelectedCommit;
+  }
+  return incomingCommit;
 }
 
 async function runGitCommand({
@@ -248,6 +269,7 @@ export function GitCommitDrawer({
   sourcePath,
   cwdOverride,
   commitHash,
+  commitSelectionRequestToken = 0,
   open,
   onClose,
   fontSize = 14,
@@ -292,6 +314,7 @@ export function GitCommitDrawer({
   const [selectedCommit, setSelectedCommit] = useState<string | undefined>(
     incomingCommit,
   );
+  const commitSelectionRequestTokenRef = useRef(commitSelectionRequestToken);
   const [commitSearch, setCommitSearch] = useState("");
   const [diffFindQuery, setDiffFindQuery] = useState("");
   const [activeDiffFindMatchIndex, setActiveDiffFindMatchIndex] =
@@ -388,9 +411,18 @@ export function GitCommitDrawer({
   }, [projectId, sourcePath, cwd, commit]);
 
   useEffect(() => {
-    if (!open) return;
-    setSelectedCommit(incomingCommit);
-  }, [incomingCommit, open]);
+    const requestTokenChanged =
+      commitSelectionRequestToken !== commitSelectionRequestTokenRef.current;
+    commitSelectionRequestTokenRef.current = commitSelectionRequestToken;
+    setSelectedCommit((currentSelectedCommit) =>
+      resolveIncomingGitCommitSelection({
+        open,
+        currentSelectedCommit,
+        incomingCommit,
+        requestTokenChanged,
+      }),
+    );
+  }, [incomingCommit, open, commitSelectionRequestToken]);
 
   useEffect(() => {
     setCommitSearch("");

@@ -21,6 +21,7 @@ import {
   MarkdownHistoryInput,
   ReviewNoteEditor,
   resolveGitReviewLoadFailure,
+  resolveIncomingGitCommitSelection,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
   shouldClearGitHeadCommitBusyOnScopeChange,
@@ -289,6 +290,35 @@ describe("git commit drawer merge commit formatting", () => {
         reviewSaving: true,
       }),
     ).toBe(false);
+  });
+
+  it("reapplies explicit git commit link requests even when the hash itself is unchanged", () => {
+    expect(
+      resolveIncomingGitCommitSelection({
+        open: true,
+        currentSelectedCommit: "deadbeef",
+        incomingCommit: "abc1234",
+        requestTokenChanged: true,
+      }),
+    ).toBe("abc1234");
+
+    expect(
+      resolveIncomingGitCommitSelection({
+        open: true,
+        currentSelectedCommit: "abc1234",
+        incomingCommit: "abc1234",
+        requestTokenChanged: false,
+      }),
+    ).toBe("abc1234");
+
+    expect(
+      resolveIncomingGitCommitSelection({
+        open: false,
+        currentSelectedCommit: "deadbeef",
+        incomingCommit: "abc1234",
+        requestTokenChanged: true,
+      }),
+    ).toBe("deadbeef");
   });
 
   it("preserves onModeChange forwarding for git review note/comment editors", () => {
