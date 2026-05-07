@@ -379,6 +379,73 @@ async function replaceOwnedMembershipPackageAssignments({
   }
 }
 
+async function clearPortableRows({
+  table,
+  account_id,
+}: {
+  table: PortableStateTable;
+  account_id: string;
+}): Promise<void> {
+  if (table === "api_keys") {
+    await ensureAccountRehomeApiKeysSchema();
+    await getPool().query(
+      `
+        DELETE FROM api_keys
+         WHERE account_id=$1
+           AND project_id IS NULL
+      `,
+      [account_id],
+    );
+    return;
+  }
+  await getPool().query(`DELETE FROM "${table}" WHERE account_id=$1`, [
+    account_id,
+  ]);
+}
+
+async function clearOwnedPortableRows({
+  table,
+  account_id,
+}: {
+  table: AccountOwnedMembershipPortableTable;
+  account_id: string;
+}): Promise<void> {
+  await getPool().query(`DELETE FROM "${table}" WHERE owner_account_id=$1`, [
+    account_id,
+  ]);
+}
+
+async function clearOwnedMembershipPackageAssignments(
+  account_id: string,
+): Promise<void> {
+  await getPool().query(
+    `
+      DELETE FROM membership_package_assignments
+       WHERE package_id IN (
+         SELECT id
+           FROM membership_packages
+          WHERE owner_account_id=$1
+       )
+    `,
+    [account_id],
+  );
+}
+
+async function clearPortableState(account_id: string): Promise<void> {
+  for (const table of PORTABLE_STATE_TABLES) {
+    await clearPortableRows({ table, account_id });
+  }
+  await clearOwnedMembershipPackageAssignments(account_id);
+  await clearOwnedPortableRows({
+    table: "membership_packages",
+    account_id,
+  });
+  await clearOwnedPortableRows({
+    table: "membership_side_effects_outbox",
+    account_id,
+  });
+}
+
 async function loadAccountWidePortableApiKeyRows(
   account_id: string,
 ): Promise<Record<string, unknown>[]> {
@@ -1177,6 +1244,7 @@ export async function runAccountRehomeOperation(
     }
 
     if (op.stage === "projections_copied") {
+      await clearPortableState(op.account_id);
       const accountEntry = await getClusterAccountById(op.account_id);
       await updateClusterAccountHomeBay({
         account_id: op.account_id,

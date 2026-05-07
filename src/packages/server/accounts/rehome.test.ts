@@ -160,6 +160,60 @@ describe("account rehome", () => {
       if (sql.includes("UPDATE cluster_accounts")) {
         return { rows: [], rowCount: 1 };
       }
+      if (
+        sql.includes('DELETE FROM "account_project_index" WHERE account_id=$1')
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_collaborator_index" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_notification_index" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('DELETE FROM "remember_me" WHERE account_id=$1')) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('DELETE FROM "auth_tokens" WHERE account_id=$1')) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes("DELETE FROM api_keys") &&
+        sql.includes("project_id IS NULL")
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('DELETE FROM "membership_grants" WHERE account_id=$1')) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes("DELETE FROM membership_package_assignments") &&
+        sql.includes("WHERE package_id IN")
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "membership_packages" WHERE owner_account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "membership_side_effects_outbox" WHERE owner_account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes("UPDATE account_rehome_operations")) {
         const stage = params?.find((value) =>
           [
@@ -379,6 +433,60 @@ describe("account rehome", () => {
           ],
         };
       }
+      if (
+        sql.includes('DELETE FROM "account_project_index" WHERE account_id=$1')
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_collaborator_index" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_notification_index" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('DELETE FROM "remember_me" WHERE account_id=$1')) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('DELETE FROM "auth_tokens" WHERE account_id=$1')) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes("DELETE FROM api_keys") &&
+        sql.includes("project_id IS NULL")
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('DELETE FROM "membership_grants" WHERE account_id=$1')) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes("DELETE FROM membership_package_assignments") &&
+        sql.includes("WHERE package_id IN")
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "membership_packages" WHERE owner_account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "membership_side_effects_outbox" WHERE owner_account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes("UPDATE cluster_accounts")) {
         return { rows: [], rowCount: 1 };
       }
@@ -446,6 +554,24 @@ describe("account rehome", () => {
           }),
         ],
       }),
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'DELETE FROM "membership_grants" WHERE account_id=$1',
+      ),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'DELETE FROM "membership_packages" WHERE owner_account_id=$1',
+      ),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'DELETE FROM "membership_side_effects_outbox" WHERE owner_account_id=$1',
+      ),
+      [TARGET_ACCOUNT_ID],
     );
   });
 
