@@ -53,6 +53,9 @@ const PORTABLE_STATE_TABLES = [
 ] as const;
 
 type PortableStateTable = (typeof PORTABLE_STATE_TABLES)[number];
+type AccountOwnedMembershipPortableTable =
+  | "membership_packages"
+  | "membership_side_effects_outbox";
 
 type AccountRehomeOperationRow = AccountRehomeOperationSummary & {
   account: Record<string, unknown> | null;
@@ -314,6 +317,55 @@ async function replacePortableRows({
   }
 }
 
+async function replaceOwnedPortableRows({
+  table,
+  account_id,
+  rows,
+}: {
+  table: AccountOwnedMembershipPortableTable;
+  account_id: string;
+  rows: Record<string, unknown>[];
+}): Promise<void> {
+  const primaryKey = table === "membership_packages" ? ["id"] : ["effect_key"];
+  await getPool().query(`DELETE FROM "${table}" WHERE owner_account_id=$1`, [
+    account_id,
+  ]);
+  for (const row of rows) {
+    await upsertJsonRow({
+      table,
+      row,
+      primaryKey,
+    });
+  }
+}
+
+async function replaceOwnedMembershipPackageAssignments({
+  account_id,
+  rows,
+}: {
+  account_id: string;
+  rows: Record<string, unknown>[];
+}): Promise<void> {
+  await getPool().query(
+    `
+      DELETE FROM membership_package_assignments
+       WHERE package_id IN (
+         SELECT id
+           FROM membership_packages
+          WHERE owner_account_id=$1
+       )
+    `,
+    [account_id],
+  );
+  for (const row of rows) {
+    await upsertJsonRow({
+      table: "membership_package_assignments",
+      row,
+      primaryKey: ["id"],
+    });
+  }
+}
+
 async function loadAccountWidePortableApiKeyRows(
   account_id: string,
 ): Promise<Record<string, unknown>[]> {
@@ -329,6 +381,47 @@ async function loadAccountWidePortableApiKeyRows(
            WHERE account_id=$1
              AND project_id IS NULL
              AND key_id IS NOT NULL
+        ) t
+    `,
+    [account_id],
+  );
+  return Array.isArray(rows[0]?.rows) ? rows[0].rows! : [];
+}
+
+async function loadOwnedPortableRows(
+  table: AccountOwnedMembershipPortableTable,
+  account_id: string,
+): Promise<Record<string, unknown>[]> {
+  const { rows } = await getPool().query<{
+    rows: Record<string, unknown>[] | null;
+  }>(
+    `
+      SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) AS rows
+        FROM (
+          SELECT *
+            FROM "${table}"
+           WHERE owner_account_id=$1
+        ) t
+    `,
+    [account_id],
+  );
+  return Array.isArray(rows[0]?.rows) ? rows[0].rows! : [];
+}
+
+async function loadOwnedMembershipPackageAssignmentRows(
+  account_id: string,
+): Promise<Record<string, unknown>[]> {
+  const { rows } = await getPool().query<{
+    rows: Record<string, unknown>[] | null;
+  }>(
+    `
+      SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) AS rows
+        FROM (
+          SELECT a.*
+            FROM membership_package_assignments a
+            JOIN membership_packages p
+              ON p.id = a.package_id
+           WHERE p.owner_account_id=$1
         ) t
     `,
     [account_id],
@@ -388,6 +481,9 @@ async function loadPortableState(
     auth_tokens,
     api_keys,
     membership_grants,
+    membership_packages,
+    membership_package_assignments,
+    membership_side_effects_outbox,
   ] = await Promise.all([
     loadPortableRows("account_project_index", account_id),
     loadPortableRows("account_collaborator_index", account_id),
@@ -396,6 +492,9 @@ async function loadPortableState(
     loadPortableRows("auth_tokens", account_id),
     loadAccountWidePortableApiKeyRows(account_id),
     loadPortableRows("membership_grants", account_id),
+    loadOwnedPortableRows("membership_packages", account_id),
+    loadOwnedMembershipPackageAssignmentRows(account_id),
+    loadOwnedPortableRows("membership_side_effects_outbox", account_id),
   ]);
   return {
     target_account_id: account_id,
@@ -408,6 +507,9 @@ async function loadPortableState(
     auth_tokens,
     api_keys,
     membership_grants,
+    membership_packages,
+    membership_package_assignments,
+    membership_side_effects_outbox,
   };
 }
 
@@ -822,6 +924,9 @@ export async function copyAccountRehomeState({
   auth_tokens,
   api_keys,
   membership_grants,
+  membership_packages,
+  membership_package_assignments,
+  membership_side_effects_outbox,
 }: AccountRehomeStateCopyRequest): Promise<void> {
   const accountId = normalizeUuid("target_account_id", target_account_id);
   normalizeBayId("source_bay_id", source_bay_id);
@@ -868,6 +973,20 @@ export async function copyAccountRehomeState({
     account_id: accountId,
     rows: membership_grants ?? [],
   });
+  await replaceOwnedPortableRows({
+    table: "membership_packages",
+    account_id: accountId,
+    rows: membership_packages ?? [],
+  });
+  await replaceOwnedMembershipPackageAssignments({
+    account_id: accountId,
+    rows: membership_package_assignments ?? [],
+  });
+  await replaceOwnedPortableRows({
+    table: "membership_side_effects_outbox",
+    account_id: accountId,
+    rows: membership_side_effects_outbox ?? [],
+  });
   await updateClusterAccountApiKeysHomeBay({
     account_id: accountId,
     home_bay_id: destBayId,
@@ -883,6 +1002,11 @@ export async function copyAccountRehomeState({
     auth_tokens_rows: auth_tokens?.length ?? 0,
     api_keys_rows: api_keys?.length ?? 0,
     membership_grants_rows: membership_grants?.length ?? 0,
+    membership_packages_rows: membership_packages?.length ?? 0,
+    membership_package_assignments_rows:
+      membership_package_assignments?.length ?? 0,
+    membership_side_effects_outbox_rows:
+      membership_side_effects_outbox?.length ?? 0,
   });
 }
 

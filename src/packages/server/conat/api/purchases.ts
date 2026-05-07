@@ -214,6 +214,20 @@ export async function getMembershipPackages({
       throw Error("must be an admin");
     }
   }
+  if (account_id && targetId !== account_id) {
+    const home_bay_id = await resolveTargetAccountHomeBay({
+      account_id,
+      user_account_id: targetId,
+    });
+    if (home_bay_id !== getConfiguredBayId()) {
+      return await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: home_bay_id,
+      }).getMembershipPackages({
+        owner_account_id: targetId,
+      });
+    }
+  }
   return await listMembershipPackageDetailsForOwner({
     owner_account_id: targetId,
   });

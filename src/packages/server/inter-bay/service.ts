@@ -93,6 +93,7 @@ import {
   createMembershipGrant,
   revokeMembershipGrantById,
 } from "@cocalc/server/membership/grants";
+import { listMembershipPackageDetailsForOwner } from "@cocalc/server/membership/packages";
 import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
@@ -416,6 +417,10 @@ async function startAccountLocalService(): Promise<void> {
     getMembershipDetails: async ({ account_id, refresh_usage_status }) =>
       await resolveMembershipDetailsForAccount(account_id, {
         refresh_usage_status,
+      }),
+    getMembershipPackages: async ({ owner_account_id }) =>
+      await listMembershipPackageDetailsForOwner({
+        owner_account_id,
       }),
   };
   services.push(

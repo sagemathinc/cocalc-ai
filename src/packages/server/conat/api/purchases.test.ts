@@ -19,6 +19,7 @@ const claimMembershipPackageSeatMock = jest.fn();
 const purchaseMembershipPackageMock = jest.fn();
 const resolveAccountHomeBayMock = jest.fn();
 const interBayGetMembershipDetailsMock = jest.fn();
+const interBayGetMembershipPackagesMock = jest.fn();
 
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
   __esModule: true,
@@ -94,6 +95,8 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
     dest_bay,
     getMembershipDetails: (...args: any[]) =>
       interBayGetMembershipDetailsMock(...args),
+    getMembershipPackages: (...args: any[]) =>
+      interBayGetMembershipPackagesMock(...args),
   })),
 }));
 
@@ -297,6 +300,43 @@ describe("purchases membership packages", () => {
       owner_account_id: "account-1",
     });
     expect(result).toHaveLength(1);
+  });
+
+  it("routes another account's package list to that account's home bay", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resolveAccountHomeBayMock.mockResolvedValue({
+      account_id: "owner-1",
+      home_bay_id: "bay-2",
+      source: "cluster-directory",
+    });
+    interBayGetMembershipPackagesMock.mockResolvedValue([
+      {
+        id: "package-remote-1",
+        owner_account_id: "owner-1",
+        kind: "team",
+        membership_class: "member",
+        seat_count: 2,
+        active_assignment_count: 1,
+        available_seat_count: 1,
+        assignments: [],
+      },
+    ]);
+
+    const { getMembershipPackages } = await import("./purchases");
+    const result = await getMembershipPackages({
+      account_id: "admin-1",
+      user_account_id: "owner-1",
+    });
+
+    expect(resolveAccountHomeBayMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      user_account_id: "owner-1",
+    });
+    expect(interBayGetMembershipPackagesMock).toHaveBeenCalledWith({
+      owner_account_id: "owner-1",
+    });
+    expect(listMembershipPackageDetailsForOwnerMock).not.toHaveBeenCalled();
+    expect(result[0]?.id).toBe("package-remote-1");
   });
 
   it("requires ownership or admin rights to quote an existing package", async () => {
