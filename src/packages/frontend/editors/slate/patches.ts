@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Editor, Node, Path, Point, Range } from "slate";
+import { Editor, Node, Path, Point, Range, Text } from "slate";
 import { ensurePoint, ensureRange, pointAtPath } from "./slate-util";
 
 // The version of isNodeList in slate is **insanely** slow, and this hack
@@ -11,6 +11,55 @@ import { ensurePoint, ensureRange, pointAtPath } from "./slate-util";
 // This makes a MASSIVE different for larger documents!
 Node.isNodeList = (value: any): value is Node[] => {
   return Array.isArray(value) && (value?.length == 0 || Node.isNode(value[0]));
+};
+
+function fallbackLeaf(root: Node, path: Path): Text | undefined {
+  const findDescendantText = (basePath: Path): Text | undefined => {
+    try {
+      if (!Node.has(root, basePath)) return;
+      const base = Node.get(root, basePath);
+      if (Text.isText(base)) return base;
+      const [first] = Node.first(root, basePath);
+      if (Text.isText(first)) return first;
+      const [last] = Node.last(root, basePath);
+      if (Text.isText(last)) return last;
+    } catch {
+      return;
+    }
+  };
+
+  if (Editor.isEditor(root)) {
+    try {
+      const safe = pointAtPath(root, path);
+      const leaf = Node.get(root, safe.path);
+      if (Text.isText(leaf)) return leaf;
+    } catch {
+      // fall through to generic fallback
+    }
+  }
+
+  const nextPath = path.slice();
+  while (nextPath.length > 0) {
+    const leaf = findDescendantText(nextPath);
+    if (leaf) return leaf;
+    nextPath.pop();
+  }
+
+  return findDescendantText([]);
+}
+
+// Upstream slate-react calls Node.leaf during render and again in a deferred
+// effect for mark placeholders. If the selection path becomes stale between
+// those phases, we prefer a nearby text leaf over a fatal editor crash.
+const unpatchedNodeLeaf = Node.leaf;
+Node.leaf = function (root: Node, path: Path): Text {
+  try {
+    return unpatchedNodeLeaf(root, path);
+  } catch (err) {
+    const leaf = fallbackLeaf(root, path);
+    if (leaf) return leaf;
+    throw err;
+  }
 };
 
 // I have seen cocalc.com crash in production randomly when editing markdown
