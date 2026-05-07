@@ -277,6 +277,30 @@ export function applyGitReviewedByCommitEntries({
   return next;
 }
 
+export function applyGitReviewedByCommitResetEntry({
+  previous,
+  commitSha,
+  draftReviewed,
+}: {
+  previous: Record<string, boolean>;
+  commitSha: string;
+  draftReviewed?: boolean;
+}): Record<string, boolean> {
+  if (typeof draftReviewed !== "boolean") {
+    return previous;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(previous, commitSha) &&
+    previous[commitSha] === draftReviewed
+  ) {
+    return previous;
+  }
+  return {
+    ...previous,
+    [commitSha]: draftReviewed,
+  };
+}
+
 async function runGitCommand({
   projectId,
   cwd,
@@ -1021,13 +1045,13 @@ export function GitCommitDrawer({
       setReviewRecord(undefined);
       setReviewStateCommit(normalizedNext);
       if (normalizedNext) {
-        setReviewedByCommit((prev) => ({
-          ...prev,
-          [normalizedNext]:
-            typeof draft?.reviewed === "boolean"
-              ? draft.reviewed
-              : Boolean(prev[normalizedNext]),
-        }));
+        setReviewedByCommit((prev) =>
+          applyGitReviewedByCommitResetEntry({
+            previous: prev,
+            commitSha: normalizedNext,
+            draftReviewed: draft?.reviewed,
+          }),
+        );
       }
     };
     if (!open || !accountId || !commit) {

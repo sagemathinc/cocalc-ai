@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import {
   applySubmittedGitReviewComments,
   applyGitReviewedByCommitEntries,
+  applyGitReviewedByCommitResetEntry,
   buildGitInlineDraftEditorId,
   buildGitInlineEditEditorId,
   buildGitDiffFindMatches,
@@ -258,6 +259,40 @@ describe("git commit drawer merge commit formatting", () => {
     ).toEqual({
       def5678: false,
       "999aaaa": true,
+    });
+  });
+
+  it("does not create an explicit unreviewed indicator when review reset has no draft state", () => {
+    expect(
+      applyGitReviewedByCommitResetEntry({
+        previous: {
+          def5678: false,
+        },
+        commitSha: "abc1234",
+        draftReviewed: undefined,
+      }),
+    ).toEqual({
+      def5678: false,
+    });
+    expect(
+      applyGitReviewedByCommitResetEntry({
+        previous: {
+          abc1234: true,
+        },
+        commitSha: "abc1234",
+        draftReviewed: undefined,
+      }),
+    ).toEqual({
+      abc1234: true,
+    });
+    expect(
+      applyGitReviewedByCommitResetEntry({
+        previous: {},
+        commitSha: "abc1234",
+        draftReviewed: false,
+      }),
+    ).toEqual({
+      abc1234: false,
     });
   });
 
