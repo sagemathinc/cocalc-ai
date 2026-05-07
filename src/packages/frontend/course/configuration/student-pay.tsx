@@ -22,8 +22,9 @@ import { DEFAULT_PURCHASE_INFO } from "@cocalc/util/purchases/quota/student-pay"
 import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import { currency } from "@cocalc/util/misc";
 import ShowError from "@cocalc/frontend/components/error";
+import { InstitutePaySection } from "./institute-pay";
 
-export default function StudentPay({ actions, settings }) {
+export default function StudentPay({ actions, settings, project_id }) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
 
@@ -56,7 +57,6 @@ export default function StudentPay({ actions, settings }) {
       // it causes an update to the UI.
       actions.configuration.setStudentPay({ info, cost });
     }, 1);
-    console.log(info);
     return info;
   });
 
@@ -151,17 +151,19 @@ export default function StudentPay({ actions, settings }) {
           <Icon name="dashboard" />{" "}
           <FormattedMessage
             id="course.student-pay.title"
-            defaultMessage={"Require Students to Upgrade (Students Pay)"}
+            defaultMessage={"Course Payment Options"}
           />
         </>
       }
     >
       <ShowError error={error} setError={setError} />
-      {cost != null && !showStudentPay && !!settings?.get("student_pay") && (
-        <div style={{ float: "right" }}>
-          <MoneyStatistic title="Cost Per Student" value={cost} />
-        </div>
-      )}
+      {cost != null &&
+        !showStudentPay &&
+        !!(settings?.get("student_pay") || settings?.get("institute_pay")) && (
+          <div style={{ float: "right" }}>
+            <MoneyStatistic title="Cost Per Student" value={cost} />
+          </div>
+        )}
       <Checkbox
         checked={!!settings?.get("student_pay")}
         onChange={(e) => {
@@ -261,6 +263,28 @@ export default function StudentPay({ actions, settings }) {
           </div>
         </div>
       )}
+      <InstitutePaySection
+        project_id={project_id}
+        enabled={!!settings?.get("institute_pay")}
+        cost={cost}
+        payConfigured={cost != null}
+        when={when}
+        onConfigurePayment={() => {
+          setShowStudentPay(true);
+        }}
+        onToggle={(checked) => {
+          actions.configuration.set_pay_choice("institute", checked);
+          if (checked) {
+            setShowStudentPay(true);
+            actions.configuration.setStudentPay({
+              when: getWhenFromSettings(),
+              info,
+              cost,
+            });
+            actions.configuration.configure_all_projects();
+          }
+        }}
+      />
     </Card>
   );
 }

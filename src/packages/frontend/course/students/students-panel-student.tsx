@@ -2,8 +2,8 @@
  *  This file is part of CoCalc: Copyright © 2020 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
-import { Button, Card, Col, Input, Popconfirm, Row, Space } from "antd";
-import { useEffect, useState } from "react";
+import { Button, Card, Col, Input, Popconfirm, Row, Space, Tag } from "antd";
+import { useEffect, useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import {
@@ -14,14 +14,20 @@ import {
   Tip,
   Tooltip,
 } from "@cocalc/frontend/components";
+import {
+  assignMembershipPackageSeat,
+  revokeMembershipPackageSeat,
+} from "@cocalc/frontend/purchases/api";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectMap, UserMap } from "@cocalc/frontend/todo-types";
 import { User } from "@cocalc/frontend/users";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { MembershipPackageDetails } from "@cocalc/conat/hub/api/purchases";
 import { search_match, search_split, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { CourseActions } from "../actions";
 import { StudentAssignmentInfo, StudentAssignmentInfoHeader } from "../common";
+import { getActiveMembershipPackageAssignmentForAccount } from "../membership-packages";
 import {
   AssignmentsMap,
   IsGradingMap,
@@ -62,6 +68,8 @@ interface StudentProps {
   active_feedback_edits: IsGradingMap;
   nbgrader_run_info?: NBgraderRunInfo;
   assignmentFilter?;
+  coursePackage?: MembershipPackageDetails;
+  refreshCoursePackage?: () => Promise<void>;
 }
 
 export function Student({
@@ -79,6 +87,8 @@ export function Student({
   active_feedback_edits,
   nbgrader_run_info,
   assignmentFilter,
+  coursePackage,
+  refreshCoursePackage,
 }: StudentProps) {
   const intl = useIntl();
   const actions: CourseActions = redux.getActions(name);
@@ -87,6 +97,19 @@ export function Student({
 
   const deletedAccount = !!student.get("deleted_account");
   const hasAccount = student.get("account_id") != null;
+  const institutePayEnabled = !!store.getIn(["settings", "institute_pay"]);
+  const studentAccountId = student.get("account_id");
+  const studentProjectId = student.get("project_id");
+  const activeSeatAssignment = useMemo(
+    () =>
+      getActiveMembershipPackageAssignmentForAccount(
+        coursePackage,
+        studentAccountId,
+      ),
+    [coursePackage, studentAccountId],
+  );
+  const [seatLoading, setSeatLoading] = useState<boolean>(false);
+  const [seatError, setSeatError] = useState<string>("");
 
   const size = useButtonSize();
 
@@ -621,6 +644,7 @@ export function Student({
     // Info for each assignment about the student.
     return (
       <>
+        {render_institute_paid_seat()}
         <Row key="more">
           <Col md={24}>{render_assignments_info()}</Col>
         </Row>
@@ -725,6 +749,128 @@ export function Student({
           </Row>
         ) : undefined}
       </div>
+    );
+  }
+
+  async function assign_institute_paid_seat() {
+    if (!coursePackage || !studentAccountId || !studentProjectId) {
+      return;
+    }
+    setSeatLoading(true);
+    setSeatError("");
+    try {
+      await assignMembershipPackageSeat({
+        package_id: coursePackage.id,
+        target_account_id: studentAccountId,
+        metadata: {
+          course_project_id: store.get("course_project_id"),
+          project_id: studentProjectId,
+          student_id,
+        },
+      });
+      await refreshCoursePackage?.();
+    } catch (err) {
+      setSeatError(`${err}`);
+    } finally {
+      setSeatLoading(false);
+    }
+  }
+
+  async function revoke_institute_paid_seat() {
+    if (!coursePackage || !studentAccountId) {
+      return;
+    }
+    setSeatLoading(true);
+    setSeatError("");
+    try {
+      await revokeMembershipPackageSeat({
+        package_id: coursePackage.id,
+        target_account_id: studentAccountId,
+      });
+      await refreshCoursePackage?.();
+    } catch (err) {
+      setSeatError(`${err}`);
+    } finally {
+      setSeatLoading(false);
+    }
+  }
+
+  function render_institute_paid_seat() {
+    if (!institutePayEnabled || student.get("deleted")) {
+      return;
+    }
+    let content: React.JSX.Element;
+    if (!coursePackage) {
+      content = (
+        <span style={{ color: COLORS.GRAY_M }}>
+          No institute-paid course seats have been purchased yet.
+        </span>
+      );
+    } else if (!hasAccount) {
+      content = (
+        <span style={{ color: COLORS.GRAY_M }}>
+          The student must create a CoCalc account before you can assign a paid
+          seat.
+        </span>
+      );
+    } else if (!studentProjectId) {
+      content = (
+        <span style={{ color: COLORS.GRAY_M }}>
+          Create the student project before assigning a paid seat so usage is
+          attributed correctly.
+        </span>
+      );
+    } else if (activeSeatAssignment) {
+      content = (
+        <Space wrap>
+          <Tag color="green">Assigned</Tag>
+          <Button
+            size={size}
+            loading={seatLoading}
+            onClick={revoke_institute_paid_seat}
+          >
+            <Icon name="times" /> Revoke paid seat
+          </Button>
+        </Space>
+      );
+    } else {
+      content = (
+        <Space wrap>
+          <Tag color="default">Not assigned</Tag>
+          <Button
+            size={size}
+            type="primary"
+            loading={seatLoading}
+            disabled={coursePackage.available_seat_count <= 0}
+            onClick={assign_institute_paid_seat}
+          >
+            <Icon name="check" /> Assign paid seat
+          </Button>
+          {coursePackage.available_seat_count <= 0 && (
+            <span style={{ color: COLORS.GRAY_M }}>No seats available.</span>
+          )}
+        </Space>
+      );
+    }
+    return (
+      <Row key="membership-seat" style={{ marginBottom: "15px" }}>
+        <Col xs={4}>
+          <Tip
+            title="Institute-paid seat"
+            tip="Assign one purchased course seat to this student account."
+          >
+            Institute-paid seat
+          </Tip>
+        </Col>
+        <Col xs={20}>
+          {content}
+          {seatError && (
+            <div style={{ color: COLORS.FG_RED, marginTop: "8px" }}>
+              {seatError}
+            </div>
+          )}
+        </Col>
+      </Row>
     );
   }
 

@@ -12,10 +12,13 @@ import { AppRedux, useRedux } from "@cocalc/frontend/app-framework";
 import { Gap, Icon, Tip } from "@cocalc/frontend/components";
 import ScrollableList from "@cocalc/frontend/components/scrollable-list";
 import { course, labels } from "@cocalc/frontend/i18n";
+import { getMembershipPackages } from "@cocalc/frontend/purchases/api";
 import { useProjectRunQuotaPrefetch } from "@cocalc/frontend/project/use-project-run-quota";
 import { ProjectMap, UserMap } from "@cocalc/frontend/todo-types";
+import type { MembershipPackageDetails } from "@cocalc/conat/hub/api/purchases";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type { CourseActions } from "../actions";
+import { getCourseMembershipPackage } from "../membership-packages";
 import {
   AssignmentsMap,
   IsGradingMap,
@@ -79,10 +82,26 @@ export function StudentsPanel({
   );
   const assignmentFilter = useRedux(name, "assignmentFilter");
   const pageFilter = useRedux(name, "pageFilter");
+  const settings = useRedux(name, "settings");
   const filter = pageFilter?.get("students") ?? "";
   const setFilter = (filter: string) => {
     actions.setPageFilter("students", filter);
   };
+  const institutePay = !!settings?.get("institute_pay");
+  const [coursePackage, setCoursePackage] = useState<
+    MembershipPackageDetails | undefined
+  >(undefined);
+  const [coursePackageError, setCoursePackageError] = useState<string>("");
+
+  async function refreshCoursePackage() {
+    try {
+      setCoursePackageError("");
+      const packages = await getMembershipPackages();
+      setCoursePackage(getCourseMembershipPackage(packages, project_id));
+    } catch (err) {
+      setCoursePackageError(`${err}`);
+    }
+  }
 
   // the type is copy/paste from what TS infers in the util.parse_students function
   const [students_unordered, set_students_unordered] = useState<
@@ -121,6 +140,14 @@ export function StudentsPanel({
       set_students_unordered(v);
     }
   }, [students, user_map, runQuotaVersion]);
+
+  useEffect(() => {
+    if (!institutePay) {
+      setCoursePackage(undefined);
+      return;
+    }
+    refreshCoursePackage();
+  }, [institutePay, project_id]);
 
   // student_list not a list, but has one, plus some extra info.
   const student_list: StudentList = useMemo(() => {
@@ -335,6 +362,8 @@ export function StudentsPanel({
         active_feedback_edits={active_feedback_edits}
         nbgrader_run_info={nbgrader_run_info}
         assignmentFilter={assignmentFilter?.get(student_id)}
+        coursePackage={coursePackage}
+        refreshCoursePackage={refreshCoursePackage}
       />
     );
   }
@@ -344,15 +373,24 @@ export function StudentsPanel({
       return render_no_students();
     }
     return (
-      <ScrollableList
-        virtualize
-        rowCount={students.length}
-        rowRenderer={({ key, index }) => render_student(key, index)}
-        rowKey={(index) =>
-          students[index] != null ? students[index].student_id : undefined
-        }
-        cacheId={`course-student-${name}-${frame_id}`}
-      />
+      <>
+        {coursePackageError && (
+          <Alert
+            type="error"
+            style={{ marginBottom: "15px" }}
+            title={coursePackageError}
+          />
+        )}
+        <ScrollableList
+          virtualize
+          rowCount={students.length}
+          rowRenderer={({ key, index }) => render_student(key, index)}
+          rowKey={(index) =>
+            students[index] != null ? students[index].student_id : undefined
+          }
+          cacheId={`course-student-${name}-${frame_id}`}
+        />
+      </>
     );
   }
 

@@ -322,6 +322,49 @@ export function AdminMembership({ account_id }: { account_id: string }) {
           ) : (
             <Text type="secondary">No admin-assigned membership.</Text>
           )}
+          <Divider style={{ margin: "16px 0" }} />
+          <div>
+            <Text strong>Active membership sources</Text>
+            {candidateRows.length === 0 ? (
+              <div style={{ marginTop: "8px" }}>
+                <Text type="secondary">
+                  No active subscriptions or admin assignments.
+                </Text>
+              </div>
+            ) : (
+              <Table
+                style={{ marginTop: "8px" }}
+                size="small"
+                pagination={false}
+                dataSource={candidateRows}
+                columns={[
+                  {
+                    title: "Tier",
+                    dataIndex: "tier",
+                    render: (value, row) => (
+                      <Space>
+                        {value}
+                        {row.selected && <Tag color="blue">Selected</Tag>}
+                      </Space>
+                    ),
+                  },
+                  { title: "Source", dataIndex: "source" },
+                  { title: "Priority", dataIndex: "priority" },
+                  {
+                    title: "Expires",
+                    dataIndex: "expires",
+                    render: (value) =>
+                      value ? <TimeAgo date={value} /> : "Never",
+                  },
+                  {
+                    title: "Subscription id",
+                    dataIndex: "subscription_id",
+                    render: (value) => value ?? "—",
+                  },
+                ]}
+              />
+            )}
+          </div>
           <div style={{ marginTop: "10px" }}>
             <Space
               orientation="vertical"
@@ -376,49 +419,6 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                 and admin assignments.
               </Text>
             </Space>
-          </div>
-          <Divider style={{ margin: "16px 0" }} />
-          <div>
-            <Text strong>Active membership sources</Text>
-            {candidateRows.length === 0 ? (
-              <div style={{ marginTop: "8px" }}>
-                <Text type="secondary">
-                  No active subscriptions or admin assignments.
-                </Text>
-              </div>
-            ) : (
-              <Table
-                style={{ marginTop: "8px" }}
-                size="small"
-                pagination={false}
-                dataSource={candidateRows}
-                columns={[
-                  {
-                    title: "Tier",
-                    dataIndex: "tier",
-                    render: (value, row) => (
-                      <Space>
-                        {value}
-                        {row.selected && <Tag color="blue">Selected</Tag>}
-                      </Space>
-                    ),
-                  },
-                  { title: "Source", dataIndex: "source" },
-                  { title: "Priority", dataIndex: "priority" },
-                  {
-                    title: "Expires",
-                    dataIndex: "expires",
-                    render: (value) =>
-                      value ? <TimeAgo date={value} /> : "Never",
-                  },
-                  {
-                    title: "Subscription id",
-                    dataIndex: "subscription_id",
-                    render: (value) => value ?? "—",
-                  },
-                ]}
-              />
-            )}
           </div>
           <Divider style={{ margin: "16px 0" }} />
           <div>

@@ -70,12 +70,12 @@ const MESSAGES = defineMessages({
   billing: {
     id: "account.settings.overview.billing",
     defaultMessage:
-      "Manage memberships, subscriptions, and billing information.",
+      "Manage memberships, team seats, site licenses, and billing information.",
   },
   store: {
     id: "account.settings.overview.store",
     defaultMessage:
-      "Buy memberships and vouchers, then jump directly to project host billing.",
+      "Buy memberships, team seats, and vouchers, then jump directly to project host billing.",
   },
   vouchers: {
     id: "account.settings.overview.vouchers",

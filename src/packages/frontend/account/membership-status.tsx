@@ -42,6 +42,10 @@ import type {
   MembershipUsageStatus,
 } from "@cocalc/conat/hub/api/purchases";
 import MembershipPurchaseModal from "./membership-purchase-modal";
+import {
+  ClaimableMembershipPackagesPanel,
+  MembershipPackageManager,
+} from "./membership-package-manager";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const { Text } = Typography;
@@ -772,6 +776,14 @@ export function MembershipStatusPanel({
                 : "Change membership"}
             </Button>
           </Space>
+
+          <Divider style={{ margin: "8px 0" }} />
+
+          <ClaimableMembershipPackagesPanel onChanged={handleChanged} />
+
+          <Divider style={{ margin: "8px 0" }} />
+
+          <MembershipPackageManager tiers={tiers} onChanged={handleChanged} />
 
           <Divider style={{ margin: "8px 0" }} />
 

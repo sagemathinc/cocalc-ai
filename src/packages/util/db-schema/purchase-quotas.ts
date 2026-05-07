@@ -2,7 +2,6 @@ import { CREATED_BY, ID } from "./crm";
 import { SCHEMA as schema } from "./index";
 import type { Service } from "./purchases";
 import { Table } from "./types";
-import type { MoneyValue } from "@cocalc/util/money";
 
 export type { Service };
 
@@ -82,31 +81,6 @@ export const QUOTA_SPEC: QuotaSpec = {
     description: "Charge for purchasing a voucher.",
   },
 } as const;
-
-// Legacy project quota upgrades (deprecated)
-export interface ProjectQuota {
-  cost?: MoneyValue; // dollars per hour
-  enabled?: number;
-  cores?: number;
-  disk_quota?: number;
-  memory?: number;
-  mintime?: number;
-  network?: number;
-  member_host?: number;
-  always_running?: number;
-}
-
-export const PROJECT_QUOTA_KEYS = new Set<string>([
-  "enabled",
-  "cost",
-  "cores",
-  "disk_quota",
-  "memory",
-  "mintime",
-  "network",
-  "member_host",
-  "always_running",
-]);
 
 export function serviceToDisplay(service: Service): string {
   return QUOTA_SPEC[service]?.display ?? service;

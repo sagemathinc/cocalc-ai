@@ -14,6 +14,14 @@ import type {
 import LRU from "lru-cache";
 import type { Subscription } from "@cocalc/util/db-schema/subscriptions";
 import type { Interval, Statement } from "@cocalc/util/db-schema/statements";
+import type {
+  ClaimableMembershipPackage,
+  MembershipClass,
+  MembershipPackageAssignment,
+  MembershipPackageDetails,
+  MembershipPackageKind,
+  MembershipPackageQuote,
+} from "@cocalc/conat/hub/api/purchases";
 import { hoursInInterval } from "@cocalc/util/stripe/timecalcs";
 import { toDecimal, type MoneyValue } from "@cocalc/util/money";
 import type {
@@ -35,6 +43,11 @@ async function api(endpoint: string, args?: object, noThrottle?: boolean) {
     throttle({ endpoint });
   }
   return await api0(endpoint, args);
+}
+
+async function getPurchasesHubRpc() {
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return webapp_client.conat_client.hub.purchases;
 }
 
 // We cache some results below using this cache, since they are general settings
@@ -420,6 +433,71 @@ export async function applyMembershipChange(opts: {
   MembershipChangeQuote & { subscription_id: number; purchase_id: number }
 > {
   return await api("purchases/membership-change", opts);
+}
+
+export async function getMembershipPackageQuote(opts: {
+  package_id?: string;
+  kind?: MembershipPackageKind;
+  membership_class?: MembershipClass;
+  seat_count: number;
+  interval?: "month" | "year";
+  course_project_id?: string;
+  starts_at?: Date | string;
+  expires_at?: Date | string;
+  metadata?: Record<string, unknown> | null;
+}): Promise<MembershipPackageQuote> {
+  return await (await getPurchasesHubRpc()).getMembershipPackageQuote(opts);
+}
+
+export async function purchaseMembershipPackage(opts: {
+  package_id?: string;
+  kind?: MembershipPackageKind;
+  membership_class?: MembershipClass;
+  seat_count: number;
+  interval?: "month" | "year";
+  course_project_id?: string;
+  starts_at?: Date | string;
+  expires_at?: Date | string;
+  metadata?: Record<string, unknown> | null;
+}): Promise<{ package_id: string; purchase_id: number }> {
+  return await (await getPurchasesHubRpc()).purchaseMembershipPackage(opts);
+}
+
+export async function getMembershipPackages(
+  opts: {
+    user_account_id?: string;
+  } = {},
+): Promise<MembershipPackageDetails[]> {
+  return await (await getPurchasesHubRpc()).getMembershipPackages(opts);
+}
+
+export async function assignMembershipPackageSeat(opts: {
+  package_id: string;
+  target_account_id?: string;
+  target_email_address?: string;
+  metadata?: Record<string, unknown> | null;
+}): Promise<MembershipPackageAssignment> {
+  return await (await getPurchasesHubRpc()).assignMembershipPackageSeat(opts);
+}
+
+export async function revokeMembershipPackageSeat(opts: {
+  package_id: string;
+  target_account_id?: string;
+  target_email_address?: string;
+}): Promise<{ revoked: boolean }> {
+  return await (await getPurchasesHubRpc()).revokeMembershipPackageSeat(opts);
+}
+
+export async function getClaimableMembershipPackages(): Promise<
+  ClaimableMembershipPackage[]
+> {
+  return await (await getPurchasesHubRpc()).getClaimableMembershipPackages({});
+}
+
+export async function claimMembershipPackageSeat(opts: {
+  package_id: string;
+}): Promise<MembershipPackageAssignment> {
+  return await (await getPurchasesHubRpc()).claimMembershipPackageSeat(opts);
 }
 
 // get your own min balance

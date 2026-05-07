@@ -17,7 +17,6 @@
 
 // TODO: relative path just needed in manage-*
 
-import type { ProjectQuota as PayAsYouGoQuota } from "@cocalc/util/db-schema/purchase-quotas";
 import { GPU } from "@cocalc/util/types/gpu";
 import { DEFAULT_QUOTAS, upgrades } from "@cocalc/util/upgrade-spec";
 import { deep_copy, test_valid_jsonpatch } from "../misc";
@@ -27,6 +26,18 @@ const MAX_UPGRADES = upgrades.max_per_project;
 interface Limit {
   readonly member: number;
   readonly nonmember: number;
+}
+
+interface LegacyPayAsYouGoQuota {
+  cost?: number;
+  enabled?: number;
+  cores?: number;
+  disk_quota?: number;
+  memory?: number;
+  mintime?: number;
+  network?: number;
+  member_host?: number;
+  always_running?: number;
 }
 
 // No matter what, every project gets SOME possibly tiny amount of guaranteed cpu.
@@ -73,7 +84,7 @@ interface QuotaBase {
   pay_as_you_go?: null | {
     account_id: string;
     purchase_id: number;
-    quota: PayAsYouGoQuota;
+    quota: LegacyPayAsYouGoQuota;
   };
 }
 
@@ -383,7 +394,7 @@ export function quota(
   users_arg?: Users,
   site_settings?: SiteSettingsQuotas,
   pay_as_you_go?: {
-    quota: PayAsYouGoQuota;
+    quota: LegacyPayAsYouGoQuota;
     account_id: string;
     purchase_id: number;
   },

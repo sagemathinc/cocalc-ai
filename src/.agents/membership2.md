@@ -1,780 +1,768 @@
 # Membership / Billing / Dedicated Hosts V1 Plan
 
+## Status
+
+This is the corrected V1 plan after re-checking the actual multi-bay
+architecture.
+
+The earlier version of this document got the product model mostly right, but it
+did not fully account for where billing and entitlement state must live in a
+real multi-bay cluster.
+
+This version treats:
+
+- multi-bay as the real architecture
+- one-bay as a special case of that architecture
+- account home bay, project owning bay, and seed-global state as separate
+  authorities with explicit responsibilities
+
 ## Purpose
 
-This document is the concrete V1 plan for the last major user-visible release
-blocker in `cocalc-ai`:
+This plan covers the remaining major user-visible release work in `cocalc-ai`:
 
-- individual memberships
+- personal memberships
 - student pay
-- instructor-paid course access
-- team licenses
+- instructor-paid course seats
+- team seats
 - domain / site licenses
 - dedicated host pricing and billing
 
-The plan is grounded in the current `cocalc-ai` codebase and is explicitly
-trying to avoid a large architectural rewrite.
+The goal is to implement these correctly inside the existing multi-bay control
+plane instead of building a one-bay billing system that would have to be
+rewritten later.
 
 ## Core Product Goals
 
-1. Memberships must be account-wide, not project-scoped.
-2. Billing and limits must be easy for users to understand.
-3. Course / teaching workflows must not unfairly bill or throttle instructors
-   for student activity.
-4. Dedicated hosts must be useful and competitive, especially for spot-backed
-   research / Codex / long-running compute workflows.
-5. The implementation must leverage existing membership, purchases, statement,
-   and throttling infrastructure instead of inventing a second system.
+1. Memberships are account-wide, not project-scoped.
+2. Billing and limits are understandable to users.
+3. Course / teaching workflows do not bill or throttle instructors for student
+   usage.
+4. Domain / site licensing has a non-SSO transition path.
+5. Dedicated hosts are competitive and explicit about pricing.
+6. The implementation is correct under multi-bay routing and account rehome.
+
+## Non-Negotiable Architecture Invariants
+
+These are the invariants this plan must satisfy.
+
+### 1. One architecture
+
+The real architecture is multi-bay.
+
+One-bay deployments are only the degenerate case where:
+
+- account home bay
+- project owning bay
+- seed/global authority
+
+all happen to collapse to one bay.
+
+### 2. Account-facing billing state is home-bay authoritative
+
+All account-scoped billing and entitlement state belongs to the account home
+bay.
+
+This includes:
+
+- purchases
+- subscriptions
+- statements
+- account balance and quota state
+- account billing settings and payment-provider references
+- membership grants where the account is the beneficiary
+- membership packages where the account is the payer / owner
+- membership package assignments for packages owned by that account
+
+This supports:
+
+- data locality
+- scalability
+- account rehome as a first-class workflow
+
+### 3. Project-specific course state is project-owning-bay authoritative
+
+Anything tied to the project row itself remains on the project owning bay.
+
+This includes:
+
+- course `payInfo`
+- course student-project metadata
+- `projects.usage_account_id`
+- project usage measurements
+
+### 4. Seed/global state is only for cluster-global facts
+
+Seed-global authoritative state is allowed only for facts that are inherently
+cluster-wide and not naturally owned by one account home bay.
+
+This includes:
+
+- cluster account directory
+- institutional claim scopes for domain / site licensing
+- canonical claim-identity dedupe records
+- provider pricing catalog for dedicated hosts
+
+### 5. Cross-bay discovery uses directories or projections, not scans
+
+No purchase, claim, or entitlement flow may depend on:
+
+- scanning every bay
+- querying arbitrary remote bays until something matches
+- assuming the seed has a full copy of account-home-bay billing tables
+
+Cross-bay discovery must go through explicit cluster-global directories or
+projections.
+
+### 6. Account rehome must move all home-bay billing state
+
+If account-facing billing state belongs to the home bay, then account rehome
+must move it.
+
+This is not optional.
+
+The current rehome workflow only copies small portable projection/session state.
+That is not enough for purchases, subscriptions, statements, or owned
+membership packages.
 
 ## What Already Exists
 
 ### Memberships and entitlements
 
-- Membership resolution is already account-based in
-  `src/packages/server/membership/resolve.ts`.
-- Membership tiers are already admin-configurable in
-  `src/packages/server/membership/tiers.ts` and
-  `src/packages/util/membership-tier-templates.ts`.
-- Membership store checkout already exists in
-  `src/packages/server/purchases/purchase-shopping-cart-item.ts` and
-  `src/packages/server/purchases/shopping-cart-checkout.ts`.
+- membership resolution is already account-based in
+  `src/packages/server/membership/resolve.ts`
+- tiers are already admin-configurable in
+  `src/packages/server/membership/tiers.ts`
+- account-wide membership UI already exists
 
 ### Usage limits and throttling
 
-- Storage / project-count accounting is currently owner-based in
-  `src/packages/server/membership/usage-status.ts`.
-- Snapshot / backup limits are currently owner-based in
-  `src/packages/server/membership/project-limits.ts`.
-- Managed egress fallback attribution is currently owner-based in
-  `src/packages/server/membership/managed-egress.ts`.
+- `projects.usage_account_id` was already introduced as the correct basis for
+  course/student attribution
+- storage / snapshot / backup / managed-egress logic already started moving in
+  that direction
 
-### Student pay
+### Course / package foundations
 
-- Course projects already carry student identity in
-  `src/packages/util/db-schema/projects.ts` via `course.account_id` and
-  `course.email_address`.
-- Student pay already exists in
-  `src/packages/server/purchases/student-pay.ts`.
-- The current implementation creates a purchase and marks `course.paid`, but it
-  does **not** grant a membership tier.
+- `membership_grants`
+- `membership_packages`
+- `membership_package_assignments`
 
-### Statements and monthly billing
+already exist in code and schema.
 
-- Statements already exist in `src/packages/server/purchases/statements/*`.
-- Monthly statement generation already exists in
-  `src/packages/server/purchases/statements/create-statements.ts`.
-- Emailing and browsing statements already exists in
-  `src/packages/server/purchases/statements/email-statement.ts`.
-- There is existing Stripe collection machinery, but the product model should
-  remain statement- and purchase-based, not Stripe-subscription-driven.
+### Current architecture gap
 
-### Dedicated hosts
+The current implementation is not yet multi-bay-correct:
 
-- Host creation gating already exists in
-  `src/packages/server/conat/api/hosts.ts`.
-- Host placement entitlement checks already exist in
-  `src/packages/server/project-host/placement.ts`.
-- Dedicated VM / disk catalog and retail pricing helpers already exist in
-  `src/packages/util/upgrades/dedicated.ts` and
-  `src/packages/util/purchases/quota/dedicated-price.ts`.
-- What does **not** exist yet is a complete dedicated-host billing model,
-  provider price sync, or host charge ledger.
+- browser transport now routes new package calls to the account home bay
+- but backend package/billing code still does direct local DB reads and writes
+- there is no seed-global package / assignment directory
+- account rehome does not copy purchases, subscriptions, statements, grants, or
+  packages
 
-## Decisions Locked In
+This document addresses that gap directly.
 
-These decisions are the basis of the implementation plan.
+## State Ownership Model
 
-### 1. Memberships are account-wide
+There are four relevant state classes.
 
-This is non-negotiable. We are not going back to project-scoped paid upgrades.
+## A. Account Home Bay Authoritative State
 
-Consequences:
+This state is written and read on the account home bay.
 
-- `student pay` grants an account-wide `student` membership for the course term.
-- team / domain / site access grants account-wide memberships.
-- membership resolution stays account-based.
+### Billing ledger
 
-This is far easier for users to understand and aligns with the current
-resolver and tier code.
+- `purchases`
+- `subscriptions`
+- `statements`
+- account balance / quota state
+- account automatic-payment / billing preference state
+- payment-provider references tied to the account
 
-### 2. Add `projects.usage_account_id`
+### Membership state for the account
 
-We need a first-class way to say which account's limits a project consumes.
+- `membership_grants` where `account_id` is the beneficiary
 
-Without this, course and sponsored collaboration workflows remain confusing and
-unfair.
+### Owned package state
 
-Resolution rule for project usage attribution:
+- `membership_packages` where `owner_account_id` is this account
+- `membership_package_assignments` for those packages
+- frozen package seat pricing / package metadata used for future seat expansion
 
-1. `projects.usage_account_id`, if set
-2. otherwise `course.account_id` for `course.type == "student"`
+### Why this belongs here
+
+- it is account-scoped
+- it is privacy-sensitive
+- it must move cleanly on account rehome
+- it scales by distributing users across bays
+
+## B. Project Owning Bay Authoritative State
+
+This state is tied to project ownership, not account billing.
+
+- course `payInfo`
+- course project metadata
+- student project metadata
+- `projects.usage_account_id`
+- project storage usage
+- project backup / snapshot counts
+- background project egress attribution inputs
+
+### Why this belongs here
+
+- it is part of the project row and project lifecycle
+- project move already has its own workflow
+- account rehome must not imply project move
+
+## C. Seed / Global Authoritative State
+
+This state is cluster-global by nature.
+
+### Cluster account directory
+
+Already exists and remains the authority for:
+
+- `account_id -> home_bay_id`
+- email / account lookup for routing
+
+### Institutional claim scopes
+
+Needed for `domain` and `site` licensing.
+
+These records define the institutional scope that multiple packages may belong
+to, for example:
+
+- `example.edu`
+- `university-x-site-license-2026`
+
+### Canonical institutional claim identities
+
+Needed to prevent one person from claiming multiple institutional memberships
+using `+alias` emails.
+
+For example:
+
+- `foo@example.edu`
+- `foo+1@example.edu`
+- `foo+lab@example.edu`
+
+must map to one canonical institutional identity for claim purposes.
+
+### Dedicated-host provider price catalog
+
+The synced provider price catalog is cluster-global and not naturally account
+local.
+
+## D. Seed / Global Projection State
+
+These are not billing source-of-truth tables. They exist for routing and
+cross-bay discovery.
+
+### Package directory projection
+
+One row per package, with enough metadata to discover:
+
+- package kind
+- owner account
+- owner home bay
+- active term
+- seat capacity summary
+- claim scope, if any
+
+### Assignment / reservation directory projection
+
+One row per active assignment or reservation, with enough metadata to discover:
+
+- package id
+- owner home bay
+- assigned account id, if known
+- reserved email address, if present
+- claim scope / canonical identity key, if present
+- revoked status
+
+### Why projections instead of global authority
+
+The package itself is paid for by a specific account and belongs on that
+account's home bay. The seed only needs enough replicated information to route
+cross-bay claim and assignment flows.
+
+## Product Decisions That Still Stand
+
+These earlier decisions remain correct.
+
+### Memberships are account-wide
+
+- `student pay` grants account-wide `student`
+- team/site/domain seats grant account-wide memberships
+- no return to project-scoped paid upgrades
+
+### `projects.usage_account_id` is required
+
+Usage attribution remains:
+
+1. `projects.usage_account_id`
+2. otherwise `course.account_id` for student course projects
 3. otherwise project owner
 
-This resolved usage account must drive:
+### Dedicated-host egress is not billed separately
 
-- storage accounting
-- project-count accounting
-- snapshot / backup limits
-- project-level background egress attribution
+Egress remains part of the membership / entitlement model, not a separate
+dedicated-host per-GB line item.
 
-### 3. No separate egress fee for dedicated hosts
+### Dedicated hosts are billed to the host owner
 
-Dedicated-host network usage is **not** billed separately.
+Not to collaborators or to the project owner unless that is the same account.
 
-Instead:
+### Dedicated hosts are billed monthly, not prepaid-balance-gated
 
-- egress policy / caps are part of the user's membership
-- `cocalc-ai` is not positioning itself as generic public web hosting
-- this keeps costs predictable for users
+Membership tier and admin overrides control risk limits. Monthly statements
+remain the main collection model.
 
-### 4. Dedicated hosts are billed to the host owner
+## Data Model Corrections
 
-Not the project owner, not collaborators, not the usage account.
+The existing local tables stay, but their ownership semantics change.
 
-This keeps the dedicated-host product simple:
+## Home-Bay Authoritative Tables
 
-- one host has one billing owner
-- one monthly statement shows membership + host charges
+These remain bay-local and account-owned:
 
-### 5. Dedicated hosts are not prepaid-balance-gated
+- `membership_grants`
+- `membership_packages`
+- `membership_package_assignments`
+- `purchases`
+- `subscriptions`
+- `statements`
 
-The `cocalc.com` prepaid-only model is not the right product model here.
+## New Seed-Global Authoritative Tables
 
-Instead:
+### `membership_claim_scopes`
 
-- membership tier unlocks dedicated-host eligibility and a monthly spend limit
-- usage is billed monthly with a single statement / invoice flow
-- account trust is membership-gated and admin-overridable
-
-### 6. Dedicated host spot pricing cannot be frozen for long periods
-
-On-demand pricing is relatively stable and can be snapshotted.
-
-Spot pricing is different:
-
-- provider spot prices can change significantly
-- those changes can be large enough that freezing prices for long periods is
-  operationally unsafe
-
-Therefore:
-
-- we need provider price sync
-- spot-backed hosts must be billed from a local synced provider catalog
-- host billing must be based on discrete rate-change events over time
-
-This does **not** mean live cloud pricing APIs in the user request path.
-It means background synchronization into our own local pricing catalog.
-
-## V1 Architecture
-
-## Entitlements
-
-Use one shared entitlement model for all non-personal membership sources.
-
-### New table: `membership_grants`
-
-One row per active or historical account-level grant.
+Defines cluster-global institutional claim scopes.
 
 Suggested fields:
 
 - `id`
-- `account_id`
-- `membership_class`
-- `source`
-  - `student-pay`
-  - `course-seat`
-  - `team-seat`
-  - `domain-license`
-  - `site-license`
-  - `admin` can remain in the legacy table for now
-- `package_id` nullable
-- `purchase_id` nullable
-- `granted_by_account_id` nullable
-- `starts_at`
-- `expires_at`
-- `revoked_at`
-- `metadata`
-
-### New table: `membership_packages`
-
-One row per seat pool / license package owned by a paying account or created by
-sales / admins.
-
-Suggested fields:
-
-- `id`
-- `owner_account_id`
 - `kind`
-  - `course`
-  - `team`
   - `domain`
   - `site`
-- `membership_class`
-- `seat_count`
-- `starts_at`
-- `expires_at`
-- `purchase_id`
+- `scope_key`
+  - e.g. `example.edu`
+  - or internal site-license identifier
 - `metadata`
+- `created`
+- `updated`
 
-### Package amendments
+### `membership_claim_identities`
 
-Course and team packages must support seat-count increases during the active
-term.
-
-V1 rule:
-
-- a package can be expanded by buying additional seats
-- the added seats use the same per-seat price for that package / term
-- there is no prorating logic
-- there is no retroactive recalculation of earlier seats
-
-Implementation-wise, this can be represented either by:
-
-- increasing `seat_count` on the package and attaching another purchase, or
-- a small `membership_package_adjustments` table
-
-The important product rule is simpler than the storage model:
-
-- "add 5 more students"
-- charge 5 more seats at the ordinary package seat price
-- do not introduce prorated complexity
-
-### New table: `membership_package_assignments`
-
-This is needed to support reserved seats before the recipient account exists and
-to cleanly manage course / domain / team seat assignment.
+Defines the canonical institutional identity that currently holds a claim
+within a scope.
 
 Suggested fields:
 
-- `id`
-- `package_id`
-- `account_id` nullable
-- `email_address` nullable
-- `project_id` nullable
-- `grant_id` nullable
-- `assigned_by_account_id`
-- `assigned_at`
+- `claim_scope_id`
+- `canonical_identity_key`
+- `account_id`
+- `assignment_id` nullable
+- `claimed_at`
 - `revoked_at`
 - `metadata`
 
-This table is the bridge between:
+Uniqueness rule:
 
-- a package with capacity
-- a known or not-yet-known user
-- an actual `membership_grant`
+- at most one active claim per `(claim_scope_id, canonical_identity_key)`
 
-### Keep `admin_assigned_memberships` for now
+## New Seed-Global Projection Tables
 
-Do **not** migrate or replace it before release.
+### `cluster_membership_package_directory`
 
-Instead:
+Suggested fields:
 
-- keep the current admin override path
-- extend the resolver to read both admin assignments and grants
+- `package_id`
+- `owner_account_id`
+- `owner_home_bay_id`
+- `kind`
+- `membership_class`
+- `seat_count`
+- `active_assignment_count`
+- `starts_at`
+- `expires_at`
+- `claim_scope_id` nullable
+- `metadata_summary`
+- `updated_at`
 
-### Membership resolver update
+### `cluster_membership_assignment_directory`
 
-`src/packages/server/membership/resolve.ts` must resolve membership candidates
-from:
+Suggested fields:
 
-- active personal membership subscription
-- active admin assignment
-- active membership grants
-- free tier fallback
+- `assignment_id`
+- `package_id`
+- `owner_account_id`
+- `owner_home_bay_id`
+- `account_id` nullable
+- `email_address` nullable
+- `canonical_identity_key` nullable
+- `claim_scope_id` nullable
+- `revoked_at`
+- `metadata_summary`
+- `updated_at`
 
-Selection rule:
+## Canonical Identity Rules
 
-- highest tier priority wins
-- source is mainly descriptive
-- source-specific tie-breaking should only matter for display, not for
-  semantics
+This applies only to institutional claim dedupe, not to account creation or
+login identity.
 
-## Usage attribution
+### V1 canonicalization
 
-### New field: `projects.usage_account_id`
+For `domain` / `site` claim scopes:
 
-Add a nullable `usage_account_id` to `projects`.
-
-Use it in:
-
-- `src/packages/server/membership/usage-status.ts`
-- `src/packages/server/membership/project-limits.ts`
-- `src/packages/server/membership/managed-egress.ts`
-
-### Attribution rules
-
-#### Project-level limits
-
-The resolved usage account controls:
-
-- total storage limits
-- total project count
-- backup limit per project
-- snapshot limit per project
-
-#### Egress attribution
-
-Split this into two cases:
-
-1. user-attributable egress
-   - charge to the acting account when known
-2. project/background egress
-   - charge to the resolved usage account
+- lowercase domain
+- lowercase local part
+- strip `+suffix` from the local part
 
 Examples:
 
-- student downloading or proxying from a course project:
-  - student account
-- backup upload from a course project:
-  - project usage account, which should be the student
+- `foo@example.edu`
+- `foo+1@example.edu`
+- `foo+lab@example.edu`
 
-This fixes the current unfair instructor attribution problem.
+all canonicalize to one institutional identity key.
 
-## User-visible product model
+### Important limitation
+
+This does not merge accounts.
+
+Multiple CoCalc accounts can still exist. The rule is only:
+
+- one active institutional claim per canonical identity within a claim scope
+
+### Long-term upgrade path
+
+SSO subject identifiers should eventually become the stronger claim identity
+when available.
+
+## Routing Rules
+
+These flows must be explicit.
+
+## Browser to Home Bay
+
+All account membership / billing UI is served from the account home bay.
+
+That includes:
+
+- package purchase
+- package management
+- seat assignment
+- claim flow
+- billing history
+- statements
+
+## Home Bay to Project Owning Bay
+
+Used when account-scoped billing actions depend on project-owned state.
+
+Examples:
+
+- quoting or purchasing a `course` package requires reading course `payInfo`
+- course seat assignment requires updating `projects.usage_account_id`
+- student pay requires marking course payment state on the course project
+
+## Home Bay to Seed
+
+Used for cluster-global discovery or uniqueness checks.
+
+Examples:
+
+- domain / site claim discovery
+- `+alias` canonical-identity dedupe
+- package / assignment directory reads
+- provider pricing catalog reads
+
+## Home Bay to Another Account Home Bay
+
+Used when a package owned by one account grants membership to another account.
+
+Examples:
+
+- team seat assignment to an existing account
+- course seat assignment once the student account is known
+- claiming a reserved email assignment
+- claiming a domain / site seat
+
+The owner home bay remains authoritative for:
+
+- seat capacity
+- assignment existence
+- package term and pricing
+
+The beneficiary home bay remains authoritative for:
+
+- the beneficiary's local `membership_grants`
+- local membership resolution
+
+## Correct Product Flows
 
 ## Personal memberships
 
-These remain very close to what already exists:
+Personal membership purchase remains home-bay-local.
 
-- personal paid memberships are bought through the existing store and shopping
-  cart flow
-- the selected membership tier remains account-wide
-
-The key changes are:
-
-- more explicit tier messaging
-- new tier fields for dedicated-host financial limits
-- clearer display of why the user has a given tier
+No seed/global logic is needed beyond any cluster-wide payment-provider support
+already in place.
 
 ## Student pay
 
-### Product behavior
+Correct multi-bay flow:
 
-When a student pays a course fee:
+1. browser calls the student's account home bay
+2. student home bay resolves the course project owning bay
+3. student home bay fetches current course `payInfo` from the project owning bay
+4. student home bay creates the purchase and grant locally
+5. student home bay calls the project owning bay to mark payment state and set
+   `usage_account_id`
 
-1. create the purchase
-2. mark `course.paid`
-3. grant the student an account-wide `student` membership for the course term
-4. ensure `projects.usage_account_id` points at the student
+This keeps:
 
-### Implementation surface
+- billing with the student
+- project state with the project
 
-Backend:
+## Instructor-paid course packages
 
-- update `src/packages/server/purchases/student-pay.ts`
+Correct multi-bay flow:
 
-Frontend:
+1. instructor buys the package on the instructor home bay
+2. instructor home bay validates course info via the project owning bay
+3. package and purchase are created on instructor home bay
+4. package directory projection is published to seed
+5. seat assignment:
+   - owner home bay creates local assignment
+   - seed projection is updated
+   - student home bay gets the grant when the student account is known
+   - project owning bay gets `usage_account_id` update
 
-- keep `src/packages/frontend/purchases/student-pay/*`
-- change the copy to make the result explicit:
-  - paying the course fee activates a student membership for the course term
+## Team packages
 
-### Important note
+Correct multi-bay flow:
 
-`student` remains a hidden tier in the general store.
-
-It is granted through:
-
-- student pay
-- instructor-paid course seats
-- possibly site arrangements
-
-It is not a normal self-serve public tier.
-
-## Instructor-paid courses
-
-Use `membership_packages` and `membership_package_assignments`.
-
-### Product behavior
-
-An instructor or institution buys a `course` package:
-
-- package kind: `course`
-- membership class: usually `student`
-- seat count: number of students
-- term: course duration
-
-If enrollment grows later, they can buy more seats for the same package without
-any prorating logic.
-
-Then the instructor assigns seats to course student projects.
-
-Assignment creates:
-
-- a package assignment
-- a membership grant once the student account is known
-- `usage_account_id` on the student project
-
-### Important compatibility point
-
-We already have:
-
-- `course.account_id`
-- `course.email_address`
-- `course.project_id`
-- `course.path`
-
-These are enough to integrate course seats without inventing a whole new course
-billing model.
-
-## Team licenses
-
-This should use the same package / assignment / grant machinery.
-
-### Product behavior
-
-A paying account buys a `team` package:
-
-- fixed seat count
-- fixed membership class, likely `member` or `pro`
-
-If the team grows, the owner can add more seats later at the same seat price
-without prorating.
-
-Then they assign seats to specific accounts.
-
-Each active assignment yields an active grant.
-
-### V1 constraints
-
-Do not build a full organization model before release.
-
-V1 only needs:
-
-- buy seats
-- assign seats
-- revoke seats
-- show who currently has them
+1. owner buys package on owner home bay
+2. owner home bay creates package and purchase locally
+3. owner home bay publishes package directory projection
+4. assigning a seat to an existing account:
+   - owner home bay creates local assignment
+   - owner home bay routes grant creation to beneficiary home bay
+   - seed assignment projection is updated
+5. reserving by email:
+   - owner home bay creates local assignment
+   - seed assignment projection is updated
+6. later claim:
+   - claimant home bay discovers the reservation through the seed projection
+   - claimant home bay calls owner home bay to consume the reservation
+   - owner home bay calls claimant home bay to create the grant
 
 ## Domain / site licenses
 
-This should also use packages + assignments + grants, but **not** be fully
-self-serve before release.
+Correct multi-bay flow:
 
-### Product behavior
+1. institutional package is still paid for and owned on some account home bay
+2. a seed-global `claim_scope` is created for the institution
+3. package directory projection links the package to that scope
+4. claimant home bay:
+   - reads verified emails locally
+   - asks seed for matching claimable scope/package information
+   - checks canonical identity uniqueness
+5. claim is routed to the owner home bay
+6. owner home bay allocates capacity and records assignment
+7. beneficiary home bay receives the actual grant
 
-Sales / admins create a package:
+This is the correct split:
 
-- `domain` or `site`
-- seat count / policy
-- membership class
-- list of allowed verified domains in metadata
+- account-owned billing state stays local to the payer
+- institution-wide uniqueness and discovery live in seed-global state
 
-Users can then:
+## Rehome Semantics
 
-- be assigned manually, or
-- claim a seat if they have a matching verified domain
+## Account rehome must move billing state
 
-Claiming or assignment creates the grant.
+The current rehome portable-state copy is insufficient.
 
-### Release scope
+It currently moves only:
 
-Do not build a full campus procurement or self-serve institution flow before
-release.
+- account projections
+- auth/session state
+- account API keys
 
-Admin / sales-assisted setup is acceptable and probably preferable.
+It must be expanded to move all home-bay-authoritative billing data.
 
-## Dedicated hosts
+### Must move on account rehome
 
-Dedicated hosts are a separate billing problem from memberships.
+- `purchases` where `account_id` matches
+- `subscriptions` where `account_id` matches
+- `statements` where `account_id` matches
+- account billing settings / payment-provider references
+- `membership_grants` where `account_id` matches
+- `membership_packages` where `owner_account_id` matches
+- `membership_package_assignments` for those owned packages
+- any future dedicated-host billing cursors or account-scoped host charge state
 
-Memberships decide whether a user may use dedicated hosts and how much monthly
-risk / spend we are willing to extend to them by default.
+### Does not move on account rehome
 
-### Membership tie-in
+- project rows
+- project hosts
+- project usage measurements
+- seed-global claim scopes
+- seed-global claim identity rows
+- seed-global package / assignment directory projections
 
-Each membership tier should include:
+### Important nuance
 
-- whether host creation is allowed
-- allowed project-host tier
-- default dedicated-host monthly spend limit
+If an account has a team/site/domain membership granted from someone else's
+package:
 
-The first two already exist conceptually via:
+- the owner-side package and assignment stay with the owner's home bay
+- the beneficiary's local grant row must move with the beneficiary account
 
-- `features.create_hosts`
-- `features.project_host_tier`
+### Implementation requirement
 
-We should add a new limit in membership usage or feature data, e.g.:
+The current `loadPortableState` and `copyRehomeState` flow must be expanded or
+complemented by a dedicated account-billing-state copy phase.
 
-- `dedicated_host_monthly_spend_limit_usd`
+Because purchase history can be large, this should be:
 
-This is a product / risk control parameter, not a compute resource limit.
+- batched
+- replayable
+- fenced
+- not one huge JSON aggregate blob
 
-Admins must be able to override it for specific customers.
+## Package owner rehome
 
-## Dedicated host pricing model
+When the package owner account rehomes:
 
-### High-level model
+- the package rows move
+- the owner-side assignment rows move
+- the seed package / assignment directory updates `owner_home_bay_id`
 
-The user sees:
+Beneficiary grant rows do not move unless those beneficiary accounts themselves
+rehome.
 
-- one membership charge per month
-- one charge line per dedicated host per month
-- line-item detail in the host drawer explaining how that charge was computed
+## Dedicated host billing under multi-bay
 
-There is **no** separate egress fee.
+Dedicated-host billing also needs the same split.
 
-### Retail catalog
+### Account-home-bay state
 
-We should expose only a curated public catalog of dedicated host options.
+- monthly host charge purchases
+- statement inclusion
+- account-level risk / spend limit settings
 
-Reasons:
+### Seed/global state
 
-- simpler UI
-- simpler support
-- lower pricing-sync complexity
-- lower financial risk from spot volatility
+- provider pricing catalog
 
-The current all-of-GCP-style surface from legacy CoCalc is overkill for
-`cocalc-ai`.
+### Host-owning or control-bay state
 
-### Provider pricing sync
+- raw host lifecycle observations
+- rate-change triggers
+- host metering intervals
 
-We need background jobs to sync provider price data into a local pricing
-catalog.
+### Correct billing flow
 
-Especially for:
+1. host lifecycle/rate events are produced where host control is authoritative
+2. a worker computes billable intervals
+3. before posting a charge, it resolves the owner's current home bay
+4. the charge is created as a purchase on the owner's home bay
+5. monthly statements on the home bay include that charge
 
-- GCP spot pricing
-- Nebius pricing, where applicable
-
-This sync is not on the user request path.
-
-Instead:
-
-- sync provider prices periodically into local tables or cached records
-- host creation / resize reads from that local catalog
-
-### New table: `cloud_provider_prices`
-
-One local synced catalog for the small supported machine / disk set.
-
-Suggested fields:
-
-- `provider`
-- `region`
-- `sku_type`
-  - `vm-on-demand`
-  - `vm-spot`
-  - `disk`
-- `spec_key`
-- `price_hourly_usd` or `price_monthly_usd`
-- `effective_at`
-- `observed_at`
-- `metadata`
-
-This table is authoritative for host pricing decisions inside `cocalc-ai`.
-
-### New table: `project_host_rate_events`
-
-We need a history of rate changes per host.
-
-Suggested fields:
-
-- `id`
-- `host_id`
-- `effective_at`
-- `reason`
-  - `create`
-  - `resize`
-  - `disk-grow`
-  - `pricing-model-change`
-  - `provider-price-sync`
-  - `spot-to-standard`
-  - `standard-to-spot`
-- `requested_pricing_model`
-- `effective_pricing_model`
-- `vm_spec`
-- `disk_spec`
-- `vm_hourly_usd`
-- `disk_hourly_usd`
-- `lower_bound_hourly_usd` nullable
-- `upper_bound_hourly_usd` nullable
-- `metadata`
-
-This is the core of the billing model. We do **not** want to recover host
-charges by replaying cloud history heuristically from current host metadata.
-
-### What gets charged
-
-For each host, charges come from time segments between `project_host_rate_events`.
-
-The charge basis is:
-
-- VM charges while the VM is in a billable running state
-- disk charges while the dedicated disk exists
-
-This means:
-
-- stopped VM can still have disk charges
-- resizing disk or VM creates a new rate event
-
-### Spot pricing
-
-Spot pricing is the hard part.
-
-We should not oversimplify it away. Dedicated-host users are exactly the users
-who care about this.
-
-#### Policy
-
-1. Pure on-demand host
-   - price can be snapshotted from the local catalog until config change
-2. Pure spot host
-   - price follows the synced local spot catalog over time
-   - upstream spot price changes create new `project_host_rate_events`
-3. Spot-to-standard strategy
-   - user explicitly opts in
-   - UI shows lower and upper spend bounds
-   - user configures an additional bound such as max standard time per month
-
-#### Why this is necessary
-
-Spot price changes can be large enough that freezing spot pricing for long
-periods is financially unsafe.
-
-At the same time, charging the user arbitrary emergency standard fallback rates
-without explicit UX would be unacceptable.
-
-Therefore the system must be explicit:
-
-- show the user the pricing mode
-- show the possible spend range
-- record discrete rate-change events
-
-### Spend limit policy
-
-Each membership tier gets a default monthly dedicated-host spend limit.
-
-Examples:
-
-- small membership: no dedicated host
-- medium membership: small experimentation allowance
-- high membership: much larger default monthly host budget
-
-This is **not** a prepaid balance.
-
-It is a default allowed monthly exposure level.
-
-Before create / start / upward resize:
-
-- compute projected monthly spend for the chosen host configuration
-- compare against the account's dedicated-host monthly limit
-
-For variable spot strategies:
-
-- use the explicit upper-bound model shown to the user
-
-Admins can override these limits for important accounts.
-
-### Monthly billing model
-
-The product model is:
-
-- one monthly statement
-- one monthly charge collection
-- line items for memberships and each dedicated host
-
-We should reuse the existing purchase and statement system in:
-
-- `src/packages/server/purchases/statements/*`
-- the existing invoice / collection path that already supports monthly billing
-
-Strategically:
-
-- do not expand reliance on Stripe-native subscription semantics
-- keep CoCalc's own purchase / statement ledger authoritative
-
-### Host drawer UX
-
-The host drawer should show:
-
-- current pricing mode
-- current effective hourly / monthly rate
-- if variable, lower and upper bound
-- current month's accrued cost so far
-- detailed rate-change history
-- exact explanation of why the monthly line item is what it is
-
-This is critical for trust.
-
-## What We Are Explicitly Not Doing Before Release
-
-- no return to project-scoped upgrade licenses
-- no separate dedicated-host egress billing
-- no full institution self-serve procurement flow
-- no giant public dedicated-host machine catalog
-- no attempt to make `software_licenses` serve hosted memberships
+This allows account rehome without moving raw host-control history.
 
 ## Implementation Plan
 
-## Phase 1: entitlement foundation
+## Phase 0: lock the multi-bay billing invariants
 
-1. add `membership_grants`
-2. add `membership_packages`
-3. add `membership_package_assignments`
-4. extend `src/packages/server/membership/resolve.ts`
-5. extend `src/packages/conat/hub/api/purchases.ts`
+1. update this plan
+2. write one short release-invariants note that explicitly replaces
+   `seed-owned purchases` with:
+   - account-home-bay billing authority
+   - seed-global institutional registry only
+3. stop further membership/billing implementation until all new code follows
+   those invariants
 
-## Phase 2: usage attribution fix
+## Phase 1: explicit routing and write fences
 
-1. add `projects.usage_account_id`
-2. implement shared project usage-account resolver
-3. update:
-   - `src/packages/server/membership/usage-status.ts`
-   - `src/packages/server/membership/project-limits.ts`
-   - `src/packages/server/membership/managed-egress.ts`
+1. audit all membership/purchase/package codepaths
+2. require explicit home-bay assertions for account-owned billing writes
+3. add or use `withAccountRehomeWriteFence` for billing mutations
+4. ensure course-dependent purchase flows route through project-owning-bay APIs
+   instead of local SQL assumptions
 
-This phase is required before course / team / site flows are truly correct.
+## Phase 2: seed-global institutional registries and projections
 
-## Phase 3: student pay
+1. add `membership_claim_scopes`
+2. add `membership_claim_identities`
+3. add package directory projection
+4. add assignment directory projection
+5. add canonical-identity logic for domain/site claim scopes
 
-1. update `src/packages/server/purchases/student-pay.ts`
-2. grant `student` membership for course term
-3. update student pay UI copy
-4. show membership source clearly in the account UI
+## Phase 3: correct account-home-bay package and grant flows
 
-## Phase 4: instructor-paid courses
+1. keep packages and purchases on owner home bay
+2. route grant creation/revocation to beneficiary home bay
+3. route course `usage_account_id` writes to project owning bay
+4. route claim discovery through the seed projections
 
-1. add course package purchase flow
-2. add seat assignment UI bound to course projects
-3. set / maintain `usage_account_id`
-4. grant / revoke course student memberships
+## Phase 4: rehome-safe billing state
 
-## Phase 5: team and domain/site licenses
+1. add account billing-state copy workflow
+2. move purchases / subscriptions / statements on rehome
+3. move grants / owned packages / owned assignments on rehome
+4. update seed package directory ownership pointers after package-owner rehome
+5. add rehome tests for:
+   - account with purchases/subscriptions/statements
+   - account owning team packages
+   - account receiving grants from another user's package
 
-1. add team package flow
-2. add admin / sales-assisted domain / site package flow
-3. add seat claim / assignment UI
-4. add account page to show why a grant is active
+## Phase 5: finish user-visible purchase flows on the corrected architecture
 
-## Phase 6: dedicated host billing
+1. student pay on correct cross-bay routing
+2. instructor-paid course seats on correct cross-bay routing
+3. team seats on correct cross-bay routing
+4. domain/site claim flow on seed projections + canonical claim identity
 
-1. add local provider pricing sync
-2. add `project_host_rate_events`
-3. add host charge generation worker
-4. integrate host charges into monthly statements
-5. add host drawer pricing / charge breakdown UI
-6. add membership-tier dedicated-host spend limits and admin overrides
+## Phase 6: dedicated hosts on the corrected architecture
 
-## Questions Deferred Until After Release
+1. seed/global provider pricing catalog
+2. host rate-event history
+3. host-charge posting to owner home bay
+4. monthly statement integration
+5. host drawer pricing / charge explanation UI
 
-- exact seat-claim automation for verified domains
-- whether course packages need special bundle pricing beyond ordinary seat math
-- long-term shape of institution / department admin UX
-- whether to keep or retire legacy Stripe usage-based subscription helpers
-- whether dedicated-host spend limits should eventually become more risk-based
-  per provider / per pricing model
+## Validation Requirements
+
+This plan is not complete without explicit multi-bay validation.
+
+### Required scenarios
+
+1. package owner on bay A assigns seat to user on bay B
+2. user on bay B claims reserved email seat from package on bay A
+3. domain/site claimant on bay B claims institutional seat from package on bay A
+4. student on bay B pays for course project owned on bay C
+5. account with purchases and owned packages rehomes from bay A to bay B
+6. beneficiary account with received grant rehomes from bay A to bay B
+7. active dedicated host continues billing correctly after owner account rehome
 
 ## Summary
 
-The smallest coherent V1 is:
+The correct V1 split is:
 
-- account-wide memberships
-- `projects.usage_account_id`
-- one grants/packages model for student / course / team / site access
-- dedicated hosts billed monthly as metered infrastructure, with a local synced
-  provider catalog and explicit rate-change history
+- account-owned billing history and owned packages live on the account home bay
+- project-specific course and usage state live on the project owning bay
+- institution-wide claim scopes and canonical identity dedupe live on seed/global
+- cross-bay discovery uses seed-global projections, not scans
 
-This keeps the system understandable for users, fits the existing codebase, and
-does not require a large rewrite.
+This is more work than the earlier one-bay-assuming version of the plan, but it
+is the correct architecture and avoids building billing state that would break
+under the real multi-bay deployment.
+
+## Further TODO
+
+- [ ] update the master release plan to remove the obsolete `seed-owned purchases/billing authority for first release` assumption
+- [ ] implement canonical `+alias` identity dedupe for domain/site claims
+- [ ] add Cloudflare Email Service support for verification and notifications
+- [ ] add `cocalc-cli` operator/testing support for package, claim, and rehome flows

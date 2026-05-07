@@ -80,10 +80,6 @@ jest.mock("@cocalc/frontend/components", () => ({
   VisibleMDLG: ({ children }: any) => <>{children}</>,
 }));
 
-jest.mock("./client-side-throttle", () => ({
-  useAllowedFreeProjectToRun: () => true,
-}));
-
 jest.mock("./context", () => ({
   useProjectContext: () => ({
     project_id: "project-1",
@@ -93,10 +89,6 @@ jest.mock("./context", () => ({
 
 jest.mock("@cocalc/frontend/lite", () => ({
   lite: false,
-}));
-
-jest.mock("./project-banner", () => ({
-  DOC_TRIAL: "https://example.com/trial",
 }));
 
 jest.mock("@cocalc/frontend/projects/host-info", () => ({

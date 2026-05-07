@@ -12,7 +12,7 @@ query for everything for account with canceled if everything they decided not to
 
 import { Table } from "./types";
 import { SCHEMA as schema } from "./index";
-export type ProductType = "cash-voucher" | "membership";
+export type MembershipPackageKind = "course" | "team" | "domain" | "site";
 
 export interface CashVoucher {
   type: "cash-voucher";
@@ -34,7 +34,26 @@ export interface MembershipSubscription {
   price?: number;
 }
 
-export type ProductDescription = CashVoucher | MembershipSubscription;
+export interface MembershipPackageProduct {
+  type: "membership-package";
+  kind: MembershipPackageKind;
+  membership_class: string;
+  seat_count: number;
+  interval?: "month" | "year";
+  package_id?: string;
+  course_project_id?: string;
+  starts_at?: Date | string;
+  expires_at?: Date | string;
+  price_per_seat?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export type ProductType = "cash-voucher" | "membership" | "membership-package";
+
+export type ProductDescription =
+  | CashVoucher
+  | MembershipSubscription
+  | MembershipPackageProduct;
 
 export interface Item {
   id: number;
