@@ -1048,10 +1048,12 @@ export function GitCommitDrawer({
         if (reviewLoadTokenRef.current !== token) return;
         setReviewRecord(rec);
         setReviewed(Boolean(rec?.reviewed));
-        setReviewedByCommit((prev) => ({
-          ...prev,
-          [normalizedCommit]: Boolean(rec?.reviewed),
-        }));
+        setReviewedByCommit((prev) =>
+          applyGitReviewedByCommitEntries({
+            previous: prev,
+            entries: [[normalizedCommit, rec]],
+          }),
+        );
         const note = typeof rec?.note === "string" ? rec.note : "";
         setReviewNote(note);
         setReviewNoteDraft(note);
