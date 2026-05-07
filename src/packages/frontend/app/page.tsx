@@ -15,6 +15,7 @@ import type { IconName } from "@cocalc/frontend/components/icon";
 import { Spin } from "antd";
 import { useIntl } from "react-intl";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
   CSS,
@@ -164,6 +165,9 @@ export const Page: React.FC = () => {
         icon={icon}
         active_top_tab={active_top_tab}
         hide_label={!show_label}
+        on_click={() => {
+          openAccountSettings({ kind: "index" }, { changeHistory: false });
+        }}
         tooltip={intl.formatMessage(labels.account)}
       />
     );

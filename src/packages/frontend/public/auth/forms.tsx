@@ -15,6 +15,10 @@ import {
   postAuthApi,
   retryAuthOnHomeBay,
 } from "@cocalc/frontend/auth/api";
+import {
+  getSecondFactorPlaceholder,
+  inferSecondFactorInputMethod,
+} from "@cocalc/frontend/auth/second-factor-input";
 import { appUrl } from "@cocalc/frontend/auth/util";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import {
@@ -183,12 +187,10 @@ export function PublicSignInForm({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [challengeId, setChallengeId] = useState("");
-  const [factorMethod, setFactorMethod] = useState<"totp" | "recovery_code">(
-    "totp",
-  );
   const [factorCode, setFactorCode] = useState("");
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState("");
+  const factorMethod = inferSecondFactorInputMethod(factorCode);
 
   const canSubmit = challengeId
     ? factorCode.trim().length > 0 && !signingIn
@@ -215,7 +217,6 @@ export function PublicSignInForm({
       if (isMfaRequiredAuthResponse(result)) {
         setStoredControlPlaneOrigin(result?.home_bay_url);
         setChallengeId(result.challenge_id);
-        setFactorMethod("totp");
         setFactorCode("");
         return;
       }
@@ -244,7 +245,7 @@ export function PublicSignInForm({
         body: {
           challenge_id: challengeId,
           method: factorMethod,
-          code: factorCode,
+          code: factorCode.trim(),
         },
       });
       setStoredControlPlaneOrigin(result?.home_bay_url);
@@ -292,28 +293,14 @@ export function PublicSignInForm({
       ) : (
         <div style={FIELD_STYLE}>
           <div style={LABEL_STYLE}>Second factor</div>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            <ActionButton
-              disabled={signingIn}
-              onClick={() => setFactorMethod("totp")}
-            >
-              {factorMethod === "totp"
-                ? "Authenticator selected"
-                : "Use authenticator"}
-            </ActionButton>
-            <ActionButton
-              disabled={signingIn}
-              onClick={() => setFactorMethod("recovery_code")}
-            >
-              {factorMethod === "recovery_code"
-                ? "Recovery code selected"
-                : "Use recovery code"}
-            </ActionButton>
+          <div style={{ color: "#666", marginBottom: "8px" }}>
+            Enter either the 6-digit authenticator code or one of your recovery
+            codes.
           </div>
           <TextInput
             autoComplete="one-time-code"
             autoFocus
-            placeholder={factorMethod === "totp" ? "123456" : "ABCD-EFGH-IJKL"}
+            placeholder={getSecondFactorPlaceholder(factorCode)}
             value={factorCode}
             onChange={setFactorCode}
             onPressEnter={verifySecondFactor}
