@@ -117,3 +117,15 @@ export function formatMergeCommitBodyMarkdown(
   const fence = backtickSequence(text);
   return `${fence}\n${text}\n${fence}`;
 }
+
+export function shouldClearGitHeadCommitBusyOnScopeChange({
+  headCommitBusy,
+  previousScope,
+  nextScope,
+}: {
+  headCommitBusy: boolean;
+  previousScope?: string;
+  nextScope?: string;
+}): boolean {
+  return headCommitBusy && previousScope !== nextScope;
+}

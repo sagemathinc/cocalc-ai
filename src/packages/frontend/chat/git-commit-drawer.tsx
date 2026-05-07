@@ -121,6 +121,7 @@ import {
   isMergeCommitSummary,
   isNotGitRepoError,
   resolveOpenPath,
+  shouldClearGitHeadCommitBusyOnScopeChange,
   shouldCaptureGitDrawerFindShortcut,
 } from "./git-commit/utils";
 import "./git-commit-drawer.css";
@@ -167,6 +168,7 @@ export {
   GitDiffListFooterSpacer,
   getCommitReviewIndicatorState,
   isMergeCommitSummary,
+  shouldClearGitHeadCommitBusyOnScopeChange,
   shouldCaptureGitDrawerFindShortcut,
 };
 
@@ -324,6 +326,9 @@ export function GitCommitDrawer({
   const reviewScopeRef = useRef<string | undefined>(undefined);
   const reviewSubmitTokenRef = useRef(0);
   const reviewSubmitScopeRef = useRef<string | undefined>(undefined);
+  const headScopeRef = useRef<string | undefined>(undefined);
+  const headCommitActionTokenRef = useRef(0);
+  const headCommitActionScopeRef = useRef<string | undefined>(undefined);
   const reviewNoteDraftRef = useRef(reviewNoteDraft);
   const reviewedRef = useRef(reviewed);
   const preserveCommitSearchOnAutoClearRef = useRef(false);
@@ -822,6 +827,23 @@ export function GitCommitDrawer({
       setReviewSubmitBusy(false);
     }
   }, [open, accountId, commit, reviewSaving, reviewSubmitBusy]);
+
+  useEffect(() => {
+    const nextScope = open && isHeadSelected ? HEAD_REF : undefined;
+    const previousScope = headScopeRef.current;
+    headScopeRef.current = nextScope;
+    if (
+      shouldClearGitHeadCommitBusyOnScopeChange({
+        headCommitBusy,
+        previousScope,
+        nextScope,
+      })
+    ) {
+      headCommitActionTokenRef.current += 1;
+      headCommitActionScopeRef.current = undefined;
+      setHeadCommitBusy(false);
+    }
+  }, [open, isHeadSelected, headCommitBusy]);
 
   useEffect(() => {
     if (!open || !accountId) return;
@@ -2049,15 +2071,40 @@ export function GitCommitDrawer({
       message: headCommitMessage,
       includeSummary,
     });
+    const startedScope = headScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = headCommitActionTokenRef.current + 1;
+    headCommitActionTokenRef.current = actionToken;
+    headCommitActionScopeRef.current = startedScope;
     setHeadCommitBusy(true);
     setHeadCommitError("");
     try {
       await onRequestAgentTurn(prompt);
-      onClose();
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        onClose();
+      }
     } catch (err) {
-      setHeadCommitError(`${err ?? "Unable to send commit request to codex."}`);
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        setHeadCommitError(
+          `${err ?? "Unable to send commit request to codex."}`,
+        );
+      }
     } finally {
-      setHeadCommitBusy(false);
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope
+      ) {
+        headCommitActionScopeRef.current = undefined;
+        setHeadCommitBusy(false);
+      }
     }
   };
 
@@ -2068,6 +2115,11 @@ export function GitCommitDrawer({
       await requestAgentCommit({ includeSummary: false });
       return;
     }
+    const startedScope = headScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = headCommitActionTokenRef.current + 1;
+    headCommitActionTokenRef.current = actionToken;
+    headCommitActionScopeRef.current = startedScope;
     setHeadCommitBusy(true);
     setHeadCommitError("");
     try {
@@ -2115,11 +2167,29 @@ export function GitCommitDrawer({
         type: "info",
         message: (result.stdout || "Commit created successfully.").trim(),
       });
-      onClose();
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        onClose();
+      }
     } catch (err) {
-      setHeadCommitError(`${err ?? "Unable to create commit."}`);
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        setHeadCommitError(`${err ?? "Unable to create commit."}`);
+      }
     } finally {
-      setHeadCommitBusy(false);
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope
+      ) {
+        headCommitActionScopeRef.current = undefined;
+        setHeadCommitBusy(false);
+      }
     }
   };
   const bumpContext = (delta: -1 | 1) => {

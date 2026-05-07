@@ -23,6 +23,7 @@ import {
   resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
+  shouldClearGitHeadCommitBusyOnScopeChange,
   shouldClearGitInlinePendingKey,
   shouldClearGitReviewSavingOnScopeChange,
   shouldClearGitReviewSubmitOnScopeChange,
@@ -503,6 +504,30 @@ describe("git commit drawer merge commit formatting", () => {
         actionPendingKey: "resolve:comment-a",
       }),
     ).toBe(true);
+  });
+
+  it("clears head commit busy state only when leaving the active HEAD scope", () => {
+    expect(
+      shouldClearGitHeadCommitBusyOnScopeChange({
+        headCommitBusy: true,
+        previousScope: "HEAD",
+        nextScope: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearGitHeadCommitBusyOnScopeChange({
+        headCommitBusy: true,
+        previousScope: "HEAD",
+        nextScope: "HEAD",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitHeadCommitBusyOnScopeChange({
+        headCommitBusy: false,
+        previousScope: "HEAD",
+        nextScope: undefined,
+      }),
+    ).toBe(false);
   });
 
   it("does not persist a private review note when cancel wins after blur ordering", () => {
