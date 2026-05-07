@@ -220,6 +220,37 @@ const getDefaultRegion = (
   options: FieldOptionsMap,
 ) => vals.region ?? optionsFor("region", options)[0]?.value;
 
+const toRamGiB = (value: unknown): number | undefined => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.max(1, Math.ceil(parsed));
+};
+
+const machineResourceMetadata = (shape: {
+  guestCpus?: number | null;
+  memoryMb?: number | null;
+  vcpus?: number | null;
+  memory_gib?: number | null;
+  cpu?: number | null;
+  ram?: number | null;
+}): Record<string, any> => {
+  const cpu = shape.guestCpus ?? shape.vcpus ?? shape.cpu ?? undefined;
+  const ramGiB =
+    shape.memory_gib ??
+    (shape.memoryMb != null ? Number(shape.memoryMb) / 1024 : undefined) ??
+    shape.ram ??
+    undefined;
+  const metadata: Record<string, any> = {};
+  if (Number.isFinite(cpu) && Number(cpu) > 0) {
+    metadata.cpu = Math.floor(Number(cpu));
+  }
+  const normalizedRamGiB = toRamGiB(ramGiB);
+  if (normalizedRamGiB != null) {
+    metadata.ram_gb = normalizedRamGiB;
+  }
+  return metadata;
+};
+
 const buildBasePayload = (
   vals: Record<string, any>,
   options: FieldOptionsMap,
@@ -598,6 +629,7 @@ export const getGcpMachineTypeOptions = (
   return filtered.map((mt) => ({
     value: mt.name ?? "",
     label: mt.name ?? "unknown",
+    meta: mt,
   }));
 };
 
@@ -1534,6 +1566,11 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
       ],
     }),
     buildCreatePayload: (vals, ctx) => {
+      const machineType = findOption<HostCatalogMachineType>(
+        "machine_type",
+        vals.machine_type,
+        ctx.fieldOptions,
+      );
       const gpu_type =
         vals.gpu_type && vals.gpu_type !== "none" ? vals.gpu_type : undefined;
       const wantsGpu = !!gpu_type;
@@ -1545,6 +1582,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
           gpu_type,
           gpu_count: gpu_type ? 1 : undefined,
           zone: vals.zone ?? undefined,
+          metadata: machineResourceMetadata(machineType ?? {}),
         },
         wantsGpu,
       );
@@ -1610,6 +1648,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
           machine_type: flavor?.name,
           gpu_type: hyperGpuType,
           gpu_count: hyperGpuCount || undefined,
+          metadata: machineResourceMetadata(flavor ?? {}),
         },
         wantsGpu,
       );
@@ -1675,6 +1714,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
         {
           machine_type: vals.machine_type || undefined,
           gpu_count: gpuCount || undefined,
+          metadata: machineResourceMetadata(instance ?? {}),
         },
         wantsGpu,
       );
@@ -1736,6 +1776,7 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
           machine_type: vals.machine_type || undefined,
           gpu_type: wantsGpu ? instance?.gpu_label : undefined,
           gpu_count: gpuCount || undefined,
+          metadata: machineResourceMetadata(instance ?? {}),
         },
         wantsGpu,
       );

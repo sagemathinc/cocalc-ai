@@ -76,9 +76,19 @@ export function getHostSizeDisplay(host: Host): {
   primary: string;
   secondary?: string;
 } {
+  const configuredMachineType = `${host.machine?.machine_type ?? ""}`.trim();
+  const storedSize = `${host.size ?? ""}`.trim();
+  const nonRunningConfiguredShapeMismatch =
+    !!configuredMachineType &&
+    !!storedSize &&
+    configuredMachineType !== storedSize &&
+    host.status !== "running";
+  if (nonRunningConfiguredShapeMismatch) {
+    return { primary: configuredMachineType };
+  }
   const cpu = getHostCpuCount(host);
   const ramGiB = getHostRamGiB(host);
-  const fallback = host.size || host.machine?.machine_type || "n/a";
+  const fallback = host.machine?.machine_type || host.size || "n/a";
   if (cpu == null && ramGiB == null) {
     return { primary: fallback };
   }

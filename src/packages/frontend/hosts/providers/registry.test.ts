@@ -1,6 +1,36 @@
 import { buildCreateHostPayload, isNebiusSpotSupported } from "./registry";
 
 describe("buildCreateHostPayload", () => {
+  it("adds derived cpu and ram metadata for gcp machine types", () => {
+    const payload = buildCreateHostPayload(
+      {
+        provider: "gcp",
+        name: "GCP Host",
+        region: "us-west1",
+        zone: "us-west1-a",
+        machine_type: "t2d-standard-2",
+      },
+      {
+        fieldOptions: {
+          region: [{ value: "us-west1", label: "US West 1" }],
+          zone: [{ value: "us-west1-a", label: "US West 1A" }],
+          machine_type: [
+            {
+              value: "t2d-standard-2",
+              label: "t2d-standard-2",
+              meta: { guestCpus: 2, memoryMb: 8192 },
+            },
+          ],
+        },
+      },
+    );
+
+    expect(payload.machine?.metadata).toMatchObject({
+      cpu: 2,
+      ram_gb: 8,
+    });
+  });
+
   it("preserves disk_gb from the host edit form for nebius", () => {
     const payload = buildCreateHostPayload(
       {
