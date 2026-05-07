@@ -947,6 +947,158 @@ Design principle:
 
 - abuse controls must work across bays, not only within one account home bay
 
+### 7. Abuse analytics and operator visibility
+
+The release should include simple admin-visible analytics for account,
+membership, and payment behavior.
+
+This should be treated as part of abuse control, not as optional reporting.
+
+In practice, unusual behavior often shows up first as unusual rate changes in:
+
+- account creation
+- email verification
+- payment-intent creation / failure
+- membership grant creation
+- package purchase / expansion
+- seat reservation / claim
+- dedicated-host creation / denial
+
+#### Multi-bay architecture
+
+The correct architecture is:
+
+- authoritative event emission on the bay where the action is authoritative
+- seed-global summarized projections for cluster-wide analytics
+- both admin UI and `cocalc-cli` read the same projected analytics tables
+
+This avoids:
+
+- scanning all bays for time-series data
+- rebuilding analytics live from billing source tables
+- inventing a second incompatible admin-only data path
+
+#### Event classes to record
+
+V1 should record at least these event families:
+
+- account created
+- email verified
+- signup denied / rate-limited
+- payment intent created
+- payment intent succeeded
+- payment intent failed
+- payment flagged high-risk / review-required
+- refund created
+- chargeback / dispute opened
+- membership grant created
+- membership grant revoked / suspended
+- membership package purchased
+- membership package expanded
+- seat assigned
+- seat reserved by email
+- seat claimed
+- claim denied due to canonical-identity conflict
+- dedicated host create/start/resize requested
+- dedicated host create/start/resize denied due to trust or spend-window policy
+
+These do not need to be expensive append-only forensic logs in V1.
+
+They do need to be structured enough to support:
+
+- cluster-wide counts
+- per-bay counts
+- per-account drill-down
+- per-package and per-claim-scope drill-down
+- anomaly detection by simple thresholding and baseline comparison
+
+#### Recommended rollups
+
+V1 rollups should be small and obvious:
+
+- 5-minute buckets
+- 1-hour buckets
+- 1-day buckets
+
+Grouped by:
+
+- event type
+- bay id
+- membership/package kind when relevant
+- payment result / risk state when relevant
+
+This is enough to support:
+
+- burst detection
+- day-over-day comparison
+- short-window abuse investigation
+- admin dashboard charts
+
+#### Admin UI surfaces
+
+The admin UI should expose a minimal abuse analytics panel with:
+
+- SVG time-series plots for:
+  - account creation
+  - email verification
+  - payment intent create/success/failure/review
+  - membership grant creation/revocation
+  - package purchase/expansion
+  - seat reservation/claim
+  - dedicated-host create/deny
+- current 5-hour and 7-day counters for host-spend denials and risk-triggered
+  blocks
+- top recent spikes by event type
+- links from unusual spikes into filtered admin account/package views
+
+The goal is not a full BI tool.
+
+The goal is that an operator can look at one page and immediately answer:
+
+- are signups behaving strangely?
+- are payment attempts behaving strangely?
+- are institutional claims behaving strangely?
+- are host requests spiking abnormally?
+
+#### `cocalc-cli` surfaces
+
+`cocalc-cli` should expose the same operator information in text/JSON form.
+
+The CLI should not implement a second analytics backend. It should query the
+same summarized projections as the admin UI.
+
+V1 should include commands along the lines of:
+
+- `cocalc admin abuse summary`
+- `cocalc admin abuse timeseries --event payment_intent_failed --window 24h`
+- `cocalc admin abuse account <account_id>`
+- `cocalc admin abuse package <package_id>`
+- `cocalc admin abuse claim-scope <claim_scope_id>`
+
+The exact command names can change. The invariant is:
+
+- admin UI and CLI should agree because they read the same projected data
+
+#### Privacy and retention
+
+These analytics should default to aggregated counts and identifiers already
+known to operators.
+
+They should not require shipping unnecessary raw PII into a global analytics
+store just to make charts.
+
+V1 should prefer:
+
+- counts
+- bay ids
+- account ids
+- package ids
+- claim-scope ids
+- coarse risk/status categories
+
+over copying full request payloads or payment-provider blobs into analytics
+tables.
+
 ### Recommended release priorities
 
 From the abuse/safety point of view, the near-term order should be:
@@ -985,3 +1137,4 @@ under the real multi-bay deployment.
   - [ ] Stripe Radar integration and payment-risk handling policy
   - [ ] chargeback/refund-driven entitlement suspension policy
   - [ ] operator risk flags and cluster-wide abuse audit surfaces
+  - [ ] seed-global abuse analytics rollups for admin UI and `cocalc-cli`

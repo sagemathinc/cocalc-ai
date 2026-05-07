@@ -539,6 +539,10 @@ Goal: make operator workflows safe and not context-fragile.
   - Postgres pressure
   - routing latency
   - host reconciliation lag
+- [ ] Add minimum operator abuse analytics for memberships/billing/hosts:
+  - seed-global summarized rollups, not per-bay scans
+  - admin UI time-series views
+  - matching `cocalc-cli` readout from the same projections
 - [ ] Add/export control-plane traffic stats in frontend session tooling.
 
 ### Exit Criteria
