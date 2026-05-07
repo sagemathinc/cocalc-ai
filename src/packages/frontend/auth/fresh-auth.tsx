@@ -6,8 +6,11 @@
 import { Alert, Checkbox, Input, Modal, Space } from "antd";
 import { React, useEffect, useState } from "@cocalc/frontend/app-framework";
 
-import { Button } from "@cocalc/frontend/antd-bootstrap";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
+import {
+  getSecondFactorPlaceholder,
+  inferSecondFactorInputMethod,
+} from "@cocalc/frontend/auth/second-factor-input";
 
 type TwoFactorStatus = {
   enabled: boolean;
@@ -29,12 +32,12 @@ export function FreshAuthModal({
   onSuccess: () => Promise<void>;
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
-  const [method, setMethod] = useState<"totp" | "recovery_code">("totp");
   const [code, setCode] = useState("");
   const [extended, setExtended] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [factorEnabled, setFactorEnabled] = useState<boolean | null>(null);
+  const inferredMethod = inferSecondFactorInputMethod(code);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,10 +69,10 @@ export function FreshAuthModal({
   }, [open]);
 
   useEffect(() => {
-    if (factorEnabled !== true || method !== "totp") {
+    if (factorEnabled !== true || inferredMethod !== "totp") {
       setExtended(false);
     }
-  }, [factorEnabled, method]);
+  }, [factorEnabled, inferredMethod]);
 
   async function submit() {
     setSaving(true);
@@ -80,7 +83,9 @@ export function FreshAuthModal({
         endpoint: "auth/fresh-auth",
         body: {
           current_password: currentPassword,
-          ...(requireSecondFactor ? { method, code } : {}),
+          ...(requireSecondFactor
+            ? { method: inferredMethod, code: code.trim() }
+            : {}),
           duration: requireSecondFactor && extended ? "extended" : "default",
         },
       });
@@ -131,26 +136,17 @@ export function FreshAuthModal({
           <>
             <div>
               <div style={{ marginBottom: "8px" }}>Second factor</div>
-              <Space wrap>
-                <Button
-                  bsStyle={method === "totp" ? "primary" : undefined}
-                  onClick={() => setMethod("totp")}
-                >
-                  Authenticator code
-                </Button>
-                <Button
-                  bsStyle={method === "recovery_code" ? "primary" : undefined}
-                  onClick={() => setMethod("recovery_code")}
-                >
-                  Recovery code
-                </Button>
-              </Space>
+              <Alert
+                type="info"
+                showIcon
+                message="Enter either the 6-digit authenticator code or one of your recovery codes."
+              />
             </div>
             <div>
               <Input
                 value={code}
                 autoComplete="one-time-code"
-                placeholder={method === "totp" ? "123456" : "ABCD-EFGH-IJKL"}
+                placeholder={getSecondFactorPlaceholder(code)}
                 onChange={(e) => setCode(e.target.value)}
                 onPressEnter={submit}
               />
@@ -159,7 +155,7 @@ export function FreshAuthModal({
         ) : undefined}
         <Checkbox
           checked={extended}
-          disabled={factorEnabled !== true || method !== "totp"}
+          disabled={factorEnabled !== true || inferredMethod !== "totp"}
           onChange={(e) => setExtended(e.target.checked)}
         >
           Keep this verification active for 8 hours on this browser
