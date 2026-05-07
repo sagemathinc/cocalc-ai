@@ -65,11 +65,68 @@ test("membership list defaults to the current account", async () => {
     captured?.[0]?.package_id,
     "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
   );
+  assert.equal(captured?.[0]?.kind, "team");
+  assert.equal(captured?.[0]?.active_assignment_count, 1);
+  assert.equal(captured?.[0]?.available_seat_count, 1);
+  assert.equal("assignment_targets" in captured?.[0], false);
+  assert.equal("seat_price" in captured?.[0], false);
+});
+
+test("membership list --wide keeps the broader summary shape", async () => {
+  let captured: any;
+  const program = new Command();
+  registerMembershipCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          purchases: {
+            getMembershipPackages: async () => [
+              {
+                id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                owner_account_id: "11111111-1111-1111-1111-111111111111",
+                kind: "team",
+                membership_class: "pro",
+                seat_count: 2,
+                purchase_id: 9,
+                starts_at: "2026-05-01T00:00:00.000Z",
+                expires_at: "2026-06-01T00:00:00.000Z",
+                metadata: { interval: "month", seat_price: 20 },
+                created: "2026-05-01T00:00:00.000Z",
+                updated: "2026-05-02T00:00:00.000Z",
+                active_assignment_count: 1,
+                available_seat_count: 1,
+                assignments: [
+                  {
+                    id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                    package_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                    account_id: "22222222-2222-2222-2222-222222222222",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      };
+      captured = await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => {
+      throw new Error("should not resolve an explicit account");
+    },
+    resolveProject: async () => {
+      throw new Error("should not resolve a project");
+    },
+  } as any);
+
+  await program.parseAsync(["node", "test", "membership", "list", "--wide"]);
+
   assert.equal(
     captured?.[0]?.assignment_targets,
     "22222222-2222-2222-2222-222222222222",
   );
   assert.equal(captured?.[0]?.seat_price, 20);
+  assert.equal(captured?.[0]?.interval, "month");
 });
 
 test("membership list resolves an explicit owner account", async () => {

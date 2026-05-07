@@ -117,47 +117,58 @@ function serializeMembershipPackage(
   membershipPackage: MembershipPackageDetails,
   toIso: MembershipCommandDeps["toIso"],
   opts: {
+    mode?: "narrow" | "wide" | "full";
     includeAssignments?: boolean;
   } = {},
 ) {
   const activeAssignments = membershipPackage.assignments.filter(
     (assignment) => !assignment.revoked_at,
   );
+  const mode = opts.mode ?? (opts.includeAssignments ? "full" : "wide");
   const result: Record<string, unknown> = {
     package_id: membershipPackage.id,
-    owner_account_id: membershipPackage.owner_account_id,
     kind: membershipPackage.kind,
     membership_class: membershipPackage.membership_class,
     seat_count: membershipPackage.seat_count,
-    purchase_id: membershipPackage.purchase_id ?? null,
-    starts_at: toIso(membershipPackage.starts_at),
-    expires_at: toIso(membershipPackage.expires_at),
-    interval: `${membershipPackage.metadata?.interval ?? ""}`.trim() || null,
-    seat_price:
-      typeof membershipPackage.metadata?.seat_price === "number"
-        ? membershipPackage.metadata.seat_price
-        : null,
     active_assignment_count: membershipPackage.active_assignment_count,
     available_seat_count: membershipPackage.available_seat_count,
-    assignment_targets: activeAssignments
-      .map(formatAssignmentTarget)
-      .join(", "),
-    assignment_emails: activeAssignments
-      .map((assignment) => `${assignment.email_address ?? ""}`.trim())
-      .filter(Boolean),
-    allowed_domains: getAllowedDomains(membershipPackage),
-    course_project_id:
-      `${membershipPackage.metadata?.course_project_id ?? ""}`.trim() || null,
-    created: toIso(membershipPackage.created),
-    updated: toIso(membershipPackage.updated),
+    starts_at: toIso(membershipPackage.starts_at),
+    expires_at: toIso(membershipPackage.expires_at),
   };
-  if (opts.includeAssignments) {
+  if (mode !== "narrow") {
+    result.owner_account_id = membershipPackage.owner_account_id;
+    result.purchase_id = membershipPackage.purchase_id ?? null;
+    result.interval =
+      `${membershipPackage.metadata?.interval ?? ""}`.trim() || null;
+    result.seat_price =
+      typeof membershipPackage.metadata?.seat_price === "number"
+        ? membershipPackage.metadata.seat_price
+        : null;
+    result.assignment_targets = activeAssignments
+      .map(formatAssignmentTarget)
+      .join(", ");
+    result.assignment_emails = activeAssignments
+      .map((assignment) => `${assignment.email_address ?? ""}`.trim())
+      .filter(Boolean);
+    result.allowed_domains = getAllowedDomains(membershipPackage);
+    result.course_project_id =
+      `${membershipPackage.metadata?.course_project_id ?? ""}`.trim() || null;
+    result.created = toIso(membershipPackage.created);
+    result.updated = toIso(membershipPackage.updated);
+  }
+  if (mode === "full" || opts.includeAssignments) {
     result.assignments = membershipPackage.assignments.map((assignment) =>
       serializeAssignment(assignment, toIso),
     );
     result.metadata = membershipPackage.metadata ?? null;
   }
   return result;
+}
+
+function wantsStructuredOutput(ctx: {
+  globals?: { json?: boolean; output?: "table" | "json" | "yaml" };
+}): boolean {
+  return !!ctx.globals?.json || ctx.globals?.output === "json";
 }
 
 function serializeClaimablePackage(
@@ -249,11 +260,15 @@ export function registerMembershipCommand(
   membership
     .command("list [account]")
     .description("list membership packages owned by an account")
+    .option(
+      "--wide",
+      "include wider package summary fields in table output (default in json)",
+    )
     .option("--full", "include full metadata and assignment details")
     .action(
       async (
         accountIdentifier: string | undefined,
-        opts: { full?: boolean },
+        opts: { wide?: boolean; full?: boolean },
         command: Command,
       ) => {
         await withContext(command, "membership list", async (ctx) => {
@@ -270,9 +285,15 @@ export function registerMembershipCommand(
               ? {}
               : { user_account_id: owner_account_id }),
           });
+          const mode = opts.full
+            ? "full"
+            : opts.wide || wantsStructuredOutput(ctx)
+              ? "wide"
+              : "narrow";
           return packages.map((membershipPackage: MembershipPackageDetails) =>
             serializeMembershipPackage(membershipPackage, toIso, {
-              includeAssignments: !!opts.full,
+              mode,
+              includeAssignments: mode === "full",
             }),
           );
         });
