@@ -214,6 +214,34 @@ export function shouldFinalizeGitFileOpenAction({
   );
 }
 
+export function shouldDisableGitReviewSubmission({
+  actionableInlineCommentCount,
+  reviewSubmitBusy,
+  reviewSaving,
+  canRequestAgentTurn,
+  accountId,
+  currentReviewCommit,
+  isHeadSelected,
+}: {
+  actionableInlineCommentCount: number;
+  reviewSubmitBusy: boolean;
+  reviewSaving: boolean;
+  canRequestAgentTurn: boolean;
+  accountId?: string;
+  currentReviewCommit?: string;
+  isHeadSelected: boolean;
+}): boolean {
+  return (
+    actionableInlineCommentCount === 0 ||
+    reviewSubmitBusy ||
+    reviewSaving ||
+    !canRequestAgentTurn ||
+    !accountId ||
+    !currentReviewCommit ||
+    isHeadSelected
+  );
+}
+
 export function shouldClearGitHeadStatusActionOnScopeChange({
   headStatusAction,
   previousScope,

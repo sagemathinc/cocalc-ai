@@ -38,6 +38,7 @@ import {
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
   isMergeCommitSummary,
+  shouldDisableGitReviewSubmission,
   shouldApplyGitFileOpenScopedResult,
   matchGitDrawerScrollCommand,
   resolveGitCommitSearchChange,
@@ -258,6 +259,53 @@ describe("git commit drawer merge commit formatting", () => {
       def5678: false,
       "999aaaa": true,
     });
+  });
+
+  it("disables git review submission when review persistence or target context is unavailable", () => {
+    expect(
+      shouldDisableGitReviewSubmission({
+        actionableInlineCommentCount: 1,
+        reviewSubmitBusy: false,
+        reviewSaving: false,
+        canRequestAgentTurn: true,
+        accountId: undefined,
+        currentReviewCommit: "abc1234",
+        isHeadSelected: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDisableGitReviewSubmission({
+        actionableInlineCommentCount: 1,
+        reviewSubmitBusy: false,
+        reviewSaving: false,
+        canRequestAgentTurn: true,
+        accountId: "acct-1",
+        currentReviewCommit: undefined,
+        isHeadSelected: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDisableGitReviewSubmission({
+        actionableInlineCommentCount: 1,
+        reviewSubmitBusy: false,
+        reviewSaving: false,
+        canRequestAgentTurn: true,
+        accountId: "acct-1",
+        currentReviewCommit: "abc1234",
+        isHeadSelected: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDisableGitReviewSubmission({
+        actionableInlineCommentCount: 1,
+        reviewSubmitBusy: false,
+        reviewSaving: false,
+        canRequestAgentTurn: true,
+        accountId: "acct-1",
+        currentReviewCommit: "abc1234",
+        isHeadSelected: false,
+      }),
+    ).toBe(false);
   });
 
   it("refreshes git review state on reconnect only for editable persisted commits", () => {
