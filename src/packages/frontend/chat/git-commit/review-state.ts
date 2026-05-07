@@ -114,3 +114,15 @@ export function shouldClearGitReviewSavingOnScopeChange({
 }): boolean {
   return reviewSaving && previousScope !== nextScope;
 }
+
+export function shouldClearGitReviewSubmitOnScopeChange({
+  reviewSubmitBusy,
+  previousScope,
+  nextScope,
+}: {
+  reviewSubmitBusy: boolean;
+  previousScope?: string;
+  nextScope?: string;
+}): boolean {
+  return reviewSubmitBusy && previousScope !== nextScope;
+}

@@ -24,6 +24,7 @@ import {
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
   shouldClearGitReviewSavingOnScopeChange,
+  shouldClearGitReviewSubmitOnScopeChange,
   buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
@@ -458,6 +459,30 @@ describe("git commit drawer merge commit formatting", () => {
     expect(
       shouldClearGitReviewSavingOnScopeChange({
         reviewSaving: false,
+        previousScope: "aaa1111",
+        nextScope: "bbb2222",
+      }),
+    ).toBe(false);
+  });
+
+  it("clears git review submit state only when the active commit scope changes", () => {
+    expect(
+      shouldClearGitReviewSubmitOnScopeChange({
+        reviewSubmitBusy: true,
+        previousScope: "aaa1111",
+        nextScope: "bbb2222",
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearGitReviewSubmitOnScopeChange({
+        reviewSubmitBusy: true,
+        previousScope: "aaa1111",
+        nextScope: "aaa1111",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitReviewSubmitOnScopeChange({
+        reviewSubmitBusy: false,
         previousScope: "aaa1111",
         nextScope: "bbb2222",
       }),

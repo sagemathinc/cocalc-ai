@@ -83,6 +83,7 @@ import {
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
   shouldClearGitReviewSavingOnScopeChange,
+  shouldClearGitReviewSubmitOnScopeChange,
 } from "./git-commit/review-state";
 import {
   buildGitInlineDraftEditorId,
@@ -151,6 +152,7 @@ export {
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
   shouldClearGitReviewSavingOnScopeChange,
+  shouldClearGitReviewSubmitOnScopeChange,
 };
 export {
   buildGitInlineDraftEditorId,
@@ -318,6 +320,8 @@ export function GitCommitDrawer({
   const reviewLoadTokenRef = useRef(0);
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
   const reviewScopeRef = useRef<string | undefined>(undefined);
+  const reviewSubmitTokenRef = useRef(0);
+  const reviewSubmitScopeRef = useRef<string | undefined>(undefined);
   const reviewNoteDraftRef = useRef(reviewNoteDraft);
   const reviewedRef = useRef(reviewed);
   const preserveCommitSearchOnAutoClearRef = useRef(false);
@@ -799,7 +803,18 @@ export function GitCommitDrawer({
     ) {
       setReviewSaving(false);
     }
-  }, [open, accountId, commit, reviewSaving]);
+    if (
+      shouldClearGitReviewSubmitOnScopeChange({
+        reviewSubmitBusy,
+        previousScope,
+        nextScope,
+      })
+    ) {
+      reviewSubmitTokenRef.current += 1;
+      reviewSubmitScopeRef.current = undefined;
+      setReviewSubmitBusy(false);
+    }
+  }, [open, accountId, commit, reviewSaving, reviewSubmitBusy]);
 
   useEffect(() => {
     if (!open || !accountId) return;
@@ -1600,8 +1615,13 @@ export function GitCommitDrawer({
 
   const sendInlineReviewToAgent = async () => {
     if (!onRequestAgentTurn || !commit || isHeadSelected) return;
+    const startedScope = normalizeCommitSha(commit);
+    if (!startedScope) return;
     const actionable = actionableInlineComments;
     if (actionable.length === 0) return;
+    const submitToken = reviewSubmitTokenRef.current + 1;
+    reviewSubmitTokenRef.current = submitToken;
+    reviewSubmitScopeRef.current = startedScope;
     const gitCommand = `git show --no-color -U${contextLines} ${commit}`;
     const payload = {
       target: { git_command: gitCommand },
@@ -1670,11 +1690,29 @@ export function GitCommitDrawer({
         last_submitted_at: now,
         last_submission_turn_id: turnId,
       });
-      onClose();
+      if (
+        reviewSubmitTokenRef.current === submitToken &&
+        reviewSubmitScopeRef.current === startedScope &&
+        activeReviewCommitRef.current === startedScope
+      ) {
+        onClose();
+      }
     } catch (err) {
-      setReviewError(`${err ?? "Unable to send review comments to codex."}`);
+      if (
+        reviewSubmitTokenRef.current === submitToken &&
+        reviewSubmitScopeRef.current === startedScope &&
+        activeReviewCommitRef.current === startedScope
+      ) {
+        setReviewError(`${err ?? "Unable to send review comments to codex."}`);
+      }
     } finally {
-      setReviewSubmitBusy(false);
+      if (
+        reviewSubmitTokenRef.current === submitToken &&
+        reviewSubmitScopeRef.current === startedScope
+      ) {
+        reviewSubmitScopeRef.current = undefined;
+        setReviewSubmitBusy(false);
+      }
     }
   };
 
