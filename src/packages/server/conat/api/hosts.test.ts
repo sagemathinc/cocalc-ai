@@ -66,6 +66,7 @@ let getHostOwnerBaySshIdentityMock: jest.Mock;
 let getProviderContextMock: jest.Mock;
 let siteUrlMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
+let getProjectUsageAccountIdMock: jest.Mock;
 let fetchMock: jest.Mock;
 let getBackupConfigLocalInternalMock: jest.Mock;
 let recordProjectBackupLocalInternalMock: jest.Mock;
@@ -76,6 +77,8 @@ let deleteProjectBackupIndexLocalInternalMock: jest.Mock;
 let refreshCloudCatalogNowMock: jest.Mock;
 let bumpReconcileMock: jest.Mock;
 let runReconcileOnceMock: jest.Mock;
+let getBrowserAuthSessionHashMock: jest.Mock;
+let requireFreshAuthForSessionHashMock: jest.Mock;
 const originalFetch = global.fetch;
 
 jest.mock("node:child_process", () => {
@@ -141,6 +144,18 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 jest.mock("@cocalc/server/accounts/is-banned", () => ({
   __esModule: true,
   default: (...args: any[]) => isBannedMock(...args),
+}));
+
+jest.mock("@cocalc/server/conat/socketio/browser-auth-sessions", () => ({
+  __esModule: true,
+  getBrowserAuthSessionHash: (...args: any[]) =>
+    getBrowserAuthSessionHashMock(...args),
+}));
+
+jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  __esModule: true,
+  requireFreshAuthForSessionHash: (...args: any[]) =>
+    requireFreshAuthForSessionHashMock(...args),
 }));
 
 jest.mock("@cocalc/server/projects/move", () => ({
@@ -357,6 +372,16 @@ jest.mock("@cocalc/server/project-backup", () => ({
     recordProjectBackupLocalInternalMock(...args),
 }));
 
+jest.mock("@cocalc/server/membership/project-usage", () => ({
+  __esModule: true,
+  getProjectUsageAccountId: (...args: any[]) =>
+    getProjectUsageAccountIdMock(...args),
+  getProjectOwnerAccountId: jest.fn(),
+  getUsageProjectCountForAccount: jest.fn(),
+  listUsageProjectsForAccount: jest.fn(),
+  setProjectUsageAccountId: jest.fn(),
+}));
+
 const HOST_ID = "host-123";
 const ACCOUNT_ID = "acct-123";
 
@@ -408,6 +433,9 @@ beforeEach(() => {
   }));
   siteUrlMock = jest.fn(async () => "https://hub.example.test");
   getServerSettingsMock = jest.fn(async () => ({}));
+  getProjectUsageAccountIdMock = jest.fn(async () => undefined);
+  getBrowserAuthSessionHashMock = jest.fn(() => undefined);
+  requireFreshAuthForSessionHashMock = jest.fn(async () => undefined);
   fetchMock = jest.fn();
   global.fetch = fetchMock as any;
   hostConnectionGetMock = jest.fn();
@@ -1133,6 +1161,120 @@ describe("hosts.createHost", () => {
 
     expect(insertedMetadata.bootstrap_channel).toBe("staging");
     expect(insertedMetadata.bootstrap_version).toBe("bootstrap-v2");
+  });
+
+  it("requires fresh auth for browser host creation when browser_id is provided", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("INSERT INTO project_hosts")) {
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO cloud_vm_work")) {
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT * FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              name: "host-name",
+              region: "us-central1",
+              status: "starting",
+              metadata: { owner: ACCOUNT_ID, size: "small", machine: {} },
+              bay_id: "bay-0",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+
+    const { createHost } = await import("./hosts");
+    await createHost({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      name: "host-name",
+      region: "us-central1",
+      size: "small",
+      machine: { cloud: "gcp", metadata: {} },
+    });
+
+    expect(getBrowserAuthSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+    });
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+    });
+  });
+});
+
+describe("hosts browser fresh auth gating", () => {
+  beforeEach(() => {
+    process.env.LOGS = os.tmpdir();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
+    isAdminMock = jest.fn(async () => false);
+    isBannedMock = jest.fn(async () => false);
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-0",
+      epoch: 1,
+    }));
+    getBrowserAuthSessionHashMock = jest.fn(() => undefined);
+  });
+
+  it("rejects browser host start without a fresh-auth browser session", async () => {
+    const { startHost } = await import("./hosts");
+    await expect(
+      startHost({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+    });
+  });
+
+  it("checks fresh auth before host machine updates when browser_id is provided", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                  metadata: { cpu: 4, ram_gb: 16 },
+                },
+                pricing_model: "on_demand",
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+
+    const { updateHostMachine } = await import("./hosts");
+    await updateHostMachine({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      id: HOST_ID,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+    });
   });
 });
 
@@ -3175,12 +3317,9 @@ describe("hosts.resolveHostConnection", () => {
   });
 
   it("returns project owner effective limits locally for host callers", async () => {
-    queryMock = jest.fn(async (sql: string, params?: any[]) => {
-      if (sql.includes("FROM projects")) {
-        expect(params).toEqual([REMOTE_PROJECT_ID]);
-        return { rows: [{ account_id: "owner-1" }] };
-      }
-      return { rows: [] };
+    getProjectUsageAccountIdMock = jest.fn(async (project_id: string) => {
+      expect(project_id).toBe(REMOTE_PROJECT_ID);
+      return "owner-1";
     });
     resolveMembershipForAccountMock = jest.fn(async () => ({
       effective_limits: {

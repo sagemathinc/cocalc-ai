@@ -31,6 +31,10 @@ import {
   processPaymentIntents,
 } from "./api";
 import { Alert, Button, Card, Modal, Space, Spin } from "antd";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { loadStripe } from "@cocalc/frontend/billing/stripe";
 import { Tooltip } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
@@ -74,6 +78,9 @@ export default function StripePayment({
   const [hasPaymentMethods, setHasPaymentMethods] = useState<boolean | null>(
     null,
   );
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
   const safeLineItems = lineItems ?? [];
 
   useEffect(() => {
@@ -132,13 +139,15 @@ export default function StripePayment({
                   onClick={async () => {
                     try {
                       setLoading(true);
-                      await createPaymentIntent({
-                        description,
-                        lineItems: safeLineItems,
-                        purpose,
-                        metadata,
+                      await runFreshAuthAction(async () => {
+                        await createPaymentIntent({
+                          description,
+                          lineItems: safeLineItems,
+                          purpose,
+                          metadata,
+                        });
+                        onFinished?.(stripeToMoney(totalStripe).toNumber());
                       });
-                      onFinished?.(stripeToMoney(totalStripe).toNumber());
                     } catch (err) {
                       setError(`${err}`);
                     } finally {
@@ -197,6 +206,7 @@ export default function StripePayment({
           </Button>
         </div>
       )}
+      <FreshAuthModal {...freshAuthModalProps} />
     </Card>
   );
 }
@@ -622,15 +632,20 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
   const [error, setError] = useState<string>("");
   const [secret, setSecret] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const load = async () => {
     try {
       setLoading(true);
       setError("");
-      const intent = await createSetupIntent({
-        description: "Add a new payment method.",
+      await runFreshAuthAction(async () => {
+        const intent = await createSetupIntent({
+          description: "Add a new payment method.",
+        });
+        setSecret(intent);
       });
-      setSecret(intent);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -648,14 +663,17 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
 
   if (error) {
     return (
-      <ShowError
-        style={style}
-        error={error}
-        setError={(error) => {
-          setError(error);
-          load();
-        }}
-      />
+      <>
+        <ShowError
+          style={style}
+          error={error}
+          setError={(error) => {
+            setError(error);
+            load();
+          }}
+        />
+        <FreshAuthModal {...freshAuthModalProps} />
+      </>
     );
   }
 
@@ -664,22 +682,25 @@ function CollectPaymentMethod({ style, onFinished }: { style?; onFinished? }) {
   }
 
   return (
-    <Elements
-      options={{
-        ...secret,
-        appearance: {
-          theme: "stripe",
-        },
-        loader: "never",
-      }}
-      stripe={loadStripe()}
-    >
-      <FinishCollectingPaymentMethod
-        style={style}
-        onFinished={onFinished}
-        setError={setError}
-      />
-    </Elements>
+    <>
+      <Elements
+        options={{
+          ...secret,
+          appearance: {
+            theme: "stripe",
+          },
+          loader: "never",
+        }}
+        stripe={loadStripe()}
+      >
+        <FinishCollectingPaymentMethod
+          style={style}
+          onFinished={onFinished}
+          setError={setError}
+        />
+      </Elements>
+      <FreshAuthModal {...freshAuthModalProps} />
+    </>
   );
 }
 

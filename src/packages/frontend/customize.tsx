@@ -116,11 +116,6 @@ export interface CustomizeState {
   logo_square: string;
   max_upgrades: TypedMap<Partial<Upgrades>>;
 
-  // Commercialization parameters.
-  // Be sure to also update disableCommercializationParameters
-  // below if you change these:
-  nonfree_countries?: List<string>;
-
   onprem_quota_heading: string;
   organization_email: string;
   organization_name: string;
@@ -211,10 +206,6 @@ export class CustomizeStore extends Store<CustomizeState> {
 }
 
 export class CustomizeActions extends Actions<CustomizeState> {
-  disableCommercializationParameters = () => {
-    this.setState({});
-  };
-
   reload = async () => {
     await loadCustomizeState();
   };

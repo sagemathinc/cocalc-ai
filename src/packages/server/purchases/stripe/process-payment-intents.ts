@@ -16,6 +16,7 @@ import {
   SUBSCRIPTION_RENEWAL,
   RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
+  MEMBERSHIP_PACKAGE_PURCHASE,
   VOUCHER_PURCHASE,
 } from "@cocalc/util/db-schema/purchases";
 import {
@@ -38,8 +39,24 @@ import getPool from "@cocalc/database/pool";
 import { getTransactionClient } from "@cocalc/database/pool";
 import { recordPaymentIntent } from "./create-payment-intent";
 import createVouchers from "@cocalc/server/vouchers/create-vouchers";
+import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
+import type { MembershipPackageProduct } from "@cocalc/util/db-schema/shopping-cart-items";
 
 const logger = getLogger("purchases:stripe:process-payment-intents");
+
+function getMembershipPackageProductFromMetadata(
+  metadata?: Record<string, string>,
+): MembershipPackageProduct {
+  const value = `${metadata?.membership_package_product ?? ""}`.trim();
+  if (!value) {
+    throw Error("membership package purchase metadata is missing");
+  }
+  const product = JSON.parse(value);
+  if (product?.type !== "membership-package") {
+    throw Error("invalid membership package purchase metadata");
+  }
+  return product;
+}
 
 export default async function processPaymentIntents({
   paymentIntents,
@@ -259,6 +276,10 @@ customer.  So we don't know what to do with this.  Please manually investigate.
           });
         } else if (paymentIntent.metadata.purpose == MEMBERSHIP_CHANGE) {
           result = `the membership change to ${paymentIntent.metadata.membership_class} was not applied`;
+        } else if (
+          paymentIntent.metadata.purpose == MEMBERSHIP_PACKAGE_PURCHASE
+        ) {
+          result = "the membership package purchase was not completed";
         } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
           const statement_id = parseInt(
             paymentIntent.metadata.purpose.split("-")[1],
@@ -391,6 +412,21 @@ ${await support()}`;
             | "year",
           allowDowngrade: paymentIntent.metadata.allow_downgrade === "true",
           storeVisibleOnly: true,
+        });
+      } else if (
+        paymentIntent.metadata.purpose == MEMBERSHIP_PACKAGE_PURCHASE
+      ) {
+        const product = getMembershipPackageProductFromMetadata(
+          paymentIntent.metadata,
+        );
+        reason =
+          product.package_id != null
+            ? `expand membership package ${product.package_id}`
+            : `purchase a ${product.kind} membership package`;
+        await purchaseMembershipPackage({
+          account_id,
+          product,
+          amount,
         });
       } else if (paymentIntent.metadata.purpose == VOUCHER_PURCHASE) {
         const amountEach = Number(paymentIntent.metadata.voucher_amount ?? 0);

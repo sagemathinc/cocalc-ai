@@ -151,6 +151,10 @@ import {
   registerAccountCommand,
   type AccountCommandDeps,
 } from "./commands/account";
+import {
+  registerMembershipCommand,
+  type MembershipCommandDeps,
+} from "./commands/membership";
 import { registerBayCommand, type BayCommandDeps } from "./commands/bay";
 import {
   registerNotificationsCommand,
@@ -2496,6 +2500,15 @@ const accountCommandDeps = {
 } satisfies AccountCommandDeps;
 
 registerAccountCommand(program, accountCommandDeps);
+
+const membershipCommandDeps = {
+  withContext,
+  toIso,
+  resolveAccountByIdentifier,
+  resolveProject,
+} satisfies MembershipCommandDeps;
+
+registerMembershipCommand(program, membershipCommandDeps);
 
 const bayCommandDeps = {
   withContext,

@@ -98,7 +98,7 @@ function getUsageAlerts(
     alerts.push({
       key: "max-projects",
       type: "warning",
-      title: "This user is over the owned project limit.",
+      title: "This user is over the project limit.",
     });
   }
   if (
@@ -108,7 +108,8 @@ function getUsageAlerts(
     alerts.push({
       key: "partial-sampling",
       type: "warning",
-      title: "Usage totals are only partially sampled from owned projects.",
+      title:
+        "Usage totals are only partially sampled from this user's attributed projects.",
     });
   }
   if (usageStatus.over_managed_egress_5h) {
@@ -193,12 +194,14 @@ export function AdminMembership({ account_id }: { account_id: string }) {
         details?.selected.class === candidate.class &&
         details?.selected.source === candidate.source;
       return {
-        key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? "admin"}`,
+        key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? candidate.grant_id ?? "admin"}`,
         tier: tierLabels[candidate.class] ?? candidate.class,
         source:
           candidate.source === "subscription"
             ? "Subscription"
-            : "Admin assigned",
+            : candidate.source === "grant"
+              ? "Granted"
+              : "Admin assigned",
         priority: candidate.priority,
         expires: candidate.expires,
         subscription_id: candidate.subscription_id,
@@ -319,6 +322,49 @@ export function AdminMembership({ account_id }: { account_id: string }) {
           ) : (
             <Text type="secondary">No admin-assigned membership.</Text>
           )}
+          <Divider style={{ margin: "16px 0" }} />
+          <div>
+            <Text strong>Active membership sources</Text>
+            {candidateRows.length === 0 ? (
+              <div style={{ marginTop: "8px" }}>
+                <Text type="secondary">
+                  No active subscriptions or admin assignments.
+                </Text>
+              </div>
+            ) : (
+              <Table
+                style={{ marginTop: "8px" }}
+                size="small"
+                pagination={false}
+                dataSource={candidateRows}
+                columns={[
+                  {
+                    title: "Tier",
+                    dataIndex: "tier",
+                    render: (value, row) => (
+                      <Space>
+                        {value}
+                        {row.selected && <Tag color="blue">Selected</Tag>}
+                      </Space>
+                    ),
+                  },
+                  { title: "Source", dataIndex: "source" },
+                  { title: "Priority", dataIndex: "priority" },
+                  {
+                    title: "Expires",
+                    dataIndex: "expires",
+                    render: (value) =>
+                      value ? <TimeAgo date={value} /> : "Never",
+                  },
+                  {
+                    title: "Subscription id",
+                    dataIndex: "subscription_id",
+                    render: (value) => value ?? "—",
+                  },
+                ]}
+              />
+            )}
+          </div>
           <div style={{ marginTop: "10px" }}>
             <Space
               orientation="vertical"
@@ -373,49 +419,6 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                 and admin assignments.
               </Text>
             </Space>
-          </div>
-          <Divider style={{ margin: "16px 0" }} />
-          <div>
-            <Text strong>Active membership sources</Text>
-            {candidateRows.length === 0 ? (
-              <div style={{ marginTop: "8px" }}>
-                <Text type="secondary">
-                  No active subscriptions or admin assignments.
-                </Text>
-              </div>
-            ) : (
-              <Table
-                style={{ marginTop: "8px" }}
-                size="small"
-                pagination={false}
-                dataSource={candidateRows}
-                columns={[
-                  {
-                    title: "Tier",
-                    dataIndex: "tier",
-                    render: (value, row) => (
-                      <Space>
-                        {value}
-                        {row.selected && <Tag color="blue">Selected</Tag>}
-                      </Space>
-                    ),
-                  },
-                  { title: "Source", dataIndex: "source" },
-                  { title: "Priority", dataIndex: "priority" },
-                  {
-                    title: "Expires",
-                    dataIndex: "expires",
-                    render: (value) =>
-                      value ? <TimeAgo date={value} /> : "Never",
-                  },
-                  {
-                    title: "Subscription id",
-                    dataIndex: "subscription_id",
-                    render: (value) => value ?? "—",
-                  },
-                ]}
-              />
-            )}
           </div>
           <Divider style={{ margin: "16px 0" }} />
           <div>

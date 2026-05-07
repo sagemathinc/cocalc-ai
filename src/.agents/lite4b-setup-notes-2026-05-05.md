@@ -7,10 +7,27 @@ These are the concrete operational facts for working on the `lite4b` dev setup.
 - Load hub admin env before using the CoCalc CLI:
   - `cd /home/user/cocalc-ai/src`
   - `eval "$(pnpm -s dev:hub:env)"`
+- For new CLI work that only exists in the repo build, use the repo-built CLI directly:
+  - `node /home/user/cocalc-ai/src/packages/cli/dist/bin/cocalc.js ...`
+  - do not assume the installed `/opt/cocalc` CLI includes the newest commands yet
 - In this setup, the local dev hub at `http://localhost:9100` is fronted by public Cloudflare at:
   - `https://lite4b.cocalc.ai`
 - The public software endpoint is therefore:
   - `https://lite4b.cocalc.ai/software`
+
+## CLI auth caveat for smoke tests
+
+- `dev:hub:env` is correct for admin/control-plane work, but it also exports admin-oriented auth context such as:
+  - `COCALC_ACCOUNT_ID`
+  - `COCALC_HUB_PASSWORD`
+- That context can override the intended identity when trying to smoke test account-scoped flows with a disposable user's API key.
+- For smoke tests that must run as a non-admin account, explicitly clear the hub-admin auth env and force API-key auth:
+  - `env -u COCALC_ACCOUNT_ID -u COCALC_HUB_PASSWORD -u COCALC_BEARER_TOKEN COCALC_API_KEY='<user-api-key>' node /home/user/cocalc-ai/src/packages/cli/dist/bin/cocalc.js --no-daemon ...`
+- A reliable verification command is:
+  - `... cocalc.js --no-daemon auth status --check --json`
+- In the correct setup for a disposable smoke user:
+  - `effective_remote_auth` should be `api_key`
+  - `check.account_id` should match the intended smoke account
 
 ## Browser / UI
 

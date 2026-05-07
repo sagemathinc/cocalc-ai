@@ -1,32 +1,1434 @@
-In the meantime I think it'll be a nontrivial amount of work to come up with a good spec for 
+# Membership / Billing / Dedicated Hosts V1 Plan
 
+## Status
+
+This is the corrected V1 plan after re-checking the actual multi-bay
+architecture.
+
+The earlier version of this document got the product model mostly right, but it
+did not fully account for where billing and entitlement state must live in a
+real multi-bay cluster.
+
+This version treats:
+
+- multi-bay as the real architecture
+- one-bay as a special case of that architecture
+- account home bay, project owning bay, and seed-global state as separate
+  authorities with explicit responsibilities
+
+## Purpose
+
+This plan covers the remaining major user-visible release work in `cocalc-ai`:
+
+- personal memberships
 - student pay
-- domain memberships
-- instructor paying for a class, 
-- etc.
+- instructor-paid course seats
+- team seats
+- domain / site licenses
+- dedicated host pricing and billing
 
-GOALS:
+The goal is to implement these correctly inside the existing multi-bay control
+plane instead of building a one-bay billing system that would have to be
+rewritten later.
 
-- leverage cleanly what we have ALREADY implemented around memberships and throttling:
-  - various local and global quotas on storage, number of projects, egress, AI usage, etc.
-  - don't try to come up with any model that causes undue tension with this implementation
-- must be EASY for users to understand and use.  This is absolutely critical.     I have come up with several purchasing models over the last 9 years, and I don't think any are easy.
-- our customers (cocalc.com) so far are classrooms/departments/universities, and also indiviuals/researchers/hobbyists.   However, it would be better if our users were more small-medium business, enterprise, etc., and education was more for visibility.  Also, academic researchers and research labs could be good customers and a natural fit.
-- cocalc-ai is aimed at technical users who probably don't know who to program well, but have 
-- we REALLY want to _grow_ usage with this new product (cocalc-ai).  This would open a lot of other options.
+## Core Product Goals
 
-Thoughts:
+1. Memberships are account-wide, not project-scoped.
+2. Billing and limits are understandable to users.
+3. Course / teaching workflows do not bill or throttle instructors for student
+   usage.
+4. Domain / site licensing has a non-SSO transition path.
+5. Dedicated hosts are competitive and explicit about pricing.
+6. The implementation is correct under multi-bay routing and account rehome.
 
-Obviously, a university-wide arrangement is the easiest thing for instructors/students to use, and also the best for my company:
+## Non-Negotiable Architecture Invariants
 
-   - more demonstrated active usage and uptake of cocalc-ai
-   - more revenue (university can justify spending more)
-However, the best way to get to a university-wide license in some cases is to have single class or department use cocalc.  How can we do that given that the membership can't be determined by just the email
-domain. 
+These are the invariants this plan must satisfy.
 
-Ideas:
+### 1. One architecture
 
-   - We could sell a class membership package.
-   - It's for "n students".
-   - Instructor associates it with the class
-   - When students get added to the course they are also recorded in the membership package.
+The real architecture is multi-bay.
+
+One-bay deployments are only the degenerate case where:
+
+- account home bay
+- project owning bay
+- seed/global authority
+
+all happen to collapse to one bay.
+
+### 2. Account-facing billing state is home-bay authoritative
+
+All account-scoped billing and entitlement state belongs to the account home
+bay.
+
+This includes:
+
+- purchases
+- subscriptions
+- statements
+- account balance and quota state
+- account billing settings and payment-provider references
+- membership grants where the account is the beneficiary
+- membership packages where the account is the payer / owner
+- membership package assignments for packages owned by that account
+
+This supports:
+
+- data locality
+- scalability
+- account rehome as a first-class workflow
+
+### 3. Project-specific course state is project-owning-bay authoritative
+
+Anything tied to the project row itself remains on the project owning bay.
+
+This includes:
+
+- course `payInfo`
+- course student-project metadata
+- `projects.usage_account_id`
+- project usage measurements
+
+### 4. Seed/global state is only for cluster-global facts
+
+Seed-global authoritative state is allowed only for facts that are inherently
+cluster-wide and not naturally owned by one account home bay.
+
+This includes:
+
+- cluster account directory
+- institutional claim scopes for domain / site licensing
+- canonical claim-identity dedupe records
+- provider pricing catalog for dedicated hosts
+
+### 5. Cross-bay discovery uses directories or projections, not scans
+
+No purchase, claim, or entitlement flow may depend on:
+
+- scanning every bay
+- querying arbitrary remote bays until something matches
+- assuming the seed has a full copy of account-home-bay billing tables
+
+Cross-bay discovery must go through explicit cluster-global directories or
+projections.
+
+### 6. Account rehome must move all home-bay billing state
+
+If account-facing billing state belongs to the home bay, then account rehome
+must move it.
+
+This is not optional.
+
+The current rehome workflow only copies small portable projection/session state.
+That is not enough for purchases, subscriptions, statements, or owned
+membership packages.
+
+## What Already Exists
+
+### Memberships and entitlements
+
+- membership resolution is already account-based in
+  `src/packages/server/membership/resolve.ts`
+- tiers are already admin-configurable in
+  `src/packages/server/membership/tiers.ts`
+- account-wide membership UI already exists
+
+### Usage limits and throttling
+
+- `projects.usage_account_id` was already introduced as the correct basis for
+  course/student attribution
+- storage / snapshot / backup / managed-egress logic already started moving in
+  that direction
+
+### Course / package foundations
+
+- `membership_grants`
+- `membership_packages`
+- `membership_package_assignments`
+
+already exist in code and schema.
+
+### Current architecture gap
+
+The current implementation is not yet multi-bay-correct:
+
+- browser transport now routes new package calls to the account home bay
+- but backend package/billing code still does direct local DB reads and writes
+- there is no seed-global package / assignment directory
+- account rehome does not copy purchases, subscriptions, statements, grants, or
+  packages
+
+This document addresses that gap directly.
+
+## State Ownership Model
+
+There are four relevant state classes.
+
+## A. Account Home Bay Authoritative State
+
+This state is written and read on the account home bay.
+
+### Billing ledger
+
+- `purchases`
+- `subscriptions`
+- `statements`
+- account balance / quota state
+- account automatic-payment / billing preference state
+- payment-provider references tied to the account
+
+### Membership state for the account
+
+- `membership_grants` where `account_id` is the beneficiary
+
+### Owned package state
+
+- `membership_packages` where `owner_account_id` is this account
+- `membership_package_assignments` for those packages
+- frozen package seat pricing / package metadata used for future seat expansion
+
+### Why this belongs here
+
+- it is account-scoped
+- it is privacy-sensitive
+- it must move cleanly on account rehome
+- it scales by distributing users across bays
+
+## B. Project Owning Bay Authoritative State
+
+This state is tied to project ownership, not account billing.
+
+- course `payInfo`
+- course project metadata
+- student project metadata
+- `projects.usage_account_id`
+- project storage usage
+- project backup / snapshot counts
+- background project egress attribution inputs
+
+### Why this belongs here
+
+- it is part of the project row and project lifecycle
+- project move already has its own workflow
+- account rehome must not imply project move
+
+## C. Seed / Global Authoritative State
+
+This state is cluster-global by nature.
+
+### Cluster account directory
+
+Already exists and remains the authority for:
+
+- `account_id -> home_bay_id`
+- email / account lookup for routing
+
+### Institutional claim scopes
+
+Needed for `domain` and `site` licensing.
+
+These records define the institutional scope that multiple packages may belong
+to, for example:
+
+- `example.edu`
+- `university-x-site-license-2026`
+
+### Canonical institutional claim identities
+
+Needed to prevent one person from claiming multiple institutional memberships
+using `+alias` emails.
+
+For example:
+
+- `foo@example.edu`
+- `foo+1@example.edu`
+- `foo+lab@example.edu`
+
+must map to one canonical institutional identity for claim purposes.
+
+### Dedicated-host provider price catalog
+
+The synced provider price catalog is cluster-global and not naturally account
+local.
+
+## D. Seed / Global Projection State
+
+These are not billing source-of-truth tables. They exist for routing and
+cross-bay discovery.
+
+### Package directory projection
+
+One row per package, with enough metadata to discover:
+
+- package kind
+- owner account
+- owner home bay
+- active term
+- seat capacity summary
+- claim scope, if any
+
+### Assignment / reservation directory projection
+
+One row per active assignment or reservation, with enough metadata to discover:
+
+- package id
+- owner home bay
+- assigned account id, if known
+- reserved email address, if present
+- claim scope / canonical identity key, if present
+- revoked status
+
+### Why projections instead of global authority
+
+The package itself is paid for by a specific account and belongs on that
+account's home bay. The seed only needs enough replicated information to route
+cross-bay claim and assignment flows.
+
+## Product Decisions That Still Stand
+
+These earlier decisions remain correct.
+
+### Memberships are account-wide
+
+- `student pay` grants account-wide `student`
+- team/site/domain seats grant account-wide memberships
+- no return to project-scoped paid upgrades
+
+### `projects.usage_account_id` is required
+
+Usage attribution remains:
+
+1. `projects.usage_account_id`
+2. otherwise `course.account_id` for student course projects
+3. otherwise project owner
+
+### Dedicated-host egress is not billed separately
+
+Egress remains part of the membership / entitlement model, not a separate
+dedicated-host per-GB line item.
+
+### Dedicated hosts are billed to the host owner
+
+Not to collaborators or to the project owner unless that is the same account.
+
+### Dedicated hosts are billed monthly, with separate credit and prepaid controls
+
+Dedicated-host usage is still charged on the normal monthly billing path, but
+the admission policy must distinguish:
+
+- postpaid credit exposure
+- prepaid host-usage exposure
+- payment/top-up fraud controls
+
+These are separate risks and should not be collapsed into one limit.
+
+Monthly statements remain the main collection model for posted charges.
+
+The key dedicated-host windows should be:
+
+- `credit_spend_limit_5h`
+- `credit_spend_limit_7d`
+- `prepaid_host_usage_limit_5h`
+- `prepaid_host_usage_limit_7d`
+
+Later, if needed, there can also be separate funding-event limits such as:
+
+- `prepaid_topup_limit_5h`
+- `prepaid_topup_limit_7d`
+
+But those should remain distinct from host-usage admission.
+
+### Free tier / trial policy is experimental, but must be bounded
+
+The exact public free-tier policy should not be locked down too early.
+
+This is a competitive-market product question, and the right answer will likely
+require safe experimentation.
+
+What must be decided now is not one exact free plan. It is the architecture
+envelope within which free/trial variants can be tested without rewriting the
+entitlement model.
+
+V1 should support at least these policy modes:
+
+1. account creation with no meaningful free compute
+2. a limited personal free/trial workspace
+3. stronger free access for verified education/domain users
+4. institution-sponsored or course-invite access that is effectively free to
+   the end user
+
+Non-negotiable invariants:
+
+- generic free/trial accounts do not get dedicated-host access by default
+- free/trial compute stays behind small rolling spend/usage windows and tight
+  AI/egress/project caps
+- higher-cost free access requires stronger trust signals such as:
+  - verified email
+  - verified education/domain eligibility
+  - course/institution invitation
+  - payment method
+  - account age / manual review
+- free/trial policy must be admin-configurable and observable
+
+The important planning decision is:
+
+- free/trial is a policy layer over trust, usage windows, and product exposure
+- it is not a separate entitlement architecture
+
+### Outbound network policy should be trust-tier based
+
+For `cocalc-ai`, a blanket `no outbound internet for free users` policy would
+make the product feel broken.
+
+Modern users expect at least:
+
+- `pip install`
+- `apt install`
+- git over HTTPS
+- access to package registries and cloud/API endpoints
+
+So the correct model is not a giant domain allowlist and not unrestricted
+internet for everyone.
+
+It is a trust-tier-based network policy.
+
+#### Recommended policy classes
+
+V1 should support at least these outbound network classes:
+
+1. `none`
+2. `web-only`
+   - DNS
+   - HTTP/HTTPS
+3. `full`
+
+#### Default mapping
+
+- generic free/trial shared runtimes:
+  - `web-only`
+  - no dedicated hosts
+  - strict egress, connection-rate, and runtime windows
+- verified education / invited / institution-sponsored users:
+  - usually `web-only`
+  - higher limits than generic free/trial
+- trusted paid users:
+  - usually `full`
+  - still governed by rolling spend/trust limits
+- dedicated hosts:
+  - `full`
+  - stronger monitoring and risk controls
+
+#### Important non-goals
+
+Do not build V1 around hostname whitelists such as special-casing GitHub or
+apt mirrors.
+
+That approach is fragile, high-maintenance, and incompatible with modern
+package registries and CDN-backed downloads.
+
+The default controls should instead be:
+
+- protocol class
+- egress byte limits
+- connection-rate limits
+- concurrent connection limits
+- public exposure rights
+- trust-tier gating
+
+#### Security boundaries
+
+Even when outbound access is allowed, the platform should still default to:
+
+- no private-network access
+- no public inbound exposure by default
+- no dedicated-host access for generic free/trial users
+- no broad UDP-based internet access for low-trust users unless there is a
+  specific reason
+
+The important planning decision is:
+
+- outbound network access is another managed policy surface, like AI spend and
+  egress
+- it is not an ad hoc firewall exception list
+
+## Data Model Corrections
+
+The existing local tables stay, but their ownership semantics change.
+
+## Membership tier configuration additions
+
+Membership tiers need explicit commercial configuration beyond just
+`price_monthly` and `price_yearly`.
+
+### Trial pricing
+
+Each membership tier should support:
+
+- `trial_price`
+- `trial_period`
+
+Examples:
+
+- `$1` for the first month
+- `$0` for the first 14 days
+
+This must be configured per membership tier, not as one global trial setting.
+
+The important rule is:
+
+- trial pricing is part of membership-tier purchase configuration
+- free/trial eligibility policy is still a separate trust/abuse-control layer
+
+### Dedicated-host policy defaults
+
+Each membership tier should also carry default dedicated-host admission policy
+for:
+
+- `credit_spend_limit_5h`
+- `credit_spend_limit_7d`
+- `prepaid_host_usage_limit_5h`
+- `prepaid_host_usage_limit_7d`
+
+Optional future fields, if needed, should remain separate:
+
+- `prepaid_topup_limit_5h`
+- `prepaid_topup_limit_7d`
+
+## Home-Bay Authoritative Tables
+
+These remain bay-local and account-owned:
+
+- `membership_grants`
+- `membership_packages`
+- `membership_package_assignments`
+- `purchases`
+- `subscriptions`
+- `statements`
+
+## New Seed-Global Authoritative Tables
+
+### `membership_claim_scopes`
+
+Defines cluster-global institutional claim scopes.
+
+Suggested fields:
+
+- `id`
+- `kind`
+  - `domain`
+  - `site`
+- `scope_key`
+  - e.g. `example.edu`
+  - or internal site-license identifier
+- `metadata`
+- `created`
+- `updated`
+
+### `membership_claim_identities`
+
+Defines the canonical institutional identity that currently holds a claim
+within a scope.
+
+Suggested fields:
+
+- `claim_scope_id`
+- `canonical_identity_key`
+- `account_id`
+- `assignment_id` nullable
+- `claimed_at`
+- `revoked_at`
+- `metadata`
+
+Uniqueness rule:
+
+- at most one active claim per `(claim_scope_id, canonical_identity_key)`
+
+## New Seed-Global Projection Tables
+
+### `cluster_membership_package_directory`
+
+Suggested fields:
+
+- `package_id`
+- `owner_account_id`
+- `owner_home_bay_id`
+- `kind`
+- `membership_class`
+- `seat_count`
+- `active_assignment_count`
+- `starts_at`
+- `expires_at`
+- `claim_scope_id` nullable
+- `metadata_summary`
+- `updated_at`
+
+### `cluster_membership_assignment_directory`
+
+Suggested fields:
+
+- `assignment_id`
+- `package_id`
+- `owner_account_id`
+- `owner_home_bay_id`
+- `account_id` nullable
+- `email_address` nullable
+- `canonical_identity_key` nullable
+- `claim_scope_id` nullable
+- `revoked_at`
+- `metadata_summary`
+- `updated_at`
+
+## Canonical Identity Rules
+
+This applies only to institutional claim dedupe, not to account creation or
+login identity.
+
+### V1 canonicalization
+
+For `domain` / `site` claim scopes:
+
+- lowercase domain
+- lowercase local part
+- strip `+suffix` from the local part
+
+Examples:
+
+- `foo@example.edu`
+- `foo+1@example.edu`
+- `foo+lab@example.edu`
+
+all canonicalize to one institutional identity key.
+
+### Important limitation
+
+This does not merge accounts.
+
+Multiple CoCalc accounts can still exist. The rule is only:
+
+- one active institutional claim per canonical identity within a claim scope
+
+### Long-term upgrade path
+
+SSO subject identifiers should eventually become the stronger claim identity
+when available.
+
+## Routing Rules
+
+These flows must be explicit.
+
+## Browser to Home Bay
+
+All account membership / billing UI is served from the account home bay.
+
+That includes:
+
+- package purchase
+- package management
+- seat assignment
+- claim flow
+- billing history
+- statements
+
+## Home Bay to Project Owning Bay
+
+Used when account-scoped billing actions depend on project-owned state.
+
+Examples:
+
+- quoting or purchasing a `course` package requires reading course `payInfo`
+- course seat assignment requires updating `projects.usage_account_id`
+- student pay requires marking course payment state on the course project
+
+## Home Bay to Seed
+
+Used for cluster-global discovery or uniqueness checks.
+
+Examples:
+
+- domain / site claim discovery
+- `+alias` canonical-identity dedupe
+- package / assignment directory reads
+- provider pricing catalog reads
+
+## Home Bay to Another Account Home Bay
+
+Used when a package owned by one account grants membership to another account.
+
+Examples:
+
+- team seat assignment to an existing account
+- course seat assignment once the student account is known
+- claiming a reserved email assignment
+- claiming a domain / site seat
+
+The owner home bay remains authoritative for:
+
+- seat capacity
+- assignment existence
+- package term and pricing
+
+The beneficiary home bay remains authoritative for:
+
+- the beneficiary's local `membership_grants`
+- local membership resolution
+
+## Correct Product Flows
+
+## Personal memberships
+
+Personal membership purchase remains home-bay-local.
+
+No seed/global logic is needed beyond any cluster-wide payment-provider support
+already in place.
+
+## Student pay
+
+Correct multi-bay flow:
+
+1. browser calls the student's account home bay
+2. student home bay resolves the course project owning bay
+3. student home bay fetches current course `payInfo` from the project owning bay
+4. student home bay creates the purchase and grant locally
+5. student home bay calls the project owning bay to mark payment state and set
+   `usage_account_id`
+
+This keeps:
+
+- billing with the student
+- project state with the project
+
+## Instructor-paid course packages
+
+Correct multi-bay flow:
+
+1. instructor buys the package on the instructor home bay
+2. instructor home bay validates course info via the project owning bay
+3. package and purchase are created on instructor home bay
+4. package directory projection is published to seed
+5. seat assignment:
+   - owner home bay creates local assignment
+   - seed projection is updated
+   - student home bay gets the grant when the student account is known
+   - project owning bay gets `usage_account_id` update
+
+## Team packages
+
+Correct multi-bay flow:
+
+1. owner buys package on owner home bay
+2. owner home bay creates package and purchase locally
+3. owner home bay publishes package directory projection
+4. assigning a seat to an existing account:
+   - owner home bay creates local assignment
+   - owner home bay routes grant creation to beneficiary home bay
+   - seed assignment projection is updated
+5. reserving by email:
+   - owner home bay creates local assignment
+   - seed assignment projection is updated
+6. later claim:
+   - claimant home bay discovers the reservation through the seed projection
+   - claimant home bay calls owner home bay to consume the reservation
+   - owner home bay calls claimant home bay to create the grant
+
+## Domain / site licenses
+
+Correct multi-bay flow:
+
+1. institutional package is still paid for and owned on some account home bay
+2. a seed-global `claim_scope` is created for the institution
+3. package directory projection links the package to that scope
+4. claimant home bay:
+   - reads verified emails locally
+   - asks seed for matching claimable scope/package information
+   - checks canonical identity uniqueness
+5. claim is routed to the owner home bay
+6. owner home bay allocates capacity and records assignment
+7. beneficiary home bay receives the actual grant
+
+This is the correct split:
+
+- account-owned billing state stays local to the payer
+- institution-wide uniqueness and discovery live in seed-global state
+
+## Rehome Semantics
+
+## Account rehome must move billing state
+
+The current rehome portable-state copy is insufficient.
+
+It currently moves only:
+
+- account projections
+- auth/session state
+- account API keys
+
+It must be expanded to move all home-bay-authoritative billing data.
+
+### Must move on account rehome
+
+- `purchases` where `account_id` matches
+- `subscriptions` where `account_id` matches
+- `statements` where `account_id` matches
+- account billing settings / payment-provider references
+- `membership_grants` where `account_id` matches
+- `membership_packages` where `owner_account_id` matches
+- `membership_package_assignments` for those owned packages
+- any future dedicated-host billing cursors or account-scoped host charge state
+
+### Does not move on account rehome
+
+- project rows
+- project hosts
+- project usage measurements
+- seed-global claim scopes
+- seed-global claim identity rows
+- seed-global package / assignment directory projections
+
+### Important nuance
+
+If an account has a team/site/domain membership granted from someone else's
+package:
+
+- the owner-side package and assignment stay with the owner's home bay
+- the beneficiary's local grant row must move with the beneficiary account
+
+### Implementation requirement
+
+The current `loadPortableState` and `copyRehomeState` flow must be expanded or
+complemented by a dedicated account-billing-state copy phase.
+
+Because purchase history can be large, this should be:
+
+- batched
+- replayable
+- fenced
+- not one huge JSON aggregate blob
+
+## Package owner rehome
+
+When the package owner account rehomes:
+
+- the package rows move
+- the owner-side assignment rows move
+- the seed package / assignment directory updates `owner_home_bay_id`
+
+Beneficiary grant rows do not move unless those beneficiary accounts themselves
+rehome.
+
+## Dedicated host billing under multi-bay
+
+Dedicated-host billing also needs the same split.
+
+### Account-home-bay state
+
+- monthly host charge purchases
+- statement inclusion
+- account-level rolling dedicated-host policy settings
+  - postpaid credit exposure windows
+    - 5-hour
+    - 7-day
+  - prepaid host-usage windows
+    - 5-hour
+    - 7-day
+
+### Seed/global state
+
+- provider pricing catalog
+
+### Host-owning or control-bay state
+
+- raw host lifecycle observations
+- rate-change triggers
+- host metering intervals
+
+### Correct billing flow
+
+1. host lifecycle/rate events are produced where host control is authoritative
+2. a worker computes billable intervals
+3. before posting a charge, it resolves the owner's current home bay
+4. the charge is created as a purchase on the owner's home bay
+5. monthly statements on the home bay include that charge
+
+This allows account rehome without moving raw host-control history.
+
+### Dedicated-host risk policy
+
+Dedicated-host admission should check projected and realized spend against
+rolling windows, not only against a monthly ceiling.
+
+The default policy should be:
+
+- membership tier config sets default rolling limits for:
+  - postpaid credit exposure
+    - `credit_spend_limit_5h`
+    - `credit_spend_limit_7d`
+  - prepaid dedicated-host usage
+    - `prepaid_host_usage_limit_5h`
+    - `prepaid_host_usage_limit_7d`
+- admins can override those limits per account
+- host create/start/resize is denied if it would violate the relevant credit or
+  prepaid usage window
+- positive prepaid balance does not bypass prepaid usage windows
+- a valid payment method is required for any dedicated-host capability, even if
+  the account currently has prepaid credit
+- the last payment method should not be removable while:
+  - unpaid host charges exist
+  - active dedicated hosts exist
+  - automatic postpaid charging for dedicated hosts is enabled
+- the 5-hour window exists mainly to limit burst abuse and compromised-account
+  spend
+- the 7-day window exists to cap medium-term exposure without waiting for the
+  monthly invoice cycle
+
+Operational interpretation:
+
+- low-end paid tiers may have zero postpaid credit exposure
+- those same tiers can still be allowed meaningful prepaid dedicated-host usage
+- higher tiers can have both prepaid usage limits and nonzero credit exposure
+
+### Provider price-update policy
+
+The host pricing system needs a clear rule for when provider price changes take
+effect.
+
+V1 policy:
+
+- provider price catalogs are synced on a scheduled cadence, initially once per
+  day
+- the platform may intentionally absorb up to one day of provider price change
+  because it does not continuously poll every provider catalog
+- each detected catalog change creates a new catalog version
+- spot-priced hosts are variable-rate by design:
+  - a new detected spot price starts a new host rate-event interval
+  - the host drawer should show current rate and recent rate history
+- standard VM/disk pricing should be treated as much more stable:
+  - new catalog versions affect new create/resize/change-pricing actions
+  - unchanged running standard-priced hosts should not be silently repriced
+    mid-session
+- if a detected spot repricing materially raises projected spend, the user
+  should see that clearly in the host UI
+
+This gives operators a crisp rule:
+
+- daily sync
+- up to one day of absorbed lag
+- explicit per-host rate events for spot
+- no surprise mid-session repricing for unchanged standard hosts
+
+## Idempotency and replay requirements
+
+Billing and entitlement flows will be retried.
+
+This is guaranteed by:
+
+- payment-provider webhook retries
+- cross-bay RPC retries
+- operator replay/backfill tools
+- rehome copy/retry workflows
+
+So the plan must assume at-least-once delivery, not exactly-once delivery.
+
+V1 requirements:
+
+- every purchase, package, grant, claim, projection update, and rehome billing
+  copy step needs an idempotency key or monotonic operation id
+- cross-bay mutations must be safe to replay
+- seed-global projections should be updated by idempotent upsert/version rules
+- payment success must not be able to mint duplicate grants or duplicate
+  package expansions
+- rehome billing-copy phases must be restartable without duplicate ledger
+  creation
+
+The important invariant is:
+
+- retries are normal
+- duplicate financial or entitlement side effects are not
+
+## Implementation Plan
+
+## Phase 0: lock the multi-bay billing invariants
+
+1. update this plan
+2. write one short release-invariants note that explicitly replaces
+   `seed-owned purchases` with:
+   - account-home-bay billing authority
+   - seed-global institutional registry only
+3. stop further membership/billing implementation until all new code follows
+   those invariants
+
+## Phase 1: explicit routing and write fences
+
+1. audit all membership/purchase/package codepaths
+2. require explicit home-bay assertions for account-owned billing writes
+3. add or use `withAccountRehomeWriteFence` for billing mutations
+4. ensure course-dependent purchase flows route through project-owning-bay APIs
+   instead of local SQL assumptions
+
+## Phase 2: seed-global institutional registries and projections
+
+1. add `membership_claim_scopes`
+2. add `membership_claim_identities`
+3. add package directory projection
+4. add assignment directory projection
+5. add canonical-identity logic for domain/site claim scopes
+
+## Phase 3: correct account-home-bay package and grant flows
+
+1. keep packages and purchases on owner home bay
+2. route grant creation/revocation to beneficiary home bay
+3. route course `usage_account_id` writes to project owning bay
+4. route claim discovery through the seed projections
+
+## Phase 4: rehome-safe billing state
+
+1. add account billing-state copy workflow
+2. move purchases / subscriptions / statements on rehome
+3. move grants / owned packages / owned assignments on rehome
+4. update seed package directory ownership pointers after package-owner rehome
+5. add rehome tests for:
+   - account with purchases/subscriptions/statements
+   - account owning team packages
+   - account receiving grants from another user's package
+
+## Phase 5: finish user-visible purchase flows on the corrected architecture
+
+1. student pay on correct cross-bay routing
+2. instructor-paid course seats on correct cross-bay routing
+3. team seats on correct cross-bay routing
+4. domain/site claim flow on seed projections + canonical claim identity
+
+## Phase 6: dedicated hosts on the corrected architecture
+
+1. seed/global provider pricing catalog
+2. host rate-event history
+3. host-charge posting to owner home bay
+4. monthly statement integration
+5. host drawer pricing / charge explanation UI
+
+## Validation Requirements
+
+This plan is not complete without explicit multi-bay validation.
+
+### Required scenarios
+
+1. package owner on bay A assigns seat to user on bay B
+2. user on bay B claims reserved email seat from package on bay A
+3. domain/site claimant on bay B claims institutional seat from package on bay A
+4. student on bay B pays for course project owned on bay C
+5. account with purchases and owned packages rehomes from bay A to bay B
+6. beneficiary account with received grant rehomes from bay A to bay B
+7. active dedicated host continues billing correctly after owner account rehome
+
+## Abuse and Safety Requirements
+
+The membership and billing plan also needs explicit abuse-control design.
+
+This is not secondary work.
+
+Once accounts can:
+
+- buy memberships
+- receive institutional entitlements
+- create dedicated hosts
+- spend money on compute
+
+the abuse surface includes both account creation fraud and account takeover.
+
+### Threat classes
+
+The main classes of abuse are:
+
+1. signup and free-trial abuse
+2. payment abuse
+3. entitlement abuse
+4. account takeover
+5. infrastructure abuse
+6. operator and auditability gaps
+
+### 1. Signup and free-trial abuse
+
+The system should assume that any free-trial path will be abused if it is cheap
+to automate.
+
+V1 controls:
+
+- email verification must work reliably
+- signup and payment-intent creation must be rate limited by IP, account, and
+  device/session signals
+- free-trial eligibility must not be keyed only by email address
+- reCAPTCHA is an abuse-mitigation control, not a commercialization feature
+- reCAPTCHA should be enabled if and only if keys are configured
+
+Design principle:
+
+- do not grant meaningful compute, host access, or institutional claim power to
+  an unverified or low-trust account just because it created an account first
+
+### 2. Payment abuse
+
+Stripe Radar should be part of the standard toolbox.
+
+The key mistake to avoid is treating a just-created payment intent as proof that
+an account is trustworthy.
+
+V1 controls:
+
+- payment-provider risk signals should be stored in local billing state
+- membership/package activation should happen only after trusted payment success
+- high-risk or review-required payments should not automatically mint grants,
+  seats, or dedicated-host eligibility
+- repeated failed payment attempts and card-testing patterns should rate limit
+  further purchase attempts
+- refunds and chargebacks must be able to revoke or suspend the entitlements
+  they funded
+
+Design principle:
+
+- money movement and entitlement activation must be linked, reversible, and
+  auditable
+
+### 3. Entitlement abuse
+
+The new seat/package model has its own abuse surface:
+
+- one person trying to claim multiple institutional seats
+- package owners assigning seats to burner accounts
+- reusing `+alias` email variants to evade one-seat-per-person rules
+- manipulating course/team flows to move usage onto the wrong account
+
+V1 controls:
+
+- institutional claims must use canonical identity dedupe
+- `domain` / `site` claims should be unique per
+  `(claim_scope_id, canonical_identity_key)`
+- package assignment, revocation, reservation, and claim all need durable audit
+  records
+- `projects.usage_account_id` changes must only happen through explicit package
+  or course flows, not arbitrary user edits
+- `projects.usage_account_id` changes should be logged with actor, reason, old
+  value, and new value
+
+Design principle:
+
+- entitlement state should always answer who granted what, to whom, why, and
+  from which bay
+
+### 4. Account takeover
+
+This is now high priority.
+
+Because paid compute and dedicated hosts can consume real money, compromised
+accounts are valuable.
+
+There does not currently appear to be a real 2FA / MFA implementation in this
+codebase.
+
+That should move near the top of the release queue.
+
+V1 controls:
+
+- add 2FA for accounts that can buy or operate paid compute
+- require a fresh authentication checkpoint for dangerous billing actions
+- require a stronger identity signal before:
+  - adding or changing payment methods
+  - buying memberships or seat packages above a threshold
+  - creating or resizing dedicated hosts
+  - changing invoice or payout-critical account settings
+  - transferring or reclaiming institutional entitlements
+
+The first practical version can be TOTP-based 2FA.
+
+Passkeys/WebAuthn can be a later improvement, but the release should not ship
+paid compute without some second-factor path.
+
+Design principle:
+
+- a verified password alone is not a strong enough proof of identity for
+  dangerous actions in a paid-compute product
+
+### 5. Infrastructure abuse
+
+Dedicated hosts and project compute create the classic abuse vectors:
+
+- crypto mining
+- proxy/VPN resale
+- credential stuffing and post-compromise spend
+- mass host creation using stolen cards
+
+V1 controls:
+
+- dedicated-host eligibility should be gated by membership tier and trust level
+- new accounts should not immediately get broad host-spend rights
+- low-trust shared runtimes should default to `web-only` outbound access, not
+  unrestricted internet
+- host spend limits should be rolling-window based and admin-configurable
+  across both:
+  - postpaid credit exposure
+    - 5-hour window
+    - 7-day window
+  - prepaid dedicated-host usage
+    - 5-hour window
+    - 7-day window
+- low-trust runtimes should also have:
+  - tight egress windows
+  - connection-rate limits
+  - no public app exposure by default
+- host creation/start/resize should record who did it and under what trust state
+- risk review and emergency suspension must be possible without corrupting the
+  billing ledger
+
+Design principle:
+
+- the product should prefer reviewable throttling and suspension over silent
+  overexposure
+
+### 6. Operator and auditability requirements
+
+Abuse handling fails if operators cannot see cluster-wide state quickly.
+
+V1 should include:
+
+- account risk flags
+- package risk flags
+- payment risk flags
+- ability to suspend:
+  - purchases
+  - claims
+  - dedicated-host creation
+  - package assignment
+- cluster-visible audit trails for:
+  - grant creation/revocation
+  - package purchase/expansion
+  - institutional claim/release
+  - `usage_account_id` changes
+  - dangerous billing and host actions
+
+Design principle:
+
+- abuse controls must work across bays, not only within one account home bay
+
+### 7. Abuse analytics and operator visibility
+
+The release should include simple admin-visible analytics for account,
+membership, and payment behavior.
+
+This should be treated as part of abuse control, not as optional reporting.
+
+In practice, unusual behavior often shows up first as unusual rate changes in:
+
+- account creation
+- email verification
+- payment-intent creation / failure
+- membership grant creation
+- package purchase / expansion
+- seat reservation / claim
+- dedicated-host creation / denial
+
+#### Multi-bay architecture
+
+The correct architecture is:
+
+- authoritative event emission on the bay where the action is authoritative
+- seed-global summarized projections for cluster-wide analytics
+- both admin UI and `cocalc-cli` read the same projected analytics tables
+
+This avoids:
+
+- scanning all bays for time-series data
+- rebuilding analytics live from billing source tables
+- inventing a second incompatible admin-only data path
+
+#### Event classes to record
+
+V1 should record at least these event families:
+
+- account created
+- email verified
+- signup denied / rate-limited
+- payment intent created
+- payment intent succeeded
+- payment intent failed
+- payment flagged high-risk / review-required
+- refund created
+- chargeback / dispute opened
+- membership grant created
+- membership grant revoked / suspended
+- membership package purchased
+- membership package expanded
+- seat assigned
+- seat reserved by email
+- seat claimed
+- claim denied due to canonical-identity conflict
+- dedicated host create/start/resize requested
+- dedicated host create/start/resize denied due to trust or spend-window policy
+
+These do not need to be expensive append-only forensic logs in V1.
+
+They do need to be structured enough to support:
+
+- cluster-wide counts
+- per-bay counts
+- per-account drill-down
+- per-package and per-claim-scope drill-down
+- anomaly detection by simple thresholding and baseline comparison
+
+#### Recommended rollups
+
+V1 rollups should be small and obvious:
+
+- 5-minute buckets
+- 1-hour buckets
+- 1-day buckets
+
+Grouped by:
+
+- event type
+- bay id
+- membership/package kind when relevant
+- payment result / risk state when relevant
+
+This is enough to support:
+
+- burst detection
+- day-over-day comparison
+- short-window abuse investigation
+- admin dashboard charts
+
+#### Admin UI surfaces
+
+The admin UI should expose a minimal abuse analytics panel with:
+
+- SVG time-series plots for:
+  - account creation
+  - email verification
+  - payment intent create/success/failure/review
+  - membership grant creation/revocation
+  - package purchase/expansion
+  - seat reservation/claim
+  - dedicated-host create/deny
+- current 5-hour and 7-day counters for host-spend denials and risk-triggered
+  blocks
+- top recent spikes by event type
+- links from unusual spikes into filtered admin account/package views
+
+The goal is not a full BI tool.
+
+The goal is that an operator can look at one page and immediately answer:
+
+- are signups behaving strangely?
+- are payment attempts behaving strangely?
+- are institutional claims behaving strangely?
+- are host requests spiking abnormally?
+
+#### `cocalc-cli` surfaces
+
+`cocalc-cli` should expose the same operator information in text/JSON form.
+
+The CLI should not implement a second analytics backend. It should query the
+same summarized projections as the admin UI.
+
+V1 should include commands along the lines of:
+
+- `cocalc admin abuse summary`
+- `cocalc admin abuse timeseries --event payment_intent_failed --window 24h`
+- `cocalc admin abuse account <account_id>`
+- `cocalc admin abuse package <package_id>`
+- `cocalc admin abuse claim-scope <claim_scope_id>`
+
+The exact command names can change. The invariant is:
+
+- admin UI and CLI should agree because they read the same projected data
+
+#### Codex-assisted abuse review
+
+Codex should be an explicit part of the abuse-detection loop.
+
+The intended model is:
+
+- an admin can mint a restricted-scope operator credential
+- a scheduled Codex loop can run `cocalc abuse ...` and related read-only admin
+  commands
+- Codex reviews the summarized analytics and recent suspicious events
+- Codex alerts humans when something looks unusual
+
+This is useful because many abuse incidents first appear as patterns that are
+statistically odd but not yet captured by one hard threshold.
+
+V1 requirements:
+
+- support restricted-scope operator credentials for machine use
+- support a read-only abuse-review scope that can:
+  - read abuse analytics rollups
+  - read filtered account/package/claim/host summaries
+  - read recent risk flags and denial reasons
+- keep destructive actions out of that scope by default
+
+Important boundary:
+
+- Codex can triage and alert
+- humans decide on punitive or high-risk actions unless an explicit,
+  separately-audited automation rule exists
+
+This keeps the first version useful without making an LLM the sole authority
+for suspensions, refunds, or entitlement removal.
+
+#### Privacy and retention
+
+These analytics should default to aggregated counts and identifiers already
+known to operators.
+
+They should not require shipping unnecessary raw PII into a global analytics
+store just to make charts.
+
+V1 should prefer:
+
+- counts
+- bay ids
+- account ids
+- package ids
+- claim-scope ids
+- coarse risk/status categories
+
+over copying full request payloads or payment-provider blobs into analytics
+tables.
+
+### Recommended release priorities
+
+From the abuse/safety point of view, the near-term order should be:
+
+1. ensure payment maintenance and entitlement activation are trustworthy
+2. implement 2FA and fresh-auth checkpoints for dangerous actions
+3. finish email verification and reCAPTCHA support
+4. add canonical institutional claim dedupe
+5. add operator risk flags and suspension controls
+6. add dedicated-host trust gating before broader host rollout
+
+## Summary
+
+The correct V1 split is:
+
+- account-owned billing history and owned packages live on the account home bay
+- project-specific course and usage state live on the project owning bay
+- institution-wide claim scopes and canonical identity dedupe live on seed/global
+- cross-bay discovery uses seed-global projections, not scans
+
+This is more work than the earlier one-bay-assuming version of the plan, but it
+is the correct architecture and avoids building billing state that would break
+under the real multi-bay deployment.
+
+## Further TODO
+
+- [ ] update the master release plan to remove the obsolete `seed-owned purchases/billing authority for first release` assumption
+- [ ] implement canonical `+alias` identity dedupe for domain/site claims
+      [ ] ensure that subscription maintenance, statements, payment-intent processing, and automatic payments DO run. Right now gated behind kucalc and commercial flags.
+- [ ] add Cloudflare Email Service support for verification and notifications
+- [ ] add `cocalc-cli` operator/testing support for package, claim, and rehome flows
+- [ ] abuse mitigation:
+  - [ ] 2FA / MFA for paid-compute accounts
+  - [ ] fresh-auth checkpoints for dangerous billing and host actions
+  - [ ] captcha -- finish implementing support
+  - [ ] Stripe Radar integration and payment-risk handling policy
+  - [ ] chargeback/refund-driven entitlement suspension policy
+  - [ ] operator risk flags and cluster-wide abuse audit surfaces
+  - [ ] seed-global abuse analytics rollups for admin UI and `cocalc-cli`

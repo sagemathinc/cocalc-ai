@@ -708,3 +708,124 @@ test("account rehome-drain forwards write mode and metadata", async () => {
     only_if_tag: "qa-drain",
   });
 });
+
+test("account repair-membership defaults to a dry run", async () => {
+  let captured: any;
+  let resolvedIdentifier: string | undefined;
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          system: {
+            repairAccountMembershipPortability: async (opts) => {
+              captured = opts;
+              return {
+                account_id: opts.user_account_id,
+                home_bay_id: "bay-2",
+                dry_run: opts.dry_run,
+                clear_stale: opts.clear_stale,
+                scanned_bays: [],
+                source_bays_with_rows: [],
+                stale_bay_ids: [],
+                cleared_stale_bay_ids: [],
+                merged_counts: {
+                  membership_grants: 0,
+                  membership_packages: 0,
+                  membership_package_assignments: 0,
+                  membership_side_effects_outbox: 0,
+                  total: 0,
+                },
+                applied: false,
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async (_ctx, identifier) => {
+      resolvedIdentifier = identifier;
+      return {
+        account_id: "22222222-2222-2222-2222-222222222222",
+        email_address: "qa@example.com",
+      };
+    },
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "account",
+    "repair-membership",
+    "qa@example.com",
+  ]);
+
+  assert.equal(resolvedIdentifier, "qa@example.com");
+  assert.deepEqual(captured, {
+    user_account_id: "22222222-2222-2222-2222-222222222222",
+    dry_run: true,
+    clear_stale: false,
+  });
+});
+
+test("account repair-membership forwards write and clear-stale flags", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAccountCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        accountId: "11111111-1111-1111-1111-111111111111",
+        hub: {
+          system: {
+            repairAccountMembershipPortability: async (opts) => {
+              captured = opts;
+              return {
+                account_id: opts.user_account_id,
+                home_bay_id: "bay-1",
+                dry_run: opts.dry_run,
+                clear_stale: opts.clear_stale,
+                scanned_bays: [],
+                source_bays_with_rows: [],
+                stale_bay_ids: [],
+                cleared_stale_bay_ids: ["bay-0"],
+                merged_counts: {
+                  membership_grants: 1,
+                  membership_packages: 1,
+                  membership_package_assignments: 1,
+                  membership_side_effects_outbox: 1,
+                  total: 4,
+                },
+                applied: true,
+              };
+            },
+          },
+        },
+      };
+      return await fn(ctx);
+    },
+    toIso: (value) => value,
+    resolveAccountByIdentifier: async () => ({
+      account_id: "22222222-2222-2222-2222-222222222222",
+      email_address: "qa@example.com",
+    }),
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "account",
+    "repair-membership",
+    "qa@example.com",
+    "--write",
+    "--clear-stale",
+  ]);
+
+  assert.deepEqual(captured, {
+    user_account_id: "22222222-2222-2222-2222-222222222222",
+    dry_run: false,
+    clear_stale: true,
+  });
+});

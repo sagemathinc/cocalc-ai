@@ -6,7 +6,7 @@
 import type { ManagedProjectEgressCategory } from "@cocalc/server/membership/managed-egress";
 import {
   getManagedEgressUsageForAccount,
-  getProjectOwnerAccountId,
+  getProjectUsageAccountId,
 } from "@cocalc/server/membership/managed-egress";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
@@ -32,7 +32,7 @@ export async function getManagedProjectEgressPolicy(opts: {
   const project_id = `${opts.project_id ?? ""}`.trim() || undefined;
   const account_id =
     `${opts.account_id ?? ""}`.trim() ||
-    (project_id ? await getProjectOwnerAccountId(project_id) : undefined);
+    (project_id ? await getProjectUsageAccountId(project_id) : undefined);
   if (!account_id) {
     return {
       category: opts.category,

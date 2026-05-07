@@ -1,6 +1,5 @@
 import { Map as ImmutableMap } from "immutable";
 import { redux as appRedux } from "@cocalc/frontend/app-framework";
-import { allow_project_to_run } from "@cocalc/frontend/project/client-side-throttle";
 
 import { ProjectsActions } from "./actions";
 import { store } from "./store";
@@ -18,10 +17,6 @@ jest.mock("./store", () => ({
 
 jest.mock("@cocalc/frontend/project/archive-info", () => ({
   getBackups: jest.fn(),
-}));
-
-jest.mock("@cocalc/frontend/project/client-side-throttle", () => ({
-  allow_project_to_run: jest.fn(async () => true),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -68,9 +63,6 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 const mockedStore = store as jest.Mocked<typeof store>;
 const mockedWebappClient = webapp_client as jest.Mocked<typeof webapp_client>;
 const getBackupsMock = getBackups as jest.MockedFunction<typeof getBackups>;
-const allowProjectToRunMock = allow_project_to_run as jest.MockedFunction<
-  typeof allow_project_to_run
->;
 
 describe("ProjectsActions archive flow", () => {
   const project_id = "11111111-1111-4111-8111-111111111111";
@@ -149,7 +141,6 @@ describe("ProjectsActions archive flow", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    allowProjectToRunMock.mockResolvedValue(true);
   });
 
   afterEach(() => {

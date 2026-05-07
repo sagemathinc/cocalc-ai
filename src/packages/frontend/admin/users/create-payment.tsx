@@ -8,6 +8,10 @@ import {
   Space,
   Spin,
 } from "antd";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { createPaymentIntent } from "@cocalc/frontend/purchases/api";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { useRef, useState } from "react";
@@ -37,6 +41,9 @@ export default function CreatePayment({ account_id, onClose }: Props) {
   const [error, setError] = useState<string>("");
   const [done, setDone] = useState<boolean>(false);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const doIt = async () => {
     if (typeof amount != "number") {
@@ -45,13 +52,18 @@ export default function CreatePayment({ account_id, onClose }: Props) {
     try {
       setError("");
       setLoading(true);
-      await createPaymentIntent({
-        user_account_id: account_id,
-        lineItems,
-        description: paymentDescription,
-        purpose: purposeRef.current,
+      const completed = await runFreshAuthAction(async () => {
+        await createPaymentIntent({
+          user_account_id: account_id,
+          lineItems,
+          description: paymentDescription,
+          purpose: purposeRef.current,
+        });
+        setDone(true);
       });
-      setDone(true);
+      if (!completed) {
+        return;
+      }
     } catch (err) {
       console.warn("Creating payment failed", err);
       setError(`${err}`);
@@ -159,6 +171,7 @@ export default function CreatePayment({ account_id, onClose }: Props) {
           }
         />
       </div>
+      <FreshAuthModal {...freshAuthModalProps} />
     </Card>
   );
 }

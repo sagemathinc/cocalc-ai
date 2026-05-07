@@ -40,6 +40,9 @@ export const RESUME_SUBSCRIPTION = "resume-subscription";
 // change membership tiers directly in-app
 export const MEMBERSHIP_CHANGE = "membership-change";
 
+// purchase or expand a membership package directly in-app
+export const MEMBERSHIP_PACKAGE_PURCHASE = "membership-package-purchase";
+
 // purchase account credit vouchers directly
 export const VOUCHER_PURCHASE = "voucher-purchase";
 
@@ -74,6 +77,21 @@ export interface Membership {
   interval: "month" | "year";
   admin_assigned?: boolean;
   assigned_by?: string;
+}
+
+export interface MembershipPackagePurchase {
+  type: "membership-package";
+  package_id: string;
+  kind: string;
+  membership_class: MembershipClass;
+  seat_count: number;
+  seat_price: MoneyValue;
+  total_price: MoneyValue;
+  starts_at?: Date | string;
+  expires_at?: Date | string;
+  interval?: "month" | "year";
+  expanded_existing_package?: boolean;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface StudentPayPurchase {
@@ -119,6 +137,7 @@ export type Description =
   | Credit
   | Refund
   | Membership
+  | MembershipPackagePurchase
   | StudentPayPurchase
   | Voucher;
 

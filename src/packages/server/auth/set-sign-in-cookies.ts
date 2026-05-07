@@ -3,6 +3,8 @@ import {
   HOME_BAY_ID_COOKIE_NAME,
   REMEMBER_ME_COOKIE_NAME,
 } from "@cocalc/backend/auth/cookie-names";
+import type { AuthSessionFactorLevel } from "@cocalc/server/auth/auth-sessions";
+import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBrowserCookieDomainForRequest } from "@cocalc/server/bay-public-origin";
@@ -18,13 +20,22 @@ export default async function setSignInCookies({
   res,
   account_id,
   maxAge = DEFAULT_MAX_AGE_MS,
+  session,
 }: {
   req;
   res;
   account_id: string;
   maxAge?: number;
+  session?: {
+    authenticated_at?: Date;
+    password_verified_at?: Date | null;
+    factor_verified_at?: Date | null;
+    factor_level?: AuthSessionFactorLevel;
+    fresh_auth_until?: Date | null;
+    metadata?: Record<string, unknown>;
+  };
 }) {
-  const opts = { req, res, account_id, maxAge };
+  const opts = { req, res, account_id, maxAge, session };
   await Promise.all([
     setRememberMeCookie(opts),
     setAccountIdCookie(opts),
@@ -43,8 +54,23 @@ function cookieOptionVariants<T extends Record<string, any>>(
   return variants;
 }
 
-async function setRememberMeCookie({ req, res, account_id, maxAge }) {
-  const { value } = await createRememberMeCookie(account_id, maxAge / 1000);
+async function setRememberMeCookie({ req, res, account_id, maxAge, session }) {
+  const { value, hash, expire } = await createRememberMeCookie(
+    account_id,
+    maxAge / 1000,
+  );
+  await recordNewAuthSession({
+    account_id,
+    session_hash: hash,
+    expire,
+    req,
+    authenticated_at: session?.authenticated_at,
+    password_verified_at: session?.password_verified_at,
+    factor_verified_at: session?.factor_verified_at,
+    factor_level: session?.factor_level,
+    fresh_auth_until: session?.fresh_auth_until,
+    metadata: session?.metadata,
+  });
   const cookies = new Cookies(req, res);
   const { samesite_remember_me } = await getServerSettings();
   const sameSite = samesite_remember_me;

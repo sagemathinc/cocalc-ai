@@ -42,6 +42,10 @@ import type {
   MembershipUsageStatus,
 } from "@cocalc/conat/hub/api/purchases";
 import MembershipPurchaseModal from "./membership-purchase-modal";
+import {
+  ClaimableMembershipPackagesPanel,
+  MembershipPackageManager,
+} from "./membership-package-manager";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const { Text } = Typography;
@@ -231,7 +235,7 @@ function getUsageLimitsItems(
   if (typeof maxProjects === "number" && Number.isFinite(maxProjects)) {
     items.push({
       key: "max_projects",
-      label: "Max owned projects",
+      label: "Max projects",
       value: `${maxProjects}`,
     });
   }
@@ -484,7 +488,7 @@ function getUsageStatusAlerts(
       key: "over-max-projects",
       type: "warning",
       title:
-        "Your account is over the owned project limit. Creating new projects is blocked until you delete a project or upgrade membership.",
+        "Your account is over the project limit. Creating new projects is blocked until you delete a project or upgrade membership.",
     });
   }
   if (
@@ -662,12 +666,14 @@ export function MembershipStatusPanel({
         details?.selected.source === candidate.source;
       const tierLabel = tierById[candidate.class]?.label ?? candidate.class;
       return {
-        key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? "admin"}`,
+        key: `${candidate.source}-${candidate.class}-${candidate.subscription_id ?? candidate.grant_id ?? "admin"}`,
         tier: tierLabel,
         source:
           candidate.source === "subscription"
             ? "Subscription"
-            : "Admin assigned",
+            : candidate.source === "grant"
+              ? "Granted"
+              : "Admin assigned",
         priority: candidate.priority,
         expires: candidate.expires,
         subscription_id: candidate.subscription_id,
@@ -693,9 +699,11 @@ export function MembershipStatusPanel({
   const membershipSourceLabel =
     membership?.source === "subscription"
       ? "Subscription"
-      : membership?.source === "admin"
-        ? "Admin assigned"
-        : "Free";
+      : membership?.source === "grant"
+        ? "Granted"
+        : membership?.source === "admin"
+          ? "Admin assigned"
+          : "Free";
   const expiresLabel =
     membership?.source === "subscription" ? "Current period ends" : "Expires";
   const entitlements = normalizeRecord(membership?.entitlements);
@@ -768,6 +776,14 @@ export function MembershipStatusPanel({
                 : "Change membership"}
             </Button>
           </Space>
+
+          <Divider style={{ margin: "8px 0" }} />
+
+          <ClaimableMembershipPackagesPanel onChanged={handleChanged} />
+
+          <Divider style={{ margin: "8px 0" }} />
+
+          <MembershipPackageManager tiers={tiers} onChanged={handleChanged} />
 
           <Divider style={{ margin: "8px 0" }} />
 

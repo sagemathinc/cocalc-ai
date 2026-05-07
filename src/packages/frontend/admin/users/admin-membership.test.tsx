@@ -149,9 +149,11 @@ describe("AdminMembership", () => {
     await waitFor(() => {
       expect(screen.getByText(/usage summary/i)).toBeTruthy();
       expect(screen.getByText(/over the hard total storage cap/i)).toBeTruthy();
-      expect(screen.getByText(/over the owned project limit/i)).toBeTruthy();
+      expect(screen.getByText(/over the project limit/i)).toBeTruthy();
       expect(
-        screen.getByText(/only partially sampled from owned projects/i),
+        screen.getByText(
+          /only partially sampled from this user's attributed projects/i,
+        ),
       ).toBeTruthy();
       expect(screen.getByText("Recent managed egress")).toBeTruthy();
       expect(screen.getByText("Top recent egress projects (24h)")).toBeTruthy();

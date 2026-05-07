@@ -22,6 +22,7 @@ import {
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
   createInterBayProjectControlAcceptRehomeHandler,
+  createInterBayProjectControlSetUsageAccountHandler,
   createInterBayProjectControlMoveHandler,
   createInterBayProjectControlRehomeHandler,
   createInterBayProjectControlRestartHandler,
@@ -84,10 +85,31 @@ import {
 import {
   acceptAccountRehome,
   copyAccountRehomeState,
+  getMembershipPortableState,
   getAccountRehomeOperation,
+  replaceMembershipPortableState,
   reconcileAccountRehomeOnSource,
   rehomeAccountOnHomeBay,
 } from "@cocalc/server/accounts/rehome";
+import {
+  createMembershipGrant,
+  revokeMembershipGrantById,
+} from "@cocalc/server/membership/grants";
+import {
+  activateMembershipClaimIdentityDirect,
+  getMembershipClaimIdentityDirect,
+  reserveMembershipClaimIdentityDirect,
+  revokeMembershipClaimIdentityDirect,
+} from "@cocalc/server/membership/claim-directory";
+import {
+  claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
+  listLocalClaimableMembershipPackagesForVerifiedEmails,
+  listMembershipPackageDetailsForOwner,
+} from "@cocalc/server/membership/packages";
+import {
+  resolveMembershipDetailsForAccount,
+  resolveMembershipForAccount,
+} from "@cocalc/server/membership/resolve";
 import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
@@ -100,6 +122,7 @@ import {
   handleProjectControlActiveOperation,
   handleProjectControlBackup,
   handleProjectControlAcceptRehome,
+  handleProjectControlSetUsageAccount,
   handleProjectControlMove,
   handleProjectControlRehome,
   handleProjectControlRestart,
@@ -184,6 +207,15 @@ const logger = getLogger("server:inter-bay:service");
 
 let serviceStarted = false;
 let services: ConatService[] = [];
+
+function normalizeOptionalDateLike(
+  value?: string | number | Date | null,
+): string | Date | null | undefined {
+  if (typeof value === "number") {
+    return new Date(value);
+  }
+  return value;
+}
 
 export async function initInterBayServices(): Promise<void> {
   if (serviceStarted) {
@@ -357,6 +389,14 @@ async function startAccountDirectoryService(): Promise<void> {
       await updateClusterAccountApiKeysHomeBay(opts),
     touchApiKey: async (opts) =>
       await touchClusterAccountApiKeyDirectoryEntry(opts),
+    getMembershipClaimIdentity: async (opts) =>
+      await getMembershipClaimIdentityDirect(opts),
+    reserveMembershipClaimIdentity: async (opts) =>
+      await reserveMembershipClaimIdentityDirect(opts),
+    activateMembershipClaimIdentity: async (opts) =>
+      await activateMembershipClaimIdentityDirect(opts),
+    revokeMembershipClaimIdentity: async (opts) =>
+      await revokeMembershipClaimIdentityDirect(opts),
   };
   services.push(
     ...createInterBayAccountDirectoryHandlers({
@@ -378,6 +418,64 @@ async function startAccountLocalService(): Promise<void> {
     getRehomeOperation: async ({ op_id }) =>
       (await getAccountRehomeOperation(op_id)) ?? null,
     reconcileRehome: async (opts) => await reconcileAccountRehomeOnSource(opts),
+    upsertMembershipGrant: async (opts) => ({
+      grant_id: await createMembershipGrant({
+        ...opts,
+        starts_at: normalizeOptionalDateLike(opts.starts_at),
+        expires_at: normalizeOptionalDateLike(opts.expires_at),
+      }),
+    }),
+    revokeMembershipGrant: async ({ account_id, grant_id, revoked_at }) => {
+      await revokeMembershipGrantById({
+        account_id,
+        grant_id,
+        revoked_at: normalizeOptionalDateLike(revoked_at),
+      });
+    },
+    getMembership: async ({ account_id }) =>
+      await resolveMembershipForAccount(account_id),
+    getMembershipDetails: async ({ account_id, refresh_usage_status }) =>
+      await resolveMembershipDetailsForAccount(account_id, {
+        refresh_usage_status,
+      }),
+    getMembershipPackages: async ({ owner_account_id }) =>
+      await listMembershipPackageDetailsForOwner({
+        owner_account_id,
+      }),
+    getClaimableMembershipPackages: async ({
+      account_id,
+      verified_email_addresses,
+    }) =>
+      await listLocalClaimableMembershipPackagesForVerifiedEmails({
+        account_id,
+        verified_email_addresses,
+      }),
+    claimMembershipPackageSeat: async ({
+      package_id,
+      account_id,
+      verified_email_addresses,
+    }) =>
+      await claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
+        package_id,
+        account_id,
+        verified_email_addresses,
+      }),
+    getMembershipPortableState: async ({ account_id }) =>
+      await getMembershipPortableState(account_id),
+    replaceMembershipPortableState: async ({
+      account_id,
+      membership_grants,
+      membership_packages,
+      membership_package_assignments,
+      membership_side_effects_outbox,
+    }) =>
+      await replaceMembershipPortableState({
+        account_id,
+        membership_grants,
+        membership_packages,
+        membership_package_assignments,
+        membership_side_effects_outbox,
+      }),
   };
   services.push(
     ...createInterBayAccountLocalHandler({
@@ -421,6 +519,8 @@ async function startProjectControlStartService(): Promise<void> {
     },
     backup: async (opts) => await handleProjectControlBackup(opts),
     state: async (opts) => await handleProjectControlState(opts),
+    setUsageAccount: async (opts) =>
+      await handleProjectControlSetUsageAccount(opts),
     address: async (opts) => await handleProjectControlAddress(opts),
     move: async (opts) => await handleProjectControlMove(opts),
     rehome: async (opts) => await handleProjectControlRehome(opts),
@@ -458,6 +558,12 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlStateHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlSetUsageAccountHandler({
       client,
       bay_id,
       parallel: true,

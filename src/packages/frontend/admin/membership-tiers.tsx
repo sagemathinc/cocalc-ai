@@ -536,7 +536,7 @@ export function MembershipTiers() {
           >
             <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
           </Form.Item>
-          <Form.Item name="usage_limit_max_projects" label="Max owned projects">
+          <Form.Item name="usage_limit_max_projects" label="Max projects">
             <InputNumber min={0} step={1} />
           </Form.Item>
           <Form.Item

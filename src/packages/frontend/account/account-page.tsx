@@ -137,7 +137,7 @@ export const AccountPage: React.FC = () => {
   function handle_select(key: MenuKey): void {
     const accountActions = redux.getActions("account");
     switch (key) {
-      case "settings":
+      case "index":
         applyAccountSettingsRoute(accountActions, { kind: "index" });
         return;
       case "billing":
@@ -453,7 +453,7 @@ export const AccountPage: React.FC = () => {
         children[subTab.key] = subTab.children;
         titles[subTab.key] = subTab.label; // Always store original full label
       }
-    } else if (tab.key === "settings" || tab.key === "profile") {
+    } else if (tab.key === "index" || tab.key === "profile") {
       // Handle settings and profile as top-level pages
       // Store original full label for renderTitle()
       const originalLabel = tab.label;

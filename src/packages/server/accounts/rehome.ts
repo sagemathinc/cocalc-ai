@@ -7,6 +7,7 @@ import getLogger from "@cocalc/backend/logger";
 import { conat } from "@cocalc/backend/conat";
 import getPool from "@cocalc/database/pool";
 import type {
+  AccountMembershipPortableState,
   AccountRehomeAcceptRequest,
   AccountRehomeOperationStage,
   AccountRehomeOperationStatus,
@@ -23,7 +24,10 @@ import {
   getClusterBayPublicOrigins,
 } from "@cocalc/server/bay-public-origin";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import {
+  listConfiguredBays,
+  resolveAccountHomeBay,
+} from "@cocalc/server/bay-directory";
 import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
 import { listBrowserSessionsForAccount } from "@cocalc/server/conat/api/browser-sessions";
 import { getLiveBrowserSessionInfo } from "@cocalc/server/conat/api/browser-sessions-live";
@@ -47,14 +51,31 @@ const PORTABLE_STATE_TABLES = [
   "account_collaborator_index",
   "account_notification_index",
   "remember_me",
+  "account_auth_sessions",
+  "account_auth_challenges",
+  "account_second_factors",
+  "account_second_factor_recovery_codes",
   "auth_tokens",
   "api_keys",
+  "membership_grants",
 ] as const;
 
 type PortableStateTable = (typeof PORTABLE_STATE_TABLES)[number];
+type AccountOwnedMembershipPortableTable =
+  | "membership_packages"
+  | "membership_side_effects_outbox";
 
 type AccountRehomeOperationRow = AccountRehomeOperationSummary & {
   account: Record<string, unknown> | null;
+};
+
+type MembershipPortableStateKey = keyof AccountMembershipPortableState;
+
+type MembershipPortableStateCounts = Record<
+  MembershipPortableStateKey,
+  number
+> & {
+  total: number;
 };
 
 export type AccountRehomeDrainResult = {
@@ -278,9 +299,13 @@ async function replacePortableRows({
           ? ["account_id", "notification_id"]
           : table === "remember_me"
             ? ["hash"]
-            : table === "auth_tokens"
-              ? ["auth_token"]
-              : ["key_id"];
+            : table === "account_auth_sessions"
+              ? ["session_hash"]
+              : table === "auth_tokens"
+                ? ["auth_token"]
+                : table === "api_keys"
+                  ? ["key_id"]
+                  : ["id"];
   if (table === "api_keys") {
     await getPool().query(
       `
@@ -311,6 +336,122 @@ async function replacePortableRows({
   }
 }
 
+async function replaceOwnedPortableRows({
+  table,
+  account_id,
+  rows,
+}: {
+  table: AccountOwnedMembershipPortableTable;
+  account_id: string;
+  rows: Record<string, unknown>[];
+}): Promise<void> {
+  const primaryKey = table === "membership_packages" ? ["id"] : ["effect_key"];
+  await getPool().query(`DELETE FROM "${table}" WHERE owner_account_id=$1`, [
+    account_id,
+  ]);
+  for (const row of rows) {
+    await upsertJsonRow({
+      table,
+      row,
+      primaryKey,
+    });
+  }
+}
+
+async function replaceOwnedMembershipPackageAssignments({
+  account_id,
+  rows,
+}: {
+  account_id: string;
+  rows: Record<string, unknown>[];
+}): Promise<void> {
+  await getPool().query(
+    `
+      DELETE FROM membership_package_assignments
+       WHERE package_id IN (
+         SELECT id
+           FROM membership_packages
+          WHERE owner_account_id=$1
+       )
+    `,
+    [account_id],
+  );
+  for (const row of rows) {
+    await upsertJsonRow({
+      table: "membership_package_assignments",
+      row,
+      primaryKey: ["id"],
+    });
+  }
+}
+
+async function clearPortableRows({
+  table,
+  account_id,
+}: {
+  table: PortableStateTable;
+  account_id: string;
+}): Promise<void> {
+  if (table === "api_keys") {
+    await ensureAccountRehomeApiKeysSchema();
+    await getPool().query(
+      `
+        DELETE FROM api_keys
+         WHERE account_id=$1
+           AND project_id IS NULL
+      `,
+      [account_id],
+    );
+    return;
+  }
+  await getPool().query(`DELETE FROM "${table}" WHERE account_id=$1`, [
+    account_id,
+  ]);
+}
+
+async function clearOwnedPortableRows({
+  table,
+  account_id,
+}: {
+  table: AccountOwnedMembershipPortableTable;
+  account_id: string;
+}): Promise<void> {
+  await getPool().query(`DELETE FROM "${table}" WHERE owner_account_id=$1`, [
+    account_id,
+  ]);
+}
+
+async function clearOwnedMembershipPackageAssignments(
+  account_id: string,
+): Promise<void> {
+  await getPool().query(
+    `
+      DELETE FROM membership_package_assignments
+       WHERE package_id IN (
+         SELECT id
+           FROM membership_packages
+          WHERE owner_account_id=$1
+       )
+    `,
+    [account_id],
+  );
+}
+
+async function clearPortableState(account_id: string): Promise<void> {
+  for (const table of PORTABLE_STATE_TABLES) {
+    await clearPortableRows({ table, account_id });
+  }
+  await clearOwnedMembershipPackageAssignments(account_id);
+  await clearOwnedPortableRows({
+    table: "membership_packages",
+    account_id,
+  });
+  await clearOwnedPortableRows({
+    table: "membership_side_effects_outbox",
+    account_id,
+  });
+}
+
 async function loadAccountWidePortableApiKeyRows(
   account_id: string,
 ): Promise<Record<string, unknown>[]> {
@@ -331,6 +472,103 @@ async function loadAccountWidePortableApiKeyRows(
     [account_id],
   );
   return Array.isArray(rows[0]?.rows) ? rows[0].rows! : [];
+}
+
+async function loadOwnedPortableRows(
+  table: AccountOwnedMembershipPortableTable,
+  account_id: string,
+): Promise<Record<string, unknown>[]> {
+  const { rows } = await getPool().query<{
+    rows: Record<string, unknown>[] | null;
+  }>(
+    `
+      SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) AS rows
+        FROM (
+          SELECT *
+            FROM "${table}"
+           WHERE owner_account_id=$1
+        ) t
+    `,
+    [account_id],
+  );
+  return Array.isArray(rows[0]?.rows) ? rows[0].rows! : [];
+}
+
+async function loadOwnedMembershipPackageAssignmentRows(
+  account_id: string,
+): Promise<Record<string, unknown>[]> {
+  const { rows } = await getPool().query<{
+    rows: Record<string, unknown>[] | null;
+  }>(
+    `
+      SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) AS rows
+        FROM (
+          SELECT a.*
+            FROM membership_package_assignments a
+            JOIN membership_packages p
+              ON p.id = a.package_id
+           WHERE p.owner_account_id=$1
+        ) t
+    `,
+    [account_id],
+  );
+  return Array.isArray(rows[0]?.rows) ? rows[0].rows! : [];
+}
+
+export async function getMembershipPortableState(
+  account_id: string,
+): Promise<AccountMembershipPortableState> {
+  const [
+    membership_grants,
+    membership_packages,
+    membership_package_assignments,
+    membership_side_effects_outbox,
+  ] = await Promise.all([
+    loadPortableRows("membership_grants", account_id),
+    loadOwnedPortableRows("membership_packages", account_id),
+    loadOwnedMembershipPackageAssignmentRows(account_id),
+    loadOwnedPortableRows("membership_side_effects_outbox", account_id),
+  ]);
+  return {
+    membership_grants,
+    membership_packages,
+    membership_package_assignments,
+    membership_side_effects_outbox,
+  };
+}
+
+export async function replaceMembershipPortableState({
+  account_id,
+  membership_grants,
+  membership_packages,
+  membership_package_assignments,
+  membership_side_effects_outbox,
+}: {
+  account_id: string;
+  membership_grants?: Record<string, unknown>[];
+  membership_packages?: Record<string, unknown>[];
+  membership_package_assignments?: Record<string, unknown>[];
+  membership_side_effects_outbox?: Record<string, unknown>[];
+}): Promise<void> {
+  await replacePortableRows({
+    table: "membership_grants",
+    account_id,
+    rows: membership_grants ?? [],
+  });
+  await replaceOwnedPortableRows({
+    table: "membership_packages",
+    account_id,
+    rows: membership_packages ?? [],
+  });
+  await replaceOwnedMembershipPackageAssignments({
+    account_id,
+    rows: membership_package_assignments ?? [],
+  });
+  await replaceOwnedPortableRows({
+    table: "membership_side_effects_outbox",
+    account_id,
+    rows: membership_side_effects_outbox ?? [],
+  });
 }
 
 async function loadAccountRowForRehome(
@@ -382,15 +620,25 @@ async function loadPortableState(
     account_collaborator_index,
     account_notification_index,
     remember_me,
+    account_auth_sessions,
+    account_auth_challenges,
+    account_second_factors,
+    account_second_factor_recovery_codes,
     auth_tokens,
     api_keys,
+    membershipPortableState,
   ] = await Promise.all([
     loadPortableRows("account_project_index", account_id),
     loadPortableRows("account_collaborator_index", account_id),
     loadPortableRows("account_notification_index", account_id),
     loadPortableRows("remember_me", account_id),
+    loadPortableRows("account_auth_sessions", account_id),
+    loadPortableRows("account_auth_challenges", account_id),
+    loadPortableRows("account_second_factors", account_id),
+    loadPortableRows("account_second_factor_recovery_codes", account_id),
     loadPortableRows("auth_tokens", account_id),
     loadAccountWidePortableApiKeyRows(account_id),
+    getMembershipPortableState(account_id),
   ]);
   return {
     target_account_id: account_id,
@@ -400,8 +648,18 @@ async function loadPortableState(
     account_collaborator_index,
     account_notification_index,
     remember_me,
+    account_auth_sessions,
+    account_auth_challenges,
+    account_second_factors,
+    account_second_factor_recovery_codes,
     auth_tokens,
     api_keys,
+    membership_grants: membershipPortableState.membership_grants,
+    membership_packages: membershipPortableState.membership_packages,
+    membership_package_assignments:
+      membershipPortableState.membership_package_assignments,
+    membership_side_effects_outbox:
+      membershipPortableState.membership_side_effects_outbox,
   };
 }
 
@@ -813,8 +1071,16 @@ export async function copyAccountRehomeState({
   account_collaborator_index,
   account_notification_index,
   remember_me,
+  account_auth_sessions,
+  account_auth_challenges,
+  account_second_factors,
+  account_second_factor_recovery_codes,
   auth_tokens,
   api_keys,
+  membership_grants,
+  membership_packages,
+  membership_package_assignments,
+  membership_side_effects_outbox,
 }: AccountRehomeStateCopyRequest): Promise<void> {
   const accountId = normalizeUuid("target_account_id", target_account_id);
   normalizeBayId("source_bay_id", source_bay_id);
@@ -846,6 +1112,26 @@ export async function copyAccountRehomeState({
     rows: remember_me ?? [],
   });
   await replacePortableRows({
+    table: "account_auth_sessions",
+    account_id: accountId,
+    rows: account_auth_sessions ?? [],
+  });
+  await replacePortableRows({
+    table: "account_auth_challenges",
+    account_id: accountId,
+    rows: account_auth_challenges ?? [],
+  });
+  await replacePortableRows({
+    table: "account_second_factors",
+    account_id: accountId,
+    rows: account_second_factors ?? [],
+  });
+  await replacePortableRows({
+    table: "account_second_factor_recovery_codes",
+    account_id: accountId,
+    rows: account_second_factor_recovery_codes ?? [],
+  });
+  await replacePortableRows({
     table: "auth_tokens",
     account_id: accountId,
     rows: auth_tokens ?? [],
@@ -855,6 +1141,25 @@ export async function copyAccountRehomeState({
     table: "api_keys",
     account_id: accountId,
     rows: api_keys ?? [],
+  });
+  await replacePortableRows({
+    table: "membership_grants",
+    account_id: accountId,
+    rows: membership_grants ?? [],
+  });
+  await replaceOwnedPortableRows({
+    table: "membership_packages",
+    account_id: accountId,
+    rows: membership_packages ?? [],
+  });
+  await replaceOwnedMembershipPackageAssignments({
+    account_id: accountId,
+    rows: membership_package_assignments ?? [],
+  });
+  await replaceOwnedPortableRows({
+    table: "membership_side_effects_outbox",
+    account_id: accountId,
+    rows: membership_side_effects_outbox ?? [],
   });
   await updateClusterAccountApiKeysHomeBay({
     account_id: accountId,
@@ -870,6 +1175,12 @@ export async function copyAccountRehomeState({
     remember_me_rows: remember_me?.length ?? 0,
     auth_tokens_rows: auth_tokens?.length ?? 0,
     api_keys_rows: api_keys?.length ?? 0,
+    membership_grants_rows: membership_grants?.length ?? 0,
+    membership_packages_rows: membership_packages?.length ?? 0,
+    membership_package_assignments_rows:
+      membership_package_assignments?.length ?? 0,
+    membership_side_effects_outbox_rows:
+      membership_side_effects_outbox?.length ?? 0,
   });
 }
 
@@ -975,13 +1286,18 @@ export async function runAccountRehomeOperation(
     }
 
     if (op.stage === "projections_copied") {
+      await clearPortableState(op.account_id);
       const accountEntry = await getClusterAccountById(op.account_id);
       await updateClusterAccountHomeBay({
         account_id: op.account_id,
         home_bay_id: op.dest_bay_id,
       });
       await waitForAccountHomeBayReadPath({
-        acting_account_id: op.requested_by ?? op.account_id,
+        // Use the rehomed account itself for the convergence lookup. The
+        // requesting admin may be homed on a different bay, so polling with
+        // the operator account can fail on attached source bays even though
+        // the rehome itself already succeeded.
+        acting_account_id: op.account_id,
         target_account_id: op.account_id,
         dest_bay_id: op.dest_bay_id,
       });
@@ -1085,6 +1401,284 @@ export async function rehomeAccount({
     reason,
     campaign_id,
   });
+}
+
+function emptyMembershipPortableState(): Required<AccountMembershipPortableState> {
+  return {
+    membership_grants: [],
+    membership_packages: [],
+    membership_package_assignments: [],
+    membership_side_effects_outbox: [],
+  };
+}
+
+function membershipPortableStateCounts(
+  state: AccountMembershipPortableState,
+): MembershipPortableStateCounts {
+  const membership_grants = state.membership_grants?.length ?? 0;
+  const membership_packages = state.membership_packages?.length ?? 0;
+  const membership_package_assignments =
+    state.membership_package_assignments?.length ?? 0;
+  const membership_side_effects_outbox =
+    state.membership_side_effects_outbox?.length ?? 0;
+  return {
+    membership_grants,
+    membership_packages,
+    membership_package_assignments,
+    membership_side_effects_outbox,
+    total:
+      membership_grants +
+      membership_packages +
+      membership_package_assignments +
+      membership_side_effects_outbox,
+  };
+}
+
+function membershipPortableRowKey(
+  key: MembershipPortableStateKey,
+  row: Record<string, unknown>,
+): string {
+  const value =
+    key === "membership_grants"
+      ? row.id
+      : key === "membership_packages"
+        ? row.id
+        : key === "membership_package_assignments"
+          ? row.id
+          : row.effect_key;
+  const normalized = `${value ?? ""}`.trim();
+  if (!normalized) {
+    throw new Error(`membership portability row missing key for ${key}`);
+  }
+  return normalized;
+}
+
+function rowTimestamp(row: Record<string, unknown>): number {
+  for (const field of [
+    "updated_at",
+    "updated",
+    "last_attempt_at",
+    "created_at",
+    "created",
+  ]) {
+    const value = row[field];
+    if (value == null) continue;
+    const ts =
+      value instanceof Date
+        ? value.valueOf()
+        : typeof value === "number"
+          ? value
+          : Date.parse(`${value}`);
+    if (Number.isFinite(ts)) {
+      return ts;
+    }
+  }
+  return 0;
+}
+
+function mergeMembershipPortableRows({
+  key,
+  home_bay_id,
+  states_by_bay,
+}: {
+  key: MembershipPortableStateKey;
+  home_bay_id: string;
+  states_by_bay: Array<{
+    bay_id: string;
+    state: AccountMembershipPortableState;
+  }>;
+}): Record<string, unknown>[] {
+  const merged = new Map<
+    string,
+    { bay_id: string; row: Record<string, unknown> }
+  >();
+  const orderedStates = [...states_by_bay].sort((a, b) => {
+    if (a.bay_id === home_bay_id && b.bay_id !== home_bay_id) return -1;
+    if (b.bay_id === home_bay_id && a.bay_id !== home_bay_id) return 1;
+    return a.bay_id.localeCompare(b.bay_id);
+  });
+  for (const { bay_id, state } of orderedStates) {
+    for (const row of state[key] ?? []) {
+      const rowRecord = row as Record<string, unknown>;
+      const identity = membershipPortableRowKey(key, rowRecord);
+      const existing = merged.get(identity);
+      if (!existing) {
+        merged.set(identity, { bay_id, row: rowRecord });
+        continue;
+      }
+      if (existing.bay_id === home_bay_id) {
+        continue;
+      }
+      if (bay_id === home_bay_id) {
+        merged.set(identity, { bay_id, row: rowRecord });
+        continue;
+      }
+      if (rowTimestamp(rowRecord) >= rowTimestamp(existing.row)) {
+        merged.set(identity, { bay_id, row: rowRecord });
+      }
+    }
+  }
+  return [...merged.values()].map(({ row }) => row);
+}
+
+async function loadMembershipPortableStateFromBay({
+  bay_id,
+  account_id,
+}: {
+  bay_id: string;
+  account_id: string;
+}): Promise<AccountMembershipPortableState> {
+  if (bay_id === getConfiguredBayId()) {
+    return await getMembershipPortableState(account_id);
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: bay_id,
+    timeout: ACCOUNT_REHOME_TIMEOUT_MS,
+  }).getMembershipPortableState({ account_id });
+}
+
+async function replaceMembershipPortableStateOnBay({
+  bay_id,
+  account_id,
+  state,
+}: {
+  bay_id: string;
+  account_id: string;
+  state: AccountMembershipPortableState;
+}): Promise<void> {
+  if (bay_id === getConfiguredBayId()) {
+    await replaceMembershipPortableState({
+      account_id,
+      ...state,
+    });
+    return;
+  }
+  await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: bay_id,
+    timeout: ACCOUNT_REHOME_TIMEOUT_MS,
+  }).replaceMembershipPortableState({
+    account_id,
+    ...state,
+  });
+}
+
+export async function repairAccountMembershipPortability({
+  account_id,
+  target_account_id,
+  dry_run = true,
+  clear_stale = false,
+}: {
+  account_id?: string;
+  target_account_id: string;
+  dry_run?: boolean;
+  clear_stale?: boolean;
+}): Promise<{
+  account_id: string;
+  home_bay_id: string;
+  dry_run: boolean;
+  clear_stale: boolean;
+  scanned_bays: Array<{
+    bay_id: string;
+    membership_grants: number;
+    membership_packages: number;
+    membership_package_assignments: number;
+    membership_side_effects_outbox: number;
+    total: number;
+  }>;
+  source_bays_with_rows: string[];
+  stale_bay_ids: string[];
+  cleared_stale_bay_ids: string[];
+  merged_counts: MembershipPortableStateCounts;
+  applied: boolean;
+}> {
+  await assertAdmin(account_id);
+  const accountId = normalizeUuid("target_account_id", target_account_id);
+  const account = await getClusterAccountById(accountId);
+  if (!account?.account_id) {
+    throw new Error(`account ${accountId} not found`);
+  }
+  const homeBayId =
+    `${account.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  const configuredBayIds = (await listConfiguredBays()).map(
+    ({ bay_id }) => bay_id,
+  );
+  const bayIds = [
+    ...new Set([homeBayId, getConfiguredBayId(), ...configuredBayIds]),
+  ];
+  const statesByBay = await Promise.all(
+    bayIds.map(async (bay_id) => ({
+      bay_id,
+      state: await loadMembershipPortableStateFromBay({
+        bay_id,
+        account_id: accountId,
+      }),
+    })),
+  );
+  const scanned_bays = statesByBay.map(({ bay_id, state }) => ({
+    bay_id,
+    ...membershipPortableStateCounts(state),
+  }));
+  const source_bays_with_rows = scanned_bays
+    .filter(({ total }) => total > 0)
+    .map(({ bay_id }) => bay_id);
+  const stale_bay_ids = scanned_bays
+    .filter(({ bay_id, total }) => bay_id !== homeBayId && total > 0)
+    .map(({ bay_id }) => bay_id);
+  const mergedState: Required<AccountMembershipPortableState> = {
+    membership_grants: mergeMembershipPortableRows({
+      key: "membership_grants",
+      home_bay_id: homeBayId,
+      states_by_bay: statesByBay,
+    }),
+    membership_packages: mergeMembershipPortableRows({
+      key: "membership_packages",
+      home_bay_id: homeBayId,
+      states_by_bay: statesByBay,
+    }),
+    membership_package_assignments: mergeMembershipPortableRows({
+      key: "membership_package_assignments",
+      home_bay_id: homeBayId,
+      states_by_bay: statesByBay,
+    }),
+    membership_side_effects_outbox: mergeMembershipPortableRows({
+      key: "membership_side_effects_outbox",
+      home_bay_id: homeBayId,
+      states_by_bay: statesByBay,
+    }),
+  };
+  const merged_counts = membershipPortableStateCounts(mergedState);
+  const cleared_stale_bay_ids: string[] = [];
+  if (!dry_run) {
+    await replaceMembershipPortableStateOnBay({
+      bay_id: homeBayId,
+      account_id: accountId,
+      state: mergedState,
+    });
+    if (clear_stale) {
+      for (const bay_id of stale_bay_ids) {
+        await replaceMembershipPortableStateOnBay({
+          bay_id,
+          account_id: accountId,
+          state: emptyMembershipPortableState(),
+        });
+        cleared_stale_bay_ids.push(bay_id);
+      }
+    }
+  }
+  return {
+    account_id: accountId,
+    home_bay_id: homeBayId,
+    dry_run,
+    clear_stale,
+    scanned_bays,
+    source_bays_with_rows,
+    stale_bay_ids,
+    cleared_stale_bay_ids,
+    merged_counts,
+    applied: !dry_run,
+  };
 }
 
 export async function reconcileAccountRehome({

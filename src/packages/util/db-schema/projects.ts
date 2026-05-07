@@ -55,6 +55,7 @@ Table({
       "deleted", // in various queries we quickly fiter deleted projects
       "host_id", // project-host placement lookup
       "owning_bay_id", // owning control-plane bay lookup
+      "usage_account_id", // membership usage, storage, and egress attribution
     ],
 
     crm_indexes: ["last_edited"],
@@ -385,11 +386,6 @@ Table({
       desc: "Project-wide launcher defaults (quick create + app defaults).",
       render: { type: "json", editable: true },
     },
-    pay_as_you_go_quotas: {
-      type: "map",
-      desc: "Pay as you go quotas that users set so that when they run this project, it gets upgraded to at least what is specified here, and user gets billed later for what is used.  Any changes to this table could result in money being spent, so should only be done via the api.  This is a map from the account_id of the user that set the quota to the value of the quota spec (which is purchase-quotas.ProjectQuota).",
-      render: { type: "json", editable: false },
-    },
     notes: NOTES,
     secret_token: {
       type: "string",
@@ -410,6 +406,11 @@ Table({
       type: "uuid",
       desc: "Shared project backup repository id used for this project's backups.",
       render: { type: "text", editable: false },
+    },
+    usage_account_id: {
+      type: "uuid",
+      desc: "Optional account id that should be charged membership usage, storage, and managed egress for this project.",
+      render: { type: "account", editable: false },
     },
   },
 });

@@ -76,20 +76,26 @@ describe("resolveMembershipDetailsForAccount usage-status cache", () => {
   });
 
   it("invalidates the cache when the selected membership limits change", async () => {
-    queryMock
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: "sub-1",
-            metadata: { class: "pro" },
-            current_period_end: new Date("2026-06-01T00:00:00.000Z"),
-            status: "active",
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    let subscriptionQueryCount = 0;
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM subscriptions")) {
+        subscriptionQueryCount += 1;
+        if (subscriptionQueryCount === 1) {
+          return { rows: [] };
+        }
+        return {
+          rows: [
+            {
+              id: "sub-1",
+              metadata: { class: "pro" },
+              current_period_end: new Date("2026-06-01T00:00:00.000Z"),
+              status: "active",
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
     getMembershipTierMapMock.mockResolvedValue({
       free: {
         id: "free",

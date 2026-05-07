@@ -19,6 +19,7 @@ import getBalance from "./get-balance";
 import purchaseShoppingCartItem from "./purchase-shopping-cart-item";
 import { stripeToDecimal } from "@cocalc/util/stripe/calc";
 import { computeMembershipPricing } from "@cocalc/server/membership/tiers";
+import { resolveMembershipPackageQuote } from "@cocalc/server/membership/packages";
 
 const logger = getLogger("purchases:shopping-cart-checkout");
 
@@ -147,7 +148,9 @@ export async function getCheckoutCart(
     filter ??
       ((item) =>
         item.checked &&
-        (item.product == "cash-voucher" || item.product == "membership")),
+        (item.product == "cash-voucher" ||
+          item.product == "membership" ||
+          item.product == "membership-package")),
   );
   const membershipItems = cart.filter((item) => item.product == "membership");
   if (membershipItems.length > 1) {
@@ -161,7 +164,9 @@ export async function getCheckoutCart(
     const itemCost =
       cartItem.product == "membership"
         ? await membershipCostFromCart(account_id, cartItem)
-        : computeCost(cartItem.description as ComputeCostProps);
+        : cartItem.product == "membership-package"
+          ? await membershipPackageCostFromCart(cartItem)
+          : computeCost(cartItem.description as ComputeCostProps);
     if (itemCost == null) {
       throw Error("bug cost must not be null");
     }
@@ -175,6 +180,38 @@ export async function getCheckoutCart(
     });
   }
   return { total: stripeToDecimal(totalStripe), cart: chargeableCart };
+}
+
+async function membershipPackageCostFromCart(cartItem) {
+  const description = cartItem?.description;
+  if (description?.type != "membership-package") {
+    throw Error("invalid membership package description");
+  }
+  const quote = await resolveMembershipPackageQuote(description);
+  const monthlyCost =
+    quote.interval == "year"
+      ? toDecimal(quote.total_price).div(12).toNumber()
+      : quote.total_price;
+  const yearlyCost =
+    quote.interval == "year"
+      ? quote.total_price
+      : toDecimal(quote.total_price).mul(12).toNumber();
+  const cost: CostInputPeriod = {
+    cost: quote.total_price,
+    cost_per_unit: quote.seat_price,
+    cost_per_project_per_month: monthlyCost,
+    cost_sub_month: monthlyCost,
+    cost_sub_year: yearlyCost,
+    cost_sub_first_period: quote.total_price,
+    quantity: quote.seat_count,
+    period: quote.interval == "year" ? "yearly" : "monthly",
+    input: {
+      type: "cash-voucher",
+      amount: quote.total_price,
+      subscription: quote.interval == "year" ? "yearly" : "monthly",
+    },
+  };
+  return cost;
 }
 
 async function membershipCostFromCart(account_id: string, cartItem) {

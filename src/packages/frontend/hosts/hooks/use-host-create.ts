@@ -1,4 +1,5 @@
 import { useState } from "@cocalc/frontend/app-framework";
+import { isFreshAuthRequiredError } from "@cocalc/frontend/auth/fresh-auth";
 import {
   buildCreateHostPayload,
   type FieldOptionsMap,
@@ -12,7 +13,10 @@ import type {
 type HubClient = {
   hosts: {
     createHost: (opts: any) => Promise<Host>;
-    startHost?: (opts: { id: string }) => Promise<HostLroResponse>;
+    startHost?: (opts: {
+      id: string;
+      browser_id?: string;
+    }) => Promise<HostLroResponse>;
   };
 };
 
@@ -22,6 +26,7 @@ type UseHostCreateOptions = {
   fieldOptions: FieldOptionsMap;
   catalog?: HostCatalog;
   onHostOp?: (host_id: string, op: HostLroResponse) => void;
+  browser_id?: string;
 };
 
 export const useHostCreate = ({
@@ -30,6 +35,7 @@ export const useHostCreate = ({
   fieldOptions,
   catalog,
   onHostOp,
+  browser_id,
 }: UseHostCreateOptions) => {
   const [creating, setCreating] = useState(false);
 
@@ -38,18 +44,21 @@ export const useHostCreate = ({
     setCreating(true);
     try {
       const payload = buildCreateHostPayload(vals, { fieldOptions, catalog });
-      const created = await hub.hosts.createHost(payload);
+      const created = await hub.hosts.createHost({ ...payload, browser_id });
       const selfHostKind = payload?.machine?.metadata?.self_host_kind;
       const shouldAutoStart =
         payload?.machine?.cloud === "self-host" &&
         (selfHostKind === "direct" || selfHostKind == null);
       if (shouldAutoStart && created?.id && hub.hosts.startHost) {
-        const op = await hub.hosts.startHost({ id: created.id });
+        const op = await hub.hosts.startHost({ id: created.id, browser_id });
         onHostOp?.(created.id, op);
       }
       await refresh();
       return true;
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       console.error(err);
       return false;
     } finally {

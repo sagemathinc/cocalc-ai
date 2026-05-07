@@ -10,6 +10,9 @@ const peekCachedMembershipUsageStatusForAccountMock = jest.fn();
 const getStorageHistoryMock = jest.fn();
 const getBackupsMock = jest.fn();
 const conatWithProjectRoutingForAccountMock = jest.fn();
+const getUsageProjectCountForAccountMock = jest.fn();
+const getProjectOwnerAccountIdMock = jest.fn();
+const getProjectUsageAccountIdMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -48,6 +51,16 @@ jest.mock("@cocalc/server/conat/route-client", () => ({
     conatWithProjectRoutingForAccountMock(...args),
 }));
 
+jest.mock("./project-usage", () => ({
+  __esModule: true,
+  getUsageProjectCountForAccount: (...args: any[]) =>
+    getUsageProjectCountForAccountMock(...args),
+  getProjectOwnerAccountId: (...args: any[]) =>
+    getProjectOwnerAccountIdMock(...args),
+  getProjectUsageAccountId: (...args: any[]) =>
+    getProjectUsageAccountIdMock(...args),
+}));
+
 describe("project membership limits", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -60,16 +73,19 @@ describe("project membership limits", () => {
       total_storage_bytes: 0,
     });
     peekCachedMembershipUsageStatusForAccountMock.mockReturnValue(undefined);
+    getUsageProjectCountForAccountMock.mockResolvedValue(0);
+    getProjectOwnerAccountIdMock.mockResolvedValue(undefined);
+    getProjectUsageAccountIdMock.mockResolvedValue(undefined);
   });
 
   it("returns the owned project count", async () => {
-    queryMock.mockResolvedValue({ rows: [{ count: "7" }] });
+    getUsageProjectCountForAccountMock.mockResolvedValue(7);
     const { getOwnedProjectCountForAccount } = await import("./project-limits");
     await expect(getOwnedProjectCountForAccount("account-1")).resolves.toBe(7);
   });
 
   it("returns the owner account id for a project", async () => {
-    queryMock.mockResolvedValue({ rows: [{ account_id: "owner-1" }] });
+    getProjectOwnerAccountIdMock.mockResolvedValue("owner-1");
     const { getProjectOwnerAccountId } = await import("./project-limits");
     await expect(getProjectOwnerAccountId("project-1")).resolves.toBe(
       "owner-1",
@@ -77,7 +93,7 @@ describe("project membership limits", () => {
   });
 
   it("allows creation below the configured max_projects limit", async () => {
-    queryMock.mockResolvedValue({ rows: [{ count: "2" }] });
+    getUsageProjectCountForAccountMock.mockResolvedValue(2);
     resolveMembershipForAccountMock.mockResolvedValue({
       entitlements: {},
       effective_limits: { max_projects: 3 },
@@ -89,14 +105,14 @@ describe("project membership limits", () => {
   });
 
   it("blocks creation at the configured max_projects limit", async () => {
-    queryMock.mockResolvedValue({ rows: [{ count: "3" }] });
+    getUsageProjectCountForAccountMock.mockResolvedValue(3);
     resolveMembershipForAccountMock.mockResolvedValue({
       entitlements: { usage_limits: { max_projects: 3 } },
     });
     const { assertCanOwnAdditionalProject } = await import("./project-limits");
     await expect(
       assertCanOwnAdditionalProject({ account_id: "account-1" }),
-    ).rejects.toThrow("owned project limit reached (3/3)");
+    ).rejects.toThrow("project limit reached (3/3)");
   });
 
   it("returns the fallback snapshot and backup caps when a project has no owner", async () => {
@@ -112,7 +128,7 @@ describe("project membership limits", () => {
   });
 
   it("returns tier-configured snapshot and backup caps for the project owner", async () => {
-    queryMock.mockResolvedValue({ rows: [{ account_id: "owner-1" }] });
+    getProjectUsageAccountIdMock.mockResolvedValue("owner-1");
     resolveMembershipForAccountMock.mockResolvedValue({
       class: "pro",
       source: "subscription",
@@ -279,7 +295,7 @@ describe("project membership limits", () => {
   });
 
   it("blocks archived-project restore when the estimated restored size exceeds the soft cap headroom", async () => {
-    queryMock.mockResolvedValue({ rows: [{ account_id: "owner-1" }] });
+    getProjectUsageAccountIdMock.mockResolvedValue("owner-1");
     getStorageHistoryMock.mockResolvedValue({
       points: [{ quota_used_bytes: 60 }],
     });
@@ -303,7 +319,7 @@ describe("project membership limits", () => {
   });
 
   it("blocks archived-project restore when the estimated restored size exceeds the hard cap headroom", async () => {
-    queryMock.mockResolvedValue({ rows: [{ account_id: "owner-1" }] });
+    getProjectUsageAccountIdMock.mockResolvedValue("owner-1");
     getStorageHistoryMock.mockResolvedValue({
       points: [{ quota_used_bytes: 60 }],
     });

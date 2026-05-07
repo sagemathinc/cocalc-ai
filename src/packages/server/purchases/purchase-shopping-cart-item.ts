@@ -20,6 +20,7 @@ import createSubscription from "./create-subscription";
 import createVouchers from "@cocalc/server/vouchers/create-vouchers";
 import dayjs from "dayjs";
 import { computeMembershipPricing } from "@cocalc/server/membership/tiers";
+import { createMembershipPackagePurchase } from "./membership-package";
 
 const logger = getLogger("purchases:purchase-shopping-cart-item");
 
@@ -37,6 +38,8 @@ export default async function purchaseShoppingCartItem(
     await purchaseVoucherShoppingCartItem(item, client, credit_id);
   } else if (item.product == "membership") {
     await purchaseMembershipShoppingCartItem(item, client);
+  } else if (item.product == "membership-package") {
+    await purchaseMembershipPackageShoppingCartItem(item, client);
   } else {
     throw Error(`unsupported product type '${item.product}'`);
   }
@@ -147,6 +150,26 @@ async function purchaseMembershipShoppingCartItem(item, client: PoolClient) {
   logger.debug(
     "purchaseMembershipShoppingCartItem -- created membership subscription",
     { subscription_id, purchase_id },
+  );
+
+  await markItemPurchased(item, client);
+}
+
+async function purchaseMembershipPackageShoppingCartItem(
+  item,
+  client: PoolClient,
+) {
+  logger.debug("purchaseMembershipPackageShoppingCartItem", item);
+  const { description } = item;
+  if (description?.type != "membership-package") {
+    throw Error("product type must be 'membership-package'");
+  }
+  await createMembershipPackagePurchase(
+    {
+      account_id: item.account_id,
+      product: description,
+    },
+    client,
   );
 
   await markItemPurchased(item, client);

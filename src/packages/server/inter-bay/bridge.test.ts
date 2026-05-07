@@ -133,6 +133,26 @@ describe("inter-bay bridge", () => {
     );
   });
 
+  it("dispatches typed project usage-account requests through the fabric client", async () => {
+    requestMock.mockResolvedValue({ data: { updated: true } });
+    const { getInterBayBridge } = await import("./bridge");
+    const bridge = getInterBayBridge();
+    await expect(
+      bridge.projectControl("bay-0").setUsageAccount({
+        project_id: "p1",
+        usage_account_id: "a1",
+      } as any),
+    ).resolves.toEqual({ updated: true });
+    expect(requestMock).toHaveBeenCalledWith(
+      "bay.bay-0.rpc.project-control.set-usage-account",
+      {
+        name: "setUsageAccount",
+        args: [{ project_id: "p1", usage_account_id: "a1" }],
+      },
+      { timeout: 10 * 1000, waitForInterest: true },
+    );
+  });
+
   it("dispatches typed project address requests through the fabric client", async () => {
     requestMock.mockResolvedValue({
       data: { host: "10.0.0.1", port: 443, secret_token: "secret" },

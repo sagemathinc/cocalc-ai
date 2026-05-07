@@ -106,6 +106,12 @@ jest.mock("@cocalc/frontend/i18n", () => ({
 }));
 
 jest.mock("./../membership-purchase-modal", () => () => null);
+jest.mock("./../membership-package-manager", () => ({
+  MembershipPackageManager: () => <div>membership-package-manager</div>,
+  ClaimableMembershipPackagesPanel: () => (
+    <div>claimable-membership-packages-panel</div>
+  ),
+}));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -247,7 +253,7 @@ describe("MembershipStatusPanel", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/over the hard total storage cap/i)).toBeTruthy();
-      expect(screen.getByText(/over the owned project limit/i)).toBeTruthy();
+      expect(screen.getByText(/over the project limit/i)).toBeTruthy();
       expect(
         screen.getByText(/only partially sampled from your projects/i),
       ).toBeTruthy();

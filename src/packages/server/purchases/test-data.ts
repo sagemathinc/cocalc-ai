@@ -137,3 +137,93 @@ export async function createTestAdminAssignedMembership(
     ],
   );
 }
+
+export async function createTestMembershipGrant(
+  account_id: string,
+  opts: {
+    membership_class: MembershipClass;
+    source?: string;
+    package_id?: string | null;
+    purchase_id?: number | null;
+    granted_by_account_id?: string | null;
+    starts_at?: Date | null;
+    expires_at?: Date | null;
+    revoked_at?: Date | null;
+    metadata?: Record<string, unknown> | null;
+  },
+) {
+  const pool = getPool("medium");
+  await pool.query(
+    `INSERT INTO membership_grants (
+      id,
+      account_id,
+      membership_class,
+      source,
+      package_id,
+      purchase_id,
+      granted_by_account_id,
+      starts_at,
+      expires_at,
+      revoked_at,
+      metadata,
+      created,
+      updated
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::JSONB,NOW(),NOW())`,
+    [
+      uuid(),
+      account_id,
+      opts.membership_class,
+      opts.source ?? "test-grant",
+      opts.package_id ?? null,
+      opts.purchase_id ?? null,
+      opts.granted_by_account_id ?? null,
+      opts.starts_at ?? new Date(),
+      opts.expires_at ?? null,
+      opts.revoked_at ?? null,
+      opts.metadata ?? null,
+    ],
+  );
+}
+
+export async function createTestMembershipPackage(opts: {
+  owner_account_id: string;
+  kind: "course" | "team" | "domain" | "site";
+  membership_class: MembershipClass;
+  seat_count: number;
+  purchase_id?: number | null;
+  starts_at?: Date | null;
+  expires_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  const pool = getPool("medium");
+  const id = uuid();
+  await pool.query(
+    `INSERT INTO membership_packages (
+      id,
+      owner_account_id,
+      kind,
+      membership_class,
+      seat_count,
+      purchase_id,
+      starts_at,
+      expires_at,
+      metadata,
+      created,
+      updated
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::JSONB,NOW(),NOW())`,
+    [
+      id,
+      opts.owner_account_id,
+      opts.kind,
+      opts.membership_class,
+      opts.seat_count,
+      opts.purchase_id ?? null,
+      opts.starts_at ?? new Date(),
+      opts.expires_at ?? null,
+      opts.metadata ?? null,
+    ],
+  );
+  return id;
+}

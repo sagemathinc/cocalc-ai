@@ -2,6 +2,7 @@ import { Form } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
+import { useFreshAuthAction } from "@cocalc/frontend/auth/fresh-auth";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { useHostActions } from "./use-host-actions";
 import { useHostCatalog } from "./use-host-catalog";
@@ -284,6 +285,7 @@ function persistShowRuntimeVersions(value: boolean) {
 
 export const useHostsPageViewModel = () => {
   const hub = webapp_client.conat_client.hub;
+  const browser_id = webapp_client.browser_id;
   const [form] = Form.useForm();
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const flags = useHostFeatureFlags();
@@ -295,6 +297,16 @@ export const useHostsPageViewModel = () => {
   const [showRuntimeVersions, setShowRuntimeVersions] = React.useState(
     readShowRuntimeVersions,
   );
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => {
+      alert_message({
+        type: "error",
+        message:
+          err instanceof Error ? err.message : `Unexpected error: ${err}`,
+        timeout: 20,
+      });
+    },
+  });
   const parallelOps = useParallelOps(hub, {
     enabled: isAdmin && showParallelLimits,
   });
@@ -357,6 +369,7 @@ export const useHostsPageViewModel = () => {
     setHosts,
     refresh,
     onHostOp: trackHostOp,
+    browser_id,
   });
   const recoverTimedOutUpgrade = React.useCallback(
     async ({
@@ -1511,11 +1524,12 @@ export const useHostsPageViewModel = () => {
     fieldOptions,
     catalog,
     onHostOp: trackHostOp,
+    browser_id,
   });
 
   const createVm = useHostCreateViewModel({
     permissions: { isAdmin, canCreateHosts },
-    form: { form, creating, onCreate },
+    form: { form, creating, onCreate, runFreshAuthAction },
     provider: {
       providerOptions,
       selectedProvider: selectedProvider ?? providerOptions[0]?.value ?? "none",
@@ -1583,7 +1597,10 @@ export const useHostsPageViewModel = () => {
     hostsLoaded,
     hostsError,
     hostOps,
-    onStart: (id: string) => setStatus(id, "start"),
+    onStart: (id: string) =>
+      runFreshAuthAction(async () => {
+        await setStatus(id, "start");
+      }),
     onStop: (id: string, opts) => setStatus(id, "stop", opts),
     onRestart: restartHost,
     onDrain: (id: string, opts) => drainHost(id, opts),
@@ -1728,104 +1745,215 @@ export const useHostsPageViewModel = () => {
     ) => {
       setSavingEdit(true);
       try {
-        if (!editingHost) return;
-        if (values.name && values.name !== editingHost.name) {
-          await renameHost(id, values.name);
-        }
-        const isSelfHost = editingHost.machine?.cloud === "self-host";
-        const isDeprovisioned = editingHost.status === "deprovisioned";
-        const isStopped = editingHost.status === "off";
-        const erroredReprovision =
-          editingHost.status === "error" && !!editingHost.reprovision_required;
-        const canEditMachine =
-          isDeprovisioned || isStopped || erroredReprovision;
-        const currentAutoGrow = (editingHost.machine?.metadata?.auto_grow ??
-          {}) as Record<string, any>;
-        const nextProvider = (values.provider ??
-          (editingHost.machine?.cloud as HostProvider | undefined) ??
-          "none") as HostProvider;
-        const nextStorageMode =
-          values.storage_mode ??
-          editingHost.machine?.storage_mode ??
-          "persistent";
-        const supportsAutoGrowConfig =
-          nextProvider === "gcp" && nextStorageMode !== "ephemeral";
-        const parsePositive = (value: unknown) => {
-          const parsed = Number(value);
-          if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
-          return Math.floor(parsed);
-        };
-        const currentPricingModel = editingHost.pricing_model ?? "on_demand";
-        const currentInterruptionRestorePolicy =
-          editingHost.interruption_restore_policy ??
-          (currentPricingModel === "spot" ? "immediate" : "none");
-        const currentSpotRecoveryPolicy = activeSpotRecoveryPolicy({
-          pricingModel: currentPricingModel,
-          interruptionRestorePolicy: currentInterruptionRestorePolicy,
-          spotRecoveryPolicy: editingHost.spot_recovery_policy,
-        });
-        if (isDeprovisioned) {
-          const provider = (values.provider ??
+        const completed = await runFreshAuthAction(async () => {
+          if (!editingHost) return;
+          if (values.name && values.name !== editingHost.name) {
+            await renameHost(id, values.name);
+          }
+          const isSelfHost = editingHost.machine?.cloud === "self-host";
+          const isDeprovisioned = editingHost.status === "deprovisioned";
+          const isStopped = editingHost.status === "off";
+          const erroredReprovision =
+            editingHost.status === "error" &&
+            !!editingHost.reprovision_required;
+          const canEditMachine =
+            isDeprovisioned || isStopped || erroredReprovision;
+          const currentAutoGrow = (editingHost.machine?.metadata?.auto_grow ??
+            {}) as Record<string, any>;
+          const nextProvider = (values.provider ??
             (editingHost.machine?.cloud as HostProvider | undefined) ??
             "none") as HostProvider;
-          const selection = {
-            region: values.region,
-            zone: values.zone,
-            machine_type: values.machine_type,
-            gpu_type: values.gpu_type,
-            size: values.size,
-            gpu: values.gpu,
+          const nextStorageMode =
+            values.storage_mode ??
+            editingHost.machine?.storage_mode ??
+            "persistent";
+          const supportsAutoGrowConfig =
+            nextProvider === "gcp" && nextStorageMode !== "ephemeral";
+          const parsePositive = (value: unknown) => {
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+            return Math.floor(parsed);
           };
-          const fieldOptions = getProviderOptions(
-            provider,
-            editCatalog,
-            selection,
-          );
-          const payload = buildCreateHostPayload(
-            { ...values, provider },
-            { fieldOptions, catalog: editCatalog },
-          );
-          const machine = payload.machine ?? {};
-          const metadata = (machine.metadata ?? {}) as Record<string, any>;
+          const currentPricingModel = editingHost.pricing_model ?? "on_demand";
+          const currentInterruptionRestorePolicy =
+            editingHost.interruption_restore_policy ??
+            (currentPricingModel === "spot" ? "immediate" : "none");
+          const currentSpotRecoveryPolicy = activeSpotRecoveryPolicy({
+            pricingModel: currentPricingModel,
+            interruptionRestorePolicy: currentInterruptionRestorePolicy,
+            spotRecoveryPolicy: editingHost.spot_recovery_policy,
+          });
+
+          if (isDeprovisioned) {
+            const provider = (values.provider ??
+              (editingHost.machine?.cloud as HostProvider | undefined) ??
+              "none") as HostProvider;
+            const selection = {
+              region: values.region,
+              zone: values.zone,
+              machine_type: values.machine_type,
+              gpu_type: values.gpu_type,
+              size: values.size,
+              gpu: values.gpu,
+            };
+            const fieldOptions = getProviderOptions(
+              provider,
+              editCatalog,
+              selection,
+            );
+            const payload = buildCreateHostPayload(
+              { ...values, provider },
+              { fieldOptions, catalog: editCatalog },
+            );
+            const machine = payload.machine ?? {};
+            const metadata = (machine.metadata ?? {}) as Record<string, any>;
+            const update: Record<string, any> = {};
+            if (machine.cloud) update.cloud = machine.cloud;
+            if (payload.region) update.region = payload.region;
+            if (machine.zone) update.zone = machine.zone;
+            if (machine.machine_type) {
+              update.machine_type = machine.machine_type;
+            }
+            if (machine.gpu_type !== undefined) {
+              update.gpu_type = machine.gpu_type || undefined;
+            }
+            if (machine.gpu_count !== undefined) {
+              update.gpu_count = machine.gpu_count;
+            }
+            if (machine.storage_mode) {
+              update.storage_mode = machine.storage_mode;
+            }
+            if (typeof machine.disk_gb === "number") {
+              update.disk_gb = machine.disk_gb;
+            }
+            if (machine.disk_type) {
+              update.disk_type = machine.disk_type;
+            }
+            if (typeof metadata.cpu === "number") {
+              update.cpu = metadata.cpu;
+            }
+            if (typeof metadata.ram_gb === "number") {
+              update.ram_gb = metadata.ram_gb;
+            }
+            if (typeof metadata.self_host_ssh_target === "string") {
+              update.self_host_ssh_target = metadata.self_host_ssh_target;
+            }
+            if (
+              payload.pricing_model &&
+              payload.pricing_model !== currentPricingModel
+            ) {
+              update.pricing_model = payload.pricing_model;
+            }
+            if (
+              payload.interruption_restore_policy &&
+              payload.interruption_restore_policy !==
+                currentInterruptionRestorePolicy
+            ) {
+              update.interruption_restore_policy =
+                payload.interruption_restore_policy;
+            }
+            const nextSpotRecoveryPolicy = activeSpotRecoveryPolicy({
+              pricingModel: payload.pricing_model ?? currentPricingModel,
+              interruptionRestorePolicy:
+                payload.interruption_restore_policy ??
+                currentInterruptionRestorePolicy,
+              spotRecoveryPolicy: payload.spot_recovery_policy,
+            });
+            if (
+              !equalSpotRecoveryPolicies(
+                currentSpotRecoveryPolicy,
+                nextSpotRecoveryPolicy,
+              ) &&
+              nextSpotRecoveryPolicy
+            ) {
+              update.spot_recovery_policy = nextSpotRecoveryPolicy;
+            }
+            if (supportsAutoGrowConfig) {
+              if (
+                typeof values.auto_grow_enabled === "boolean" &&
+                values.auto_grow_enabled !== currentAutoGrow.enabled
+              ) {
+                update.auto_grow_enabled = values.auto_grow_enabled;
+              }
+              const nextAutoGrowMaxDisk = parsePositive(
+                values.auto_grow_max_disk_gb,
+              );
+              if (
+                nextAutoGrowMaxDisk != null &&
+                nextAutoGrowMaxDisk !== currentAutoGrow.max_disk_gb
+              ) {
+                update.auto_grow_max_disk_gb = nextAutoGrowMaxDisk;
+              }
+              const nextAutoGrowGrowthStep = parsePositive(
+                values.auto_grow_growth_step_gb,
+              );
+              if (
+                nextAutoGrowGrowthStep != null &&
+                nextAutoGrowGrowthStep !== currentAutoGrow.growth_step_gb
+              ) {
+                update.auto_grow_growth_step_gb = nextAutoGrowGrowthStep;
+              }
+              const nextAutoGrowMinInterval = parsePositive(
+                values.auto_grow_min_grow_interval_minutes,
+              );
+              if (
+                nextAutoGrowMinInterval != null &&
+                nextAutoGrowMinInterval !==
+                  currentAutoGrow.min_grow_interval_minutes
+              ) {
+                update.auto_grow_min_grow_interval_minutes =
+                  nextAutoGrowMinInterval;
+              }
+            }
+            if (Object.keys(update).length > 0) {
+              await updateHostMachine(id, update);
+            }
+            closeEdit();
+            return;
+          }
+
           const update: Record<string, any> = {};
-          if (machine.cloud) update.cloud = machine.cloud;
-          if (payload.region) update.region = payload.region;
-          if (machine.zone) update.zone = machine.zone;
-          if (machine.machine_type) update.machine_type = machine.machine_type;
-          if (machine.gpu_type !== undefined)
-            update.gpu_type = machine.gpu_type || undefined;
-          if (machine.gpu_count !== undefined)
-            update.gpu_count = machine.gpu_count;
-          if (machine.storage_mode) update.storage_mode = machine.storage_mode;
-          if (typeof machine.disk_gb === "number")
-            update.disk_gb = machine.disk_gb;
-          if (machine.disk_type) update.disk_type = machine.disk_type;
-          if (typeof metadata.cpu === "number") update.cpu = metadata.cpu;
-          if (typeof metadata.ram_gb === "number")
-            update.ram_gb = metadata.ram_gb;
-          if (typeof metadata.self_host_ssh_target === "string") {
-            update.self_host_ssh_target = metadata.self_host_ssh_target;
+          const currentCpu = Number(editingHost.machine?.metadata?.cpu);
+          const currentRam = Number(editingHost.machine?.metadata?.ram_gb);
+          const currentDisk = Number(editingHost.machine?.disk_gb);
+          const nextCpu = parsePositive(values.cpu);
+          const nextRam = parsePositive(values.ram_gb);
+          const nextDisk = parsePositive(values.disk_gb);
+          if (isSelfHost) {
+            if (nextCpu && nextCpu !== currentCpu) update.cpu = nextCpu;
+            if (nextRam && nextRam !== currentRam) update.ram_gb = nextRam;
+          }
+          if (nextDisk && nextDisk !== currentDisk) {
+            update.disk_gb = nextDisk;
+          }
+          if (isSelfHost) {
+            const currentTarget =
+              editingHost.machine?.metadata?.self_host_ssh_target ?? "";
+            const nextTarget = values.self_host_ssh_target ?? "";
+            if (String(currentTarget) !== String(nextTarget)) {
+              update.self_host_ssh_target = nextTarget.trim() || undefined;
+            }
           }
           if (
-            payload.pricing_model &&
-            payload.pricing_model !== currentPricingModel
+            values.pricing_model &&
+            values.pricing_model !== currentPricingModel
           ) {
-            update.pricing_model = payload.pricing_model;
+            update.pricing_model = values.pricing_model;
           }
           if (
-            payload.interruption_restore_policy &&
-            payload.interruption_restore_policy !==
+            values.interruption_restore_policy &&
+            values.interruption_restore_policy !==
               currentInterruptionRestorePolicy
           ) {
             update.interruption_restore_policy =
-              payload.interruption_restore_policy;
+              values.interruption_restore_policy;
           }
           const nextSpotRecoveryPolicy = activeSpotRecoveryPolicy({
-            pricingModel: payload.pricing_model ?? currentPricingModel,
+            pricingModel: values.pricing_model ?? currentPricingModel,
             interruptionRestorePolicy:
-              payload.interruption_restore_policy ??
+              values.interruption_restore_policy ??
               currentInterruptionRestorePolicy,
-            spotRecoveryPolicy: payload.spot_recovery_policy,
+            spotRecoveryPolicy: values.spot_recovery_policy,
           });
           if (
             !equalSpotRecoveryPolicies(
@@ -1836,6 +1964,90 @@ export const useHostsPageViewModel = () => {
           ) {
             update.spot_recovery_policy = nextSpotRecoveryPolicy;
           }
+
+          if (canEditMachine) {
+            const nextMachineType = values.machine_type || values.size;
+            if (isDeprovisioned) {
+              if (
+                values.provider &&
+                values.provider !== editingHost.machine?.cloud
+              ) {
+                update.cloud = values.provider;
+              }
+              if (values.region && values.region !== editingHost.region) {
+                update.region = values.region;
+              }
+              if (values.zone && values.zone !== editingHost.machine?.zone) {
+                update.zone = values.zone;
+              }
+            }
+            if (
+              nextMachineType &&
+              nextMachineType !== editingHost.machine?.machine_type
+            ) {
+              update.machine_type = nextMachineType;
+            }
+            if (nextProvider === "nebius" && nextMachineType) {
+              const selection = {
+                region: values.region ?? editingHost.region ?? undefined,
+                zone: values.zone ?? editingHost.machine?.zone ?? undefined,
+                machine_type: nextMachineType,
+                gpu_type: values.gpu_type ?? editingHost.machine?.gpu_type,
+                size: values.size ?? nextMachineType,
+                gpu: editingHost.gpu ? "true" : undefined,
+              };
+              const fieldOptions = getProviderOptions(
+                nextProvider,
+                editCatalog,
+                selection,
+              );
+              const payload = buildCreateHostPayload(
+                {
+                  ...values,
+                  provider: nextProvider,
+                  region: selection.region,
+                  zone: selection.zone,
+                  machine_type: selection.machine_type,
+                  size: selection.size,
+                },
+                { fieldOptions, catalog: editCatalog },
+              );
+              const machine = payload.machine ?? {};
+              const nextDerivedGpuType = machine.gpu_type ?? "none";
+              const currentDerivedGpuType =
+                editingHost.machine?.gpu_type ?? "none";
+              const nextDerivedGpuCount = machine.gpu_count ?? 0;
+              const currentDerivedGpuCount =
+                editingHost.machine?.gpu_count ?? 0;
+              if (nextDerivedGpuType !== currentDerivedGpuType) {
+                update.gpu_type = nextDerivedGpuType;
+              }
+              if (nextDerivedGpuCount !== currentDerivedGpuCount) {
+                update.gpu_count = nextDerivedGpuCount;
+              }
+            }
+            if (values.gpu_type !== undefined) {
+              const nextGpu = values.gpu_type || undefined;
+              if (nextGpu !== editingHost.machine?.gpu_type) {
+                update.gpu_type = values.gpu_type;
+              }
+            }
+            if (isDeprovisioned) {
+              if (
+                values.storage_mode &&
+                values.storage_mode !== editingHost.machine?.storage_mode
+              ) {
+                update.storage_mode = values.storage_mode;
+              }
+              if (
+                values.disk_type &&
+                values.disk_type !== editingHost.machine?.disk_type
+              ) {
+                update.disk_type = values.disk_type;
+              }
+            }
+          }
+
           if (supportsAutoGrowConfig) {
             if (
               typeof values.auto_grow_enabled === "boolean" &&
@@ -1873,198 +2085,17 @@ export const useHostsPageViewModel = () => {
                 nextAutoGrowMinInterval;
             }
           }
+
           if (Object.keys(update).length > 0) {
             await updateHostMachine(id, update);
           }
-          return;
-        }
-        const update: Record<string, any> = {};
-
-        const currentCpu = Number(editingHost.machine?.metadata?.cpu);
-        const currentRam = Number(editingHost.machine?.metadata?.ram_gb);
-        const currentDisk = Number(editingHost.machine?.disk_gb);
-        const nextCpu = parsePositive(values.cpu);
-        const nextRam = parsePositive(values.ram_gb);
-        const nextDisk = parsePositive(values.disk_gb);
-        if (isSelfHost) {
-          if (nextCpu && nextCpu !== currentCpu) update.cpu = nextCpu;
-          if (nextRam && nextRam !== currentRam) update.ram_gb = nextRam;
-        }
-        if (nextDisk && nextDisk !== currentDisk) update.disk_gb = nextDisk;
-        if (isSelfHost) {
-          const currentTarget =
-            editingHost.machine?.metadata?.self_host_ssh_target ?? "";
-          const nextTarget = values.self_host_ssh_target ?? "";
-          if (String(currentTarget) !== String(nextTarget)) {
-            update.self_host_ssh_target = nextTarget.trim() || undefined;
-          }
-        }
-        if (
-          values.pricing_model &&
-          values.pricing_model !== currentPricingModel
-        ) {
-          update.pricing_model = values.pricing_model;
-        }
-        if (
-          values.interruption_restore_policy &&
-          values.interruption_restore_policy !==
-            currentInterruptionRestorePolicy
-        ) {
-          update.interruption_restore_policy =
-            values.interruption_restore_policy;
-        }
-        const nextSpotRecoveryPolicy = activeSpotRecoveryPolicy({
-          pricingModel: values.pricing_model ?? currentPricingModel,
-          interruptionRestorePolicy:
-            values.interruption_restore_policy ??
-            currentInterruptionRestorePolicy,
-          spotRecoveryPolicy: values.spot_recovery_policy,
+          closeEdit();
         });
-        if (
-          !equalSpotRecoveryPolicies(
-            currentSpotRecoveryPolicy,
-            nextSpotRecoveryPolicy,
-          ) &&
-          nextSpotRecoveryPolicy
-        ) {
-          update.spot_recovery_policy = nextSpotRecoveryPolicy;
-        }
-
-        if (canEditMachine) {
-          const nextMachineType = values.machine_type || values.size;
-          const selection = {
-            region: values.region ?? editingHost.region ?? undefined,
-            zone: values.zone ?? editingHost.machine?.zone ?? undefined,
-            machine_type: nextMachineType,
-            gpu_type: values.gpu_type ?? editingHost.machine?.gpu_type,
-            size: values.size ?? nextMachineType,
-            gpu: editingHost.gpu ? "true" : undefined,
-          };
-          const fieldOptions =
-            nextProvider !== "self-host"
-              ? getProviderOptions(nextProvider, editCatalog, selection)
-              : undefined;
-          const machineUpdatePayload =
-            nextMachineType && fieldOptions
-              ? buildCreateHostPayload(
-                  {
-                    ...values,
-                    provider: nextProvider,
-                    region: selection.region,
-                    zone: selection.zone,
-                    machine_type: selection.machine_type,
-                    size: selection.size,
-                  },
-                  { fieldOptions, catalog: editCatalog },
-                )
-              : undefined;
-          const nextMachineMetadata = (machineUpdatePayload?.machine
-            ?.metadata ?? {}) as Record<string, any>;
-          if (isDeprovisioned) {
-            if (
-              values.provider &&
-              values.provider !== editingHost.machine?.cloud
-            ) {
-              update.cloud = values.provider;
-            }
-            if (values.region && values.region !== editingHost.region) {
-              update.region = values.region;
-            }
-            if (values.zone && values.zone !== editingHost.machine?.zone) {
-              update.zone = values.zone;
-            }
-          }
-          if (
-            nextMachineType &&
-            nextMachineType !== editingHost.machine?.machine_type
-          ) {
-            update.machine_type = nextMachineType;
-            if (typeof nextMachineMetadata.cpu === "number") {
-              update.cpu = nextMachineMetadata.cpu;
-            }
-            if (typeof nextMachineMetadata.ram_gb === "number") {
-              update.ram_gb = nextMachineMetadata.ram_gb;
-            }
-          }
-          if (nextProvider === "nebius" && nextMachineType) {
-            const machine = machineUpdatePayload?.machine ?? {};
-            const nextDerivedGpuType = machine.gpu_type ?? "none";
-            const currentDerivedGpuType =
-              editingHost.machine?.gpu_type ?? "none";
-            const nextDerivedGpuCount = machine.gpu_count ?? 0;
-            const currentDerivedGpuCount = editingHost.machine?.gpu_count ?? 0;
-            if (nextDerivedGpuType !== currentDerivedGpuType) {
-              update.gpu_type = nextDerivedGpuType;
-            }
-            if (nextDerivedGpuCount !== currentDerivedGpuCount) {
-              update.gpu_count = nextDerivedGpuCount;
-            }
-          }
-          if (values.gpu_type !== undefined) {
-            const nextGpu = values.gpu_type || undefined;
-            if (nextGpu !== editingHost.machine?.gpu_type) {
-              update.gpu_type = values.gpu_type;
-            }
-          }
-          if (isDeprovisioned) {
-            if (
-              values.storage_mode &&
-              values.storage_mode !== editingHost.machine?.storage_mode
-            ) {
-              update.storage_mode = values.storage_mode;
-            }
-            if (
-              values.disk_type &&
-              values.disk_type !== editingHost.machine?.disk_type
-            ) {
-              update.disk_type = values.disk_type;
-            }
-          }
-        }
-        if (supportsAutoGrowConfig) {
-          if (
-            typeof values.auto_grow_enabled === "boolean" &&
-            values.auto_grow_enabled !== currentAutoGrow.enabled
-          ) {
-            update.auto_grow_enabled = values.auto_grow_enabled;
-          }
-          const nextAutoGrowMaxDisk = parsePositive(
-            values.auto_grow_max_disk_gb,
-          );
-          if (
-            nextAutoGrowMaxDisk != null &&
-            nextAutoGrowMaxDisk !== currentAutoGrow.max_disk_gb
-          ) {
-            update.auto_grow_max_disk_gb = nextAutoGrowMaxDisk;
-          }
-          const nextAutoGrowGrowthStep = parsePositive(
-            values.auto_grow_growth_step_gb,
-          );
-          if (
-            nextAutoGrowGrowthStep != null &&
-            nextAutoGrowGrowthStep !== currentAutoGrow.growth_step_gb
-          ) {
-            update.auto_grow_growth_step_gb = nextAutoGrowGrowthStep;
-          }
-          const nextAutoGrowMinInterval = parsePositive(
-            values.auto_grow_min_grow_interval_minutes,
-          );
-          if (
-            nextAutoGrowMinInterval != null &&
-            nextAutoGrowMinInterval !==
-              currentAutoGrow.min_grow_interval_minutes
-          ) {
-            update.auto_grow_min_grow_interval_minutes =
-              nextAutoGrowMinInterval;
-          }
-        }
-
-        if (Object.keys(update).length > 0) {
-          await updateHostMachine(id, update);
+        if (!completed) {
+          return;
         }
       } finally {
         setSavingEdit(false);
-        closeEdit();
       }
     },
     catalog: editCatalog,
@@ -2105,5 +2136,13 @@ export const useHostsPageViewModel = () => {
     },
   };
 
-  return { createVm, hostListVm, hostDrawerVm, editVm, setupVm, removeVm };
+  return {
+    createVm,
+    hostListVm,
+    hostDrawerVm,
+    editVm,
+    setupVm,
+    removeVm,
+    freshAuthModalProps,
+  };
 };

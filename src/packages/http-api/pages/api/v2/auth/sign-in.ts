@@ -19,7 +19,12 @@ import { Request, Response } from "express";
 
 import getPool from "@cocalc/database/pool";
 import { recordFail, signInCheck } from "@cocalc/server/auth/throttle";
+import type { AuthSessionFactorLevel } from "@cocalc/server/auth/auth-sessions";
 import getRequiresToken from "@cocalc/server/auth/tokens/get-requires-token";
+import {
+  createSignInSecondFactorChallenge,
+  hasActiveSecondFactor,
+} from "@cocalc/server/auth/two-factor";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { verify } from "password-hash";
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
@@ -81,7 +86,27 @@ export default async function signIn(req: Request, res: Response) {
     return;
   }
 
-  await signUserIn(req, res, account_id);
+  if (await hasActiveSecondFactor(account_id)) {
+    const challenge = await createSignInSecondFactorChallenge({ account_id });
+    res.json({
+      mfa_required: true,
+      challenge_id: challenge.challenge_id,
+      methods: challenge.methods,
+      home_bay_id: getConfiguredBayId(),
+      home_bay_url: await getBayPublicOriginForRequest(
+        req,
+        getConfiguredBayId(),
+      ),
+    });
+    return;
+  }
+
+  await signUserIn(req, res, account_id, {
+    authenticated_at: new Date(),
+    password_verified_at: new Date(),
+    factor_level: "none",
+    fresh_auth_until: null,
+  });
 }
 
 function getSignInErrorMessage(
@@ -177,14 +202,32 @@ export async function signUserIn(
   req,
   res,
   account_id: string,
-  opts?: { maxAge?: number },
+  opts?: {
+    maxAge?: number;
+    authenticated_at?: Date;
+    password_verified_at?: Date | null;
+    factor_verified_at?: Date | null;
+    factor_level?: AuthSessionFactorLevel;
+    fresh_auth_until?: Date | null;
+  },
 ): Promise<void> {
   try {
+    const authenticated_at = opts?.authenticated_at ?? new Date();
     await setSignInCookies({
       req,
       res,
       account_id,
       maxAge: opts?.maxAge,
+      session: {
+        authenticated_at,
+        password_verified_at:
+          opts?.password_verified_at === undefined
+            ? authenticated_at
+            : opts.password_verified_at,
+        factor_verified_at: opts?.factor_verified_at ?? null,
+        factor_level: opts?.factor_level ?? "none",
+        fresh_auth_until: opts?.fresh_auth_until ?? null,
+      },
     });
   } catch (err) {
     // Avoid leaking cookie implementation/internal errors to clients.

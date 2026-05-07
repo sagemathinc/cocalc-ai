@@ -1,7 +1,7 @@
 # First Public Release Master Plan
 
-Status: master release planning and execution tracker, refreshed on 2026-05-04
-after host-density, project-host, and spot-recovery canary work.
+Status: master release planning and execution tracker, refreshed on 2026-05-06
+after hosted-backup sharding, move UX, and start-wedge fixes.
 
 This document is the single planning / todo document for the first public
 release of `cocalc-ai`.
@@ -33,6 +33,7 @@ Related documents:
 - [shared-host-stopping-eviction-spec-2026-04-29.md](/home/user/cocalc-ai/src/.agents/shared-host-stopping-eviction-spec-2026-04-29.md)
 - [project-host-daemon-upgrade-rollback-plan.md](/home/user/cocalc-ai/src/.agents/project-host-daemon-upgrade-rollback-plan.md)
 - [project-host-auth.md](/home/user/cocalc-ai/src/.agents/project-host-auth.md)
+- [project-backup-rustic-r2-sharding-v1-2026-05-05.md](/home/user/cocalc-ai/src/.agents/project-backup-rustic-r2-sharding-v1-2026-05-05.md)
 
 ## Release Definition
 
@@ -154,6 +155,28 @@ The following scope is **not** in:
   - automatic finalization back to `idle`
 - the spot recovery policy now has real UI/configuration surfaces instead of
   being hidden metadata only
+- hosted backup index sidecars no longer pay the main rustic-repo metadata tax:
+  - sqlite backup indexes are uploaded directly to R2 object storage
+  - Postgres tracks manifest/status for those index artifacts
+- shared hosted rustic backups are now sharded for the first release:
+  - seed-controlled shard assignment
+  - `4` active shards per region
+  - `500` projects per shard cap
+  - `10` retained backups per project default
+  - operator visibility exists in admin UI, CLI, and RPC
+- project move between hosts/regions is now materially more trustworthy:
+  - same-region and cross-region triangle moves passed on real hosts with a
+    nontrivial cloned project
+  - backup-region cutover works with the new sharded backup model
+  - the move-complete browser UX is now explicit: after a successful move, the
+    browser session shows completion and asks the user to reopen the project on
+    the destination host
+- stale/orphaned `project-start` LROs were identified as a real cause of
+  “project start wedged” reports and are now cleaned up in the hub start path
+  before new starts are evaluated
+- the GCP-in-project Ubuntu mirror bug was fixed by using the zone-scoped
+  `gce.clouds.archive.ubuntu.com` mirror path instead of the broken region-only
+  hostname synthesis
 
 These are meaningful release advances, but they do **not** by themselves mean
 the release is ready. They mainly reduce uncertainty around host/runtime
@@ -175,6 +198,15 @@ correctness and capacity.
   - the host still had meaningful CPU headroom at that point
 - managed spot interruption recovery is now a real system, not a sketch:
   - fallback to standard and return-to-spot both passed live canaries
+- hosted backup storage is no longer on one unbounded rustic repo:
+  - direct-R2 backup-index storage is live
+  - shared rustic repos are sharded
+  - shard assignment is visible to operators
+- project move now has a release-credible user/browser model:
+  - move correctness is real
+  - backup cutover is real
+  - the browser reconnect step is explicit instead of pretending in-place
+    editor recovery is reliable
 
 ### What still looks risky
 
@@ -182,7 +214,7 @@ correctness and capacity.
 - cleanup throughput / runtime garbage-collection after failed high-density
   runs
 - stale/deleted host convergence and operator-facing freshness across bays
-- region-move correctness and backup cutover semantics
+- sustained soak confidence for the new sharded backup/move path
 - deployment / upgrade / rollback reproducibility
 - operator workflows that remain too environment-sensitive
 - dedicated-host pricing, billing, and access-control polish
@@ -243,14 +275,31 @@ Goal: make the current multibay architecture trustworthy under churn.
   - take exactly one fresh backup in the destination region
   - flip the official backup region to the destination
   - purge the old-region snapshots after cutover
-- [ ] Fix the temporary browser/frontend inconsistency after a completed region
-      move so the project state and page UX stop looking broken during the
-      post-move settle window.
+- [x] Replace the broken “keep all open editors alive across move” idea with an
+      explicit post-move reopen UX:
+  - while the move runs, show move progress
+  - when the move completes in that browser session, show that the move is done
+  - require an explicit reopen onto the destination host for that browser
+    session
+  - do not show the move-complete screen on a cold page load of an already
+    moved project
+- [x] Move hosted backup indexes off rustic sidecar snapshots and into direct
+      R2 object storage with manifest/status tracking.
+- [x] Finish first-release hosted rustic backup sharding and operator
+      observability:
+  - seed-controlled assignment
+  - `4` active shards per region
+  - `500` projects per shard cap
+  - `10` retained backups per project default
+  - admin RPC / CLI / frontend visibility
+- [ ] Soak backup shard assignment, restore, and cross-region cutover behavior
+      under ordinary churn, not just one-off canaries.
 - [ ] Verify the accessibility case where a project's current backup region has
       no active hosts, and moving it to a region with hosts restores normal
       access.
 - [ ] Document the user/operator-visible semantics for region moves:
   - expected downtime
+  - why the move is safe
   - what metadata changes
   - what snapshots are retained
   - who is allowed to initiate the move
@@ -281,6 +330,7 @@ coherent release story.
 - [ ] Keep the remaining limit model surfaces coherent:
   - admin override controls
   - dedicated-host egress policy semantics/documentation
+  - outbound network policy by trust tier
   - override explanation/audit visibility
 - [ ] Ensure dedicated hosts use the same local host-protection model as
       shared hosts.
@@ -475,10 +525,15 @@ Goal: make operator workflows safe and not context-fragile.
 - [ ] Eliminate ambient auth target confusion caused by `CONAT_SERVER`, bearer,
       or project-secret env.
 - [ ] Define the supported operator credential story for release.
+- [ ] Support restricted-scope operator credentials for machine/Codex use.
 - [ ] Make `cocalc-cli` operator commands reliable without hidden local
       context.
 - [ ] Add structured logs for critical host/project auth failures and deny
       reasons.
+- [x] Add minimum operator visibility for hosted backup shards:
+  - admin-only RPC
+  - `cocalc-cli` subcommand
+  - admin table in the frontend
 - [ ] Add minimum required production observability:
   - message rates
   - event-loop delay
@@ -486,6 +541,15 @@ Goal: make operator workflows safe and not context-fragile.
   - Postgres pressure
   - routing latency
   - host reconciliation lag
+- [ ] Add minimum operator abuse analytics for memberships/billing/hosts:
+  - seed-global summarized rollups, not per-bay scans
+  - admin UI time-series views
+  - matching `cocalc-cli` readout from the same projections
+- [ ] Add a Codex-assisted abuse-review loop:
+  - read-only scoped operator credential
+  - scheduled `cocalc abuse ...` style review
+  - alert humans on suspicious patterns
+  - no default autonomous punitive actions
 - [ ] Add/export control-plane traffic stats in frontend session tooling.
 
 ### Exit Criteria
@@ -538,15 +602,10 @@ This list should stay aggressively pruned and explicit.
 
 ### Current Known Bugs / Defects
 
-- [ ] New projects on `lite4b` can fail runtime bootstrap because `apt-get`
-      cannot locate `sudo`.
 - [ ] ACP worker supervisor still emits `EACCES` on
       `/mnt/cocalc/data/logs/acp-worker.log`.
 - [ ] Duplicate/stale `project_hosts` rows and stale host search/inspection
       state can remain in the registry and harm operator trust.
-- [ ] Project move between regions still has a confusing temporary browser/UI
-      state after the move finishes, even though the backend move itself now
-      works if the user waits for convergence.
 - [ ] `cocalc project log` CLI handling for stopped projects is not reliable
       enough; the log stream itself works, but the operator-facing path is
       confusing.
@@ -592,7 +651,7 @@ This is the recommended order of work.
 - [ ] close remaining admin override / dedicated-host egress work
 - [ ] finish deployment/packaging path
 - [ ] finish multibay stale-state convergence work
-- [ ] finish project move between regions implementation
+- [x] finish project move between regions implementation
 
 ### Phase 2. Dedicated Host Narrow MVP
 
@@ -676,23 +735,33 @@ true:
 If we want the shortest path to release from today, do these next:
 
 - [ ] fix the current known live bugs from recent canaries, especially:
-  - `lite4b` bootstrap/package issues
   - stale host state/operator-trust issues
   - runtime cleanup / leaked-state recovery after failed high-density runs
-  - project-move frontend confusion during the post-move settle window
+  - any regressions in the new sharded backup / move / start paths
+- [ ] finish the release docs for project move:
+  - explicit reopen semantics
+  - why the move is safe
+  - expected downtime and backup-region effects
+- [ ] soak the new hosted backup architecture:
+  - direct-R2 backup indexes
+  - shard assignment/cap behavior
+  - cross-region move cutover under churn
 - [ ] snapshots
-  - [ ] get ordinary flows off full snapshot listing entirely
-  - [ ] finish sharding implementation
-- [ ] creating a custom image on the todo list, since that'll make bootstrap much faster and more robust for GCP hosts. 
+  - [ ] keep ordinary user-facing index/browse flows off full snapshot listing
+        permanently
 - [ ] finish central admin override controls
 - [ ] implement student pay
 - [ ] implement minimal site/domain license
 - [ ] finish packaging/deploy/rollback path
 - [ ] validate one supported rented dedicated-host path end to end, including
-  billing/access-control polish rather than only host lifecycle
+      billing/access-control polish rather than only host lifecycle
 - [ ] run a real 3-bay soak and fix what it finds
 - [ ] turn the current benchmark evidence into a conservative sizing note and a
-  cleanup / runtime-repair playbook
+      cleanup / runtime-repair playbook
 
 That is the highest-value path to a real first public release without
 expanding scope.
+
+### TODO
+
+- [ ] finish recaptcha support
