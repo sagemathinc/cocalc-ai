@@ -7,6 +7,10 @@ import getLogger from "@cocalc/backend/logger";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
+  activateMembershipClaimIdentity,
+  revokeMembershipClaimIdentity,
+} from "@cocalc/server/membership/claim-directory";
+import {
   revokeMembershipGrantOnHomeBay,
   upsertMembershipGrantOnHomeBay,
   type MembershipGrantRecord,
@@ -37,6 +41,7 @@ const LEASE_MS = clampInt(
 );
 
 const EFFECT_KIND_GRANT_SYNC = "grant-sync";
+const EFFECT_KIND_CLAIM_IDENTITY_SYNC = "claim-identity-sync";
 const EFFECT_KIND_PROJECT_USAGE_SYNC = "project-usage-sync";
 
 type Queryable = PoolClient | ReturnType<typeof getPool>;
@@ -59,8 +64,34 @@ type MembershipProjectUsageSyncPayload = {
   expected_current_usage_account_id?: string | null;
 };
 
+type MembershipClaimIdentitySyncPayload =
+  | {
+      desired_state: "active";
+      scope_key: string;
+      scope_kind: string;
+      canonical_identity: string;
+      reservation_id: string;
+      account_id: string;
+      package_id: string;
+      assignment_id: string;
+      grant_id?: string | null;
+      matched_email_address: string;
+      claimed_domain: string;
+      metadata?: Record<string, unknown> | null;
+    }
+  | {
+      desired_state: "revoked";
+      scope_key: string;
+      canonical_identity: string;
+      account_id: string;
+      assignment_id: string;
+      reservation_id?: string;
+      revoked_at?: Date | string | null;
+    };
+
 type MembershipSideEffectPayload =
   | MembershipGrantSyncPayload
+  | MembershipClaimIdentitySyncPayload
   | MembershipProjectUsageSyncPayload;
 
 interface MembershipSideEffectRow {
@@ -118,6 +149,10 @@ function membershipGrantEffectKey(assignment_id: string): string {
 
 function membershipProjectUsageEffectKey(assignment_id: string): string {
   return `project-usage-sync:${assignment_id}`;
+}
+
+function membershipClaimIdentityEffectKey(assignment_id: string): string {
+  return `claim-identity-sync:${assignment_id}`;
 }
 
 function nextRetryDelayMs(attempt_count: number): number {
@@ -240,6 +275,30 @@ export async function queueMembershipProjectUsageSyncEffect({
     package_id,
     assignment_id,
     effect_kind: EFFECT_KIND_PROJECT_USAGE_SYNC,
+    desired_payload_json: desired_payload,
+    client,
+  });
+}
+
+export async function queueMembershipClaimIdentitySyncEffect({
+  owner_account_id,
+  package_id,
+  assignment_id,
+  desired_payload,
+  client,
+}: {
+  owner_account_id: string;
+  package_id: string;
+  assignment_id: string;
+  desired_payload: MembershipClaimIdentitySyncPayload;
+  client?: PoolClient;
+}): Promise<number> {
+  return await upsertMembershipSideEffect({
+    effect_key: membershipClaimIdentityEffectKey(assignment_id),
+    owner_account_id,
+    package_id,
+    assignment_id,
+    effect_kind: EFFECT_KIND_CLAIM_IDENTITY_SYNC,
     desired_payload_json: desired_payload,
     client,
   });
@@ -376,6 +435,35 @@ async function applyProjectUsageSyncPayload(
   }
 }
 
+async function applyMembershipClaimIdentitySyncPayload(
+  payload: MembershipClaimIdentitySyncPayload,
+): Promise<void> {
+  if (payload.desired_state === "active") {
+    await activateMembershipClaimIdentity({
+      scope_key: payload.scope_key,
+      scope_kind: payload.scope_kind,
+      canonical_identity: payload.canonical_identity,
+      account_id: payload.account_id,
+      reservation_id: payload.reservation_id,
+      package_id: payload.package_id,
+      assignment_id: payload.assignment_id,
+      grant_id: payload.grant_id ?? null,
+      matched_email_address: payload.matched_email_address,
+      claimed_domain: payload.claimed_domain,
+      metadata: payload.metadata,
+    });
+    return;
+  }
+  await revokeMembershipClaimIdentity({
+    scope_key: payload.scope_key,
+    canonical_identity: payload.canonical_identity,
+    account_id: payload.account_id,
+    assignment_id: payload.assignment_id,
+    reservation_id: payload.reservation_id,
+    revoked_at: payload.revoked_at,
+  });
+}
+
 async function applyMembershipSideEffect(
   row: ClaimedMembershipSideEffectRow,
 ): Promise<void> {
@@ -388,6 +476,11 @@ async function applyMembershipSideEffect(
     case EFFECT_KIND_PROJECT_USAGE_SYNC:
       await applyProjectUsageSyncPayload(
         row.desired_payload_json as MembershipProjectUsageSyncPayload,
+      );
+      return;
+    case EFFECT_KIND_CLAIM_IDENTITY_SYNC:
+      await applyMembershipClaimIdentitySyncPayload(
+        row.desired_payload_json as MembershipClaimIdentitySyncPayload,
       );
       return;
     default:

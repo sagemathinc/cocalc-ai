@@ -428,6 +428,62 @@ export interface AccountDirectoryCreateRequest {
   customize?: any;
 }
 
+export type MembershipClaimIdentityState = "pending" | "active" | "revoked";
+
+export interface MembershipClaimIdentityEntry {
+  scope_id: string;
+  scope_key: string;
+  scope_kind: string;
+  canonical_identity: string;
+  account_id: string;
+  state: MembershipClaimIdentityState;
+  reservation_id: string;
+  package_id?: string;
+  assignment_id?: string;
+  grant_id?: string;
+  matched_email_address: string;
+  claimed_domain: string;
+  reservation_expires_at?: Date | null;
+  activated_at?: Date | null;
+  revoked_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date;
+  updated?: Date;
+}
+
+export interface MembershipClaimIdentityGetRequest {
+  scope_key: string;
+  canonical_identity: string;
+}
+
+export interface MembershipClaimIdentityReserveRequest extends MembershipClaimIdentityGetRequest {
+  scope_kind: string;
+  account_id: string;
+  reservation_id: string;
+  matched_email_address: string;
+  claimed_domain: string;
+  reservation_ttl_ms?: number;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface MembershipClaimIdentityReserveResult {
+  scope_id: string;
+  reservation_id: string;
+}
+
+export interface MembershipClaimIdentityActivateRequest extends MembershipClaimIdentityReserveRequest {
+  package_id: string;
+  assignment_id: string;
+  grant_id?: string | null;
+}
+
+export interface MembershipClaimIdentityRevokeRequest extends MembershipClaimIdentityGetRequest {
+  account_id: string;
+  assignment_id?: string;
+  reservation_id?: string;
+  revoked_at?: string | number | Date | null;
+}
+
 export interface AccountRehomeRequest {
   account_id?: string;
   target_account_id: string;
@@ -778,7 +834,11 @@ export type AccountDirectoryMethod =
   | "upsert-api-key"
   | "delete-api-key"
   | "update-api-keys-home-bay"
-  | "touch-api-key";
+  | "touch-api-key"
+  | "get-membership-claim-identity"
+  | "reserve-membership-claim-identity"
+  | "activate-membership-claim-identity"
+  | "revoke-membership-claim-identity";
 export type AccountLocalMethod =
   | "create"
   | "delete"
@@ -1323,6 +1383,18 @@ export interface InterBayAccountDirectoryApi {
     opts: AccountApiKeyDirectoryUpdateHomeBayRequest,
   ) => Promise<void>;
   touchApiKey: (opts: AccountApiKeyDirectoryTouchRequest) => Promise<void>;
+  getMembershipClaimIdentity: (
+    opts: MembershipClaimIdentityGetRequest,
+  ) => Promise<MembershipClaimIdentityEntry | null>;
+  reserveMembershipClaimIdentity: (
+    opts: MembershipClaimIdentityReserveRequest,
+  ) => Promise<MembershipClaimIdentityReserveResult>;
+  activateMembershipClaimIdentity: (
+    opts: MembershipClaimIdentityActivateRequest,
+  ) => Promise<void>;
+  revokeMembershipClaimIdentity: (
+    opts: MembershipClaimIdentityRevokeRequest,
+  ) => Promise<void>;
 }
 
 export interface InterBayAccountLocalApi {
@@ -2224,6 +2296,38 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "touch-api-key" }),
   });
+  const getMembershipClaimIdentityClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "getMembershipClaimIdentity">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "get-membership-claim-identity",
+    }),
+  });
+  const reserveMembershipClaimIdentityClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "reserveMembershipClaimIdentity">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "reserve-membership-claim-identity",
+    }),
+  });
+  const activateMembershipClaimIdentityClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "activateMembershipClaimIdentity">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "activate-membership-claim-identity",
+    }),
+  });
+  const revokeMembershipClaimIdentityClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "revokeMembershipClaimIdentity">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "revoke-membership-claim-identity",
+    }),
+  });
   return {
     get: async (opts) => await getClient.get(opts),
     getByEmail: async (opts) => await getByEmailClient.getByEmail(opts),
@@ -2241,6 +2345,20 @@ export function createInterBayAccountDirectoryClient({
     updateApiKeysHomeBay: async (opts) =>
       await updateApiKeysHomeBayClient.updateApiKeysHomeBay(opts),
     touchApiKey: async (opts) => await touchApiKeyClient.touchApiKey(opts),
+    getMembershipClaimIdentity: async (opts) =>
+      await getMembershipClaimIdentityClient.getMembershipClaimIdentity(opts),
+    reserveMembershipClaimIdentity: async (opts) =>
+      await reserveMembershipClaimIdentityClient.reserveMembershipClaimIdentity(
+        opts,
+      ),
+    activateMembershipClaimIdentity: async (opts) =>
+      await activateMembershipClaimIdentityClient.activateMembershipClaimIdentity(
+        opts,
+      ),
+    revokeMembershipClaimIdentity: async (opts) =>
+      await revokeMembershipClaimIdentityClient.revokeMembershipClaimIdentity(
+        opts,
+      ),
   };
 }
 
@@ -2358,6 +2476,58 @@ export function createInterBayAccountDirectoryHandlers({
       subject: accountDirectorySubject({ method: "touch-api-key" }),
       impl: {
         touchApiKey: async (opts) => await impl.touchApiKey(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "getMembershipClaimIdentity">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "get-membership-claim-identity",
+      }),
+      impl: {
+        getMembershipClaimIdentity: async (opts) =>
+          await impl.getMembershipClaimIdentity(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "reserveMembershipClaimIdentity">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "reserve-membership-claim-identity",
+      }),
+      impl: {
+        reserveMembershipClaimIdentity: async (opts) =>
+          await impl.reserveMembershipClaimIdentity(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "activateMembershipClaimIdentity">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "activate-membership-claim-identity",
+      }),
+      impl: {
+        activateMembershipClaimIdentity: async (opts) =>
+          await impl.activateMembershipClaimIdentity(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "revokeMembershipClaimIdentity">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "revoke-membership-claim-identity",
+      }),
+      impl: {
+        revokeMembershipClaimIdentity: async (opts) =>
+          await impl.revokeMembershipClaimIdentity(opts),
       },
     }),
   ];

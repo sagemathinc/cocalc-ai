@@ -33,9 +33,16 @@ import { DEFAULT_PURCHASE_INFO } from "@cocalc/util/purchases/quota/student-pay"
 import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { getCost as getCoursePayCost } from "@cocalc/server/purchases/student-pay";
+import {
+  canonicalizeInstitutionalClaimEmail,
+  getMembershipClaimIdentity,
+  reserveMembershipClaimIdentity,
+  revokeMembershipClaimIdentity,
+} from "./claim-directory";
 import { createMembershipGrant, revokeMembershipGrantById } from "./grants";
 import { setProjectUsageAccountId } from "./project-usage";
 import {
+  queueMembershipClaimIdentitySyncEffect,
   queueMembershipGrantSyncEffect,
   queueMembershipProjectUsageSyncEffect,
 } from "./side-effects";
@@ -51,6 +58,13 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 type Queryable = PoolClient | ReturnType<typeof getPool>;
 type ClaimableMembershipPackageWithBay = ClaimableMembershipPackage & {
   owner_bay_id: string;
+};
+type InstitutionalClaimDescriptor = {
+  scope_key: string;
+  scope_kind: string;
+  canonical_identity: string;
+  matched_email_address: string;
+  claimed_domain: string;
 };
 
 interface RawMembershipPackageRecord {
@@ -232,6 +246,60 @@ function getPackageDomains(
     }
   }
   return [];
+}
+
+function getInstitutionalClaimScopeKey(
+  metadata?: Record<string, unknown> | null,
+): string | undefined {
+  const explicit = `${metadata?.claim_scope_key ?? ""}`.trim().toLowerCase();
+  if (explicit) {
+    return explicit;
+  }
+  const domains = Array.from(new Set(getPackageDomains(metadata))).sort();
+  if (domains.length === 0) {
+    return;
+  }
+  return `institutional-domains:${domains.join(",")}`;
+}
+
+function getInstitutionalClaimScopeKind(
+  metadata?: Record<string, unknown> | null,
+): string {
+  const explicit = `${metadata?.claim_scope_kind ?? ""}`.trim().toLowerCase();
+  return explicit || "institutional-domain-set";
+}
+
+function getInstitutionalClaimDescriptorForEmail({
+  pkg,
+  matched_email_address,
+}: {
+  pkg: MembershipPackageRecord;
+  matched_email_address: string;
+}): InstitutionalClaimDescriptor | undefined {
+  if (pkg.kind !== "domain" && pkg.kind !== "site") {
+    return;
+  }
+  const normalizedEmail = normalizeEmailAddress(matched_email_address);
+  if (!normalizedEmail) {
+    return;
+  }
+  const scope_key = getInstitutionalClaimScopeKey(pkg.metadata);
+  if (!scope_key) {
+    return;
+  }
+  const claimed_domain = `${normalizedEmail.split("@")[1] ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (!claimed_domain) {
+    return;
+  }
+  return {
+    scope_key,
+    scope_kind: getInstitutionalClaimScopeKind(pkg.metadata),
+    canonical_identity: canonicalizeInstitutionalClaimEmail(normalizedEmail),
+    matched_email_address: normalizedEmail,
+    claimed_domain,
+  };
 }
 
 async function getVerifiedEmailAddressesForAccount(
@@ -1174,6 +1242,34 @@ export async function revokeMembershipPackageSeat(
           client: dbClient,
         });
       }
+      const claim_scope_key =
+        `${assignment.metadata?.claim_scope_key ?? ""}`.trim() || undefined;
+      const claim_identity_key =
+        `${assignment.metadata?.claim_identity_key ?? ""}`.trim() || undefined;
+      const claim_reservation_id =
+        `${assignment.metadata?.claim_reservation_id ?? ""}`.trim() ||
+        undefined;
+      if (
+        assignment.account_id &&
+        claim_scope_key &&
+        claim_identity_key &&
+        (pkg.kind === "domain" || pkg.kind === "site")
+      ) {
+        await queueMembershipClaimIdentitySyncEffect({
+          owner_account_id: pkg.owner_account_id,
+          package_id,
+          assignment_id: assignment.id,
+          desired_payload: {
+            desired_state: "revoked",
+            scope_key: claim_scope_key,
+            canonical_identity: claim_identity_key,
+            account_id: assignment.account_id,
+            assignment_id: assignment.id,
+            reservation_id: claim_reservation_id,
+          },
+          client: dbClient,
+        });
+      }
       const project_id = `${assignment.metadata?.project_id ?? ""}`.trim();
       if (
         pkg.kind === "course" &&
@@ -1266,6 +1362,7 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
     .map((row) => normalizePackageRecord(row))
     .filter((row): row is MembershipPackageRecord => !!row);
   const claimables = new Map<string, ClaimableMembershipPackage>();
+  const claimIdentityCache = new Map<string, boolean>();
   for (const pkg of allPackages) {
     const assignments = await listMembershipPackageAssignments({
       package_id: pkg.id,
@@ -1318,6 +1415,28 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
         allowedDomains.has(email.split("@")[1] ?? ""),
       );
       if (matchedEmailAddress) {
+        const claimDescriptor = getInstitutionalClaimDescriptorForEmail({
+          pkg,
+          matched_email_address: matchedEmailAddress,
+        });
+        const claimIdentityKey =
+          claimDescriptor == null
+            ? null
+            : `${claimDescriptor.scope_key}\u0000${claimDescriptor.canonical_identity}`;
+        let blocked = false;
+        if (claimDescriptor != null && claimIdentityKey != null) {
+          if (!claimIdentityCache.has(claimIdentityKey)) {
+            const currentClaim = await getMembershipClaimIdentity({
+              scope_key: claimDescriptor.scope_key,
+              canonical_identity: claimDescriptor.canonical_identity,
+            });
+            claimIdentityCache.set(claimIdentityKey, currentClaim != null);
+          }
+          blocked = claimIdentityCache.get(claimIdentityKey) ?? false;
+        }
+        if (blocked) {
+          continue;
+        }
         claimables.set(pkg.id, {
           package_id: pkg.id,
           kind: pkg.kind,
@@ -1387,120 +1506,251 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
   verified_email_addresses: string[];
   client?: PoolClient;
 }): Promise<MembershipPackageAssignment> {
-  return await withPackageOwnerWriteFence({
-    package_id,
-    action: "claim membership package seat",
-    client,
-    fn: async ({ client: dbClient, pkg }) => {
-      const pool = getQueryClient(dbClient);
-      if (pkg.expires_at && pkg.expires_at <= new Date()) {
-        throw Error("membership package has expired");
-      }
-      const verifiedEmailAddresses = Array.from(
-        new Set(
-          verified_email_addresses
-            .map((email) => normalizeEmailAddress(email))
-            .filter((email): email is string => !!email),
-        ),
-      );
-      if (verifiedEmailAddresses.length === 0) {
-        throw Error("verify an email address before claiming this package");
-      }
-      const assignments = await listMembershipPackageAssignments({
-        package_id,
-        include_revoked: false,
-        client: dbClient,
-      });
-      const existing = assignments.find(
-        (assignment) => assignment.account_id === account_id,
-      );
-      if (existing) {
-        return existing;
-      }
-
-      const emailSet = new Set(verifiedEmailAddresses);
-      const pendingAssignment = assignments.find(
-        (assignment) =>
-          assignment.account_id == null &&
-          assignment.email_address &&
-          emailSet.has(assignment.email_address),
-      );
-      if (pendingAssignment) {
-        const grantInfo = await createGrantForAssignment({
-          owner_account_id: pkg.owner_account_id,
+  let reservedInstitutionalClaim:
+    | (InstitutionalClaimDescriptor & {
+        reservation_id: string;
+      })
+    | undefined;
+  try {
+    return await withPackageOwnerWriteFence({
+      package_id,
+      action: "claim membership package seat",
+      client,
+      fn: async ({ client: dbClient, pkg }) => {
+        const pool = getQueryClient(dbClient);
+        if (pkg.expires_at && pkg.expires_at <= new Date()) {
+          throw Error("membership package has expired");
+        }
+        const verifiedEmailAddresses = Array.from(
+          new Set(
+            verified_email_addresses
+              .map((email) => normalizeEmailAddress(email))
+              .filter((email): email is string => !!email),
+          ),
+        );
+        if (verifiedEmailAddresses.length === 0) {
+          throw Error("verify an email address before claiming this package");
+        }
+        const assignments = await listMembershipPackageAssignments({
           package_id,
-          account_id,
-          assigned_by_account_id:
-            pendingAssignment.assigned_by_account_id ?? null,
-          assignment_id: pendingAssignment.id,
-          metadata: pendingAssignment.metadata,
+          include_revoked: false,
           client: dbClient,
         });
-        const nextMetadata = {
-          ...normalizeMetadata(pendingAssignment.metadata),
-          grant_id: grantInfo.grant_id,
-          grant_source: grantInfo.grant_source,
-          grant_purchase_id: grantInfo.grant_purchase_id ?? null,
-          grant_home_bay_id: grantInfo.grant_home_bay_id,
-          claimed_at: new Date().toISOString(),
-        };
-        await pool.query(
-          `
-            UPDATE membership_package_assignments
-            SET account_id = $2,
-                metadata = $3::jsonb,
-                updated = NOW()
-            WHERE id = $1
-          `,
-          [pendingAssignment.id, account_id, nextMetadata],
+        const existing = assignments.find(
+          (assignment) => assignment.account_id === account_id,
         );
-        const project_id =
-          `${pendingAssignment.metadata?.project_id ?? ""}`.trim();
-        if (pkg.kind === "course" && isValidUUID(project_id)) {
-          await syncProjectUsageForAssignment({
+        if (existing) {
+          return existing;
+        }
+
+        const emailSet = new Set(verifiedEmailAddresses);
+        const pendingAssignment = assignments.find(
+          (assignment) =>
+            assignment.account_id == null &&
+            assignment.email_address &&
+            emailSet.has(assignment.email_address),
+        );
+        const pendingClaimDescriptor =
+          pendingAssignment?.email_address == null
+            ? undefined
+            : getInstitutionalClaimDescriptorForEmail({
+                pkg,
+                matched_email_address: pendingAssignment.email_address,
+              });
+        if (pendingClaimDescriptor != null) {
+          const reserved = await reserveMembershipClaimIdentity({
+            scope_key: pendingClaimDescriptor.scope_key,
+            scope_kind: pendingClaimDescriptor.scope_kind,
+            canonical_identity: pendingClaimDescriptor.canonical_identity,
+            account_id,
+            reservation_id: uuid(),
+            matched_email_address: pendingClaimDescriptor.matched_email_address,
+            claimed_domain: pendingClaimDescriptor.claimed_domain,
+            metadata: {
+              package_kind: pkg.kind,
+              package_id,
+            },
+          });
+          reservedInstitutionalClaim = {
+            ...pendingClaimDescriptor,
+            reservation_id: reserved.reservation_id,
+          };
+        }
+        if (pendingAssignment) {
+          const grantInfo = await createGrantForAssignment({
             owner_account_id: pkg.owner_account_id,
             package_id,
-            assignment_id: pendingAssignment.id,
-            project_id,
             account_id,
+            assigned_by_account_id:
+              pendingAssignment.assigned_by_account_id ?? null,
+            assignment_id: pendingAssignment.id,
+            metadata: pendingAssignment.metadata,
             client: dbClient,
           });
+          const nextMetadata = {
+            ...normalizeMetadata(pendingAssignment.metadata),
+            grant_id: grantInfo.grant_id,
+            grant_source: grantInfo.grant_source,
+            grant_purchase_id: grantInfo.grant_purchase_id ?? null,
+            grant_home_bay_id: grantInfo.grant_home_bay_id,
+            claimed_at: new Date().toISOString(),
+            ...(reservedInstitutionalClaim
+              ? {
+                  claim_scope_key: reservedInstitutionalClaim.scope_key,
+                  claim_scope_kind: reservedInstitutionalClaim.scope_kind,
+                  claim_identity_key:
+                    reservedInstitutionalClaim.canonical_identity,
+                  claim_reservation_id:
+                    reservedInstitutionalClaim.reservation_id,
+                }
+              : {}),
+          };
+          await pool.query(
+            `
+              UPDATE membership_package_assignments
+              SET account_id = $2,
+                  metadata = $3::jsonb,
+                  updated = NOW()
+              WHERE id = $1
+            `,
+            [pendingAssignment.id, account_id, nextMetadata],
+          );
+          if (reservedInstitutionalClaim) {
+            await queueMembershipClaimIdentitySyncEffect({
+              owner_account_id: pkg.owner_account_id,
+              package_id,
+              assignment_id: pendingAssignment.id,
+              desired_payload: {
+                desired_state: "active",
+                scope_key: reservedInstitutionalClaim.scope_key,
+                scope_kind: reservedInstitutionalClaim.scope_kind,
+                canonical_identity:
+                  reservedInstitutionalClaim.canonical_identity,
+                reservation_id: reservedInstitutionalClaim.reservation_id,
+                account_id,
+                package_id,
+                assignment_id: pendingAssignment.id,
+                grant_id: grantInfo.grant_id,
+                matched_email_address:
+                  reservedInstitutionalClaim.matched_email_address,
+                claimed_domain: reservedInstitutionalClaim.claimed_domain,
+                metadata: {
+                  package_kind: pkg.kind,
+                },
+              },
+              client: dbClient,
+            });
+          }
+          const project_id =
+            `${pendingAssignment.metadata?.project_id ?? ""}`.trim();
+          if (pkg.kind === "course" && isValidUUID(project_id)) {
+            await syncProjectUsageForAssignment({
+              owner_account_id: pkg.owner_account_id,
+              package_id,
+              assignment_id: pendingAssignment.id,
+              project_id,
+              account_id,
+              client: dbClient,
+            });
+          }
+          return {
+            ...pendingAssignment,
+            account_id,
+            metadata: nextMetadata,
+            grant_id: grantInfo.grant_id,
+            grant_source: grantInfo.grant_source,
+            grant_purchase_id: grantInfo.grant_purchase_id,
+          };
         }
-        return {
-          ...pendingAssignment,
-          account_id,
-          metadata: nextMetadata,
-          grant_id: grantInfo.grant_id,
-          grant_source: grantInfo.grant_source,
-          grant_purchase_id: grantInfo.grant_purchase_id,
-        };
-      }
 
-      if (pkg.kind !== "domain" && pkg.kind !== "site") {
-        throw Error("no claimable seat found for this account");
-      }
-      const allowedDomains = new Set(getPackageDomains(pkg.metadata));
-      const matchedEmailAddress = verifiedEmailAddresses.find((email) =>
-        allowedDomains.has(email.split("@")[1] ?? ""),
-      );
-      if (!matchedEmailAddress) {
-        throw Error("no verified email matches this package");
-      }
-      return await assignMembershipPackageSeat(
-        {
-          package_id,
+        if (pkg.kind !== "domain" && pkg.kind !== "site") {
+          throw Error("no claimable seat found for this account");
+        }
+        const allowedDomains = new Set(getPackageDomains(pkg.metadata));
+        const matchedEmailAddress = verifiedEmailAddresses.find((email) =>
+          allowedDomains.has(email.split("@")[1] ?? ""),
+        );
+        if (!matchedEmailAddress) {
+          throw Error("no verified email matches this package");
+        }
+        const institutionalClaim = getInstitutionalClaimDescriptorForEmail({
+          pkg,
+          matched_email_address: matchedEmailAddress,
+        });
+        if (institutionalClaim == null) {
+          throw Error("no claimable seat found for this account");
+        }
+        const reserved = await reserveMembershipClaimIdentity({
+          scope_key: institutionalClaim.scope_key,
+          scope_kind: institutionalClaim.scope_kind,
+          canonical_identity: institutionalClaim.canonical_identity,
           account_id,
-          email_address: matchedEmailAddress,
-          assigned_by_account_id: pkg.owner_account_id,
+          reservation_id: uuid(),
+          matched_email_address: institutionalClaim.matched_email_address,
+          claimed_domain: institutionalClaim.claimed_domain,
           metadata: {
-            claimed_from_domain: matchedEmailAddress.split("@")[1],
-            claimed_email_address: matchedEmailAddress,
+            package_kind: pkg.kind,
+            package_id,
           },
-        },
-        dbClient,
-      );
-    },
-  });
+        });
+        reservedInstitutionalClaim = {
+          ...institutionalClaim,
+          reservation_id: reserved.reservation_id,
+        };
+        const claimed = await assignMembershipPackageSeat(
+          {
+            package_id,
+            account_id,
+            email_address: matchedEmailAddress,
+            assigned_by_account_id: pkg.owner_account_id,
+            metadata: {
+              claimed_from_domain: matchedEmailAddress.split("@")[1],
+              claimed_email_address: matchedEmailAddress,
+              claim_scope_key: reservedInstitutionalClaim.scope_key,
+              claim_scope_kind: reservedInstitutionalClaim.scope_kind,
+              claim_identity_key: reservedInstitutionalClaim.canonical_identity,
+              claim_reservation_id: reservedInstitutionalClaim.reservation_id,
+            },
+          },
+          dbClient,
+        );
+        await queueMembershipClaimIdentitySyncEffect({
+          owner_account_id: pkg.owner_account_id,
+          package_id,
+          assignment_id: claimed.id,
+          desired_payload: {
+            desired_state: "active",
+            scope_key: reservedInstitutionalClaim.scope_key,
+            scope_kind: reservedInstitutionalClaim.scope_kind,
+            canonical_identity: reservedInstitutionalClaim.canonical_identity,
+            reservation_id: reservedInstitutionalClaim.reservation_id,
+            account_id,
+            package_id,
+            assignment_id: claimed.id,
+            grant_id: claimed.grant_id ?? null,
+            matched_email_address:
+              reservedInstitutionalClaim.matched_email_address,
+            claimed_domain: reservedInstitutionalClaim.claimed_domain,
+            metadata: {
+              package_kind: pkg.kind,
+            },
+          },
+          client: dbClient,
+        });
+        return claimed;
+      },
+    });
+  } catch (err) {
+    if (reservedInstitutionalClaim) {
+      await revokeMembershipClaimIdentity({
+        scope_key: reservedInstitutionalClaim.scope_key,
+        canonical_identity: reservedInstitutionalClaim.canonical_identity,
+        account_id,
+        reservation_id: reservedInstitutionalClaim.reservation_id,
+      }).catch(() => undefined);
+    }
+    throw err;
+  }
 }
 
 export async function claimMembershipPackageSeat({

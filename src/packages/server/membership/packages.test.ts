@@ -45,6 +45,7 @@ import {
 import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
 import { uuid } from "@cocalc/util/misc";
 import { resolveMembershipForAccount } from "./resolve";
+import { getMembershipClaimIdentity } from "./claim-directory";
 import {
   assignMembershipPackageSeat,
   claimMembershipPackageSeat,
@@ -118,6 +119,20 @@ describe("membership packages", () => {
        FROM membership_side_effects_outbox
        WHERE desired_revision > applied_revision
        ORDER BY effect_kind, effect_key`,
+    );
+    return result.rows.map((row) => row.effect_kind);
+  }
+
+  async function listOutboxKindsForAssignment(
+    assignment_id: string,
+  ): Promise<string[]> {
+    const result = await getPool("medium").query<{ effect_kind: string }>(
+      `SELECT effect_kind
+       FROM membership_side_effects_outbox
+       WHERE assignment_id = $1
+         AND desired_revision > applied_revision
+       ORDER BY effect_kind, effect_key`,
+      [assignment_id],
     );
     return result.rows.map((row) => row.effect_kind);
   }
@@ -648,6 +663,129 @@ describe("membership packages", () => {
       [site_user_account_id, package_id],
     );
     expect(localGrantCount.rows[0]?.count).toBe(0);
+  });
+
+  it("dedupes domain and site claims across plus aliases until the prior claim is revoked", async () => {
+    const owner_account_id = uuid();
+    const first_account_id = uuid();
+    const second_account_id = uuid();
+    const domain = `dept-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(owner_account_id);
+    await createTestAccount(first_account_id);
+    await createTestAccount(second_account_id);
+    await markVerifiedEmail(first_account_id, `ada@${domain}`);
+    await markVerifiedEmail(second_account_id, `ada+lab@${domain}`);
+
+    const site_package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "site",
+      membership_class: teamTier,
+      seat_count: 3,
+      metadata: {
+        interval: "year",
+        seat_price: 100,
+        allowed_domains: [domain],
+      },
+    });
+    const domain_package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "domain",
+      membership_class: teamTier,
+      seat_count: 3,
+      metadata: {
+        interval: "year",
+        seat_price: 100,
+        allowed_domains: [domain],
+      },
+    });
+
+    const firstClaimables = await listClaimableMembershipPackagesForAccount({
+      account_id: first_account_id,
+    });
+    expect(firstClaimables).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ package_id: site_package_id }),
+        expect.objectContaining({ package_id: domain_package_id }),
+      ]),
+    );
+
+    const firstClaim = await claimMembershipPackageSeat({
+      package_id: site_package_id,
+      account_id: first_account_id,
+    });
+    expect(firstClaim.metadata?.claim_identity_key).toBe(`ada@${domain}`);
+    expect(await listOutboxKindsForAssignment(firstClaim.id)).toContain(
+      "claim-identity-sync",
+    );
+    expect(
+      await getMembershipClaimIdentity({
+        scope_key: `institutional-domains:${domain}`,
+        canonical_identity: `ada@${domain}`,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        account_id: first_account_id,
+        state: "pending",
+      }),
+    );
+    await runMembershipSideEffectsPass();
+    expect(
+      await getMembershipClaimIdentity({
+        scope_key: `institutional-domains:${domain}`,
+        canonical_identity: `ada@${domain}`,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        account_id: first_account_id,
+        state: "active",
+      }),
+    );
+
+    const secondClaimables = await listClaimableMembershipPackagesForAccount({
+      account_id: second_account_id,
+    });
+    expect(
+      secondClaimables.some(
+        (claimable) =>
+          claimable.package_id === site_package_id ||
+          claimable.package_id === domain_package_id,
+      ),
+    ).toBe(false);
+    await expect(
+      claimMembershipPackageSeat({
+        package_id: domain_package_id,
+        account_id: second_account_id,
+      }),
+    ).rejects.toThrow(/institutional|no claimable seat/i);
+
+    await revokeMembershipPackageSeat({
+      package_id: site_package_id,
+      account_id: first_account_id,
+    });
+
+    const stillBlockedClaimables =
+      await listClaimableMembershipPackagesForAccount({
+        account_id: second_account_id,
+      });
+    expect(
+      stillBlockedClaimables.some(
+        (claimable) => claimable.package_id === domain_package_id,
+      ),
+    ).toBe(false);
+
+    await runMembershipSideEffectsPass();
+
+    const releasedClaimables = await listClaimableMembershipPackagesForAccount({
+      account_id: second_account_id,
+    });
+    expect(releasedClaimables).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          package_id: domain_package_id,
+          matched_email_address: `ada+lab@${domain}`,
+        }),
+      ]),
+    );
   });
 
   it("discovers remote claimable domain packages across the cluster", async () => {

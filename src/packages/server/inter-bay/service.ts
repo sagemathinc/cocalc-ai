@@ -96,6 +96,12 @@ import {
   revokeMembershipGrantById,
 } from "@cocalc/server/membership/grants";
 import {
+  activateMembershipClaimIdentityDirect,
+  getMembershipClaimIdentityDirect,
+  reserveMembershipClaimIdentityDirect,
+  revokeMembershipClaimIdentityDirect,
+} from "@cocalc/server/membership/claim-directory";
+import {
   claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
   listLocalClaimableMembershipPackagesForVerifiedEmails,
   listMembershipPackageDetailsForOwner,
@@ -383,6 +389,14 @@ async function startAccountDirectoryService(): Promise<void> {
       await updateClusterAccountApiKeysHomeBay(opts),
     touchApiKey: async (opts) =>
       await touchClusterAccountApiKeyDirectoryEntry(opts),
+    getMembershipClaimIdentity: async (opts) =>
+      await getMembershipClaimIdentityDirect(opts),
+    reserveMembershipClaimIdentity: async (opts) =>
+      await reserveMembershipClaimIdentityDirect(opts),
+    activateMembershipClaimIdentity: async (opts) =>
+      await activateMembershipClaimIdentityDirect(opts),
+    revokeMembershipClaimIdentity: async (opts) =>
+      await revokeMembershipClaimIdentityDirect(opts),
   };
   services.push(
     ...createInterBayAccountDirectoryHandlers({
