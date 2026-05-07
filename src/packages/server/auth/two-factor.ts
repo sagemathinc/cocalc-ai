@@ -320,6 +320,27 @@ function ensureFreshAuthCodeMethod(value: string): SecondFactorMethod {
   throw new Error("invalid second factor method");
 }
 
+function assertFreshAuthDurationMethodCompatible({
+  duration,
+  method,
+}: {
+  duration?: FreshAuthDuration;
+  method?: string;
+}): void {
+  if (duration !== "extended") {
+    return;
+  }
+  const normalizedMethod = `${method ?? ""}`.trim();
+  if (!normalizedMethod || normalizedMethod === "recovery_code") {
+    throw new Error(
+      "extended fresh auth requires a TOTP verification in this browser session",
+    );
+  }
+  if (normalizedMethod !== "totp") {
+    ensureFreshAuthCodeMethod(normalizedMethod);
+  }
+}
+
 function normalizeTotpIssuerHostname(value: string | undefined): string {
   const raw = `${value ?? ""}`.trim();
   if (!raw) return "";
@@ -950,6 +971,7 @@ export async function freshAuthSession({
   duration?: FreshAuthDuration;
 }): Promise<{ fresh_auth_until: Date; factor_level: AuthSessionFactorLevel }> {
   const accountId = ensureAccountId(account_id);
+  assertFreshAuthDurationMethodCompatible({ duration, method });
   const impersonation = await getCurrentImpersonationSession({
     req,
     account_id: accountId,
