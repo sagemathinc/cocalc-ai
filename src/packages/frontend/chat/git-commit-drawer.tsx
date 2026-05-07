@@ -1066,6 +1066,8 @@ export function GitCommitDrawer({
         const fallback = resolveGitReviewLoadFailure({
           draft: loadReviewDraft(normalizedCommit, accountId),
           error: err,
+          accountId,
+          commitSha: normalizedCommit,
         });
         setReviewError(fallback.reviewError);
         setReviewed(fallback.reviewed);
@@ -1074,7 +1076,7 @@ export function GitCommitDrawer({
         setReviewNoteEditing(false);
         setReviewUpdatedAt(fallback.reviewUpdatedAt);
         setReviewDirty(false);
-        setReviewRecord(undefined);
+        setReviewRecord(fallback.reviewRecord);
       } finally {
         if (reviewLoadTokenRef.current !== token) return;
         setReviewLoading(false);

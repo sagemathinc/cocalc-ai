@@ -120,28 +120,50 @@ export function applySubmittedGitReviewComments({
 export function resolveGitReviewLoadFailure({
   draft,
   error,
+  accountId,
+  commitSha,
 }: {
   draft?: {
     reviewed: boolean;
     note: string;
+    comments?: Record<string, GitReviewCommentV2>;
     updated_at?: number;
+    revision?: number;
   };
   error: unknown;
+  accountId?: string;
+  commitSha?: string;
 }): {
   reviewError: string;
   reviewed: boolean;
   reviewNote: string;
   reviewNoteDraft: string;
   reviewUpdatedAt?: number;
+  reviewRecord?: GitReviewRecordV2;
 } {
   const note = `${draft?.note ?? ""}`;
+  const updatedAt =
+    typeof draft?.updated_at === "number" ? draft.updated_at : undefined;
   return {
     reviewError: `${error ?? "Unable to load review state."}`,
     reviewed: Boolean(draft?.reviewed),
     reviewNote: note,
     reviewNoteDraft: note,
-    reviewUpdatedAt:
-      typeof draft?.updated_at === "number" ? draft.updated_at : undefined,
+    reviewUpdatedAt: updatedAt,
+    reviewRecord:
+      draft && accountId && commitSha
+        ? {
+            version: 2,
+            account_id: accountId,
+            commit_sha: commitSha,
+            reviewed: Boolean(draft.reviewed),
+            note,
+            comments: draft.comments ?? {},
+            created_at: updatedAt ?? Date.now(),
+            updated_at: updatedAt ?? Date.now(),
+            revision: Math.max(1, draft.revision ?? 1),
+          }
+        : undefined,
   };
 }
 

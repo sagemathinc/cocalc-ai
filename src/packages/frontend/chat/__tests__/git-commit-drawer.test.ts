@@ -538,9 +538,24 @@ describe("git commit drawer merge commit formatting", () => {
         draft: {
           reviewed: true,
           note: "local draft note",
+          comments: {
+            "comment-a": {
+              id: "comment-a",
+              file_path: "src/example.ts",
+              side: "new",
+              body_md: "keep me",
+              status: "draft",
+              created_at: 1,
+              updated_at: 1234,
+              local_revision: 1,
+            } as any,
+          },
           updated_at: 1234,
+          revision: 3,
         },
         error: "closed",
+        accountId: "acct-1",
+        commitSha: "abc1234",
       }),
     ).toEqual({
       reviewError: "closed",
@@ -548,6 +563,28 @@ describe("git commit drawer merge commit formatting", () => {
       reviewNote: "local draft note",
       reviewNoteDraft: "local draft note",
       reviewUpdatedAt: 1234,
+      reviewRecord: {
+        version: 2,
+        account_id: "acct-1",
+        commit_sha: "abc1234",
+        reviewed: true,
+        note: "local draft note",
+        comments: {
+          "comment-a": {
+            id: "comment-a",
+            file_path: "src/example.ts",
+            side: "new",
+            body_md: "keep me",
+            status: "draft",
+            created_at: 1,
+            updated_at: 1234,
+            local_revision: 1,
+          },
+        },
+        created_at: 1234,
+        updated_at: 1234,
+        revision: 3,
+      },
     });
   });
 
