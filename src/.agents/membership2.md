@@ -314,8 +314,14 @@ Not to collaborators or to the project owner unless that is the same account.
 
 ### Dedicated hosts are billed monthly, not prepaid-balance-gated
 
-Membership tier and admin overrides control risk limits. Monthly statements
-remain the main collection model.
+Membership tier and admin overrides control rolling risk limits.
+
+The key limits should be:
+
+- a rolling 5-hour spend limit
+- a rolling 7-day spend limit
+
+Monthly statements remain the main collection model.
 
 ## Data Model Corrections
 
@@ -650,7 +656,9 @@ Dedicated-host billing also needs the same split.
 
 - monthly host charge purchases
 - statement inclusion
-- account-level risk / spend limit settings
+- account-level rolling host spend-limit settings
+  - 5-hour window
+  - 7-day window
 
 ### Seed/global state
 
@@ -671,6 +679,21 @@ Dedicated-host billing also needs the same split.
 5. monthly statements on the home bay include that charge
 
 This allows account rehome without moving raw host-control history.
+
+### Dedicated-host risk policy
+
+Dedicated-host admission should check projected and realized spend against
+rolling windows, not only against a monthly ceiling.
+
+The default policy should be:
+
+- membership tier config sets default 5-hour and 7-day host spend limits
+- admins can override those limits per account
+- host create/start/resize is denied if it would violate either window
+- the 5-hour window exists mainly to limit burst abuse and compromised-account
+  spend
+- the 7-day window exists to cap medium-term exposure without waiting for the
+  monthly invoice cycle
 
 ## Implementation Plan
 
@@ -887,7 +910,9 @@ V1 controls:
 
 - dedicated-host eligibility should be gated by membership tier and trust level
 - new accounts should not immediately get broad host-spend rights
-- trust limits should be admin-configurable and overrideable
+- host spend limits should be rolling-window based and admin-configurable
+  - 5-hour window
+  - 7-day window
 - host creation/start/resize should record who did it and under what trust state
 - risk review and emergency suspension must be possible without corrupting the
   billing ledger
