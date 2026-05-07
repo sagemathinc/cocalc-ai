@@ -36,11 +36,12 @@ export default async function setSignInCookies({
   };
 }) {
   const opts = { req, res, account_id, maxAge, session };
-  await Promise.all([
+  const [rememberMe] = await Promise.all([
     setRememberMeCookie(opts),
     setAccountIdCookie(opts),
     setHomeBayCookie(opts),
   ]);
+  return rememberMe;
 }
 
 function cookieOptionVariants<T extends Record<string, any>>(
@@ -83,6 +84,7 @@ async function setRememberMeCookie({ req, res, account_id, maxAge, session }) {
   })) {
     cookies.set(REMEMBER_ME_COOKIE_NAME, value, opts);
   }
+  return { value, hash, expire };
 }
 
 async function setAccountIdCookie({ req, res, account_id, maxAge }) {

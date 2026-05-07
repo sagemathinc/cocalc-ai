@@ -3,15 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Card } from "antd";
+import { Alert, Button, Card } from "antd";
 import { join } from "path";
 
-import { Rendered, useEffect, useState } from "@cocalc/frontend/app-framework";
+import { Rendered, useState } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { CopyToClipBoard } from "@cocalc/frontend/components";
 import { useLocalizationCtx } from "@cocalc/frontend/app/localize";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 
 interface Props {
   account_id: string;
@@ -20,37 +24,56 @@ interface Props {
 }
 
 export function Impersonate({ first_name, last_name, account_id }: Props) {
-  const [auth_token, set_auth_token] = useState<string | null>(null);
+  const [impersonationUrl, setImpersonationUrl] = useState<string | null>(null);
   const [err, set_err] = useState<string | null>(null);
   const [extraWarning, setExtraWarning] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(false);
   const { locale } = useLocalizationCtx();
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => set_err(`${err}`),
+  });
 
-  async function get_token(): Promise<void> {
+  async function generate_link(): Promise<void> {
+    setLoading(true);
     try {
-      const auth_token =
-        await webapp_client.admin_client.get_user_auth_token(account_id);
-      set_auth_token(auth_token);
-      set_err(null);
+      await runFreshAuthAction(async () => {
+        const result =
+          await webapp_client.admin_client.create_impersonation_grant({
+            subject_account_id: account_id,
+            reason: "admin-ui",
+            lang_temp: locale,
+          });
+        setImpersonationUrl(result.url);
+        set_err(null);
+      });
     } catch (err) {
-      set_err(err.toString());
-      set_auth_token(null);
+      set_err(`${err}`);
+      setImpersonationUrl(null);
+    } finally {
+      setLoading(false);
     }
   }
 
-  useEffect(() => {
-    get_token();
-  }, []);
-
   function render_link(): Rendered {
-    if (auth_token == null) {
+    if (loading) {
       return <Loading />;
     }
+    if (impersonationUrl == null) {
+      return (
+        <div style={{ textAlign: "center" }}>
+          <Button type="primary" onClick={() => void generate_link()}>
+            Generate impersonation link
+          </Button>
+          <div style={{ marginTop: "15px", color: "#666" }}>
+            This requires recent admin password verification and 2FA.
+          </div>
+        </div>
+      );
+    }
 
-    // The lang_temp temporarily sets the interface language of the user to impersonate to the one of the admin
-    const link = join(
-      appBasePath,
-      `auth/impersonate?auth_token=${auth_token}&lang_temp=${locale}`,
-    );
+    const link = impersonationUrl.startsWith("http")
+      ? impersonationUrl
+      : join(appBasePath, impersonationUrl);
 
     const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
       event.preventDefault(); // Prevent left click from opening the link
@@ -77,7 +100,7 @@ export function Impersonate({ first_name, last_name, account_id }: Props) {
           <br />
           <CopyToClipBoard
             inputWidth="500px"
-            value={`${location.origin}${link}`}
+            value={link.startsWith("http") ? link : `${location.origin}${link}`}
           />
         </div>
         {extraWarning && (
@@ -113,6 +136,7 @@ export function Impersonate({ first_name, last_name, account_id }: Props) {
     >
       {render_err()}
       {render_link()}
+      <FreshAuthModal {...freshAuthModalProps} />
     </Card>
   );
 }

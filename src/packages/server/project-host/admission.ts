@@ -61,10 +61,12 @@ export function evaluateDedicatedHostAdmission({
   action,
   machine_cloud,
   snapshot,
+  has_active_second_factor_override,
 }: {
   action: DedicatedHostAction;
   machine_cloud?: string | null;
   snapshot: AccountLocalDedicatedHostPolicySnapshot;
+  has_active_second_factor_override?: boolean;
 }): DedicatedHostAdmissionDecision {
   if (!isBillableDedicatedHostCloud(machine_cloud)) {
     return { allowed: true };
@@ -78,7 +80,10 @@ export function evaluateDedicatedHostAdmission({
     };
   }
 
-  if (!snapshot.has_active_second_factor) {
+  const hasSecondFactor =
+    has_active_second_factor_override ?? snapshot.has_active_second_factor;
+
+  if (!hasSecondFactor) {
     return {
       allowed: false,
       code: "two_factor_required",
@@ -197,10 +202,12 @@ export async function assertDedicatedHostAdmissionForAccount({
   account_id,
   action,
   machine_cloud,
+  has_active_second_factor_override,
 }: {
   account_id: string;
   action: DedicatedHostAction;
   machine_cloud?: string | null;
+  has_active_second_factor_override?: boolean;
 }): Promise<void> {
   if (!isBillableDedicatedHostCloud(machine_cloud)) {
     return;
@@ -209,6 +216,7 @@ export async function assertDedicatedHostAdmissionForAccount({
     action,
     machine_cloud,
     snapshot: await getDedicatedHostPolicySnapshotForAccount({ account_id }),
+    has_active_second_factor_override,
   });
   if (decision.allowed) {
     return;

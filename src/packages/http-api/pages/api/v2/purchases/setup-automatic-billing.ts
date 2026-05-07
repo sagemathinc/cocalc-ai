@@ -28,7 +28,7 @@ async function get(req) {
   if (account_id == null) {
     throw Error("must be signed in");
   }
-  await requireFreshAuth({ req, account_id });
+  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   const { success_url, cancel_url } = getParams(req);
   return await createStripeUsageBasedSubscription({
     account_id,

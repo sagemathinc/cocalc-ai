@@ -1169,7 +1169,7 @@ describe("hosts.createHost", () => {
       name: "host-name",
       region: "us-central1",
       size: "small",
-      machine: { cloud: "gcp", metadata: {} },
+      machine: { cloud: "local", metadata: {} },
     });
 
     expect(insertedMetadata.bootstrap_channel).toBeUndefined();
@@ -1214,7 +1214,7 @@ describe("hosts.createHost", () => {
       region: "us-central1",
       size: "small",
       machine: {
-        cloud: "gcp",
+        cloud: "local",
         metadata: {
           bootstrap_channel: "staging",
           bootstrap_version: "bootstrap-v2",
@@ -1248,6 +1248,9 @@ describe("hosts.createHost", () => {
           ],
         };
       }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
@@ -1259,7 +1262,7 @@ describe("hosts.createHost", () => {
       name: "host-name",
       region: "us-central1",
       size: "small",
-      machine: { cloud: "gcp", metadata: {} },
+      machine: { cloud: "local", metadata: {} },
     });
 
     expect(getBrowserAuthSessionHashMock).toHaveBeenCalledWith({
@@ -1268,6 +1271,7 @@ describe("hosts.createHost", () => {
     });
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
       session_hash: "session-hash",
     });
   });
@@ -1313,7 +1317,7 @@ describe("hosts browser fresh auth gating", () => {
               metadata: {
                 owner: ACCOUNT_ID,
                 machine: {
-                  cloud: "gcp",
+                  cloud: "local",
                   machine_type: "e2-standard-4",
                   metadata: { cpu: 4, ram_gb: 16 },
                 },
@@ -1322,6 +1326,9 @@ describe("hosts browser fresh auth gating", () => {
             },
           ],
         };
+      }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -1336,6 +1343,7 @@ describe("hosts browser fresh auth gating", () => {
 
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
       session_hash: "session-hash",
     });
   });

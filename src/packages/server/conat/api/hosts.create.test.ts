@@ -9,6 +9,7 @@ let hasPaymentMethodMock: jest.Mock;
 let getBalanceMock: jest.Mock;
 let getMinBalanceMock: jest.Mock;
 let resolveAccountHomeBayMock: jest.Mock;
+let assertDedicatedHostAdmissionForAccountMock: jest.Mock;
 
 const ACCOUNT_ID = "81e787c4-8705-46c5-86df-9d07bc424a01";
 
@@ -48,6 +49,12 @@ jest.mock("@cocalc/server/bay-directory", () => ({
   resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBayMock(...args),
 }));
 
+jest.mock("@cocalc/server/project-host/admission", () => ({
+  __esModule: true,
+  assertDedicatedHostAdmissionForAccount: (...args: any[]) =>
+    assertDedicatedHostAdmissionForAccountMock(...args),
+}));
+
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   __esModule: true,
   getServerSettings: (...args: any[]) => getServerSettingsMock(...args),
@@ -82,6 +89,8 @@ jest.mock("@cocalc/server/accounts/is-banned", () => ({
 describe("hosts.createHost", () => {
   beforeEach(() => {
     jest.resetModules();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
     resolveMembershipForAccountMock = jest.fn(async () => ({
       class: "member",
       entitlements: { features: { create_hosts: true } },
@@ -100,6 +109,7 @@ describe("hosts.createHost", () => {
       home_bay_id: "bay-0",
       epoch: 1,
     }));
+    assertDedicatedHostAdmissionForAccountMock = jest.fn(async () => undefined);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[4]?.pricing_model).toBe("spot");
@@ -165,7 +175,9 @@ describe("hosts.createHost", () => {
   });
 
   it("requires two-factor authentication for billable cloud hosts", async () => {
-    hasActiveSecondFactorMock = jest.fn(async () => false);
+    assertDedicatedHostAdmissionForAccountMock = jest.fn(async () => {
+      throw new Error("enable two-factor authentication");
+    });
     const { createHost } = await import("./hosts");
     await expect(
       createHost({
@@ -177,5 +189,11 @@ describe("hosts.createHost", () => {
         machine: { cloud: "gcp" },
       }),
     ).rejects.toThrow("enable two-factor authentication");
+    expect(assertDedicatedHostAdmissionForAccountMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "create",
+      has_active_second_factor_override: false,
+      machine_cloud: "gcp",
+    });
   });
 });

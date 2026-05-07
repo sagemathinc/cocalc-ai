@@ -22,6 +22,7 @@ import { initAccountTable } from "./table-bootstrap";
 import Cookies from "js-cookie";
 import { ACCOUNT_ID_COOKIE } from "@cocalc/frontend/client/client";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
+import { getAuthBootstrap } from "@cocalc/frontend/auth/api";
 
 export function init(redux) {
   // Register account store
@@ -69,6 +70,16 @@ export function init(redux) {
       // pre-sign-in state.
       await once(table, "connected");
     }
+    try {
+      const bootstrap = await getAuthBootstrap();
+      actions.setState({
+        home_bay_id: bootstrap.home_bay_id,
+        home_bay_source: bootstrap.home_bay_id
+          ? "cluster-directory"
+          : undefined,
+        impersonation: bootstrap.impersonation ?? null,
+      });
+    } catch {}
     actions.set_user_type("signed_in");
   });
 
@@ -77,6 +88,7 @@ export function init(redux) {
     actions.setState({
       home_bay_id: undefined,
       home_bay_source: undefined,
+      impersonation: null,
       managed_egress_blocked_error: undefined,
     });
     actions.set_user_type("public");
@@ -91,6 +103,7 @@ export function init(redux) {
           webapp_client.account_id ?? Cookies.get(ACCOUNT_ID_COOKIE) ?? "",
         home_bay_id: undefined,
         home_bay_source: undefined,
+        impersonation: null,
         managed_egress_blocked_error: blocked.raw,
         remember_me: false,
         sign_in_error: blocked.raw,
@@ -102,6 +115,7 @@ export function init(redux) {
     actions.setState({
       home_bay_id: undefined,
       home_bay_source: undefined,
+      impersonation: null,
       managed_egress_blocked_error: undefined,
     });
     actions.set_user_type("public");

@@ -4,11 +4,10 @@
  */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import { assertNoImpersonationForSubjectSecurityAction } from "@cocalc/server/auth/impersonation";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
-import { disableTwoFactor } from "@cocalc/server/auth/two-factor";
+import { getFreshAuthStatus } from "@cocalc/server/auth/two-factor";
 
-export default async function disableTwoFactorApi(req, res) {
+export default async function getFreshAuthStatusApi(req, res) {
   try {
     const account_id = await getAccountId(req);
     if (!account_id) {
@@ -17,19 +16,13 @@ export default async function disableTwoFactorApi(req, res) {
     if (!getRememberMeHash(req)) {
       throw new Error("browser sign-in is required");
     }
-    await assertNoImpersonationForSubjectSecurityAction({
-      req,
-      account_id,
-      action: "disable two-factor authentication",
-    });
-    await disableTwoFactor({ req, account_id });
-    res.json({});
+    res.json(await getFreshAuthStatus({ req, account_id }));
   } catch (err) {
     res.json({
       error:
         err instanceof Error
           ? err.message
-          : "Problem disabling two-factor authentication.",
+          : "Problem loading fresh auth status.",
     });
   }
 }

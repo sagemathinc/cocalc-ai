@@ -23,7 +23,7 @@ async function get(req) {
   if (account_id == null) {
     throw Error("must be signed in");
   }
-  await requireFreshAuth({ req, account_id });
+  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   const { class: targetClass, interval, allow_downgrade } = req.body ?? {};
   if (!targetClass) {
     throw Error("membership class is required");

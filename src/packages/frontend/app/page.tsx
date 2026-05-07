@@ -56,6 +56,7 @@ import VersionWarning from "./version-warning";
 import { CookieWarning, LocalStorageWarning } from "./warnings";
 import { ImportPublicUrlModal } from "./import-public-url-modal";
 import { lite } from "@cocalc/frontend/lite";
+import { ImpersonationBanner } from "./impersonation-banner";
 
 // ipad and ios have a weird trick where they make the screen
 // actually smaller than 100vh and have it be scrollable, even
@@ -348,6 +349,7 @@ export const Page: React.FC = () => {
       {cookie_warning && <CookieWarning />}
       {local_storage_warning && <LocalStorageWarning />}
       {show_i18n && <I18NBanner />}
+      <ImpersonationBanner />
       <VerifyEmail />
       {!lite && !fullscreen && !isAuthView && (
         <nav className="smc-top-bar" style={topBarStyle}>

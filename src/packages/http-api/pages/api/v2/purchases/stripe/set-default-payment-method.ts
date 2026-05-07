@@ -25,7 +25,7 @@ async function set(req): Promise<{ success: true }> {
   if (account_id == null) {
     throw Error("must be signed in to set stripe default payment method");
   }
-  await requireFreshAuth({ req, account_id });
+  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   throttle({
     account_id,
     endpoint: "purchases/stripe/set-default-payment-method",

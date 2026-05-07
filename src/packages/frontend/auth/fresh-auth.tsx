@@ -12,8 +12,11 @@ import {
   inferSecondFactorInputMethod,
 } from "@cocalc/frontend/auth/second-factor-input";
 
-type TwoFactorStatus = {
+type FreshAuthStatus = {
+  mode: "account" | "impersonation_actor";
   enabled: boolean;
+  actor_name?: string | null;
+  actor_email_address?: string | null;
 };
 
 export function isFreshAuthRequiredError(err: unknown): boolean {
@@ -37,27 +40,31 @@ export function FreshAuthModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [factorEnabled, setFactorEnabled] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<FreshAuthStatus | null>(null);
   const inferredMethod = inferSecondFactorInputMethod(code);
 
   useEffect(() => {
     let cancelled = false;
     async function loadStatus() {
       if (!open) {
+        setStatus(null);
         return;
       }
       setError("");
       setFactorEnabled(null);
       try {
-        const status = await postAuthApi<TwoFactorStatus>({
-          endpoint: "auth/2fa/status",
+        const next = await postAuthApi<FreshAuthStatus>({
+          endpoint: "auth/fresh-auth-status",
           body: {},
         });
         if (!cancelled) {
-          setFactorEnabled(!!status?.enabled);
+          setStatus(next);
+          setFactorEnabled(!!next?.enabled);
         }
       } catch (err) {
         if (!cancelled) {
           setError(`${err}`);
+          setStatus(null);
           setFactorEnabled(null);
         }
       }
@@ -117,6 +124,13 @@ export function FreshAuthModal({
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         {error ? <Alert type="error" showIcon message={error} /> : undefined}
+        {status?.mode === "impersonation_actor" ? (
+          <Alert
+            type="warning"
+            showIcon
+            message={`You are verifying the admin account "${`${status.actor_name ?? ""}`.trim() || `${status.actor_email_address ?? ""}`.trim() || "unknown"}" while acting as this user.`}
+          />
+        ) : undefined}
         {factorEnabled === false ? (
           <Alert
             type="info"

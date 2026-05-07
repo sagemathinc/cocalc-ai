@@ -95,6 +95,15 @@ export interface AccountState {
   hub?: string;
   home_bay_id?: string;
   home_bay_source?: "account-row" | "cluster-directory" | "single-bay-default";
+  impersonation?: {
+    active: true;
+    actor_account_id: string;
+    actor_email_address?: string | null;
+    actor_name?: string | null;
+    subject_account_id: string;
+    fresh_auth_until?: string | Date | null;
+    factor_level?: "none" | "totp" | "recovery_code" | null;
+  } | null;
   remember_me?: boolean;
   has_remember_me?: boolean;
   passports?: Map<string, any>;

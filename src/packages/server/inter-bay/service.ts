@@ -95,6 +95,8 @@ import {
   createMembershipGrant,
   revokeMembershipGrantById,
 } from "@cocalc/server/membership/grants";
+import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
+import { verifyFreshAuthCredentials } from "@cocalc/server/auth/two-factor";
 import {
   activateMembershipClaimIdentityDirect,
   getMembershipClaimIdentityDirect,
@@ -419,6 +421,48 @@ async function startAccountLocalService(): Promise<void> {
     getRehomeOperation: async ({ op_id }) =>
       (await getAccountRehomeOperation(op_id)) ?? null,
     reconcileRehome: async (opts) => await reconcileAccountRehomeOnSource(opts),
+    createImpersonationGrant: async (opts) => {
+      const grant = await createImpersonationGrantLocal({
+        actor_account_id: opts.actor_account_id,
+        subject_account_id: opts.subject_account_id,
+        actor_session_hash: opts.actor_session_hash,
+        subject_home_bay_id: opts.subject_home_bay_id,
+        actor_authenticated_at: normalizeOptionalDateLike(
+          opts.actor_authenticated_at,
+        ) as Date | null | undefined,
+        actor_password_verified_at: normalizeOptionalDateLike(
+          opts.actor_password_verified_at,
+        ) as Date | null | undefined,
+        actor_factor_verified_at: normalizeOptionalDateLike(
+          opts.actor_factor_verified_at,
+        ) as Date | null | undefined,
+        actor_fresh_auth_until: normalizeOptionalDateLike(
+          opts.actor_fresh_auth_until,
+        ) as Date | null | undefined,
+        actor_factor_level: opts.actor_factor_level ?? "none",
+        reason: opts.reason,
+        metadata: opts.metadata,
+      });
+      return {
+        grant_id: grant.id,
+        subject_account_id: grant.subject_account_id,
+        subject_home_bay_id: grant.subject_home_bay_id ?? getConfiguredBayId(),
+        expires_at: grant.expire,
+      };
+    },
+    verifyFreshAuthCredentials: async ({
+      account_id,
+      current_password,
+      method,
+      code,
+    }) => ({
+      factor_level: await verifyFreshAuthCredentials({
+        account_id,
+        current_password,
+        method,
+        code,
+      }),
+    }),
     upsertMembershipGrant: async (opts) => ({
       grant_id: await createMembershipGrant({
         ...opts,
