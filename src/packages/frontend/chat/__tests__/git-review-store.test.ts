@@ -117,7 +117,7 @@ describe("git review import/export", () => {
     ]);
   });
 
-  it("loads current review records from the shared v2 dkv without falling back to legacy akv", async () => {
+  it("loads current review records from the v2 akv store without falling back to legacy reviews", async () => {
     const store = getStore("acct-1", "cocalc-git-review-v2");
     store.set("commit:abc1234", {
       version: 2,
@@ -142,8 +142,7 @@ describe("git review import/export", () => {
       reviewed: true,
       note: "persisted v2 review",
     });
-    expect(dkvMock).toHaveBeenCalled();
-    expect(akvMock).not.toHaveBeenCalled();
+    expect(akvMock).toHaveBeenCalled();
   });
 
   it("imports newer review records and rewrites them to the current account", async () => {
@@ -311,6 +310,15 @@ describe("git review import/export", () => {
     });
   });
 
+  it("returns undefined when no persisted or draft review state exists", async () => {
+    await expect(
+      loadReviewRecord({
+        accountId: "acct-11",
+        commitSha: "999aaaa",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("migrates legacy unscoped drafts into account-scoped storage on load", async () => {
     localStorage.setItem(
       "cocalc:git-review:draft:v2:commit:ddd4444",
@@ -457,6 +465,30 @@ describe("git review import/export", () => {
       reviewed: true,
       note: "newer draft",
       revision: 2,
+    });
+  });
+
+  it("saves live review edits through the v2 akv path instead of the shared dkv", async () => {
+    await saveReviewRecord({
+      version: 2,
+      account_id: "acct-10",
+      commit_sha: "abc1234",
+      reviewed: true,
+      note: "reviewed",
+      comments: {},
+      created_at: 10,
+      updated_at: 10,
+      revision: 1,
+    });
+
+    expect(akvMock).toHaveBeenCalled();
+    expect(
+      getStore("acct-10", "cocalc-git-review-v2").get("commit:abc1234"),
+    ).toMatchObject({
+      account_id: "acct-10",
+      commit_sha: "abc1234",
+      reviewed: true,
+      note: "reviewed",
     });
   });
 });

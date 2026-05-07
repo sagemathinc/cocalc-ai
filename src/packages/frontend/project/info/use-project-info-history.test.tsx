@@ -31,8 +31,15 @@ jest.mock("@cocalc/conat/project/project-info", () => ({
   getHistory: (...args) => getProjectInfoHistory(...args),
 }));
 
-function TestComponent() {
-  useProjectInfoHistory({ project_id: "project-1" });
+function TestComponent({
+  projectId = "project-1",
+  onValue,
+}: {
+  projectId?: string;
+  onValue?: (value: ReturnType<typeof useProjectInfoHistory>) => void;
+}) {
+  const value = useProjectInfoHistory({ project_id: projectId });
+  onValue?.(value);
   return null;
 }
 
@@ -41,6 +48,16 @@ async function flush() {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("useProjectInfoHistory", () => {
@@ -104,5 +121,100 @@ describe("useProjectInfoHistory", () => {
 
     expect(projectConat).toHaveBeenCalledTimes(2);
     expect(getProjectInfoHistory).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears stale history when switching projects and the next load fails", async () => {
+    const history1 = {
+      timestamp: 1,
+      cpu: [1],
+      mem: [2],
+    };
+    projectConat
+      .mockResolvedValueOnce({ client: "project-1" })
+      .mockRejectedValueOnce(new Error("closed"));
+    getProjectInfoHistory.mockResolvedValueOnce(history1);
+    let latest: ReturnType<typeof useProjectInfoHistory> | undefined;
+
+    const { rerender } = render(
+      <TestComponent
+        projectId="project-1"
+        onValue={(value) => {
+          latest = value;
+        }}
+      />,
+    );
+    await flush();
+
+    expect(latest?.history).toEqual(history1);
+
+    rerender(
+      <TestComponent
+        projectId="project-2"
+        onValue={(value) => {
+          latest = value;
+        }}
+      />,
+    );
+    await flush();
+
+    expect(projectConat.mock.calls.at(-1)?.[0]).toEqual(
+      expect.objectContaining({
+        project_id: "project-2",
+        caller: "useProjectInfoHistory",
+      }),
+    );
+    expect(latest?.history).toBeNull();
+  });
+
+  it("ignores stale history responses from a previously selected project", async () => {
+    const pendingProject1 = deferred<{ client: string }>();
+    const history2 = {
+      timestamp: 2,
+      cpu: [2],
+      mem: [3],
+    };
+    projectConat
+      .mockReturnValueOnce(pendingProject1.promise)
+      .mockResolvedValueOnce({ client: "project-2" });
+    getProjectInfoHistory.mockResolvedValueOnce(history2);
+
+    let latest: ReturnType<typeof useProjectInfoHistory> | undefined;
+    const { rerender } = render(
+      <TestComponent
+        projectId="project-1"
+        onValue={(value) => {
+          latest = value;
+        }}
+      />,
+    );
+    await flush();
+
+    rerender(
+      <TestComponent
+        projectId="project-2"
+        onValue={(value) => {
+          latest = value;
+        }}
+      />,
+    );
+    await flush();
+
+    expect(latest?.history).toEqual(history2);
+
+    pendingProject1.resolve({ client: "project-1" });
+    getProjectInfoHistory.mockResolvedValueOnce({
+      timestamp: 1,
+      cpu: [1],
+      mem: [1],
+    });
+    await flush();
+
+    expect(latest?.history).toEqual(history2);
+    expect(projectConat.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        project_id: "project-1",
+        caller: "useProjectInfoHistory",
+      }),
+    );
   });
 });

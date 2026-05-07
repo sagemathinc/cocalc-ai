@@ -67,8 +67,9 @@ const pt_stats_init = {
 } as const;
 
 export const ProjectInfo: React.FC<Props> = React.memo(
-  ({ mode = "full", wrap }: Props) => {
-    const { project_id } = useProjectContext();
+  ({ project_id: projectIdProp, mode = "full", wrap }: Props) => {
+    const { project_id: contextProjectId } = useProjectContext();
+    const project_id = projectIdProp ?? contextProjectId;
     const intl = useIntl();
     const projectLabel = intl.formatMessage(labels.project);
     const {
@@ -102,7 +103,7 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     // this is @cocalc/conn/project-status/types::ProjectStatus
     const project_status = useTypedRedux({ project_id }, "status");
     const project_map = useTypedRedux("projects", "project_map");
-    const [project, set_project] = useState(project_map?.get(project_id));
+    const project = project_map?.get(project_id);
     const [project_state, set_project_state] = useState<string | undefined>();
     const [start_ts, set_start_ts] = useState<number | undefined>(undefined);
     const [ptree, set_ptree] = useState<ProcessRow[] | undefined>(undefined);
@@ -117,22 +118,33 @@ export const ProjectInfo: React.FC<Props> = React.memo(
     );
     const [show_long_loading, set_show_long_loading] = useState(false);
 
-    React.useMemo(() => {
-      if (project_map == null) return;
-      set_project(project_map.get(project_id));
-    }, [project_map]);
-
     React.useEffect(() => {
-      if (project == null) return;
+      if (project == null) {
+        set_start_ts(undefined);
+        set_project_state(undefined);
+        return;
+      }
       set_start_ts(project_status?.get("start_ts") as any);
       set_project_state(project.getIn(["state", "state"]) as any);
     }, [project, project_status]);
 
     // used in render_not_loading_info()
     React.useEffect(() => {
+      set_show_long_loading(false);
       const timer = setTimeout(() => set_show_long_loading(true), 30000);
       return () => clearTimeout(timer);
-    }, []);
+    }, [project_id]);
+
+    React.useEffect(() => {
+      set_ptree(undefined);
+      set_pt_stats(pt_stats_init);
+      set_selected([]);
+      set_expanded([]);
+      set_have_children([]);
+      set_cg_info(gc_info_init);
+      set_disk_usage(du_init);
+      set_modal(undefined);
+    }, [project_id]);
 
     function update_top(info: ProjectInfoType) {
       // this shouldn't be the case, but somehow I saw this happening once

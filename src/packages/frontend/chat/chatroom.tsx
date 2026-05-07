@@ -689,6 +689,10 @@ export function ChatPanel({
   const [gitBrowserCommitHash, setGitBrowserCommitHash] = useState<
     string | undefined
   >(undefined);
+  const [
+    gitBrowserCommitSelectionRequestToken,
+    setGitBrowserCommitSelectionRequestToken,
+  ] = useState(0);
   const [gitBrowserThreadKey, setGitBrowserThreadKey] = useState<
     string | undefined
   >(undefined);
@@ -1841,6 +1845,7 @@ export function ChatPanel({
       setGitBrowserCwd(wd);
       setGitBrowserThreadKey(threadKey);
       setGitBrowserCommitHash(undefined);
+      setGitBrowserCommitSelectionRequestToken((current) => current + 1);
       setGitBrowserOpen(true);
     },
     [actions],
@@ -1879,6 +1884,7 @@ export function ChatPanel({
       );
       setGitBrowserThreadKey(normalizedThreadKey);
       setGitBrowserCommitHash(`${commitHash ?? ""}`.trim() || undefined);
+      setGitBrowserCommitSelectionRequestToken((current) => current + 1);
       setGitBrowserOpen(true);
     },
     [],
@@ -2405,6 +2411,7 @@ export function ChatPanel({
         sourcePath={path}
         cwdOverride={gitBrowserCwd}
         commitHash={gitBrowserCommitHash}
+        commitSelectionRequestToken={gitBrowserCommitSelectionRequestToken}
         open={gitBrowserOpen}
         onClose={() => {
           setGitBrowserOpen(false);

@@ -60,6 +60,7 @@ export function useHostRootfsImages(
   const [error, setError] = useState<string>();
   const [actionKey, setActionKey] = useState<string>();
   const refreshTokenRef = useRef(0);
+  const scopeTokenRef = useRef(0);
 
   const refresh = useCallback(async () => {
     if (!enabled || !hostId) {
@@ -68,18 +69,32 @@ export function useHostRootfsImages(
       return;
     }
     const token = ++refreshTokenRef.current;
+    const scopeToken = scopeTokenRef.current;
     setRefreshing(true);
     setError(undefined);
     try {
       const rows = await hub.hosts.listHostRootfsImages({ id: hostId });
-      if (refreshTokenRef.current !== token) return;
+      if (
+        refreshTokenRef.current !== token ||
+        scopeTokenRef.current !== scopeToken
+      ) {
+        return;
+      }
       setEntries(rows ?? []);
     } catch (err) {
-      if (refreshTokenRef.current !== token) return;
+      if (
+        refreshTokenRef.current !== token ||
+        scopeTokenRef.current !== scopeToken
+      ) {
+        return;
+      }
       setEntries([]);
       setError(getErrorMessage(err));
     } finally {
-      if (refreshTokenRef.current === token) {
+      if (
+        refreshTokenRef.current === token &&
+        scopeTokenRef.current === scopeToken
+      ) {
         setRefreshing(false);
         setLoading(false);
       }
@@ -91,15 +106,20 @@ export function useHostRootfsImages(
       if (!hostId) return;
       const trimmed = image.trim();
       if (!trimmed) return;
+      const scopeToken = scopeTokenRef.current;
       setActionKey(`pull:${trimmed}`);
       setError(undefined);
       try {
         await hub.hosts.pullHostRootfsImage({ id: hostId, image: trimmed });
+        if (scopeTokenRef.current !== scopeToken) return;
         await refresh();
       } catch (err) {
+        if (scopeTokenRef.current !== scopeToken) return;
         setError(getErrorMessage(err));
       } finally {
-        setActionKey(undefined);
+        if (scopeTokenRef.current === scopeToken) {
+          setActionKey(undefined);
+        }
       }
     },
     [hostId, hub, refresh],
@@ -110,15 +130,20 @@ export function useHostRootfsImages(
       if (!hostId) return;
       const trimmed = image.trim();
       if (!trimmed) return;
+      const scopeToken = scopeTokenRef.current;
       setActionKey(`delete:${trimmed}`);
       setError(undefined);
       try {
         await hub.hosts.deleteHostRootfsImage({ id: hostId, image: trimmed });
+        if (scopeTokenRef.current !== scopeToken) return;
         await refresh();
       } catch (err) {
+        if (scopeTokenRef.current !== scopeToken) return;
         setError(getErrorMessage(err));
       } finally {
-        setActionKey(undefined);
+        if (scopeTokenRef.current === scopeToken) {
+          setActionKey(undefined);
+        }
       }
     },
     [hostId, hub, refresh],
@@ -126,25 +151,33 @@ export function useHostRootfsImages(
 
   const gcDeleted = useCallback(async () => {
     if (!hostId) return;
+    const scopeToken = scopeTokenRef.current;
     setActionKey("gc:deleted");
     setError(undefined);
     try {
       const result = await hub.hosts.gcDeletedHostRootfsImages({ id: hostId });
+      if (scopeTokenRef.current !== scopeToken) return;
       await refresh();
       return result;
     } catch (err) {
+      if (scopeTokenRef.current !== scopeToken) return;
       setError(getErrorMessage(err));
     } finally {
-      setActionKey(undefined);
+      if (scopeTokenRef.current === scopeToken) {
+        setActionKey(undefined);
+      }
     }
   }, [hostId, hub, refresh]);
 
   useEffect(() => {
+    scopeTokenRef.current += 1;
+    refreshTokenRef.current += 1;
+    setEntries([]);
+    setLoading(false);
+    setRefreshing(false);
+    setError(undefined);
+    setActionKey(undefined);
     if (!enabled || !hostId) {
-      setEntries([]);
-      setLoading(false);
-      setRefreshing(false);
-      setError(undefined);
       return;
     }
     setLoading(true);

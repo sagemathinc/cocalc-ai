@@ -84,6 +84,8 @@ export function useHostRuntimeDeploymentStatus(
 
   useEffect(() => {
     if (!enabled || !hostId) {
+      tokenRef.current += 1;
+      statusRef.current = undefined;
       setStatus(undefined);
       setLoading(false);
       setRefreshing(false);

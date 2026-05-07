@@ -45,11 +45,17 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
   const [loaded, setLoaded] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const onErrorRef = useRef(onError);
+  const hostsRef = useRef<Host[]>([]);
   const lastMembershipRef = useRef(0);
+  const requestSeqRef = useRef(0);
 
   useEffect(() => {
     onErrorRef.current = onError;
   }, [onError]);
+
+  useEffect(() => {
+    hostsRef.current = hosts;
+  }, [hosts]);
 
   const refreshMembership = useCallback(async () => {
     const now = Date.now();
@@ -69,6 +75,7 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
   }, [hub]);
 
   const refresh = useCallback(async () => {
+    const requestSeq = ++requestSeqRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -77,16 +84,24 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
         include_deleted: includeDeleted ? true : undefined,
         show_all: showAll ? true : undefined,
       });
+      if (requestSeq !== requestSeqRef.current) {
+        return hostsRef.current;
+      }
       setHosts(list);
       setLoaded(true);
       void refreshMembership();
       return list;
     } catch (err) {
+      if (requestSeq !== requestSeqRef.current) {
+        return hostsRef.current;
+      }
       setError(getErrorMessage(err));
       setLoaded(true);
       throw err;
     } finally {
-      setLoading(false);
+      if (requestSeq === requestSeqRef.current) {
+        setLoading(false);
+      }
     }
   }, [hub, adminView, includeDeleted, showAll, refreshMembership]);
 
