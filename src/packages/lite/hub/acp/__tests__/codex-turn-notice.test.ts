@@ -3,10 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+jest.mock("@cocalc/conat/hub/call-hub", () => jest.fn());
+
 import {
   buildCodexTurnNoticeOptions,
+  publishCodexTurnNotice,
   shouldNotifyOnCodexTurnFinish,
 } from "../codex-turn-notice";
+import callHub from "@cocalc/conat/hub/call-hub";
 
 describe("codex turn completion notices", () => {
   it("only notifies when the thread config enables it", () => {
@@ -56,5 +60,39 @@ describe("codex turn completion notices", () => {
     expect(result.severity).toBe("warning");
     expect(result.body_markdown).toContain("Codex finished with an error");
     expect(result.body_markdown).toContain("Something broke");
+  });
+
+  it("publishes notices through the current project-authenticated client", async () => {
+    const client = {} as any;
+    (callHub as jest.Mock).mockResolvedValueOnce(undefined);
+
+    await expect(
+      publishCodexTurnNotice({
+        client,
+        project_id: "project-1",
+        notice: {
+          account_id: "acct-1",
+          source_project_id: "project-1",
+          source_path: "work/chat.chat",
+          thread_id: "thread-1",
+          title: "Codex turn finished",
+          body_markdown: "done",
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(callHub).toHaveBeenCalledWith({
+      client,
+      project_id: "project-1",
+      name: "notifications.createCodexTurnNotice",
+      args: [
+        expect.objectContaining({
+          account_id: "acct-1",
+          source_project_id: "project-1",
+          source_path: "work/chat.chat",
+          thread_id: "thread-1",
+        }),
+      ],
+    });
   });
 });

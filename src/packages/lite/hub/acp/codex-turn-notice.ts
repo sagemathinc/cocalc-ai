@@ -3,11 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import callHub from "@cocalc/conat/hub/call-hub";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type {
   CreateCodexTurnNoticeOptions,
   NotificationSeverity,
 } from "@cocalc/conat/hub/api/notifications";
+import type { Client as ConatClient } from "@cocalc/conat/core/client";
 
 export type CodexTurnTerminalState = "complete" | "error";
 
@@ -65,4 +67,17 @@ export function buildCodexTurnNoticeOptions(opts: {
     severity,
     stable_source_id: `${opts.stable_source_id ?? ""}`.trim() || undefined,
   };
+}
+
+export async function publishCodexTurnNotice(opts: {
+  client: ConatClient;
+  project_id: string;
+  notice: CreateCodexTurnNoticeOptions;
+}): Promise<void> {
+  await callHub({
+    client: opts.client,
+    project_id: opts.project_id,
+    name: "notifications.createCodexTurnNotice",
+    args: [opts.notice],
+  });
 }

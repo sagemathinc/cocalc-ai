@@ -113,6 +113,7 @@ import {
 } from "./queued-user-message";
 import {
   buildCodexTurnNoticeOptions,
+  publishCodexTurnNotice,
   shouldNotifyOnCodexTurnFinish,
 } from "./codex-turn-notice";
 import { resolveLiteCodexHome } from "../codex-auth";
@@ -1855,7 +1856,7 @@ export class ChatStreamWriter {
   private async publishCodexTurnCompletionNoticeBestEffort(
     terminalState: "complete" | "error",
   ): Promise<void> {
-    if (this.completionNoticePublished || !hasRemote) {
+    if (this.completionNoticePublished) {
       return;
     }
     this.completionNoticePublished = true;
@@ -1889,9 +1890,10 @@ export class ChatStreamWriter {
         terminal_state: terminalState,
         error_text: terminalState === "error" ? this.lastErrorText : undefined,
       });
-      await callRemoteHub({
-        name: "notifications.createCodexTurnNotice",
-        args: [notice],
+      await publishCodexTurnNotice({
+        client: this.client,
+        project_id: this.metadata.project_id,
+        notice,
       });
     } catch (err) {
       logger.warn("failed to publish codex turn completion notice", {
