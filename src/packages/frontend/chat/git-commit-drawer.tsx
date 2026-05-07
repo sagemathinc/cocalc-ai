@@ -121,9 +121,11 @@ import {
   isMergeCommitSummary,
   isNotGitRepoError,
   resolveOpenPath,
+  shouldApplyGitRepoBootstrapScopedResult,
   shouldClearGitHeadCommitBusyOnScopeChange,
   shouldClearGitHeadStatusActionOnScopeChange,
   shouldClearGitRepoBootstrapBusyOnScopeChange,
+  shouldFinalizeGitRepoBootstrapAction,
   shouldCaptureGitDrawerFindShortcut,
 } from "./git-commit/utils";
 import "./git-commit-drawer.css";
@@ -170,9 +172,11 @@ export {
   GitDiffListFooterSpacer,
   getCommitReviewIndicatorState,
   isMergeCommitSummary,
+  shouldApplyGitRepoBootstrapScopedResult,
   shouldClearGitHeadCommitBusyOnScopeChange,
   shouldClearGitHeadStatusActionOnScopeChange,
   shouldClearGitRepoBootstrapBusyOnScopeChange,
+  shouldFinalizeGitRepoBootstrapAction,
   shouldCaptureGitDrawerFindShortcut,
 };
 
@@ -1957,6 +1961,11 @@ export function GitCommitDrawer({
 
   const initializeGitRepo = async () => {
     if (!projectId) return;
+    const startedScope = repoBootstrapScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = repoBootstrapActionTokenRef.current + 1;
+    repoBootstrapActionTokenRef.current = actionToken;
+    repoBootstrapActionScopeRef.current = startedScope;
     setRepoBootstrapBusy(true);
     setGitLogError("");
     try {
@@ -1977,17 +1986,47 @@ export function GitCommitDrawer({
           (result.stderr || result.stdout || "git init failed").trim(),
         );
       }
-      setNonRepoError("");
-      setSelectedCommit(HEAD_REF);
-      refreshAll();
-      alert_message({
-        type: "info",
-        message: "Initialized a new git repository.",
-      });
+      if (
+        shouldApplyGitRepoBootstrapScopedResult({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+          activeScope: repoBootstrapScopeRef.current,
+        })
+      ) {
+        setNonRepoError("");
+        setSelectedCommit(HEAD_REF);
+        refreshAll();
+        alert_message({
+          type: "info",
+          message: "Initialized a new git repository.",
+        });
+      }
     } catch (err) {
-      setGitLogError(`${err ?? "Unable to initialize git repository."}`);
+      if (
+        shouldApplyGitRepoBootstrapScopedResult({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+          activeScope: repoBootstrapScopeRef.current,
+        })
+      ) {
+        setGitLogError(`${err ?? "Unable to initialize git repository."}`);
+      }
     } finally {
-      setRepoBootstrapBusy(false);
+      if (
+        shouldFinalizeGitRepoBootstrapAction({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+        })
+      ) {
+        repoBootstrapActionScopeRef.current = undefined;
+        setRepoBootstrapBusy(false);
+      }
     }
   };
 
@@ -2012,24 +2051,36 @@ export function GitCommitDrawer({
       ].join("\n");
       await onRequestAgentTurn(prompt);
       if (
-        repoBootstrapActionTokenRef.current === actionToken &&
-        repoBootstrapActionScopeRef.current === startedScope &&
-        repoBootstrapScopeRef.current === startedScope
+        shouldApplyGitRepoBootstrapScopedResult({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+          activeScope: repoBootstrapScopeRef.current,
+        })
       ) {
         onClose();
       }
     } catch (err) {
       if (
-        repoBootstrapActionTokenRef.current === actionToken &&
-        repoBootstrapActionScopeRef.current === startedScope &&
-        repoBootstrapScopeRef.current === startedScope
+        shouldApplyGitRepoBootstrapScopedResult({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+          activeScope: repoBootstrapScopeRef.current,
+        })
       ) {
         setGitLogError(`${err ?? "Unable to send setup request to codex."}`);
       }
     } finally {
       if (
-        repoBootstrapActionTokenRef.current === actionToken &&
-        repoBootstrapActionScopeRef.current === startedScope
+        shouldFinalizeGitRepoBootstrapAction({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+        })
       ) {
         repoBootstrapActionScopeRef.current = undefined;
         setRepoBootstrapBusy(false);

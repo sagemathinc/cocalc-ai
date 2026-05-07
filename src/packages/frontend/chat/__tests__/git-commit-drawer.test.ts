@@ -24,12 +24,14 @@ import {
   resolveIncomingGitCommitSelection,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
+  shouldApplyGitRepoBootstrapScopedResult,
   shouldClearGitHeadCommitBusyOnScopeChange,
   shouldClearGitHeadStatusActionOnScopeChange,
   shouldClearGitInlinePendingKey,
   shouldClearGitRepoBootstrapBusyOnScopeChange,
   shouldClearGitReviewSavingOnScopeChange,
   shouldClearGitReviewSubmitOnScopeChange,
+  shouldFinalizeGitRepoBootstrapAction,
   buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
@@ -582,6 +584,72 @@ describe("git commit drawer merge commit formatting", () => {
         repoBootstrapBusy: false,
         previousScope: "non-repo",
         nextScope: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("only applies git repo bootstrap results while the same non-repo scope is still active", () => {
+    expect(
+      shouldApplyGitRepoBootstrapScopedResult({
+        actionToken: 2,
+        currentActionToken: 2,
+        startedScope: "non-repo",
+        currentActionScope: "non-repo",
+        activeScope: "non-repo",
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplyGitRepoBootstrapScopedResult({
+        actionToken: 2,
+        currentActionToken: 3,
+        startedScope: "non-repo",
+        currentActionScope: "non-repo",
+        activeScope: "non-repo",
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplyGitRepoBootstrapScopedResult({
+        actionToken: 2,
+        currentActionToken: 2,
+        startedScope: "non-repo",
+        currentActionScope: undefined,
+        activeScope: "non-repo",
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplyGitRepoBootstrapScopedResult({
+        actionToken: 2,
+        currentActionToken: 2,
+        startedScope: "non-repo",
+        currentActionScope: "non-repo",
+        activeScope: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("only finalizes the git repo bootstrap action that still owns the scope token", () => {
+    expect(
+      shouldFinalizeGitRepoBootstrapAction({
+        actionToken: 4,
+        currentActionToken: 4,
+        startedScope: "non-repo",
+        currentActionScope: "non-repo",
+      }),
+    ).toBe(true);
+    expect(
+      shouldFinalizeGitRepoBootstrapAction({
+        actionToken: 4,
+        currentActionToken: 5,
+        startedScope: "non-repo",
+        currentActionScope: "non-repo",
+      }),
+    ).toBe(false);
+    expect(
+      shouldFinalizeGitRepoBootstrapAction({
+        actionToken: 4,
+        currentActionToken: 4,
+        startedScope: "non-repo",
+        currentActionScope: undefined,
       }),
     ).toBe(false);
   });
