@@ -4,6 +4,11 @@
  */
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import {
+  assertAccountNotRehoming,
+  assertAccountWriteOnHomeBay,
+  withAccountRehomeWriteFence,
+} from "@cocalc/server/accounts/rehome-fence";
 import { uuid } from "@cocalc/util/misc";
 import type { MembershipClass } from "@cocalc/conat/hub/api/purchases";
 
@@ -23,6 +28,25 @@ export interface MembershipGrantRecord {
 
 function getQueryClient(client?: PoolClient) {
   return client ?? getPool();
+}
+
+async function assertAccountGrantWriteAllowed({
+  account_id,
+  client,
+}: {
+  account_id: string;
+  client: PoolClient;
+}): Promise<void> {
+  await assertAccountNotRehoming({
+    db: client,
+    account_id,
+    action: "modify membership grants",
+  });
+  await assertAccountWriteOnHomeBay({
+    db: client,
+    account_id,
+    action: "modify membership grants",
+  });
 }
 
 export async function listActiveMembershipGrantsForAccount(
@@ -81,6 +105,29 @@ export async function createMembershipGrant(
   },
   client?: PoolClient,
 ): Promise<string> {
+  if (client == null) {
+    return await withAccountRehomeWriteFence({
+      account_id,
+      action: "modify membership grants",
+      fn: async (db) =>
+        await createMembershipGrant(
+          {
+            id,
+            account_id,
+            membership_class,
+            source,
+            package_id,
+            purchase_id,
+            granted_by_account_id,
+            starts_at,
+            expires_at,
+            metadata,
+          },
+          db as PoolClient,
+        ),
+    });
+  }
+  await assertAccountGrantWriteAllowed({ account_id, client });
   await getQueryClient(client).query(
     `
       INSERT INTO membership_grants

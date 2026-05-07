@@ -10,6 +10,7 @@ import {
   createTestMembershipPackage,
   createTestMembershipTier,
 } from "@cocalc/server/purchases/test-data";
+import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
 import { uuid } from "@cocalc/util/misc";
 import { resolveMembershipForAccount } from "./resolve";
 import {
@@ -42,6 +43,24 @@ describe("membership packages", () => {
         { [email_address]: new Date().toISOString() },
       ],
     );
+  }
+
+  async function setAccountHomeBay(account_id: string, home_bay_id: string) {
+    const pool = getPool("medium");
+    await pool.query("UPDATE accounts SET home_bay_id=$2 WHERE account_id=$1", [
+      account_id,
+      home_bay_id,
+    ]);
+    const table = await pool.query<{ table_name: string | null }>(
+      "SELECT to_regclass($1) AS table_name",
+      ["public.cluster_account_directory"],
+    );
+    if (table.rows[0]?.table_name) {
+      await pool.query(
+        "UPDATE cluster_account_directory SET home_bay_id=$2 WHERE account_id=$1",
+        [account_id, home_bay_id],
+      );
+    }
   }
 
   beforeAll(async () => {
@@ -310,5 +329,85 @@ describe("membership packages", () => {
     const membership = await resolveMembershipForAccount(site_user_account_id);
     expect(membership.class).toBe(teamTier);
     expect(membership.grant_source).toBe("site-license");
+  });
+
+  it("rejects package purchase writes on a stale non-home bay", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    await setAccountHomeBay(owner_account_id, "bay-1");
+
+    await expect(
+      purchaseMembershipPackage({
+        account_id: owner_account_id,
+        amount: 200,
+        product: {
+          type: "membership-package",
+          kind: "team",
+          membership_class: teamTier,
+          seat_count: 1,
+          interval: "month",
+        },
+      }),
+    ).rejects.toThrow(/account is homed on bay-1/);
+  });
+
+  it("rejects seat assignment writes on a stale non-home bay", async () => {
+    const owner_account_id = uuid();
+    const invited_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(invited_account_id);
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 1,
+      metadata: {
+        interval: "month",
+        seat_price: 20,
+      },
+    });
+    await setAccountHomeBay(owner_account_id, "bay-1");
+
+    await expect(
+      assignMembershipPackageSeat({
+        package_id,
+        account_id: invited_account_id,
+        assigned_by_account_id: owner_account_id,
+      }),
+    ).rejects.toThrow(/account is homed on bay-1/);
+  });
+
+  it("rejects claims that would mint a grant for an account homed on another bay", async () => {
+    const owner_account_id = uuid();
+    const invited_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(invited_account_id);
+    await markVerifiedEmail(invited_account_id, "remote-student@example.com");
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 1,
+      metadata: {
+        interval: "month",
+        seat_price: 20,
+      },
+    });
+
+    await assignMembershipPackageSeat({
+      package_id,
+      email_address: "remote-student@example.com",
+      assigned_by_account_id: owner_account_id,
+    });
+    await setAccountHomeBay(invited_account_id, "bay-1");
+
+    await expect(
+      claimMembershipPackageSeat({
+        package_id,
+        account_id: invited_account_id,
+      }),
+    ).rejects.toThrow(/account is homed on bay-1/);
   });
 });
