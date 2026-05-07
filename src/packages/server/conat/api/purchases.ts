@@ -10,6 +10,7 @@ import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
+import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import {
   assignMembershipPackageSeat as assignMembershipPackageSeat0,
   claimMembershipPackageSeat as claimMembershipPackageSeat0,
@@ -24,6 +25,9 @@ import type { MoneyValue } from "@cocalc/util/money";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import type { MembershipPackageProduct } from "@cocalc/util/db-schema/shopping-cart-items";
 import purchaseMembershipPackage0 from "@cocalc/server/purchases/membership-package";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
 export { getBalance };
 
@@ -37,6 +41,20 @@ export async function getMinBalance({
 
 export async function getMembership({ account_id }) {
   return await resolveMembershipForAccount(account_id);
+}
+
+async function resolveTargetAccountHomeBay({
+  account_id,
+  user_account_id,
+}: {
+  account_id: string;
+  user_account_id: string;
+}): Promise<string> {
+  const location = await resolveAccountHomeBay({
+    account_id,
+    user_account_id,
+  });
+  return `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
 }
 
 export async function getMembershipDetails({
@@ -55,6 +73,21 @@ export async function getMembershipDetails({
   if (user_account_id && user_account_id !== account_id) {
     if (!account_id || !(await isAdmin(account_id))) {
       throw Error("must be an admin");
+    }
+  }
+  if (account_id && targetId !== account_id) {
+    const home_bay_id = await resolveTargetAccountHomeBay({
+      account_id,
+      user_account_id: targetId,
+    });
+    if (home_bay_id !== getConfiguredBayId()) {
+      return await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: home_bay_id,
+      }).getMembershipDetails({
+        account_id: targetId,
+        refresh_usage_status,
+      });
     }
   }
   return await resolveMembershipDetailsForAccount(targetId, {

@@ -570,7 +570,6 @@ export async function resolveMembershipPackageQuote(
   product: MembershipPackageProduct,
   client?: PoolClient,
 ): Promise<MembershipPackageQuote> {
-  const kind = normalizePackageKind(product.kind);
   const seat_count = normalizeSeatCount(product.seat_count);
   if (product.package_id) {
     const existing = await getMembershipPackage({
@@ -627,6 +626,7 @@ export async function resolveMembershipPackageQuote(
     };
   }
 
+  const kind = normalizePackageKind(product.kind);
   if (kind === "course") {
     const course_project_id = `${product.course_project_id ?? ""}`.trim();
     if (!isValidUUID(course_project_id)) {

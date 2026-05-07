@@ -260,6 +260,33 @@ describe("membership packages", () => {
     expect(quote.total_price).toBe(87.5);
   });
 
+  it("allows expanding an existing package without resupplying the package kind", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 2,
+      metadata: {
+        interval: "month",
+        seat_price: 20,
+      },
+    });
+
+    const quote = await resolveMembershipPackageQuote({
+      type: "membership-package",
+      membership_class: teamTier,
+      seat_count: 1,
+      package_id,
+    });
+
+    expect(quote.package_id).toBe(package_id);
+    expect(quote.kind).toBe("team");
+    expect(quote.total_price).toBe(20);
+  });
+
   it("updates project usage attribution when assigning and revoking a course seat", async () => {
     const owner_account_id = uuid();
     const student_account_id = uuid();

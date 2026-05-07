@@ -17,6 +17,8 @@ const revokeMembershipPackageSeatMock = jest.fn();
 const listClaimableMembershipPackagesForAccountMock = jest.fn();
 const claimMembershipPackageSeatMock = jest.fn();
 const purchaseMembershipPackageMock = jest.fn();
+const resolveAccountHomeBayMock = jest.fn();
+const interBayGetMembershipDetailsMock = jest.fn();
 
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
   __esModule: true,
@@ -73,6 +75,26 @@ jest.mock("@cocalc/server/purchases/membership-package", () => ({
 jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
   default: (...args: any[]) => isAdminMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-directory", () => ({
+  resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: jest.fn(() => "bay-0"),
+}));
+
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
+  getInterBayFabricClient: jest.fn(() => ({ kind: "fabric-client" })),
+}));
+
+jest.mock("@cocalc/conat/inter-bay/api", () => ({
+  createInterBayAccountLocalClient: jest.fn(({ dest_bay }) => ({
+    dest_bay,
+    getMembershipDetails: (...args: any[]) =>
+      interBayGetMembershipDetailsMock(...args),
+  })),
 }));
 
 describe("purchases.getManagedEgressHistory", () => {
@@ -214,6 +236,38 @@ describe("purchases.getMembershipDetails", () => {
       "account-1",
       { refresh_usage_status: true },
     );
+  });
+
+  it("routes another account's membership details to that account's home bay", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resolveAccountHomeBayMock.mockResolvedValue({
+      account_id: "account-2",
+      home_bay_id: "bay-2",
+      source: "cluster-directory",
+    });
+    interBayGetMembershipDetailsMock.mockResolvedValue({
+      selected: { class: "member", source: "grant", entitlements: {} },
+      candidates: [],
+      usage_status: undefined,
+    });
+
+    const { getMembershipDetails } = await import("./purchases");
+    const result = await getMembershipDetails({
+      account_id: "admin-1",
+      user_account_id: "account-2",
+      refresh_usage_status: true,
+    });
+
+    expect(resolveAccountHomeBayMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      user_account_id: "account-2",
+    });
+    expect(interBayGetMembershipDetailsMock).toHaveBeenCalledWith({
+      account_id: "account-2",
+      refresh_usage_status: true,
+    });
+    expect(resolveMembershipDetailsForAccountMock).not.toHaveBeenCalled();
+    expect(result.selected.class).toBe("member");
   });
 });
 

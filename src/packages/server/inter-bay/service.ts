@@ -94,6 +94,10 @@ import {
   revokeMembershipGrantById,
 } from "@cocalc/server/membership/grants";
 import {
+  resolveMembershipDetailsForAccount,
+  resolveMembershipForAccount,
+} from "@cocalc/server/membership/resolve";
+import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
   resolveProjectBayAcrossCluster,
@@ -407,6 +411,12 @@ async function startAccountLocalService(): Promise<void> {
         revoked_at: normalizeOptionalDateLike(revoked_at),
       });
     },
+    getMembership: async ({ account_id }) =>
+      await resolveMembershipForAccount(account_id),
+    getMembershipDetails: async ({ account_id, refresh_usage_status }) =>
+      await resolveMembershipDetailsForAccount(account_id, {
+        refresh_usage_status,
+      }),
   };
   services.push(
     ...createInterBayAccountLocalHandler({

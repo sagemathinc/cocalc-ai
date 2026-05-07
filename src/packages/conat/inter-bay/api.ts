@@ -20,6 +20,10 @@ import type {
   HostConnectionInfo,
   Hosts,
 } from "@cocalc/conat/hub/api/hosts";
+import type {
+  MembershipDetails,
+  MembershipResolution,
+} from "@cocalc/conat/hub/api/purchases";
 import type { BayBackupsInfo, BayLoadInfo } from "@cocalc/conat/hub/api/system";
 import type {
   ProjectActiveOperationSummary,
@@ -446,6 +450,7 @@ export interface AccountRehomeStateCopyRequest {
   remember_me?: Record<string, unknown>[];
   auth_tokens?: Record<string, unknown>[];
   api_keys?: Record<string, unknown>[];
+  membership_grants?: Record<string, unknown>[];
 }
 
 export interface AccountLocalUpsertMembershipGrantRequest {
@@ -466,6 +471,15 @@ export interface AccountLocalRevokeMembershipGrantRequest {
   account_id: string;
   grant_id: string;
   revoked_at?: Date | string | number | null;
+}
+
+export interface AccountLocalGetMembershipRequest {
+  account_id: string;
+}
+
+export interface AccountLocalGetMembershipDetailsRequest {
+  account_id: string;
+  refresh_usage_status?: boolean;
 }
 
 export type AccountRehomeOperationStage =
@@ -738,7 +752,9 @@ export type AccountLocalMethod =
   | "get-rehome-operation"
   | "reconcile-rehome"
   | "upsert-membership-grant"
-  | "revoke-membership-grant";
+  | "revoke-membership-grant"
+  | "get-membership"
+  | "get-membership-details";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
 export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod = "get-load" | "get-backups";
@@ -1294,6 +1310,12 @@ export interface InterBayAccountLocalApi {
   revokeMembershipGrant: (
     opts: AccountLocalRevokeMembershipGrantRequest,
   ) => Promise<void>;
+  getMembership: (
+    opts: AccountLocalGetMembershipRequest,
+  ) => Promise<MembershipResolution>;
+  getMembershipDetails: (
+    opts: AccountLocalGetMembershipDetailsRequest,
+  ) => Promise<MembershipDetails>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -2354,6 +2376,24 @@ export function createInterBayAccountLocalClient({
       method: "revoke-membership-grant",
     }),
   });
+  const getMembershipClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getMembership">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-membership",
+    }),
+  });
+  const getMembershipDetailsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getMembershipDetails">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-membership-details",
+    }),
+  });
   return {
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
@@ -2369,6 +2409,10 @@ export function createInterBayAccountLocalClient({
       await upsertMembershipGrantClient.upsertMembershipGrant(opts),
     revokeMembershipGrant: async (opts) =>
       await revokeMembershipGrantClient.revokeMembershipGrant(opts),
+    getMembership: async (opts) =>
+      await getMembershipClient.getMembership(opts),
+    getMembershipDetails: async (opts) =>
+      await getMembershipDetailsClient.getMembershipDetails(opts),
   };
 }
 
@@ -2477,6 +2521,31 @@ export function createInterBayAccountLocalHandler({
           await impl.revokeMembershipGrant(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getMembership">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-membership",
+      }),
+      impl: {
+        getMembership: async (opts) => await impl.getMembership(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getMembershipDetails">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "get-membership-details",
+        }),
+        impl: {
+          getMembershipDetails: async (opts) =>
+            await impl.getMembershipDetails(opts),
+        },
+      },
+    ),
   ];
 }
 

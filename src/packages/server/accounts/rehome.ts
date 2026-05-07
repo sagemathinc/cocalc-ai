@@ -49,6 +49,7 @@ const PORTABLE_STATE_TABLES = [
   "remember_me",
   "auth_tokens",
   "api_keys",
+  "membership_grants",
 ] as const;
 
 type PortableStateTable = (typeof PORTABLE_STATE_TABLES)[number];
@@ -280,7 +281,9 @@ async function replacePortableRows({
             ? ["hash"]
             : table === "auth_tokens"
               ? ["auth_token"]
-              : ["key_id"];
+              : table === "api_keys"
+                ? ["key_id"]
+                : ["id"];
   if (table === "api_keys") {
     await getPool().query(
       `
@@ -384,6 +387,7 @@ async function loadPortableState(
     remember_me,
     auth_tokens,
     api_keys,
+    membership_grants,
   ] = await Promise.all([
     loadPortableRows("account_project_index", account_id),
     loadPortableRows("account_collaborator_index", account_id),
@@ -391,6 +395,7 @@ async function loadPortableState(
     loadPortableRows("remember_me", account_id),
     loadPortableRows("auth_tokens", account_id),
     loadAccountWidePortableApiKeyRows(account_id),
+    loadPortableRows("membership_grants", account_id),
   ]);
   return {
     target_account_id: account_id,
@@ -402,6 +407,7 @@ async function loadPortableState(
     remember_me,
     auth_tokens,
     api_keys,
+    membership_grants,
   };
 }
 
@@ -815,6 +821,7 @@ export async function copyAccountRehomeState({
   remember_me,
   auth_tokens,
   api_keys,
+  membership_grants,
 }: AccountRehomeStateCopyRequest): Promise<void> {
   const accountId = normalizeUuid("target_account_id", target_account_id);
   normalizeBayId("source_bay_id", source_bay_id);
@@ -856,6 +863,11 @@ export async function copyAccountRehomeState({
     account_id: accountId,
     rows: api_keys ?? [],
   });
+  await replacePortableRows({
+    table: "membership_grants",
+    account_id: accountId,
+    rows: membership_grants ?? [],
+  });
   await updateClusterAccountApiKeysHomeBay({
     account_id: accountId,
     home_bay_id: destBayId,
@@ -870,6 +882,7 @@ export async function copyAccountRehomeState({
     remember_me_rows: remember_me?.length ?? 0,
     auth_tokens_rows: auth_tokens?.length ?? 0,
     api_keys_rows: api_keys?.length ?? 0,
+    membership_grants_rows: membership_grants?.length ?? 0,
   });
 }
 
@@ -981,7 +994,11 @@ export async function runAccountRehomeOperation(
         home_bay_id: op.dest_bay_id,
       });
       await waitForAccountHomeBayReadPath({
-        acting_account_id: op.requested_by ?? op.account_id,
+        // Use the rehomed account itself for the convergence lookup. The
+        // requesting admin may be homed on a different bay, so polling with
+        // the operator account can fail on attached source bays even though
+        // the rehome itself already succeeded.
+        acting_account_id: op.account_id,
         target_account_id: op.account_id,
         dest_bay_id: op.dest_bay_id,
       });
