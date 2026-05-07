@@ -78,6 +78,9 @@ export default function StripePayment({
   const [hasPaymentMethods, setHasPaymentMethods] = useState<boolean | null>(
     null,
   );
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
   const safeLineItems = lineItems ?? [];
 
   useEffect(() => {
@@ -136,13 +139,15 @@ export default function StripePayment({
                   onClick={async () => {
                     try {
                       setLoading(true);
-                      await createPaymentIntent({
-                        description,
-                        lineItems: safeLineItems,
-                        purpose,
-                        metadata,
+                      await runFreshAuthAction(async () => {
+                        await createPaymentIntent({
+                          description,
+                          lineItems: safeLineItems,
+                          purpose,
+                          metadata,
+                        });
+                        onFinished?.(stripeToMoney(totalStripe).toNumber());
                       });
-                      onFinished?.(stripeToMoney(totalStripe).toNumber());
                     } catch (err) {
                       setError(`${err}`);
                     } finally {
@@ -201,6 +206,7 @@ export default function StripePayment({
           </Button>
         </div>
       )}
+      <FreshAuthModal {...freshAuthModalProps} />
     </Card>
   );
 }

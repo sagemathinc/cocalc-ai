@@ -460,7 +460,13 @@ export async function purchaseMembershipPackage(opts: {
   expires_at?: Date | string;
   metadata?: Record<string, unknown> | null;
 }): Promise<{ package_id: string; purchase_id: number }> {
-  return await (await getPurchasesHubRpc()).purchaseMembershipPackage(opts);
+  const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+  return await (
+    await getPurchasesHubRpc()
+  ).purchaseMembershipPackage({
+    ...opts,
+    browser_id: webapp_client.browser_id,
+  });
 }
 
 export async function getMembershipPackages(

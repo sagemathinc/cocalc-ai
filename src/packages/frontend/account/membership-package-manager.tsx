@@ -21,6 +21,10 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
@@ -733,6 +737,9 @@ function TeamPackagePurchaseModal({
   );
   const numPaymentsRef = useRef<number | null>(null);
   const [chargeAmount, setChargeAmount] = useState<number>(0);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setActionError(`${err}`),
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -853,9 +860,14 @@ function TeamPackagePurchaseModal({
     setActionError("");
     setDisabled(true);
     try {
-      await purchaseMembershipPackage(product);
-      await onPurchased();
-      setPlace("done");
+      const completed = await runFreshAuthAction(async () => {
+        await purchaseMembershipPackage(product);
+        await onPurchased();
+        setPlace("done");
+      });
+      if (!completed) {
+        return;
+      }
     } catch (err) {
       setActionError(`${err}`);
     } finally {
@@ -1053,6 +1065,7 @@ function TeamPackagePurchaseModal({
             description="The package seat count has been updated. You can assign seats immediately."
           />
         ) : null}
+        <FreshAuthModal {...freshAuthModalProps} />
       </Space>
     </Modal>
   );

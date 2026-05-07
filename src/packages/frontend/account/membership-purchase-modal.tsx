@@ -18,6 +18,10 @@ import {
 } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import api from "@cocalc/frontend/client/api";
 import { Icon } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
@@ -82,6 +86,9 @@ export default function MembershipPurchaseModal({
     "checkout",
   );
   const numPaymentsRef = useRef<number | null>(null);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setQuoteError(`${err}`),
+  });
 
   const load = async () => {
     setLoading(true);
@@ -199,14 +206,19 @@ export default function MembershipPurchaseModal({
     setActionLoading(true);
     setQuoteError("");
     try {
-      await applyMembershipChange({
-        class: selectedTierId,
-        interval,
-        allow_downgrade: true,
+      const completed = await runFreshAuthAction(async () => {
+        await applyMembershipChange({
+          class: selectedTierId,
+          interval,
+          allow_downgrade: true,
+        });
+        setPlace("done");
+        await load();
+        onChanged?.();
       });
-      setPlace("done");
-      await load();
-      onChanged?.();
+      if (!completed) {
+        return;
+      }
     } catch (err) {
       setQuoteError(`${err}`);
     } finally {
@@ -427,6 +439,7 @@ export default function MembershipPurchaseModal({
           )}
         </div>
       )}
+      <FreshAuthModal {...freshAuthModalProps} />
     </Modal>
   );
 }

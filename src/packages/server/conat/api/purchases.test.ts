@@ -20,6 +20,8 @@ const purchaseMembershipPackageMock = jest.fn();
 const resolveAccountHomeBayMock = jest.fn();
 const interBayGetMembershipDetailsMock = jest.fn();
 const interBayGetMembershipPackagesMock = jest.fn();
+const getBrowserAuthSessionHashMock = jest.fn();
+const requireFreshAuthForSessionHashMock = jest.fn();
 
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
   __esModule: true,
@@ -86,6 +88,16 @@ jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(() => "bay-0"),
 }));
 
+jest.mock("@cocalc/server/conat/socketio/browser-auth-sessions", () => ({
+  getBrowserAuthSessionHash: (...args: any[]) =>
+    getBrowserAuthSessionHashMock(...args),
+}));
+
+jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  requireFreshAuthForSessionHash: (...args: any[]) =>
+    requireFreshAuthForSessionHashMock(...args),
+}));
+
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: jest.fn(() => ({ kind: "fabric-client" })),
 }));
@@ -99,6 +111,13 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
       interBayGetMembershipPackagesMock(...args),
   })),
 }));
+
+beforeEach(() => {
+  getBrowserAuthSessionHashMock.mockReset();
+  requireFreshAuthForSessionHashMock.mockReset();
+  getBrowserAuthSessionHashMock.mockReturnValue(undefined);
+  requireFreshAuthForSessionHashMock.mockResolvedValue(undefined);
+});
 
 describe("purchases.getManagedEgressHistory", () => {
   beforeEach(() => {
@@ -458,6 +477,59 @@ describe("purchases membership packages", () => {
     expect(result).toEqual({
       package_id: "package-1",
       purchase_id: 17,
+    });
+  });
+
+  it("requires fresh auth for browser membership-package purchases", async () => {
+    const { purchaseMembershipPackage } = await import("./purchases");
+
+    await expect(
+      purchaseMembershipPackage({
+        account_id: "owner-1",
+        browser_id: "browser-1",
+        kind: "team",
+        seat_count: 2,
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+    });
+
+    expect(purchaseMembershipPackageMock).not.toHaveBeenCalled();
+  });
+
+  it("checks browser-session fresh auth before purchasing a membership package", async () => {
+    getBrowserAuthSessionHashMock.mockReturnValue("session-1");
+    purchaseMembershipPackageMock.mockResolvedValue({
+      package_id: "package-1",
+      purchase_id: 17,
+    });
+
+    const { purchaseMembershipPackage } = await import("./purchases");
+    await purchaseMembershipPackage({
+      account_id: "owner-1",
+      browser_id: "browser-1",
+      kind: "team",
+      seat_count: 2,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+      session_hash: "session-1",
+    });
+    expect(purchaseMembershipPackageMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+      product: {
+        type: "membership-package",
+        kind: "team",
+        membership_class: "",
+        seat_count: 2,
+        interval: undefined,
+        package_id: undefined,
+        course_project_id: undefined,
+        starts_at: undefined,
+        expires_at: undefined,
+        metadata: undefined,
+      },
     });
   });
 

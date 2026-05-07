@@ -2,13 +2,17 @@ import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import createPaymentIntent from "@cocalc/server/purchases/stripe/create-payment-intent";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import throttle from "@cocalc/util/api/throttle";
 
 export default async function handle(req, res) {
   try {
     res.json(await get(req));
   } catch (err) {
-    res.json({ error: `${err.message}` });
+    res.json({
+      error: `${err.message}`,
+      ...(err?.code != null ? { code: err.code } : {}),
+    });
     return;
   }
 }
@@ -29,6 +33,7 @@ async function get(req) {
     if (!(await userIsInGroup(admin_account_id, "admin"))) {
       throw Error("only admins can create a payment");
     }
+    await requireFreshAuth({ req, account_id: admin_account_id });
     await createPaymentIntent({
       account_id: user_account_id,
       lineItems,
@@ -45,6 +50,7 @@ async function get(req) {
       account_id,
       endpoint: "purchases/stripe/create-payment-intent",
     });
+    await requireFreshAuth({ req, account_id });
     await createPaymentIntent({
       account_id,
       description,

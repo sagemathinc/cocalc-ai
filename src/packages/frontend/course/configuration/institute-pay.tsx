@@ -18,6 +18,10 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dayjs } from "dayjs";
 
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, TimeAgo } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
 import Payments from "@cocalc/frontend/purchases/payments";
@@ -230,6 +234,9 @@ function PurchaseCourseSeatsModal({
   );
   const numPaymentsRef = useRef<number | null>(null);
   const [chargeAmount, setChargeAmount] = useState<number>(0);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setActionError(`${err}`),
+  });
 
   const product = useMemo(
     () => ({
@@ -319,9 +326,14 @@ function PurchaseCourseSeatsModal({
     setActionError("");
     setDisabled(true);
     try {
-      await purchaseMembershipPackage(product);
-      await onPurchased();
-      setPlace("done");
+      const completed = await runFreshAuthAction(async () => {
+        await purchaseMembershipPackage(product);
+        await onPurchased();
+        setPlace("done");
+      });
+      if (!completed) {
+        return;
+      }
     } catch (err) {
       setActionError(`${err}`);
     } finally {
@@ -489,6 +501,7 @@ function PurchaseCourseSeatsModal({
             description="The updated seat count is now available. Assign seats to students from the Students tab."
           />
         )}
+        <FreshAuthModal {...freshAuthModalProps} />
       </Space>
     </Modal>
   );

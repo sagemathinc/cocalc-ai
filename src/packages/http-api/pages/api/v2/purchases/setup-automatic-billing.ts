@@ -7,6 +7,7 @@ tops it back up to 0.
 */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import { createStripeUsageBasedSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 
@@ -14,7 +15,10 @@ export default async function handle(req, res) {
   try {
     res.json(await get(req));
   } catch (err) {
-    res.json({ error: `${err.message}` });
+    res.json({
+      error: `${err.message}`,
+      ...(err?.code != null ? { code: err.code } : {}),
+    });
     return;
   }
 }
@@ -24,6 +28,7 @@ async function get(req) {
   if (account_id == null) {
     throw Error("must be signed in");
   }
+  await requireFreshAuth({ req, account_id });
   const { success_url, cancel_url } = getParams(req);
   return await createStripeUsageBasedSubscription({
     account_id,

@@ -28,6 +28,8 @@ import purchaseMembershipPackage0 from "@cocalc/server/purchases/membership-pack
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
+import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 
 export { getBalance };
 
@@ -55,6 +57,41 @@ async function resolveTargetAccountHomeBay({
     user_account_id,
   });
   return `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+}
+
+function requireAccount(account_id?: string): string {
+  const owner = `${account_id ?? ""}`.trim();
+  if (!owner) {
+    throw Error("account_id required");
+  }
+  return owner;
+}
+
+async function maybeRequireFreshAuthForBrowserPurchaseAction({
+  account_id,
+  browser_id,
+}: {
+  account_id?: string;
+  browser_id?: string;
+}): Promise<void> {
+  const owner = requireAccount(account_id);
+  const cleanedBrowserId = `${browser_id ?? ""}`.trim();
+  if (!cleanedBrowserId) {
+    return;
+  }
+  const session_hash = getBrowserAuthSessionHash({
+    account_id: owner,
+    browser_id: cleanedBrowserId,
+  });
+  if (!session_hash) {
+    throw Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+  }
+  await requireFreshAuthForSessionHash({
+    account_id: owner,
+    session_hash,
+  });
 }
 
 export async function getMembershipDetails({
@@ -147,6 +184,7 @@ export async function getMembershipPackageQuote({
 
 export async function purchaseMembershipPackage({
   account_id,
+  browser_id,
   package_id,
   kind,
   membership_class,
@@ -158,6 +196,7 @@ export async function purchaseMembershipPackage({
   metadata,
 }: {
   account_id?: string;
+  browser_id?: string;
   package_id?: string;
   kind?;
   membership_class?: string;
@@ -171,6 +210,10 @@ export async function purchaseMembershipPackage({
   if (!account_id) {
     throw Error("account_id required");
   }
+  await maybeRequireFreshAuthForBrowserPurchaseAction({
+    account_id,
+    browser_id,
+  });
   const product: MembershipPackageProduct = {
     type: "membership-package",
     kind,
