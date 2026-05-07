@@ -507,6 +507,10 @@ export interface AccountRehomeStateCopyRequest {
   account_collaborator_index?: Record<string, unknown>[];
   account_notification_index?: Record<string, unknown>[];
   remember_me?: Record<string, unknown>[];
+  account_auth_sessions?: Record<string, unknown>[];
+  account_auth_challenges?: Record<string, unknown>[];
+  account_second_factors?: Record<string, unknown>[];
+  account_second_factor_recovery_codes?: Record<string, unknown>[];
   auth_tokens?: Record<string, unknown>[];
   api_keys?: Record<string, unknown>[];
   membership_grants?: Record<string, unknown>[];

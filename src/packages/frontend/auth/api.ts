@@ -14,6 +14,14 @@ export type WrongBayAuthResponse = {
   retry_token: string;
 };
 
+export type MfaRequiredAuthResponse = {
+  mfa_required: true;
+  challenge_id: string;
+  methods: Array<"totp" | "recovery_code">;
+  home_bay_id: string;
+  home_bay_url?: string;
+};
+
 export type AuthBootstrapResponse = {
   signed_in: boolean;
   account_id?: string;
@@ -26,6 +34,17 @@ export function isWrongBayAuthResponse(
 ): value is WrongBayAuthResponse {
   return (
     !!value && typeof value === "object" && (value as any).wrong_bay === true
+  );
+}
+
+export function isMfaRequiredAuthResponse(
+  value: unknown,
+): value is MfaRequiredAuthResponse {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as any).mfa_required === true &&
+    typeof (value as any).challenge_id === "string"
   );
 }
 

@@ -111,6 +111,7 @@ import {
 } from "./browser-sessions";
 import { getLiveBrowserSessionInfo } from "./browser-sessions-live";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
+import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
 import {
   getProjectAppPublicPolicy as getProjectAppPublicPolicyRaw,
   getPublicAppRouteByHostname as getPublicAppRouteByHostnameRaw,
@@ -2296,10 +2297,20 @@ export async function issueBrowserSignInCookie({
     Number.isFinite(cleanMaxAgeMs) && cleanMaxAgeMs > 0
       ? Math.floor(cleanMaxAgeMs)
       : DEFAULT_BROWSER_SIGN_IN_COOKIE_MAX_AGE_MS;
-  const { value } = await createRememberMeCookie(
+  const { value, hash, expire } = await createRememberMeCookie(
     account_id,
     Math.max(60, Math.floor(resolvedMaxAgeMs / 1000)),
   );
+  await recordNewAuthSession({
+    account_id,
+    session_hash: hash,
+    expire,
+    authenticated_at: new Date(),
+    password_verified_at: new Date(),
+    factor_level: "none",
+    fresh_auth_until: null,
+    metadata: { issued_by: "issueBrowserSignInCookie" },
+  });
   return {
     account_id,
     remember_me: value,

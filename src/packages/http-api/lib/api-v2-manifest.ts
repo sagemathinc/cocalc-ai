@@ -16,134 +16,141 @@ import handler9 from "../pages/api/v2/accounts/set-name";
 import handler10 from "../pages/api/v2/accounts/set-password";
 import handler11 from "../pages/api/v2/accounts/sign-out";
 import handler12 from "../pages/api/v2/api-keys";
-import handler13 from "../pages/api/v2/auth/bootstrap";
-import handler14 from "../pages/api/v2/auth/has-password";
-import handler15 from "../pages/api/v2/auth/password-reset";
-import handler16 from "../pages/api/v2/auth/password-strength";
-import handler17 from "../pages/api/v2/auth/redeem-password-reset";
-import handler18 from "../pages/api/v2/auth/redeem-verify-email";
-import handler19 from "../pages/api/v2/auth/requires-token";
-import handler20 from "../pages/api/v2/auth/sign-in";
-import handler21 from "../pages/api/v2/auth/sign-up";
-import handler22 from "../pages/api/v2/auth/sso-strategies";
-import handler23 from "../pages/api/v2/auth/unlink-strategy";
-import handler24 from "../pages/api/v2/billing/cancel-subscription";
-import handler25 from "../pages/api/v2/billing/create-payment-method";
-import handler26 from "../pages/api/v2/billing/delete-payment-method";
-import handler27 from "../pages/api/v2/billing/get-customer";
-import handler28 from "../pages/api/v2/billing/get-invoice-url";
-import handler29 from "../pages/api/v2/billing/get-invoice";
-import handler30 from "../pages/api/v2/billing/get-invoices-and-receipts";
-import handler31 from "../pages/api/v2/billing/get-subscriptions";
-import handler32 from "../pages/api/v2/bookmarks/add";
-import handler33 from "../pages/api/v2/bookmarks/get";
-import handler34 from "../pages/api/v2/bookmarks/remove";
-import handler35 from "../pages/api/v2/bookmarks/set";
-import handler36 from "../pages/api/v2/customize";
-import handler37 from "../pages/api/v2/exec";
-import handler38 from "../pages/api/v2/file-access";
-import handler39 from "../pages/api/v2/guesslang";
-import handler40 from "../pages/api/v2/index";
-import handler41 from "../pages/api/v2/messages/get";
-import handler42 from "../pages/api/v2/messages/send";
-import handler43 from "../pages/api/v2/news/admin-get";
-import handler44 from "../pages/api/v2/news/admin-list";
-import handler45 from "../pages/api/v2/news/edit";
-import handler46 from "../pages/api/v2/news/events";
-import handler47 from "../pages/api/v2/news/get";
-import handler48 from "../pages/api/v2/news/list";
-import handler49 from "../pages/api/v2/projects/collaborators/add";
-import handler50 from "../pages/api/v2/projects/collaborators/list";
-import handler51 from "../pages/api/v2/projects/collaborators/remove";
-import handler52 from "../pages/api/v2/projects/copy-path";
-import handler53 from "../pages/api/v2/projects/copy-url";
-import handler54 from "../pages/api/v2/projects/course/set-course-info";
-import handler55 from "../pages/api/v2/projects/create";
-import handler56 from "../pages/api/v2/projects/delete";
-import handler57 from "../pages/api/v2/projects/filename-search";
-import handler58 from "../pages/api/v2/projects/get-one";
-import handler59 from "../pages/api/v2/projects/get";
-import handler60 from "../pages/api/v2/projects/restore";
-import handler61 from "../pages/api/v2/projects/set-admin-quotas";
-import handler62 from "../pages/api/v2/projects/start";
-import handler63 from "../pages/api/v2/projects/stop";
-import handler64 from "../pages/api/v2/projects/touch";
-import handler65 from "../pages/api/v2/projects/update";
-import handler66 from "../pages/api/v2/purchases/admin-purchase";
-import handler67 from "../pages/api/v2/purchases/cancel-automatic-billing";
-import handler68 from "../pages/api/v2/purchases/cancel-current-checkout-session";
-import handler69 from "../pages/api/v2/purchases/cancel-subscription";
-import handler70 from "../pages/api/v2/purchases/cost-to-resume-subscription";
-import handler71 from "../pages/api/v2/purchases/create-refund";
-import handler72 from "../pages/api/v2/purchases/email-statement";
-import handler73 from "../pages/api/v2/purchases/get-balance-admin";
-import handler74 from "../pages/api/v2/purchases/get-balance";
-import handler75 from "../pages/api/v2/purchases/get-charges-by-service";
-import handler76 from "../pages/api/v2/purchases/get-closing-dates";
-import handler77 from "../pages/api/v2/purchases/get-cost-per-day";
-import handler78 from "../pages/api/v2/purchases/get-current-checkout-session";
-import handler79 from "../pages/api/v2/purchases/get-live-subscriptions";
-import handler80 from "../pages/api/v2/purchases/get-llm-usage";
-import handler81 from "../pages/api/v2/purchases/get-membership-tiers";
-import handler82 from "../pages/api/v2/purchases/get-membership";
-import handler83 from "../pages/api/v2/purchases/get-min-balance";
-import handler84 from "../pages/api/v2/purchases/get-purchases-admin";
-import handler85 from "../pages/api/v2/purchases/get-purchases";
-import handler86 from "../pages/api/v2/purchases/get-quotas";
-import handler87 from "../pages/api/v2/purchases/get-service-cost";
-import handler88 from "../pages/api/v2/purchases/get-shopping-cart-checkout-params";
-import handler89 from "../pages/api/v2/purchases/get-spend-rate";
-import handler90 from "../pages/api/v2/purchases/get-statements";
-import handler91 from "../pages/api/v2/purchases/get-stripe-publishable-key";
-import handler92 from "../pages/api/v2/purchases/get-subscriptions";
-import handler93 from "../pages/api/v2/purchases/get-unpaid-invoices";
-import handler94 from "../pages/api/v2/purchases/is-purchase-allowed";
-import handler95 from "../pages/api/v2/purchases/membership-change";
-import handler96 from "../pages/api/v2/purchases/membership-quote";
-import handler97 from "../pages/api/v2/purchases/renew-subscription";
-import handler98 from "../pages/api/v2/purchases/reset-closing-date";
-import handler99 from "../pages/api/v2/purchases/resume-subscription";
-import handler100 from "../pages/api/v2/purchases/set-quota";
-import handler101 from "../pages/api/v2/purchases/setup-automatic-billing";
-import handler102 from "../pages/api/v2/purchases/shopping-cart-checkout";
-import handler103 from "../pages/api/v2/purchases/stripe/cancel-payment-intent";
-import handler104 from "../pages/api/v2/purchases/stripe/create-payment-intent";
-import handler105 from "../pages/api/v2/purchases/stripe/create-setup-intent";
-import handler106 from "../pages/api/v2/purchases/stripe/create-subscription-payment";
-import handler107 from "../pages/api/v2/purchases/stripe/delete-payment-method";
-import handler108 from "../pages/api/v2/purchases/stripe/get-checkout-session";
-import handler109 from "../pages/api/v2/purchases/stripe/get-customer-session";
-import handler110 from "../pages/api/v2/purchases/stripe/get-customer";
-import handler111 from "../pages/api/v2/purchases/stripe/get-open-payments";
-import handler112 from "../pages/api/v2/purchases/stripe/get-payment-method";
-import handler113 from "../pages/api/v2/purchases/stripe/get-payment-methods";
-import handler114 from "../pages/api/v2/purchases/stripe/get-payments";
-import handler115 from "../pages/api/v2/purchases/stripe/process-payment-intents";
-import handler116 from "../pages/api/v2/purchases/stripe/set-customer";
-import handler117 from "../pages/api/v2/purchases/stripe/set-default-payment-method";
-import handler118 from "../pages/api/v2/purchases/student-pay-transfer";
-import handler119 from "../pages/api/v2/purchases/student-pay";
-import handler120 from "../pages/api/v2/purchases/sync-subscription";
-import handler121 from "../pages/api/v2/salesloft/money";
-import handler122 from "../pages/api/v2/shopping/cart/add";
-import handler123 from "../pages/api/v2/shopping/cart/checked";
-import handler124 from "../pages/api/v2/shopping/cart/delete";
-import handler125 from "../pages/api/v2/shopping/cart/edit";
-import handler126 from "../pages/api/v2/shopping/cart/get";
-import handler127 from "../pages/api/v2/shopping/cart/processing";
-import handler128 from "../pages/api/v2/shopping/cart/recent-purchases";
-import handler129 from "../pages/api/v2/shopping/cart/remove";
-import handler130 from "../pages/api/v2/software/activate";
-import handler131 from "../pages/api/v2/software/status";
-import handler132 from "../pages/api/v2/support/create-ticket";
-import handler133 from "../pages/api/v2/support/tickets";
-import handler134 from "../pages/api/v2/user-query";
-import handler135 from "../pages/api/v2/vouchers/charge-for-unpaid-vouchers";
-import handler136 from "../pages/api/v2/vouchers/create";
-import handler137 from "../pages/api/v2/vouchers/get-voucher-codes";
-import handler138 from "../pages/api/v2/vouchers/recent-vouchers";
-import handler139 from "../pages/api/v2/vouchers/redeem";
-import handler140 from "../pages/api/v2/vouchers/set-voucher-code-notes";
+import handler13 from "../pages/api/v2/auth/2fa/disable";
+import handler14 from "../pages/api/v2/auth/2fa/recovery-codes/rotate";
+import handler15 from "../pages/api/v2/auth/2fa/setup/confirm";
+import handler16 from "../pages/api/v2/auth/2fa/setup/start";
+import handler17 from "../pages/api/v2/auth/2fa/status";
+import handler18 from "../pages/api/v2/auth/bootstrap";
+import handler19 from "../pages/api/v2/auth/fresh-auth";
+import handler20 from "../pages/api/v2/auth/has-password";
+import handler21 from "../pages/api/v2/auth/password-reset";
+import handler22 from "../pages/api/v2/auth/password-strength";
+import handler23 from "../pages/api/v2/auth/redeem-password-reset";
+import handler24 from "../pages/api/v2/auth/redeem-verify-email";
+import handler25 from "../pages/api/v2/auth/requires-token";
+import handler26 from "../pages/api/v2/auth/sign-in";
+import handler27 from "../pages/api/v2/auth/sign-up";
+import handler28 from "../pages/api/v2/auth/sso-strategies";
+import handler29 from "../pages/api/v2/auth/unlink-strategy";
+import handler30 from "../pages/api/v2/auth/verify-second-factor";
+import handler31 from "../pages/api/v2/billing/cancel-subscription";
+import handler32 from "../pages/api/v2/billing/create-payment-method";
+import handler33 from "../pages/api/v2/billing/delete-payment-method";
+import handler34 from "../pages/api/v2/billing/get-customer";
+import handler35 from "../pages/api/v2/billing/get-invoice-url";
+import handler36 from "../pages/api/v2/billing/get-invoice";
+import handler37 from "../pages/api/v2/billing/get-invoices-and-receipts";
+import handler38 from "../pages/api/v2/billing/get-subscriptions";
+import handler39 from "../pages/api/v2/bookmarks/add";
+import handler40 from "../pages/api/v2/bookmarks/get";
+import handler41 from "../pages/api/v2/bookmarks/remove";
+import handler42 from "../pages/api/v2/bookmarks/set";
+import handler43 from "../pages/api/v2/customize";
+import handler44 from "../pages/api/v2/exec";
+import handler45 from "../pages/api/v2/file-access";
+import handler46 from "../pages/api/v2/guesslang";
+import handler47 from "../pages/api/v2/index";
+import handler48 from "../pages/api/v2/messages/get";
+import handler49 from "../pages/api/v2/messages/send";
+import handler50 from "../pages/api/v2/news/admin-get";
+import handler51 from "../pages/api/v2/news/admin-list";
+import handler52 from "../pages/api/v2/news/edit";
+import handler53 from "../pages/api/v2/news/events";
+import handler54 from "../pages/api/v2/news/get";
+import handler55 from "../pages/api/v2/news/list";
+import handler56 from "../pages/api/v2/projects/collaborators/add";
+import handler57 from "../pages/api/v2/projects/collaborators/list";
+import handler58 from "../pages/api/v2/projects/collaborators/remove";
+import handler59 from "../pages/api/v2/projects/copy-path";
+import handler60 from "../pages/api/v2/projects/copy-url";
+import handler61 from "../pages/api/v2/projects/course/set-course-info";
+import handler62 from "../pages/api/v2/projects/create";
+import handler63 from "../pages/api/v2/projects/delete";
+import handler64 from "../pages/api/v2/projects/filename-search";
+import handler65 from "../pages/api/v2/projects/get-one";
+import handler66 from "../pages/api/v2/projects/get";
+import handler67 from "../pages/api/v2/projects/restore";
+import handler68 from "../pages/api/v2/projects/set-admin-quotas";
+import handler69 from "../pages/api/v2/projects/start";
+import handler70 from "../pages/api/v2/projects/stop";
+import handler71 from "../pages/api/v2/projects/touch";
+import handler72 from "../pages/api/v2/projects/update";
+import handler73 from "../pages/api/v2/purchases/admin-purchase";
+import handler74 from "../pages/api/v2/purchases/cancel-automatic-billing";
+import handler75 from "../pages/api/v2/purchases/cancel-current-checkout-session";
+import handler76 from "../pages/api/v2/purchases/cancel-subscription";
+import handler77 from "../pages/api/v2/purchases/cost-to-resume-subscription";
+import handler78 from "../pages/api/v2/purchases/create-refund";
+import handler79 from "../pages/api/v2/purchases/email-statement";
+import handler80 from "../pages/api/v2/purchases/get-balance-admin";
+import handler81 from "../pages/api/v2/purchases/get-balance";
+import handler82 from "../pages/api/v2/purchases/get-charges-by-service";
+import handler83 from "../pages/api/v2/purchases/get-closing-dates";
+import handler84 from "../pages/api/v2/purchases/get-cost-per-day";
+import handler85 from "../pages/api/v2/purchases/get-current-checkout-session";
+import handler86 from "../pages/api/v2/purchases/get-live-subscriptions";
+import handler87 from "../pages/api/v2/purchases/get-llm-usage";
+import handler88 from "../pages/api/v2/purchases/get-membership-tiers";
+import handler89 from "../pages/api/v2/purchases/get-membership";
+import handler90 from "../pages/api/v2/purchases/get-min-balance";
+import handler91 from "../pages/api/v2/purchases/get-purchases-admin";
+import handler92 from "../pages/api/v2/purchases/get-purchases";
+import handler93 from "../pages/api/v2/purchases/get-quotas";
+import handler94 from "../pages/api/v2/purchases/get-service-cost";
+import handler95 from "../pages/api/v2/purchases/get-shopping-cart-checkout-params";
+import handler96 from "../pages/api/v2/purchases/get-spend-rate";
+import handler97 from "../pages/api/v2/purchases/get-statements";
+import handler98 from "../pages/api/v2/purchases/get-stripe-publishable-key";
+import handler99 from "../pages/api/v2/purchases/get-subscriptions";
+import handler100 from "../pages/api/v2/purchases/get-unpaid-invoices";
+import handler101 from "../pages/api/v2/purchases/is-purchase-allowed";
+import handler102 from "../pages/api/v2/purchases/membership-change";
+import handler103 from "../pages/api/v2/purchases/membership-quote";
+import handler104 from "../pages/api/v2/purchases/renew-subscription";
+import handler105 from "../pages/api/v2/purchases/reset-closing-date";
+import handler106 from "../pages/api/v2/purchases/resume-subscription";
+import handler107 from "../pages/api/v2/purchases/set-quota";
+import handler108 from "../pages/api/v2/purchases/setup-automatic-billing";
+import handler109 from "../pages/api/v2/purchases/shopping-cart-checkout";
+import handler110 from "../pages/api/v2/purchases/stripe/cancel-payment-intent";
+import handler111 from "../pages/api/v2/purchases/stripe/create-payment-intent";
+import handler112 from "../pages/api/v2/purchases/stripe/create-setup-intent";
+import handler113 from "../pages/api/v2/purchases/stripe/create-subscription-payment";
+import handler114 from "../pages/api/v2/purchases/stripe/delete-payment-method";
+import handler115 from "../pages/api/v2/purchases/stripe/get-checkout-session";
+import handler116 from "../pages/api/v2/purchases/stripe/get-customer-session";
+import handler117 from "../pages/api/v2/purchases/stripe/get-customer";
+import handler118 from "../pages/api/v2/purchases/stripe/get-open-payments";
+import handler119 from "../pages/api/v2/purchases/stripe/get-payment-method";
+import handler120 from "../pages/api/v2/purchases/stripe/get-payment-methods";
+import handler121 from "../pages/api/v2/purchases/stripe/get-payments";
+import handler122 from "../pages/api/v2/purchases/stripe/process-payment-intents";
+import handler123 from "../pages/api/v2/purchases/stripe/set-customer";
+import handler124 from "../pages/api/v2/purchases/stripe/set-default-payment-method";
+import handler125 from "../pages/api/v2/purchases/student-pay-transfer";
+import handler126 from "../pages/api/v2/purchases/student-pay";
+import handler127 from "../pages/api/v2/purchases/sync-subscription";
+import handler128 from "../pages/api/v2/salesloft/money";
+import handler129 from "../pages/api/v2/shopping/cart/add";
+import handler130 from "../pages/api/v2/shopping/cart/checked";
+import handler131 from "../pages/api/v2/shopping/cart/delete";
+import handler132 from "../pages/api/v2/shopping/cart/edit";
+import handler133 from "../pages/api/v2/shopping/cart/get";
+import handler134 from "../pages/api/v2/shopping/cart/processing";
+import handler135 from "../pages/api/v2/shopping/cart/recent-purchases";
+import handler136 from "../pages/api/v2/shopping/cart/remove";
+import handler137 from "../pages/api/v2/software/activate";
+import handler138 from "../pages/api/v2/software/status";
+import handler139 from "../pages/api/v2/support/create-ticket";
+import handler140 from "../pages/api/v2/support/tickets";
+import handler141 from "../pages/api/v2/user-query";
+import handler142 from "../pages/api/v2/vouchers/charge-for-unpaid-vouchers";
+import handler143 from "../pages/api/v2/vouchers/create";
+import handler144 from "../pages/api/v2/vouchers/get-voucher-codes";
+import handler145 from "../pages/api/v2/vouchers/recent-vouchers";
+import handler146 from "../pages/api/v2/vouchers/redeem";
+import handler147 from "../pages/api/v2/vouchers/set-voucher-code-notes";
 
 export type ApiV2Handler = (req: Request, res: Response) => any;
 
@@ -163,132 +170,142 @@ export const apiV2Manifest: ApiV2ManifestEntry[] = [
   { path: "/accounts/set-password", handler: handler10 },
   { path: "/accounts/sign-out", handler: handler11 },
   { path: "/api-keys", handler: handler12 },
-  { path: "/auth/bootstrap", handler: handler13 },
-  { path: "/auth/has-password", handler: handler14 },
-  { path: "/auth/password-reset", handler: handler15 },
-  { path: "/auth/password-strength", handler: handler16 },
-  { path: "/auth/redeem-password-reset", handler: handler17 },
-  { path: "/auth/redeem-verify-email", handler: handler18 },
-  { path: "/auth/requires-token", handler: handler19 },
-  { path: "/auth/sign-in", handler: handler20 },
-  { path: "/auth/sign-up", handler: handler21 },
-  { path: "/auth/sso-strategies", handler: handler22 },
-  { path: "/auth/unlink-strategy", handler: handler23 },
-  { path: "/billing/cancel-subscription", handler: handler24 },
-  { path: "/billing/create-payment-method", handler: handler25 },
-  { path: "/billing/delete-payment-method", handler: handler26 },
-  { path: "/billing/get-customer", handler: handler27 },
-  { path: "/billing/get-invoice-url", handler: handler28 },
-  { path: "/billing/get-invoice", handler: handler29 },
-  { path: "/billing/get-invoices-and-receipts", handler: handler30 },
-  { path: "/billing/get-subscriptions", handler: handler31 },
-  { path: "/bookmarks/add", handler: handler32 },
-  { path: "/bookmarks/get", handler: handler33 },
-  { path: "/bookmarks/remove", handler: handler34 },
-  { path: "/bookmarks/set", handler: handler35 },
-  { path: "/customize", handler: handler36 },
-  { path: "/exec", handler: handler37 },
-  { path: "/file-access", handler: handler38 },
-  { path: "/guesslang", handler: handler39 },
-  { path: "/", handler: handler40 },
-  { path: "/messages/get", handler: handler41 },
-  { path: "/messages/send", handler: handler42 },
-  { path: "/news/admin-get", handler: handler43 },
-  { path: "/news/admin-list", handler: handler44 },
-  { path: "/news/edit", handler: handler45 },
-  { path: "/news/events", handler: handler46 },
-  { path: "/news/get", handler: handler47 },
-  { path: "/news/list", handler: handler48 },
-  { path: "/projects/collaborators/add", handler: handler49 },
-  { path: "/projects/collaborators/list", handler: handler50 },
-  { path: "/projects/collaborators/remove", handler: handler51 },
-  { path: "/projects/copy-path", handler: handler52 },
-  { path: "/projects/copy-url", handler: handler53 },
-  { path: "/projects/course/set-course-info", handler: handler54 },
-  { path: "/projects/create", handler: handler55 },
-  { path: "/projects/delete", handler: handler56 },
-  { path: "/projects/filename-search", handler: handler57 },
-  { path: "/projects/get-one", handler: handler58 },
-  { path: "/projects/get", handler: handler59 },
-  { path: "/projects/restore", handler: handler60 },
-  { path: "/projects/set-admin-quotas", handler: handler61 },
-  { path: "/projects/start", handler: handler62 },
-  { path: "/projects/stop", handler: handler63 },
-  { path: "/projects/touch", handler: handler64 },
-  { path: "/projects/update", handler: handler65 },
-  { path: "/purchases/admin-purchase", handler: handler66 },
-  { path: "/purchases/cancel-automatic-billing", handler: handler67 },
-  { path: "/purchases/cancel-current-checkout-session", handler: handler68 },
-  { path: "/purchases/cancel-subscription", handler: handler69 },
-  { path: "/purchases/cost-to-resume-subscription", handler: handler70 },
-  { path: "/purchases/create-refund", handler: handler71 },
-  { path: "/purchases/email-statement", handler: handler72 },
-  { path: "/purchases/get-balance-admin", handler: handler73 },
-  { path: "/purchases/get-balance", handler: handler74 },
-  { path: "/purchases/get-charges-by-service", handler: handler75 },
-  { path: "/purchases/get-closing-dates", handler: handler76 },
-  { path: "/purchases/get-cost-per-day", handler: handler77 },
-  { path: "/purchases/get-current-checkout-session", handler: handler78 },
-  { path: "/purchases/get-live-subscriptions", handler: handler79 },
-  { path: "/purchases/get-llm-usage", handler: handler80 },
-  { path: "/purchases/get-membership-tiers", handler: handler81 },
-  { path: "/purchases/get-membership", handler: handler82 },
-  { path: "/purchases/get-min-balance", handler: handler83 },
-  { path: "/purchases/get-purchases-admin", handler: handler84 },
-  { path: "/purchases/get-purchases", handler: handler85 },
-  { path: "/purchases/get-quotas", handler: handler86 },
-  { path: "/purchases/get-service-cost", handler: handler87 },
-  { path: "/purchases/get-shopping-cart-checkout-params", handler: handler88 },
-  { path: "/purchases/get-spend-rate", handler: handler89 },
-  { path: "/purchases/get-statements", handler: handler90 },
-  { path: "/purchases/get-stripe-publishable-key", handler: handler91 },
-  { path: "/purchases/get-subscriptions", handler: handler92 },
-  { path: "/purchases/get-unpaid-invoices", handler: handler93 },
-  { path: "/purchases/is-purchase-allowed", handler: handler94 },
-  { path: "/purchases/membership-change", handler: handler95 },
-  { path: "/purchases/membership-quote", handler: handler96 },
-  { path: "/purchases/renew-subscription", handler: handler97 },
-  { path: "/purchases/reset-closing-date", handler: handler98 },
-  { path: "/purchases/resume-subscription", handler: handler99 },
-  { path: "/purchases/set-quota", handler: handler100 },
-  { path: "/purchases/setup-automatic-billing", handler: handler101 },
-  { path: "/purchases/shopping-cart-checkout", handler: handler102 },
-  { path: "/purchases/stripe/cancel-payment-intent", handler: handler103 },
-  { path: "/purchases/stripe/create-payment-intent", handler: handler104 },
-  { path: "/purchases/stripe/create-setup-intent", handler: handler105 },
-  { path: "/purchases/stripe/create-subscription-payment", handler: handler106 },
-  { path: "/purchases/stripe/delete-payment-method", handler: handler107 },
-  { path: "/purchases/stripe/get-checkout-session", handler: handler108 },
-  { path: "/purchases/stripe/get-customer-session", handler: handler109 },
-  { path: "/purchases/stripe/get-customer", handler: handler110 },
-  { path: "/purchases/stripe/get-open-payments", handler: handler111 },
-  { path: "/purchases/stripe/get-payment-method", handler: handler112 },
-  { path: "/purchases/stripe/get-payment-methods", handler: handler113 },
-  { path: "/purchases/stripe/get-payments", handler: handler114 },
-  { path: "/purchases/stripe/process-payment-intents", handler: handler115 },
-  { path: "/purchases/stripe/set-customer", handler: handler116 },
-  { path: "/purchases/stripe/set-default-payment-method", handler: handler117 },
-  { path: "/purchases/student-pay-transfer", handler: handler118 },
-  { path: "/purchases/student-pay", handler: handler119 },
-  { path: "/purchases/sync-subscription", handler: handler120 },
-  { path: "/salesloft/money", handler: handler121 },
-  { path: "/shopping/cart/add", handler: handler122 },
-  { path: "/shopping/cart/checked", handler: handler123 },
-  { path: "/shopping/cart/delete", handler: handler124 },
-  { path: "/shopping/cart/edit", handler: handler125 },
-  { path: "/shopping/cart/get", handler: handler126 },
-  { path: "/shopping/cart/processing", handler: handler127 },
-  { path: "/shopping/cart/recent-purchases", handler: handler128 },
-  { path: "/shopping/cart/remove", handler: handler129 },
-  { path: "/software/activate", handler: handler130 },
-  { path: "/software/status", handler: handler131 },
-  { path: "/support/create-ticket", handler: handler132 },
-  { path: "/support/tickets", handler: handler133 },
-  { path: "/user-query", handler: handler134 },
-  { path: "/vouchers/charge-for-unpaid-vouchers", handler: handler135 },
-  { path: "/vouchers/create", handler: handler136 },
-  { path: "/vouchers/get-voucher-codes", handler: handler137 },
-  { path: "/vouchers/recent-vouchers", handler: handler138 },
-  { path: "/vouchers/redeem", handler: handler139 },
-  { path: "/vouchers/set-voucher-code-notes", handler: handler140 },
+  { path: "/auth/2fa/disable", handler: handler13 },
+  { path: "/auth/2fa/recovery-codes/rotate", handler: handler14 },
+  { path: "/auth/2fa/setup/confirm", handler: handler15 },
+  { path: "/auth/2fa/setup/start", handler: handler16 },
+  { path: "/auth/2fa/status", handler: handler17 },
+  { path: "/auth/bootstrap", handler: handler18 },
+  { path: "/auth/fresh-auth", handler: handler19 },
+  { path: "/auth/has-password", handler: handler20 },
+  { path: "/auth/password-reset", handler: handler21 },
+  { path: "/auth/password-strength", handler: handler22 },
+  { path: "/auth/redeem-password-reset", handler: handler23 },
+  { path: "/auth/redeem-verify-email", handler: handler24 },
+  { path: "/auth/requires-token", handler: handler25 },
+  { path: "/auth/sign-in", handler: handler26 },
+  { path: "/auth/sign-up", handler: handler27 },
+  { path: "/auth/sso-strategies", handler: handler28 },
+  { path: "/auth/unlink-strategy", handler: handler29 },
+  { path: "/auth/verify-second-factor", handler: handler30 },
+  { path: "/billing/cancel-subscription", handler: handler31 },
+  { path: "/billing/create-payment-method", handler: handler32 },
+  { path: "/billing/delete-payment-method", handler: handler33 },
+  { path: "/billing/get-customer", handler: handler34 },
+  { path: "/billing/get-invoice-url", handler: handler35 },
+  { path: "/billing/get-invoice", handler: handler36 },
+  { path: "/billing/get-invoices-and-receipts", handler: handler37 },
+  { path: "/billing/get-subscriptions", handler: handler38 },
+  { path: "/bookmarks/add", handler: handler39 },
+  { path: "/bookmarks/get", handler: handler40 },
+  { path: "/bookmarks/remove", handler: handler41 },
+  { path: "/bookmarks/set", handler: handler42 },
+  { path: "/customize", handler: handler43 },
+  { path: "/exec", handler: handler44 },
+  { path: "/file-access", handler: handler45 },
+  { path: "/guesslang", handler: handler46 },
+  { path: "/", handler: handler47 },
+  { path: "/messages/get", handler: handler48 },
+  { path: "/messages/send", handler: handler49 },
+  { path: "/news/admin-get", handler: handler50 },
+  { path: "/news/admin-list", handler: handler51 },
+  { path: "/news/edit", handler: handler52 },
+  { path: "/news/events", handler: handler53 },
+  { path: "/news/get", handler: handler54 },
+  { path: "/news/list", handler: handler55 },
+  { path: "/projects/collaborators/add", handler: handler56 },
+  { path: "/projects/collaborators/list", handler: handler57 },
+  { path: "/projects/collaborators/remove", handler: handler58 },
+  { path: "/projects/copy-path", handler: handler59 },
+  { path: "/projects/copy-url", handler: handler60 },
+  { path: "/projects/course/set-course-info", handler: handler61 },
+  { path: "/projects/create", handler: handler62 },
+  { path: "/projects/delete", handler: handler63 },
+  { path: "/projects/filename-search", handler: handler64 },
+  { path: "/projects/get-one", handler: handler65 },
+  { path: "/projects/get", handler: handler66 },
+  { path: "/projects/restore", handler: handler67 },
+  { path: "/projects/set-admin-quotas", handler: handler68 },
+  { path: "/projects/start", handler: handler69 },
+  { path: "/projects/stop", handler: handler70 },
+  { path: "/projects/touch", handler: handler71 },
+  { path: "/projects/update", handler: handler72 },
+  { path: "/purchases/admin-purchase", handler: handler73 },
+  { path: "/purchases/cancel-automatic-billing", handler: handler74 },
+  { path: "/purchases/cancel-current-checkout-session", handler: handler75 },
+  { path: "/purchases/cancel-subscription", handler: handler76 },
+  { path: "/purchases/cost-to-resume-subscription", handler: handler77 },
+  { path: "/purchases/create-refund", handler: handler78 },
+  { path: "/purchases/email-statement", handler: handler79 },
+  { path: "/purchases/get-balance-admin", handler: handler80 },
+  { path: "/purchases/get-balance", handler: handler81 },
+  { path: "/purchases/get-charges-by-service", handler: handler82 },
+  { path: "/purchases/get-closing-dates", handler: handler83 },
+  { path: "/purchases/get-cost-per-day", handler: handler84 },
+  { path: "/purchases/get-current-checkout-session", handler: handler85 },
+  { path: "/purchases/get-live-subscriptions", handler: handler86 },
+  { path: "/purchases/get-llm-usage", handler: handler87 },
+  { path: "/purchases/get-membership-tiers", handler: handler88 },
+  { path: "/purchases/get-membership", handler: handler89 },
+  { path: "/purchases/get-min-balance", handler: handler90 },
+  { path: "/purchases/get-purchases-admin", handler: handler91 },
+  { path: "/purchases/get-purchases", handler: handler92 },
+  { path: "/purchases/get-quotas", handler: handler93 },
+  { path: "/purchases/get-service-cost", handler: handler94 },
+  { path: "/purchases/get-shopping-cart-checkout-params", handler: handler95 },
+  { path: "/purchases/get-spend-rate", handler: handler96 },
+  { path: "/purchases/get-statements", handler: handler97 },
+  { path: "/purchases/get-stripe-publishable-key", handler: handler98 },
+  { path: "/purchases/get-subscriptions", handler: handler99 },
+  { path: "/purchases/get-unpaid-invoices", handler: handler100 },
+  { path: "/purchases/is-purchase-allowed", handler: handler101 },
+  { path: "/purchases/membership-change", handler: handler102 },
+  { path: "/purchases/membership-quote", handler: handler103 },
+  { path: "/purchases/renew-subscription", handler: handler104 },
+  { path: "/purchases/reset-closing-date", handler: handler105 },
+  { path: "/purchases/resume-subscription", handler: handler106 },
+  { path: "/purchases/set-quota", handler: handler107 },
+  { path: "/purchases/setup-automatic-billing", handler: handler108 },
+  { path: "/purchases/shopping-cart-checkout", handler: handler109 },
+  { path: "/purchases/stripe/cancel-payment-intent", handler: handler110 },
+  { path: "/purchases/stripe/create-payment-intent", handler: handler111 },
+  { path: "/purchases/stripe/create-setup-intent", handler: handler112 },
+  {
+    path: "/purchases/stripe/create-subscription-payment",
+    handler: handler113,
+  },
+  { path: "/purchases/stripe/delete-payment-method", handler: handler114 },
+  { path: "/purchases/stripe/get-checkout-session", handler: handler115 },
+  { path: "/purchases/stripe/get-customer-session", handler: handler116 },
+  { path: "/purchases/stripe/get-customer", handler: handler117 },
+  { path: "/purchases/stripe/get-open-payments", handler: handler118 },
+  { path: "/purchases/stripe/get-payment-method", handler: handler119 },
+  { path: "/purchases/stripe/get-payment-methods", handler: handler120 },
+  { path: "/purchases/stripe/get-payments", handler: handler121 },
+  { path: "/purchases/stripe/process-payment-intents", handler: handler122 },
+  { path: "/purchases/stripe/set-customer", handler: handler123 },
+  { path: "/purchases/stripe/set-default-payment-method", handler: handler124 },
+  { path: "/purchases/student-pay-transfer", handler: handler125 },
+  { path: "/purchases/student-pay", handler: handler126 },
+  { path: "/purchases/sync-subscription", handler: handler127 },
+  { path: "/salesloft/money", handler: handler128 },
+  { path: "/shopping/cart/add", handler: handler129 },
+  { path: "/shopping/cart/checked", handler: handler130 },
+  { path: "/shopping/cart/delete", handler: handler131 },
+  { path: "/shopping/cart/edit", handler: handler132 },
+  { path: "/shopping/cart/get", handler: handler133 },
+  { path: "/shopping/cart/processing", handler: handler134 },
+  { path: "/shopping/cart/recent-purchases", handler: handler135 },
+  { path: "/shopping/cart/remove", handler: handler136 },
+  { path: "/software/activate", handler: handler137 },
+  { path: "/software/status", handler: handler138 },
+  { path: "/support/create-ticket", handler: handler139 },
+  { path: "/support/tickets", handler: handler140 },
+  { path: "/user-query", handler: handler141 },
+  { path: "/vouchers/charge-for-unpaid-vouchers", handler: handler142 },
+  { path: "/vouchers/create", handler: handler143 },
+  { path: "/vouchers/get-voucher-codes", handler: handler144 },
+  { path: "/vouchers/recent-vouchers", handler: handler145 },
+  { path: "/vouchers/redeem", handler: handler146 },
+  { path: "/vouchers/set-voucher-code-notes", handler: handler147 },
 ];

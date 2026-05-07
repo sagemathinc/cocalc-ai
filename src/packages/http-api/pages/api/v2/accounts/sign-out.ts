@@ -6,6 +6,10 @@ the account that is making the API request.
 */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import {
+  revokeAllAuthSessions,
+  revokeAuthSession,
+} from "@cocalc/server/auth/auth-sessions";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import {
   deleteRememberMe,
@@ -37,12 +41,17 @@ async function signOut(req, res): Promise<void> {
     const account_id = await getAccountId(req);
     if (!account_id) return; // not signed in
     await deleteAllRememberMe(account_id);
+    await revokeAllAuthSessions(account_id);
     // Revoke host-level persistent sessions/tokens issued before now.
     await recordAccountRevocation(account_id, Date.now());
   } else {
     const hash = getRememberMeHash(req);
     if (!hash) return; // not signed in
+    const account_id = await getAccountId(req);
     await deleteRememberMe(hash);
+    if (account_id) {
+      await revokeAuthSession({ account_id, session_hash: hash });
+    }
   }
   // also delete any security relevant cookies for safety and to avoid confusion.
   await clearAuthCookies({ req, res });

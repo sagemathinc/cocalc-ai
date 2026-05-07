@@ -51,6 +51,10 @@ const PORTABLE_STATE_TABLES = [
   "account_collaborator_index",
   "account_notification_index",
   "remember_me",
+  "account_auth_sessions",
+  "account_auth_challenges",
+  "account_second_factors",
+  "account_second_factor_recovery_codes",
   "auth_tokens",
   "api_keys",
   "membership_grants",
@@ -295,11 +299,13 @@ async function replacePortableRows({
           ? ["account_id", "notification_id"]
           : table === "remember_me"
             ? ["hash"]
-            : table === "auth_tokens"
-              ? ["auth_token"]
-              : table === "api_keys"
-                ? ["key_id"]
-                : ["id"];
+            : table === "account_auth_sessions"
+              ? ["session_hash"]
+              : table === "auth_tokens"
+                ? ["auth_token"]
+                : table === "api_keys"
+                  ? ["key_id"]
+                  : ["id"];
   if (table === "api_keys") {
     await getPool().query(
       `
@@ -614,6 +620,10 @@ async function loadPortableState(
     account_collaborator_index,
     account_notification_index,
     remember_me,
+    account_auth_sessions,
+    account_auth_challenges,
+    account_second_factors,
+    account_second_factor_recovery_codes,
     auth_tokens,
     api_keys,
     membershipPortableState,
@@ -622,6 +632,10 @@ async function loadPortableState(
     loadPortableRows("account_collaborator_index", account_id),
     loadPortableRows("account_notification_index", account_id),
     loadPortableRows("remember_me", account_id),
+    loadPortableRows("account_auth_sessions", account_id),
+    loadPortableRows("account_auth_challenges", account_id),
+    loadPortableRows("account_second_factors", account_id),
+    loadPortableRows("account_second_factor_recovery_codes", account_id),
     loadPortableRows("auth_tokens", account_id),
     loadAccountWidePortableApiKeyRows(account_id),
     getMembershipPortableState(account_id),
@@ -634,6 +648,10 @@ async function loadPortableState(
     account_collaborator_index,
     account_notification_index,
     remember_me,
+    account_auth_sessions,
+    account_auth_challenges,
+    account_second_factors,
+    account_second_factor_recovery_codes,
     auth_tokens,
     api_keys,
     membership_grants: membershipPortableState.membership_grants,
@@ -1053,6 +1071,10 @@ export async function copyAccountRehomeState({
   account_collaborator_index,
   account_notification_index,
   remember_me,
+  account_auth_sessions,
+  account_auth_challenges,
+  account_second_factors,
+  account_second_factor_recovery_codes,
   auth_tokens,
   api_keys,
   membership_grants,
@@ -1088,6 +1110,26 @@ export async function copyAccountRehomeState({
     table: "remember_me",
     account_id: accountId,
     rows: remember_me ?? [],
+  });
+  await replacePortableRows({
+    table: "account_auth_sessions",
+    account_id: accountId,
+    rows: account_auth_sessions ?? [],
+  });
+  await replacePortableRows({
+    table: "account_auth_challenges",
+    account_id: accountId,
+    rows: account_auth_challenges ?? [],
+  });
+  await replacePortableRows({
+    table: "account_second_factors",
+    account_id: accountId,
+    rows: account_second_factors ?? [],
+  });
+  await replacePortableRows({
+    table: "account_second_factor_recovery_codes",
+    account_id: accountId,
+    rows: account_second_factor_recovery_codes ?? [],
   });
   await replacePortableRows({
     table: "auth_tokens",

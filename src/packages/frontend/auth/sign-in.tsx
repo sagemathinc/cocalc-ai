@@ -5,7 +5,12 @@ import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-orig
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import type { AuthView } from "./types";
-import { isWrongBayAuthResponse, postAuthApi, retryAuthOnHomeBay } from "./api";
+import {
+  isMfaRequiredAuthResponse,
+  isWrongBayAuthResponse,
+  postAuthApi,
+  retryAuthOnHomeBay,
+} from "./api";
 import { appUrl } from "./util";
 
 interface SignInProps {
@@ -15,11 +20,17 @@ interface SignInProps {
 export default function SignInForm({ onNavigate }: SignInProps) {
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
+  const [challengeId, setChallengeId] = useState<string>("");
+  const [factorMethod, setFactorMethod] = useState<"totp" | "recovery_code">(
+    "totp",
+  );
+  const [factorCode, setFactorCode] = useState<string>("");
   const [signingIn, setSigningIn] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
 
-  const canSubmit =
-    isValidEmailAddress(email) && password.length > 0 && !signingIn;
+  const canSubmit = challengeId
+    ? factorCode.trim().length > 0 && !signingIn
+    : isValidEmailAddress(email) && password.length > 0 && !signingIn;
 
   async function signIn() {
     if (!canSubmit) {
@@ -39,6 +50,37 @@ export default function SignInForm({ onNavigate }: SignInProps) {
           body: { email, password },
         });
       }
+      if (isMfaRequiredAuthResponse(result)) {
+        setStoredControlPlaneOrigin(result?.home_bay_url);
+        setChallengeId(result.challenge_id);
+        setFactorMethod("totp");
+        setFactorCode("");
+        return;
+      }
+      setStoredControlPlaneOrigin(result?.home_bay_url);
+      window.location.href = appUrl("app?sign-in");
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSigningIn(false);
+    }
+  }
+
+  async function verifySecondFactor() {
+    if (!canSubmit) {
+      return;
+    }
+    setError("");
+    setSigningIn(true);
+    try {
+      const result = await postAuthApi<any>({
+        endpoint: "auth/verify-second-factor",
+        body: {
+          challenge_id: challengeId,
+          method: factorMethod,
+          code: factorCode,
+        },
+      });
       setStoredControlPlaneOrigin(result?.home_bay_url);
       window.location.href = appUrl("app?sign-in");
     } catch (err) {
@@ -51,47 +93,102 @@ export default function SignInForm({ onNavigate }: SignInProps) {
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       {error && <Alert type="error" showIcon title={error} />}
-      <div>
-        <div>Email address</div>
-        <Input
-          autoFocus
-          value={email}
-          autoComplete="username"
-          placeholder="you@example.com"
-          onChange={(e) => setEmail(e.target.value)}
-          onPressEnter={signIn}
-        />
-      </div>
-      <div>
-        <div>Password</div>
-        <Input.Password
-          value={password}
-          autoComplete="current-password"
-          placeholder="Password"
-          maxLength={MAX_PASSWORD_LENGTH}
-          onChange={(e) => setPassword(e.target.value)}
-          onPressEnter={signIn}
-        />
-      </div>
+      {!challengeId ? (
+        <>
+          <div>
+            <div>Email address</div>
+            <Input
+              autoFocus
+              value={email}
+              autoComplete="username"
+              placeholder="you@example.com"
+              onChange={(e) => setEmail(e.target.value)}
+              onPressEnter={signIn}
+            />
+          </div>
+          <div>
+            <div>Password</div>
+            <Input.Password
+              value={password}
+              autoComplete="current-password"
+              placeholder="Password"
+              maxLength={MAX_PASSWORD_LENGTH}
+              onChange={(e) => setPassword(e.target.value)}
+              onPressEnter={signIn}
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          <div>
+            <div>Second factor</div>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+              <Button
+                type={factorMethod === "totp" ? "primary" : "default"}
+                onClick={() => setFactorMethod("totp")}
+              >
+                Authenticator code
+              </Button>
+              <Button
+                type={factorMethod === "recovery_code" ? "primary" : "default"}
+                onClick={() => setFactorMethod("recovery_code")}
+              >
+                Recovery code
+              </Button>
+            </div>
+            <Input
+              autoFocus
+              value={factorCode}
+              autoComplete="one-time-code"
+              placeholder={
+                factorMethod === "totp" ? "123456" : "ABCD-EFGH-IJKL"
+              }
+              onChange={(e) => setFactorCode(e.target.value)}
+              onPressEnter={verifySecondFactor}
+            />
+          </div>
+          <a
+            onClick={() => {
+              setChallengeId("");
+              setFactorCode("");
+              setError("");
+            }}
+            style={{ cursor: "pointer" }}
+          >
+            Use a different account
+          </a>
+        </>
+      )}
       <Button
         type="primary"
         size="large"
         disabled={!canSubmit}
-        onClick={signIn}
+        onClick={challengeId ? verifySecondFactor : signIn}
       >
-        {signingIn ? "Signing In..." : "Sign In"}
+        {signingIn
+          ? challengeId
+            ? "Verifying..."
+            : "Signing In..."
+          : challengeId
+            ? "Verify"
+            : "Sign In"}
       </Button>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <a
-          onClick={() => onNavigate("password-reset")}
-          style={{ cursor: "pointer" }}
-        >
-          Forgot password?
-        </a>
-        <a onClick={() => onNavigate("sign-up")} style={{ cursor: "pointer" }}>
-          Create an account
-        </a>
-      </div>
+      {!challengeId && (
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <a
+            onClick={() => onNavigate("password-reset")}
+            style={{ cursor: "pointer" }}
+          >
+            Forgot password?
+          </a>
+          <a
+            onClick={() => onNavigate("sign-up")}
+            style={{ cursor: "pointer" }}
+          >
+            Create an account
+          </a>
+        </div>
+      )}
     </Space>
   );
 }
