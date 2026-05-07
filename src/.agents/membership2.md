@@ -1174,6 +1174,39 @@ The exact command names can change. The invariant is:
 
 - admin UI and CLI should agree because they read the same projected data
 
+#### Codex-assisted abuse review
+
+Codex should be an explicit part of the abuse-detection loop.
+
+The intended model is:
+
+- an admin can mint a restricted-scope operator credential
+- a scheduled Codex loop can run `cocalc abuse ...` and related read-only admin
+  commands
+- Codex reviews the summarized analytics and recent suspicious events
+- Codex alerts humans when something looks unusual
+
+This is useful because many abuse incidents first appear as patterns that are
+statistically odd but not yet captured by one hard threshold.
+
+V1 requirements:
+
+- support restricted-scope operator credentials for machine use
+- support a read-only abuse-review scope that can:
+  - read abuse analytics rollups
+  - read filtered account/package/claim/host summaries
+  - read recent risk flags and denial reasons
+- keep destructive actions out of that scope by default
+
+Important boundary:
+
+- Codex can triage and alert
+- humans decide on punitive or high-risk actions unless an explicit,
+  separately-audited automation rule exists
+
+This keeps the first version useful without making an LLM the sole authority
+for suspensions, refunds, or entitlement removal.
+
 #### Privacy and retention
 
 These analytics should default to aggregated counts and identifiers already

@@ -524,6 +524,7 @@ Goal: make operator workflows safe and not context-fragile.
 - [ ] Eliminate ambient auth target confusion caused by `CONAT_SERVER`, bearer,
       or project-secret env.
 - [ ] Define the supported operator credential story for release.
+- [ ] Support restricted-scope operator credentials for machine/Codex use.
 - [ ] Make `cocalc-cli` operator commands reliable without hidden local
       context.
 - [ ] Add structured logs for critical host/project auth failures and deny
@@ -543,6 +544,11 @@ Goal: make operator workflows safe and not context-fragile.
   - seed-global summarized rollups, not per-bay scans
   - admin UI time-series views
   - matching `cocalc-cli` readout from the same projections
+- [ ] Add a Codex-assisted abuse-review loop:
+  - read-only scoped operator credential
+  - scheduled `cocalc abuse ...` style review
+  - alert humans on suspicious patterns
+  - no default autonomous punitive actions
 - [ ] Add/export control-plane traffic stats in frontend session tooling.
 
 ### Exit Criteria
