@@ -107,6 +107,10 @@ import {
   resolveInlineCodeLinks,
   type InlineCodeLink,
 } from "./inline-code-links";
+import {
+  applyQueuedUserMessageEditToRequest,
+  getLatestQueuedUserMessageContent,
+} from "./queued-user-message";
 import { resolveLiteCodexHome } from "../codex-auth";
 import type { SyncDB } from "@cocalc/conat/sync-doc/syncdb";
 import type { AcpStreamUsage } from "@cocalc/ai/acp";
@@ -6054,7 +6058,8 @@ async function prepareQueuedUserMessageForExecution({
   path: string;
   thread_id: string;
   user_message_id: string;
-}): Promise<void> {
+}): Promise<{ latestContent?: string }> {
+  let latestContent: string | undefined;
   await withChatSyncDB({
     client,
     project_id,
@@ -6063,6 +6068,9 @@ async function prepareQueuedUserMessageForExecution({
       const versionCountBefore = syncdbVersionCount(syncdb);
       const current = findChatRowByMessageId(syncdb, user_message_id);
       if (current != null) {
+        latestContent = getLatestQueuedUserMessageContent(
+          syncdbField(current, "history"),
+        );
         const rowDate =
           normalizeIsoDateString(syncdbField<string>(current, "date")) ??
           undefined;
@@ -6110,6 +6118,7 @@ async function prepareQueuedUserMessageForExecution({
       }
     },
   });
+  return { latestContent };
 }
 
 async function enqueueRecoveryContinuationForJob({
@@ -6468,14 +6477,16 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     });
     return;
   }
+  let latestQueuedMessageContent: string | undefined;
   try {
-    await prepareQueuedUserMessageForExecution({
+    const prepared = await prepareQueuedUserMessageForExecution({
       client: conatClient,
       project_id,
       path,
       thread_id,
       user_message_id,
     });
+    latestQueuedMessageContent = prepared.latestContent;
   } catch (err) {
     logger.warn("failed preparing queued acp user message for execution", {
       job: job.op_id,
@@ -6492,21 +6503,25 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     return;
   }
 
-  request.prompt = maybeDecorateQueuedPromptForJob({
-    prompt: request.prompt ?? "",
+  const refreshedRequest = applyQueuedUserMessageEditToRequest({
+    request,
+    latestContent: latestQueuedMessageContent,
+  });
+  refreshedRequest.prompt = maybeDecorateQueuedPromptForJob({
+    prompt: refreshedRequest.prompt ?? "",
     job,
   });
 
   try {
     const result = await executeAcpRequest({
-      ...request,
+      ...refreshedRequest,
       stream: async () => {},
     });
     await finalizeAutomationRun({
-      automation_id: request.chat?.automation_id,
+      automation_id: refreshedRequest.chat?.automation_id,
       terminalState: result.terminalState,
       last_job_op_id: job.op_id,
-      last_message_id: request.chat?.message_id,
+      last_message_id: refreshedRequest.chat?.message_id,
     });
     setAcpJobState({
       op_id: job.op_id,
@@ -7244,15 +7259,27 @@ async function handleAcpControlRequest(
       ) {
         return await restoreQueuedImmediate();
       }
+      const prepared = await prepareQueuedUserMessageForExecution({
+        client,
+        project_id,
+        path,
+        thread_id,
+        user_message_id,
+      });
+      const refreshedRequest = applyQueuedUserMessageEditToRequest({
+        request: queuedRequest,
+        latestContent: prepared.latestContent,
+      });
+      const refreshedChat = refreshedRequest.chat ?? queuedRequest.chat;
       const steerResult = await attemptAcpSteerRequest({
-        request_kind: queuedRequest.request_kind,
-        project_id: queuedRequest.project_id,
-        account_id: queuedRequest.account_id,
-        prompt: queuedRequest.prompt,
-        session_id: queuedRequest.session_id,
-        config: queuedRequest.config,
-        runtime_env: queuedRequest.runtime_env,
-        chat: queuedRequest.chat,
+        request_kind: refreshedRequest.request_kind,
+        project_id: refreshedRequest.project_id,
+        account_id: refreshedRequest.account_id,
+        prompt: refreshedRequest.prompt,
+        session_id: refreshedRequest.session_id,
+        config: refreshedRequest.config,
+        runtime_env: refreshedRequest.runtime_env,
+        chat: refreshedChat,
       });
       if (steerResult.state !== "steered") {
         return await restoreQueuedImmediate();

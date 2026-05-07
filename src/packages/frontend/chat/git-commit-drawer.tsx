@@ -771,8 +771,9 @@ export function GitCommitDrawer({
         entries: gitLog,
         reviewedByCommit,
         onlyUnreviewed: showOnlyUnreviewedCommits,
+        selectedCommit: commit,
       }),
-    [gitLog, reviewedByCommit, showOnlyUnreviewedCommits],
+    [gitLog, reviewedByCommit, showOnlyUnreviewedCommits, commit],
   );
 
   const commitIndex = useMemo(() => {

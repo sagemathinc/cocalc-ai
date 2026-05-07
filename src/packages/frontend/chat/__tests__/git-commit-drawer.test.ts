@@ -1554,10 +1554,51 @@ describe("git commit drawer merge commit formatting", () => {
           bbb2222: false,
         },
         onlyUnreviewed: true,
+        selectedCommit: undefined,
       }),
     ).toEqual([
       { hash: "bbb2222", subject: "Unreviewed commit" },
       { hash: "ccc3333", subject: "Unknown review state" },
+    ]);
+  });
+
+  it("keeps the currently selected reviewed commit visible under the unreviewed filter", () => {
+    expect(
+      filterGitReviewLogEntries({
+        entries: [
+          { hash: "aaa1111", subject: "Reviewed commit" },
+          { hash: "bbb2222", subject: "Unreviewed commit" },
+          { hash: "ccc3333", subject: "Unknown review state" },
+        ],
+        reviewedByCommit: {
+          aaa1111: true,
+          bbb2222: false,
+        },
+        onlyUnreviewed: true,
+        selectedCommit: "aaa1111",
+      }),
+    ).toEqual([
+      { hash: "aaa1111", subject: "Reviewed commit" },
+      { hash: "bbb2222", subject: "Unreviewed commit" },
+      { hash: "ccc3333", subject: "Unknown review state" },
+    ]);
+
+    expect(
+      filterGitReviewLogEntries({
+        entries: [
+          { hash: "aaa1111f00", subject: "Reviewed commit" },
+          { hash: "bbb2222", subject: "Unreviewed commit" },
+        ],
+        reviewedByCommit: {
+          aaa1111f00: true,
+          bbb2222: false,
+        },
+        onlyUnreviewed: true,
+        selectedCommit: "aaa1111",
+      }),
+    ).toEqual([
+      { hash: "aaa1111f00", subject: "Reviewed commit" },
+      { hash: "bbb2222", subject: "Unreviewed commit" },
     ]);
   });
 

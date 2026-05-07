@@ -700,6 +700,29 @@ export function resolveMessageBodyMode({
   return "static";
 }
 
+export function shouldShowQueuedMessageEditedVersionSent({
+  acpStateToRender,
+  historySize,
+}: {
+  acpStateToRender?: string;
+  historySize: number;
+}): boolean {
+  return acpStateToRender === "queue" && historySize > 1;
+}
+
+export function getQueuedMessageEditHelpText({
+  acpStateToRender,
+  isEditing,
+}: {
+  acpStateToRender?: string;
+  isEditing: boolean;
+}): string | undefined {
+  if (acpStateToRender !== "queue" || !isEditing) {
+    return undefined;
+  }
+  return "If you edit and save this message before the next turn, then it will be used.";
+}
+
 export default function Message({
   index,
   actions,
@@ -1462,6 +1485,9 @@ export default function Message({
     return (
       <div style={{ color: COLORS.GRAY_M }}>
         {text}
+        {queuedMessageEditHelpText ? (
+          <div style={{ marginTop: "5px" }}>{queuedMessageEditHelpText}</div>
+        ) : null}
         {is_editing ? (
           <span style={{ margin: "10px 10px 0 10px", display: "inline-block" }}>
             <Button onClick={on_cancel}>Cancel</Button>
@@ -3082,6 +3108,22 @@ export default function Message({
     latestThreadMessage,
     isLastMessageInThread,
   ]);
+  const showQueuedEditedVersionSent = useMemo(
+    () =>
+      shouldShowQueuedMessageEditedVersionSent({
+        acpStateToRender,
+        historySize: history_size,
+      }),
+    [acpStateToRender, history_size],
+  );
+  const queuedMessageEditHelpText = useMemo(
+    () =>
+      getQueuedMessageEditHelpText({
+        acpStateToRender,
+        isEditing,
+      }),
+    [acpStateToRender, isEditing],
+  );
 
   const renderAcpState = () => {
     if (!acpStateToRender) return null;
@@ -3089,6 +3131,14 @@ export default function Message({
       return (
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
           <Tag color="gold">queued</Tag>
+          {showQueuedEditedVersionSent ? (
+            <Tag color="cyan">edited version sent</Tag>
+          ) : null}
+          {showEditButton ? (
+            <Button size="small" type="text" onClick={edit_message}>
+              Edit
+            </Button>
+          ) : null}
           <Button
             size="small"
             type="text"

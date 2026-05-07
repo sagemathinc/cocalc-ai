@@ -26,13 +26,27 @@ export function filterGitReviewLogEntries({
   entries,
   reviewedByCommit,
   onlyUnreviewed,
+  selectedCommit,
 }: {
   entries: GitLogEntry[];
   reviewedByCommit: Record<string, boolean>;
   onlyUnreviewed: boolean;
+  selectedCommit?: string;
 }): GitLogEntry[] {
   if (!onlyUnreviewed) return entries;
-  return entries.filter((entry) => reviewedByCommit[entry.hash] !== true);
+  const normalizedSelectedCommit = `${selectedCommit ?? ""}`
+    .trim()
+    .toLowerCase();
+  return entries.filter((entry) => {
+    if (
+      normalizedSelectedCommit &&
+      (entry.hash === normalizedSelectedCommit ||
+        entry.hash.startsWith(normalizedSelectedCommit))
+    ) {
+      return true;
+    }
+    return reviewedByCommit[entry.hash] !== true;
+  });
 }
 
 export function resolveGitCommitSearchChange({
