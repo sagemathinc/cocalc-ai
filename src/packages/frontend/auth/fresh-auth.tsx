@@ -4,7 +4,7 @@
  */
 
 import { Alert, Checkbox, Input, Modal, Space } from "antd";
-import { React, useEffect, useState } from "@cocalc/frontend/app-framework";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { postAuthApi } from "@cocalc/frontend/auth/api";
 import {
@@ -170,15 +170,15 @@ export function useFreshAuthAction({
 }: {
   onUnhandledError?: (err: unknown) => void;
 } = {}) {
-  const [open, setOpen] = React.useState(false);
-  const pendingActionRef = React.useRef<null | (() => Promise<void>)>(null);
+  const [open, setOpen] = useState(false);
+  const pendingActionRef = useRef<null | (() => Promise<void>)>(null);
 
-  const cancelFreshAuth = React.useCallback(() => {
+  const cancelFreshAuth = useCallback(() => {
     pendingActionRef.current = null;
     setOpen(false);
   }, []);
 
-  const runFreshAuthAction = React.useCallback(
+  const runFreshAuthAction = useCallback(
     async (action: () => Promise<void>): Promise<boolean> => {
       try {
         await action();
@@ -195,7 +195,7 @@ export function useFreshAuthAction({
     [],
   );
 
-  const handleFreshAuthSuccess = React.useCallback(async () => {
+  const handleFreshAuthSuccess = useCallback(async () => {
     const action = pendingActionRef.current;
     pendingActionRef.current = null;
     if (!action) {
