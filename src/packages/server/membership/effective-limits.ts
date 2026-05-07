@@ -30,6 +30,13 @@ function normalizeNonNegativeInteger(value: unknown): number | undefined {
   return Math.floor(value);
 }
 
+function normalizeNonNegativeNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return value;
+}
+
 function normalizeEgressPolicy(
   value: unknown,
 ): MembershipEgressPolicy | undefined {
@@ -73,6 +80,18 @@ export function normalizeMembershipEffectiveLimits(
     egress_policy: normalizeEgressPolicy(usageLimits?.egress_policy),
     dedicated_host_egress_policy: normalizeDedicatedHostEgressPolicy(
       usageLimits?.dedicated_host_egress_policy,
+    ),
+    credit_spend_limit_5h_usd: normalizeNonNegativeNumber(
+      usageLimits?.credit_spend_limit_5h_usd,
+    ),
+    credit_spend_limit_7d_usd: normalizeNonNegativeNumber(
+      usageLimits?.credit_spend_limit_7d_usd,
+    ),
+    prepaid_host_usage_limit_5h_usd: normalizeNonNegativeNumber(
+      usageLimits?.prepaid_host_usage_limit_5h_usd,
+    ),
+    prepaid_host_usage_limit_7d_usd: normalizeNonNegativeNumber(
+      usageLimits?.prepaid_host_usage_limit_7d_usd,
     ),
   };
 }

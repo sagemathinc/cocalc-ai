@@ -110,6 +110,7 @@ import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
+import { getDedicatedHostPolicySnapshotLocal } from "@cocalc/server/project-host/admission";
 import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
@@ -438,6 +439,8 @@ async function startAccountLocalService(): Promise<void> {
       await resolveMembershipDetailsForAccount(account_id, {
         refresh_usage_status,
       }),
+    getDedicatedHostPolicySnapshot: async ({ account_id }) =>
+      await getDedicatedHostPolicySnapshotLocal(account_id),
     getMembershipPackages: async ({ owner_account_id }) =>
       await listMembershipPackageDetailsForOwner({
         owner_account_id,

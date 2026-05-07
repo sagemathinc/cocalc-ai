@@ -24,6 +24,10 @@ export interface MembershipUsageLimits {
   egress_7d_bytes?: number;
   egress_policy?: MembershipEgressPolicy;
   dedicated_host_egress_policy?: DedicatedHostEgressPolicy;
+  credit_spend_limit_5h_usd?: number;
+  credit_spend_limit_7d_usd?: number;
+  prepaid_host_usage_limit_5h_usd?: number;
+  prepaid_host_usage_limit_7d_usd?: number;
 }
 
 export interface MembershipEffectiveLimits extends MembershipUsageLimits {}

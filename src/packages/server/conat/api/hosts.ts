@@ -39,6 +39,7 @@ import type {
   ProjectBackupIndexRecord,
 } from "@cocalc/conat/hub/api/hosts";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
+import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
@@ -73,7 +74,6 @@ import {
 } from "@cocalc/server/cloud";
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import {
   gcpSafeName,
   getProviderPrefix,
@@ -153,6 +153,7 @@ import {
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { assertDedicatedHostAdmissionForAccount } from "@cocalc/server/project-host/admission";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import {
   ensureHostOwnerSshTrust as ensureHostOwnerSshTrustInternal,
@@ -3341,6 +3342,11 @@ export async function createHost({
   await maybeRequireFreshAuthForBrowserHostAction({ account_id, browser_id });
   const membership = await loadMembership(owner);
   requireCreateHosts(membership.entitlements);
+  await assertDedicatedHostAdmissionForAccount({
+    account_id: owner,
+    action: "create",
+    machine_cloud: machine?.cloud,
+  });
   return await createHostInternalHelper({
     owner,
     name,
@@ -3428,6 +3434,11 @@ export async function startHost({
     });
   }
   const row = await loadHostForStartStop(id, account_id);
+  await assertDedicatedHostAdmissionForAccount({
+    account_id: requireAccount(account_id),
+    action: "start",
+    machine_cloud: row.metadata?.machine?.cloud,
+  });
   return await createHostLro({
     kind: HOST_START_LRO_KIND,
     row,
@@ -3974,8 +3985,12 @@ export async function updateHostMachine({
   interruption_restore_policy?: HostInterruptionRestorePolicy;
   spot_recovery_policy?: HostSpotRecoveryPolicy;
 }): Promise<Host> {
-  await maybeRequireFreshAuthForBrowserHostAction({ account_id, browser_id });
-  const row = await loadOwnedHost(id, account_id);
+  const owner = requireAccount(account_id);
+  await maybeRequireFreshAuthForBrowserHostAction({
+    account_id: owner,
+    browser_id,
+  });
+  const row = await loadOwnedHost(id, owner);
   const metadata = row.metadata ?? {};
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
@@ -3995,6 +4010,11 @@ export async function updateHostMachine({
   let nextRegion = row.region ?? "";
   const requestedCloudRaw = typeof cloud === "string" ? cloud : undefined;
   const requestedCloud = normalizeProviderId(requestedCloudRaw);
+  await assertDedicatedHostAdmissionForAccount({
+    account_id: owner,
+    action: "resize",
+    machine_cloud: requestedCloud ?? machineCloud,
+  });
   const cloudChanged =
     requestedCloudRaw !== undefined && requestedCloud !== machineCloud;
   const buildConfigSpec = (

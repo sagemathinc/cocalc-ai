@@ -23,6 +23,7 @@ import type {
 import type {
   ClaimableMembershipPackage,
   MembershipDetails,
+  MembershipEffectiveLimits,
   MembershipPackageAssignment,
   MembershipPackageDetails,
   MembershipResolution,
@@ -68,6 +69,7 @@ import type {
 } from "@cocalc/conat/project-host/api";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
+import type { MoneyValue } from "@cocalc/util/money";
 
 export interface BayOwnership {
   bay_id: string;
@@ -548,6 +550,21 @@ export interface AccountLocalGetMembershipDetailsRequest {
   refresh_usage_status?: boolean;
 }
 
+export interface AccountLocalDedicatedHostPolicySnapshot {
+  account_id: string;
+  membership_class: string;
+  can_create_hosts: boolean;
+  effective_limits: MembershipEffectiveLimits;
+  has_active_second_factor: boolean;
+  has_payment_method: boolean;
+  balance: MoneyValue;
+  min_balance: MoneyValue;
+}
+
+export interface AccountLocalGetDedicatedHostPolicySnapshotRequest {
+  account_id: string;
+}
+
 export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
 }
@@ -855,6 +872,7 @@ export type AccountLocalMethod =
   | "revoke-membership-grant"
   | "get-membership"
   | "get-membership-details"
+  | "get-dedicated-host-policy-snapshot"
   | "get-membership-packages"
   | "get-claimable-membership-packages"
   | "claim-membership-package-seat"
@@ -1433,6 +1451,9 @@ export interface InterBayAccountLocalApi {
   getMembershipDetails: (
     opts: AccountLocalGetMembershipDetailsRequest,
   ) => Promise<MembershipDetails>;
+  getDedicatedHostPolicySnapshot: (
+    opts: AccountLocalGetDedicatedHostPolicySnapshotRequest,
+  ) => Promise<AccountLocalDedicatedHostPolicySnapshot>;
   getMembershipPackages: (
     opts: AccountLocalGetMembershipPackagesRequest,
   ) => Promise<MembershipPackageDetails[]>;
@@ -2624,6 +2645,15 @@ export function createInterBayAccountLocalClient({
       method: "get-membership-details",
     }),
   });
+  const getDedicatedHostPolicySnapshotClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getDedicatedHostPolicySnapshot">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-dedicated-host-policy-snapshot",
+    }),
+  });
   const getMembershipPackagesClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getMembershipPackages">
   >({
@@ -2688,6 +2718,10 @@ export function createInterBayAccountLocalClient({
       await getMembershipClient.getMembership(opts),
     getMembershipDetails: async (opts) =>
       await getMembershipDetailsClient.getMembershipDetails(opts),
+    getDedicatedHostPolicySnapshot: async (opts) =>
+      await getDedicatedHostPolicySnapshotClient.getDedicatedHostPolicySnapshot(
+        opts,
+      ),
     getMembershipPackages: async (opts) =>
       await getMembershipPackagesClient.getMembershipPackages(opts),
     getClaimableMembershipPackages: async (opts) =>
@@ -2835,6 +2869,20 @@ export function createInterBayAccountLocalHandler({
         },
       },
     ),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getDedicatedHostPolicySnapshot">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-dedicated-host-policy-snapshot",
+      }),
+      impl: {
+        getDedicatedHostPolicySnapshot: async (opts) =>
+          await impl.getDedicatedHostPolicySnapshot(opts),
+      },
+    }),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "getMembershipPackages">
     >({
