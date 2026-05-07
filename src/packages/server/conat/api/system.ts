@@ -45,6 +45,7 @@ import {
 import {
   drainAccountRehome as drainAccountRehomeInternal,
   getAccountRehomeOperationForOperator,
+  repairAccountMembershipPortability as repairAccountMembershipPortabilityInternal,
   reconcileAccountRehome as reconcileAccountRehomeInternal,
   rehomeAccount as rehomeAccountInternal,
 } from "@cocalc/server/accounts/rehome";
@@ -1690,6 +1691,25 @@ export async function drainAccountRehome({
     campaign_id,
     reason,
     only_if_tag,
+  });
+}
+
+export async function repairAccountMembershipPortability({
+  account_id,
+  user_account_id,
+  dry_run,
+  clear_stale,
+}: {
+  account_id?: string;
+  user_account_id: string;
+  dry_run?: boolean;
+  clear_stale?: boolean;
+}) {
+  return await repairAccountMembershipPortabilityInternal({
+    account_id,
+    target_account_id: user_account_id,
+    dry_run,
+    clear_stale,
   });
 }
 

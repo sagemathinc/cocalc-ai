@@ -85,7 +85,9 @@ import {
 import {
   acceptAccountRehome,
   copyAccountRehomeState,
+  getMembershipPortableState,
   getAccountRehomeOperation,
+  replaceMembershipPortableState,
   reconcileAccountRehomeOnSource,
   rehomeAccountOnHomeBay,
 } from "@cocalc/server/accounts/rehome";
@@ -421,6 +423,22 @@ async function startAccountLocalService(): Promise<void> {
     getMembershipPackages: async ({ owner_account_id }) =>
       await listMembershipPackageDetailsForOwner({
         owner_account_id,
+      }),
+    getMembershipPortableState: async ({ account_id }) =>
+      await getMembershipPortableState(account_id),
+    replaceMembershipPortableState: async ({
+      account_id,
+      membership_grants,
+      membership_packages,
+      membership_package_assignments,
+      membership_side_effects_outbox,
+    }) =>
+      await replaceMembershipPortableState({
+        account_id,
+        membership_grants,
+        membership_packages,
+        membership_package_assignments,
+        membership_side_effects_outbox,
       }),
   };
   services.push(

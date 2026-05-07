@@ -14,6 +14,9 @@ let listBrowserSessionsForAccountMock: jest.Mock;
 let getLiveBrowserSessionInfoMock: jest.Mock;
 let acceptRehomeMock: jest.Mock;
 let copyRehomeStateMock: jest.Mock;
+let getMembershipPortableStateMock: jest.Mock;
+let replaceMembershipPortableStateMock: jest.Mock;
+let createInterBayAccountLocalClientMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -37,6 +40,11 @@ jest.mock("@cocalc/server/bay-config", () => ({
 }));
 
 jest.mock("@cocalc/server/bay-directory", () => ({
+  listConfiguredBays: jest.fn(async () => [
+    { bay_id: "bay-0" },
+    { bay_id: "bay-1" },
+    { bay_id: "bay-2" },
+  ]),
   resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBayMock(...args),
 }));
 
@@ -91,12 +99,8 @@ jest.mock("@cocalc/server/inter-bay/fabric", () => ({
 }));
 
 jest.mock("@cocalc/conat/inter-bay/api", () => ({
-  createInterBayAccountLocalClient: jest.fn(() => ({
-    acceptRehome: (...args: any[]) => acceptRehomeMock(...args),
-    copyRehomeState: (...args: any[]) => copyRehomeStateMock(...args),
-    getRehomeOperation: jest.fn(async () => null),
-    reconcileRehome: jest.fn(async () => undefined),
-  })),
+  createInterBayAccountLocalClient: (...args: any[]) =>
+    createInterBayAccountLocalClientMock(...args),
 }));
 
 describe("account rehome", () => {
@@ -211,6 +215,23 @@ describe("account rehome", () => {
     getLiveBrowserSessionInfoMock = jest.fn(async () => ({}));
     acceptRehomeMock = jest.fn(async () => undefined);
     copyRehomeStateMock = jest.fn(async () => undefined);
+    getMembershipPortableStateMock = jest.fn(async () => ({
+      membership_grants: [],
+      membership_packages: [],
+      membership_package_assignments: [],
+      membership_side_effects_outbox: [],
+    }));
+    replaceMembershipPortableStateMock = jest.fn(async () => undefined);
+    createInterBayAccountLocalClientMock = jest.fn(({ dest_bay }) => ({
+      acceptRehome: async (opts: any) => await acceptRehomeMock(opts),
+      copyRehomeState: async (opts: any) => await copyRehomeStateMock(opts),
+      getRehomeOperation: jest.fn(async () => null),
+      reconcileRehome: jest.fn(async () => undefined),
+      getMembershipPortableState: async (opts: any) =>
+        await getMembershipPortableStateMock({ dest_bay, ...opts }),
+      replaceMembershipPortableState: async (opts: any) =>
+        await replaceMembershipPortableStateMock({ dest_bay, ...opts }),
+    }));
   });
 
   it("polls route convergence using the rehomed account on attached source bays", async () => {
@@ -426,5 +447,224 @@ describe("account rehome", () => {
         ],
       }),
     );
+  });
+
+  it("repairs historical membership portability state onto the current home bay", async () => {
+    getClusterAccountByIdMock = jest.fn(async () => ({
+      account_id: TARGET_ACCOUNT_ID,
+      home_bay_id: "bay-2",
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes('FROM "membership_grants"') &&
+        sql.includes("WHERE account_id=$1")
+      ) {
+        return { rows: [{ rows: [] }] };
+      }
+      if (
+        sql.includes('FROM "membership_packages"') &&
+        sql.includes("WHERE owner_account_id=$1")
+      ) {
+        return { rows: [{ rows: [] }] };
+      }
+      if (
+        sql.includes("FROM membership_package_assignments a") &&
+        sql.includes("JOIN membership_packages p")
+      ) {
+        return { rows: [{ rows: [] }] };
+      }
+      if (
+        sql.includes('FROM "membership_side_effects_outbox"') &&
+        sql.includes("WHERE owner_account_id=$1")
+      ) {
+        return { rows: [{ rows: [] }] };
+      }
+      if (sql.includes('DELETE FROM "membership_grants" WHERE account_id=$1')) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "membership_packages" WHERE owner_account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes("DELETE FROM membership_package_assignments") &&
+        sql.includes("WHERE package_id IN")
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "membership_side_effects_outbox" WHERE owner_account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('INSERT INTO "membership_grants"')) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO "membership_packages"')) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO "membership_package_assignments"')) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('INSERT INTO "membership_side_effects_outbox"')) {
+        return { rows: [], rowCount: 1 };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    getMembershipPortableStateMock = jest.fn(
+      async ({ dest_bay, account_id }) => {
+        expect(account_id).toBe(TARGET_ACCOUNT_ID);
+        if (dest_bay !== "bay-0") {
+          return {
+            membership_grants: [],
+            membership_packages: [],
+            membership_package_assignments: [],
+            membership_side_effects_outbox: [],
+          };
+        }
+        return {
+          membership_grants: [
+            {
+              id: "grant-1",
+              account_id: TARGET_ACCOUNT_ID,
+              membership_class: "member",
+              source: "team-seat",
+              package_id: "package-1",
+              updated: "2026-05-06T01:00:00.000Z",
+            },
+          ],
+          membership_packages: [
+            {
+              id: "package-1",
+              owner_account_id: TARGET_ACCOUNT_ID,
+              kind: "team",
+              membership_class: "member",
+              seat_count: 2,
+              updated: "2026-05-06T01:00:00.000Z",
+            },
+          ],
+          membership_package_assignments: [
+            {
+              id: "assignment-1",
+              package_id: "package-1",
+              account_id: "beneficiary-1",
+              updated: "2026-05-06T01:00:00.000Z",
+            },
+          ],
+          membership_side_effects_outbox: [
+            {
+              effect_key: "grant-sync:assignment-1",
+              owner_account_id: TARGET_ACCOUNT_ID,
+              package_id: "package-1",
+              assignment_id: "assignment-1",
+              effect_kind: "grant-sync",
+              desired_revision: 1,
+              updated_at: "2026-05-06T01:00:00.000Z",
+            },
+          ],
+        };
+      },
+    );
+
+    const { repairAccountMembershipPortability } = await import("./rehome");
+    const result = await repairAccountMembershipPortability({
+      account_id: REQUESTED_BY,
+      target_account_id: TARGET_ACCOUNT_ID,
+      dry_run: false,
+      clear_stale: true,
+    });
+
+    expect(getMembershipPortableStateMock).toHaveBeenCalledWith({
+      dest_bay: "bay-2",
+      account_id: TARGET_ACCOUNT_ID,
+    });
+    expect(getMembershipPortableStateMock).toHaveBeenCalledWith({
+      dest_bay: "bay-0",
+      account_id: TARGET_ACCOUNT_ID,
+    });
+    expect(replaceMembershipPortableStateMock).toHaveBeenCalledWith({
+      dest_bay: "bay-2",
+      account_id: TARGET_ACCOUNT_ID,
+      membership_grants: [
+        expect.objectContaining({
+          id: "grant-1",
+          account_id: TARGET_ACCOUNT_ID,
+        }),
+      ],
+      membership_packages: [
+        expect.objectContaining({
+          id: "package-1",
+          owner_account_id: TARGET_ACCOUNT_ID,
+        }),
+      ],
+      membership_package_assignments: [
+        expect.objectContaining({
+          id: "assignment-1",
+          package_id: "package-1",
+        }),
+      ],
+      membership_side_effects_outbox: [
+        expect.objectContaining({
+          effect_key: "grant-sync:assignment-1",
+          owner_account_id: TARGET_ACCOUNT_ID,
+        }),
+      ],
+    });
+    expect(replaceMembershipPortableStateMock).toHaveBeenCalledWith({
+      dest_bay: "bay-0",
+      account_id: TARGET_ACCOUNT_ID,
+      membership_grants: [],
+      membership_packages: [],
+      membership_package_assignments: [],
+      membership_side_effects_outbox: [],
+    });
+    expect(result).toEqual({
+      account_id: TARGET_ACCOUNT_ID,
+      home_bay_id: "bay-2",
+      dry_run: false,
+      clear_stale: true,
+      scanned_bays: [
+        {
+          bay_id: "bay-2",
+          membership_grants: 0,
+          membership_packages: 0,
+          membership_package_assignments: 0,
+          membership_side_effects_outbox: 0,
+          total: 0,
+        },
+        {
+          bay_id: "bay-1",
+          membership_grants: 0,
+          membership_packages: 0,
+          membership_package_assignments: 0,
+          membership_side_effects_outbox: 0,
+          total: 0,
+        },
+        {
+          bay_id: "bay-0",
+          membership_grants: 1,
+          membership_packages: 1,
+          membership_package_assignments: 1,
+          membership_side_effects_outbox: 1,
+          total: 4,
+        },
+      ],
+      source_bays_with_rows: ["bay-0"],
+      stale_bay_ids: ["bay-0"],
+      cleared_stale_bay_ids: ["bay-0"],
+      merged_counts: {
+        membership_grants: 1,
+        membership_packages: 1,
+        membership_package_assignments: 1,
+        membership_side_effects_outbox: 1,
+        total: 4,
+      },
+      applied: true,
+    });
   });
 });

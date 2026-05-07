@@ -490,6 +490,21 @@ export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
 }
 
+export interface AccountMembershipPortableState {
+  membership_grants?: Record<string, unknown>[];
+  membership_packages?: Record<string, unknown>[];
+  membership_package_assignments?: Record<string, unknown>[];
+  membership_side_effects_outbox?: Record<string, unknown>[];
+}
+
+export interface AccountLocalGetMembershipPortableStateRequest {
+  account_id: string;
+}
+
+export interface AccountLocalReplaceMembershipPortableStateRequest extends AccountMembershipPortableState {
+  account_id: string;
+}
+
 export type AccountRehomeOperationStage =
   | "requested"
   | "destination_accepted"
@@ -763,7 +778,9 @@ export type AccountLocalMethod =
   | "revoke-membership-grant"
   | "get-membership"
   | "get-membership-details"
-  | "get-membership-packages";
+  | "get-membership-packages"
+  | "get-membership-portable-state"
+  | "replace-membership-portable-state";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
 export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod = "get-load" | "get-backups";
@@ -1328,6 +1345,12 @@ export interface InterBayAccountLocalApi {
   getMembershipPackages: (
     opts: AccountLocalGetMembershipPackagesRequest,
   ) => Promise<MembershipPackageDetails[]>;
+  getMembershipPortableState: (
+    opts: AccountLocalGetMembershipPortableStateRequest,
+  ) => Promise<AccountMembershipPortableState>;
+  replaceMembershipPortableState: (
+    opts: AccountLocalReplaceMembershipPortableStateRequest,
+  ) => Promise<void>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -2415,6 +2438,24 @@ export function createInterBayAccountLocalClient({
       method: "get-membership-packages",
     }),
   });
+  const getMembershipPortableStateClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getMembershipPortableState">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-membership-portable-state",
+    }),
+  });
+  const replaceMembershipPortableStateClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "replaceMembershipPortableState">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "replace-membership-portable-state",
+    }),
+  });
   return {
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
@@ -2436,6 +2477,12 @@ export function createInterBayAccountLocalClient({
       await getMembershipDetailsClient.getMembershipDetails(opts),
     getMembershipPackages: async (opts) =>
       await getMembershipPackagesClient.getMembershipPackages(opts),
+    getMembershipPortableState: async (opts) =>
+      await getMembershipPortableStateClient.getMembershipPortableState(opts),
+    replaceMembershipPortableState: async (opts) =>
+      await replaceMembershipPortableStateClient.replaceMembershipPortableState(
+        opts,
+      ),
   };
 }
 
@@ -2581,6 +2628,34 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getMembershipPackages: async (opts) =>
           await impl.getMembershipPackages(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getMembershipPortableState">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-membership-portable-state",
+      }),
+      impl: {
+        getMembershipPortableState: async (opts) =>
+          await impl.getMembershipPortableState(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "replaceMembershipPortableState">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "replace-membership-portable-state",
+      }),
+      impl: {
+        replaceMembershipPortableState: async (opts) =>
+          await impl.replaceMembershipPortableState(opts),
       },
     }),
   ];

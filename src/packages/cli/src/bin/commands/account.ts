@@ -446,6 +446,44 @@ export function registerAccountCommand(
       },
     );
 
+  account
+    .command("repair-membership <account>")
+    .description(
+      "repair historical membership/package portability state for a rehomed account",
+    )
+    .option("--write", "apply changes instead of dry run", false)
+    .option(
+      "--clear-stale",
+      "after writing the merged state to the home bay, clear stale rows from non-home bays",
+      false,
+    )
+    .action(
+      async (
+        accountIdentifier: string,
+        opts: {
+          write?: boolean;
+          clearStale?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "account repair-membership", async (ctx) => {
+          const target = await resolveAccountByIdentifier(
+            ctx,
+            accountIdentifier.trim(),
+          );
+          const accountId = `${target.account_id ?? ""}`.trim();
+          if (!accountId) {
+            throw new Error("unable to resolve target account");
+          }
+          return await ctx.hub.system.repairAccountMembershipPortability({
+            user_account_id: accountId,
+            dry_run: opts.write !== true,
+            clear_stale: opts.clearStale === true,
+          });
+        });
+      },
+    );
+
   const accountApiKey = account
     .command("api-key")
     .description("manage account API keys");
