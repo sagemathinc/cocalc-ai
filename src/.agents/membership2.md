@@ -314,8 +314,14 @@ Not to collaborators or to the project owner unless that is the same account.
 
 ### Dedicated hosts are billed monthly, not prepaid-balance-gated
 
-Membership tier and admin overrides control risk limits. Monthly statements
-remain the main collection model.
+Membership tier and admin overrides control rolling risk limits.
+
+The key limits should be:
+
+- a rolling 5-hour spend limit
+- a rolling 7-day spend limit
+
+Monthly statements remain the main collection model.
 
 ## Data Model Corrections
 
@@ -650,7 +656,9 @@ Dedicated-host billing also needs the same split.
 
 - monthly host charge purchases
 - statement inclusion
-- account-level risk / spend limit settings
+- account-level rolling host spend-limit settings
+  - 5-hour window
+  - 7-day window
 
 ### Seed/global state
 
@@ -671,6 +679,21 @@ Dedicated-host billing also needs the same split.
 5. monthly statements on the home bay include that charge
 
 This allows account rehome without moving raw host-control history.
+
+### Dedicated-host risk policy
+
+Dedicated-host admission should check projected and realized spend against
+rolling windows, not only against a monthly ceiling.
+
+The default policy should be:
+
+- membership tier config sets default 5-hour and 7-day host spend limits
+- admins can override those limits per account
+- host create/start/resize is denied if it would violate either window
+- the 5-hour window exists mainly to limit burst abuse and compromised-account
+  spend
+- the 7-day window exists to cap medium-term exposure without waiting for the
+  monthly invoice cycle
 
 ## Implementation Plan
 
@@ -747,6 +770,346 @@ This plan is not complete without explicit multi-bay validation.
 6. beneficiary account with received grant rehomes from bay A to bay B
 7. active dedicated host continues billing correctly after owner account rehome
 
+## Abuse and Safety Requirements
+
+The membership and billing plan also needs explicit abuse-control design.
+
+This is not secondary work.
+
+Once accounts can:
+
+- buy memberships
+- receive institutional entitlements
+- create dedicated hosts
+- spend money on compute
+
+the abuse surface includes both account creation fraud and account takeover.
+
+### Threat classes
+
+The main classes of abuse are:
+
+1. signup and free-trial abuse
+2. payment abuse
+3. entitlement abuse
+4. account takeover
+5. infrastructure abuse
+6. operator and auditability gaps
+
+### 1. Signup and free-trial abuse
+
+The system should assume that any free-trial path will be abused if it is cheap
+to automate.
+
+V1 controls:
+
+- email verification must work reliably
+- signup and payment-intent creation must be rate limited by IP, account, and
+  device/session signals
+- free-trial eligibility must not be keyed only by email address
+- reCAPTCHA is an abuse-mitigation control, not a commercialization feature
+- reCAPTCHA should be enabled if and only if keys are configured
+
+Design principle:
+
+- do not grant meaningful compute, host access, or institutional claim power to
+  an unverified or low-trust account just because it created an account first
+
+### 2. Payment abuse
+
+Stripe Radar should be part of the standard toolbox.
+
+The key mistake to avoid is treating a just-created payment intent as proof that
+an account is trustworthy.
+
+V1 controls:
+
+- payment-provider risk signals should be stored in local billing state
+- membership/package activation should happen only after trusted payment success
+- high-risk or review-required payments should not automatically mint grants,
+  seats, or dedicated-host eligibility
+- repeated failed payment attempts and card-testing patterns should rate limit
+  further purchase attempts
+- refunds and chargebacks must be able to revoke or suspend the entitlements
+  they funded
+
+Design principle:
+
+- money movement and entitlement activation must be linked, reversible, and
+  auditable
+
+### 3. Entitlement abuse
+
+The new seat/package model has its own abuse surface:
+
+- one person trying to claim multiple institutional seats
+- package owners assigning seats to burner accounts
+- reusing `+alias` email variants to evade one-seat-per-person rules
+- manipulating course/team flows to move usage onto the wrong account
+
+V1 controls:
+
+- institutional claims must use canonical identity dedupe
+- `domain` / `site` claims should be unique per
+  `(claim_scope_id, canonical_identity_key)`
+- package assignment, revocation, reservation, and claim all need durable audit
+  records
+- `projects.usage_account_id` changes must only happen through explicit package
+  or course flows, not arbitrary user edits
+- `projects.usage_account_id` changes should be logged with actor, reason, old
+  value, and new value
+
+Design principle:
+
+- entitlement state should always answer who granted what, to whom, why, and
+  from which bay
+
+### 4. Account takeover
+
+This is now high priority.
+
+Because paid compute and dedicated hosts can consume real money, compromised
+accounts are valuable.
+
+There does not currently appear to be a real 2FA / MFA implementation in this
+codebase.
+
+That should move near the top of the release queue.
+
+V1 controls:
+
+- add 2FA for accounts that can buy or operate paid compute
+- require a fresh authentication checkpoint for dangerous billing actions
+- require a stronger identity signal before:
+  - adding or changing payment methods
+  - buying memberships or seat packages above a threshold
+  - creating or resizing dedicated hosts
+  - changing invoice or payout-critical account settings
+  - transferring or reclaiming institutional entitlements
+
+The first practical version can be TOTP-based 2FA.
+
+Passkeys/WebAuthn can be a later improvement, but the release should not ship
+paid compute without some second-factor path.
+
+Design principle:
+
+- a verified password alone is not a strong enough proof of identity for
+  dangerous actions in a paid-compute product
+
+### 5. Infrastructure abuse
+
+Dedicated hosts and project compute create the classic abuse vectors:
+
+- crypto mining
+- proxy/VPN resale
+- credential stuffing and post-compromise spend
+- mass host creation using stolen cards
+
+V1 controls:
+
+- dedicated-host eligibility should be gated by membership tier and trust level
+- new accounts should not immediately get broad host-spend rights
+- host spend limits should be rolling-window based and admin-configurable
+  - 5-hour window
+  - 7-day window
+- host creation/start/resize should record who did it and under what trust state
+- risk review and emergency suspension must be possible without corrupting the
+  billing ledger
+
+Design principle:
+
+- the product should prefer reviewable throttling and suspension over silent
+  overexposure
+
+### 6. Operator and auditability requirements
+
+Abuse handling fails if operators cannot see cluster-wide state quickly.
+
+V1 should include:
+
+- account risk flags
+- package risk flags
+- payment risk flags
+- ability to suspend:
+  - purchases
+  - claims
+  - dedicated-host creation
+  - package assignment
+- cluster-visible audit trails for:
+  - grant creation/revocation
+  - package purchase/expansion
+  - institutional claim/release
+  - `usage_account_id` changes
+  - dangerous billing and host actions
+
+Design principle:
+
+- abuse controls must work across bays, not only within one account home bay
+
+### 7. Abuse analytics and operator visibility
+
+The release should include simple admin-visible analytics for account,
+membership, and payment behavior.
+
+This should be treated as part of abuse control, not as optional reporting.
+
+In practice, unusual behavior often shows up first as unusual rate changes in:
+
+- account creation
+- email verification
+- payment-intent creation / failure
+- membership grant creation
+- package purchase / expansion
+- seat reservation / claim
+- dedicated-host creation / denial
+
+#### Multi-bay architecture
+
+The correct architecture is:
+
+- authoritative event emission on the bay where the action is authoritative
+- seed-global summarized projections for cluster-wide analytics
+- both admin UI and `cocalc-cli` read the same projected analytics tables
+
+This avoids:
+
+- scanning all bays for time-series data
+- rebuilding analytics live from billing source tables
+- inventing a second incompatible admin-only data path
+
+#### Event classes to record
+
+V1 should record at least these event families:
+
+- account created
+- email verified
+- signup denied / rate-limited
+- payment intent created
+- payment intent succeeded
+- payment intent failed
+- payment flagged high-risk / review-required
+- refund created
+- chargeback / dispute opened
+- membership grant created
+- membership grant revoked / suspended
+- membership package purchased
+- membership package expanded
+- seat assigned
+- seat reserved by email
+- seat claimed
+- claim denied due to canonical-identity conflict
+- dedicated host create/start/resize requested
+- dedicated host create/start/resize denied due to trust or spend-window policy
+
+These do not need to be expensive append-only forensic logs in V1.
+
+They do need to be structured enough to support:
+
+- cluster-wide counts
+- per-bay counts
+- per-account drill-down
+- per-package and per-claim-scope drill-down
+- anomaly detection by simple thresholding and baseline comparison
+
+#### Recommended rollups
+
+V1 rollups should be small and obvious:
+
+- 5-minute buckets
+- 1-hour buckets
+- 1-day buckets
+
+Grouped by:
+
+- event type
+- bay id
+- membership/package kind when relevant
+- payment result / risk state when relevant
+
+This is enough to support:
+
+- burst detection
+- day-over-day comparison
+- short-window abuse investigation
+- admin dashboard charts
+
+#### Admin UI surfaces
+
+The admin UI should expose a minimal abuse analytics panel with:
+
+- SVG time-series plots for:
+  - account creation
+  - email verification
+  - payment intent create/success/failure/review
+  - membership grant creation/revocation
+  - package purchase/expansion
+  - seat reservation/claim
+  - dedicated-host create/deny
+- current 5-hour and 7-day counters for host-spend denials and risk-triggered
+  blocks
+- top recent spikes by event type
+- links from unusual spikes into filtered admin account/package views
+
+The goal is not a full BI tool.
+
+The goal is that an operator can look at one page and immediately answer:
+
+- are signups behaving strangely?
+- are payment attempts behaving strangely?
+- are institutional claims behaving strangely?
+- are host requests spiking abnormally?
+
+#### `cocalc-cli` surfaces
+
+`cocalc-cli` should expose the same operator information in text/JSON form.
+
+The CLI should not implement a second analytics backend. It should query the
+same summarized projections as the admin UI.
+
+V1 should include commands along the lines of:
+
+- `cocalc admin abuse summary`
+- `cocalc admin abuse timeseries --event payment_intent_failed --window 24h`
+- `cocalc admin abuse account <account_id>`
+- `cocalc admin abuse package <package_id>`
+- `cocalc admin abuse claim-scope <claim_scope_id>`
+
+The exact command names can change. The invariant is:
+
+- admin UI and CLI should agree because they read the same projected data
+
+#### Privacy and retention
+
+These analytics should default to aggregated counts and identifiers already
+known to operators.
+
+They should not require shipping unnecessary raw PII into a global analytics
+store just to make charts.
+
+V1 should prefer:
+
+- counts
+- bay ids
+- account ids
+- package ids
+- claim-scope ids
+- coarse risk/status categories
+
+over copying full request payloads or payment-provider blobs into analytics
+tables.
+
+### Recommended release priorities
+
+From the abuse/safety point of view, the near-term order should be:
+
+1. ensure payment maintenance and entitlement activation are trustworthy
+2. implement 2FA and fresh-auth checkpoints for dangerous actions
+3. finish email verification and reCAPTCHA support
+4. add canonical institutional claim dedupe
+5. add operator risk flags and suspension controls
+6. add dedicated-host trust gating before broader host rollout
+
 ## Summary
 
 The correct V1 split is:
@@ -764,5 +1127,14 @@ under the real multi-bay deployment.
 
 - [ ] update the master release plan to remove the obsolete `seed-owned purchases/billing authority for first release` assumption
 - [ ] implement canonical `+alias` identity dedupe for domain/site claims
+      [ ] ensure that subscription maintenance, statements, payment-intent processing, and automatic payments DO run. Right now gated behind kucalc and commercial flags.
 - [ ] add Cloudflare Email Service support for verification and notifications
 - [ ] add `cocalc-cli` operator/testing support for package, claim, and rehome flows
+- [ ] abuse mitigation:
+  - [ ] 2FA / MFA for paid-compute accounts
+  - [ ] fresh-auth checkpoints for dangerous billing and host actions
+  - [ ] captcha -- finish implementing support
+  - [ ] Stripe Radar integration and payment-risk handling policy
+  - [ ] chargeback/refund-driven entitlement suspension policy
+  - [ ] operator risk flags and cluster-wide abuse audit surfaces
+  - [ ] seed-global abuse analytics rollups for admin UI and `cocalc-cli`

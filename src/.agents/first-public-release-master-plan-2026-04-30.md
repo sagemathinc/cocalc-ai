@@ -539,6 +539,10 @@ Goal: make operator workflows safe and not context-fragile.
   - Postgres pressure
   - routing latency
   - host reconciliation lag
+- [ ] Add minimum operator abuse analytics for memberships/billing/hosts:
+  - seed-global summarized rollups, not per-bay scans
+  - admin UI time-series views
+  - matching `cocalc-cli` readout from the same projections
 - [ ] Add/export control-plane traffic stats in frontend session tooling.
 
 ### Exit Criteria
@@ -738,7 +742,6 @@ If we want the shortest path to release from today, do these next:
 - [ ] snapshots
   - [ ] keep ordinary user-facing index/browse flows off full snapshot listing
         permanently
-- [ ] create a custom image so GCP host bootstrap is faster and less fragile
 - [ ] finish central admin override controls
 - [ ] implement student pay
 - [ ] implement minimal site/domain license
@@ -751,3 +754,7 @@ If we want the shortest path to release from today, do these next:
 
 That is the highest-value path to a real first public release without
 expanding scope.
+
+### TODO
+
+- [ ] finish recaptcha support
