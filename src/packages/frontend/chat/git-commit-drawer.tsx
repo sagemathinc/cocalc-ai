@@ -82,6 +82,7 @@ import {
   resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
+  shouldClearGitInlinePendingKey,
   shouldClearGitReviewSavingOnScopeChange,
   shouldClearGitReviewSubmitOnScopeChange,
 } from "./git-commit/review-state";
@@ -151,6 +152,7 @@ export {
   resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
+  shouldClearGitInlinePendingKey,
   shouldClearGitReviewSavingOnScopeChange,
   shouldClearGitReviewSubmitOnScopeChange,
 };
@@ -346,6 +348,7 @@ export function GitCommitDrawer({
   >(undefined);
   const [activeInlineEditBody, setActiveInlineEditBody] = useState("");
   const [inlineCommentPendingKey, setInlineCommentPendingKey] = useState("");
+  const inlineCommentPendingKeyRef = useRef(inlineCommentPendingKey);
 
   const cwd = useMemo(() => {
     const override = `${cwdOverride ?? ""}`.trim();
@@ -360,6 +363,10 @@ export function GitCommitDrawer({
   useEffect(() => {
     reviewedRef.current = reviewed;
   }, [reviewed]);
+
+  useEffect(() => {
+    inlineCommentPendingKeyRef.current = inlineCommentPendingKey;
+  }, [inlineCommentPendingKey]);
   const scrollStorageId = useMemo(() => {
     const commitKey = `${commit ?? HEAD_REF}`.toLowerCase();
     const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${cwd}|${commitKey}`;
@@ -1460,7 +1467,14 @@ export function GitCommitDrawer({
         setActiveInlineDraft(undefined);
         setActiveInlineDraftBody("");
       } finally {
-        setInlineCommentPendingKey("");
+        if (
+          shouldClearGitInlinePendingKey({
+            currentPendingKey: inlineCommentPendingKeyRef.current,
+            actionPendingKey: key,
+          })
+        ) {
+          setInlineCommentPendingKey("");
+        }
       }
     },
     [createInlineComment],
@@ -1472,12 +1486,20 @@ export function GitCommitDrawer({
       const trimmed = `${value ?? ""}`.trim();
       if (!trimmed) return;
       setInlineCommentPendingKey(`edit:${id}`);
+      const pendingKey = `edit:${id}`;
       try {
         await updateInlineComment(id, trimmed);
         setActiveInlineEditId(undefined);
         setActiveInlineEditBody("");
       } finally {
-        setInlineCommentPendingKey("");
+        if (
+          shouldClearGitInlinePendingKey({
+            currentPendingKey: inlineCommentPendingKeyRef.current,
+            actionPendingKey: pendingKey,
+          })
+        ) {
+          setInlineCommentPendingKey("");
+        }
       }
     },
     [activeInlineEditId, updateInlineComment],
@@ -1485,7 +1507,8 @@ export function GitCommitDrawer({
 
   const handleResolveInlineComment = useCallback(
     async (id: string) => {
-      setInlineCommentPendingKey(`resolve:${id}`);
+      const pendingKey = `resolve:${id}`;
+      setInlineCommentPendingKey(pendingKey);
       try {
         await resolveInlineComment(id);
         if (activeInlineEditId === id) {
@@ -1493,7 +1516,14 @@ export function GitCommitDrawer({
           setActiveInlineEditBody("");
         }
       } finally {
-        setInlineCommentPendingKey("");
+        if (
+          shouldClearGitInlinePendingKey({
+            currentPendingKey: inlineCommentPendingKeyRef.current,
+            actionPendingKey: pendingKey,
+          })
+        ) {
+          setInlineCommentPendingKey("");
+        }
       }
     },
     [activeInlineEditId, resolveInlineComment],
@@ -1501,7 +1531,8 @@ export function GitCommitDrawer({
 
   const handleReopenInlineComment = useCallback(
     async (id: string) => {
-      setInlineCommentPendingKey(`reopen:${id}`);
+      const pendingKey = `reopen:${id}`;
+      setInlineCommentPendingKey(pendingKey);
       try {
         await reopenInlineComment(id);
         if (activeInlineEditId === id) {
@@ -1509,7 +1540,14 @@ export function GitCommitDrawer({
           setActiveInlineEditBody("");
         }
       } finally {
-        setInlineCommentPendingKey("");
+        if (
+          shouldClearGitInlinePendingKey({
+            currentPendingKey: inlineCommentPendingKeyRef.current,
+            actionPendingKey: pendingKey,
+          })
+        ) {
+          setInlineCommentPendingKey("");
+        }
       }
     },
     [activeInlineEditId, reopenInlineComment],

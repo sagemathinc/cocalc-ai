@@ -23,6 +23,7 @@ import {
   resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
+  shouldClearGitInlinePendingKey,
   shouldClearGitReviewSavingOnScopeChange,
   shouldClearGitReviewSubmitOnScopeChange,
   buildGitLogArgs,
@@ -487,6 +488,21 @@ describe("git commit drawer merge commit formatting", () => {
         nextScope: "bbb2222",
       }),
     ).toBe(false);
+  });
+
+  it("only clears inline comment pending state for the action that owns it", () => {
+    expect(
+      shouldClearGitInlinePendingKey({
+        currentPendingKey: "resolve:comment-b",
+        actionPendingKey: "resolve:comment-a",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitInlinePendingKey({
+        currentPendingKey: "resolve:comment-a",
+        actionPendingKey: "resolve:comment-a",
+      }),
+    ).toBe(true);
   });
 
   it("does not persist a private review note when cancel wins after blur ordering", () => {

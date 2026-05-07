@@ -126,3 +126,13 @@ export function shouldClearGitReviewSubmitOnScopeChange({
 }): boolean {
   return reviewSubmitBusy && previousScope !== nextScope;
 }
+
+export function shouldClearGitInlinePendingKey({
+  currentPendingKey,
+  actionPendingKey,
+}: {
+  currentPendingKey?: string;
+  actionPendingKey: string;
+}): boolean {
+  return currentPendingKey === actionPendingKey;
+}
