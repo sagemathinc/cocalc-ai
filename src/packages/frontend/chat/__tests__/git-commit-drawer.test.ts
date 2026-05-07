@@ -25,6 +25,7 @@ import {
   resolveGitReviewSaveState,
   shouldClearGitHeadCommitBusyOnScopeChange,
   shouldClearGitInlinePendingKey,
+  shouldClearGitRepoBootstrapBusyOnScopeChange,
   shouldClearGitReviewSavingOnScopeChange,
   shouldClearGitReviewSubmitOnScopeChange,
   buildGitLogArgs,
@@ -525,6 +526,30 @@ describe("git commit drawer merge commit formatting", () => {
       shouldClearGitHeadCommitBusyOnScopeChange({
         headCommitBusy: false,
         previousScope: "HEAD",
+        nextScope: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears repo bootstrap busy state only when leaving the non-repo scope", () => {
+    expect(
+      shouldClearGitRepoBootstrapBusyOnScopeChange({
+        repoBootstrapBusy: true,
+        previousScope: "non-repo",
+        nextScope: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearGitRepoBootstrapBusyOnScopeChange({
+        repoBootstrapBusy: true,
+        previousScope: "non-repo",
+        nextScope: "non-repo",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitRepoBootstrapBusyOnScopeChange({
+        repoBootstrapBusy: false,
+        previousScope: "non-repo",
         nextScope: undefined,
       }),
     ).toBe(false);

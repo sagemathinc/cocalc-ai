@@ -122,6 +122,7 @@ import {
   isNotGitRepoError,
   resolveOpenPath,
   shouldClearGitHeadCommitBusyOnScopeChange,
+  shouldClearGitRepoBootstrapBusyOnScopeChange,
   shouldCaptureGitDrawerFindShortcut,
 } from "./git-commit/utils";
 import "./git-commit-drawer.css";
@@ -169,6 +170,7 @@ export {
   getCommitReviewIndicatorState,
   isMergeCommitSummary,
   shouldClearGitHeadCommitBusyOnScopeChange,
+  shouldClearGitRepoBootstrapBusyOnScopeChange,
   shouldCaptureGitDrawerFindShortcut,
 };
 
@@ -329,6 +331,9 @@ export function GitCommitDrawer({
   const headScopeRef = useRef<string | undefined>(undefined);
   const headCommitActionTokenRef = useRef(0);
   const headCommitActionScopeRef = useRef<string | undefined>(undefined);
+  const repoBootstrapScopeRef = useRef<string | undefined>(undefined);
+  const repoBootstrapActionTokenRef = useRef(0);
+  const repoBootstrapActionScopeRef = useRef<string | undefined>(undefined);
   const reviewNoteDraftRef = useRef(reviewNoteDraft);
   const reviewedRef = useRef(reviewed);
   const preserveCommitSearchOnAutoClearRef = useRef(false);
@@ -844,6 +849,23 @@ export function GitCommitDrawer({
       setHeadCommitBusy(false);
     }
   }, [open, isHeadSelected, headCommitBusy]);
+
+  useEffect(() => {
+    const nextScope = open && Boolean(nonRepoError) ? "non-repo" : undefined;
+    const previousScope = repoBootstrapScopeRef.current;
+    repoBootstrapScopeRef.current = nextScope;
+    if (
+      shouldClearGitRepoBootstrapBusyOnScopeChange({
+        repoBootstrapBusy,
+        previousScope,
+        nextScope,
+      })
+    ) {
+      repoBootstrapActionTokenRef.current += 1;
+      repoBootstrapActionScopeRef.current = undefined;
+      setRepoBootstrapBusy(false);
+    }
+  }, [open, nonRepoError, repoBootstrapBusy]);
 
   useEffect(() => {
     if (!open || !accountId) return;
@@ -1924,6 +1946,11 @@ export function GitCommitDrawer({
 
   const requestAgentRepoSetup = async () => {
     if (!onRequestAgentTurn) return;
+    const startedScope = repoBootstrapScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = repoBootstrapActionTokenRef.current + 1;
+    repoBootstrapActionTokenRef.current = actionToken;
+    repoBootstrapActionScopeRef.current = startedScope;
     setRepoBootstrapBusy(true);
     try {
       const prompt = [
@@ -1937,11 +1964,29 @@ export function GitCommitDrawer({
         "5. Summarize exactly what you included/excluded.",
       ].join("\n");
       await onRequestAgentTurn(prompt);
-      onClose();
+      if (
+        repoBootstrapActionTokenRef.current === actionToken &&
+        repoBootstrapActionScopeRef.current === startedScope &&
+        repoBootstrapScopeRef.current === startedScope
+      ) {
+        onClose();
+      }
     } catch (err) {
-      setGitLogError(`${err ?? "Unable to send setup request to codex."}`);
+      if (
+        repoBootstrapActionTokenRef.current === actionToken &&
+        repoBootstrapActionScopeRef.current === startedScope &&
+        repoBootstrapScopeRef.current === startedScope
+      ) {
+        setGitLogError(`${err ?? "Unable to send setup request to codex."}`);
+      }
     } finally {
-      setRepoBootstrapBusy(false);
+      if (
+        repoBootstrapActionTokenRef.current === actionToken &&
+        repoBootstrapActionScopeRef.current === startedScope
+      ) {
+        repoBootstrapActionScopeRef.current = undefined;
+        setRepoBootstrapBusy(false);
+      }
     }
   };
 
