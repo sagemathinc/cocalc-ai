@@ -32,7 +32,7 @@ export function ImpersonationBanner() {
       type="warning"
       showIcon
       style={{ marginBottom: "10px" }}
-      title={`Impersonating ${subject}`}
+      message={`Impersonating ${subject}`}
       description={
         <Space direction="vertical" size="small">
           <div>Admin actor: {actor}</div>
