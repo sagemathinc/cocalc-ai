@@ -27,6 +27,7 @@ import {
   resolveIncomingGitCommitSelection,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
+  shouldHighlightGitCommitNeedsReview,
   shouldApplyGitRepoBootstrapScopedResult,
   shouldClearGitHeadCommitBusyOnScopeChange,
   shouldClearGitHeadStatusActionOnScopeChange,
@@ -294,6 +295,37 @@ describe("git commit drawer merge commit formatting", () => {
     ).toEqual({
       abc1234: false,
     });
+  });
+
+  it("highlights commits that still need review even when their state is unknown", () => {
+    expect(
+      shouldHighlightGitCommitNeedsReview({
+        hash: "abc1234",
+        reviewed: false,
+        fallback: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldHighlightGitCommitNeedsReview({
+        hash: "abc1234",
+        reviewed: true,
+        fallback: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldHighlightGitCommitNeedsReview({
+        hash: "HEAD",
+        reviewed: false,
+        fallback: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldHighlightGitCommitNeedsReview({
+        hash: "abc1234",
+        reviewed: false,
+        fallback: true,
+      }),
+    ).toBe(false);
   });
 
   it("disables git review submission when review persistence or target context is unavailable", () => {

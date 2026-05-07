@@ -131,6 +131,7 @@ import {
   shouldFinalizeGitFileOpenAction,
   shouldFinalizeGitRepoBootstrapAction,
   shouldCaptureGitDrawerFindShortcut,
+  shouldHighlightGitCommitNeedsReview,
 } from "./git-commit/utils";
 import "./git-commit-drawer.css";
 import type { ReactNode } from "react";
@@ -177,6 +178,7 @@ export {
   GitDiffListFooterSpacer,
   getCommitReviewIndicatorState,
   isMergeCommitSummary,
+  shouldHighlightGitCommitNeedsReview,
   shouldApplyGitFileOpenScopedResult,
   shouldApplyGitRepoBootstrapScopedResult,
   shouldDisableGitReviewSubmission,
@@ -832,12 +834,15 @@ export function GitCommitDrawer({
 
   const logOptions = useMemo(() => {
     const makeOptionLabel = (entry: GitLogEntry, fallback = false) => {
-      const { reviewed, known } = getCommitReviewIndicatorState(
+      const { reviewed } = getCommitReviewIndicatorState(
         reviewedByCommit,
         entry.hash,
       );
-      const highlightNeedsReview =
-        !fallback && !isHeadCommit(entry.hash) && known && !reviewed;
+      const highlightNeedsReview = shouldHighlightGitCommitNeedsReview({
+        hash: entry.hash,
+        reviewed,
+        fallback,
+      });
       return (
         <div
           style={{

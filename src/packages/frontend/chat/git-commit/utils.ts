@@ -6,6 +6,7 @@
 // Focus: small pure drawer utilities for review indicators, commit message formatting, file opening, and keyboard/find behavior.
 
 import { backtickSequence } from "@cocalc/frontend/markdown/util";
+import { isHeadCommit } from "./commit-selection";
 import type { GitShowSummary } from "./types";
 
 export function getCommitReviewIndicatorState(
@@ -17,6 +18,18 @@ export function getCommitReviewIndicatorState(
     reviewed: known ? Boolean(reviewedByCommit[hash]) : false,
     known,
   };
+}
+
+export function shouldHighlightGitCommitNeedsReview({
+  hash,
+  reviewed,
+  fallback,
+}: {
+  hash: string;
+  reviewed: boolean;
+  fallback: boolean;
+}): boolean {
+  return !fallback && !isHeadCommit(hash) && !reviewed;
 }
 
 export function resolveOpenPath(
