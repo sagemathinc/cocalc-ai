@@ -48,6 +48,7 @@ import "./lti";
 import "./mentions";
 import "./admin-assigned-memberships";
 import "./membership-grants";
+import "./membership-side-effects-outbox";
 import "./membership-tiers";
 import "./messages";
 import "./news";
