@@ -51,7 +51,10 @@ function RecoveryCodesBlock({ codes }: { codes: string[] }) {
 }
 
 export default function TwoFactorAuthSetting() {
-  const impersonation = useTypedRedux("account", "impersonation");
+  const rawImpersonation = useTypedRedux("account", "impersonation") as any;
+  const impersonation =
+    rawImpersonation?.toJS?.() ?? rawImpersonation ?? undefined;
+  const isImpersonating = impersonation?.active === true;
   const [status, setStatus] = useState<TwoFactorStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -153,7 +156,7 @@ export default function TwoFactorAuthSetting() {
         {loading ? (
           <Alert type="info" showIcon message="Loading security status..." />
         ) : undefined}
-        {impersonation?.active ? (
+        {isImpersonating ? (
           <Alert
             type="warning"
             showIcon
@@ -192,7 +195,7 @@ export default function TwoFactorAuthSetting() {
             }
           />
         ) : undefined}
-        {impersonation?.active ? null : setup ? (
+        {isImpersonating ? null : setup ? (
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
             <Alert
               type="info"
@@ -246,7 +249,7 @@ export default function TwoFactorAuthSetting() {
         <RecoveryCodesBlock codes={recoveryCodes} />
       </Space>
       <FreshAuthModal
-        open={freshAction != null && !impersonation?.active}
+        open={freshAction != null && !isImpersonating}
         onCancel={() => setFreshAction(null)}
         onSuccess={async () => {
           if (freshAction === "rotate") {

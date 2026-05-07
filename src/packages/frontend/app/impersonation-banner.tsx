@@ -8,13 +8,15 @@ import { Alert, Button, Space } from "antd";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 
 export function ImpersonationBanner() {
-  const impersonation = useTypedRedux("account", "impersonation");
+  const rawImpersonation = useTypedRedux("account", "impersonation") as any;
+  const impersonation =
+    rawImpersonation?.toJS?.() ?? rawImpersonation ?? undefined;
   const first_name = useTypedRedux("account", "first_name");
   const last_name = useTypedRedux("account", "last_name");
   const email_address = useTypedRedux("account", "email_address");
   const actions = useActions("account");
 
-  if (!impersonation?.active) {
+  if (impersonation?.active !== true) {
     return null;
   }
 
