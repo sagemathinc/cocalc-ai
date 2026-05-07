@@ -82,6 +82,7 @@ import {
   resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
+  shouldClearGitReviewSavingOnScopeChange,
 } from "./git-commit/review-state";
 import {
   buildGitInlineDraftEditorId,
@@ -149,6 +150,7 @@ export {
   resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
+  shouldClearGitReviewSavingOnScopeChange,
 };
 export {
   buildGitInlineDraftEditorId,
@@ -315,6 +317,7 @@ export function GitCommitDrawer({
     useState("");
   const reviewLoadTokenRef = useRef(0);
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
+  const reviewScopeRef = useRef<string | undefined>(undefined);
   const reviewNoteDraftRef = useRef(reviewNoteDraft);
   const reviewedRef = useRef(reviewed);
   const preserveCommitSearchOnAutoClearRef = useRef(false);
@@ -780,16 +783,23 @@ export function GitCommitDrawer({
   }, [visibleLogEntries, commit, reviewedByCommit]);
 
   useEffect(() => {
-    if (!open) {
-      activeReviewCommitRef.current = undefined;
-      return;
+    const nextScope =
+      open && accountId && commit && !isHeadCommit(commit)
+        ? normalizeCommitSha(commit)
+        : undefined;
+    const previousScope = reviewScopeRef.current;
+    reviewScopeRef.current = nextScope;
+    activeReviewCommitRef.current = nextScope;
+    if (
+      shouldClearGitReviewSavingOnScopeChange({
+        reviewSaving,
+        previousScope,
+        nextScope,
+      })
+    ) {
+      setReviewSaving(false);
     }
-    if (!commit || isHeadCommit(commit)) {
-      activeReviewCommitRef.current = undefined;
-      return;
-    }
-    activeReviewCommitRef.current = normalizeCommitSha(commit);
-  }, [open, commit]);
+  }, [open, accountId, commit, reviewSaving]);
 
   useEffect(() => {
     if (!open || !accountId) return;

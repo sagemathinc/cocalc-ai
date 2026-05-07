@@ -102,3 +102,15 @@ export function resolveGitReviewLoadFailure({
       typeof draft?.updated_at === "number" ? draft.updated_at : undefined,
   };
 }
+
+export function shouldClearGitReviewSavingOnScopeChange({
+  reviewSaving,
+  previousScope,
+  nextScope,
+}: {
+  reviewSaving: boolean;
+  previousScope?: string;
+  nextScope?: string;
+}): boolean {
+  return reviewSaving && previousScope !== nextScope;
+}

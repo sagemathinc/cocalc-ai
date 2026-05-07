@@ -23,6 +23,7 @@ import {
   resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
+  shouldClearGitReviewSavingOnScopeChange,
   buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
@@ -437,6 +438,30 @@ describe("git commit drawer merge commit formatting", () => {
       reviewNoteDraft: "local draft note",
       reviewUpdatedAt: 1234,
     });
+  });
+
+  it("clears git review saving only when the active commit scope changes", () => {
+    expect(
+      shouldClearGitReviewSavingOnScopeChange({
+        reviewSaving: true,
+        previousScope: "aaa1111",
+        nextScope: "bbb2222",
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearGitReviewSavingOnScopeChange({
+        reviewSaving: true,
+        previousScope: "aaa1111",
+        nextScope: "aaa1111",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitReviewSavingOnScopeChange({
+        reviewSaving: false,
+        previousScope: "aaa1111",
+        nextScope: "bbb2222",
+      }),
+    ).toBe(false);
   });
 
   it("does not persist a private review note when cancel wins after blur ordering", () => {
