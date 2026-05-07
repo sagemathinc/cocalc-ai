@@ -111,6 +111,10 @@ import {
   applyQueuedUserMessageEditToRequest,
   getLatestQueuedUserMessageContent,
 } from "./queued-user-message";
+import {
+  buildCodexTurnNoticeOptions,
+  shouldNotifyOnCodexTurnFinish,
+} from "./codex-turn-notice";
 import { resolveLiteCodexHome } from "../codex-auth";
 import type { SyncDB } from "@cocalc/conat/sync-doc/syncdb";
 import type { AcpStreamUsage } from "@cocalc/ai/acp";
@@ -1533,6 +1537,7 @@ export class ChatStreamWriter {
   private seq = 0;
   private finished = false;
   private finishedBy?: "summary" | "error" | "interrupt";
+  private completionNoticePublished = false;
   private approverAccountId: string;
   private interruptedMessage?: string;
   private contentBeforeInterrupt?: string;
@@ -1830,6 +1835,7 @@ export class ChatStreamWriter {
     switch (this.finishedBy) {
       case "error":
         this.setThreadState("error");
+        void this.publishCodexTurnCompletionNoticeBestEffort("error");
         this.finalizeLease("error", this.lastErrorText ?? undefined);
         return;
       case "interrupt":
@@ -1838,10 +1844,64 @@ export class ChatStreamWriter {
         return;
       case "summary":
         this.setThreadState("complete");
+        void this.publishCodexTurnCompletionNoticeBestEffort("complete");
         this.finalizeLease("completed");
         return;
       default:
         return;
+    }
+  }
+
+  private async publishCodexTurnCompletionNoticeBestEffort(
+    terminalState: "complete" | "error",
+  ): Promise<void> {
+    if (this.completionNoticePublished || !hasRemote) {
+      return;
+    }
+    this.completionNoticePublished = true;
+    try {
+      const threadId = this.resolvedThreadId();
+      if (!threadId || !this.syncdb) {
+        return;
+      }
+      const threadConfig = preferredThreadConfigRow(this.syncdb, threadId);
+      const config = this.recordField<any>(threadConfig, "acp_config") as
+        | undefined
+        | null;
+      if (!shouldNotifyOnCodexTurnFinish(config)) {
+        return;
+      }
+      const threadLabel =
+        this.recordField<string>(threadConfig, "name") ?? undefined;
+      const messageDateMs = Date.parse(`${this.metadata.message_date ?? ""}`);
+      const notice = buildCodexTurnNoticeOptions({
+        account_id: this.approverAccountId,
+        source_project_id: this.metadata.project_id,
+        source_path: this.metadata.path,
+        source_fragment_id: Number.isFinite(messageDateMs)
+          ? `chat=${Math.floor(messageDateMs)}`
+          : undefined,
+        thread_id: threadId,
+        thread_label: threadLabel,
+        stable_source_id:
+          `${this.metadata.message_id ?? this.metadata.message_date ?? ""}`.trim() ||
+          undefined,
+        terminal_state: terminalState,
+        error_text: terminalState === "error" ? this.lastErrorText : undefined,
+      });
+      await callRemoteHub({
+        name: "notifications.createCodexTurnNotice",
+        args: [notice],
+      });
+    } catch (err) {
+      logger.warn("failed to publish codex turn completion notice", {
+        chatKey: this.chatKey,
+        project_id: this.metadata.project_id,
+        path: this.metadata.path,
+        thread_id: this.metadata.thread_id,
+        message_id: this.metadata.message_id,
+        err,
+      });
     }
   }
 

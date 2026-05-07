@@ -1,12 +1,6 @@
 /** @jest-environment jsdom */
 
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import * as immutable from "immutable";
 import { ChatPanel } from "../chatroom";
 
@@ -223,47 +217,27 @@ describe("ChatPanel ACP thread behavior", () => {
     );
   });
 
-  it("lets the completed-turn modal disable notify for the next turn", async () => {
+  it("reads and persists notify state from the thread codex config", async () => {
     currentAcpState = immutable.Map({
       "thread:t1": "running",
     });
+    const setCodexConfig = jest.fn();
     const actions = {
       sendChat: jest.fn(() => Date.now()),
       getThreadMetadata: jest.fn(() => ({
         agent_kind: "acp",
-        acp_config: { model: "gpt-5.4", sessionMode: "workspace-write" },
+        acp_config: {
+          model: "gpt-5.4",
+          sessionMode: "workspace-write",
+          notifyOnTurnFinish: true,
+        },
       })),
-      getMessagesInThread: jest
-        .fn()
-        .mockReturnValueOnce([
-          {
-            date: new Date(1000),
-            thread_id: "t1",
-            message_id: "m1",
-            sender_id: "acct",
-            history: [{ author_id: "acct", content: "working" }],
-            acp_account_id: "acct",
-            generating: false,
-            acp_interrupted: false,
-          },
-        ])
-        .mockReturnValueOnce([
-          {
-            date: new Date(2000),
-            thread_id: "t1",
-            message_id: "m2",
-            sender_id: "acct",
-            history: [{ author_id: "acct", content: "done" }],
-            acp_account_id: "acct",
-            generating: false,
-            acp_interrupted: false,
-          },
-        ])
-        .mockReturnValue([]),
+      getMessagesInThread: jest.fn(() => []),
       deleteDraft: jest.fn(),
       frameTreeActions: undefined,
       frameId: undefined,
       languageModelStopGenerating: jest.fn(),
+      setCodexConfig,
       getCodexConfig: jest.fn(() => ({
         model: "gpt-5.4",
         sessionMode: "workspace-write",
@@ -281,10 +255,6 @@ describe("ChatPanel ACP thread behavior", () => {
       />,
     );
 
-    await act(async () => {
-      lastThreadPanelProps?.onNotifyOnTurnFinishChange?.(true);
-    });
-
     await waitFor(() =>
       expect(lastThreadPanelProps?.notifyOnTurnFinish).toBe(true),
     );
@@ -301,20 +271,17 @@ describe("ChatPanel ACP thread behavior", () => {
       />,
     );
 
-    const notify = await screen.findByRole("checkbox", { name: "Notify" });
-    fireEvent.click(notify);
+    await act(async () => {
+      lastThreadPanelProps?.onNotifyOnTurnFinishChange?.(false);
+    });
 
-    rerender(
-      <ChatPanel
-        actions={actions}
-        project_id="project-1"
-        path="chat/test.chat"
-        messages={new Map()}
-        threadIndex={undefined}
-        docVersion={2}
-      />,
+    expect(setCodexConfig).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({
+        model: "gpt-5.4",
+        sessionMode: "workspace-write",
+        notifyOnTurnFinish: false,
+      }),
     );
-
-    expect(lastThreadPanelProps?.notifyOnTurnFinish).toBe(false);
   });
 });

@@ -26,6 +26,7 @@ import type { NewsItemWebapp } from "@cocalc/util/types/news";
 import type {
   ArchiveNotificationOptions,
   CreateAccountNoticeOptions,
+  CreateCodexTurnNoticeOptions,
   CreateMentionNotificationOptions,
   CreateNotificationResult,
   ListNotificationsOptions,
@@ -1338,6 +1339,20 @@ async function createAccountNoticeLite(
   );
 }
 
+async function createCodexTurnNoticeLite(
+  opts: CreateCodexTurnNoticeOptions,
+): Promise<CreateNotificationResult> {
+  if (hasRemote) {
+    return await callRemoteHub({
+      name: "notifications.createCodexTurnNotice",
+      args: [opts],
+    });
+  }
+  throw Error(
+    "notifications.createCodexTurnNotice requires a remote hub connection in lite mode",
+  );
+}
+
 async function listNotificationsLite(
   opts?: ListNotificationsOptions,
 ): Promise<NotificationListRow[]> {
@@ -1451,6 +1466,7 @@ export const hubApi: HubApi = {
   notifications: {
     createMention: createMentionLite,
     createAccountNotice: createAccountNoticeLite,
+    createCodexTurnNotice: createCodexTurnNoticeLite,
     list: listNotificationsLite,
     counts: getNotificationCountsLite,
     markRead: markNotificationReadLite,

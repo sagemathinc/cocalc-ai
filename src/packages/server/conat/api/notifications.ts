@@ -20,6 +20,7 @@ import {
 } from "@cocalc/database/postgres/notifications-core";
 import type {
   CreateAccountNoticeOptions,
+  CreateCodexTurnNoticeOptions,
   ArchiveNotificationOptions,
   CreateMentionNotificationOptions,
   CreateNotificationResult,
@@ -249,6 +250,19 @@ export async function createAccountNotice(
     opts.dedupe_key == null || `${opts.dedupe_key}`.trim() === ""
       ? null
       : `${opts.dedupe_key}`.trim();
+  const source_project_id =
+    opts.source_project_id == null || `${opts.source_project_id}`.trim() === ""
+      ? null
+      : requireUuid(opts.source_project_id, "source project id");
+  const source_path =
+    opts.source_path == null || `${opts.source_path}`.trim() === ""
+      ? null
+      : `${opts.source_path}`.trim();
+  const source_fragment_id =
+    opts.source_fragment_id == null ||
+    `${opts.source_fragment_id}`.trim() === ""
+      ? null
+      : `${opts.source_fragment_id}`.trim();
 
   return await createNotificationResult({
     kind: "account_notice",
@@ -257,9 +271,11 @@ export async function createAccountNotice(
     buildEvent: async () => ({
       kind: "account_notice",
       source_bay_id,
-      source_project_id: null,
+      source_project_id,
+      source_path,
+      source_fragment_id,
       actor_account_id: account_id,
-      origin_kind: "system",
+      origin_kind: source_project_id ? "project" : "system",
       payload_json: {
         severity,
         title,
@@ -282,8 +298,99 @@ export async function createAccountNotice(
           origin_label,
           action_link,
           action_label,
+          path: source_path,
+          fragment_id: source_fragment_id,
         },
       })),
+  });
+}
+
+export async function createCodexTurnNotice(
+  opts: CreateCodexTurnNoticeOptions,
+): Promise<CreateNotificationResult> {
+  const account_id = requireAccountId(opts.account_id);
+  const source_project_id = requireUuid(
+    opts.source_project_id,
+    "source project id",
+  );
+  await assertProjectCollaboratorAccessAllowRemote({
+    account_id,
+    project_id: source_project_id,
+  });
+  const source_path = requireNonEmptyString(opts.source_path, "source_path");
+  const source_fragment_id =
+    opts.source_fragment_id == null ||
+    `${opts.source_fragment_id}`.trim() === ""
+      ? null
+      : `${opts.source_fragment_id}`.trim();
+  const thread_id = requireNonEmptyString(opts.thread_id, "thread_id");
+  const thread_label =
+    opts.thread_label == null || `${opts.thread_label}`.trim() === ""
+      ? null
+      : `${opts.thread_label}`.trim();
+  const title = requireNonEmptyString(opts.title, "title");
+  const body_markdown = requireNonEmptyString(
+    opts.body_markdown,
+    "body_markdown",
+  );
+  const severity = normalizeSeverity(opts.severity ?? "info");
+  const stable_source_id =
+    opts.stable_source_id == null || `${opts.stable_source_id}`.trim() === ""
+      ? null
+      : `${opts.stable_source_id}`.trim();
+  const source_bay_id = getConfiguredBayId();
+
+  return await createNotificationResult({
+    kind: "account_notice",
+    source_bay_id,
+    targets: [account_id],
+    buildEvent: async () => ({
+      kind: "account_notice",
+      source_bay_id,
+      source_project_id,
+      source_path,
+      source_fragment_id,
+      actor_account_id: account_id,
+      origin_kind: "project",
+      payload_json: {
+        title,
+        body_markdown,
+        severity,
+        origin_label: "Codex",
+        notice_type: "codex_turn_completion",
+        thread_id,
+        thread_label,
+        stable_source_id,
+      },
+    }),
+    buildTargets: async (targetHomeBays) => [
+      {
+        target_account_id: account_id,
+        target_home_bay_id: targetHomeBays[account_id],
+        dedupe_key: stable_source_id
+          ? [
+              "codex_turn_completion",
+              source_project_id,
+              source_path,
+              thread_id,
+              stable_source_id,
+              account_id,
+            ].join(":")
+          : null,
+        summary_json: {
+          title,
+          body_markdown,
+          severity,
+          origin_label: "Codex",
+          notice_type: "codex_turn_completion",
+          path: source_path,
+          fragment_id: source_fragment_id,
+          thread_id,
+          thread_label,
+          stable_source_id,
+        },
+      },
+    ],
   });
 }
 

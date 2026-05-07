@@ -23,6 +23,7 @@ import {
 } from "./types";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { lite, remote_sync } from "@cocalc/frontend/lite";
+import { showCodexTurnCompletionToastBestEffort } from "../codex-turn-toast";
 
 const DEFAULT_INBOX_LIMIT = 500;
 
@@ -57,11 +58,14 @@ function buildNotificationMention(
     title: summary.title,
     body_markdown: summary.body_markdown,
     origin_label: summary.origin_label,
+    notice_type: summary.notice_type,
     action_link: summary.action_link,
     action_label: summary.action_label,
     severity: summary.severity,
     description: summary.description,
     fragment_id: summary.fragment_id,
+    thread_id: summary.thread_id,
+    thread_label: summary.thread_label,
     users: {
       [account_id]: {
         read: !!row.read_state?.read,
@@ -270,6 +274,10 @@ export class MentionsActions extends Actions<MentionsState> {
     }
     switch (event.type) {
       case "notification.upsert": {
+        void showCodexTurnCompletionToastBestEffort({
+          account_id,
+          row: event.notification,
+        });
         const mention = buildNotificationMention(account_id, {
           ...event.notification,
           created_at: event.notification.created_at

@@ -9,6 +9,7 @@ import {
   archive,
   counts,
   createAccountNotice,
+  createCodexTurnNotice,
   createMention,
   list,
   markRead,
@@ -169,6 +170,60 @@ describe("conat notifications api", () => {
         }),
       ],
     });
+  });
+
+  it("creates codex turn completion notices for the current account", async () => {
+    await seedMentionContext();
+
+    await expect(
+      createCodexTurnNotice({
+        account_id: TARGET_ACCOUNT_ID,
+        source_project_id: PROJECT_ID,
+        source_path: "work/chat.chat",
+        source_fragment_id: "chat=1715000000000",
+        thread_id: "thread-1",
+        thread_label: "Build fix",
+        title: "Codex turn finished",
+        body_markdown: "Codex finished working in **Build fix**.",
+        severity: "info",
+        stable_source_id: "assistant-message-1",
+      }),
+    ).resolves.toMatchObject({
+      kind: "account_notice",
+      target_count: 1,
+      targets: [
+        expect.objectContaining({
+          target_account_id: TARGET_ACCOUNT_ID,
+          target_home_bay_id: LOCAL_BAY_ID,
+        }),
+      ],
+    });
+
+    const { rows } = await getPool().query(
+      `SELECT kind, source_project_id, source_path, source_fragment_id,
+              actor_account_id, origin_kind, payload_json
+         FROM notification_events`,
+    );
+    expect(rows).toEqual([
+      {
+        kind: "account_notice",
+        source_project_id: PROJECT_ID,
+        source_path: "work/chat.chat",
+        source_fragment_id: "chat=1715000000000",
+        actor_account_id: TARGET_ACCOUNT_ID,
+        origin_kind: "project",
+        payload_json: {
+          title: "Codex turn finished",
+          body_markdown: "Codex finished working in **Build fix**.",
+          severity: "info",
+          origin_label: "Codex",
+          notice_type: "codex_turn_completion",
+          thread_id: "thread-1",
+          thread_label: "Build fix",
+          stable_source_id: "assistant-message-1",
+        },
+      },
+    ]);
   });
 
   it("lists projected notifications, returns counts, and marks rows read", async () => {
