@@ -330,6 +330,7 @@ coherent release story.
 - [ ] Keep the remaining limit model surfaces coherent:
   - admin override controls
   - dedicated-host egress policy semantics/documentation
+  - outbound network policy by trust tier
   - override explanation/audit visibility
 - [ ] Ensure dedicated hosts use the same local host-protection model as
       shared hosts.

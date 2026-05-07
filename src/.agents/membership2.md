@@ -360,6 +360,82 @@ The important planning decision is:
 - free/trial is a policy layer over trust, usage windows, and product exposure
 - it is not a separate entitlement architecture
 
+### Outbound network policy should be trust-tier based
+
+For `cocalc-ai`, a blanket `no outbound internet for free users` policy would
+make the product feel broken.
+
+Modern users expect at least:
+
+- `pip install`
+- `apt install`
+- git over HTTPS
+- access to package registries and cloud/API endpoints
+
+So the correct model is not a giant domain allowlist and not unrestricted
+internet for everyone.
+
+It is a trust-tier-based network policy.
+
+#### Recommended policy classes
+
+V1 should support at least these outbound network classes:
+
+1. `none`
+2. `web-only`
+   - DNS
+   - HTTP/HTTPS
+3. `full`
+
+#### Default mapping
+
+- generic free/trial shared runtimes:
+  - `web-only`
+  - no dedicated hosts
+  - strict egress, connection-rate, and runtime windows
+- verified education / invited / institution-sponsored users:
+  - usually `web-only`
+  - higher limits than generic free/trial
+- trusted paid users:
+  - usually `full`
+  - still governed by rolling spend/trust limits
+- dedicated hosts:
+  - `full`
+  - stronger monitoring and risk controls
+
+#### Important non-goals
+
+Do not build V1 around hostname whitelists such as special-casing GitHub or
+apt mirrors.
+
+That approach is fragile, high-maintenance, and incompatible with modern
+package registries and CDN-backed downloads.
+
+The default controls should instead be:
+
+- protocol class
+- egress byte limits
+- connection-rate limits
+- concurrent connection limits
+- public exposure rights
+- trust-tier gating
+
+#### Security boundaries
+
+Even when outbound access is allowed, the platform should still default to:
+
+- no private-network access
+- no public inbound exposure by default
+- no dedicated-host access for generic free/trial users
+- no broad UDP-based internet access for low-trust users unless there is a
+  specific reason
+
+The important planning decision is:
+
+- outbound network access is another managed policy surface, like AI spend and
+  egress
+- it is not an ad hoc firewall exception list
+
 ## Data Model Corrections
 
 The existing local tables stay, but their ownership semantics change.
@@ -1005,9 +1081,15 @@ V1 controls:
 
 - dedicated-host eligibility should be gated by membership tier and trust level
 - new accounts should not immediately get broad host-spend rights
+- low-trust shared runtimes should default to `web-only` outbound access, not
+  unrestricted internet
 - host spend limits should be rolling-window based and admin-configurable
   - 5-hour window
   - 7-day window
+- low-trust runtimes should also have:
+  - tight egress windows
+  - connection-rate limits
+  - no public app exposure by default
 - host creation/start/resize should record who did it and under what trust state
 - risk review and emergency suspension must be possible without corrupting the
   billing ledger
