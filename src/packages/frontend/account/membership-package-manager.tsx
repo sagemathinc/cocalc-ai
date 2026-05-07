@@ -103,13 +103,12 @@ function sortPackagesByRecent(
 function getPackageKindLabel(kind: MembershipPackageKind): string {
   switch (kind) {
     case "team":
-      return "Team";
+      return "Team package";
     case "domain":
-      return "Domain";
     case "site":
-      return "Site";
+      return "Site license";
     case "course":
-      return "Course";
+      return "Course package";
   }
 }
 
@@ -225,8 +224,8 @@ export function ClaimableMembershipPackagesPanel({
       <Text strong>Claim memberships</Text>
       <Paragraph type="secondary" style={{ marginTop: "6px" }}>
         If a seat was reserved for one of your verified email addresses, or if
-        your verified domain matches an available institutional package, you can
-        claim that membership here.
+        your verified domain matches an available site license, you can claim
+        that membership here.
       </Paragraph>
       {loading ? <Loading /> : null}
       {error ? (
@@ -237,7 +236,7 @@ export function ClaimableMembershipPackagesPanel({
           type="info"
           showIcon
           title="No claimable memberships right now"
-          description="Verify the relevant email address first if you expect a reserved team, site, or domain seat to appear here."
+          description="Verify the relevant email address first if you expect a reserved team or site-license seat to appear here."
         />
       ) : null}
       {!loading && claimables.length > 0 ? (
@@ -248,7 +247,7 @@ export function ClaimableMembershipPackagesPanel({
               size="small"
               title={
                 <Space wrap>
-                  <span>{`${getPackageKindLabel(claimablePackage.kind)} package`}</span>
+                  <span>{getPackageKindLabel(claimablePackage.kind)}</span>
                   <Tag color="blue">
                     {capitalize(claimablePackage.membership_class)}
                   </Tag>
@@ -409,8 +408,8 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
       <Text strong>Team and site licenses</Text>
       <Paragraph type="secondary" style={{ marginTop: "6px" }}>
         Team packages let you buy seats and grant memberships to specific
-        accounts. Site and domain packages are usually provisioned by support or
-        admins, then managed here.
+        accounts. Site licenses are provisioned by support or admins, then
+        managed here. There is no self-serve site-license creation flow yet.
       </Paragraph>
       {error && (
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />
@@ -450,9 +449,9 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
             }}
           />
           <PackageGroup
-            title="Site and domain packages"
-            emptyTitle="No site or domain packages provisioned"
-            emptyDescription="These packages are normally created by support or admins. Once they exist, assign seats from here to the accounts that should receive access."
+            title="Site licenses"
+            emptyTitle="No site licenses provisioned"
+            emptyDescription="Site licenses are provisioned by support or admins. Once they exist, assign seats from here to the accounts that should receive access."
             membershipPackages={sitePackages}
             tiers={tiers}
             accountNames={accountNames}
@@ -590,7 +589,7 @@ function MembershipPackageCard({
       size="small"
       title={
         <Space wrap>
-          <span>{`${getPackageKindLabel(membershipPackage.kind)} package`}</span>
+          <span>{getPackageKindLabel(membershipPackage.kind)}</span>
           <Tag color="blue">{tierLabel}</Tag>
           {interval ? <Tag>{interval}</Tag> : null}
         </Space>
@@ -1196,7 +1195,7 @@ function AssignMembershipSeatModal({
           <Paragraph type="secondary" style={{ marginBottom: 0 }}>
             Search for an existing account or enter an exact email address to
             reserve a seat from the{" "}
-            {getPackageKindLabel(membershipPackage.kind).toLowerCase()} package.
+            {getPackageKindLabel(membershipPackage.kind).toLowerCase()}.
             Reserved email seats appear as claimable memberships once that user
             verifies the address on their account.
           </Paragraph>

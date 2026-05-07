@@ -137,7 +137,7 @@ describe("MembershipPackageManager", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Team packages")).toBeTruthy();
-      expect(screen.getByText("Site and domain packages")).toBeTruthy();
+      expect(screen.getByText("Site licenses")).toBeTruthy();
       expect(screen.getByText("example.edu")).toBeTruthy();
       expect(screen.getByText("Grace Hopper")).toBeTruthy();
     });
