@@ -847,6 +847,8 @@ export default function Message({
   const [openCommitHash, setOpenCommitHash] = useState<string | undefined>(
     undefined,
   );
+  const [openCommitSelectionRequestToken, setOpenCommitSelectionRequestToken] =
+    useState(0);
 
   const replyMessageRef = useRef<string>("");
   const replyMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
@@ -1704,6 +1706,7 @@ export default function Message({
       return;
     }
     setOpenCommitHash(request.commitHash);
+    setOpenCommitSelectionRequestToken((current) => current + 1);
   }
 
   function renderHeaderActions() {
@@ -2336,6 +2339,7 @@ export default function Message({
         return;
       }
       setOpenCommitHash(hash);
+      setOpenCommitSelectionRequestToken((current) => current + 1);
     };
 
     return (
@@ -2518,6 +2522,7 @@ export default function Message({
         return;
       }
       setOpenCommitHash(hash);
+      setOpenCommitSelectionRequestToken((current) => current + 1);
     };
     return (
       <Drawer
@@ -3141,6 +3146,7 @@ export default function Message({
           sourcePath={path}
           cwdOverride={activityBasePath}
           commitHash={openCommitHash}
+          commitSelectionRequestToken={openCommitSelectionRequestToken}
           open={openCommitHash != null}
           onClose={() => setOpenCommitHash(undefined)}
           fontSize={font_size}

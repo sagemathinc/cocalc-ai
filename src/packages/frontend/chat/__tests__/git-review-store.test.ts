@@ -310,6 +310,15 @@ describe("git review import/export", () => {
     });
   });
 
+  it("returns undefined when no persisted or draft review state exists", async () => {
+    await expect(
+      loadReviewRecord({
+        accountId: "acct-11",
+        commitSha: "999aaaa",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("migrates legacy unscoped drafts into account-scoped storage on load", async () => {
     localStorage.setItem(
       "cocalc:git-review:draft:v2:commit:ddd4444",

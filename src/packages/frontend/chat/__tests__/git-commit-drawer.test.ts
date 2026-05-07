@@ -1,5 +1,8 @@
 import React, { useState } from "react";
 import {
+  applySubmittedGitReviewComments,
+  applyGitReviewedByCommitEntries,
+  applyGitReviewedByCommitResetEntry,
   buildGitInlineDraftEditorId,
   buildGitInlineEditEditorId,
   buildGitDiffFindMatches,
@@ -20,17 +23,30 @@ import {
   isGitDiffFindTargetRendered,
   MarkdownHistoryInput,
   ReviewNoteEditor,
+  resolveGitReviewLoadFailure,
+  resolveIncomingGitCommitSelection,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
+  shouldApplyGitRepoBootstrapScopedResult,
+  shouldClearGitHeadCommitBusyOnScopeChange,
+  shouldClearGitHeadStatusActionOnScopeChange,
+  shouldClearGitInlinePendingKey,
+  shouldClearGitRepoBootstrapBusyOnScopeChange,
+  shouldClearGitReviewSavingOnScopeChange,
+  shouldClearGitReviewSubmitOnScopeChange,
+  shouldFinalizeGitRepoBootstrapAction,
   buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
   isMergeCommitSummary,
+  shouldDisableGitReviewSubmission,
+  shouldApplyGitFileOpenScopedResult,
   matchGitDrawerScrollCommand,
   resolveGitCommitSearchChange,
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
+  shouldFinalizeGitFileOpenAction,
   shouldRefreshGitReviewStateOnReconnect,
   shouldCaptureGitDrawerFindShortcut,
 } from "../git-commit-drawer";
@@ -227,6 +243,106 @@ describe("git commit drawer merge commit formatting", () => {
     );
   });
 
+  it("keeps missing review state unknown when refreshing commit review indicators", () => {
+    expect(
+      applyGitReviewedByCommitEntries({
+        previous: {
+          abc1234: true,
+          def5678: false,
+        },
+        entries: [
+          ["abc1234", undefined],
+          ["def5678", { reviewed: false } as any],
+          ["999aaaa", { reviewed: true } as any],
+        ],
+      }),
+    ).toEqual({
+      def5678: false,
+      "999aaaa": true,
+    });
+  });
+
+  it("does not create an explicit unreviewed indicator when review reset has no draft state", () => {
+    expect(
+      applyGitReviewedByCommitResetEntry({
+        previous: {
+          def5678: false,
+        },
+        commitSha: "abc1234",
+        draftReviewed: undefined,
+      }),
+    ).toEqual({
+      def5678: false,
+    });
+    expect(
+      applyGitReviewedByCommitResetEntry({
+        previous: {
+          abc1234: true,
+        },
+        commitSha: "abc1234",
+        draftReviewed: undefined,
+      }),
+    ).toEqual({
+      abc1234: true,
+    });
+    expect(
+      applyGitReviewedByCommitResetEntry({
+        previous: {},
+        commitSha: "abc1234",
+        draftReviewed: false,
+      }),
+    ).toEqual({
+      abc1234: false,
+    });
+  });
+
+  it("disables git review submission when review persistence or target context is unavailable", () => {
+    expect(
+      shouldDisableGitReviewSubmission({
+        actionableInlineCommentCount: 1,
+        reviewSubmitBusy: false,
+        reviewSaving: false,
+        canRequestAgentTurn: true,
+        accountId: undefined,
+        currentReviewCommit: "abc1234",
+        isHeadSelected: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDisableGitReviewSubmission({
+        actionableInlineCommentCount: 1,
+        reviewSubmitBusy: false,
+        reviewSaving: false,
+        canRequestAgentTurn: true,
+        accountId: "acct-1",
+        currentReviewCommit: undefined,
+        isHeadSelected: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDisableGitReviewSubmission({
+        actionableInlineCommentCount: 1,
+        reviewSubmitBusy: false,
+        reviewSaving: false,
+        canRequestAgentTurn: true,
+        accountId: "acct-1",
+        currentReviewCommit: "abc1234",
+        isHeadSelected: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDisableGitReviewSubmission({
+        actionableInlineCommentCount: 1,
+        reviewSubmitBusy: false,
+        reviewSaving: false,
+        canRequestAgentTurn: true,
+        accountId: "acct-1",
+        currentReviewCommit: "abc1234",
+        isHeadSelected: false,
+      }),
+    ).toBe(false);
+  });
+
   it("refreshes git review state on reconnect only for editable persisted commits", () => {
     expect(
       shouldRefreshGitReviewStateOnReconnect({
@@ -282,6 +398,35 @@ describe("git commit drawer merge commit formatting", () => {
         reviewSaving: true,
       }),
     ).toBe(false);
+  });
+
+  it("reapplies explicit git commit link requests even when the hash itself is unchanged", () => {
+    expect(
+      resolveIncomingGitCommitSelection({
+        open: true,
+        currentSelectedCommit: "deadbeef",
+        incomingCommit: "abc1234",
+        requestTokenChanged: true,
+      }),
+    ).toBe("abc1234");
+
+    expect(
+      resolveIncomingGitCommitSelection({
+        open: true,
+        currentSelectedCommit: "abc1234",
+        incomingCommit: "abc1234",
+        requestTokenChanged: false,
+      }),
+    ).toBe("abc1234");
+
+    expect(
+      resolveIncomingGitCommitSelection({
+        open: false,
+        currentSelectedCommit: "deadbeef",
+        incomingCommit: "abc1234",
+        requestTokenChanged: true,
+      }),
+    ).toBe("deadbeef");
   });
 
   it("preserves onModeChange forwarding for git review note/comment editors", () => {
@@ -417,6 +562,371 @@ describe("git commit drawer merge commit formatting", () => {
       reviewNoteDraft: "newer local draft",
       reviewDirty: true,
     });
+  });
+
+  it("keeps newer inline comment edits when send-to-agent completes from an older snapshot", () => {
+    const unchangedDraft = {
+      id: "comment-a",
+      file_path: "src/example.ts",
+      side: "new",
+      body_md: "first draft",
+      status: "draft",
+      created_at: 1,
+      updated_at: 10,
+      local_revision: 1,
+    } as const;
+    const editedAfterSend = {
+      ...unchangedDraft,
+      body_md: "edited after send",
+      updated_at: 20,
+      local_revision: 2,
+    };
+    const untouchedOther = {
+      id: "comment-b",
+      file_path: "src/example.ts",
+      side: "new",
+      body_md: "other draft",
+      status: "draft",
+      created_at: 2,
+      updated_at: 11,
+      local_revision: 1,
+    } as const;
+
+    expect(
+      applySubmittedGitReviewComments({
+        sentComments: [unchangedDraft as any, untouchedOther as any],
+        currentComments: {
+          "comment-a": editedAfterSend as any,
+          "comment-b": untouchedOther as any,
+        },
+        submittedAt: 50,
+        submissionTurnId: "git-review-50",
+      }),
+    ).toEqual({
+      "comment-a": editedAfterSend,
+      "comment-b": {
+        ...untouchedOther,
+        status: "submitted",
+        submitted_at: 50,
+        submission_turn_id: "git-review-50",
+        updated_at: 50,
+        local_revision: 1,
+      },
+    });
+  });
+
+  it("keeps a local review draft visible when persisted review loading fails", () => {
+    expect(
+      resolveGitReviewLoadFailure({
+        draft: {
+          reviewed: true,
+          note: "local draft note",
+          comments: {
+            "comment-a": {
+              id: "comment-a",
+              file_path: "src/example.ts",
+              side: "new",
+              body_md: "keep me",
+              status: "draft",
+              created_at: 1,
+              updated_at: 1234,
+              local_revision: 1,
+            } as any,
+          },
+          updated_at: 1234,
+          revision: 3,
+        },
+        error: "closed",
+        accountId: "acct-1",
+        commitSha: "abc1234",
+      }),
+    ).toEqual({
+      reviewError: "closed",
+      reviewed: true,
+      reviewNote: "local draft note",
+      reviewNoteDraft: "local draft note",
+      reviewUpdatedAt: 1234,
+      reviewRecord: {
+        version: 2,
+        account_id: "acct-1",
+        commit_sha: "abc1234",
+        reviewed: true,
+        note: "local draft note",
+        comments: {
+          "comment-a": {
+            id: "comment-a",
+            file_path: "src/example.ts",
+            side: "new",
+            body_md: "keep me",
+            status: "draft",
+            created_at: 1,
+            updated_at: 1234,
+            local_revision: 1,
+          },
+        },
+        created_at: 1234,
+        updated_at: 1234,
+        revision: 3,
+      },
+    });
+  });
+
+  it("clears git review saving only when the active commit scope changes", () => {
+    expect(
+      shouldClearGitReviewSavingOnScopeChange({
+        reviewSaving: true,
+        previousScope: "aaa1111",
+        nextScope: "bbb2222",
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearGitReviewSavingOnScopeChange({
+        reviewSaving: true,
+        previousScope: "aaa1111",
+        nextScope: "aaa1111",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitReviewSavingOnScopeChange({
+        reviewSaving: false,
+        previousScope: "aaa1111",
+        nextScope: "bbb2222",
+      }),
+    ).toBe(false);
+  });
+
+  it("clears git review submit state only when the active commit scope changes", () => {
+    expect(
+      shouldClearGitReviewSubmitOnScopeChange({
+        reviewSubmitBusy: true,
+        previousScope: "aaa1111",
+        nextScope: "bbb2222",
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearGitReviewSubmitOnScopeChange({
+        reviewSubmitBusy: true,
+        previousScope: "aaa1111",
+        nextScope: "aaa1111",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitReviewSubmitOnScopeChange({
+        reviewSubmitBusy: false,
+        previousScope: "aaa1111",
+        nextScope: "bbb2222",
+      }),
+    ).toBe(false);
+  });
+
+  it("only clears inline comment pending state for the action that owns it", () => {
+    expect(
+      shouldClearGitInlinePendingKey({
+        currentPendingKey: "resolve:comment-b",
+        actionPendingKey: "resolve:comment-a",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitInlinePendingKey({
+        currentPendingKey: "resolve:comment-a",
+        actionPendingKey: "resolve:comment-a",
+      }),
+    ).toBe(true);
+  });
+
+  it("clears head commit busy state only when leaving the active HEAD scope", () => {
+    expect(
+      shouldClearGitHeadCommitBusyOnScopeChange({
+        headCommitBusy: true,
+        previousScope: "HEAD",
+        nextScope: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearGitHeadCommitBusyOnScopeChange({
+        headCommitBusy: true,
+        previousScope: "HEAD",
+        nextScope: "HEAD",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitHeadCommitBusyOnScopeChange({
+        headCommitBusy: false,
+        previousScope: "HEAD",
+        nextScope: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears repo bootstrap busy state only when leaving the non-repo scope", () => {
+    expect(
+      shouldClearGitRepoBootstrapBusyOnScopeChange({
+        repoBootstrapBusy: true,
+        previousScope: "non-repo",
+        nextScope: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearGitRepoBootstrapBusyOnScopeChange({
+        repoBootstrapBusy: true,
+        previousScope: "non-repo",
+        nextScope: "non-repo",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitRepoBootstrapBusyOnScopeChange({
+        repoBootstrapBusy: false,
+        previousScope: "non-repo",
+        nextScope: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("only applies git repo bootstrap results while the same non-repo scope is still active", () => {
+    expect(
+      shouldApplyGitRepoBootstrapScopedResult({
+        actionToken: 2,
+        currentActionToken: 2,
+        startedScope: "non-repo",
+        currentActionScope: "non-repo",
+        activeScope: "non-repo",
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplyGitRepoBootstrapScopedResult({
+        actionToken: 2,
+        currentActionToken: 3,
+        startedScope: "non-repo",
+        currentActionScope: "non-repo",
+        activeScope: "non-repo",
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplyGitRepoBootstrapScopedResult({
+        actionToken: 2,
+        currentActionToken: 2,
+        startedScope: "non-repo",
+        currentActionScope: undefined,
+        activeScope: "non-repo",
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplyGitRepoBootstrapScopedResult({
+        actionToken: 2,
+        currentActionToken: 2,
+        startedScope: "non-repo",
+        currentActionScope: "non-repo",
+        activeScope: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("only finalizes the git repo bootstrap action that still owns the scope token", () => {
+    expect(
+      shouldFinalizeGitRepoBootstrapAction({
+        actionToken: 4,
+        currentActionToken: 4,
+        startedScope: "non-repo",
+        currentActionScope: "non-repo",
+      }),
+    ).toBe(true);
+    expect(
+      shouldFinalizeGitRepoBootstrapAction({
+        actionToken: 4,
+        currentActionToken: 5,
+        startedScope: "non-repo",
+        currentActionScope: "non-repo",
+      }),
+    ).toBe(false);
+    expect(
+      shouldFinalizeGitRepoBootstrapAction({
+        actionToken: 4,
+        currentActionToken: 4,
+        startedScope: "non-repo",
+        currentActionScope: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("only applies git diff file-open results while the same drawer view is still active", () => {
+    expect(
+      shouldApplyGitFileOpenScopedResult({
+        actionToken: 7,
+        currentActionToken: 7,
+        startedScope: "1:hash-a",
+        currentActionScope: "1:hash-a",
+        activeScope: "1:hash-a",
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplyGitFileOpenScopedResult({
+        actionToken: 7,
+        currentActionToken: 8,
+        startedScope: "1:hash-a",
+        currentActionScope: "1:hash-a",
+        activeScope: "1:hash-a",
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplyGitFileOpenScopedResult({
+        actionToken: 7,
+        currentActionToken: 7,
+        startedScope: "1:hash-a",
+        currentActionScope: "1:hash-a",
+        activeScope: "2:hash-a",
+      }),
+    ).toBe(false);
+  });
+
+  it("only finalizes the latest git diff file-open action for its drawer view", () => {
+    expect(
+      shouldFinalizeGitFileOpenAction({
+        actionToken: 9,
+        currentActionToken: 9,
+        startedScope: "1:hash-a",
+        currentActionScope: "1:hash-a",
+      }),
+    ).toBe(true);
+    expect(
+      shouldFinalizeGitFileOpenAction({
+        actionToken: 9,
+        currentActionToken: 10,
+        startedScope: "1:hash-a",
+        currentActionScope: "1:hash-a",
+      }),
+    ).toBe(false);
+    expect(
+      shouldFinalizeGitFileOpenAction({
+        actionToken: 9,
+        currentActionToken: 9,
+        startedScope: "1:hash-a",
+        currentActionScope: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears head status actions only when leaving the active HEAD scope", () => {
+    expect(
+      shouldClearGitHeadStatusActionOnScopeChange({
+        headStatusAction: "add:src/file.ts",
+        previousScope: "HEAD",
+        nextScope: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearGitHeadStatusActionOnScopeChange({
+        headStatusAction: "add:src/file.ts",
+        previousScope: "HEAD",
+        nextScope: "HEAD",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitHeadStatusActionOnScopeChange({
+        headStatusAction: "",
+        previousScope: "HEAD",
+        nextScope: undefined,
+      }),
+    ).toBe(false);
   });
 
   it("does not persist a private review note when cancel wins after blur ordering", () => {

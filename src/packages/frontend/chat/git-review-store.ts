@@ -409,11 +409,14 @@ export async function loadReviewRecord({
   const legacy = await kvV1.get(normalizedCommit);
   const draft = loadReviewDraft(normalizedCommit, accountId);
   if (!legacy) {
+    if (!draft) {
+      return undefined;
+    }
     return mergeRecordWithDraft(
       emptyRecord({
         accountId,
         commitSha: normalizedCommit,
-        now: draft?.updated_at ?? Date.now(),
+        now: draft.updated_at ?? Date.now(),
       }),
       draft,
     );

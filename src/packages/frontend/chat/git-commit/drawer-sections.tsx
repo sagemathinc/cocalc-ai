@@ -40,6 +40,7 @@ import {
   formatMergeCommitBodyMarkdown,
   isMergeCommitSummary,
   parseDateSafe,
+  shouldDisableGitReviewSubmission,
   splitCommitMessage,
 } from "./utils";
 import type { GitReviewCommentV2 } from "../git-review-store";
@@ -595,11 +596,15 @@ export function GitReviewPanel({
   reviewSubmissionHelpText,
   onSendInlineReviewToAgent,
 }: GitReviewPanelProps) {
-  const submitDisabled =
-    actionableInlineCommentCount === 0 ||
-    reviewSubmitBusy ||
-    reviewSaving ||
-    !canRequestAgentTurn;
+  const submitDisabled = shouldDisableGitReviewSubmission({
+    actionableInlineCommentCount,
+    reviewSubmitBusy,
+    reviewSaving,
+    canRequestAgentTurn,
+    accountId: accountId ?? undefined,
+    currentReviewCommit: currentReviewCommit ?? undefined,
+    isHeadSelected,
+  });
   const submitButton = (
     <Button
       size="small"

@@ -79,8 +79,13 @@ import {
   hashGitCommitValue,
 } from "./git-commit/ids";
 import {
+  applySubmittedGitReviewComments,
+  resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
+  shouldClearGitInlinePendingKey,
+  shouldClearGitReviewSavingOnScopeChange,
+  shouldClearGitReviewSubmitOnScopeChange,
 } from "./git-commit/review-state";
 import {
   buildGitInlineDraftEditorId,
@@ -117,6 +122,14 @@ import {
   isMergeCommitSummary,
   isNotGitRepoError,
   resolveOpenPath,
+  shouldApplyGitFileOpenScopedResult,
+  shouldApplyGitRepoBootstrapScopedResult,
+  shouldDisableGitReviewSubmission,
+  shouldClearGitHeadCommitBusyOnScopeChange,
+  shouldClearGitHeadStatusActionOnScopeChange,
+  shouldClearGitRepoBootstrapBusyOnScopeChange,
+  shouldFinalizeGitFileOpenAction,
+  shouldFinalizeGitRepoBootstrapAction,
   shouldCaptureGitDrawerFindShortcut,
 } from "./git-commit/utils";
 import "./git-commit-drawer.css";
@@ -144,7 +157,15 @@ export {
   scrollGitDrawerElementIntoView,
 };
 export { filterGitReviewLogEntries, resolveGitCommitSearchChange };
-export { resolveGitReviewSaveCompletion, resolveGitReviewSaveState };
+export {
+  applySubmittedGitReviewComments,
+  resolveGitReviewLoadFailure,
+  resolveGitReviewSaveCompletion,
+  resolveGitReviewSaveState,
+  shouldClearGitInlinePendingKey,
+  shouldClearGitReviewSavingOnScopeChange,
+  shouldClearGitReviewSubmitOnScopeChange,
+};
 export {
   buildGitInlineDraftEditorId,
   buildGitInlineEditEditorId,
@@ -156,6 +177,14 @@ export {
   GitDiffListFooterSpacer,
   getCommitReviewIndicatorState,
   isMergeCommitSummary,
+  shouldApplyGitFileOpenScopedResult,
+  shouldApplyGitRepoBootstrapScopedResult,
+  shouldDisableGitReviewSubmission,
+  shouldClearGitHeadCommitBusyOnScopeChange,
+  shouldClearGitHeadStatusActionOnScopeChange,
+  shouldClearGitRepoBootstrapBusyOnScopeChange,
+  shouldFinalizeGitFileOpenAction,
+  shouldFinalizeGitRepoBootstrapAction,
   shouldCaptureGitDrawerFindShortcut,
 };
 
@@ -193,6 +222,7 @@ interface GitCommitDrawerProps {
   sourcePath?: string;
   cwdOverride?: string;
   commitHash?: string;
+  commitSelectionRequestToken?: number;
   open: boolean;
   onClose: () => void;
   fontSize?: number;
@@ -204,6 +234,71 @@ interface GitCommitDrawerProps {
   onFindInChat?: (query: string) => void | Promise<void>;
   onOpenActivityLog?: () => void;
   reviewSubmissionHelpText?: ReactNode;
+}
+
+export function resolveIncomingGitCommitSelection({
+  open,
+  currentSelectedCommit,
+  incomingCommit,
+  requestTokenChanged,
+}: {
+  open: boolean;
+  currentSelectedCommit?: string;
+  incomingCommit?: string;
+  requestTokenChanged: boolean;
+}): string | undefined {
+  if (!open) {
+    return currentSelectedCommit;
+  }
+  if (!requestTokenChanged && incomingCommit === currentSelectedCommit) {
+    return currentSelectedCommit;
+  }
+  return incomingCommit;
+}
+
+export function applyGitReviewedByCommitEntries({
+  previous,
+  entries,
+}: {
+  previous: Record<string, boolean>;
+  entries: readonly (readonly [
+    string,
+    Pick<GitReviewRecordV2, "reviewed"> | undefined,
+  ])[];
+}): Record<string, boolean> {
+  const next = { ...previous };
+  for (const [hash, record] of entries) {
+    if (record == null) {
+      delete next[hash];
+      continue;
+    }
+    next[hash] = Boolean(record.reviewed);
+  }
+  return next;
+}
+
+export function applyGitReviewedByCommitResetEntry({
+  previous,
+  commitSha,
+  draftReviewed,
+}: {
+  previous: Record<string, boolean>;
+  commitSha: string;
+  draftReviewed?: boolean;
+}): Record<string, boolean> {
+  if (typeof draftReviewed !== "boolean") {
+    return previous;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(previous, commitSha) &&
+    previous[commitSha] === draftReviewed
+  ) {
+    return previous;
+  }
+  return {
+    ...previous,
+    [commitSha]: draftReviewed,
+  };
 }
 
 async function runGitCommand({
@@ -231,6 +326,7 @@ export function GitCommitDrawer({
   sourcePath,
   cwdOverride,
   commitHash,
+  commitSelectionRequestToken = 0,
   open,
   onClose,
   fontSize = 14,
@@ -275,6 +371,7 @@ export function GitCommitDrawer({
   const [selectedCommit, setSelectedCommit] = useState<string | undefined>(
     incomingCommit,
   );
+  const commitSelectionRequestTokenRef = useRef(commitSelectionRequestToken);
   const [commitSearch, setCommitSearch] = useState("");
   const [diffFindQuery, setDiffFindQuery] = useState("");
   const [activeDiffFindMatchIndex, setActiveDiffFindMatchIndex] =
@@ -310,6 +407,17 @@ export function GitCommitDrawer({
     useState("");
   const reviewLoadTokenRef = useRef(0);
   const activeReviewCommitRef = useRef<string | undefined>(undefined);
+  const reviewScopeRef = useRef<string | undefined>(undefined);
+  const reviewSubmitTokenRef = useRef(0);
+  const reviewSubmitScopeRef = useRef<string | undefined>(undefined);
+  const headScopeRef = useRef<string | undefined>(undefined);
+  const headCommitActionTokenRef = useRef(0);
+  const headCommitActionScopeRef = useRef<string | undefined>(undefined);
+  const headStatusActionTokenRef = useRef(0);
+  const headStatusActionScopeRef = useRef<string | undefined>(undefined);
+  const repoBootstrapScopeRef = useRef<string | undefined>(undefined);
+  const repoBootstrapActionTokenRef = useRef(0);
+  const repoBootstrapActionScopeRef = useRef<string | undefined>(undefined);
   const reviewNoteDraftRef = useRef(reviewNoteDraft);
   const reviewedRef = useRef(reviewed);
   const preserveCommitSearchOnAutoClearRef = useRef(false);
@@ -317,6 +425,11 @@ export function GitCommitDrawer({
   const diffFindInputRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const drawerViewSessionEpochRef = useRef(0);
+  const drawerViewWasOpenRef = useRef(false);
+  const drawerViewScopeRef = useRef<string | undefined>(undefined);
+  const openFileActionTokenRef = useRef(0);
+  const openFileActionScopeRef = useRef<string | undefined>(undefined);
   const restoringScrollRef = useRef(false);
   const pendingScrollRestoreRef = useRef<number | null>(null);
   const pendingContextAnchorRef = useRef<GitDiffScrollAnchor | null>(null);
@@ -334,6 +447,7 @@ export function GitCommitDrawer({
   >(undefined);
   const [activeInlineEditBody, setActiveInlineEditBody] = useState("");
   const [inlineCommentPendingKey, setInlineCommentPendingKey] = useState("");
+  const inlineCommentPendingKeyRef = useRef(inlineCommentPendingKey);
 
   const cwd = useMemo(() => {
     const override = `${cwdOverride ?? ""}`.trim();
@@ -348,6 +462,10 @@ export function GitCommitDrawer({
   useEffect(() => {
     reviewedRef.current = reviewed;
   }, [reviewed]);
+
+  useEffect(() => {
+    inlineCommentPendingKeyRef.current = inlineCommentPendingKey;
+  }, [inlineCommentPendingKey]);
   const scrollStorageId = useMemo(() => {
     const commitKey = `${commit ?? HEAD_REF}`.toLowerCase();
     const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${cwd}|${commitKey}`;
@@ -355,9 +473,28 @@ export function GitCommitDrawer({
   }, [projectId, sourcePath, cwd, commit]);
 
   useEffect(() => {
-    if (!open) return;
-    setSelectedCommit(incomingCommit);
-  }, [incomingCommit, open]);
+    if (open && !drawerViewWasOpenRef.current) {
+      drawerViewSessionEpochRef.current += 1;
+    }
+    drawerViewWasOpenRef.current = open;
+    drawerViewScopeRef.current = open
+      ? `${drawerViewSessionEpochRef.current}:${scrollStorageId}`
+      : undefined;
+  }, [open, scrollStorageId]);
+
+  useEffect(() => {
+    const requestTokenChanged =
+      commitSelectionRequestToken !== commitSelectionRequestTokenRef.current;
+    commitSelectionRequestTokenRef.current = commitSelectionRequestToken;
+    setSelectedCommit((currentSelectedCommit) =>
+      resolveIncomingGitCommitSelection({
+        open,
+        currentSelectedCommit,
+        incomingCommit,
+        requestTokenChanged,
+      }),
+    );
+  }, [incomingCommit, open, commitSelectionRequestToken]);
 
   useEffect(() => {
     setCommitSearch("");
@@ -775,16 +912,79 @@ export function GitCommitDrawer({
   }, [visibleLogEntries, commit, reviewedByCommit]);
 
   useEffect(() => {
-    if (!open) {
-      activeReviewCommitRef.current = undefined;
-      return;
+    const nextScope =
+      open && accountId && commit && !isHeadCommit(commit)
+        ? normalizeCommitSha(commit)
+        : undefined;
+    const previousScope = reviewScopeRef.current;
+    reviewScopeRef.current = nextScope;
+    activeReviewCommitRef.current = nextScope;
+    if (
+      shouldClearGitReviewSavingOnScopeChange({
+        reviewSaving,
+        previousScope,
+        nextScope,
+      })
+    ) {
+      setReviewSaving(false);
     }
-    if (!commit || isHeadCommit(commit)) {
-      activeReviewCommitRef.current = undefined;
-      return;
+    if (
+      shouldClearGitReviewSubmitOnScopeChange({
+        reviewSubmitBusy,
+        previousScope,
+        nextScope,
+      })
+    ) {
+      reviewSubmitTokenRef.current += 1;
+      reviewSubmitScopeRef.current = undefined;
+      setReviewSubmitBusy(false);
     }
-    activeReviewCommitRef.current = normalizeCommitSha(commit);
-  }, [open, commit]);
+  }, [open, accountId, commit, reviewSaving, reviewSubmitBusy]);
+
+  useEffect(() => {
+    const nextScope = open && isHeadSelected ? HEAD_REF : undefined;
+    const previousScope = headScopeRef.current;
+    headScopeRef.current = nextScope;
+    if (
+      shouldClearGitHeadCommitBusyOnScopeChange({
+        headCommitBusy,
+        previousScope,
+        nextScope,
+      })
+    ) {
+      headCommitActionTokenRef.current += 1;
+      headCommitActionScopeRef.current = undefined;
+      setHeadCommitBusy(false);
+    }
+    if (
+      shouldClearGitHeadStatusActionOnScopeChange({
+        headStatusAction,
+        previousScope,
+        nextScope,
+      })
+    ) {
+      headStatusActionTokenRef.current += 1;
+      headStatusActionScopeRef.current = undefined;
+      setHeadStatusAction("");
+    }
+  }, [open, isHeadSelected, headCommitBusy, headStatusAction]);
+
+  useEffect(() => {
+    const nextScope = open && Boolean(nonRepoError) ? "non-repo" : undefined;
+    const previousScope = repoBootstrapScopeRef.current;
+    repoBootstrapScopeRef.current = nextScope;
+    if (
+      shouldClearGitRepoBootstrapBusyOnScopeChange({
+        repoBootstrapBusy,
+        previousScope,
+        nextScope,
+      })
+    ) {
+      repoBootstrapActionTokenRef.current += 1;
+      repoBootstrapActionScopeRef.current = undefined;
+      setRepoBootstrapBusy(false);
+    }
+  }, [open, nonRepoError, repoBootstrapBusy]);
 
   useEffect(() => {
     if (!open || !accountId) return;
@@ -805,17 +1005,16 @@ export function GitCommitDrawer({
         const entries = await Promise.all(
           hashes.map(async (hash) => {
             const rec = await loadReviewRecord({ accountId, commitSha: hash });
-            return [hash, Boolean(rec?.reviewed)] as const;
+            return [hash, rec] as const;
           }),
         );
         if (cancelled) return;
-        setReviewedByCommit((prev) => {
-          const next = { ...prev };
-          for (const [hash, isReviewed] of entries) {
-            next[hash] = isReviewed;
-          }
-          return next;
-        });
+        setReviewedByCommit((prev) =>
+          applyGitReviewedByCommitEntries({
+            previous: prev,
+            entries,
+          }),
+        );
       } catch {
         // ignore transient dropdown review indicator failures
       }
@@ -846,13 +1045,13 @@ export function GitCommitDrawer({
       setReviewRecord(undefined);
       setReviewStateCommit(normalizedNext);
       if (normalizedNext) {
-        setReviewedByCommit((prev) => ({
-          ...prev,
-          [normalizedNext]:
-            typeof draft?.reviewed === "boolean"
-              ? draft.reviewed
-              : Boolean(prev[normalizedNext]),
-        }));
+        setReviewedByCommit((prev) =>
+          applyGitReviewedByCommitResetEntry({
+            previous: prev,
+            commitSha: normalizedNext,
+            draftReviewed: draft?.reviewed,
+          }),
+        );
       }
     };
     if (!open || !accountId || !commit) {
@@ -875,10 +1074,12 @@ export function GitCommitDrawer({
         if (reviewLoadTokenRef.current !== token) return;
         setReviewRecord(rec);
         setReviewed(Boolean(rec?.reviewed));
-        setReviewedByCommit((prev) => ({
-          ...prev,
-          [normalizedCommit]: Boolean(rec?.reviewed),
-        }));
+        setReviewedByCommit((prev) =>
+          applyGitReviewedByCommitEntries({
+            previous: prev,
+            entries: [[normalizedCommit, rec]],
+          }),
+        );
         const note = typeof rec?.note === "string" ? rec.note : "";
         setReviewNote(note);
         setReviewNoteDraft(note);
@@ -890,14 +1091,20 @@ export function GitCommitDrawer({
         setReviewError("");
       } catch (err) {
         if (reviewLoadTokenRef.current !== token) return;
-        setReviewError(`${err ?? "Unable to load review state."}`);
-        setReviewed(false);
-        setReviewNote("");
-        setReviewNoteDraft("");
+        const fallback = resolveGitReviewLoadFailure({
+          draft: loadReviewDraft(normalizedCommit, accountId),
+          error: err,
+          accountId,
+          commitSha: normalizedCommit,
+        });
+        setReviewError(fallback.reviewError);
+        setReviewed(fallback.reviewed);
+        setReviewNote(fallback.reviewNote);
+        setReviewNoteDraft(fallback.reviewNoteDraft);
         setReviewNoteEditing(false);
-        setReviewUpdatedAt(undefined);
+        setReviewUpdatedAt(fallback.reviewUpdatedAt);
         setReviewDirty(false);
-        setReviewRecord(undefined);
+        setReviewRecord(fallback.reviewRecord);
       } finally {
         if (reviewLoadTokenRef.current !== token) return;
         setReviewLoading(false);
@@ -1426,7 +1633,14 @@ export function GitCommitDrawer({
         setActiveInlineDraft(undefined);
         setActiveInlineDraftBody("");
       } finally {
-        setInlineCommentPendingKey("");
+        if (
+          shouldClearGitInlinePendingKey({
+            currentPendingKey: inlineCommentPendingKeyRef.current,
+            actionPendingKey: key,
+          })
+        ) {
+          setInlineCommentPendingKey("");
+        }
       }
     },
     [createInlineComment],
@@ -1438,12 +1652,20 @@ export function GitCommitDrawer({
       const trimmed = `${value ?? ""}`.trim();
       if (!trimmed) return;
       setInlineCommentPendingKey(`edit:${id}`);
+      const pendingKey = `edit:${id}`;
       try {
         await updateInlineComment(id, trimmed);
         setActiveInlineEditId(undefined);
         setActiveInlineEditBody("");
       } finally {
-        setInlineCommentPendingKey("");
+        if (
+          shouldClearGitInlinePendingKey({
+            currentPendingKey: inlineCommentPendingKeyRef.current,
+            actionPendingKey: pendingKey,
+          })
+        ) {
+          setInlineCommentPendingKey("");
+        }
       }
     },
     [activeInlineEditId, updateInlineComment],
@@ -1451,7 +1673,8 @@ export function GitCommitDrawer({
 
   const handleResolveInlineComment = useCallback(
     async (id: string) => {
-      setInlineCommentPendingKey(`resolve:${id}`);
+      const pendingKey = `resolve:${id}`;
+      setInlineCommentPendingKey(pendingKey);
       try {
         await resolveInlineComment(id);
         if (activeInlineEditId === id) {
@@ -1459,7 +1682,14 @@ export function GitCommitDrawer({
           setActiveInlineEditBody("");
         }
       } finally {
-        setInlineCommentPendingKey("");
+        if (
+          shouldClearGitInlinePendingKey({
+            currentPendingKey: inlineCommentPendingKeyRef.current,
+            actionPendingKey: pendingKey,
+          })
+        ) {
+          setInlineCommentPendingKey("");
+        }
       }
     },
     [activeInlineEditId, resolveInlineComment],
@@ -1467,7 +1697,8 @@ export function GitCommitDrawer({
 
   const handleReopenInlineComment = useCallback(
     async (id: string) => {
-      setInlineCommentPendingKey(`reopen:${id}`);
+      const pendingKey = `reopen:${id}`;
+      setInlineCommentPendingKey(pendingKey);
       try {
         await reopenInlineComment(id);
         if (activeInlineEditId === id) {
@@ -1475,7 +1706,14 @@ export function GitCommitDrawer({
           setActiveInlineEditBody("");
         }
       } finally {
-        setInlineCommentPendingKey("");
+        if (
+          shouldClearGitInlinePendingKey({
+            currentPendingKey: inlineCommentPendingKeyRef.current,
+            actionPendingKey: pendingKey,
+          })
+        ) {
+          setInlineCommentPendingKey("");
+        }
       }
     },
     [activeInlineEditId, reopenInlineComment],
@@ -1581,8 +1819,13 @@ export function GitCommitDrawer({
 
   const sendInlineReviewToAgent = async () => {
     if (!onRequestAgentTurn || !commit || isHeadSelected) return;
+    const startedScope = normalizeCommitSha(commit);
+    if (!startedScope) return;
     const actionable = actionableInlineComments;
     if (actionable.length === 0) return;
+    const submitToken = reviewSubmitTokenRef.current + 1;
+    reviewSubmitTokenRef.current = submitToken;
+    reviewSubmitScopeRef.current = startedScope;
     const gitCommand = `git show --no-color -U${contextLines} ${commit}`;
     const payload = {
       target: { git_command: gitCommand },
@@ -1610,31 +1853,25 @@ export function GitCommitDrawer({
       await onRequestAgentTurn(prompt);
       const now = Date.now();
       const turnId = `git-review-${now}`;
-      const nextComments = {
-        ...(reviewRecord?.comments ?? {}),
-      } as Record<string, GitReviewCommentV2>;
-      for (const comment of actionable) {
-        const existing = nextComments[comment.id];
-        if (!existing) continue;
-        nextComments[comment.id] = {
-          ...existing,
-          status: "submitted",
-          submitted_at: now,
-          submission_turn_id: turnId,
-          updated_at: Math.max(existing.updated_at ?? now, now),
-          local_revision: Math.max(1, existing.local_revision ?? 1),
-        };
-      }
+      const normalizedCommit = normalizeCommitSha(commit);
+      const latestDraft = normalizedCommit
+        ? loadReviewDraft(normalizedCommit, accountId)
+        : undefined;
+      const resolved = resolveGitReviewSaveState({
+        draft: latestDraft,
+        reviewed,
+        reviewNote,
+        reviewNoteDraft,
+        reviewComments: reviewRecord?.comments,
+      });
+      const nextComments = applySubmittedGitReviewComments({
+        sentComments: actionable,
+        currentComments: resolved.comments,
+        submittedAt: now,
+        submissionTurnId: turnId,
+      });
       if (commit) {
-        const normalizedCommit = normalizeCommitSha(commit);
         if (normalizedCommit) {
-          const resolved = resolveGitReviewSaveState({
-            draft: loadReviewDraft(normalizedCommit, accountId),
-            reviewed,
-            reviewNote,
-            reviewNoteDraft,
-            reviewComments: reviewRecord?.comments,
-          });
           saveReviewDraft(
             normalizedCommit,
             {
@@ -1648,14 +1885,34 @@ export function GitCommitDrawer({
       }
       await saveReview({
         comments: nextComments,
+        reviewed: resolved.reviewed,
+        note: resolved.note,
         last_submitted_at: now,
         last_submission_turn_id: turnId,
       });
-      onClose();
+      if (
+        reviewSubmitTokenRef.current === submitToken &&
+        reviewSubmitScopeRef.current === startedScope &&
+        activeReviewCommitRef.current === startedScope
+      ) {
+        onClose();
+      }
     } catch (err) {
-      setReviewError(`${err ?? "Unable to send review comments to codex."}`);
+      if (
+        reviewSubmitTokenRef.current === submitToken &&
+        reviewSubmitScopeRef.current === startedScope &&
+        activeReviewCommitRef.current === startedScope
+      ) {
+        setReviewError(`${err ?? "Unable to send review comments to codex."}`);
+      }
     } finally {
-      setReviewSubmitBusy(false);
+      if (
+        reviewSubmitTokenRef.current === submitToken &&
+        reviewSubmitScopeRef.current === startedScope
+      ) {
+        reviewSubmitScopeRef.current = undefined;
+        setReviewSubmitBusy(false);
+      }
     }
   };
 
@@ -1771,6 +2028,11 @@ export function GitCommitDrawer({
 
   const initializeGitRepo = async () => {
     if (!projectId) return;
+    const startedScope = repoBootstrapScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = repoBootstrapActionTokenRef.current + 1;
+    repoBootstrapActionTokenRef.current = actionToken;
+    repoBootstrapActionScopeRef.current = startedScope;
     setRepoBootstrapBusy(true);
     setGitLogError("");
     try {
@@ -1791,22 +2053,57 @@ export function GitCommitDrawer({
           (result.stderr || result.stdout || "git init failed").trim(),
         );
       }
-      setNonRepoError("");
-      setSelectedCommit(HEAD_REF);
-      refreshAll();
-      alert_message({
-        type: "info",
-        message: "Initialized a new git repository.",
-      });
+      if (
+        shouldApplyGitRepoBootstrapScopedResult({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+          activeScope: repoBootstrapScopeRef.current,
+        })
+      ) {
+        setNonRepoError("");
+        setSelectedCommit(HEAD_REF);
+        refreshAll();
+        alert_message({
+          type: "info",
+          message: "Initialized a new git repository.",
+        });
+      }
     } catch (err) {
-      setGitLogError(`${err ?? "Unable to initialize git repository."}`);
+      if (
+        shouldApplyGitRepoBootstrapScopedResult({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+          activeScope: repoBootstrapScopeRef.current,
+        })
+      ) {
+        setGitLogError(`${err ?? "Unable to initialize git repository."}`);
+      }
     } finally {
-      setRepoBootstrapBusy(false);
+      if (
+        shouldFinalizeGitRepoBootstrapAction({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+        })
+      ) {
+        repoBootstrapActionScopeRef.current = undefined;
+        setRepoBootstrapBusy(false);
+      }
     }
   };
 
   const requestAgentRepoSetup = async () => {
     if (!onRequestAgentTurn) return;
+    const startedScope = repoBootstrapScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = repoBootstrapActionTokenRef.current + 1;
+    repoBootstrapActionTokenRef.current = actionToken;
+    repoBootstrapActionScopeRef.current = startedScope;
     setRepoBootstrapBusy(true);
     try {
       const prompt = [
@@ -1820,16 +2117,51 @@ export function GitCommitDrawer({
         "5. Summarize exactly what you included/excluded.",
       ].join("\n");
       await onRequestAgentTurn(prompt);
-      onClose();
+      if (
+        shouldApplyGitRepoBootstrapScopedResult({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+          activeScope: repoBootstrapScopeRef.current,
+        })
+      ) {
+        onClose();
+      }
     } catch (err) {
-      setGitLogError(`${err ?? "Unable to send setup request to codex."}`);
+      if (
+        shouldApplyGitRepoBootstrapScopedResult({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+          activeScope: repoBootstrapScopeRef.current,
+        })
+      ) {
+        setGitLogError(`${err ?? "Unable to send setup request to codex."}`);
+      }
     } finally {
-      setRepoBootstrapBusy(false);
+      if (
+        shouldFinalizeGitRepoBootstrapAction({
+          actionToken,
+          currentActionToken: repoBootstrapActionTokenRef.current,
+          startedScope,
+          currentActionScope: repoBootstrapActionScopeRef.current,
+        })
+      ) {
+        repoBootstrapActionScopeRef.current = undefined;
+        setRepoBootstrapBusy(false);
+      }
     }
   };
 
   const addUntrackedFile = async (path: string) => {
     if (!projectId) return;
+    const startedScope = headScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = headStatusActionTokenRef.current + 1;
+    headStatusActionTokenRef.current = actionToken;
+    headStatusActionScopeRef.current = startedScope;
     setHeadStatusAction(`add:${path}`);
     setHeadCommitError("");
     try {
@@ -1845,14 +2177,31 @@ export function GitCommitDrawer({
       }
       setReloadCounter((n) => n + 1);
     } catch (err) {
-      setHeadCommitError(`${err ?? "Unable to add untracked file."}`);
+      if (
+        headStatusActionTokenRef.current === actionToken &&
+        headStatusActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        setHeadCommitError(`${err ?? "Unable to add untracked file."}`);
+      }
     } finally {
-      setHeadStatusAction("");
+      if (
+        headStatusActionTokenRef.current === actionToken &&
+        headStatusActionScopeRef.current === startedScope
+      ) {
+        headStatusActionScopeRef.current = undefined;
+        setHeadStatusAction("");
+      }
     }
   };
 
   const ignoreUntrackedFile = async (path: string) => {
     if (!projectId) return;
+    const startedScope = headScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = headStatusActionTokenRef.current + 1;
+    headStatusActionTokenRef.current = actionToken;
+    headStatusActionScopeRef.current = startedScope;
     setHeadStatusAction(`ignore:${path}`);
     setHeadCommitError("");
     try {
@@ -1877,9 +2226,21 @@ export function GitCommitDrawer({
       }
       setReloadCounter((n) => n + 1);
     } catch (err) {
-      setHeadCommitError(`${err ?? "Unable to ignore untracked file."}`);
+      if (
+        headStatusActionTokenRef.current === actionToken &&
+        headStatusActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        setHeadCommitError(`${err ?? "Unable to ignore untracked file."}`);
+      }
     } finally {
-      setHeadStatusAction("");
+      if (
+        headStatusActionTokenRef.current === actionToken &&
+        headStatusActionScopeRef.current === startedScope
+      ) {
+        headStatusActionScopeRef.current = undefined;
+        setHeadStatusAction("");
+      }
     }
   };
 
@@ -1889,18 +2250,54 @@ export function GitCommitDrawer({
 
   const openFile = async (filePath: string) => {
     if (!projectActions) return;
+    const startedScope = drawerViewScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = openFileActionTokenRef.current + 1;
+    openFileActionTokenRef.current = actionToken;
+    openFileActionScopeRef.current = startedScope;
     try {
       await projectActions.open_file({
         path: resolveOpenPath(repoRoot || data?.repoRoot, filePath),
         foreground: true,
         explicit: true,
       });
-      onClose();
+      if (
+        shouldApplyGitFileOpenScopedResult({
+          actionToken,
+          currentActionToken: openFileActionTokenRef.current,
+          startedScope,
+          currentActionScope: openFileActionScopeRef.current,
+          activeScope: drawerViewScopeRef.current,
+        })
+      ) {
+        onClose();
+      }
     } catch (err) {
-      alert_message({
-        type: "error",
-        message: `Unable to open file '${filePath}' (${err})`,
-      });
+      if (
+        shouldApplyGitFileOpenScopedResult({
+          actionToken,
+          currentActionToken: openFileActionTokenRef.current,
+          startedScope,
+          currentActionScope: openFileActionScopeRef.current,
+          activeScope: drawerViewScopeRef.current,
+        })
+      ) {
+        alert_message({
+          type: "error",
+          message: `Unable to open file '${filePath}' (${err})`,
+        });
+      }
+    } finally {
+      if (
+        shouldFinalizeGitFileOpenAction({
+          actionToken,
+          currentActionToken: openFileActionTokenRef.current,
+          startedScope,
+          currentActionScope: openFileActionScopeRef.current,
+        })
+      ) {
+        openFileActionScopeRef.current = undefined;
+      }
     }
   };
 
@@ -1954,15 +2351,40 @@ export function GitCommitDrawer({
       message: headCommitMessage,
       includeSummary,
     });
+    const startedScope = headScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = headCommitActionTokenRef.current + 1;
+    headCommitActionTokenRef.current = actionToken;
+    headCommitActionScopeRef.current = startedScope;
     setHeadCommitBusy(true);
     setHeadCommitError("");
     try {
       await onRequestAgentTurn(prompt);
-      onClose();
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        onClose();
+      }
     } catch (err) {
-      setHeadCommitError(`${err ?? "Unable to send commit request to codex."}`);
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        setHeadCommitError(
+          `${err ?? "Unable to send commit request to codex."}`,
+        );
+      }
     } finally {
-      setHeadCommitBusy(false);
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope
+      ) {
+        headCommitActionScopeRef.current = undefined;
+        setHeadCommitBusy(false);
+      }
     }
   };
 
@@ -1973,6 +2395,11 @@ export function GitCommitDrawer({
       await requestAgentCommit({ includeSummary: false });
       return;
     }
+    const startedScope = headScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = headCommitActionTokenRef.current + 1;
+    headCommitActionTokenRef.current = actionToken;
+    headCommitActionScopeRef.current = startedScope;
     setHeadCommitBusy(true);
     setHeadCommitError("");
     try {
@@ -2020,11 +2447,29 @@ export function GitCommitDrawer({
         type: "info",
         message: (result.stdout || "Commit created successfully.").trim(),
       });
-      onClose();
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        onClose();
+      }
     } catch (err) {
-      setHeadCommitError(`${err ?? "Unable to create commit."}`);
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        setHeadCommitError(`${err ?? "Unable to create commit."}`);
+      }
     } finally {
-      setHeadCommitBusy(false);
+      if (
+        headCommitActionTokenRef.current === actionToken &&
+        headCommitActionScopeRef.current === startedScope
+      ) {
+        headCommitActionScopeRef.current = undefined;
+        setHeadCommitBusy(false);
+      }
     }
   };
   const bumpContext = (delta: -1 | 1) => {

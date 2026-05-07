@@ -117,3 +117,139 @@ export function formatMergeCommitBodyMarkdown(
   const fence = backtickSequence(text);
   return `${fence}\n${text}\n${fence}`;
 }
+
+export function shouldClearGitHeadCommitBusyOnScopeChange({
+  headCommitBusy,
+  previousScope,
+  nextScope,
+}: {
+  headCommitBusy: boolean;
+  previousScope?: string;
+  nextScope?: string;
+}): boolean {
+  return headCommitBusy && previousScope !== nextScope;
+}
+
+export function shouldClearGitRepoBootstrapBusyOnScopeChange({
+  repoBootstrapBusy,
+  previousScope,
+  nextScope,
+}: {
+  repoBootstrapBusy: boolean;
+  previousScope?: string;
+  nextScope?: string;
+}): boolean {
+  return repoBootstrapBusy && previousScope !== nextScope;
+}
+
+export function shouldApplyGitRepoBootstrapScopedResult({
+  actionToken,
+  currentActionToken,
+  startedScope,
+  currentActionScope,
+  activeScope,
+}: {
+  actionToken: number;
+  currentActionToken: number;
+  startedScope?: string;
+  currentActionScope?: string;
+  activeScope?: string;
+}): boolean {
+  return (
+    currentActionToken === actionToken &&
+    currentActionScope === startedScope &&
+    activeScope === startedScope
+  );
+}
+
+export function shouldFinalizeGitRepoBootstrapAction({
+  actionToken,
+  currentActionToken,
+  startedScope,
+  currentActionScope,
+}: {
+  actionToken: number;
+  currentActionToken: number;
+  startedScope?: string;
+  currentActionScope?: string;
+}): boolean {
+  return (
+    currentActionToken === actionToken && currentActionScope === startedScope
+  );
+}
+
+export function shouldApplyGitFileOpenScopedResult({
+  actionToken,
+  currentActionToken,
+  startedScope,
+  currentActionScope,
+  activeScope,
+}: {
+  actionToken: number;
+  currentActionToken: number;
+  startedScope?: string;
+  currentActionScope?: string;
+  activeScope?: string;
+}): boolean {
+  return (
+    currentActionToken === actionToken &&
+    currentActionScope === startedScope &&
+    activeScope === startedScope
+  );
+}
+
+export function shouldFinalizeGitFileOpenAction({
+  actionToken,
+  currentActionToken,
+  startedScope,
+  currentActionScope,
+}: {
+  actionToken: number;
+  currentActionToken: number;
+  startedScope?: string;
+  currentActionScope?: string;
+}): boolean {
+  return (
+    currentActionToken === actionToken && currentActionScope === startedScope
+  );
+}
+
+export function shouldDisableGitReviewSubmission({
+  actionableInlineCommentCount,
+  reviewSubmitBusy,
+  reviewSaving,
+  canRequestAgentTurn,
+  accountId,
+  currentReviewCommit,
+  isHeadSelected,
+}: {
+  actionableInlineCommentCount: number;
+  reviewSubmitBusy: boolean;
+  reviewSaving: boolean;
+  canRequestAgentTurn: boolean;
+  accountId?: string;
+  currentReviewCommit?: string;
+  isHeadSelected: boolean;
+}): boolean {
+  return (
+    actionableInlineCommentCount === 0 ||
+    reviewSubmitBusy ||
+    reviewSaving ||
+    !canRequestAgentTurn ||
+    !accountId ||
+    !currentReviewCommit ||
+    isHeadSelected
+  );
+}
+
+export function shouldClearGitHeadStatusActionOnScopeChange({
+  headStatusAction,
+  previousScope,
+  nextScope,
+}: {
+  headStatusAction?: string;
+  previousScope?: string;
+  nextScope?: string;
+}): boolean {
+  return Boolean(headStatusAction) && previousScope !== nextScope;
+}
