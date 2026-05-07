@@ -99,6 +99,28 @@ It is separate from:
 - having a valid remember-me cookie
 - possessing a long-lived API key
 
+### Fresh-auth duration policy
+
+V1 should support two fresh-auth windows for browser sessions:
+
+1. default short window: 15 minutes
+2. explicit extended window: 8 hours
+
+The extended window should:
+
+- be opt-in at the time of fresh auth
+- be session-local to the current browser session
+- not be the default
+- require a real TOTP verification, not only a recovery code
+
+Reason:
+
+- a very short default keeps security posture tight
+- an explicit longer window makes it practical to gate more billing and
+  dedicated-host actions without making the UX intolerable
+- this matches the real-world pattern used by other developer-facing products
+  that require TOTP for sensitive actions
+
 ## Non-Goals
 
 This plan does not try to solve:
@@ -380,6 +402,22 @@ It should:
 
 This helper should be the common primitive used by dangerous actions.
 
+The `fresh-auth` request should allow a caller-controlled duration request,
+subject to server-side policy, e.g.:
+
+- `duration = "default"`
+- `duration = "extended"`
+
+Server policy for V1:
+
+- `default` means 15 minutes
+- `extended` means 8 hours
+- `extended` is allowed only for browser-backed sessions and only when the
+  factor used is TOTP
+- `extended` must be rejected for recovery-code verification
+- server remains authoritative; the client can request a duration, not dictate
+  one
+
 ## UI Plan
 
 ### Sign-in flow
@@ -436,6 +474,8 @@ The modal should collect:
 
 - current password
 - TOTP or recovery code when applicable
+- optional non-default checkbox such as:
+  - `Keep this verification active for 8 hours on this browser`
 
 This should not be reimplemented separately in each page.
 
@@ -690,10 +730,13 @@ These should be decided during review before coding starts:
 
 1. How long should `fresh_auth_until` last?
    - recommended V1 default: 15 minutes
+   - recommended V1 non-default extension: 8 hours on the current browser
+     session
 2. Should enabling 2FA force sign-out-all immediately?
    - recommended V1 answer: yes
 3. Should recovery-code sign-in grant a shorter fresh-auth window than TOTP?
    - recommended V1 answer: yes
+   - recovery-code verification should not allow the 8-hour extended window
 4. Do we want dedicated host `start` to require fresh auth, or only
    create/resize?
    - recommended V1 answer: require it for `start` too
