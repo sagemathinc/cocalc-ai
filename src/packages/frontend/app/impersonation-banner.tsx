@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Space } from "antd";
+import { Alert, Button } from "antd";
 
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 
@@ -33,24 +33,33 @@ export function ImpersonationBanner() {
     <Alert
       type="warning"
       showIcon
-      style={{ marginBottom: "10px" }}
-      message={`Impersonating ${subject}`}
-      description={
-        <Space direction="vertical" size="small">
-          <div>Admin actor: {actor}</div>
-          <div>
-            Sensitive operational actions use the admin actor's recent 2FA, not
-            the subject user's.
+      banner
+      style={{ marginBottom: "10px", paddingBlock: "6px" }}
+      message={
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            flexWrap: "wrap",
+            width: "100%",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <strong>Impersonating {subject}</strong>
+            <span style={{ marginLeft: "10px" }}>
+              Admin actor: {actor}. Operational actions use the admin actor's
+              recent 2FA.
+            </span>
           </div>
-          <div>
-            <Button
-              size="small"
-              onClick={() => void actions.sign_out(false, true)}
-            >
-              End impersonation
-            </Button>
-          </div>
-        </Space>
+          <Button
+            size="small"
+            onClick={() => void actions.sign_out(false, true)}
+          >
+            End impersonation
+          </Button>
+        </div>
       }
     />
   );
