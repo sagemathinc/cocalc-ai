@@ -738,7 +738,6 @@ If we want the shortest path to release from today, do these next:
 - [ ] snapshots
   - [ ] keep ordinary user-facing index/browse flows off full snapshot listing
         permanently
-- [ ] create a custom image so GCP host bootstrap is faster and less fragile
 - [ ] finish central admin override controls
 - [ ] implement student pay
 - [ ] implement minimal site/domain license
@@ -751,3 +750,7 @@ If we want the shortest path to release from today, do these next:
 
 That is the highest-value path to a real first public release without
 expanding scope.
+
+### TODO
+
+- [ ] finish recaptcha support

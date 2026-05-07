@@ -747,6 +747,192 @@ This plan is not complete without explicit multi-bay validation.
 6. beneficiary account with received grant rehomes from bay A to bay B
 7. active dedicated host continues billing correctly after owner account rehome
 
+## Abuse and Safety Requirements
+
+The membership and billing plan also needs explicit abuse-control design.
+
+This is not secondary work.
+
+Once accounts can:
+
+- buy memberships
+- receive institutional entitlements
+- create dedicated hosts
+- spend money on compute
+
+the abuse surface includes both account creation fraud and account takeover.
+
+### Threat classes
+
+The main classes of abuse are:
+
+1. signup and free-trial abuse
+2. payment abuse
+3. entitlement abuse
+4. account takeover
+5. infrastructure abuse
+6. operator and auditability gaps
+
+### 1. Signup and free-trial abuse
+
+The system should assume that any free-trial path will be abused if it is cheap
+to automate.
+
+V1 controls:
+
+- email verification must work reliably
+- signup and payment-intent creation must be rate limited by IP, account, and
+  device/session signals
+- free-trial eligibility must not be keyed only by email address
+- reCAPTCHA is an abuse-mitigation control, not a commercialization feature
+- reCAPTCHA should be enabled if and only if keys are configured
+
+Design principle:
+
+- do not grant meaningful compute, host access, or institutional claim power to
+  an unverified or low-trust account just because it created an account first
+
+### 2. Payment abuse
+
+Stripe Radar should be part of the standard toolbox.
+
+The key mistake to avoid is treating a just-created payment intent as proof that
+an account is trustworthy.
+
+V1 controls:
+
+- payment-provider risk signals should be stored in local billing state
+- membership/package activation should happen only after trusted payment success
+- high-risk or review-required payments should not automatically mint grants,
+  seats, or dedicated-host eligibility
+- repeated failed payment attempts and card-testing patterns should rate limit
+  further purchase attempts
+- refunds and chargebacks must be able to revoke or suspend the entitlements
+  they funded
+
+Design principle:
+
+- money movement and entitlement activation must be linked, reversible, and
+  auditable
+
+### 3. Entitlement abuse
+
+The new seat/package model has its own abuse surface:
+
+- one person trying to claim multiple institutional seats
+- package owners assigning seats to burner accounts
+- reusing `+alias` email variants to evade one-seat-per-person rules
+- manipulating course/team flows to move usage onto the wrong account
+
+V1 controls:
+
+- institutional claims must use canonical identity dedupe
+- `domain` / `site` claims should be unique per
+  `(claim_scope_id, canonical_identity_key)`
+- package assignment, revocation, reservation, and claim all need durable audit
+  records
+- `projects.usage_account_id` changes must only happen through explicit package
+  or course flows, not arbitrary user edits
+- `projects.usage_account_id` changes should be logged with actor, reason, old
+  value, and new value
+
+Design principle:
+
+- entitlement state should always answer who granted what, to whom, why, and
+  from which bay
+
+### 4. Account takeover
+
+This is now high priority.
+
+Because paid compute and dedicated hosts can consume real money, compromised
+accounts are valuable.
+
+There does not currently appear to be a real 2FA / MFA implementation in this
+codebase.
+
+That should move near the top of the release queue.
+
+V1 controls:
+
+- add 2FA for accounts that can buy or operate paid compute
+- require a fresh authentication checkpoint for dangerous billing actions
+- require a stronger identity signal before:
+  - adding or changing payment methods
+  - buying memberships or seat packages above a threshold
+  - creating or resizing dedicated hosts
+  - changing invoice or payout-critical account settings
+  - transferring or reclaiming institutional entitlements
+
+The first practical version can be TOTP-based 2FA.
+
+Passkeys/WebAuthn can be a later improvement, but the release should not ship
+paid compute without some second-factor path.
+
+Design principle:
+
+- a verified password alone is not a strong enough proof of identity for
+  dangerous actions in a paid-compute product
+
+### 5. Infrastructure abuse
+
+Dedicated hosts and project compute create the classic abuse vectors:
+
+- crypto mining
+- proxy/VPN resale
+- credential stuffing and post-compromise spend
+- mass host creation using stolen cards
+
+V1 controls:
+
+- dedicated-host eligibility should be gated by membership tier and trust level
+- new accounts should not immediately get broad host-spend rights
+- trust limits should be admin-configurable and overrideable
+- host creation/start/resize should record who did it and under what trust state
+- risk review and emergency suspension must be possible without corrupting the
+  billing ledger
+
+Design principle:
+
+- the product should prefer reviewable throttling and suspension over silent
+  overexposure
+
+### 6. Operator and auditability requirements
+
+Abuse handling fails if operators cannot see cluster-wide state quickly.
+
+V1 should include:
+
+- account risk flags
+- package risk flags
+- payment risk flags
+- ability to suspend:
+  - purchases
+  - claims
+  - dedicated-host creation
+  - package assignment
+- cluster-visible audit trails for:
+  - grant creation/revocation
+  - package purchase/expansion
+  - institutional claim/release
+  - `usage_account_id` changes
+  - dangerous billing and host actions
+
+Design principle:
+
+- abuse controls must work across bays, not only within one account home bay
+
+### Recommended release priorities
+
+From the abuse/safety point of view, the near-term order should be:
+
+1. ensure payment maintenance and entitlement activation are trustworthy
+2. implement 2FA and fresh-auth checkpoints for dangerous actions
+3. finish email verification and reCAPTCHA support
+4. add canonical institutional claim dedupe
+5. add operator risk flags and suspension controls
+6. add dedicated-host trust gating before broader host rollout
+
 ## Summary
 
 The correct V1 split is:
@@ -764,5 +950,13 @@ under the real multi-bay deployment.
 
 - [ ] update the master release plan to remove the obsolete `seed-owned purchases/billing authority for first release` assumption
 - [ ] implement canonical `+alias` identity dedupe for domain/site claims
+      [ ] ensure that subscription maintenance, statements, payment-intent processing, and automatic payments DO run. Right now gated behind kucalc and commercial flags.
 - [ ] add Cloudflare Email Service support for verification and notifications
 - [ ] add `cocalc-cli` operator/testing support for package, claim, and rehome flows
+- [ ] abuse mitigation:
+  - [ ] 2FA / MFA for paid-compute accounts
+  - [ ] fresh-auth checkpoints for dangerous billing and host actions
+  - [ ] captcha -- finish implementing support
+  - [ ] Stripe Radar integration and payment-risk handling policy
+  - [ ] chargeback/refund-driven entitlement suspension policy
+  - [ ] operator risk flags and cluster-wide abuse audit surfaces
