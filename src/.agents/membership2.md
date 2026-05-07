@@ -312,16 +312,32 @@ dedicated-host per-GB line item.
 
 Not to collaborators or to the project owner unless that is the same account.
 
-### Dedicated hosts are billed monthly, not prepaid-balance-gated
+### Dedicated hosts are billed monthly, with separate credit and prepaid controls
 
-Membership tier and admin overrides control rolling risk limits.
+Dedicated-host usage is still charged on the normal monthly billing path, but
+the admission policy must distinguish:
 
-The key limits should be:
+- postpaid credit exposure
+- prepaid host-usage exposure
+- payment/top-up fraud controls
 
-- a rolling 5-hour spend limit
-- a rolling 7-day spend limit
+These are separate risks and should not be collapsed into one limit.
 
-Monthly statements remain the main collection model.
+Monthly statements remain the main collection model for posted charges.
+
+The key dedicated-host windows should be:
+
+- `credit_spend_limit_5h`
+- `credit_spend_limit_7d`
+- `prepaid_host_usage_limit_5h`
+- `prepaid_host_usage_limit_7d`
+
+Later, if needed, there can also be separate funding-event limits such as:
+
+- `prepaid_topup_limit_5h`
+- `prepaid_topup_limit_7d`
+
+But those should remain distinct from host-usage admission.
 
 ### Free tier / trial policy is experimental, but must be bounded
 
@@ -439,6 +455,45 @@ The important planning decision is:
 ## Data Model Corrections
 
 The existing local tables stay, but their ownership semantics change.
+
+## Membership tier configuration additions
+
+Membership tiers need explicit commercial configuration beyond just
+`price_monthly` and `price_yearly`.
+
+### Trial pricing
+
+Each membership tier should support:
+
+- `trial_price`
+- `trial_period`
+
+Examples:
+
+- `$1` for the first month
+- `$0` for the first 14 days
+
+This must be configured per membership tier, not as one global trial setting.
+
+The important rule is:
+
+- trial pricing is part of membership-tier purchase configuration
+- free/trial eligibility policy is still a separate trust/abuse-control layer
+
+### Dedicated-host policy defaults
+
+Each membership tier should also carry default dedicated-host admission policy
+for:
+
+- `credit_spend_limit_5h`
+- `credit_spend_limit_7d`
+- `prepaid_host_usage_limit_5h`
+- `prepaid_host_usage_limit_7d`
+
+Optional future fields, if needed, should remain separate:
+
+- `prepaid_topup_limit_5h`
+- `prepaid_topup_limit_7d`
 
 ## Home-Bay Authoritative Tables
 
@@ -769,9 +824,13 @@ Dedicated-host billing also needs the same split.
 
 - monthly host charge purchases
 - statement inclusion
-- account-level rolling host spend-limit settings
-  - 5-hour window
-  - 7-day window
+- account-level rolling dedicated-host policy settings
+  - postpaid credit exposure windows
+    - 5-hour
+    - 7-day
+  - prepaid host-usage windows
+    - 5-hour
+    - 7-day
 
 ### Seed/global state
 
@@ -800,13 +859,33 @@ rolling windows, not only against a monthly ceiling.
 
 The default policy should be:
 
-- membership tier config sets default 5-hour and 7-day host spend limits
+- membership tier config sets default rolling limits for:
+  - postpaid credit exposure
+    - `credit_spend_limit_5h`
+    - `credit_spend_limit_7d`
+  - prepaid dedicated-host usage
+    - `prepaid_host_usage_limit_5h`
+    - `prepaid_host_usage_limit_7d`
 - admins can override those limits per account
-- host create/start/resize is denied if it would violate either window
+- host create/start/resize is denied if it would violate the relevant credit or
+  prepaid usage window
+- positive prepaid balance does not bypass prepaid usage windows
+- a valid payment method is required for any dedicated-host capability, even if
+  the account currently has prepaid credit
+- the last payment method should not be removable while:
+  - unpaid host charges exist
+  - active dedicated hosts exist
+  - automatic postpaid charging for dedicated hosts is enabled
 - the 5-hour window exists mainly to limit burst abuse and compromised-account
   spend
 - the 7-day window exists to cap medium-term exposure without waiting for the
   monthly invoice cycle
+
+Operational interpretation:
+
+- low-end paid tiers may have zero postpaid credit exposure
+- those same tiers can still be allowed meaningful prepaid dedicated-host usage
+- higher tiers can have both prepaid usage limits and nonzero credit exposure
 
 ### Provider price-update policy
 
@@ -1084,8 +1163,13 @@ V1 controls:
 - low-trust shared runtimes should default to `web-only` outbound access, not
   unrestricted internet
 - host spend limits should be rolling-window based and admin-configurable
-  - 5-hour window
-  - 7-day window
+  across both:
+  - postpaid credit exposure
+    - 5-hour window
+    - 7-day window
+  - prepaid dedicated-host usage
+    - 5-hour window
+    - 7-day window
 - low-trust runtimes should also have:
   - tight egress windows
   - connection-rate limits

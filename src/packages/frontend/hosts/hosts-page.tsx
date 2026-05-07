@@ -1,5 +1,6 @@
 import { Layout } from "antd";
 import { React } from "@cocalc/frontend/app-framework";
+import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
 import { IS_MOBILE } from "@cocalc/frontend/feature";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
 import { HostCreateCard } from "./components/host-create-card";
@@ -70,8 +71,15 @@ function persistCreatePanelOpen(open: boolean) {
 }
 
 export const HostsPage: React.FC = () => {
-  const { createVm, hostListVm, hostDrawerVm, editVm, setupVm, removeVm } =
-    useHostsPageViewModel();
+  const {
+    createVm,
+    hostListVm,
+    hostDrawerVm,
+    editVm,
+    setupVm,
+    removeVm,
+    freshAuthModalProps,
+  } = useHostsPageViewModel();
   const [createPanelWidth, setCreatePanelWidth] =
     React.useState(readCreatePanelWidth);
   const [createPanelOpen, setCreatePanelOpen] =
@@ -142,6 +150,7 @@ export const HostsPage: React.FC = () => {
         <HostEditModal {...editVm} />
         <SelfHostSetupModal {...setupVm} />
         <SelfHostRemoveModal {...removeVm} />
+        <FreshAuthModal {...freshAuthModalProps} />
       </div>
     );
   }
@@ -190,6 +199,7 @@ export const HostsPage: React.FC = () => {
       <HostEditModal {...editVm} />
       <SelfHostSetupModal {...setupVm} />
       <SelfHostRemoveModal {...removeVm} />
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 };

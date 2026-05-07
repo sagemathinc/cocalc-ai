@@ -17,6 +17,11 @@ const revokeMembershipPackageSeatMock = jest.fn();
 const listClaimableMembershipPackagesForAccountMock = jest.fn();
 const claimMembershipPackageSeatMock = jest.fn();
 const purchaseMembershipPackageMock = jest.fn();
+const resolveAccountHomeBayMock = jest.fn();
+const interBayGetMembershipDetailsMock = jest.fn();
+const interBayGetMembershipPackagesMock = jest.fn();
+const getBrowserAuthSessionHashMock = jest.fn();
+const requireFreshAuthForSessionHashMock = jest.fn();
 
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
   __esModule: true,
@@ -74,6 +79,45 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
   __esModule: true,
   default: (...args: any[]) => isAdminMock(...args),
 }));
+
+jest.mock("@cocalc/server/bay-directory", () => ({
+  resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: jest.fn(() => "bay-0"),
+}));
+
+jest.mock("@cocalc/server/conat/socketio/browser-auth-sessions", () => ({
+  getBrowserAuthSessionHash: (...args: any[]) =>
+    getBrowserAuthSessionHashMock(...args),
+}));
+
+jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  requireFreshAuthForSessionHash: (...args: any[]) =>
+    requireFreshAuthForSessionHashMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
+  getInterBayFabricClient: jest.fn(() => ({ kind: "fabric-client" })),
+}));
+
+jest.mock("@cocalc/conat/inter-bay/api", () => ({
+  createInterBayAccountLocalClient: jest.fn(({ dest_bay }) => ({
+    dest_bay,
+    getMembershipDetails: (...args: any[]) =>
+      interBayGetMembershipDetailsMock(...args),
+    getMembershipPackages: (...args: any[]) =>
+      interBayGetMembershipPackagesMock(...args),
+  })),
+}));
+
+beforeEach(() => {
+  getBrowserAuthSessionHashMock.mockReset();
+  requireFreshAuthForSessionHashMock.mockReset();
+  getBrowserAuthSessionHashMock.mockReturnValue(undefined);
+  requireFreshAuthForSessionHashMock.mockResolvedValue(undefined);
+});
 
 describe("purchases.getManagedEgressHistory", () => {
   beforeEach(() => {
@@ -215,6 +259,38 @@ describe("purchases.getMembershipDetails", () => {
       { refresh_usage_status: true },
     );
   });
+
+  it("routes another account's membership details to that account's home bay", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resolveAccountHomeBayMock.mockResolvedValue({
+      account_id: "account-2",
+      home_bay_id: "bay-2",
+      source: "cluster-directory",
+    });
+    interBayGetMembershipDetailsMock.mockResolvedValue({
+      selected: { class: "member", source: "grant", entitlements: {} },
+      candidates: [],
+      usage_status: undefined,
+    });
+
+    const { getMembershipDetails } = await import("./purchases");
+    const result = await getMembershipDetails({
+      account_id: "admin-1",
+      user_account_id: "account-2",
+      refresh_usage_status: true,
+    });
+
+    expect(resolveAccountHomeBayMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      user_account_id: "account-2",
+    });
+    expect(interBayGetMembershipDetailsMock).toHaveBeenCalledWith({
+      account_id: "account-2",
+      refresh_usage_status: true,
+    });
+    expect(resolveMembershipDetailsForAccountMock).not.toHaveBeenCalled();
+    expect(result.selected.class).toBe("member");
+  });
 });
 
 describe("purchases membership packages", () => {
@@ -243,6 +319,43 @@ describe("purchases membership packages", () => {
       owner_account_id: "account-1",
     });
     expect(result).toHaveLength(1);
+  });
+
+  it("routes another account's package list to that account's home bay", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resolveAccountHomeBayMock.mockResolvedValue({
+      account_id: "owner-1",
+      home_bay_id: "bay-2",
+      source: "cluster-directory",
+    });
+    interBayGetMembershipPackagesMock.mockResolvedValue([
+      {
+        id: "package-remote-1",
+        owner_account_id: "owner-1",
+        kind: "team",
+        membership_class: "member",
+        seat_count: 2,
+        active_assignment_count: 1,
+        available_seat_count: 1,
+        assignments: [],
+      },
+    ]);
+
+    const { getMembershipPackages } = await import("./purchases");
+    const result = await getMembershipPackages({
+      account_id: "admin-1",
+      user_account_id: "owner-1",
+    });
+
+    expect(resolveAccountHomeBayMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      user_account_id: "owner-1",
+    });
+    expect(interBayGetMembershipPackagesMock).toHaveBeenCalledWith({
+      owner_account_id: "owner-1",
+    });
+    expect(listMembershipPackageDetailsForOwnerMock).not.toHaveBeenCalled();
+    expect(result[0]?.id).toBe("package-remote-1");
   });
 
   it("requires ownership or admin rights to quote an existing package", async () => {
@@ -364,6 +477,59 @@ describe("purchases membership packages", () => {
     expect(result).toEqual({
       package_id: "package-1",
       purchase_id: 17,
+    });
+  });
+
+  it("requires fresh auth for browser membership-package purchases", async () => {
+    const { purchaseMembershipPackage } = await import("./purchases");
+
+    await expect(
+      purchaseMembershipPackage({
+        account_id: "owner-1",
+        browser_id: "browser-1",
+        kind: "team",
+        seat_count: 2,
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+    });
+
+    expect(purchaseMembershipPackageMock).not.toHaveBeenCalled();
+  });
+
+  it("checks browser-session fresh auth before purchasing a membership package", async () => {
+    getBrowserAuthSessionHashMock.mockReturnValue("session-1");
+    purchaseMembershipPackageMock.mockResolvedValue({
+      package_id: "package-1",
+      purchase_id: 17,
+    });
+
+    const { purchaseMembershipPackage } = await import("./purchases");
+    await purchaseMembershipPackage({
+      account_id: "owner-1",
+      browser_id: "browser-1",
+      kind: "team",
+      seat_count: 2,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+      session_hash: "session-1",
+    });
+    expect(purchaseMembershipPackageMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+      product: {
+        type: "membership-package",
+        kind: "team",
+        membership_class: "",
+        seat_count: 2,
+        interval: undefined,
+        package_id: undefined,
+        course_project_id: undefined,
+        starts_at: undefined,
+        expires_at: undefined,
+        metadata: undefined,
+      },
     });
   });
 

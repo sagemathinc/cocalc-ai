@@ -82,7 +82,11 @@ async function callApi(
     throw Error("timeout -- try again later");
   }
   if (typeof json == "object" && json.error) {
-    throw Error(json.error);
+    const err: any = Error(json.error);
+    if (json.code != null) {
+      err.code = json.code;
+    }
+    throw err;
   }
   if (typeof json == "object" && json.errors) {
     // This is what happens when the api request fails due to schema validation issues.

@@ -30,6 +30,7 @@ import {
   startBayWalArchiveMaintenance,
 } from "@cocalc/server/bay-backup";
 import { initInterBayServices } from "@cocalc/server/inter-bay/service";
+import { startMembershipSideEffectsMaintenance } from "@cocalc/server/membership/side-effects";
 
 export { loadConatConfiguration };
 
@@ -91,6 +92,7 @@ export async function initConatApi() {
   startAccountProjectIndexProjectionMaintenance();
   startAccountCollaboratorIndexProjectionMaintenance();
   startAccountNotificationIndexProjectionMaintenance();
+  startMembershipSideEffectsMaintenance();
   startBayBackupMaintenance();
   startBayWalArchiveMaintenance();
   initInterBayServices().catch((err) => {

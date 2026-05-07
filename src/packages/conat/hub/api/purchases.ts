@@ -307,6 +307,7 @@ export interface Purchases {
   }) => Promise<MembershipPackageQuote>;
   purchaseMembershipPackage: (opts?: {
     account_id?: string;
+    browser_id?: string;
     package_id?: string;
     kind?: MembershipPackageKind;
     membership_class?: MembershipClass;

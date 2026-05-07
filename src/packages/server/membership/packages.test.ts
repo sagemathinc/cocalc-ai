@@ -45,6 +45,7 @@ import {
 import purchaseMembershipPackage from "@cocalc/server/purchases/membership-package";
 import { uuid } from "@cocalc/util/misc";
 import { resolveMembershipForAccount } from "./resolve";
+import { getMembershipClaimIdentity } from "./claim-directory";
 import {
   assignMembershipPackageSeat,
   claimMembershipPackageSeat,
@@ -53,6 +54,10 @@ import {
   resolveMembershipPackageQuote,
   revokeMembershipPackageSeat,
 } from "./packages";
+import {
+  resetMembershipSideEffectsMaintenanceStateForTests,
+  runMembershipSideEffectsPass,
+} from "./side-effects";
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -65,6 +70,7 @@ describe("membership packages", () => {
   let remoteGrantUpserts: Array<{ dest_bay: string; grant: any }>;
   let remoteGrantRevocations: Array<{ dest_bay: string; opts: any }>;
   let remoteProjectUsageUpdates: Array<{ dest_bay: string; opts: any }>;
+  const clusterBayIdsEnv = process.env.COCALC_CLUSTER_BAY_IDS;
 
   async function markVerifiedEmail(account_id: string, email_address: string) {
     await getPool().query(
@@ -107,10 +113,36 @@ describe("membership packages", () => {
     });
   });
 
-  beforeEach(() => {
+  async function listOutboxKinds(): Promise<string[]> {
+    const result = await getPool("medium").query<{ effect_kind: string }>(
+      `SELECT effect_kind
+       FROM membership_side_effects_outbox
+       WHERE desired_revision > applied_revision
+       ORDER BY effect_kind, effect_key`,
+    );
+    return result.rows.map((row) => row.effect_kind);
+  }
+
+  async function listOutboxKindsForAssignment(
+    assignment_id: string,
+  ): Promise<string[]> {
+    const result = await getPool("medium").query<{ effect_kind: string }>(
+      `SELECT effect_kind
+       FROM membership_side_effects_outbox
+       WHERE assignment_id = $1
+         AND desired_revision > applied_revision
+       ORDER BY effect_kind, effect_key`,
+      [assignment_id],
+    );
+    return result.rows.map((row) => row.effect_kind);
+  }
+
+  beforeEach(async () => {
     remoteGrantUpserts = [];
     remoteGrantRevocations = [];
     remoteProjectUsageUpdates = [];
+    resetMembershipSideEffectsMaintenanceStateForTests();
+    await getPool("medium").query("DELETE FROM membership_side_effects_outbox");
     getInterBayFabricClientMock = jest.fn(() => ({ id: "fabric-client" }));
     createInterBayAccountLocalClientMock = jest.fn(
       ({ dest_bay }: { dest_bay: string }) => ({
@@ -121,6 +153,10 @@ describe("membership packages", () => {
         revokeMembershipGrant: jest.fn(async (opts) => {
           remoteGrantRevocations.push({ dest_bay, opts });
         }),
+        getClaimableMembershipPackages: jest.fn(async () => []),
+        claimMembershipPackageSeat: jest.fn(async () => {
+          throw new Error("unexpected remote claim");
+        }),
       }),
     );
     projectControlSetUsageAccountMock = jest.fn(
@@ -129,6 +165,14 @@ describe("membership packages", () => {
         return { updated: true };
       },
     );
+  });
+
+  afterEach(() => {
+    if (clusterBayIdsEnv === undefined) {
+      delete process.env.COCALC_CLUSTER_BAY_IDS;
+    } else {
+      process.env.COCALC_CLUSTER_BAY_IDS = clusterBayIdsEnv;
+    }
   });
 
   it("assigns seats, resolves grant-backed membership, and revokes assignments", async () => {
@@ -244,6 +288,33 @@ describe("membership packages", () => {
     expect(quote.total_price).toBe(87.5);
   });
 
+  it("allows expanding an existing package without resupplying the package kind", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 2,
+      metadata: {
+        interval: "month",
+        seat_price: 20,
+      },
+    });
+
+    const quote = await resolveMembershipPackageQuote({
+      type: "membership-package",
+      membership_class: teamTier,
+      seat_count: 1,
+      package_id,
+    });
+
+    expect(quote.package_id).toBe(package_id);
+    expect(quote.kind).toBe("team");
+    expect(quote.total_price).toBe(20);
+  });
+
   it("updates project usage attribution when assigning and revoking a course seat", async () => {
     const owner_account_id = uuid();
     const student_account_id = uuid();
@@ -343,6 +414,9 @@ describe("membership packages", () => {
       },
     });
 
+    expect(remoteProjectUsageUpdates).toHaveLength(0);
+    expect(await listOutboxKinds()).toContain("project-usage-sync");
+    await runMembershipSideEffectsPass();
     expect(remoteProjectUsageUpdates).toHaveLength(1);
     expect(remoteProjectUsageUpdates[0]).toMatchObject({
       dest_bay: "bay-2",
@@ -358,6 +432,8 @@ describe("membership packages", () => {
       account_id: student_account_id,
     });
 
+    expect(remoteProjectUsageUpdates).toHaveLength(1);
+    await runMembershipSideEffectsPass();
     expect(remoteProjectUsageUpdates).toHaveLength(2);
     expect(remoteProjectUsageUpdates[1]).toMatchObject({
       dest_bay: "bay-2",
@@ -470,6 +546,8 @@ describe("membership packages", () => {
       account_id: student_account_id,
     });
 
+    expect(remoteProjectUsageUpdates).toHaveLength(0);
+    await runMembershipSideEffectsPass();
     expect(remoteProjectUsageUpdates).toHaveLength(1);
     expect(remoteProjectUsageUpdates[0]).toMatchObject({
       dest_bay: "bay-2",
@@ -565,6 +643,9 @@ describe("membership packages", () => {
     expect(claimed.account_id).toBe(site_user_account_id);
     expect(claimed.email_address).toBe("ada@example.edu");
     expect(claimed.metadata?.grant_home_bay_id).toBe("bay-1");
+    expect(remoteGrantUpserts).toHaveLength(0);
+    expect(await listOutboxKinds()).toContain("grant-sync");
+    await runMembershipSideEffectsPass();
     expect(remoteGrantUpserts).toHaveLength(1);
     expect(remoteGrantUpserts[0]).toMatchObject({
       dest_bay: "bay-1",
@@ -582,6 +663,257 @@ describe("membership packages", () => {
       [site_user_account_id, package_id],
     );
     expect(localGrantCount.rows[0]?.count).toBe(0);
+  });
+
+  it("dedupes domain and site claims across plus aliases until the prior claim is revoked", async () => {
+    const owner_account_id = uuid();
+    const first_account_id = uuid();
+    const second_account_id = uuid();
+    const domain = `dept-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(owner_account_id);
+    await createTestAccount(first_account_id);
+    await createTestAccount(second_account_id);
+    await markVerifiedEmail(first_account_id, `ada@${domain}`);
+    await markVerifiedEmail(second_account_id, `ada+lab@${domain}`);
+
+    const site_package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "site",
+      membership_class: teamTier,
+      seat_count: 3,
+      metadata: {
+        interval: "year",
+        seat_price: 100,
+        allowed_domains: [domain],
+      },
+    });
+    const domain_package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "domain",
+      membership_class: teamTier,
+      seat_count: 3,
+      metadata: {
+        interval: "year",
+        seat_price: 100,
+        allowed_domains: [domain],
+      },
+    });
+
+    const firstClaimables = await listClaimableMembershipPackagesForAccount({
+      account_id: first_account_id,
+    });
+    expect(firstClaimables).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ package_id: site_package_id }),
+        expect.objectContaining({ package_id: domain_package_id }),
+      ]),
+    );
+
+    const firstClaim = await claimMembershipPackageSeat({
+      package_id: site_package_id,
+      account_id: first_account_id,
+    });
+    expect(firstClaim.metadata?.claim_identity_key).toBe(`ada@${domain}`);
+    expect(await listOutboxKindsForAssignment(firstClaim.id)).toContain(
+      "claim-identity-sync",
+    );
+    expect(
+      await getMembershipClaimIdentity({
+        scope_key: `institutional-domains:${domain}`,
+        canonical_identity: `ada@${domain}`,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        account_id: first_account_id,
+        state: "pending",
+      }),
+    );
+    await runMembershipSideEffectsPass();
+    expect(
+      await getMembershipClaimIdentity({
+        scope_key: `institutional-domains:${domain}`,
+        canonical_identity: `ada@${domain}`,
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        account_id: first_account_id,
+        state: "active",
+      }),
+    );
+
+    const secondClaimables = await listClaimableMembershipPackagesForAccount({
+      account_id: second_account_id,
+    });
+    expect(
+      secondClaimables.some(
+        (claimable) =>
+          claimable.package_id === site_package_id ||
+          claimable.package_id === domain_package_id,
+      ),
+    ).toBe(false);
+    await expect(
+      claimMembershipPackageSeat({
+        package_id: domain_package_id,
+        account_id: second_account_id,
+      }),
+    ).rejects.toThrow(/institutional|no claimable seat/i);
+
+    await revokeMembershipPackageSeat({
+      package_id: site_package_id,
+      account_id: first_account_id,
+    });
+
+    const stillBlockedClaimables =
+      await listClaimableMembershipPackagesForAccount({
+        account_id: second_account_id,
+      });
+    expect(
+      stillBlockedClaimables.some(
+        (claimable) => claimable.package_id === domain_package_id,
+      ),
+    ).toBe(false);
+
+    await runMembershipSideEffectsPass();
+
+    const releasedClaimables = await listClaimableMembershipPackagesForAccount({
+      account_id: second_account_id,
+    });
+    expect(releasedClaimables).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          package_id: domain_package_id,
+          matched_email_address: `ada+lab@${domain}`,
+        }),
+      ]),
+    );
+  });
+
+  it("discovers remote claimable domain packages across the cluster", async () => {
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    const claimant_account_id = uuid();
+    const remote_package_id = uuid();
+    const verifiedEmail = `ada-${uuid()}@example.edu`;
+    await createTestAccount(claimant_account_id);
+    await markVerifiedEmail(claimant_account_id, verifiedEmail);
+
+    createInterBayAccountLocalClientMock = jest.fn(
+      ({ dest_bay }: { dest_bay: string }) => ({
+        upsertMembershipGrant: jest.fn(async (grant) => {
+          remoteGrantUpserts.push({ dest_bay, grant });
+          return { grant_id: grant.id };
+        }),
+        revokeMembershipGrant: jest.fn(async (opts) => {
+          remoteGrantRevocations.push({ dest_bay, opts });
+        }),
+        getClaimableMembershipPackages: jest.fn(
+          async ({
+            account_id,
+            verified_email_addresses,
+          }: {
+            account_id: string;
+            verified_email_addresses: string[];
+          }) => {
+            expect(dest_bay).toBe("bay-1");
+            expect(account_id).toBe(claimant_account_id);
+            expect(verified_email_addresses).toEqual([verifiedEmail]);
+            return [
+              {
+                package_id: remote_package_id,
+                kind: "domain",
+                membership_class: teamTier,
+                owner_account_id: uuid(),
+                starts_at: new Date("2026-05-07T00:00:00.000Z"),
+                expires_at: null,
+                available_seat_count: 1,
+                matched_email_address: verifiedEmail,
+                reason: "domain-match",
+                metadata: { allowed_domains: ["example.edu"] },
+              },
+            ];
+          },
+        ),
+        claimMembershipPackageSeat: jest.fn(async () => {
+          throw new Error("unexpected remote claim");
+        }),
+      }),
+    );
+
+    const claimables = await listClaimableMembershipPackagesForAccount({
+      account_id: claimant_account_id,
+    });
+    expect(claimables).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          package_id: remote_package_id,
+          kind: "domain",
+          matched_email_address: verifiedEmail,
+          reason: "domain-match",
+        }),
+      ]),
+    );
+  });
+
+  it("forwards remote claims to the package-owning bay with verified emails", async () => {
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    const claimant_account_id = uuid();
+    const remote_package_id = uuid();
+    const verifiedEmail = `ada-${uuid()}@example.edu`;
+    const remoteAssignment = {
+      id: uuid(),
+      package_id: remote_package_id,
+      account_id: claimant_account_id,
+      email_address: verifiedEmail,
+      assigned_by_account_id: uuid(),
+      assigned_at: new Date("2026-05-07T00:00:00.000Z"),
+      revoked_at: undefined,
+      metadata: {
+        claimed_from_domain: "example.edu",
+      },
+      grant_id: uuid(),
+      grant_source: "domain-license",
+      grant_purchase_id: null,
+    };
+    await createTestAccount(claimant_account_id);
+    await markVerifiedEmail(claimant_account_id, verifiedEmail);
+
+    const remoteClaimMock = jest.fn(async () => remoteAssignment);
+    createInterBayAccountLocalClientMock = jest.fn(
+      ({ dest_bay }: { dest_bay: string }) => ({
+        upsertMembershipGrant: jest.fn(async (grant) => {
+          remoteGrantUpserts.push({ dest_bay, grant });
+          return { grant_id: grant.id };
+        }),
+        revokeMembershipGrant: jest.fn(async (opts) => {
+          remoteGrantRevocations.push({ dest_bay, opts });
+        }),
+        getClaimableMembershipPackages: jest.fn(async () => [
+          {
+            package_id: remote_package_id,
+            kind: "domain",
+            membership_class: teamTier,
+            owner_account_id: uuid(),
+            starts_at: new Date("2026-05-07T00:00:00.000Z"),
+            expires_at: null,
+            available_seat_count: 1,
+            matched_email_address: verifiedEmail,
+            reason: "domain-match",
+            metadata: { allowed_domains: ["example.edu"] },
+          },
+        ]),
+        claimMembershipPackageSeat: remoteClaimMock,
+      }),
+    );
+
+    const claimed = await claimMembershipPackageSeat({
+      package_id: remote_package_id,
+      account_id: claimant_account_id,
+    });
+    expect(claimed).toEqual(remoteAssignment);
+    expect(remoteClaimMock).toHaveBeenCalledWith({
+      package_id: remote_package_id,
+      account_id: claimant_account_id,
+      verified_email_addresses: [verifiedEmail],
+    });
   });
 
   it("rejects package purchase writes on a stale non-home bay", async () => {
@@ -663,6 +995,8 @@ describe("membership packages", () => {
     expect(claimed.account_id).toBe(invited_account_id);
     expect(claimed.email_address).toBe("remote-student@example.com");
     expect(claimed.metadata?.grant_home_bay_id).toBe("bay-1");
+    expect(remoteGrantUpserts).toHaveLength(0);
+    await runMembershipSideEffectsPass();
     expect(remoteGrantUpserts).toHaveLength(1);
     expect(remoteGrantUpserts[0]).toMatchObject({
       dest_bay: "bay-1",
@@ -707,6 +1041,8 @@ describe("membership packages", () => {
     });
     expect(assignment.account_id).toBe(invited_account_id);
     expect(assignment.metadata?.grant_home_bay_id).toBe("bay-1");
+    expect(remoteGrantUpserts).toHaveLength(0);
+    await runMembershipSideEffectsPass();
     expect(remoteGrantUpserts).toHaveLength(1);
     expect(remoteGrantUpserts[0]).toMatchObject({
       dest_bay: "bay-1",
@@ -732,12 +1068,55 @@ describe("membership packages", () => {
         account_id: invited_account_id,
       }),
     ).resolves.toBe(true);
+    expect(remoteGrantRevocations).toHaveLength(0);
+    await runMembershipSideEffectsPass();
     expect(remoteGrantRevocations).toHaveLength(1);
     expect(remoteGrantRevocations[0]).toMatchObject({
       dest_bay: "bay-1",
       opts: {
         account_id: invited_account_id,
         grant_id: assignment.grant_id,
+      },
+    });
+  });
+
+  it("collapses remote grant replay to the latest desired state", async () => {
+    const owner_account_id = uuid();
+    const invited_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(invited_account_id);
+    await setAccountHomeBay(invited_account_id, "bay-1");
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 1,
+      metadata: {
+        interval: "month",
+        seat_price: 20,
+      },
+    });
+
+    await assignMembershipPackageSeat({
+      package_id,
+      account_id: invited_account_id,
+      assigned_by_account_id: owner_account_id,
+    });
+    await revokeMembershipPackageSeat({
+      package_id,
+      account_id: invited_account_id,
+    });
+
+    expect(remoteGrantUpserts).toHaveLength(0);
+    expect(remoteGrantRevocations).toHaveLength(0);
+    await runMembershipSideEffectsPass();
+    expect(remoteGrantUpserts).toHaveLength(0);
+    expect(remoteGrantRevocations).toHaveLength(1);
+    expect(remoteGrantRevocations[0]).toMatchObject({
+      dest_bay: "bay-1",
+      opts: {
+        account_id: invited_account_id,
       },
     });
   });

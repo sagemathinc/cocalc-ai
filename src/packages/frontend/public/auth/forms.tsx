@@ -10,6 +10,7 @@ import api from "@cocalc/frontend/client/api";
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import type { AuthView } from "@cocalc/frontend/auth/types";
 import {
+  isMfaRequiredAuthResponse,
   isWrongBayAuthResponse,
   postAuthApi,
   retryAuthOnHomeBay,
@@ -181,11 +182,17 @@ export function PublicSignInForm({
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [challengeId, setChallengeId] = useState("");
+  const [factorMethod, setFactorMethod] = useState<"totp" | "recovery_code">(
+    "totp",
+  );
+  const [factorCode, setFactorCode] = useState("");
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState("");
 
-  const canSubmit =
-    isValidEmailAddress(email) && password.length > 0 && !signingIn;
+  const canSubmit = challengeId
+    ? factorCode.trim().length > 0 && !signingIn
+    : isValidEmailAddress(email) && password.length > 0 && !signingIn;
 
   async function signIn() {
     if (!canSubmit) {
@@ -205,6 +212,41 @@ export function PublicSignInForm({
           body: { email, password },
         });
       }
+      if (isMfaRequiredAuthResponse(result)) {
+        setStoredControlPlaneOrigin(result?.home_bay_url);
+        setChallengeId(result.challenge_id);
+        setFactorMethod("totp");
+        setFactorCode("");
+        return;
+      }
+      setStoredControlPlaneOrigin(result?.home_bay_url);
+      const redirectTarget =
+        typeof redirectToPath === "function"
+          ? redirectToPath()
+          : redirectToPath;
+      window.location.href = redirectTarget ?? appUrl("app?sign-in");
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSigningIn(false);
+    }
+  }
+
+  async function verifySecondFactor() {
+    if (!canSubmit) {
+      return;
+    }
+    setError("");
+    setSigningIn(true);
+    try {
+      const result = await postAuthApi<any>({
+        endpoint: "auth/verify-second-factor",
+        body: {
+          challenge_id: challengeId,
+          method: factorMethod,
+          code: factorCode,
+        },
+      });
       setStoredControlPlaneOrigin(result?.home_bay_url);
       const redirectTarget =
         typeof redirectToPath === "function"
@@ -221,40 +263,94 @@ export function PublicSignInForm({
   return (
     <div style={STACK_STYLE}>
       {error && <Alert kind="error">{error}</Alert>}
-      <div style={FIELD_STYLE}>
-        <div style={LABEL_STYLE}>Email address</div>
-        <TextInput
-          autoComplete="username"
-          autoFocus
-          placeholder="you@example.com"
-          value={email}
-          onChange={setEmail}
-          onPressEnter={signIn}
-        />
-      </div>
-      <div style={FIELD_STYLE}>
-        <div style={LABEL_STYLE}>Password</div>
-        <TextInput
-          autoComplete="current-password"
-          maxLength={MAX_PASSWORD_LENGTH}
-          placeholder="Password"
-          type="password"
-          value={password}
-          onChange={setPassword}
-          onPressEnter={signIn}
-        />
-      </div>
-      <ActionButton disabled={!canSubmit} onClick={signIn}>
-        {signingIn ? "Signing In..." : "Sign In"}
+      {!challengeId ? (
+        <>
+          <div style={FIELD_STYLE}>
+            <div style={LABEL_STYLE}>Email address</div>
+            <TextInput
+              autoComplete="username"
+              autoFocus
+              placeholder="you@example.com"
+              value={email}
+              onChange={setEmail}
+              onPressEnter={signIn}
+            />
+          </div>
+          <div style={FIELD_STYLE}>
+            <div style={LABEL_STYLE}>Password</div>
+            <TextInput
+              autoComplete="current-password"
+              maxLength={MAX_PASSWORD_LENGTH}
+              placeholder="Password"
+              type="password"
+              value={password}
+              onChange={setPassword}
+              onPressEnter={signIn}
+            />
+          </div>
+        </>
+      ) : (
+        <div style={FIELD_STYLE}>
+          <div style={LABEL_STYLE}>Second factor</div>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <ActionButton
+              disabled={signingIn}
+              onClick={() => setFactorMethod("totp")}
+            >
+              {factorMethod === "totp"
+                ? "Authenticator selected"
+                : "Use authenticator"}
+            </ActionButton>
+            <ActionButton
+              disabled={signingIn}
+              onClick={() => setFactorMethod("recovery_code")}
+            >
+              {factorMethod === "recovery_code"
+                ? "Recovery code selected"
+                : "Use recovery code"}
+            </ActionButton>
+          </div>
+          <TextInput
+            autoComplete="one-time-code"
+            autoFocus
+            placeholder={factorMethod === "totp" ? "123456" : "ABCD-EFGH-IJKL"}
+            value={factorCode}
+            onChange={setFactorCode}
+            onPressEnter={verifySecondFactor}
+          />
+          <NavLink
+            onClick={() => {
+              setChallengeId("");
+              setFactorCode("");
+              setError("");
+            }}
+          >
+            Use a different account
+          </NavLink>
+        </div>
+      )}
+      <ActionButton
+        disabled={!canSubmit}
+        onClick={challengeId ? verifySecondFactor : signIn}
+      >
+        {signingIn
+          ? challengeId
+            ? "Verifying..."
+            : "Signing In..."
+          : challengeId
+            ? "Verify"
+            : "Sign In"}
       </ActionButton>
-      <div style={LINK_ROW_STYLE}>
-        <NavLink onClick={() => onNavigate("password-reset")}>
-          Forgot password?
-        </NavLink>
-        <NavLink onClick={() => onNavigate("sign-up")}>
-          Create an account
-        </NavLink>
-      </div>
+      {!challengeId && (
+        <div style={LINK_ROW_STYLE}>
+          <NavLink onClick={() => onNavigate("password-reset")}>
+            Forgot password?
+          </NavLink>
+          <NavLink onClick={() => onNavigate("sign-up")}>
+            Create an account
+          </NavLink>
+        </div>
+      )}
     </div>
   );
 }

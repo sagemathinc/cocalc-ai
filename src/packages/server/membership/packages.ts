@@ -34,14 +34,38 @@ import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { getCost as getCoursePayCost } from "@cocalc/server/purchases/student-pay";
 import {
-  createMembershipGrant,
-  revokeMembershipGrantOnHomeBay,
-  upsertMembershipGrantOnHomeBay,
-} from "./grants";
-import { setProjectUsageAccountIdOnOwningBay } from "./project-usage";
+  canonicalizeInstitutionalClaimEmail,
+  getMembershipClaimIdentity,
+  reserveMembershipClaimIdentity,
+  revokeMembershipClaimIdentity,
+} from "./claim-directory";
+import { createMembershipGrant, revokeMembershipGrantById } from "./grants";
+import { setProjectUsageAccountId } from "./project-usage";
+import {
+  queueMembershipClaimIdentitySyncEffect,
+  queueMembershipGrantSyncEffect,
+  queueMembershipProjectUsageSyncEffect,
+} from "./side-effects";
 import { getMembershipPrice, getMembershipTierById } from "./tiers";
+import {
+  resolveProjectBayAcrossCluster,
+  resolveProjectBayDirect,
+} from "@cocalc/server/inter-bay/directory";
+import { getConfiguredClusterBayIdsForStaticEnumerationOnly } from "@cocalc/server/cluster-config";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
 type Queryable = PoolClient | ReturnType<typeof getPool>;
+type ClaimableMembershipPackageWithBay = ClaimableMembershipPackage & {
+  owner_bay_id: string;
+};
+type InstitutionalClaimDescriptor = {
+  scope_key: string;
+  scope_kind: string;
+  canonical_identity: string;
+  matched_email_address: string;
+  claimed_domain: string;
+};
 
 interface RawMembershipPackageRecord {
   id: string;
@@ -224,6 +248,60 @@ function getPackageDomains(
   return [];
 }
 
+function getInstitutionalClaimScopeKey(
+  metadata?: Record<string, unknown> | null,
+): string | undefined {
+  const explicit = `${metadata?.claim_scope_key ?? ""}`.trim().toLowerCase();
+  if (explicit) {
+    return explicit;
+  }
+  const domains = Array.from(new Set(getPackageDomains(metadata))).sort();
+  if (domains.length === 0) {
+    return;
+  }
+  return `institutional-domains:${domains.join(",")}`;
+}
+
+function getInstitutionalClaimScopeKind(
+  metadata?: Record<string, unknown> | null,
+): string {
+  const explicit = `${metadata?.claim_scope_kind ?? ""}`.trim().toLowerCase();
+  return explicit || "institutional-domain-set";
+}
+
+function getInstitutionalClaimDescriptorForEmail({
+  pkg,
+  matched_email_address,
+}: {
+  pkg: MembershipPackageRecord;
+  matched_email_address: string;
+}): InstitutionalClaimDescriptor | undefined {
+  if (pkg.kind !== "domain" && pkg.kind !== "site") {
+    return;
+  }
+  const normalizedEmail = normalizeEmailAddress(matched_email_address);
+  if (!normalizedEmail) {
+    return;
+  }
+  const scope_key = getInstitutionalClaimScopeKey(pkg.metadata);
+  if (!scope_key) {
+    return;
+  }
+  const claimed_domain = `${normalizedEmail.split("@")[1] ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (!claimed_domain) {
+    return;
+  }
+  return {
+    scope_key,
+    scope_kind: getInstitutionalClaimScopeKind(pkg.metadata),
+    canonical_identity: canonicalizeInstitutionalClaimEmail(normalizedEmail),
+    matched_email_address: normalizedEmail,
+    claimed_domain,
+  };
+}
+
 async function getVerifiedEmailAddressesForAccount(
   account_id: string,
   client?: PoolClient,
@@ -251,6 +329,18 @@ async function getVerifiedEmailAddressesForAccount(
     return normalized ? [normalized] : [];
   }
   return Array.from(new Set(emails));
+}
+
+function sortClaimableMembershipPackages<T extends ClaimableMembershipPackage>(
+  claimables: T[],
+): T[] {
+  return claimables.sort((left, right) => {
+    const rightStart = right.starts_at?.getTime() ?? 0;
+    const leftStart = left.starts_at?.getTime() ?? 0;
+    return (
+      rightStart - leftStart || `${left.kind}`.localeCompare(`${right.kind}`)
+    );
+  });
 }
 
 type AssignmentGrantInfo = {
@@ -328,6 +418,7 @@ async function getHomeBayForAccount(account_id: string): Promise<string> {
 }
 
 async function createGrantForAssignment({
+  owner_account_id,
   package_id,
   account_id,
   assigned_by_account_id,
@@ -335,6 +426,7 @@ async function createGrantForAssignment({
   metadata,
   client,
 }: {
+  owner_account_id: string;
   package_id: string;
   account_id: string;
   assigned_by_account_id?: string | null;
@@ -353,13 +445,74 @@ async function createGrantForAssignment({
   const home_bay_id = await getHomeBayForAccount(account_id);
   if (home_bay_id === getConfiguredBayId()) {
     await createMembershipGrant(grant, client);
-  } else {
-    await upsertMembershipGrantOnHomeBay(grant);
   }
+  await queueMembershipGrantSyncEffect({
+    owner_account_id,
+    package_id,
+    assignment_id,
+    desired_payload: {
+      desired_state: "active",
+      grant,
+    },
+    client,
+  });
   return {
     ...info,
     grant_home_bay_id: home_bay_id,
   };
+}
+
+async function syncProjectUsageForAssignment({
+  owner_account_id,
+  package_id,
+  assignment_id,
+  project_id,
+  account_id,
+  expected_current_usage_account_id,
+  client,
+}: {
+  owner_account_id: string;
+  package_id: string;
+  assignment_id: string;
+  project_id: string;
+  account_id?: string | null;
+  expected_current_usage_account_id?: string | null;
+  client: PoolClient;
+}): Promise<void> {
+  const localOwnership = await resolveProjectBayDirect(project_id);
+  const ownership =
+    localOwnership ?? (await resolveProjectBayAcrossCluster(project_id));
+  if (ownership == null) {
+    throw Error(
+      `cannot route course package seat write for project ${project_id}; owning bay is unknown`,
+    );
+  }
+  if (ownership.bay_id === getConfiguredBayId()) {
+    const updated = await setProjectUsageAccountId(
+      {
+        project_id,
+        account_id,
+        expected_current_usage_account_id,
+      },
+      client,
+    );
+    if (!updated) {
+      throw Error(
+        `cannot update course package seat usage attribution for project ${project_id}`,
+      );
+    }
+  }
+  await queueMembershipProjectUsageSyncEffect({
+    owner_account_id,
+    package_id,
+    assignment_id,
+    desired_payload: {
+      project_id,
+      desired_account_id: account_id ?? null,
+      expected_current_usage_account_id,
+    },
+    client,
+  });
 }
 
 async function withPackageOwnerWriteFence<T>({
@@ -503,7 +656,6 @@ export async function resolveMembershipPackageQuote(
   product: MembershipPackageProduct,
   client?: PoolClient,
 ): Promise<MembershipPackageQuote> {
-  const kind = normalizePackageKind(product.kind);
   const seat_count = normalizeSeatCount(product.seat_count);
   if (product.package_id) {
     const existing = await getMembershipPackage({
@@ -560,6 +712,7 @@ export async function resolveMembershipPackageQuote(
     };
   }
 
+  const kind = normalizePackageKind(product.kind);
   if (kind === "course") {
     const course_project_id = `${product.course_project_id ?? ""}`.trim();
     if (!isValidUUID(course_project_id)) {
@@ -902,145 +1055,111 @@ export async function assignMembershipPackageSeat(
   },
   client?: PoolClient,
 ): Promise<MembershipPackageAssignment> {
-  let remoteGrantCleanup:
-    | {
-        account_id: string;
-        grant_id: string;
-        grant_home_bay_id?: string;
+  return await withPackageOwnerWriteFence({
+    package_id,
+    action: "assign membership package seat",
+    client,
+    fn: async ({ client: dbClient, pkg }) => {
+      const pool = getQueryClient(dbClient);
+      const normalizedAccountId = `${account_id ?? ""}`.trim() || undefined;
+      const normalizedEmailAddress = normalizeEmailAddress(email_address);
+      if (!normalizedAccountId && !normalizedEmailAddress) {
+        throw Error("account_id or email_address required");
       }
-    | undefined;
-  try {
-    return await withPackageOwnerWriteFence({
-      package_id,
-      action: "assign membership package seat",
-      client,
-      fn: async ({ client: dbClient, pkg }) => {
-        const pool = getQueryClient(dbClient);
-        const normalizedAccountId = `${account_id ?? ""}`.trim() || undefined;
-        const normalizedEmailAddress = normalizeEmailAddress(email_address);
-        if (!normalizedAccountId && !normalizedEmailAddress) {
-          throw Error("account_id or email_address required");
-        }
-        if (pkg.expires_at && pkg.expires_at <= new Date()) {
-          throw Error("membership package has expired");
-        }
+      if (pkg.expires_at && pkg.expires_at <= new Date()) {
+        throw Error("membership package has expired");
+      }
 
-        const existing = await listMembershipPackageAssignments({
-          package_id,
-          include_revoked: false,
-          client: dbClient,
-        });
-        const existingAssignment = existing.find(
-          (assignment) =>
-            (normalizedAccountId &&
-              assignment.account_id === normalizedAccountId) ||
-            (normalizedEmailAddress &&
-              assignment.email_address === normalizedEmailAddress),
-        );
-        if (existingAssignment) {
-          return existingAssignment;
-        }
-        const { activeSeatCount, activeSeatLimit } =
-          await getActiveSeatCountAndLimit(package_id, dbClient);
-        if (activeSeatCount >= activeSeatLimit) {
-          throw Error("no seats available in membership package");
-        }
+      const existing = await listMembershipPackageAssignments({
+        package_id,
+        include_revoked: false,
+        client: dbClient,
+      });
+      const existingAssignment = existing.find(
+        (assignment) =>
+          (normalizedAccountId &&
+            assignment.account_id === normalizedAccountId) ||
+          (normalizedEmailAddress &&
+            assignment.email_address === normalizedEmailAddress),
+      );
+      if (existingAssignment) {
+        return existingAssignment;
+      }
+      const { activeSeatCount, activeSeatLimit } =
+        await getActiveSeatCountAndLimit(package_id, dbClient);
+      if (activeSeatCount >= activeSeatLimit) {
+        throw Error("no seats available in membership package");
+      }
 
-        const assignment_id = uuid();
-        let grantInfo: AssignmentGrantInfo | undefined;
-        if (normalizedAccountId) {
-          grantInfo = await createGrantForAssignment({
-            package_id,
-            account_id: normalizedAccountId,
-            assigned_by_account_id,
-            assignment_id,
-            metadata,
-            client: dbClient,
-          });
-          if (grantInfo.grant_home_bay_id !== getConfiguredBayId()) {
-            remoteGrantCleanup = {
-              account_id: normalizedAccountId,
-              grant_id: grantInfo.grant_id,
-              grant_home_bay_id: grantInfo.grant_home_bay_id,
-            };
-          }
-        }
-        const assignmentMetadata = {
-          ...normalizeMetadata(metadata),
-          ...(grantInfo
-            ? {
-                grant_id: grantInfo.grant_id,
-                grant_source: grantInfo.grant_source,
-                grant_purchase_id: grantInfo.grant_purchase_id ?? null,
-                grant_home_bay_id: grantInfo.grant_home_bay_id,
-              }
-            : {}),
-        };
-        await pool.query(
-          `
-            INSERT INTO membership_package_assignments
-              (id, package_id, account_id, email_address, assigned_by_account_id, assigned_at, metadata, created, updated)
-            VALUES
-              ($1, $2, $3, $4, $5, NOW(), $6::jsonb, NOW(), NOW())
-          `,
-          [
-            assignment_id,
-            package_id,
-            normalizedAccountId ?? null,
-            normalizedEmailAddress ?? null,
-            assigned_by_account_id,
-            assignmentMetadata,
-          ],
-        );
-        if (normalizedAccountId) {
-          const project_id = `${metadata?.project_id ?? ""}`.trim();
-          if (pkg.kind === "course" && isValidUUID(project_id)) {
-            const updated = await setProjectUsageAccountIdOnOwningBay(
-              {
-                project_id,
-                account_id: normalizedAccountId,
-              },
-              dbClient,
-            );
-            if (!updated) {
-              throw Error(
-                `cannot assign course package seat for project ${project_id}; route this write to the project-owning bay first`,
-              );
-            }
-          }
-        }
-
-        return {
-          id: assignment_id,
+      const assignment_id = uuid();
+      let grantInfo: AssignmentGrantInfo | undefined;
+      if (normalizedAccountId) {
+        grantInfo = await createGrantForAssignment({
+          owner_account_id: pkg.owner_account_id,
           package_id,
           account_id: normalizedAccountId,
-          email_address: normalizedEmailAddress,
           assigned_by_account_id,
-          assigned_at: new Date(),
-          revoked_at: undefined,
-          metadata: assignmentMetadata,
-          grant_id: grantInfo?.grant_id,
-          grant_source: grantInfo?.grant_source,
-          grant_purchase_id: grantInfo?.grant_purchase_id,
-        };
-      },
-    });
-  } catch (err) {
-    if (
-      remoteGrantCleanup?.grant_home_bay_id &&
-      remoteGrantCleanup.grant_home_bay_id !== getConfiguredBayId()
-    ) {
-      try {
-        await revokeMembershipGrantOnHomeBay({
-          account_id: remoteGrantCleanup.account_id,
-          grant_id: remoteGrantCleanup.grant_id,
+          assignment_id,
+          metadata,
+          client: dbClient,
         });
-      } catch {
-        // best effort cleanup only
       }
-    }
-    throw err;
-  }
+      const assignmentMetadata = {
+        ...normalizeMetadata(metadata),
+        ...(grantInfo
+          ? {
+              grant_id: grantInfo.grant_id,
+              grant_source: grantInfo.grant_source,
+              grant_purchase_id: grantInfo.grant_purchase_id ?? null,
+              grant_home_bay_id: grantInfo.grant_home_bay_id,
+            }
+          : {}),
+      };
+      await pool.query(
+        `
+          INSERT INTO membership_package_assignments
+            (id, package_id, account_id, email_address, assigned_by_account_id, assigned_at, metadata, created, updated)
+          VALUES
+            ($1, $2, $3, $4, $5, NOW(), $6::jsonb, NOW(), NOW())
+        `,
+        [
+          assignment_id,
+          package_id,
+          normalizedAccountId ?? null,
+          normalizedEmailAddress ?? null,
+          assigned_by_account_id,
+          assignmentMetadata,
+        ],
+      );
+      if (normalizedAccountId) {
+        const project_id = `${metadata?.project_id ?? ""}`.trim();
+        if (pkg.kind === "course" && isValidUUID(project_id)) {
+          await syncProjectUsageForAssignment({
+            owner_account_id: pkg.owner_account_id,
+            package_id,
+            assignment_id,
+            project_id,
+            account_id: normalizedAccountId,
+            client: dbClient,
+          });
+        }
+      }
+
+      return {
+        id: assignment_id,
+        package_id,
+        account_id: normalizedAccountId,
+        email_address: normalizedEmailAddress,
+        assigned_by_account_id,
+        assigned_at: new Date(),
+        revoked_at: undefined,
+        metadata: assignmentMetadata,
+        grant_id: grantInfo?.grant_id,
+        grant_source: grantInfo?.grant_source,
+        grant_purchase_id: grantInfo?.grant_purchase_id,
+      };
+    },
+  });
 }
 
 export async function revokeMembershipPackageSeat(
@@ -1055,13 +1174,6 @@ export async function revokeMembershipPackageSeat(
   },
   client?: PoolClient,
 ): Promise<boolean> {
-  let remoteGrantInfo:
-    | {
-        account_id: string;
-        grant_id: string;
-        grant_home_bay_id: string;
-      }
-    | undefined;
   const revoked = await withPackageOwnerWriteFence({
     package_id,
     action: "revoke membership package seat",
@@ -1087,29 +1199,18 @@ export async function revokeMembershipPackageSeat(
       if (!assignment) {
         return false;
       }
-      const assignmentGrantHomeBayId =
-        `${assignment.metadata?.grant_home_bay_id ?? ""}`.trim() ||
-        getConfiguredBayId();
+      const currentGrantHomeBayId = assignment.account_id
+        ? await getHomeBayForAccount(assignment.account_id)
+        : getConfiguredBayId();
       if (
         assignment.account_id &&
-        assignmentGrantHomeBayId === getConfiguredBayId()
+        currentGrantHomeBayId === getConfiguredBayId()
       ) {
         await assertAccountPackageWriteAllowed({
           account_id: assignment.account_id,
           action: "revoke membership package seat grant",
           client: dbClient,
         });
-      }
-      if (
-        assignment.account_id &&
-        assignment.grant_id &&
-        assignmentGrantHomeBayId !== getConfiguredBayId()
-      ) {
-        remoteGrantInfo = {
-          account_id: assignment.account_id,
-          grant_id: assignment.grant_id,
-          grant_home_bay_id: assignmentGrantHomeBayId,
-        };
       }
       await pool.query(
         `
@@ -1119,46 +1220,75 @@ export async function revokeMembershipPackageSeat(
         `,
         [assignment.id],
       );
-      await pool.query(
-        `
-          UPDATE membership_grants
-          SET revoked_at = NOW(), updated = NOW()
-          WHERE package_id = $1
-            AND account_id = $2
-            AND revoked_at IS NULL
-            AND (metadata->>'assignment_id' = $3::text OR metadata->>'assignment_id' IS NULL)
-        `,
-        [package_id, assignment.account_id ?? null, assignment.id],
-      );
+      if (assignment.account_id && assignment.grant_id) {
+        if (currentGrantHomeBayId === getConfiguredBayId()) {
+          await revokeMembershipGrantById(
+            {
+              account_id: assignment.account_id,
+              grant_id: assignment.grant_id,
+            },
+            dbClient,
+          );
+        }
+        await queueMembershipGrantSyncEffect({
+          owner_account_id: pkg.owner_account_id,
+          package_id,
+          assignment_id: assignment.id,
+          desired_payload: {
+            desired_state: "revoked",
+            account_id: assignment.account_id,
+            grant_id: assignment.grant_id,
+          },
+          client: dbClient,
+        });
+      }
+      const claim_scope_key =
+        `${assignment.metadata?.claim_scope_key ?? ""}`.trim() || undefined;
+      const claim_identity_key =
+        `${assignment.metadata?.claim_identity_key ?? ""}`.trim() || undefined;
+      const claim_reservation_id =
+        `${assignment.metadata?.claim_reservation_id ?? ""}`.trim() ||
+        undefined;
+      if (
+        assignment.account_id &&
+        claim_scope_key &&
+        claim_identity_key &&
+        (pkg.kind === "domain" || pkg.kind === "site")
+      ) {
+        await queueMembershipClaimIdentitySyncEffect({
+          owner_account_id: pkg.owner_account_id,
+          package_id,
+          assignment_id: assignment.id,
+          desired_payload: {
+            desired_state: "revoked",
+            scope_key: claim_scope_key,
+            canonical_identity: claim_identity_key,
+            account_id: assignment.account_id,
+            assignment_id: assignment.id,
+            reservation_id: claim_reservation_id,
+          },
+          client: dbClient,
+        });
+      }
       const project_id = `${assignment.metadata?.project_id ?? ""}`.trim();
       if (
         pkg.kind === "course" &&
         isValidUUID(project_id) &&
         assignment.account_id
       ) {
-        const updated = await setProjectUsageAccountIdOnOwningBay(
-          {
-            project_id,
-            account_id: null,
-            expected_current_usage_account_id: assignment.account_id,
-          },
-          dbClient,
-        );
-        if (!updated) {
-          throw Error(
-            `cannot revoke course package seat for project ${project_id}; route this write to the project-owning bay first`,
-          );
-        }
+        await syncProjectUsageForAssignment({
+          owner_account_id: pkg.owner_account_id,
+          package_id,
+          assignment_id: assignment.id,
+          project_id,
+          account_id: null,
+          expected_current_usage_account_id: assignment.account_id,
+          client: dbClient,
+        });
       }
       return true;
     },
   });
-  if (revoked && remoteGrantInfo) {
-    await revokeMembershipGrantOnHomeBay({
-      account_id: remoteGrantInfo.account_id,
-      grant_id: remoteGrantInfo.grant_id,
-    });
-  }
   return revoked;
 }
 
@@ -1172,6 +1302,37 @@ export async function listClaimableMembershipPackagesForAccount({
   const verifiedEmailAddresses = await getVerifiedEmailAddressesForAccount(
     account_id,
     client,
+  );
+  if (verifiedEmailAddresses.length === 0) {
+    return [];
+  }
+  const claimables = await listClaimableMembershipPackagesAcrossCluster({
+    account_id,
+    verified_email_addresses: verifiedEmailAddresses,
+    client,
+  });
+  return sortClaimableMembershipPackages(
+    claimables.map(
+      ({ owner_bay_id: _owner_bay_id, ...claimable }) => claimable,
+    ),
+  );
+}
+
+export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
+  account_id,
+  verified_email_addresses,
+  client,
+}: {
+  account_id: string;
+  verified_email_addresses: string[];
+  client?: PoolClient;
+}): Promise<ClaimableMembershipPackage[]> {
+  const verifiedEmailAddresses = Array.from(
+    new Set(
+      verified_email_addresses
+        .map((email) => normalizeEmailAddress(email))
+        .filter((email): email is string => !!email),
+    ),
   );
   if (verifiedEmailAddresses.length === 0) {
     return [];
@@ -1201,6 +1362,7 @@ export async function listClaimableMembershipPackagesForAccount({
     .map((row) => normalizePackageRecord(row))
     .filter((row): row is MembershipPackageRecord => !!row);
   const claimables = new Map<string, ClaimableMembershipPackage>();
+  const claimIdentityCache = new Map<string, boolean>();
   for (const pkg of allPackages) {
     const assignments = await listMembershipPackageAssignments({
       package_id: pkg.id,
@@ -1253,6 +1415,28 @@ export async function listClaimableMembershipPackagesForAccount({
         allowedDomains.has(email.split("@")[1] ?? ""),
       );
       if (matchedEmailAddress) {
+        const claimDescriptor = getInstitutionalClaimDescriptorForEmail({
+          pkg,
+          matched_email_address: matchedEmailAddress,
+        });
+        const claimIdentityKey =
+          claimDescriptor == null
+            ? null
+            : `${claimDescriptor.scope_key}\u0000${claimDescriptor.canonical_identity}`;
+        let blocked = false;
+        if (claimDescriptor != null && claimIdentityKey != null) {
+          if (!claimIdentityCache.has(claimIdentityKey)) {
+            const currentClaim = await getMembershipClaimIdentity({
+              scope_key: claimDescriptor.scope_key,
+              canonical_identity: claimDescriptor.canonical_identity,
+            });
+            claimIdentityCache.set(claimIdentityKey, currentClaim != null);
+          }
+          blocked = claimIdentityCache.get(claimIdentityKey) ?? false;
+        }
+        if (blocked) {
+          continue;
+        }
         claimables.set(pkg.id, {
           package_id: pkg.id,
           kind: pkg.kind,
@@ -1268,30 +1452,64 @@ export async function listClaimableMembershipPackagesForAccount({
       }
     }
   }
-  return Array.from(claimables.values()).sort((left, right) => {
-    const rightStart = right.starts_at?.getTime() ?? 0;
-    const leftStart = left.starts_at?.getTime() ?? 0;
-    return (
-      rightStart - leftStart || `${left.kind}`.localeCompare(`${right.kind}`)
-    );
-  });
+  return sortClaimableMembershipPackages(Array.from(claimables.values()));
 }
 
-export async function claimMembershipPackageSeat({
+async function listClaimableMembershipPackagesAcrossCluster({
+  account_id,
+  verified_email_addresses,
+  client,
+}: {
+  account_id: string;
+  verified_email_addresses: string[];
+  client?: PoolClient;
+}): Promise<ClaimableMembershipPackageWithBay[]> {
+  const claimables = new Map<string, ClaimableMembershipPackageWithBay>();
+  const addClaimables = (
+    rows: ClaimableMembershipPackage[],
+    owner_bay_id: string,
+  ) => {
+    for (const row of rows) {
+      claimables.set(row.package_id, { ...row, owner_bay_id });
+    }
+  };
+  addClaimables(
+    await listLocalClaimableMembershipPackagesForVerifiedEmails({
+      account_id,
+      verified_email_addresses,
+      client,
+    }),
+    getConfiguredBayId(),
+  );
+  for (const bay_id of getConfiguredClusterBayIdsForStaticEnumerationOnly()) {
+    if (bay_id === getConfiguredBayId()) continue;
+    const remoteRows = await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: bay_id,
+    }).getClaimableMembershipPackages({
+      account_id,
+      verified_email_addresses,
+    });
+    addClaimables(remoteRows, bay_id);
+  }
+  return sortClaimableMembershipPackages(Array.from(claimables.values()));
+}
+
+export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
   package_id,
   account_id,
+  verified_email_addresses,
   client,
 }: {
   package_id: string;
   account_id: string;
+  verified_email_addresses: string[];
   client?: PoolClient;
 }): Promise<MembershipPackageAssignment> {
-  let remoteGrantCleanup:
-    | {
-        account_id: string;
-        grant_id: string;
-        grant_home_bay_id?: string;
-      }
+  let reservedInstitutionalClaim:
+    | (InstitutionalClaimDescriptor & {
+        reservation_id: string;
+      })
     | undefined;
   try {
     return await withPackageOwnerWriteFence({
@@ -1303,8 +1521,13 @@ export async function claimMembershipPackageSeat({
         if (pkg.expires_at && pkg.expires_at <= new Date()) {
           throw Error("membership package has expired");
         }
-        const verifiedEmailAddresses =
-          await getVerifiedEmailAddressesForAccount(account_id, dbClient);
+        const verifiedEmailAddresses = Array.from(
+          new Set(
+            verified_email_addresses
+              .map((email) => normalizeEmailAddress(email))
+              .filter((email): email is string => !!email),
+          ),
+        );
         if (verifiedEmailAddresses.length === 0) {
           throw Error("verify an email address before claiming this package");
         }
@@ -1327,8 +1550,35 @@ export async function claimMembershipPackageSeat({
             assignment.email_address &&
             emailSet.has(assignment.email_address),
         );
+        const pendingClaimDescriptor =
+          pendingAssignment?.email_address == null
+            ? undefined
+            : getInstitutionalClaimDescriptorForEmail({
+                pkg,
+                matched_email_address: pendingAssignment.email_address,
+              });
+        if (pendingClaimDescriptor != null) {
+          const reserved = await reserveMembershipClaimIdentity({
+            scope_key: pendingClaimDescriptor.scope_key,
+            scope_kind: pendingClaimDescriptor.scope_kind,
+            canonical_identity: pendingClaimDescriptor.canonical_identity,
+            account_id,
+            reservation_id: uuid(),
+            matched_email_address: pendingClaimDescriptor.matched_email_address,
+            claimed_domain: pendingClaimDescriptor.claimed_domain,
+            metadata: {
+              package_kind: pkg.kind,
+              package_id,
+            },
+          });
+          reservedInstitutionalClaim = {
+            ...pendingClaimDescriptor,
+            reservation_id: reserved.reservation_id,
+          };
+        }
         if (pendingAssignment) {
           const grantInfo = await createGrantForAssignment({
+            owner_account_id: pkg.owner_account_id,
             package_id,
             account_id,
             assigned_by_account_id:
@@ -1337,13 +1587,6 @@ export async function claimMembershipPackageSeat({
             metadata: pendingAssignment.metadata,
             client: dbClient,
           });
-          if (grantInfo.grant_home_bay_id !== getConfiguredBayId()) {
-            remoteGrantCleanup = {
-              account_id,
-              grant_id: grantInfo.grant_id,
-              grant_home_bay_id: grantInfo.grant_home_bay_id,
-            };
-          }
           const nextMetadata = {
             ...normalizeMetadata(pendingAssignment.metadata),
             grant_id: grantInfo.grant_id,
@@ -1351,6 +1594,16 @@ export async function claimMembershipPackageSeat({
             grant_purchase_id: grantInfo.grant_purchase_id ?? null,
             grant_home_bay_id: grantInfo.grant_home_bay_id,
             claimed_at: new Date().toISOString(),
+            ...(reservedInstitutionalClaim
+              ? {
+                  claim_scope_key: reservedInstitutionalClaim.scope_key,
+                  claim_scope_kind: reservedInstitutionalClaim.scope_kind,
+                  claim_identity_key:
+                    reservedInstitutionalClaim.canonical_identity,
+                  claim_reservation_id:
+                    reservedInstitutionalClaim.reservation_id,
+                }
+              : {}),
           };
           await pool.query(
             `
@@ -1362,21 +1615,43 @@ export async function claimMembershipPackageSeat({
             `,
             [pendingAssignment.id, account_id, nextMetadata],
           );
+          if (reservedInstitutionalClaim) {
+            await queueMembershipClaimIdentitySyncEffect({
+              owner_account_id: pkg.owner_account_id,
+              package_id,
+              assignment_id: pendingAssignment.id,
+              desired_payload: {
+                desired_state: "active",
+                scope_key: reservedInstitutionalClaim.scope_key,
+                scope_kind: reservedInstitutionalClaim.scope_kind,
+                canonical_identity:
+                  reservedInstitutionalClaim.canonical_identity,
+                reservation_id: reservedInstitutionalClaim.reservation_id,
+                account_id,
+                package_id,
+                assignment_id: pendingAssignment.id,
+                grant_id: grantInfo.grant_id,
+                matched_email_address:
+                  reservedInstitutionalClaim.matched_email_address,
+                claimed_domain: reservedInstitutionalClaim.claimed_domain,
+                metadata: {
+                  package_kind: pkg.kind,
+                },
+              },
+              client: dbClient,
+            });
+          }
           const project_id =
             `${pendingAssignment.metadata?.project_id ?? ""}`.trim();
           if (pkg.kind === "course" && isValidUUID(project_id)) {
-            const updated = await setProjectUsageAccountIdOnOwningBay(
-              {
-                project_id,
-                account_id,
-              },
-              dbClient,
-            );
-            if (!updated) {
-              throw Error(
-                `cannot claim course package seat for project ${project_id}; route this write to the project-owning bay first`,
-              );
-            }
+            await syncProjectUsageForAssignment({
+              owner_account_id: pkg.owner_account_id,
+              package_id,
+              assignment_id: pendingAssignment.id,
+              project_id,
+              account_id,
+              client: dbClient,
+            });
           }
           return {
             ...pendingAssignment,
@@ -1398,7 +1673,31 @@ export async function claimMembershipPackageSeat({
         if (!matchedEmailAddress) {
           throw Error("no verified email matches this package");
         }
-        return await assignMembershipPackageSeat(
+        const institutionalClaim = getInstitutionalClaimDescriptorForEmail({
+          pkg,
+          matched_email_address: matchedEmailAddress,
+        });
+        if (institutionalClaim == null) {
+          throw Error("no claimable seat found for this account");
+        }
+        const reserved = await reserveMembershipClaimIdentity({
+          scope_key: institutionalClaim.scope_key,
+          scope_kind: institutionalClaim.scope_kind,
+          canonical_identity: institutionalClaim.canonical_identity,
+          account_id,
+          reservation_id: uuid(),
+          matched_email_address: institutionalClaim.matched_email_address,
+          claimed_domain: institutionalClaim.claimed_domain,
+          metadata: {
+            package_kind: pkg.kind,
+            package_id,
+          },
+        });
+        reservedInstitutionalClaim = {
+          ...institutionalClaim,
+          reservation_id: reserved.reservation_id,
+        };
+        const claimed = await assignMembershipPackageSeat(
           {
             package_id,
             account_id,
@@ -1407,26 +1706,92 @@ export async function claimMembershipPackageSeat({
             metadata: {
               claimed_from_domain: matchedEmailAddress.split("@")[1],
               claimed_email_address: matchedEmailAddress,
+              claim_scope_key: reservedInstitutionalClaim.scope_key,
+              claim_scope_kind: reservedInstitutionalClaim.scope_kind,
+              claim_identity_key: reservedInstitutionalClaim.canonical_identity,
+              claim_reservation_id: reservedInstitutionalClaim.reservation_id,
             },
           },
           dbClient,
         );
+        await queueMembershipClaimIdentitySyncEffect({
+          owner_account_id: pkg.owner_account_id,
+          package_id,
+          assignment_id: claimed.id,
+          desired_payload: {
+            desired_state: "active",
+            scope_key: reservedInstitutionalClaim.scope_key,
+            scope_kind: reservedInstitutionalClaim.scope_kind,
+            canonical_identity: reservedInstitutionalClaim.canonical_identity,
+            reservation_id: reservedInstitutionalClaim.reservation_id,
+            account_id,
+            package_id,
+            assignment_id: claimed.id,
+            grant_id: claimed.grant_id ?? null,
+            matched_email_address:
+              reservedInstitutionalClaim.matched_email_address,
+            claimed_domain: reservedInstitutionalClaim.claimed_domain,
+            metadata: {
+              package_kind: pkg.kind,
+            },
+          },
+          client: dbClient,
+        });
+        return claimed;
       },
     });
   } catch (err) {
-    if (
-      remoteGrantCleanup?.grant_home_bay_id &&
-      remoteGrantCleanup.grant_home_bay_id !== getConfiguredBayId()
-    ) {
-      try {
-        await revokeMembershipGrantOnHomeBay({
-          account_id: remoteGrantCleanup.account_id,
-          grant_id: remoteGrantCleanup.grant_id,
-        });
-      } catch {
-        // best effort cleanup only
-      }
+    if (reservedInstitutionalClaim) {
+      await revokeMembershipClaimIdentity({
+        scope_key: reservedInstitutionalClaim.scope_key,
+        canonical_identity: reservedInstitutionalClaim.canonical_identity,
+        account_id,
+        reservation_id: reservedInstitutionalClaim.reservation_id,
+      }).catch(() => undefined);
     }
     throw err;
   }
+}
+
+export async function claimMembershipPackageSeat({
+  package_id,
+  account_id,
+  client,
+}: {
+  package_id: string;
+  account_id: string;
+  client?: PoolClient;
+}): Promise<MembershipPackageAssignment> {
+  const verifiedEmailAddresses = await getVerifiedEmailAddressesForAccount(
+    account_id,
+    client,
+  );
+  if (verifiedEmailAddresses.length === 0) {
+    throw Error("verify an email address before claiming this package");
+  }
+  const claimables = await listClaimableMembershipPackagesAcrossCluster({
+    account_id,
+    verified_email_addresses: verifiedEmailAddresses,
+    client,
+  });
+  const claimable = claimables.find((row) => row.package_id === package_id);
+  if (!claimable) {
+    throw Error("no claimable seat found for this account");
+  }
+  if (claimable.owner_bay_id === getConfiguredBayId()) {
+    return await claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
+      package_id,
+      account_id,
+      verified_email_addresses: verifiedEmailAddresses,
+      client,
+    });
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: claimable.owner_bay_id,
+  }).claimMembershipPackageSeat({
+    package_id,
+    account_id,
+    verified_email_addresses: verifiedEmailAddresses,
+  });
 }

@@ -20,6 +20,13 @@ import type {
   HostConnectionInfo,
   Hosts,
 } from "@cocalc/conat/hub/api/hosts";
+import type {
+  ClaimableMembershipPackage,
+  MembershipDetails,
+  MembershipPackageAssignment,
+  MembershipPackageDetails,
+  MembershipResolution,
+} from "@cocalc/conat/hub/api/purchases";
 import type { BayBackupsInfo, BayLoadInfo } from "@cocalc/conat/hub/api/system";
 import type {
   ProjectActiveOperationSummary,
@@ -421,6 +428,62 @@ export interface AccountDirectoryCreateRequest {
   customize?: any;
 }
 
+export type MembershipClaimIdentityState = "pending" | "active" | "revoked";
+
+export interface MembershipClaimIdentityEntry {
+  scope_id: string;
+  scope_key: string;
+  scope_kind: string;
+  canonical_identity: string;
+  account_id: string;
+  state: MembershipClaimIdentityState;
+  reservation_id: string;
+  package_id?: string;
+  assignment_id?: string;
+  grant_id?: string;
+  matched_email_address: string;
+  claimed_domain: string;
+  reservation_expires_at?: Date | null;
+  activated_at?: Date | null;
+  revoked_at?: Date | null;
+  metadata?: Record<string, unknown> | null;
+  created?: Date;
+  updated?: Date;
+}
+
+export interface MembershipClaimIdentityGetRequest {
+  scope_key: string;
+  canonical_identity: string;
+}
+
+export interface MembershipClaimIdentityReserveRequest extends MembershipClaimIdentityGetRequest {
+  scope_kind: string;
+  account_id: string;
+  reservation_id: string;
+  matched_email_address: string;
+  claimed_domain: string;
+  reservation_ttl_ms?: number;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface MembershipClaimIdentityReserveResult {
+  scope_id: string;
+  reservation_id: string;
+}
+
+export interface MembershipClaimIdentityActivateRequest extends MembershipClaimIdentityReserveRequest {
+  package_id: string;
+  assignment_id: string;
+  grant_id?: string | null;
+}
+
+export interface MembershipClaimIdentityRevokeRequest extends MembershipClaimIdentityGetRequest {
+  account_id: string;
+  assignment_id?: string;
+  reservation_id?: string;
+  revoked_at?: string | number | Date | null;
+}
+
 export interface AccountRehomeRequest {
   account_id?: string;
   target_account_id: string;
@@ -444,8 +507,16 @@ export interface AccountRehomeStateCopyRequest {
   account_collaborator_index?: Record<string, unknown>[];
   account_notification_index?: Record<string, unknown>[];
   remember_me?: Record<string, unknown>[];
+  account_auth_sessions?: Record<string, unknown>[];
+  account_auth_challenges?: Record<string, unknown>[];
+  account_second_factors?: Record<string, unknown>[];
+  account_second_factor_recovery_codes?: Record<string, unknown>[];
   auth_tokens?: Record<string, unknown>[];
   api_keys?: Record<string, unknown>[];
+  membership_grants?: Record<string, unknown>[];
+  membership_packages?: Record<string, unknown>[];
+  membership_package_assignments?: Record<string, unknown>[];
+  membership_side_effects_outbox?: Record<string, unknown>[];
 }
 
 export interface AccountLocalUpsertMembershipGrantRequest {
@@ -466,6 +537,45 @@ export interface AccountLocalRevokeMembershipGrantRequest {
   account_id: string;
   grant_id: string;
   revoked_at?: Date | string | number | null;
+}
+
+export interface AccountLocalGetMembershipRequest {
+  account_id: string;
+}
+
+export interface AccountLocalGetMembershipDetailsRequest {
+  account_id: string;
+  refresh_usage_status?: boolean;
+}
+
+export interface AccountLocalGetMembershipPackagesRequest {
+  owner_account_id: string;
+}
+
+export interface AccountLocalGetClaimableMembershipPackagesRequest {
+  account_id: string;
+  verified_email_addresses: string[];
+}
+
+export interface AccountLocalClaimMembershipPackageSeatRequest {
+  package_id: string;
+  account_id: string;
+  verified_email_addresses: string[];
+}
+
+export interface AccountMembershipPortableState {
+  membership_grants?: Record<string, unknown>[];
+  membership_packages?: Record<string, unknown>[];
+  membership_package_assignments?: Record<string, unknown>[];
+  membership_side_effects_outbox?: Record<string, unknown>[];
+}
+
+export interface AccountLocalGetMembershipPortableStateRequest {
+  account_id: string;
+}
+
+export interface AccountLocalReplaceMembershipPortableStateRequest extends AccountMembershipPortableState {
+  account_id: string;
 }
 
 export type AccountRehomeOperationStage =
@@ -728,7 +838,11 @@ export type AccountDirectoryMethod =
   | "upsert-api-key"
   | "delete-api-key"
   | "update-api-keys-home-bay"
-  | "touch-api-key";
+  | "touch-api-key"
+  | "get-membership-claim-identity"
+  | "reserve-membership-claim-identity"
+  | "activate-membership-claim-identity"
+  | "revoke-membership-claim-identity";
 export type AccountLocalMethod =
   | "create"
   | "delete"
@@ -738,7 +852,14 @@ export type AccountLocalMethod =
   | "get-rehome-operation"
   | "reconcile-rehome"
   | "upsert-membership-grant"
-  | "revoke-membership-grant";
+  | "revoke-membership-grant"
+  | "get-membership"
+  | "get-membership-details"
+  | "get-membership-packages"
+  | "get-claimable-membership-packages"
+  | "claim-membership-package-seat"
+  | "get-membership-portable-state"
+  | "replace-membership-portable-state";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
 export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod = "get-load" | "get-backups";
@@ -1266,6 +1387,18 @@ export interface InterBayAccountDirectoryApi {
     opts: AccountApiKeyDirectoryUpdateHomeBayRequest,
   ) => Promise<void>;
   touchApiKey: (opts: AccountApiKeyDirectoryTouchRequest) => Promise<void>;
+  getMembershipClaimIdentity: (
+    opts: MembershipClaimIdentityGetRequest,
+  ) => Promise<MembershipClaimIdentityEntry | null>;
+  reserveMembershipClaimIdentity: (
+    opts: MembershipClaimIdentityReserveRequest,
+  ) => Promise<MembershipClaimIdentityReserveResult>;
+  activateMembershipClaimIdentity: (
+    opts: MembershipClaimIdentityActivateRequest,
+  ) => Promise<void>;
+  revokeMembershipClaimIdentity: (
+    opts: MembershipClaimIdentityRevokeRequest,
+  ) => Promise<void>;
 }
 
 export interface InterBayAccountLocalApi {
@@ -1293,6 +1426,27 @@ export interface InterBayAccountLocalApi {
   ) => Promise<{ grant_id: string }>;
   revokeMembershipGrant: (
     opts: AccountLocalRevokeMembershipGrantRequest,
+  ) => Promise<void>;
+  getMembership: (
+    opts: AccountLocalGetMembershipRequest,
+  ) => Promise<MembershipResolution>;
+  getMembershipDetails: (
+    opts: AccountLocalGetMembershipDetailsRequest,
+  ) => Promise<MembershipDetails>;
+  getMembershipPackages: (
+    opts: AccountLocalGetMembershipPackagesRequest,
+  ) => Promise<MembershipPackageDetails[]>;
+  getClaimableMembershipPackages: (
+    opts: AccountLocalGetClaimableMembershipPackagesRequest,
+  ) => Promise<ClaimableMembershipPackage[]>;
+  claimMembershipPackageSeat: (
+    opts: AccountLocalClaimMembershipPackageSeatRequest,
+  ) => Promise<MembershipPackageAssignment>;
+  getMembershipPortableState: (
+    opts: AccountLocalGetMembershipPortableStateRequest,
+  ) => Promise<AccountMembershipPortableState>;
+  replaceMembershipPortableState: (
+    opts: AccountLocalReplaceMembershipPortableStateRequest,
   ) => Promise<void>;
 }
 
@@ -2146,6 +2300,38 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "touch-api-key" }),
   });
+  const getMembershipClaimIdentityClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "getMembershipClaimIdentity">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "get-membership-claim-identity",
+    }),
+  });
+  const reserveMembershipClaimIdentityClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "reserveMembershipClaimIdentity">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "reserve-membership-claim-identity",
+    }),
+  });
+  const activateMembershipClaimIdentityClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "activateMembershipClaimIdentity">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "activate-membership-claim-identity",
+    }),
+  });
+  const revokeMembershipClaimIdentityClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "revokeMembershipClaimIdentity">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({
+      method: "revoke-membership-claim-identity",
+    }),
+  });
   return {
     get: async (opts) => await getClient.get(opts),
     getByEmail: async (opts) => await getByEmailClient.getByEmail(opts),
@@ -2163,6 +2349,20 @@ export function createInterBayAccountDirectoryClient({
     updateApiKeysHomeBay: async (opts) =>
       await updateApiKeysHomeBayClient.updateApiKeysHomeBay(opts),
     touchApiKey: async (opts) => await touchApiKeyClient.touchApiKey(opts),
+    getMembershipClaimIdentity: async (opts) =>
+      await getMembershipClaimIdentityClient.getMembershipClaimIdentity(opts),
+    reserveMembershipClaimIdentity: async (opts) =>
+      await reserveMembershipClaimIdentityClient.reserveMembershipClaimIdentity(
+        opts,
+      ),
+    activateMembershipClaimIdentity: async (opts) =>
+      await activateMembershipClaimIdentityClient.activateMembershipClaimIdentity(
+        opts,
+      ),
+    revokeMembershipClaimIdentity: async (opts) =>
+      await revokeMembershipClaimIdentityClient.revokeMembershipClaimIdentity(
+        opts,
+      ),
   };
 }
 
@@ -2282,6 +2482,58 @@ export function createInterBayAccountDirectoryHandlers({
         touchApiKey: async (opts) => await impl.touchApiKey(opts),
       },
     }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "getMembershipClaimIdentity">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "get-membership-claim-identity",
+      }),
+      impl: {
+        getMembershipClaimIdentity: async (opts) =>
+          await impl.getMembershipClaimIdentity(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "reserveMembershipClaimIdentity">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "reserve-membership-claim-identity",
+      }),
+      impl: {
+        reserveMembershipClaimIdentity: async (opts) =>
+          await impl.reserveMembershipClaimIdentity(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "activateMembershipClaimIdentity">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "activate-membership-claim-identity",
+      }),
+      impl: {
+        activateMembershipClaimIdentity: async (opts) =>
+          await impl.activateMembershipClaimIdentity(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "revokeMembershipClaimIdentity">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({
+        method: "revoke-membership-claim-identity",
+      }),
+      impl: {
+        revokeMembershipClaimIdentity: async (opts) =>
+          await impl.revokeMembershipClaimIdentity(opts),
+      },
+    }),
   ];
 }
 
@@ -2354,6 +2606,69 @@ export function createInterBayAccountLocalClient({
       method: "revoke-membership-grant",
     }),
   });
+  const getMembershipClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getMembership">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-membership",
+    }),
+  });
+  const getMembershipDetailsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getMembershipDetails">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-membership-details",
+    }),
+  });
+  const getMembershipPackagesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getMembershipPackages">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-membership-packages",
+    }),
+  });
+  const getClaimableMembershipPackagesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getClaimableMembershipPackages">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-claimable-membership-packages",
+    }),
+  });
+  const claimMembershipPackageSeatClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "claimMembershipPackageSeat">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "claim-membership-package-seat",
+    }),
+  });
+  const getMembershipPortableStateClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getMembershipPortableState">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-membership-portable-state",
+    }),
+  });
+  const replaceMembershipPortableStateClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "replaceMembershipPortableState">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "replace-membership-portable-state",
+    }),
+  });
   return {
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
@@ -2369,6 +2684,24 @@ export function createInterBayAccountLocalClient({
       await upsertMembershipGrantClient.upsertMembershipGrant(opts),
     revokeMembershipGrant: async (opts) =>
       await revokeMembershipGrantClient.revokeMembershipGrant(opts),
+    getMembership: async (opts) =>
+      await getMembershipClient.getMembership(opts),
+    getMembershipDetails: async (opts) =>
+      await getMembershipDetailsClient.getMembershipDetails(opts),
+    getMembershipPackages: async (opts) =>
+      await getMembershipPackagesClient.getMembershipPackages(opts),
+    getClaimableMembershipPackages: async (opts) =>
+      await getClaimableMembershipPackagesClient.getClaimableMembershipPackages(
+        opts,
+      ),
+    claimMembershipPackageSeat: async (opts) =>
+      await claimMembershipPackageSeatClient.claimMembershipPackageSeat(opts),
+    getMembershipPortableState: async (opts) =>
+      await getMembershipPortableStateClient.getMembershipPortableState(opts),
+    replaceMembershipPortableState: async (opts) =>
+      await replaceMembershipPortableStateClient.replaceMembershipPortableState(
+        opts,
+      ),
   };
 }
 
@@ -2475,6 +2808,101 @@ export function createInterBayAccountLocalHandler({
       impl: {
         revokeMembershipGrant: async (opts) =>
           await impl.revokeMembershipGrant(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getMembership">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-membership",
+      }),
+      impl: {
+        getMembership: async (opts) => await impl.getMembership(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "getMembershipDetails">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "get-membership-details",
+        }),
+        impl: {
+          getMembershipDetails: async (opts) =>
+            await impl.getMembershipDetails(opts),
+        },
+      },
+    ),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getMembershipPackages">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-membership-packages",
+      }),
+      impl: {
+        getMembershipPackages: async (opts) =>
+          await impl.getMembershipPackages(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getClaimableMembershipPackages">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-claimable-membership-packages",
+      }),
+      impl: {
+        getClaimableMembershipPackages: async (opts) =>
+          await impl.getClaimableMembershipPackages(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "claimMembershipPackageSeat">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "claim-membership-package-seat",
+      }),
+      impl: {
+        claimMembershipPackageSeat: async (opts) =>
+          await impl.claimMembershipPackageSeat(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getMembershipPortableState">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-membership-portable-state",
+      }),
+      impl: {
+        getMembershipPortableState: async (opts) =>
+          await impl.getMembershipPortableState(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "replaceMembershipPortableState">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "replace-membership-portable-state",
+      }),
+      impl: {
+        replaceMembershipPortableState: async (opts) =>
+          await impl.replaceMembershipPortableState(opts),
       },
     }),
   ];

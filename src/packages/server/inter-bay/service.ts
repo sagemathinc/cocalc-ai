@@ -85,7 +85,9 @@ import {
 import {
   acceptAccountRehome,
   copyAccountRehomeState,
+  getMembershipPortableState,
   getAccountRehomeOperation,
+  replaceMembershipPortableState,
   reconcileAccountRehomeOnSource,
   rehomeAccountOnHomeBay,
 } from "@cocalc/server/accounts/rehome";
@@ -93,6 +95,21 @@ import {
   createMembershipGrant,
   revokeMembershipGrantById,
 } from "@cocalc/server/membership/grants";
+import {
+  activateMembershipClaimIdentityDirect,
+  getMembershipClaimIdentityDirect,
+  reserveMembershipClaimIdentityDirect,
+  revokeMembershipClaimIdentityDirect,
+} from "@cocalc/server/membership/claim-directory";
+import {
+  claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
+  listLocalClaimableMembershipPackagesForVerifiedEmails,
+  listMembershipPackageDetailsForOwner,
+} from "@cocalc/server/membership/packages";
+import {
+  resolveMembershipDetailsForAccount,
+  resolveMembershipForAccount,
+} from "@cocalc/server/membership/resolve";
 import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
@@ -372,6 +389,14 @@ async function startAccountDirectoryService(): Promise<void> {
       await updateClusterAccountApiKeysHomeBay(opts),
     touchApiKey: async (opts) =>
       await touchClusterAccountApiKeyDirectoryEntry(opts),
+    getMembershipClaimIdentity: async (opts) =>
+      await getMembershipClaimIdentityDirect(opts),
+    reserveMembershipClaimIdentity: async (opts) =>
+      await reserveMembershipClaimIdentityDirect(opts),
+    activateMembershipClaimIdentity: async (opts) =>
+      await activateMembershipClaimIdentityDirect(opts),
+    revokeMembershipClaimIdentity: async (opts) =>
+      await revokeMembershipClaimIdentityDirect(opts),
   };
   services.push(
     ...createInterBayAccountDirectoryHandlers({
@@ -407,6 +432,50 @@ async function startAccountLocalService(): Promise<void> {
         revoked_at: normalizeOptionalDateLike(revoked_at),
       });
     },
+    getMembership: async ({ account_id }) =>
+      await resolveMembershipForAccount(account_id),
+    getMembershipDetails: async ({ account_id, refresh_usage_status }) =>
+      await resolveMembershipDetailsForAccount(account_id, {
+        refresh_usage_status,
+      }),
+    getMembershipPackages: async ({ owner_account_id }) =>
+      await listMembershipPackageDetailsForOwner({
+        owner_account_id,
+      }),
+    getClaimableMembershipPackages: async ({
+      account_id,
+      verified_email_addresses,
+    }) =>
+      await listLocalClaimableMembershipPackagesForVerifiedEmails({
+        account_id,
+        verified_email_addresses,
+      }),
+    claimMembershipPackageSeat: async ({
+      package_id,
+      account_id,
+      verified_email_addresses,
+    }) =>
+      await claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
+        package_id,
+        account_id,
+        verified_email_addresses,
+      }),
+    getMembershipPortableState: async ({ account_id }) =>
+      await getMembershipPortableState(account_id),
+    replaceMembershipPortableState: async ({
+      account_id,
+      membership_grants,
+      membership_packages,
+      membership_package_assignments,
+      membership_side_effects_outbox,
+    }) =>
+      await replaceMembershipPortableState({
+        account_id,
+        membership_grants,
+        membership_packages,
+        membership_package_assignments,
+        membership_side_effects_outbox,
+      }),
   };
   services.push(
     ...createInterBayAccountLocalHandler({

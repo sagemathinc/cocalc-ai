@@ -150,8 +150,10 @@ import {
   resolveHostBay,
   resolveProjectBay,
 } from "@cocalc/server/inter-bay/directory";
+import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import {
   ensureHostOwnerSshTrust as ensureHostOwnerSshTrustInternal,
   getHostRehomeOperation as getHostRehomeOperationInternal,
@@ -877,6 +879,33 @@ function requireCreateHosts(entitlements: any) {
   if (!canCreate) {
     throw new Error("membership does not allow host creation");
   }
+}
+
+async function maybeRequireFreshAuthForBrowserHostAction({
+  account_id,
+  browser_id,
+}: {
+  account_id?: string;
+  browser_id?: string;
+}): Promise<void> {
+  const owner = requireAccount(account_id);
+  const cleanedBrowserId = `${browser_id ?? ""}`.trim();
+  if (!cleanedBrowserId) {
+    return;
+  }
+  const session_hash = getBrowserAuthSessionHash({
+    account_id: owner,
+    browser_id: cleanedBrowserId,
+  });
+  if (!session_hash) {
+    throw Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+  }
+  await requireFreshAuthForSessionHash({
+    account_id: owner,
+    session_hash,
+  });
 }
 
 export { rolloutComponentsForUpgradeResultsInternal as rolloutComponentsForUpgradeResults };
@@ -3287,6 +3316,7 @@ export async function removeHostSshAuthorizedKey({
 
 export async function createHost({
   account_id,
+  browser_id,
   name,
   region,
   size,
@@ -3297,6 +3327,7 @@ export async function createHost({
   machine,
 }: {
   account_id?: string;
+  browser_id?: string;
   name: string;
   region: string;
   size: string;
@@ -3307,6 +3338,7 @@ export async function createHost({
   machine?: Host["machine"];
 }): Promise<Host> {
   const owner = requireAccount(account_id);
+  await maybeRequireFreshAuthForBrowserHostAction({ account_id, browser_id });
   const membership = await loadMembership(owner);
   requireCreateHosts(membership.entitlements);
   return await createHostInternalHelper({
@@ -3379,15 +3411,19 @@ async function createHostLro({
 
 export async function startHost({
   account_id,
+  browser_id,
   id,
 }: {
   account_id?: string;
+  browser_id?: string;
   id: string;
 }): Promise<HostLroResponse> {
+  await maybeRequireFreshAuthForBrowserHostAction({ account_id, browser_id });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge().hostConnection(remoteBay).startHost({
       account_id,
+      browser_id,
       id,
     });
   }
@@ -3893,6 +3929,7 @@ export async function setHostStar({
 
 export async function updateHostMachine({
   account_id,
+  browser_id,
   id,
   cloud,
   cpu,
@@ -3915,6 +3952,7 @@ export async function updateHostMachine({
   spot_recovery_policy,
 }: {
   account_id?: string;
+  browser_id?: string;
   id: string;
   cloud?: HostMachine["cloud"];
   cpu?: number;
@@ -3936,6 +3974,7 @@ export async function updateHostMachine({
   interruption_restore_policy?: HostInterruptionRestorePolicy;
   spot_recovery_policy?: HostSpotRecoveryPolicy;
 }): Promise<Host> {
+  await maybeRequireFreshAuthForBrowserHostAction({ account_id, browser_id });
   const row = await loadOwnedHost(id, account_id);
   const metadata = row.metadata ?? {};
   const machine: HostMachine = metadata.machine ?? {};

@@ -74,6 +74,7 @@ export const system = {
   getAccountRehomeOperation: authFirstRequireAccount,
   reconcileAccountRehome: authFirstRequireAccount,
   drainAccountRehome: authFirstRequireAccount,
+  repairAccountMembershipPortability: authFirstRequireAccount,
   adminResetPasswordLink: authFirst,
   sendEmailVerification: authFirst,
   deletePassport: authFirst,
@@ -126,6 +127,18 @@ export interface ExternalCredentialInfo {
   updated: Date;
   revoked?: Date | null;
   last_used?: Date | null;
+}
+
+export interface AccountMembershipPortabilityRepairCounts {
+  membership_grants: number;
+  membership_packages: number;
+  membership_package_assignments: number;
+  membership_side_effects_outbox: number;
+  total: number;
+}
+
+export interface AccountMembershipPortabilityRepairBaySummary extends AccountMembershipPortabilityRepairCounts {
+  bay_id: string;
 }
 
 export interface CodexPaymentSourceInfo {
@@ -1183,6 +1196,24 @@ export interface System {
     reason?: string | null;
     only_if_tag?: string | null;
   }) => Promise<AccountRehomeDrainResult>;
+
+  repairAccountMembershipPortability: (opts: {
+    account_id?: string;
+    user_account_id: string;
+    dry_run?: boolean;
+    clear_stale?: boolean;
+  }) => Promise<{
+    account_id: string;
+    home_bay_id: string;
+    dry_run: boolean;
+    clear_stale: boolean;
+    scanned_bays: AccountMembershipPortabilityRepairBaySummary[];
+    source_bays_with_rows: string[];
+    stale_bay_ids: string[];
+    cleared_stale_bay_ids: string[];
+    merged_counts: AccountMembershipPortabilityRepairCounts;
+    applied: boolean;
+  }>;
 
   backfillBayOwnership: (opts: {
     account_id?: string;
