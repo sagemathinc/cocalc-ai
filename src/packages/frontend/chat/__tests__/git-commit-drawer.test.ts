@@ -24,6 +24,7 @@ import {
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
   shouldClearGitHeadCommitBusyOnScopeChange,
+  shouldClearGitHeadStatusActionOnScopeChange,
   shouldClearGitInlinePendingKey,
   shouldClearGitRepoBootstrapBusyOnScopeChange,
   shouldClearGitReviewSavingOnScopeChange,
@@ -550,6 +551,30 @@ describe("git commit drawer merge commit formatting", () => {
       shouldClearGitRepoBootstrapBusyOnScopeChange({
         repoBootstrapBusy: false,
         previousScope: "non-repo",
+        nextScope: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears head status actions only when leaving the active HEAD scope", () => {
+    expect(
+      shouldClearGitHeadStatusActionOnScopeChange({
+        headStatusAction: "add:src/file.ts",
+        previousScope: "HEAD",
+        nextScope: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearGitHeadStatusActionOnScopeChange({
+        headStatusAction: "add:src/file.ts",
+        previousScope: "HEAD",
+        nextScope: "HEAD",
+      }),
+    ).toBe(false);
+    expect(
+      shouldClearGitHeadStatusActionOnScopeChange({
+        headStatusAction: "",
+        previousScope: "HEAD",
         nextScope: undefined,
       }),
     ).toBe(false);

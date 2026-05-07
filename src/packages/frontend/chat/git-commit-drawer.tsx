@@ -122,6 +122,7 @@ import {
   isNotGitRepoError,
   resolveOpenPath,
   shouldClearGitHeadCommitBusyOnScopeChange,
+  shouldClearGitHeadStatusActionOnScopeChange,
   shouldClearGitRepoBootstrapBusyOnScopeChange,
   shouldCaptureGitDrawerFindShortcut,
 } from "./git-commit/utils";
@@ -170,6 +171,7 @@ export {
   getCommitReviewIndicatorState,
   isMergeCommitSummary,
   shouldClearGitHeadCommitBusyOnScopeChange,
+  shouldClearGitHeadStatusActionOnScopeChange,
   shouldClearGitRepoBootstrapBusyOnScopeChange,
   shouldCaptureGitDrawerFindShortcut,
 };
@@ -331,6 +333,8 @@ export function GitCommitDrawer({
   const headScopeRef = useRef<string | undefined>(undefined);
   const headCommitActionTokenRef = useRef(0);
   const headCommitActionScopeRef = useRef<string | undefined>(undefined);
+  const headStatusActionTokenRef = useRef(0);
+  const headStatusActionScopeRef = useRef<string | undefined>(undefined);
   const repoBootstrapScopeRef = useRef<string | undefined>(undefined);
   const repoBootstrapActionTokenRef = useRef(0);
   const repoBootstrapActionScopeRef = useRef<string | undefined>(undefined);
@@ -848,7 +852,18 @@ export function GitCommitDrawer({
       headCommitActionScopeRef.current = undefined;
       setHeadCommitBusy(false);
     }
-  }, [open, isHeadSelected, headCommitBusy]);
+    if (
+      shouldClearGitHeadStatusActionOnScopeChange({
+        headStatusAction,
+        previousScope,
+        nextScope,
+      })
+    ) {
+      headStatusActionTokenRef.current += 1;
+      headStatusActionScopeRef.current = undefined;
+      setHeadStatusAction("");
+    }
+  }, [open, isHeadSelected, headCommitBusy, headStatusAction]);
 
   useEffect(() => {
     const nextScope = open && Boolean(nonRepoError) ? "non-repo" : undefined;
@@ -1992,6 +2007,11 @@ export function GitCommitDrawer({
 
   const addUntrackedFile = async (path: string) => {
     if (!projectId) return;
+    const startedScope = headScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = headStatusActionTokenRef.current + 1;
+    headStatusActionTokenRef.current = actionToken;
+    headStatusActionScopeRef.current = startedScope;
     setHeadStatusAction(`add:${path}`);
     setHeadCommitError("");
     try {
@@ -2007,14 +2027,31 @@ export function GitCommitDrawer({
       }
       setReloadCounter((n) => n + 1);
     } catch (err) {
-      setHeadCommitError(`${err ?? "Unable to add untracked file."}`);
+      if (
+        headStatusActionTokenRef.current === actionToken &&
+        headStatusActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        setHeadCommitError(`${err ?? "Unable to add untracked file."}`);
+      }
     } finally {
-      setHeadStatusAction("");
+      if (
+        headStatusActionTokenRef.current === actionToken &&
+        headStatusActionScopeRef.current === startedScope
+      ) {
+        headStatusActionScopeRef.current = undefined;
+        setHeadStatusAction("");
+      }
     }
   };
 
   const ignoreUntrackedFile = async (path: string) => {
     if (!projectId) return;
+    const startedScope = headScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = headStatusActionTokenRef.current + 1;
+    headStatusActionTokenRef.current = actionToken;
+    headStatusActionScopeRef.current = startedScope;
     setHeadStatusAction(`ignore:${path}`);
     setHeadCommitError("");
     try {
@@ -2039,9 +2076,21 @@ export function GitCommitDrawer({
       }
       setReloadCounter((n) => n + 1);
     } catch (err) {
-      setHeadCommitError(`${err ?? "Unable to ignore untracked file."}`);
+      if (
+        headStatusActionTokenRef.current === actionToken &&
+        headStatusActionScopeRef.current === startedScope &&
+        headScopeRef.current === startedScope
+      ) {
+        setHeadCommitError(`${err ?? "Unable to ignore untracked file."}`);
+      }
     } finally {
-      setHeadStatusAction("");
+      if (
+        headStatusActionTokenRef.current === actionToken &&
+        headStatusActionScopeRef.current === startedScope
+      ) {
+        headStatusActionScopeRef.current = undefined;
+        setHeadStatusAction("");
+      }
     }
   };
 

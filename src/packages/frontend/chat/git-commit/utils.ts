@@ -141,3 +141,15 @@ export function shouldClearGitRepoBootstrapBusyOnScopeChange({
 }): boolean {
   return repoBootstrapBusy && previousScope !== nextScope;
 }
+
+export function shouldClearGitHeadStatusActionOnScopeChange({
+  headStatusAction,
+  previousScope,
+  nextScope,
+}: {
+  headStatusAction?: string;
+  previousScope?: string;
+  nextScope?: string;
+}): boolean {
+  return Boolean(headStatusAction) && previousScope !== nextScope;
+}
