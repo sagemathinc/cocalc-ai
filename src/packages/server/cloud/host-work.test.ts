@@ -449,7 +449,7 @@ describe("cloud host start failures", () => {
       `,
       [hostId],
     );
-    expect(workRows.rows.map((row) => row.state)).toEqual([
+    expect(workRows.rows.map((row) => row.state).sort()).toEqual([
       "in_progress",
       "queued",
     ]);

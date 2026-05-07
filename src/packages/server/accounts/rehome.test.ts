@@ -182,6 +182,30 @@ describe("account rehome", () => {
       if (sql.includes('DELETE FROM "remember_me" WHERE account_id=$1')) {
         return { rows: [], rowCount: 0 };
       }
+      if (
+        sql.includes('DELETE FROM "account_auth_sessions" WHERE account_id=$1')
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_auth_challenges" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes('DELETE FROM "account_second_factors" WHERE account_id=$1')
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_second_factor_recovery_codes" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('DELETE FROM "auth_tokens" WHERE account_id=$1')) {
         return { rows: [], rowCount: 0 };
       }
@@ -352,6 +376,18 @@ describe("account rehome", () => {
       if (sql.includes('FROM "remember_me"')) {
         return { rows: [{ rows: [] }] };
       }
+      if (sql.includes('FROM "account_auth_sessions"')) {
+        return { rows: [{ rows: [] }] };
+      }
+      if (sql.includes('FROM "account_auth_challenges"')) {
+        return { rows: [{ rows: [] }] };
+      }
+      if (sql.includes('FROM "account_second_factors"')) {
+        return { rows: [{ rows: [] }] };
+      }
+      if (sql.includes('FROM "account_second_factor_recovery_codes"')) {
+        return { rows: [{ rows: [] }] };
+      }
       if (sql.includes('FROM "auth_tokens"')) {
         return { rows: [{ rows: [] }] };
       }
@@ -453,6 +489,30 @@ describe("account rehome", () => {
         return { rows: [], rowCount: 0 };
       }
       if (sql.includes('DELETE FROM "remember_me" WHERE account_id=$1')) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes('DELETE FROM "account_auth_sessions" WHERE account_id=$1')
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_auth_challenges" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes('DELETE FROM "account_second_factors" WHERE account_id=$1')
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_second_factor_recovery_codes" WHERE account_id=$1',
+        )
+      ) {
         return { rows: [], rowCount: 0 };
       }
       if (sql.includes('DELETE FROM "auth_tokens" WHERE account_id=$1')) {
