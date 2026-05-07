@@ -7,6 +7,7 @@ export {};
 
 let createInterBayAccountLocalClientMock: jest.Mock;
 let getInterBayFabricClientMock: jest.Mock;
+let projectControlSetUsageAccountMock: jest.Mock;
 
 jest.mock("@cocalc/conat/inter-bay/api", () => {
   const actual = jest.requireActual("@cocalc/conat/inter-bay/api");
@@ -22,6 +23,16 @@ jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   __esModule: true,
   getInterBayFabricClient: (...args: any[]) =>
     getInterBayFabricClientMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  __esModule: true,
+  getInterBayBridge: jest.fn(() => ({
+    projectControl: jest.fn((dest_bay: string) => ({
+      setUsageAccount: (opts: any) =>
+        projectControlSetUsageAccountMock(dest_bay, opts),
+    })),
+  })),
 }));
 
 import getPool from "@cocalc/database/pool";
@@ -53,6 +64,7 @@ describe("membership packages", () => {
   const teamTier = `team-tier-${uuid()}`;
   let remoteGrantUpserts: Array<{ dest_bay: string; grant: any }>;
   let remoteGrantRevocations: Array<{ dest_bay: string; opts: any }>;
+  let remoteProjectUsageUpdates: Array<{ dest_bay: string; opts: any }>;
 
   async function markVerifiedEmail(account_id: string, email_address: string) {
     await getPool().query(
@@ -98,6 +110,7 @@ describe("membership packages", () => {
   beforeEach(() => {
     remoteGrantUpserts = [];
     remoteGrantRevocations = [];
+    remoteProjectUsageUpdates = [];
     getInterBayFabricClientMock = jest.fn(() => ({ id: "fabric-client" }));
     createInterBayAccountLocalClientMock = jest.fn(
       ({ dest_bay }: { dest_bay: string }) => ({
@@ -109,6 +122,12 @@ describe("membership packages", () => {
           remoteGrantRevocations.push({ dest_bay, opts });
         }),
       }),
+    );
+    projectControlSetUsageAccountMock = jest.fn(
+      async (dest_bay: string, opts: any) => {
+        remoteProjectUsageUpdates.push({ dest_bay, opts });
+        return { updated: true };
+      },
     );
   });
 
@@ -283,6 +302,74 @@ describe("membership packages", () => {
     expect(revokedUsage.rows[0]?.usage_account_id).toBeNull();
   });
 
+  it("routes course usage attribution writes to the project-owning bay", async () => {
+    const owner_account_id = uuid();
+    const student_account_id = uuid();
+    const project_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(student_account_id);
+
+    await getPool("medium").query(
+      `INSERT INTO projects (project_id, title, users, last_edited, usage_account_id, owning_bay_id)
+       VALUES ($1, $2, $3::jsonb, NOW(), NULL, $4)`,
+      [
+        project_id,
+        "Remote Student Project",
+        JSON.stringify({
+          [owner_account_id]: { group: "owner" },
+        }),
+        "bay-2",
+      ],
+    );
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "course",
+      membership_class: "student",
+      seat_count: 1,
+      metadata: {
+        course_project_id: uuid(),
+        interval: "month",
+        seat_price: 25,
+      },
+    });
+
+    await assignMembershipPackageSeat({
+      package_id,
+      account_id: student_account_id,
+      assigned_by_account_id: owner_account_id,
+      metadata: {
+        project_id,
+      },
+    });
+
+    expect(remoteProjectUsageUpdates).toHaveLength(1);
+    expect(remoteProjectUsageUpdates[0]).toMatchObject({
+      dest_bay: "bay-2",
+      opts: {
+        project_id,
+        usage_account_id: student_account_id,
+        epoch: 0,
+      },
+    });
+
+    await revokeMembershipPackageSeat({
+      package_id,
+      account_id: student_account_id,
+    });
+
+    expect(remoteProjectUsageUpdates).toHaveLength(2);
+    expect(remoteProjectUsageUpdates[1]).toMatchObject({
+      dest_bay: "bay-2",
+      opts: {
+        project_id,
+        usage_account_id: null,
+        expected_current_usage_account_id: student_account_id,
+        epoch: 0,
+      },
+    });
+  });
+
   it("updates project usage attribution when a reserved course seat is claimed", async () => {
     const owner_account_id = uuid();
     const student_account_id = uuid();
@@ -334,6 +421,64 @@ describe("membership packages", () => {
       [project_id],
     );
     expect(claimedUsage.rows[0]?.usage_account_id).toBe(student_account_id);
+  });
+
+  it("routes reserved course-seat claims to the project-owning bay", async () => {
+    const owner_account_id = uuid();
+    const student_account_id = uuid();
+    const project_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(student_account_id);
+    await markVerifiedEmail(student_account_id, "remote-claim@example.com");
+
+    await getPool("medium").query(
+      `INSERT INTO projects (project_id, title, users, last_edited, usage_account_id, owning_bay_id)
+       VALUES ($1, $2, $3::jsonb, NOW(), NULL, $4)`,
+      [
+        project_id,
+        "Remote Reserved Student Project",
+        JSON.stringify({
+          [owner_account_id]: { group: "owner" },
+        }),
+        "bay-2",
+      ],
+    );
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "course",
+      membership_class: "student",
+      seat_count: 1,
+      metadata: {
+        course_project_id: uuid(),
+        interval: "month",
+        seat_price: 25,
+      },
+    });
+
+    await assignMembershipPackageSeat({
+      package_id,
+      email_address: "remote-claim@example.com",
+      assigned_by_account_id: owner_account_id,
+      metadata: {
+        project_id,
+      },
+    });
+
+    await claimMembershipPackageSeat({
+      package_id,
+      account_id: student_account_id,
+    });
+
+    expect(remoteProjectUsageUpdates).toHaveLength(1);
+    expect(remoteProjectUsageUpdates[0]).toMatchObject({
+      dest_bay: "bay-2",
+      opts: {
+        project_id,
+        usage_account_id: student_account_id,
+        epoch: 0,
+      },
+    });
   });
 
   it("reserves a seat by email and lets the verified account claim it later", async () => {

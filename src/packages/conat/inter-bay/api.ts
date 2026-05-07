@@ -133,6 +133,17 @@ export interface ProjectControlStateRequest {
   epoch?: number;
 }
 
+export interface ProjectControlSetUsageAccountRequest {
+  project_id: string;
+  usage_account_id?: string | null;
+  expected_current_usage_account_id?: string | null;
+  epoch?: number;
+}
+
+export interface ProjectControlSetUsageAccountResponse {
+  updated: boolean;
+}
+
 export interface ProjectControlAddressRequest {
   project_id: string;
   account_id: string;
@@ -619,6 +630,7 @@ export type ProjectControlMethod =
   | "restart"
   | "backup"
   | "state"
+  | "set-usage-account"
   | "address"
   | "move"
   | "rehome"
@@ -762,6 +774,9 @@ export interface InterBayProjectControlApi {
   restart: (opts: ProjectControlRestartRequest) => Promise<void>;
   backup: (opts: ProjectControlBackupRequest) => Promise<LroSummary>;
   state: (opts: ProjectControlStateRequest) => Promise<ProjectState>;
+  setUsageAccount: (
+    opts: ProjectControlSetUsageAccountRequest,
+  ) => Promise<ProjectControlSetUsageAccountResponse>;
   address: (opts: ProjectControlAddressRequest) => Promise<ProjectAddress>;
   move: (
     opts: ProjectControlMoveRequest,
@@ -1752,6 +1767,15 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "state" }),
   });
+  const setUsageAccountClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "setUsageAccount">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({
+      dest_bay,
+      method: "set-usage-account",
+    }),
+  });
   const addressClient = createServiceClient<
     Pick<InterBayProjectControlApi, "address">
   >({
@@ -1788,6 +1812,8 @@ export function createInterBayProjectControlClient({
     restart: async (opts) => await restartClient.restart(opts),
     backup: async (opts) => await backupClient.backup(opts),
     state: async (opts) => await stateClient.state(opts),
+    setUsageAccount: async (opts) =>
+      await setUsageAccountClient.setUsageAccount(opts),
     address: async (opts) => await addressClient.address(opts),
     move: async (opts) => await moveClient.move(opts),
     rehome: async (opts) => await rehomeClient.rehome(opts),
@@ -2928,6 +2954,29 @@ export function createInterBayProjectControlAddressHandler({
     subject: projectControlSubject({ dest_bay: bay_id, method: "address" }),
     impl: {
       address: async (opts) => await impl.address(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlSetUsageAccountHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<
+    Pick<InterBayProjectControlApi, "setUsageAccount">
+  >({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({
+      dest_bay: bay_id,
+      method: "set-usage-account",
+    }),
+    impl: {
+      setUsageAccount: async (opts) => await impl.setUsageAccount(opts),
     },
   });
 }

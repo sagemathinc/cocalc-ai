@@ -38,6 +38,7 @@ import {
   revokeMembershipGrantOnHomeBay,
   upsertMembershipGrantOnHomeBay,
 } from "./grants";
+import { setProjectUsageAccountIdOnOwningBay } from "./project-usage";
 import { getMembershipPrice, getMembershipTierById } from "./tiers";
 
 type Queryable = PoolClient | ReturnType<typeof getPool>;
@@ -994,11 +995,14 @@ export async function assignMembershipPackageSeat(
         if (normalizedAccountId) {
           const project_id = `${metadata?.project_id ?? ""}`.trim();
           if (pkg.kind === "course" && isValidUUID(project_id)) {
-            const result = await pool.query(
-              "UPDATE projects SET usage_account_id=$2 WHERE project_id=$1 RETURNING project_id",
-              [project_id, normalizedAccountId],
+            const updated = await setProjectUsageAccountIdOnOwningBay(
+              {
+                project_id,
+                account_id: normalizedAccountId,
+              },
+              dbClient,
             );
-            if (!result.rows[0]) {
+            if (!updated) {
               throw Error(
                 `cannot assign course package seat for project ${project_id}; route this write to the project-owning bay first`,
               );
@@ -1132,11 +1136,15 @@ export async function revokeMembershipPackageSeat(
         isValidUUID(project_id) &&
         assignment.account_id
       ) {
-        const result = await pool.query(
-          "UPDATE projects SET usage_account_id=NULL WHERE project_id=$1 AND usage_account_id=$2 RETURNING project_id",
-          [project_id, assignment.account_id],
+        const updated = await setProjectUsageAccountIdOnOwningBay(
+          {
+            project_id,
+            account_id: null,
+            expected_current_usage_account_id: assignment.account_id,
+          },
+          dbClient,
         );
-        if (!result.rows[0]) {
+        if (!updated) {
           throw Error(
             `cannot revoke course package seat for project ${project_id}; route this write to the project-owning bay first`,
           );
@@ -1357,11 +1365,14 @@ export async function claimMembershipPackageSeat({
           const project_id =
             `${pendingAssignment.metadata?.project_id ?? ""}`.trim();
           if (pkg.kind === "course" && isValidUUID(project_id)) {
-            const result = await pool.query(
-              "UPDATE projects SET usage_account_id=$2 WHERE project_id=$1 RETURNING project_id",
-              [project_id, account_id],
+            const updated = await setProjectUsageAccountIdOnOwningBay(
+              {
+                project_id,
+                account_id,
+              },
+              dbClient,
             );
-            if (!result.rows[0]) {
+            if (!updated) {
               throw Error(
                 `cannot claim course package seat for project ${project_id}; route this write to the project-owning bay first`,
               );
