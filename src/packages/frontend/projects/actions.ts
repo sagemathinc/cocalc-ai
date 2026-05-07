@@ -15,7 +15,6 @@ import { COCALC_MINIMAL } from "@cocalc/frontend/fullscreen";
 import { markdown_to_html } from "@cocalc/frontend/markdown";
 import { notifyCollabInvitesChanged } from "@cocalc/frontend/collaborators/invite-events";
 import type { FragmentId } from "@cocalc/frontend/misc/fragment-id";
-import { allow_project_to_run } from "@cocalc/frontend/project/client-side-throttle";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { once, withTimeout } from "@cocalc/util/async-utils";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
@@ -2030,10 +2029,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   // return true, if it actually started the project
   start_project = reuseInFlight(
     async (project_id: string): Promise<boolean> => {
-      if (
-        !(await allow_project_to_run(project_id)) ||
-        !store.getIn(["project_map", project_id])
-      ) {
+      if (!store.getIn(["project_map", project_id])) {
         return false;
       }
       const lifecycleState = store.getIn([
@@ -2703,9 +2699,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   restart_project = reuseInFlight(
     async (project_id: string, _options?): Promise<void> => {
-      if (!(await allow_project_to_run(project_id))) {
-        return;
-      }
       this.project_log(project_id, {
         event: "project_restart_requested",
       });

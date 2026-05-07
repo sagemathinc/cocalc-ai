@@ -242,8 +242,6 @@ export type SiteSettingsExtrasKeys =
   | "prometheus_metrics_allowlist"
   | "pay_as_you_go_section"
   | "pay_as_you_go_min_payment"
-  | "pay_as_you_go_max_project_upgrades"
-  | "pay_as_you_go_price_project_upgrades"
   | "lambda_cloud_api_key"
   | "project_hosts_lambda_prefix"
   | "nebius_region_config_json"
@@ -881,56 +879,28 @@ export const EXTRAS: SettingsExtras = {
     subgroup: "Metrics",
   },
   pay_as_you_go_section: {
-    name: "Pay as you Go",
+    name: "Billing",
     desc: "",
     default: "",
-    show: only_commercial,
     type: "header",
     tags: ["Pay as you Go"],
     group: "Payments & Billing",
     subgroup: "Pay as you Go",
   },
   pay_as_you_go_min_payment: {
-    name: "Pay As You Go - Minimum Payment",
-    desc: "The minimum transaction size that a user can pay towards their pay-as-you-go balance, in dollars.",
+    name: "Minimum Payment",
+    desc: "The minimum transaction size, in dollars, for account credit and other automated billing collection flows.",
     default: "2.50",
-    show: only_commercial,
     to_val: toFloat,
     valid: onlyPosFloat,
     tags: ["Pay as you Go"],
     group: "Payments & Billing",
     subgroup: "Pay as you Go",
   },
-  pay_as_you_go_max_project_upgrades: {
-    name: "Pay As You Go - Max Project Upgrade Quotas",
-    desc: 'Example -- `{"network": 1, "member_host": 1, "always_running": 1, "cores": 3, "memory": 16000, "disk_quota": 15000}`. This is a json object, and the units are exactly as in the quota editor (so true/false, cores and megabytes).',
-    default:
-      '{"network": 1, "member_host": 1, "always_running": 1, "cores": 3, "memory": 16000, "disk_quota": 15000}',
-    show: only_commercial,
-    to_val: from_json,
-    to_display: displayJson,
-    valid: parsableJson,
-    tags: ["Pay as you Go"],
-    group: "Payments & Billing",
-    subgroup: "Pay as you Go",
-  },
-  pay_as_you_go_price_project_upgrades: {
-    name: "Pay As You Go - Price for Project Upgrades",
-    desc: 'Example -- `{"cores":32, "memory":4, "disk_quota":0.25, "member_host":4}`. This is a json object, where\n\n- cores = price per month for 1 vCPU\n- memory = price per month for 1GB of RAM\n- disk_quota = price per month for 1GB of disk\n- member_host = non-disk part of non-member hosting cost is divided by this',
-    default: '{"cores":32, "memory":4, "disk_quota":0.25, "member_host":4}',
-    show: only_commercial,
-    to_val: from_json,
-    to_display: displayJson,
-    valid: parsableJson,
-    tags: ["Pay as you Go"],
-    group: "Payments & Billing",
-    subgroup: "Pay as you Go",
-  },
   subscription_maintenance: {
-    name: "Pay As You Go - Subscription Maintenance Parameters",
+    name: "Subscription Maintenance Parameters",
     desc: 'Example -- {"request":6, "renew":1, "grace":3}" -- which means:\n\n- **request:** request payment 6 days before the subscription ends with instructions to renew or cancel\n- **renew:** automatically attempt renewal 1 day before subscription ends by debiting account if there is credit in the account\n- **grace:** provide a grace period of 3 days before actually cancelling the subscription and ending the license (user will get charged for those 3 days)',
     default: '{"request":6, "renew":1, "grace":3}',
-    show: only_commercial,
     to_val: from_json,
     to_display: displayJson,
     valid: parsableJson,

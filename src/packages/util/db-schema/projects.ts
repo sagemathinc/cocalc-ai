@@ -386,11 +386,6 @@ Table({
       desc: "Project-wide launcher defaults (quick create + app defaults).",
       render: { type: "json", editable: true },
     },
-    pay_as_you_go_quotas: {
-      type: "map",
-      desc: "Pay as you go quotas that users set so that when they run this project, it gets upgraded to at least what is specified here, and user gets billed later for what is used.  Any changes to this table could result in money being spent, so should only be done via the api.  This is a map from the account_id of the user that set the quota to the value of the quota spec (which is purchase-quotas.ProjectQuota).",
-      render: { type: "json", editable: false },
-    },
     notes: NOTES,
     secret_token: {
       type: "string",

@@ -16,7 +16,6 @@ import { server_time } from "@cocalc/util/misc";
 import { COLORS, DOC_URL } from "@cocalc/util/theme";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { join } from "path";
-import { useAllowedFreeProjectToRun } from "./client-side-throttle";
 
 export const DOC_TRIAL = "https://doc.cocalc.com/trial.html";
 const MEMBERSHIP_URL = join(appBasePath, "/settings");
@@ -72,15 +71,8 @@ const MEMBER_QUOTA =
 
 export const TrialBanner: React.FC<BannerProps> = React.memo(
   (props: BannerProps) => {
-    const {
-      noMemberHosting,
-      noInternet,
-      project_id,
-      projectCreatedTS,
-      projectIsRunning,
-    } = props;
-
-    const allow_run = useAllowedFreeProjectToRun(project_id);
+    const { noMemberHosting, noInternet, projectCreatedTS, projectIsRunning } =
+      props;
 
     const projectAgeDays = useMemo(() => {
       // timestamp, when this project was created. won't change over time.
@@ -117,16 +109,6 @@ export const TrialBanner: React.FC<BannerProps> = React.memo(
     }
 
     function renderMessage(): React.JSX.Element | undefined {
-      if (allow_run === false) {
-        return (
-          <span>
-            There are too many free projects running right now.
-            <br />
-            Try again later or {renderMembershipCta()}.
-          </span>
-        );
-      }
-
       if (noMemberHosting && noInternet) {
         const intro = no_entitlements ? (
           <A href={DOC_URL} style={{ ...a_style, paddingRight: ".5em" }}>
@@ -184,9 +166,7 @@ export const TrialBanner: React.FC<BannerProps> = React.memo(
 
     // don't show the banner if project is not running.
     // https://github.com/sagemathinc/cocalc/issues/6496
-    // UNLESS it is a free project and not allowed to run
-    // (banner must be visible when stopped, obviously)
-    if (!projectIsRunning && allow_run !== false) {
+    if (!projectIsRunning) {
       return null;
     }
 

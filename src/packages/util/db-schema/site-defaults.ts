@@ -81,8 +81,6 @@ export type SiteSettingsKeys =
   | "terms_of_service"
   | "terms_of_service_url"
   | "commercial"
-  | "max_trial_projects"
-  | "nonfree_countries"
   | "google_analytics"
   | "kucalc"
   | "i18n"
@@ -258,9 +256,6 @@ export const valid_dns_name_or_empty = (val) => !val || valid_dns_name(val);
 
 export const split_iframe_comm_hosts: ToValFunc<string[]> = (hosts) =>
   (hosts ?? "").match(/[a-z0-9.-]+/g) || [];
-
-const split_strings: ToValFunc<string[]> = (str) =>
-  (str ?? "").match(/[a-zA-Z0-9]+/g) || [];
 
 const split_csv_tokens: ToValFunc<string[]> = (str) =>
   (str ?? "")
@@ -669,27 +664,6 @@ export const site_settings_conf: SiteSettings = {
     default: "no",
     valid: only_booleans,
     to_val: commercial_to_val,
-    show: only_cocalc_com,
-    tags: ["Commercialization"],
-    group: "Payments & Billing",
-    subgroup: "Commercialization",
-  },
-  max_trial_projects: {
-    name: "Maximum Trial Projects",
-    desc: "Limit where we start blocking trial projects from running in nonfree countries. (0 means disabled)",
-    default: "0",
-    to_val: to_int,
-    valid: only_nonneg_int,
-    show: only_cocalc_com,
-    tags: ["Commercialization"],
-    group: "Payments & Billing",
-    subgroup: "Commercialization",
-  },
-  nonfree_countries: {
-    name: "Nonfree Countries",
-    desc: "ISO 3166-1 Alpha 2 country codes where extra usage restrictions apply",
-    default: "",
-    to_val: split_strings,
     show: only_cocalc_com,
     tags: ["Commercialization"],
     group: "Payments & Billing",

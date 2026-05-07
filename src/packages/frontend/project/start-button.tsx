@@ -15,21 +15,13 @@ happens, and also when the system is heavily loaded.
 import { Alert, Button, Progress, Space, Spin } from "antd";
 import type { ButtonProps } from "antd";
 import { CSSProperties, useRef } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import { useIntl } from "react-intl";
 import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
-import {
-  A,
-  Icon,
-  ProjectState,
-  Tooltip,
-  VisibleMDLG,
-} from "@cocalc/frontend/components";
+import { Icon, ProjectState, Tooltip } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { capitalize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import { useAllowedFreeProjectToRun } from "./client-side-throttle";
 import { useProjectContext } from "./context";
-import { DOC_TRIAL } from "./project-banner";
 import { lite } from "@cocalc/frontend/lite";
 import type { StartLroState } from "./start-ops";
 import type { MoveLroState } from "./move-ops";
@@ -71,7 +63,6 @@ export function StartButton({
 }) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
-  const projectsLabel = intl.formatMessage(labels.projects);
   const { project_id: contextProjectId, is_active } = useProjectContext();
   const project_id = projectIdProp ?? contextProjectId;
   const resolvedProjectId = project_id ?? "";
@@ -89,7 +80,6 @@ export function StartButton({
     hostOperational.reason ?? "Assigned host is unavailable.";
   const assignedHostLabel = hostLabel(hostInfo, host_id);
   const lastNotRunningRef = useRef<null | number>(null);
-  const allowed = useAllowedFreeProjectToRun(resolvedProjectId);
   const startLroRecord = useTypedRedux(
     { project_id: resolvedProjectId },
     "start_lro",
@@ -170,62 +160,11 @@ export function StartButton({
     return null;
   }
 
-  function render_not_allowed() {
-    // only show this warning if we got a clear answer that it is not allowed to run
-    if (allowed === false)
-      return (
-        <VisibleMDLG>
-          <Alert
-            style={{ margin: "10px 20%" }}
-            title={
-              <span style={{ fontWeight: 500, fontSize: "14pt" }}>
-                <FormattedMessage
-                  id="project.start-button.trial.message"
-                  defaultMessage={"Too Many Free Trial {projectsLabel}"}
-                  values={{ projectsLabel }}
-                />
-              </span>
-            }
-            type="error"
-            description={
-              <span style={{ fontSize: "12pt" }}>
-                <FormattedMessage
-                  id="project.start-button.trial.description"
-                  defaultMessage={`There is no more capacity for <A>Free Trial {projectsLabel}</A> on CoCalc right now.
-                  {br}
-                  <A2>Upgrade your {projectLabel}</A2> with a membership.
-                  `}
-                  values={{
-                    br: <br />,
-                    projectsLabel: projectsLabel.toLowerCase(),
-                    projectLabel: projectLabel.toLowerCase(),
-                    A: (c) => <A href={DOC_TRIAL}>{c}</A>,
-                    A2: (c) => (
-                      <a
-                        onClick={() => {
-                          redux
-                            .getProjectActions(project_id)
-                            .set_active_tab("upgrades");
-                        }}
-                      >
-                        {c}
-                      </a>
-                    ),
-                  }}
-                />
-              </span>
-            }
-          />
-        </VisibleMDLG>
-      );
-  }
-
   function render_start_project_button() {
     const enabled =
       state == null ||
       !state?.get("state") ||
       (!hostUnavailable &&
-        allowed &&
         ["opened", "closed", "archived"].includes(state?.get("state")));
 
     const txt = intl.formatMessage(
@@ -290,7 +229,7 @@ export function StartButton({
           <Tooltip
             title={
               <div>
-                <ProjectState state={state} show_desc={allowed} />
+                <ProjectState state={state} show_desc={true} />
                 <div style={{ fontSize: "12px", color: "#fff" }}>
                   {membership_hint}
                 </div>
@@ -299,7 +238,6 @@ export function StartButton({
                     Host unavailable: {hostUnavailableReason}
                   </div>
                 )}
-                {render_not_allowed()}
               </div>
             }
           >
@@ -407,7 +345,6 @@ export function StartButton({
                   showHostName={false}
                 />
               </div>
-              {render_not_allowed()}
             </>
           }
           type="warning"
@@ -427,7 +364,7 @@ export function StartButton({
                 color: COLORS.GRAY_D,
               }}
             >
-              <ProjectState state={state} show_desc={allowed} />
+              <ProjectState state={state} show_desc={true} />
             </span>
             <div>{render_start_project_button()}</div>
             {hostUnavailable && (
@@ -443,7 +380,6 @@ export function StartButton({
                 start the assigned host.
               </div>
             )}
-            {render_not_allowed()}
           </>
         }
         type="info"
