@@ -95,7 +95,11 @@ import {
   createMembershipGrant,
   revokeMembershipGrantById,
 } from "@cocalc/server/membership/grants";
-import { listMembershipPackageDetailsForOwner } from "@cocalc/server/membership/packages";
+import {
+  claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
+  listLocalClaimableMembershipPackagesForVerifiedEmails,
+  listMembershipPackageDetailsForOwner,
+} from "@cocalc/server/membership/packages";
 import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
@@ -423,6 +427,24 @@ async function startAccountLocalService(): Promise<void> {
     getMembershipPackages: async ({ owner_account_id }) =>
       await listMembershipPackageDetailsForOwner({
         owner_account_id,
+      }),
+    getClaimableMembershipPackages: async ({
+      account_id,
+      verified_email_addresses,
+    }) =>
+      await listLocalClaimableMembershipPackagesForVerifiedEmails({
+        account_id,
+        verified_email_addresses,
+      }),
+    claimMembershipPackageSeat: async ({
+      package_id,
+      account_id,
+      verified_email_addresses,
+    }) =>
+      await claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
+        package_id,
+        account_id,
+        verified_email_addresses,
       }),
     getMembershipPortableState: async ({ account_id }) =>
       await getMembershipPortableState(account_id),

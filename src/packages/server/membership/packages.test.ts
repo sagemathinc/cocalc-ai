@@ -69,6 +69,7 @@ describe("membership packages", () => {
   let remoteGrantUpserts: Array<{ dest_bay: string; grant: any }>;
   let remoteGrantRevocations: Array<{ dest_bay: string; opts: any }>;
   let remoteProjectUsageUpdates: Array<{ dest_bay: string; opts: any }>;
+  const clusterBayIdsEnv = process.env.COCALC_CLUSTER_BAY_IDS;
 
   async function markVerifiedEmail(account_id: string, email_address: string) {
     await getPool().query(
@@ -137,6 +138,10 @@ describe("membership packages", () => {
         revokeMembershipGrant: jest.fn(async (opts) => {
           remoteGrantRevocations.push({ dest_bay, opts });
         }),
+        getClaimableMembershipPackages: jest.fn(async () => []),
+        claimMembershipPackageSeat: jest.fn(async () => {
+          throw new Error("unexpected remote claim");
+        }),
       }),
     );
     projectControlSetUsageAccountMock = jest.fn(
@@ -145,6 +150,14 @@ describe("membership packages", () => {
         return { updated: true };
       },
     );
+  });
+
+  afterEach(() => {
+    if (clusterBayIdsEnv === undefined) {
+      delete process.env.COCALC_CLUSTER_BAY_IDS;
+    } else {
+      process.env.COCALC_CLUSTER_BAY_IDS = clusterBayIdsEnv;
+    }
   });
 
   it("assigns seats, resolves grant-backed membership, and revokes assignments", async () => {
@@ -635,6 +648,134 @@ describe("membership packages", () => {
       [site_user_account_id, package_id],
     );
     expect(localGrantCount.rows[0]?.count).toBe(0);
+  });
+
+  it("discovers remote claimable domain packages across the cluster", async () => {
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    const claimant_account_id = uuid();
+    const remote_package_id = uuid();
+    const verifiedEmail = `ada-${uuid()}@example.edu`;
+    await createTestAccount(claimant_account_id);
+    await markVerifiedEmail(claimant_account_id, verifiedEmail);
+
+    createInterBayAccountLocalClientMock = jest.fn(
+      ({ dest_bay }: { dest_bay: string }) => ({
+        upsertMembershipGrant: jest.fn(async (grant) => {
+          remoteGrantUpserts.push({ dest_bay, grant });
+          return { grant_id: grant.id };
+        }),
+        revokeMembershipGrant: jest.fn(async (opts) => {
+          remoteGrantRevocations.push({ dest_bay, opts });
+        }),
+        getClaimableMembershipPackages: jest.fn(
+          async ({
+            account_id,
+            verified_email_addresses,
+          }: {
+            account_id: string;
+            verified_email_addresses: string[];
+          }) => {
+            expect(dest_bay).toBe("bay-1");
+            expect(account_id).toBe(claimant_account_id);
+            expect(verified_email_addresses).toEqual([verifiedEmail]);
+            return [
+              {
+                package_id: remote_package_id,
+                kind: "domain",
+                membership_class: teamTier,
+                owner_account_id: uuid(),
+                starts_at: new Date("2026-05-07T00:00:00.000Z"),
+                expires_at: null,
+                available_seat_count: 1,
+                matched_email_address: verifiedEmail,
+                reason: "domain-match",
+                metadata: { allowed_domains: ["example.edu"] },
+              },
+            ];
+          },
+        ),
+        claimMembershipPackageSeat: jest.fn(async () => {
+          throw new Error("unexpected remote claim");
+        }),
+      }),
+    );
+
+    const claimables = await listClaimableMembershipPackagesForAccount({
+      account_id: claimant_account_id,
+    });
+    expect(claimables).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          package_id: remote_package_id,
+          kind: "domain",
+          matched_email_address: verifiedEmail,
+          reason: "domain-match",
+        }),
+      ]),
+    );
+  });
+
+  it("forwards remote claims to the package-owning bay with verified emails", async () => {
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
+    const claimant_account_id = uuid();
+    const remote_package_id = uuid();
+    const verifiedEmail = `ada-${uuid()}@example.edu`;
+    const remoteAssignment = {
+      id: uuid(),
+      package_id: remote_package_id,
+      account_id: claimant_account_id,
+      email_address: verifiedEmail,
+      assigned_by_account_id: uuid(),
+      assigned_at: new Date("2026-05-07T00:00:00.000Z"),
+      revoked_at: undefined,
+      metadata: {
+        claimed_from_domain: "example.edu",
+      },
+      grant_id: uuid(),
+      grant_source: "domain-license",
+      grant_purchase_id: null,
+    };
+    await createTestAccount(claimant_account_id);
+    await markVerifiedEmail(claimant_account_id, verifiedEmail);
+
+    const remoteClaimMock = jest.fn(async () => remoteAssignment);
+    createInterBayAccountLocalClientMock = jest.fn(
+      ({ dest_bay }: { dest_bay: string }) => ({
+        upsertMembershipGrant: jest.fn(async (grant) => {
+          remoteGrantUpserts.push({ dest_bay, grant });
+          return { grant_id: grant.id };
+        }),
+        revokeMembershipGrant: jest.fn(async (opts) => {
+          remoteGrantRevocations.push({ dest_bay, opts });
+        }),
+        getClaimableMembershipPackages: jest.fn(async () => [
+          {
+            package_id: remote_package_id,
+            kind: "domain",
+            membership_class: teamTier,
+            owner_account_id: uuid(),
+            starts_at: new Date("2026-05-07T00:00:00.000Z"),
+            expires_at: null,
+            available_seat_count: 1,
+            matched_email_address: verifiedEmail,
+            reason: "domain-match",
+            metadata: { allowed_domains: ["example.edu"] },
+          },
+        ]),
+        claimMembershipPackageSeat: remoteClaimMock,
+      }),
+    );
+
+    const claimed = await claimMembershipPackageSeat({
+      package_id: remote_package_id,
+      account_id: claimant_account_id,
+    });
+    expect(claimed).toEqual(remoteAssignment);
+    expect(remoteClaimMock).toHaveBeenCalledWith({
+      package_id: remote_package_id,
+      account_id: claimant_account_id,
+      verified_email_addresses: [verifiedEmail],
+    });
   });
 
   it("rejects package purchase writes on a stale non-home bay", async () => {

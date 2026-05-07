@@ -21,7 +21,9 @@ import type {
   Hosts,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
+  ClaimableMembershipPackage,
   MembershipDetails,
+  MembershipPackageAssignment,
   MembershipPackageDetails,
   MembershipResolution,
 } from "@cocalc/conat/hub/api/purchases";
@@ -490,6 +492,17 @@ export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
 }
 
+export interface AccountLocalGetClaimableMembershipPackagesRequest {
+  account_id: string;
+  verified_email_addresses: string[];
+}
+
+export interface AccountLocalClaimMembershipPackageSeatRequest {
+  package_id: string;
+  account_id: string;
+  verified_email_addresses: string[];
+}
+
 export interface AccountMembershipPortableState {
   membership_grants?: Record<string, unknown>[];
   membership_packages?: Record<string, unknown>[];
@@ -779,6 +792,8 @@ export type AccountLocalMethod =
   | "get-membership"
   | "get-membership-details"
   | "get-membership-packages"
+  | "get-claimable-membership-packages"
+  | "claim-membership-package-seat"
   | "get-membership-portable-state"
   | "replace-membership-portable-state";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
@@ -1345,6 +1360,12 @@ export interface InterBayAccountLocalApi {
   getMembershipPackages: (
     opts: AccountLocalGetMembershipPackagesRequest,
   ) => Promise<MembershipPackageDetails[]>;
+  getClaimableMembershipPackages: (
+    opts: AccountLocalGetClaimableMembershipPackagesRequest,
+  ) => Promise<ClaimableMembershipPackage[]>;
+  claimMembershipPackageSeat: (
+    opts: AccountLocalClaimMembershipPackageSeatRequest,
+  ) => Promise<MembershipPackageAssignment>;
   getMembershipPortableState: (
     opts: AccountLocalGetMembershipPortableStateRequest,
   ) => Promise<AccountMembershipPortableState>;
@@ -2438,6 +2459,24 @@ export function createInterBayAccountLocalClient({
       method: "get-membership-packages",
     }),
   });
+  const getClaimableMembershipPackagesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getClaimableMembershipPackages">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-claimable-membership-packages",
+    }),
+  });
+  const claimMembershipPackageSeatClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "claimMembershipPackageSeat">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "claim-membership-package-seat",
+    }),
+  });
   const getMembershipPortableStateClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getMembershipPortableState">
   >({
@@ -2477,6 +2516,12 @@ export function createInterBayAccountLocalClient({
       await getMembershipDetailsClient.getMembershipDetails(opts),
     getMembershipPackages: async (opts) =>
       await getMembershipPackagesClient.getMembershipPackages(opts),
+    getClaimableMembershipPackages: async (opts) =>
+      await getClaimableMembershipPackagesClient.getClaimableMembershipPackages(
+        opts,
+      ),
+    claimMembershipPackageSeat: async (opts) =>
+      await claimMembershipPackageSeatClient.claimMembershipPackageSeat(opts),
     getMembershipPortableState: async (opts) =>
       await getMembershipPortableStateClient.getMembershipPortableState(opts),
     replaceMembershipPortableState: async (opts) =>
@@ -2628,6 +2673,34 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getMembershipPackages: async (opts) =>
           await impl.getMembershipPackages(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getClaimableMembershipPackages">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-claimable-membership-packages",
+      }),
+      impl: {
+        getClaimableMembershipPackages: async (opts) =>
+          await impl.getClaimableMembershipPackages(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "claimMembershipPackageSeat">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "claim-membership-package-seat",
+      }),
+      impl: {
+        claimMembershipPackageSeat: async (opts) =>
+          await impl.claimMembershipPackageSeat(opts),
       },
     }),
     createServiceHandler<

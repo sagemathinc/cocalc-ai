@@ -44,8 +44,14 @@ import {
   resolveProjectBayAcrossCluster,
   resolveProjectBayDirect,
 } from "@cocalc/server/inter-bay/directory";
+import { getConfiguredClusterBayIdsForStaticEnumerationOnly } from "@cocalc/server/cluster-config";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
 type Queryable = PoolClient | ReturnType<typeof getPool>;
+type ClaimableMembershipPackageWithBay = ClaimableMembershipPackage & {
+  owner_bay_id: string;
+};
 
 interface RawMembershipPackageRecord {
   id: string;
@@ -255,6 +261,18 @@ async function getVerifiedEmailAddressesForAccount(
     return normalized ? [normalized] : [];
   }
   return Array.from(new Set(emails));
+}
+
+function sortClaimableMembershipPackages<T extends ClaimableMembershipPackage>(
+  claimables: T[],
+): T[] {
+  return claimables.sort((left, right) => {
+    const rightStart = right.starts_at?.getTime() ?? 0;
+    const leftStart = left.starts_at?.getTime() ?? 0;
+    return (
+      rightStart - leftStart || `${left.kind}`.localeCompare(`${right.kind}`)
+    );
+  });
 }
 
 type AssignmentGrantInfo = {
@@ -1192,6 +1210,37 @@ export async function listClaimableMembershipPackagesForAccount({
   if (verifiedEmailAddresses.length === 0) {
     return [];
   }
+  const claimables = await listClaimableMembershipPackagesAcrossCluster({
+    account_id,
+    verified_email_addresses: verifiedEmailAddresses,
+    client,
+  });
+  return sortClaimableMembershipPackages(
+    claimables.map(
+      ({ owner_bay_id: _owner_bay_id, ...claimable }) => claimable,
+    ),
+  );
+}
+
+export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
+  account_id,
+  verified_email_addresses,
+  client,
+}: {
+  account_id: string;
+  verified_email_addresses: string[];
+  client?: PoolClient;
+}): Promise<ClaimableMembershipPackage[]> {
+  const verifiedEmailAddresses = Array.from(
+    new Set(
+      verified_email_addresses
+        .map((email) => normalizeEmailAddress(email))
+        .filter((email): email is string => !!email),
+    ),
+  );
+  if (verifiedEmailAddresses.length === 0) {
+    return [];
+  }
   const emailSet = new Set(verifiedEmailAddresses);
   const pool = getQueryClient(client);
   const { rows } = await pool.query<RawMembershipPackageRecord>(
@@ -1284,22 +1333,58 @@ export async function listClaimableMembershipPackagesForAccount({
       }
     }
   }
-  return Array.from(claimables.values()).sort((left, right) => {
-    const rightStart = right.starts_at?.getTime() ?? 0;
-    const leftStart = left.starts_at?.getTime() ?? 0;
-    return (
-      rightStart - leftStart || `${left.kind}`.localeCompare(`${right.kind}`)
-    );
-  });
+  return sortClaimableMembershipPackages(Array.from(claimables.values()));
 }
 
-export async function claimMembershipPackageSeat({
+async function listClaimableMembershipPackagesAcrossCluster({
+  account_id,
+  verified_email_addresses,
+  client,
+}: {
+  account_id: string;
+  verified_email_addresses: string[];
+  client?: PoolClient;
+}): Promise<ClaimableMembershipPackageWithBay[]> {
+  const claimables = new Map<string, ClaimableMembershipPackageWithBay>();
+  const addClaimables = (
+    rows: ClaimableMembershipPackage[],
+    owner_bay_id: string,
+  ) => {
+    for (const row of rows) {
+      claimables.set(row.package_id, { ...row, owner_bay_id });
+    }
+  };
+  addClaimables(
+    await listLocalClaimableMembershipPackagesForVerifiedEmails({
+      account_id,
+      verified_email_addresses,
+      client,
+    }),
+    getConfiguredBayId(),
+  );
+  for (const bay_id of getConfiguredClusterBayIdsForStaticEnumerationOnly()) {
+    if (bay_id === getConfiguredBayId()) continue;
+    const remoteRows = await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: bay_id,
+    }).getClaimableMembershipPackages({
+      account_id,
+      verified_email_addresses,
+    });
+    addClaimables(remoteRows, bay_id);
+  }
+  return sortClaimableMembershipPackages(Array.from(claimables.values()));
+}
+
+export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
   package_id,
   account_id,
+  verified_email_addresses,
   client,
 }: {
   package_id: string;
   account_id: string;
+  verified_email_addresses: string[];
   client?: PoolClient;
 }): Promise<MembershipPackageAssignment> {
   return await withPackageOwnerWriteFence({
@@ -1311,9 +1396,12 @@ export async function claimMembershipPackageSeat({
       if (pkg.expires_at && pkg.expires_at <= new Date()) {
         throw Error("membership package has expired");
       }
-      const verifiedEmailAddresses = await getVerifiedEmailAddressesForAccount(
-        account_id,
-        dbClient,
+      const verifiedEmailAddresses = Array.from(
+        new Set(
+          verified_email_addresses
+            .map((email) => normalizeEmailAddress(email))
+            .filter((email): email is string => !!email),
+        ),
       );
       if (verifiedEmailAddresses.length === 0) {
         throw Error("verify an email address before claiming this package");
@@ -1412,5 +1500,48 @@ export async function claimMembershipPackageSeat({
         dbClient,
       );
     },
+  });
+}
+
+export async function claimMembershipPackageSeat({
+  package_id,
+  account_id,
+  client,
+}: {
+  package_id: string;
+  account_id: string;
+  client?: PoolClient;
+}): Promise<MembershipPackageAssignment> {
+  const verifiedEmailAddresses = await getVerifiedEmailAddressesForAccount(
+    account_id,
+    client,
+  );
+  if (verifiedEmailAddresses.length === 0) {
+    throw Error("verify an email address before claiming this package");
+  }
+  const claimables = await listClaimableMembershipPackagesAcrossCluster({
+    account_id,
+    verified_email_addresses: verifiedEmailAddresses,
+    client,
+  });
+  const claimable = claimables.find((row) => row.package_id === package_id);
+  if (!claimable) {
+    throw Error("no claimable seat found for this account");
+  }
+  if (claimable.owner_bay_id === getConfiguredBayId()) {
+    return await claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
+      package_id,
+      account_id,
+      verified_email_addresses: verifiedEmailAddresses,
+      client,
+    });
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: claimable.owner_bay_id,
+  }).claimMembershipPackageSeat({
+    package_id,
+    account_id,
+    verified_email_addresses: verifiedEmailAddresses,
   });
 }
