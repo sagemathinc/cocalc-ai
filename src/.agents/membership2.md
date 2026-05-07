@@ -323,6 +323,43 @@ The key limits should be:
 
 Monthly statements remain the main collection model.
 
+### Free tier / trial policy is experimental, but must be bounded
+
+The exact public free-tier policy should not be locked down too early.
+
+This is a competitive-market product question, and the right answer will likely
+require safe experimentation.
+
+What must be decided now is not one exact free plan. It is the architecture
+envelope within which free/trial variants can be tested without rewriting the
+entitlement model.
+
+V1 should support at least these policy modes:
+
+1. account creation with no meaningful free compute
+2. a limited personal free/trial workspace
+3. stronger free access for verified education/domain users
+4. institution-sponsored or course-invite access that is effectively free to
+   the end user
+
+Non-negotiable invariants:
+
+- generic free/trial accounts do not get dedicated-host access by default
+- free/trial compute stays behind small rolling spend/usage windows and tight
+  AI/egress/project caps
+- higher-cost free access requires stronger trust signals such as:
+  - verified email
+  - verified education/domain eligibility
+  - course/institution invitation
+  - payment method
+  - account age / manual review
+- free/trial policy must be admin-configurable and observable
+
+The important planning decision is:
+
+- free/trial is a policy layer over trust, usage windows, and product exposure
+- it is not a separate entitlement architecture
+
 ## Data Model Corrections
 
 The existing local tables stay, but their ownership semantics change.
@@ -694,6 +731,64 @@ The default policy should be:
   spend
 - the 7-day window exists to cap medium-term exposure without waiting for the
   monthly invoice cycle
+
+### Provider price-update policy
+
+The host pricing system needs a clear rule for when provider price changes take
+effect.
+
+V1 policy:
+
+- provider price catalogs are synced on a scheduled cadence, initially once per
+  day
+- the platform may intentionally absorb up to one day of provider price change
+  because it does not continuously poll every provider catalog
+- each detected catalog change creates a new catalog version
+- spot-priced hosts are variable-rate by design:
+  - a new detected spot price starts a new host rate-event interval
+  - the host drawer should show current rate and recent rate history
+- standard VM/disk pricing should be treated as much more stable:
+  - new catalog versions affect new create/resize/change-pricing actions
+  - unchanged running standard-priced hosts should not be silently repriced
+    mid-session
+- if a detected spot repricing materially raises projected spend, the user
+  should see that clearly in the host UI
+
+This gives operators a crisp rule:
+
+- daily sync
+- up to one day of absorbed lag
+- explicit per-host rate events for spot
+- no surprise mid-session repricing for unchanged standard hosts
+
+## Idempotency and replay requirements
+
+Billing and entitlement flows will be retried.
+
+This is guaranteed by:
+
+- payment-provider webhook retries
+- cross-bay RPC retries
+- operator replay/backfill tools
+- rehome copy/retry workflows
+
+So the plan must assume at-least-once delivery, not exactly-once delivery.
+
+V1 requirements:
+
+- every purchase, package, grant, claim, projection update, and rehome billing
+  copy step needs an idempotency key or monotonic operation id
+- cross-bay mutations must be safe to replay
+- seed-global projections should be updated by idempotent upsert/version rules
+- payment success must not be able to mint duplicate grants or duplicate
+  package expansions
+- rehome billing-copy phases must be restartable without duplicate ledger
+  creation
+
+The important invariant is:
+
+- retries are normal
+- duplicate financial or entitlement side effects are not
 
 ## Implementation Plan
 
