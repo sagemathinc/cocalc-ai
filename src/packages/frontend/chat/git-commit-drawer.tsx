@@ -254,6 +254,27 @@ export function resolveIncomingGitCommitSelection({
   return incomingCommit;
 }
 
+export function applyGitReviewedByCommitEntries({
+  previous,
+  entries,
+}: {
+  previous: Record<string, boolean>;
+  entries: readonly (readonly [
+    string,
+    Pick<GitReviewRecordV2, "reviewed"> | undefined,
+  ])[];
+}): Record<string, boolean> {
+  const next = { ...previous };
+  for (const [hash, record] of entries) {
+    if (record == null) {
+      delete next[hash];
+      continue;
+    }
+    next[hash] = Boolean(record.reviewed);
+  }
+  return next;
+}
+
 async function runGitCommand({
   projectId,
   cwd,
@@ -958,17 +979,16 @@ export function GitCommitDrawer({
         const entries = await Promise.all(
           hashes.map(async (hash) => {
             const rec = await loadReviewRecord({ accountId, commitSha: hash });
-            return [hash, Boolean(rec?.reviewed)] as const;
+            return [hash, rec] as const;
           }),
         );
         if (cancelled) return;
-        setReviewedByCommit((prev) => {
-          const next = { ...prev };
-          for (const [hash, isReviewed] of entries) {
-            next[hash] = isReviewed;
-          }
-          return next;
-        });
+        setReviewedByCommit((prev) =>
+          applyGitReviewedByCommitEntries({
+            previous: prev,
+            entries,
+          }),
+        );
       } catch {
         // ignore transient dropdown review indicator failures
       }

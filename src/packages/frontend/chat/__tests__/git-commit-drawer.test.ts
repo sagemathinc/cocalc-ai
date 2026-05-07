@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import {
   applySubmittedGitReviewComments,
+  applyGitReviewedByCommitEntries,
   buildGitInlineDraftEditorId,
   buildGitInlineEditEditorId,
   buildGitDiffFindMatches,
@@ -238,6 +239,25 @@ describe("git commit drawer merge commit formatting", () => {
         known: true,
       },
     );
+  });
+
+  it("keeps missing review state unknown when refreshing commit review indicators", () => {
+    expect(
+      applyGitReviewedByCommitEntries({
+        previous: {
+          abc1234: true,
+          def5678: false,
+        },
+        entries: [
+          ["abc1234", undefined],
+          ["def5678", { reviewed: false } as any],
+          ["999aaaa", { reviewed: true } as any],
+        ],
+      }),
+    ).toEqual({
+      def5678: false,
+      "999aaaa": true,
+    });
   });
 
   it("refreshes git review state on reconnect only for editable persisted commits", () => {
