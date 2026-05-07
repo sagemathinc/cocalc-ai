@@ -178,6 +178,42 @@ export function shouldFinalizeGitRepoBootstrapAction({
   );
 }
 
+export function shouldApplyGitFileOpenScopedResult({
+  actionToken,
+  currentActionToken,
+  startedScope,
+  currentActionScope,
+  activeScope,
+}: {
+  actionToken: number;
+  currentActionToken: number;
+  startedScope?: string;
+  currentActionScope?: string;
+  activeScope?: string;
+}): boolean {
+  return (
+    currentActionToken === actionToken &&
+    currentActionScope === startedScope &&
+    activeScope === startedScope
+  );
+}
+
+export function shouldFinalizeGitFileOpenAction({
+  actionToken,
+  currentActionToken,
+  startedScope,
+  currentActionScope,
+}: {
+  actionToken: number;
+  currentActionToken: number;
+  startedScope?: string;
+  currentActionScope?: string;
+}): boolean {
+  return (
+    currentActionToken === actionToken && currentActionScope === startedScope
+  );
+}
+
 export function shouldClearGitHeadStatusActionOnScopeChange({
   headStatusAction,
   previousScope,

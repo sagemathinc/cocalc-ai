@@ -37,11 +37,13 @@ import {
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
   isMergeCommitSummary,
+  shouldApplyGitFileOpenScopedResult,
   matchGitDrawerScrollCommand,
   resolveGitCommitSearchChange,
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
+  shouldFinalizeGitFileOpenAction,
   shouldRefreshGitReviewStateOnReconnect,
   shouldCaptureGitDrawerFindShortcut,
 } from "../git-commit-drawer";
@@ -701,6 +703,63 @@ describe("git commit drawer merge commit formatting", () => {
         actionToken: 4,
         currentActionToken: 4,
         startedScope: "non-repo",
+        currentActionScope: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it("only applies git diff file-open results while the same drawer view is still active", () => {
+    expect(
+      shouldApplyGitFileOpenScopedResult({
+        actionToken: 7,
+        currentActionToken: 7,
+        startedScope: "1:hash-a",
+        currentActionScope: "1:hash-a",
+        activeScope: "1:hash-a",
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplyGitFileOpenScopedResult({
+        actionToken: 7,
+        currentActionToken: 8,
+        startedScope: "1:hash-a",
+        currentActionScope: "1:hash-a",
+        activeScope: "1:hash-a",
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplyGitFileOpenScopedResult({
+        actionToken: 7,
+        currentActionToken: 7,
+        startedScope: "1:hash-a",
+        currentActionScope: "1:hash-a",
+        activeScope: "2:hash-a",
+      }),
+    ).toBe(false);
+  });
+
+  it("only finalizes the latest git diff file-open action for its drawer view", () => {
+    expect(
+      shouldFinalizeGitFileOpenAction({
+        actionToken: 9,
+        currentActionToken: 9,
+        startedScope: "1:hash-a",
+        currentActionScope: "1:hash-a",
+      }),
+    ).toBe(true);
+    expect(
+      shouldFinalizeGitFileOpenAction({
+        actionToken: 9,
+        currentActionToken: 10,
+        startedScope: "1:hash-a",
+        currentActionScope: "1:hash-a",
+      }),
+    ).toBe(false);
+    expect(
+      shouldFinalizeGitFileOpenAction({
+        actionToken: 9,
+        currentActionToken: 9,
+        startedScope: "1:hash-a",
         currentActionScope: undefined,
       }),
     ).toBe(false);

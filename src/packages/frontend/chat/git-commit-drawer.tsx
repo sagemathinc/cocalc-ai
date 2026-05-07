@@ -122,10 +122,12 @@ import {
   isMergeCommitSummary,
   isNotGitRepoError,
   resolveOpenPath,
+  shouldApplyGitFileOpenScopedResult,
   shouldApplyGitRepoBootstrapScopedResult,
   shouldClearGitHeadCommitBusyOnScopeChange,
   shouldClearGitHeadStatusActionOnScopeChange,
   shouldClearGitRepoBootstrapBusyOnScopeChange,
+  shouldFinalizeGitFileOpenAction,
   shouldFinalizeGitRepoBootstrapAction,
   shouldCaptureGitDrawerFindShortcut,
 } from "./git-commit/utils";
@@ -174,10 +176,12 @@ export {
   GitDiffListFooterSpacer,
   getCommitReviewIndicatorState,
   isMergeCommitSummary,
+  shouldApplyGitFileOpenScopedResult,
   shouldApplyGitRepoBootstrapScopedResult,
   shouldClearGitHeadCommitBusyOnScopeChange,
   shouldClearGitHeadStatusActionOnScopeChange,
   shouldClearGitRepoBootstrapBusyOnScopeChange,
+  shouldFinalizeGitFileOpenAction,
   shouldFinalizeGitRepoBootstrapAction,
   shouldCaptureGitDrawerFindShortcut,
 };
@@ -374,6 +378,11 @@ export function GitCommitDrawer({
   const diffFindInputRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const drawerViewSessionEpochRef = useRef(0);
+  const drawerViewWasOpenRef = useRef(false);
+  const drawerViewScopeRef = useRef<string | undefined>(undefined);
+  const openFileActionTokenRef = useRef(0);
+  const openFileActionScopeRef = useRef<string | undefined>(undefined);
   const restoringScrollRef = useRef(false);
   const pendingScrollRestoreRef = useRef<number | null>(null);
   const pendingContextAnchorRef = useRef<GitDiffScrollAnchor | null>(null);
@@ -415,6 +424,16 @@ export function GitCommitDrawer({
     const raw = `${projectId ?? "no-project"}|${sourcePath ?? ""}|${cwd}|${commitKey}`;
     return hashGitCommitValue(raw);
   }, [projectId, sourcePath, cwd, commit]);
+
+  useEffect(() => {
+    if (open && !drawerViewWasOpenRef.current) {
+      drawerViewSessionEpochRef.current += 1;
+    }
+    drawerViewWasOpenRef.current = open;
+    drawerViewScopeRef.current = open
+      ? `${drawerViewSessionEpochRef.current}:${scrollStorageId}`
+      : undefined;
+  }, [open, scrollStorageId]);
 
   useEffect(() => {
     const requestTokenChanged =
@@ -2181,18 +2200,54 @@ export function GitCommitDrawer({
 
   const openFile = async (filePath: string) => {
     if (!projectActions) return;
+    const startedScope = drawerViewScopeRef.current;
+    if (!startedScope) return;
+    const actionToken = openFileActionTokenRef.current + 1;
+    openFileActionTokenRef.current = actionToken;
+    openFileActionScopeRef.current = startedScope;
     try {
       await projectActions.open_file({
         path: resolveOpenPath(repoRoot || data?.repoRoot, filePath),
         foreground: true,
         explicit: true,
       });
-      onClose();
+      if (
+        shouldApplyGitFileOpenScopedResult({
+          actionToken,
+          currentActionToken: openFileActionTokenRef.current,
+          startedScope,
+          currentActionScope: openFileActionScopeRef.current,
+          activeScope: drawerViewScopeRef.current,
+        })
+      ) {
+        onClose();
+      }
     } catch (err) {
-      alert_message({
-        type: "error",
-        message: `Unable to open file '${filePath}' (${err})`,
-      });
+      if (
+        shouldApplyGitFileOpenScopedResult({
+          actionToken,
+          currentActionToken: openFileActionTokenRef.current,
+          startedScope,
+          currentActionScope: openFileActionScopeRef.current,
+          activeScope: drawerViewScopeRef.current,
+        })
+      ) {
+        alert_message({
+          type: "error",
+          message: `Unable to open file '${filePath}' (${err})`,
+        });
+      }
+    } finally {
+      if (
+        shouldFinalizeGitFileOpenAction({
+          actionToken,
+          currentActionToken: openFileActionTokenRef.current,
+          startedScope,
+          currentActionScope: openFileActionScopeRef.current,
+        })
+      ) {
+        openFileActionScopeRef.current = undefined;
+      }
     }
   };
 
