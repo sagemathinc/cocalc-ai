@@ -18,6 +18,7 @@ import {
   resolveNotificationTargetHomeBays,
   type NotificationKind,
 } from "@cocalc/database/postgres/notifications-core";
+import getPool from "@cocalc/database/pool";
 import type {
   CreateAccountNoticeOptions,
   CreateCodexTurnNoticeOptions,
@@ -77,6 +78,28 @@ function normalizeSeverity(value?: string): NotificationSeverity {
     throw Error(`invalid severity '${value ?? ""}'`);
   }
   return severity as NotificationSeverity;
+}
+
+async function assertHostCodexTurnNoticeAccess(opts: {
+  host_id: string;
+  project_id: string;
+  account_id: string;
+}): Promise<void> {
+  const { rowCount } = await getPool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE project_id=$1
+        AND host_id=$2
+        AND deleted IS NOT true
+        AND users ? $3::text
+      LIMIT 1
+    `,
+    [opts.project_id, opts.host_id, opts.account_id],
+  );
+  if (!rowCount) {
+    throw Error("host is not authorized to create codex turn notices");
+  }
 }
 
 async function authorizeActor(opts: {
@@ -313,10 +336,21 @@ export async function createCodexTurnNotice(
     opts.source_project_id,
     "source project id",
   );
-  await assertProjectCollaboratorAccessAllowRemote({
-    account_id,
-    project_id: source_project_id,
-  });
+  const host_id = opts.host_id
+    ? requireUuid(opts.host_id, "host id")
+    : undefined;
+  if (host_id) {
+    await assertHostCodexTurnNoticeAccess({
+      host_id,
+      project_id: source_project_id,
+      account_id,
+    });
+  } else {
+    await assertProjectCollaboratorAccessAllowRemote({
+      account_id,
+      project_id: source_project_id,
+    });
+  }
   const source_path = requireNonEmptyString(opts.source_path, "source_path");
   const source_fragment_id =
     opts.source_fragment_id == null ||

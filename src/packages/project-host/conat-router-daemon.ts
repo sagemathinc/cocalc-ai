@@ -16,6 +16,7 @@ import { getProjectHostMasterConatToken } from "./master-conat-token";
 import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
 import { setMasterConatClient } from "./master-status";
 import { wireSystemApi } from "./hub/system";
+import { wireNotificationsApi } from "./hub/notifications";
 import { startConatRouterManagedEgressLoop } from "./conat-router-egress";
 import { getProjectHostManagedEgressMode } from "./managed-egress-runtime";
 
@@ -50,6 +51,7 @@ function connectMasterClient({ hostId }: { hostId: string }) {
   });
   setMasterConatClient(client);
   wireSystemApi();
+  wireNotificationsApi();
   return client;
 }
 

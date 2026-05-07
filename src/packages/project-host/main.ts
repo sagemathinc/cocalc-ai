@@ -52,6 +52,7 @@ import { hubApi, init as initHubApi } from "@cocalc/lite/hub/api";
 import { listAcpAutomationProjectIds } from "@cocalc/lite/hub/sqlite/acp-automations";
 import { PROJECT_RUNNER_RPC_TIMEOUT_MS, wireProjectsApi } from "./hub/projects";
 import { wireHostsApi } from "./hub/hosts";
+import { wireNotificationsApi } from "./hub/notifications";
 import { wireSystemApi } from "./hub/system";
 import { startMasterRegistration } from "./master";
 import { startReconciler } from "./reconcile";
@@ -488,6 +489,7 @@ export async function main(
   await initHubApi({ client: conatClient });
   wireSystemApi();
   wireHostsApi();
+  wireNotificationsApi();
   const projectTouchService = await initProjectTouchService(conatClient);
   const projectStorageInfoService =
     await initProjectStorageInfoService(conatClient);

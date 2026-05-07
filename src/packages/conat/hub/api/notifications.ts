@@ -49,6 +49,7 @@ export interface CreateAccountNoticeOptions {
 
 export interface CreateCodexTurnNoticeOptions {
   account_id?: string;
+  host_id?: string;
   source_project_id: string;
   source_path: string;
   source_fragment_id?: string;
@@ -164,7 +165,7 @@ export interface Notifications {
 export const notifications = {
   createMention: authFirstRequireAccount,
   createAccountNotice: authFirstRequireAccount,
-  createCodexTurnNotice: async ({ args, account_id, project_id }) => {
+  createCodexTurnNotice: async ({ args, account_id, project_id, host_id }) => {
     if (args[0] == null) {
       args[0] = {} as any;
     }
@@ -180,7 +181,16 @@ export const notifications = {
       }
       return args;
     }
-    throw Error("must be signed in as an account or project");
+    if (host_id) {
+      if (!args[0].account_id) {
+        throw Error(
+          "host-authenticated codex turn notices require an account_id target",
+        );
+      }
+      args[0].host_id = host_id;
+      return args;
+    }
+    throw Error("must be signed in as an account, project, or host");
   },
   list: authFirstRequireAccount,
   counts: authFirstRequireAccount,
