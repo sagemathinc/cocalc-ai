@@ -32,6 +32,31 @@ describe("inter-bay typed service transport", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it("uses fast-rpc for project usage-account control calls", async () => {
+    const fastRpcRequest = jest.fn(async () => ({
+      raw: encode({ encoding: DataEncoding.MsgPack, mesg: { updated: true } }),
+    }));
+    const request = jest.fn();
+    const client = createInterBayProjectControlClient({
+      client: { fastRpcRequest, request } as any,
+      dest_bay: "bay-1",
+      timeout: 10_000,
+    });
+
+    await expect(
+      client.setUsageAccount({
+        project_id: "p1",
+        usage_account_id: "a1",
+      } as any),
+    ).resolves.toEqual({ updated: true });
+    expect(fastRpcRequest).toHaveBeenCalledWith(
+      "bay.bay-1.rpc.project-control.set-usage-account",
+      { raw: expect.any(Uint8Array) },
+      { timeout: 10_000 },
+    );
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it("uses request transport for long-running host-control calls", async () => {
     const fastRpcRequest = jest.fn();
     const request = jest.fn(async () => ({ data: { project_id: "p1" } }));

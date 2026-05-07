@@ -323,6 +323,119 @@ The key limits should be:
 
 Monthly statements remain the main collection model.
 
+### Free tier / trial policy is experimental, but must be bounded
+
+The exact public free-tier policy should not be locked down too early.
+
+This is a competitive-market product question, and the right answer will likely
+require safe experimentation.
+
+What must be decided now is not one exact free plan. It is the architecture
+envelope within which free/trial variants can be tested without rewriting the
+entitlement model.
+
+V1 should support at least these policy modes:
+
+1. account creation with no meaningful free compute
+2. a limited personal free/trial workspace
+3. stronger free access for verified education/domain users
+4. institution-sponsored or course-invite access that is effectively free to
+   the end user
+
+Non-negotiable invariants:
+
+- generic free/trial accounts do not get dedicated-host access by default
+- free/trial compute stays behind small rolling spend/usage windows and tight
+  AI/egress/project caps
+- higher-cost free access requires stronger trust signals such as:
+  - verified email
+  - verified education/domain eligibility
+  - course/institution invitation
+  - payment method
+  - account age / manual review
+- free/trial policy must be admin-configurable and observable
+
+The important planning decision is:
+
+- free/trial is a policy layer over trust, usage windows, and product exposure
+- it is not a separate entitlement architecture
+
+### Outbound network policy should be trust-tier based
+
+For `cocalc-ai`, a blanket `no outbound internet for free users` policy would
+make the product feel broken.
+
+Modern users expect at least:
+
+- `pip install`
+- `apt install`
+- git over HTTPS
+- access to package registries and cloud/API endpoints
+
+So the correct model is not a giant domain allowlist and not unrestricted
+internet for everyone.
+
+It is a trust-tier-based network policy.
+
+#### Recommended policy classes
+
+V1 should support at least these outbound network classes:
+
+1. `none`
+2. `web-only`
+   - DNS
+   - HTTP/HTTPS
+3. `full`
+
+#### Default mapping
+
+- generic free/trial shared runtimes:
+  - `web-only`
+  - no dedicated hosts
+  - strict egress, connection-rate, and runtime windows
+- verified education / invited / institution-sponsored users:
+  - usually `web-only`
+  - higher limits than generic free/trial
+- trusted paid users:
+  - usually `full`
+  - still governed by rolling spend/trust limits
+- dedicated hosts:
+  - `full`
+  - stronger monitoring and risk controls
+
+#### Important non-goals
+
+Do not build V1 around hostname whitelists such as special-casing GitHub or
+apt mirrors.
+
+That approach is fragile, high-maintenance, and incompatible with modern
+package registries and CDN-backed downloads.
+
+The default controls should instead be:
+
+- protocol class
+- egress byte limits
+- connection-rate limits
+- concurrent connection limits
+- public exposure rights
+- trust-tier gating
+
+#### Security boundaries
+
+Even when outbound access is allowed, the platform should still default to:
+
+- no private-network access
+- no public inbound exposure by default
+- no dedicated-host access for generic free/trial users
+- no broad UDP-based internet access for low-trust users unless there is a
+  specific reason
+
+The important planning decision is:
+
+- outbound network access is another managed policy surface, like AI spend and
+  egress
+- it is not an ad hoc firewall exception list
+
 ## Data Model Corrections
 
 The existing local tables stay, but their ownership semantics change.
@@ -695,6 +808,64 @@ The default policy should be:
 - the 7-day window exists to cap medium-term exposure without waiting for the
   monthly invoice cycle
 
+### Provider price-update policy
+
+The host pricing system needs a clear rule for when provider price changes take
+effect.
+
+V1 policy:
+
+- provider price catalogs are synced on a scheduled cadence, initially once per
+  day
+- the platform may intentionally absorb up to one day of provider price change
+  because it does not continuously poll every provider catalog
+- each detected catalog change creates a new catalog version
+- spot-priced hosts are variable-rate by design:
+  - a new detected spot price starts a new host rate-event interval
+  - the host drawer should show current rate and recent rate history
+- standard VM/disk pricing should be treated as much more stable:
+  - new catalog versions affect new create/resize/change-pricing actions
+  - unchanged running standard-priced hosts should not be silently repriced
+    mid-session
+- if a detected spot repricing materially raises projected spend, the user
+  should see that clearly in the host UI
+
+This gives operators a crisp rule:
+
+- daily sync
+- up to one day of absorbed lag
+- explicit per-host rate events for spot
+- no surprise mid-session repricing for unchanged standard hosts
+
+## Idempotency and replay requirements
+
+Billing and entitlement flows will be retried.
+
+This is guaranteed by:
+
+- payment-provider webhook retries
+- cross-bay RPC retries
+- operator replay/backfill tools
+- rehome copy/retry workflows
+
+So the plan must assume at-least-once delivery, not exactly-once delivery.
+
+V1 requirements:
+
+- every purchase, package, grant, claim, projection update, and rehome billing
+  copy step needs an idempotency key or monotonic operation id
+- cross-bay mutations must be safe to replay
+- seed-global projections should be updated by idempotent upsert/version rules
+- payment success must not be able to mint duplicate grants or duplicate
+  package expansions
+- rehome billing-copy phases must be restartable without duplicate ledger
+  creation
+
+The important invariant is:
+
+- retries are normal
+- duplicate financial or entitlement side effects are not
+
 ## Implementation Plan
 
 ## Phase 0: lock the multi-bay billing invariants
@@ -910,9 +1081,15 @@ V1 controls:
 
 - dedicated-host eligibility should be gated by membership tier and trust level
 - new accounts should not immediately get broad host-spend rights
+- low-trust shared runtimes should default to `web-only` outbound access, not
+  unrestricted internet
 - host spend limits should be rolling-window based and admin-configurable
   - 5-hour window
   - 7-day window
+- low-trust runtimes should also have:
+  - tight egress windows
+  - connection-rate limits
+  - no public app exposure by default
 - host creation/start/resize should record who did it and under what trust state
 - risk review and emergency suspension must be possible without corrupting the
   billing ledger
@@ -1078,6 +1255,39 @@ V1 should include commands along the lines of:
 The exact command names can change. The invariant is:
 
 - admin UI and CLI should agree because they read the same projected data
+
+#### Codex-assisted abuse review
+
+Codex should be an explicit part of the abuse-detection loop.
+
+The intended model is:
+
+- an admin can mint a restricted-scope operator credential
+- a scheduled Codex loop can run `cocalc abuse ...` and related read-only admin
+  commands
+- Codex reviews the summarized analytics and recent suspicious events
+- Codex alerts humans when something looks unusual
+
+This is useful because many abuse incidents first appear as patterns that are
+statistically odd but not yet captured by one hard threshold.
+
+V1 requirements:
+
+- support restricted-scope operator credentials for machine use
+- support a read-only abuse-review scope that can:
+  - read abuse analytics rollups
+  - read filtered account/package/claim/host summaries
+  - read recent risk flags and denial reasons
+- keep destructive actions out of that scope by default
+
+Important boundary:
+
+- Codex can triage and alert
+- humans decide on punitive or high-risk actions unless an explicit,
+  separately-audited automation rule exists
+
+This keeps the first version useful without making an LLM the sole authority
+for suspensions, refunds, or entitlement removal.
 
 #### Privacy and retention
 

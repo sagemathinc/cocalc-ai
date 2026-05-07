@@ -4,6 +4,12 @@
  */
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
+import {
+  resolveProjectBayAcrossCluster,
+  resolveProjectBayDirect,
+} from "@cocalc/server/inter-bay/directory";
 
 export interface ProjectUsageRow {
   project_id: string;
@@ -148,14 +154,70 @@ export async function setProjectUsageAccountId(
   {
     project_id,
     account_id,
+    expected_current_usage_account_id,
   }: {
     project_id: string;
     account_id?: string | null;
+    expected_current_usage_account_id?: string | null;
   },
   client?: PoolClient,
-): Promise<void> {
-  await getQueryClient(client).query(
-    "UPDATE projects SET usage_account_id=$2 WHERE project_id=$1",
-    [project_id, account_id ?? null],
+): Promise<boolean> {
+  if (expected_current_usage_account_id === undefined) {
+    const { rows } = await getQueryClient(client).query(
+      "UPDATE projects SET usage_account_id=$2 WHERE project_id=$1 RETURNING project_id",
+      [project_id, account_id ?? null],
+    );
+    return !!rows[0];
+  }
+  const { rows } = await getQueryClient(client).query(
+    `
+      UPDATE projects
+      SET usage_account_id=$2
+      WHERE project_id=$1
+        AND usage_account_id::text IS NOT DISTINCT FROM $3::text
+      RETURNING project_id
+    `,
+    [project_id, account_id ?? null, expected_current_usage_account_id],
   );
+  return !!rows[0];
+}
+
+export async function setProjectUsageAccountIdOnOwningBay(
+  {
+    project_id,
+    account_id,
+    expected_current_usage_account_id,
+  }: {
+    project_id: string;
+    account_id?: string | null;
+    expected_current_usage_account_id?: string | null;
+  },
+  client?: PoolClient,
+): Promise<boolean> {
+  const localOwnership = await resolveProjectBayDirect(project_id);
+  const ownership =
+    localOwnership ?? (await resolveProjectBayAcrossCluster(project_id));
+  if (ownership == null) {
+    return false;
+  }
+  if (ownership.bay_id === getConfiguredBayId()) {
+    return await setProjectUsageAccountId(
+      {
+        project_id,
+        account_id,
+        expected_current_usage_account_id,
+      },
+      client,
+    );
+  }
+  return (
+    await getInterBayBridge()
+      .projectControl(ownership.bay_id)
+      .setUsageAccount({
+        project_id,
+        usage_account_id: account_id ?? null,
+        expected_current_usage_account_id,
+        epoch: ownership.epoch,
+      })
+  ).updated;
 }

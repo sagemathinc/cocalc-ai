@@ -6,6 +6,10 @@
 import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import type { MembershipPackageProduct } from "@cocalc/util/db-schema/shopping-cart-items";
+import {
+  assertAccountNotRehoming,
+  assertAccountWriteOnHomeBay,
+} from "@cocalc/server/accounts/rehome-fence";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
@@ -35,6 +39,16 @@ export async function createMembershipPackagePurchase(
   if (product?.type !== "membership-package") {
     throw Error("product type must be 'membership-package'");
   }
+  await assertAccountNotRehoming({
+    db: client,
+    account_id,
+    action: "purchase membership package",
+  });
+  await assertAccountWriteOnHomeBay({
+    db: client,
+    account_id,
+    action: "purchase membership package",
+  });
 
   const existingPackageId = `${product.package_id ?? ""}`.trim();
   if (existingPackageId) {

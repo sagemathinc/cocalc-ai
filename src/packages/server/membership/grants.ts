@@ -4,6 +4,15 @@
  */
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import {
+  assertAccountNotRehoming,
+  assertAccountWriteOnHomeBay,
+  withAccountRehomeWriteFence,
+} from "@cocalc/server/accounts/rehome-fence";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { uuid } from "@cocalc/util/misc";
 import type { MembershipClass } from "@cocalc/conat/hub/api/purchases";
 
@@ -23,6 +32,25 @@ export interface MembershipGrantRecord {
 
 function getQueryClient(client?: PoolClient) {
   return client ?? getPool();
+}
+
+async function assertAccountGrantWriteAllowed({
+  account_id,
+  client,
+}: {
+  account_id: string;
+  client: PoolClient;
+}): Promise<void> {
+  await assertAccountNotRehoming({
+    db: client,
+    account_id,
+    action: "modify membership grants",
+  });
+  await assertAccountWriteOnHomeBay({
+    db: client,
+    account_id,
+    action: "modify membership grants",
+  });
 }
 
 export async function listActiveMembershipGrantsForAccount(
@@ -81,6 +109,29 @@ export async function createMembershipGrant(
   },
   client?: PoolClient,
 ): Promise<string> {
+  if (client == null) {
+    return await withAccountRehomeWriteFence({
+      account_id,
+      action: "modify membership grants",
+      fn: async (db) =>
+        await createMembershipGrant(
+          {
+            id,
+            account_id,
+            membership_class,
+            source,
+            package_id,
+            purchase_id,
+            granted_by_account_id,
+            starts_at,
+            expires_at,
+            metadata,
+          },
+          db as PoolClient,
+        ),
+    });
+  }
+  await assertAccountGrantWriteAllowed({ account_id, client });
   await getQueryClient(client).query(
     `
       INSERT INTO membership_grants
@@ -88,6 +139,18 @@ export async function createMembershipGrant(
          granted_by_account_id, starts_at, expires_at, metadata, created, updated)
       VALUES
         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, NOW(), NOW())
+      ON CONFLICT (id) DO UPDATE SET
+        account_id = EXCLUDED.account_id,
+        membership_class = EXCLUDED.membership_class,
+        source = EXCLUDED.source,
+        package_id = EXCLUDED.package_id,
+        purchase_id = EXCLUDED.purchase_id,
+        granted_by_account_id = EXCLUDED.granted_by_account_id,
+        starts_at = EXCLUDED.starts_at,
+        expires_at = EXCLUDED.expires_at,
+        revoked_at = NULL,
+        metadata = EXCLUDED.metadata,
+        updated = NOW()
     `,
     [
       id,
@@ -103,4 +166,87 @@ export async function createMembershipGrant(
     ],
   );
   return id;
+}
+
+export async function revokeMembershipGrantById(
+  {
+    account_id,
+    grant_id,
+    revoked_at,
+  }: {
+    account_id: string;
+    grant_id: string;
+    revoked_at?: Date | string | null;
+  },
+  client?: PoolClient,
+): Promise<void> {
+  if (client == null) {
+    await withAccountRehomeWriteFence({
+      account_id,
+      action: "revoke membership grants",
+      fn: async (db) =>
+        await revokeMembershipGrantById(
+          { account_id, grant_id, revoked_at },
+          db as PoolClient,
+        ),
+    });
+    return;
+  }
+  await assertAccountGrantWriteAllowed({ account_id, client });
+  await getQueryClient(client).query(
+    `
+      UPDATE membership_grants
+      SET revoked_at = COALESCE($3, NOW()),
+          updated = NOW()
+      WHERE id = $1
+        AND account_id = $2
+    `,
+    [grant_id, account_id, revoked_at ?? null],
+  );
+}
+
+async function getHomeBayIdForAccount(account_id: string): Promise<string> {
+  const account = await getClusterAccountById(account_id);
+  if (!account) {
+    throw new Error(`account ${account_id} not found`);
+  }
+  return `${account.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+}
+
+export async function upsertMembershipGrantOnHomeBay(
+  grant: MembershipGrantRecord,
+): Promise<string> {
+  const home_bay_id = await getHomeBayIdForAccount(grant.account_id);
+  if (home_bay_id === getConfiguredBayId()) {
+    return await createMembershipGrant(grant);
+  }
+  const result = await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home_bay_id,
+  }).upsertMembershipGrant(grant);
+  return result.grant_id;
+}
+
+export async function revokeMembershipGrantOnHomeBay({
+  account_id,
+  grant_id,
+  revoked_at,
+}: {
+  account_id: string;
+  grant_id: string;
+  revoked_at?: Date | string | null;
+}): Promise<void> {
+  const home_bay_id = await getHomeBayIdForAccount(account_id);
+  if (home_bay_id === getConfiguredBayId()) {
+    await revokeMembershipGrantById({ account_id, grant_id, revoked_at });
+    return;
+  }
+  await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home_bay_id,
+  }).revokeMembershipGrant({
+    account_id,
+    grant_id,
+    revoked_at,
+  });
 }

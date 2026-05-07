@@ -16,18 +16,65 @@ interface MaintenanceDescription {
   f: () => Promise<void>;
   // A description of what it does (for logging)
   desc: string;
+  // Whether Stripe must be configured for this task to make sense.
+  requiresStripe?: boolean;
 }
 
 const FUNCTIONS: MaintenanceDescription[] = [
-  { f: maintainSubscriptions, desc: "maintain subscriptions" },
+  {
+    f: maintainSubscriptions,
+    desc: "maintain subscriptions",
+    requiresStripe: true,
+  },
   { f: maintainStatements, desc: "maintain statements" },
   {
     f: maintainPaymentIntents,
     desc: "processing any outstanding payment intents",
+    requiresStripe: true,
   },
-  { f: maintainAutomaticPayments, desc: "maintain automatic payments" },
-  { f: maintainAutoBalance, desc: "maintain auto balance" },
+  {
+    f: maintainAutomaticPayments,
+    desc: "maintain automatic payments",
+    requiresStripe: true,
+  },
+  {
+    f: maintainAutoBalance,
+    desc: "maintain auto balance",
+    requiresStripe: true,
+  },
 ];
+
+type MaintenanceSettings = Pick<
+  Awaited<ReturnType<typeof getServerSettings>>,
+  "stripe_publishable_key" | "stripe_secret_key"
+>;
+
+export function hasStripeBillingConfiguration(
+  settings: MaintenanceSettings,
+): boolean {
+  return (
+    `${settings.stripe_publishable_key ?? ""}`.trim().length > 0 &&
+    `${settings.stripe_secret_key ?? ""}`.trim().length > 0
+  );
+}
+
+export function getEnabledMaintenanceDescriptions(
+  settings: MaintenanceSettings,
+): string[] {
+  const stripeEnabled = hasStripeBillingConfiguration(settings);
+  return FUNCTIONS.filter(
+    ({ requiresStripe }) => !requiresStripe || stripeEnabled,
+  ).map(({ desc }) => desc);
+}
+
+function getEnabledMaintenanceFunctions(
+  settings: MaintenanceSettings,
+): MaintenanceDescription[] {
+  const enabledDescriptions = new Set(
+    getEnabledMaintenanceDescriptions(settings),
+  );
+  return FUNCTIONS.filter(({ desc }) => enabledDescriptions.has(desc));
+}
 
 export default async function init() {
   let running: boolean = false;
@@ -40,9 +87,8 @@ export default async function init() {
     }
     try {
       running = true;
-      const { commercial } = await getServerSettings();
-      if (!commercial) return;
-      await doMaintenance();
+      const settings = await getServerSettings();
+      await doMaintenance(getEnabledMaintenanceFunctions(settings));
     } catch (err) {
       logger.error("doMaintenance error", err);
     } finally {
@@ -55,9 +101,9 @@ export default async function init() {
   setInterval(f, DEFAULT_DELAY_MS);
 }
 
-async function doMaintenance() {
+async function doMaintenance(functions: MaintenanceDescription[] = FUNCTIONS) {
   logger.debug("doing purchase maintenance");
-  for (const { f, desc } of FUNCTIONS) {
+  for (const { f, desc } of functions) {
     try {
       logger.debug("maintenance ", desc);
       await f();

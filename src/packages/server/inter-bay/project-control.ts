@@ -18,6 +18,8 @@ import type {
   ProjectControlRehomeRequest,
   ProjectControlRehomeResponse,
   ProjectControlRestartRequest,
+  ProjectControlSetUsageAccountRequest,
+  ProjectControlSetUsageAccountResponse,
   ProjectControlStartRequest,
   ProjectControlStateRequest,
   ProjectControlStopRequest,
@@ -40,6 +42,7 @@ import { resolveVisibleProjectReferenceLocal } from "@cocalc/server/bay-director
 import { forwardRemoteStartLroProgress } from "@cocalc/server/inter-bay/start-lro-forward";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import { setProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import { createBackup as createBackupLocal } from "@cocalc/server/conat/api/project-backups";
 import { getLro } from "@cocalc/server/lro/lro-db";
@@ -253,6 +256,22 @@ export async function handleProjectControlState(
   return rows[0]?.state ?? {};
 }
 
+export async function handleProjectControlSetUsageAccount(
+  req: ProjectControlSetUsageAccountRequest,
+): Promise<ProjectControlSetUsageAccountResponse> {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
+  return {
+    updated: await setProjectUsageAccountId({
+      project_id: req.project_id,
+      account_id: req.usage_account_id ?? null,
+      expected_current_usage_account_id: req.expected_current_usage_account_id,
+    }),
+  };
+}
+
 export async function handleProjectControlAddress(
   req: ProjectControlAddressRequest,
 ) {
@@ -440,6 +459,15 @@ export async function dispatchProjectControlRpc(
   if (subject === stateExpected) {
     return await handleProjectControlState(
       payload as ProjectControlStateRequest,
+    );
+  }
+  const setUsageAccountExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "set-usage-account",
+  });
+  if (subject === setUsageAccountExpected) {
+    return await handleProjectControlSetUsageAccount(
+      payload as ProjectControlSetUsageAccountRequest,
     );
   }
   const addressExpected = projectControlSubject({

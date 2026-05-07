@@ -22,6 +22,7 @@ import {
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
   createInterBayProjectControlAcceptRehomeHandler,
+  createInterBayProjectControlSetUsageAccountHandler,
   createInterBayProjectControlMoveHandler,
   createInterBayProjectControlRehomeHandler,
   createInterBayProjectControlRestartHandler,
@@ -89,6 +90,10 @@ import {
   rehomeAccountOnHomeBay,
 } from "@cocalc/server/accounts/rehome";
 import {
+  createMembershipGrant,
+  revokeMembershipGrantById,
+} from "@cocalc/server/membership/grants";
+import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
   resolveProjectBayAcrossCluster,
@@ -100,6 +105,7 @@ import {
   handleProjectControlActiveOperation,
   handleProjectControlBackup,
   handleProjectControlAcceptRehome,
+  handleProjectControlSetUsageAccount,
   handleProjectControlMove,
   handleProjectControlRehome,
   handleProjectControlRestart,
@@ -184,6 +190,15 @@ const logger = getLogger("server:inter-bay:service");
 
 let serviceStarted = false;
 let services: ConatService[] = [];
+
+function normalizeOptionalDateLike(
+  value?: string | number | Date | null,
+): string | Date | null | undefined {
+  if (typeof value === "number") {
+    return new Date(value);
+  }
+  return value;
+}
 
 export async function initInterBayServices(): Promise<void> {
   if (serviceStarted) {
@@ -378,6 +393,20 @@ async function startAccountLocalService(): Promise<void> {
     getRehomeOperation: async ({ op_id }) =>
       (await getAccountRehomeOperation(op_id)) ?? null,
     reconcileRehome: async (opts) => await reconcileAccountRehomeOnSource(opts),
+    upsertMembershipGrant: async (opts) => ({
+      grant_id: await createMembershipGrant({
+        ...opts,
+        starts_at: normalizeOptionalDateLike(opts.starts_at),
+        expires_at: normalizeOptionalDateLike(opts.expires_at),
+      }),
+    }),
+    revokeMembershipGrant: async ({ account_id, grant_id, revoked_at }) => {
+      await revokeMembershipGrantById({
+        account_id,
+        grant_id,
+        revoked_at: normalizeOptionalDateLike(revoked_at),
+      });
+    },
   };
   services.push(
     ...createInterBayAccountLocalHandler({
@@ -421,6 +450,8 @@ async function startProjectControlStartService(): Promise<void> {
     },
     backup: async (opts) => await handleProjectControlBackup(opts),
     state: async (opts) => await handleProjectControlState(opts),
+    setUsageAccount: async (opts) =>
+      await handleProjectControlSetUsageAccount(opts),
     address: async (opts) => await handleProjectControlAddress(opts),
     move: async (opts) => await handleProjectControlMove(opts),
     rehome: async (opts) => await handleProjectControlRehome(opts),
@@ -458,6 +489,12 @@ async function startProjectControlStartService(): Promise<void> {
       impl,
     }),
     createInterBayProjectControlStateHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlSetUsageAccountHandler({
       client,
       bay_id,
       parallel: true,
