@@ -437,6 +437,26 @@ export interface AccountRehomeStateCopyRequest {
   api_keys?: Record<string, unknown>[];
 }
 
+export interface AccountLocalUpsertMembershipGrantRequest {
+  id: string;
+  account_id: string;
+  membership_class: string;
+  source: string;
+  package_id?: string | null;
+  purchase_id?: number | null;
+  granted_by_account_id?: string | null;
+  starts_at?: Date | string | number | null;
+  expires_at?: Date | string | number | null;
+  revoked_at?: Date | string | number | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AccountLocalRevokeMembershipGrantRequest {
+  account_id: string;
+  grant_id: string;
+  revoked_at?: Date | string | number | null;
+}
+
 export type AccountRehomeOperationStage =
   | "requested"
   | "destination_accepted"
@@ -704,7 +724,9 @@ export type AccountLocalMethod =
   | "accept-rehome"
   | "copy-rehome-state"
   | "get-rehome-operation"
-  | "reconcile-rehome";
+  | "reconcile-rehome"
+  | "upsert-membership-grant"
+  | "revoke-membership-grant";
 export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
 export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod = "get-load" | "get-backups";
@@ -1251,6 +1273,12 @@ export interface InterBayAccountLocalApi {
     op_id: string;
     source_bay_id?: string;
   }) => Promise<AccountRehomeResponse>;
+  upsertMembershipGrant: (
+    opts: AccountLocalUpsertMembershipGrantRequest,
+  ) => Promise<{ grant_id: string }>;
+  revokeMembershipGrant: (
+    opts: AccountLocalRevokeMembershipGrantRequest,
+  ) => Promise<void>;
 }
 
 export interface InterBayBayRegistryApi {
@@ -2282,6 +2310,24 @@ export function createInterBayAccountLocalClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountLocalSubject({ dest_bay, method: "reconcile-rehome" }),
   });
+  const upsertMembershipGrantClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "upsertMembershipGrant">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "upsert-membership-grant",
+    }),
+  });
+  const revokeMembershipGrantClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "revokeMembershipGrant">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "revoke-membership-grant",
+    }),
+  });
   return {
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
@@ -2293,6 +2339,10 @@ export function createInterBayAccountLocalClient({
       await getRehomeOperationClient.getRehomeOperation(opts),
     reconcileRehome: async (opts) =>
       await reconcileRehomeClient.reconcileRehome(opts),
+    upsertMembershipGrant: async (opts) =>
+      await upsertMembershipGrantClient.upsertMembershipGrant(opts),
+    revokeMembershipGrant: async (opts) =>
+      await revokeMembershipGrantClient.revokeMembershipGrant(opts),
   };
 }
 
@@ -2371,6 +2421,34 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         reconcileRehome: async (opts) => await impl.reconcileRehome(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "upsertMembershipGrant">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "upsert-membership-grant",
+      }),
+      impl: {
+        upsertMembershipGrant: async (opts) =>
+          await impl.upsertMembershipGrant(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "revokeMembershipGrant">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "revoke-membership-grant",
+      }),
+      impl: {
+        revokeMembershipGrant: async (opts) =>
+          await impl.revokeMembershipGrant(opts),
       },
     }),
   ];

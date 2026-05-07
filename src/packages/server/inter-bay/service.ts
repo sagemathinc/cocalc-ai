@@ -89,6 +89,10 @@ import {
   rehomeAccountOnHomeBay,
 } from "@cocalc/server/accounts/rehome";
 import {
+  createMembershipGrant,
+  revokeMembershipGrantById,
+} from "@cocalc/server/membership/grants";
+import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
   resolveProjectBayAcrossCluster,
@@ -184,6 +188,15 @@ const logger = getLogger("server:inter-bay:service");
 
 let serviceStarted = false;
 let services: ConatService[] = [];
+
+function normalizeOptionalDateLike(
+  value?: string | number | Date | null,
+): string | Date | null | undefined {
+  if (typeof value === "number") {
+    return new Date(value);
+  }
+  return value;
+}
 
 export async function initInterBayServices(): Promise<void> {
   if (serviceStarted) {
@@ -378,6 +391,20 @@ async function startAccountLocalService(): Promise<void> {
     getRehomeOperation: async ({ op_id }) =>
       (await getAccountRehomeOperation(op_id)) ?? null,
     reconcileRehome: async (opts) => await reconcileAccountRehomeOnSource(opts),
+    upsertMembershipGrant: async (opts) => ({
+      grant_id: await createMembershipGrant({
+        ...opts,
+        starts_at: normalizeOptionalDateLike(opts.starts_at),
+        expires_at: normalizeOptionalDateLike(opts.expires_at),
+      }),
+    }),
+    revokeMembershipGrant: async ({ account_id, grant_id, revoked_at }) => {
+      await revokeMembershipGrantById({
+        account_id,
+        grant_id,
+        revoked_at: normalizeOptionalDateLike(revoked_at),
+      });
+    },
   };
   services.push(
     ...createInterBayAccountLocalHandler({
