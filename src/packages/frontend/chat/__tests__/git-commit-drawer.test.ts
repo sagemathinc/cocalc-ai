@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import {
+  applySubmittedGitReviewComments,
   buildGitInlineDraftEditorId,
   buildGitInlineEditEditorId,
   buildGitDiffFindMatches,
@@ -455,6 +456,57 @@ describe("git commit drawer merge commit formatting", () => {
       reviewNote: "saved note",
       reviewNoteDraft: "newer local draft",
       reviewDirty: true,
+    });
+  });
+
+  it("keeps newer inline comment edits when send-to-agent completes from an older snapshot", () => {
+    const unchangedDraft = {
+      id: "comment-a",
+      file_path: "src/example.ts",
+      side: "new",
+      body_md: "first draft",
+      status: "draft",
+      created_at: 1,
+      updated_at: 10,
+      local_revision: 1,
+    } as const;
+    const editedAfterSend = {
+      ...unchangedDraft,
+      body_md: "edited after send",
+      updated_at: 20,
+      local_revision: 2,
+    };
+    const untouchedOther = {
+      id: "comment-b",
+      file_path: "src/example.ts",
+      side: "new",
+      body_md: "other draft",
+      status: "draft",
+      created_at: 2,
+      updated_at: 11,
+      local_revision: 1,
+    } as const;
+
+    expect(
+      applySubmittedGitReviewComments({
+        sentComments: [unchangedDraft as any, untouchedOther as any],
+        currentComments: {
+          "comment-a": editedAfterSend as any,
+          "comment-b": untouchedOther as any,
+        },
+        submittedAt: 50,
+        submissionTurnId: "git-review-50",
+      }),
+    ).toEqual({
+      "comment-a": editedAfterSend,
+      "comment-b": {
+        ...untouchedOther,
+        status: "submitted",
+        submitted_at: 50,
+        submission_turn_id: "git-review-50",
+        updated_at: 50,
+        local_revision: 1,
+      },
     });
   });
 

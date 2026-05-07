@@ -75,6 +75,48 @@ export function resolveGitReviewSaveCompletion({
   };
 }
 
+export function applySubmittedGitReviewComments({
+  sentComments,
+  currentComments,
+  submittedAt,
+  submissionTurnId,
+}: {
+  sentComments: Pick<
+    GitReviewCommentV2,
+    "id" | "body_md" | "status" | "updated_at" | "local_revision"
+  >[];
+  currentComments: Record<string, GitReviewCommentV2>;
+  submittedAt: number;
+  submissionTurnId: string;
+}): Record<string, GitReviewCommentV2> {
+  const nextComments = { ...currentComments };
+  for (const sentComment of sentComments) {
+    const currentComment = nextComments[sentComment.id];
+    if (!currentComment) continue;
+    const unchangedSinceSend =
+      currentComment.status === sentComment.status &&
+      currentComment.body_md === sentComment.body_md &&
+      (currentComment.updated_at ?? 0) === (sentComment.updated_at ?? 0) &&
+      (currentComment.local_revision ?? 1) ===
+        (sentComment.local_revision ?? 1);
+    if (!unchangedSinceSend || currentComment.status !== "draft") {
+      continue;
+    }
+    nextComments[sentComment.id] = {
+      ...currentComment,
+      status: "submitted",
+      submitted_at: submittedAt,
+      submission_turn_id: submissionTurnId,
+      updated_at: Math.max(
+        currentComment.updated_at ?? submittedAt,
+        submittedAt,
+      ),
+      local_revision: Math.max(1, currentComment.local_revision ?? 1),
+    };
+  }
+  return nextComments;
+}
+
 export function resolveGitReviewLoadFailure({
   draft,
   error,

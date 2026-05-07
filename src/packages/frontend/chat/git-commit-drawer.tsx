@@ -79,6 +79,7 @@ import {
   hashGitCommitValue,
 } from "./git-commit/ids";
 import {
+  applySubmittedGitReviewComments,
   resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
@@ -154,6 +155,7 @@ export {
 };
 export { filterGitReviewLogEntries, resolveGitCommitSearchChange };
 export {
+  applySubmittedGitReviewComments,
   resolveGitReviewLoadFailure,
   resolveGitReviewSaveCompletion,
   resolveGitReviewSaveState,
@@ -1782,31 +1784,25 @@ export function GitCommitDrawer({
       await onRequestAgentTurn(prompt);
       const now = Date.now();
       const turnId = `git-review-${now}`;
-      const nextComments = {
-        ...(reviewRecord?.comments ?? {}),
-      } as Record<string, GitReviewCommentV2>;
-      for (const comment of actionable) {
-        const existing = nextComments[comment.id];
-        if (!existing) continue;
-        nextComments[comment.id] = {
-          ...existing,
-          status: "submitted",
-          submitted_at: now,
-          submission_turn_id: turnId,
-          updated_at: Math.max(existing.updated_at ?? now, now),
-          local_revision: Math.max(1, existing.local_revision ?? 1),
-        };
-      }
+      const normalizedCommit = normalizeCommitSha(commit);
+      const latestDraft = normalizedCommit
+        ? loadReviewDraft(normalizedCommit, accountId)
+        : undefined;
+      const resolved = resolveGitReviewSaveState({
+        draft: latestDraft,
+        reviewed,
+        reviewNote,
+        reviewNoteDraft,
+        reviewComments: reviewRecord?.comments,
+      });
+      const nextComments = applySubmittedGitReviewComments({
+        sentComments: actionable,
+        currentComments: resolved.comments,
+        submittedAt: now,
+        submissionTurnId: turnId,
+      });
       if (commit) {
-        const normalizedCommit = normalizeCommitSha(commit);
         if (normalizedCommit) {
-          const resolved = resolveGitReviewSaveState({
-            draft: loadReviewDraft(normalizedCommit, accountId),
-            reviewed,
-            reviewNote,
-            reviewNoteDraft,
-            reviewComments: reviewRecord?.comments,
-          });
           saveReviewDraft(
             normalizedCommit,
             {
@@ -1820,6 +1816,8 @@ export function GitCommitDrawer({
       }
       await saveReview({
         comments: nextComments,
+        reviewed: resolved.reviewed,
+        note: resolved.note,
         last_submitted_at: now,
         last_submission_turn_id: turnId,
       });
