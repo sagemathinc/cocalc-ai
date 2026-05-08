@@ -2,18 +2,48 @@
 
 ## Status
 
-As of 2026-05-08, the browser/admin portion of this plan is substantially
-implemented:
+As of 2026-05-08, this plan is implemented and closed.
 
 - TOTP + recovery codes
 - fresh-auth for dangerous browser actions
 - wrong-bay sign-in integration
 - rehome portability for auth-local state
 - admin impersonation integration
+- browser/device-backed CLI login
+- dedicated CLI sessions
+- CLI fresh-auth elevation
+- dangerous CLI action gating
+- automation-boundary enforcement for dangerous actions
 - repeated live/manual smoke coverage
 
-This plan is still open because the CLI / elevated-auth / automation follow-up
-has not been implemented yet.
+### Final Smoke 2026-05-08
+
+Final end-to-end smoke on the rebuilt local hub covered:
+
+- browser sign-in with TOTP challenge
+- browser default fresh-auth and extended fresh-auth
+- CLI login via browser approval with a dedicated cookie-backed CLI session
+- wrong-account CLI approval state surfaced to the browser
+- dangerous admin and dedicated-host CLI actions denied before elevation
+- extended CLI elevation rejected when attempted with a recovery code
+- default CLI elevation via TOTP with a short fresh-auth window
+- extended CLI elevation via TOTP with an extended fresh-auth window
+- admin impersonation grant issuance succeeds after CLI elevation
+- dedicated-host create succeeds after CLI elevation
+- API-key auth remains insufficient for dangerous elevated actions
+
+Two implementation gaps were found and fixed during this final smoke:
+
+- `auth status --check` for cookie-backed profiles now validates via HTTP
+  session/profile endpoints instead of trying to force a project-host bearer
+  path
+- hub API calls now propagate `auth_session_hash`, so elevated CLI sessions are
+  honored by dangerous admin actions such as impersonation grant creation
+
+One boundary remains worth noting: this final smoke did not separately live-test
+an explicit account rehome transition. That path remains covered by the
+home-bay challenge design, wrong-bay browser handling, and the existing
+rehome-aware auth architecture already described in this plan.
 
 ## Purpose
 
@@ -991,9 +1021,9 @@ Automation auth should be clearly separate from:
 - human interactive CLI auth
 - elevated fresh-auth state
 - browser sessions
-Automation credentials may continue to support ordinary non-dangerous actions,
-but they should not silently satisfy human-elevation requirements for dangerous
-host or billing actions in V1.
+  Automation credentials may continue to support ordinary non-dangerous actions,
+  but they should not silently satisfy human-elevation requirements for dangerous
+  host or billing actions in V1.
 
 ### Phase F: policy boundaries
 
@@ -1029,12 +1059,13 @@ At minimum:
 9. browser-Stripe billing flows are not silently exposed through the CLI
 10. automation credentials cannot silently satisfy human-elevation
     requirements
-11. account rehome does not break CLI elevated auth semantics
+11. account home-bay / rehome semantics do not break CLI elevated auth
+    semantics
 
 ### Completion criterion
 
-This 2FA plan remains open until:
+Completed as of 2026-05-08:
 
-- browser 2FA/fresh-auth is fully smoke tested
+- browser 2FA/fresh-auth is smoke tested
 - CLI elevated auth exists
 - automation auth boundaries are defined and tested for dangerous actions

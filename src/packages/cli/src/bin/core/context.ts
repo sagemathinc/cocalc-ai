@@ -7,6 +7,9 @@ export type HubCallContext = {
   accountId: string;
   remote: {
     client: ConatClient;
+    user?: {
+      auth_session_hash?: string | null;
+    } | null;
   };
 };
 
@@ -48,6 +51,7 @@ export async function hubCallByName<T>({
   callHub: (opts: {
     client: ConatClient;
     account_id: string;
+    auth_session_hash?: string | null;
     name: string;
     args: any[];
     timeout: number;
@@ -67,6 +71,10 @@ export async function hubCallByName<T>({
     callHub({
       client: ctx.remote.client,
       account_id: ctx.accountId,
+      auth_session_hash:
+        typeof ctx.remote.user?.auth_session_hash === "string"
+          ? ctx.remote.user.auth_session_hash
+          : null,
       name,
       args,
       timeout: rpcTimeoutMs,

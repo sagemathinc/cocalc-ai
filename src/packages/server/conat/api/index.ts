@@ -206,7 +206,7 @@ async function handleApiRequest({ request, mesg }) {
   let resp, headers;
   try {
     const { account_id, project_id, host_id } = getUserId(mesg.subject);
-    const { name, args } = request as any;
+    const { name, args, auth_session_hash } = request as any;
     logger.debug("handling hub.api request:", {
       account_id,
       project_id,
@@ -214,8 +214,14 @@ async function handleApiRequest({ request, mesg }) {
       name,
     });
     resp =
-      (await getResponse({ name, args, account_id, project_id, host_id })) ??
-      null;
+      (await getResponse({
+        name,
+        args,
+        account_id,
+        auth_session_hash,
+        project_id,
+        host_id,
+      })) ?? null;
     headers = undefined;
   } catch (err) {
     resp = null;
@@ -234,7 +240,14 @@ async function handleApiRequest({ request, mesg }) {
   }
 }
 
-async function getResponse({ name, args, account_id, project_id, host_id }) {
+async function getResponse({
+  name,
+  args,
+  account_id,
+  auth_session_hash,
+  project_id,
+  host_id,
+}) {
   const [group, functionName] = name.split(".");
   const f = hubApi[group]?.[functionName];
   if (f == null) {
@@ -244,6 +257,7 @@ async function getResponse({ name, args, account_id, project_id, host_id }) {
     name,
     args,
     account_id,
+    auth_session_hash,
     project_id,
     host_id,
   });
