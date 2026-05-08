@@ -570,8 +570,8 @@ export function registerAuthCommand(
       "after",
       `
 Examples:
-  cocalc --profile wstein --api https://lite4b.cocalc.ai auth login --email wstein@gmail.com
-  cocalc --profile bella --api https://lite4b.cocalc.ai auth login --email bella-1@gmail.com
+  cocalc --profile alice --api https://lite4b.cocalc.ai auth login --email alice@example.com
+  cocalc --profile bella --api https://lite4b.cocalc.ai auth login --email bella@example.com
 `,
     )
     .action(
@@ -598,7 +598,7 @@ Examples:
       "after",
       `
 Examples:
-  cocalc --profile wstein --api https://lite4b.cocalc.ai auth setup --email wstein@gmail.com
+  cocalc --profile alice --api https://lite4b.cocalc.ai auth setup --email alice@example.com
 `,
     )
     .action(

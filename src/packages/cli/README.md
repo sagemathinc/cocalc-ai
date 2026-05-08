@@ -149,7 +149,7 @@ env vars) to avoid discovery calls that may require broader hub permissions.
 Example:
 
 ```bash
-cocalc --profile wstein --api https://lite4b.cocalc.ai auth login --email wstein@gmail.com
+cocalc --profile alice --api https://lite4b.cocalc.ai auth login --email alice@example.com
 ```
 
 ## Phase 0 Commands

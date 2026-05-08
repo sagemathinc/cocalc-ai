@@ -216,11 +216,11 @@ describe("PublicAuthApp", () => {
       challenge_id: "challenge-1",
       kind: "login",
       account_id: "acct-target",
-      email_address: "bella-1@gmail.com",
-      display_name: "Bella1 Boo",
+      email_address: "bella@example.com",
+      display_name: "Bella Example",
       current_account_id: "acct-viewer",
-      current_email_address: "wstein@gmail.com",
-      current_display_name: "William Stein",
+      current_email_address: "alice@example.com",
+      current_display_name: "Alice Example",
       current_matches_account: false,
       state: "pending",
       expires_at: "2026-05-08T18:00:00.000Z",
@@ -236,18 +236,18 @@ describe("PublicAuthApp", () => {
 
     expect(
       await screen.findByText(
-        /This browser is signed in as wstein@gmail.com \(William Stein\)\./,
+        /This browser is signed in as alice@example.com \(Alice Example\)\./,
       ),
     ).not.toBeNull();
     expect(screen.getByRole("button", { name: "Sign out" })).not.toBeNull();
     expect(
       screen.getByText(
-        /and then sign in as bella-1@gmail.com \(Bella1 Boo\) to approve the CLI login request\./,
+        /and then sign in as bella@example.com \(Bella Example\) to approve the CLI login request\./,
       ),
     ).not.toBeNull();
     expect(
       screen.getByText(
-        /If that is inconvenient, open this link in a new temporary incognito or private browser window and sign in there as bella-1@gmail.com \(Bella1 Boo\)\./,
+        /If that is inconvenient, open this link in a new temporary incognito or private browser window and sign in there as bella@example.com \(Bella Example\)\./,
       ),
     ).not.toBeNull();
     expect(
