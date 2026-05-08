@@ -14,6 +14,7 @@ let isBillableDedicatedHostCloudMock: jest.Mock;
 let selectDedicatedHostFundingLaneMock: jest.Mock;
 let estimateDedicatedHostRateUsdPerHourMock: jest.Mock;
 let reconcileDedicatedHostPurchaseSessionForAccountMock: jest.Mock;
+let requireFreshAuthForSessionHashMock: jest.Mock;
 
 const ACCOUNT_ID = "81e787c4-8705-46c5-86df-9d07bc424a01";
 
@@ -46,6 +47,12 @@ jest.mock("@cocalc/server/purchases/get-balance", () => ({
 jest.mock("@cocalc/server/bay-directory", () => ({
   __esModule: true,
   resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  __esModule: true,
+  requireFreshAuthForSessionHash: (...args: any[]) =>
+    requireFreshAuthForSessionHashMock(...args),
 }));
 
 jest.mock("@cocalc/server/project-host/admission", () => ({
@@ -157,6 +164,7 @@ describe("hosts.createHost", () => {
     reconcileDedicatedHostPurchaseSessionForAccountMock = jest.fn(
       async () => undefined,
     );
+    requireFreshAuthForSessionHashMock = jest.fn(async () => undefined);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[4]?.pricing_model).toBe("spot");
@@ -198,6 +206,9 @@ describe("hosts.createHost", () => {
           ],
         };
       }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
   });
@@ -206,6 +217,7 @@ describe("hosts.createHost", () => {
     const { createHost } = await import("./hosts");
     const host = await createHost({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       name: "fresh-gcp",
       region: "us-west1",
       size: "e2-standard-2",
@@ -291,12 +303,16 @@ describe("hosts.createHost", () => {
           ],
         };
       }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
 
     const { createHost } = await import("./hosts");
     await createHost({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       name: "fresh-gcp",
       region: "us-west1",
       size: "e2-standard-2",
@@ -368,12 +384,16 @@ describe("hosts.createHost", () => {
           ],
         };
       }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
 
     const { createHost } = await import("./hosts");
     const host = await createHost({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       name: "fresh-gcp",
       region: "us-west1",
       size: "e2-standard-2",
@@ -402,6 +422,7 @@ describe("hosts.createHost", () => {
     await expect(
       createHost({
         account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
         name: "fresh-gcp",
         region: "us-west1",
         size: "e2-standard-2",
