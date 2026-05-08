@@ -7,9 +7,9 @@
 declare let window, document;
 
 import { callback } from "awaiting";
-import { List, Map, fromJS, Set as immutableSet } from "immutable";
+import { List, Map, fromJS } from "immutable";
 import { throttle } from "lodash";
-import { basename, dirname, join } from "path";
+import { join } from "path";
 import { defineMessage } from "react-intl";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { get as getProjectStatus } from "@cocalc/conat/project/project-status";
@@ -60,7 +60,6 @@ import {
   FLYOUT_LOG_FILTER_DEFAULT,
   FlyoutLogFilter,
 } from "@cocalc/frontend/project/page/flyouts/utils";
-import { migrateStarsOnMove } from "@cocalc/frontend/project/page/flyouts/store";
 import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activity-bar";
 import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-consts";
 import {
@@ -117,34 +116,16 @@ import { MoveOpsManager } from "@cocalc/frontend/project/move-ops";
 import { StartOpsManager } from "@cocalc/frontend/project/start-ops";
 import { isCollaboratorRealtimeAccessError } from "@cocalc/frontend/project/collaborator-realtime";
 import { canUseCollaboratorProjectRealtime } from "@cocalc/frontend/project/realtime-access";
-import { getFileTemplate } from "../templates";
-import { isBackupsPath } from "@cocalc/util/consts/backups";
-import {
-  getSnapshotPathTarget,
-  isSnapshotsPath,
-} from "@cocalc/util/consts/snapshots";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
 import dust from "@cocalc/frontend/project/disk-usage/dust";
 import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
 import { EditorLoadError } from "../../file-editors-error";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
-import { normalizeCpSourcePath } from "@cocalc/frontend/project/copy-paths";
-import { notifyProjectFilesystemChange } from "@cocalc/frontend/project/user-filesystem-change";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import {
-  moveDestinationPath,
-  normalizeDirectoryDestination,
-} from "@cocalc/frontend/project/action-paths";
 import { isJupyterPath } from "@cocalc/util/jupyter/names";
-import {
-  DEFAULT_PROJECT_RUNTIME_HOME,
-  projectRuntimeHomeRelativePath,
-} from "@cocalc/util/project-runtime";
 import { canonicalSyncPath } from "@cocalc/frontend/project/sync-path";
 import {
-  buildProjectFilesTarget,
   getProjectUrlPath,
-  buildProjectScopedTarget,
   parseProjectTarget,
 } from "@cocalc/frontend/project-routing";
 import {
@@ -160,145 +141,49 @@ import {
   filterProjectLogRows,
   pageProjectLogRows,
 } from "./project-log";
+import { callFilesystemClientWithRecovery } from "./filesystem-client";
+import {
+  resetOpenFileRuntimeAfterHostReset,
+  selectOpenFilesForSyncPath,
+} from "./open-file-runtime";
+import {
+  copyPathBetweenProjects,
+  copyPaths,
+  deleteFiles,
+  deleteMatchingFiles,
+  moveFiles,
+  renameFile,
+} from "./file-operations";
+import {
+  constructAbsolutePath,
+  createFile as createProjectFile,
+  createFolder as createProjectFolder,
+  ensureContainingDirectoryExists as ensureProjectContainingDirectoryExists,
+  ensureDirectoryExists as ensureProjectDirectoryExists,
+} from "./file-creation";
+import {
+  isVirtualListingPath,
+  toAbsoluteCurrentPath,
+  toAuxTabPath,
+  toUrlPath,
+  fromUrlDirectoryPath,
+} from "./path-routing";
+import {
+  nextSelectedFileIndex,
+  selectedFileRange,
+  setFileCheckedState,
+  setFileListCheckedState,
+  setFileListUncheckedState,
+  suggestDuplicateFilenameInDirectory,
+  uniqueFileActionPaths,
+} from "./file-selection";
+export { callFilesystemClientWithRecovery } from "./filesystem-client";
+export { resetOpenFileRuntimeAfterHostReset } from "./open-file-runtime";
 
 const { defaults, required } = misc;
 
-const BAD_FILENAME_CHARACTERS = "\\";
-const BAD_LATEX_FILENAME_CHARACTERS = '\'"()"~%$';
-const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
-
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
-
-function isRecoverableFilesystemClientError(err: unknown): boolean {
-  const message = `${err}`.toLowerCase();
-  return (
-    message.includes("closed") ||
-    message.includes("disconnected") ||
-    message.includes("connection closed") ||
-    message.includes("socket has been disconnected") ||
-    message.includes("not connected") ||
-    message.includes("file server not initialized") ||
-    message.includes("unable to route") ||
-    message.includes("project-host") ||
-    message.includes("project host")
-  );
-}
-
-type ResetOpenFileRuntimeAfterHostResetOpts = {
-  openFiles?: Map<string, any>;
-  activeProjectTab?: string;
-  getSyncPath: (path: string) => string;
-  getComponent: (path: string) => any;
-  setComponent: (path: string, component: any) => void;
-  removeRuntime: (syncPath: string) => Promise<void> | void;
-  rebootstrapPath?: (
-    path: string,
-    opts?: { noFocus?: boolean },
-  ) => Promise<void> | void;
-};
-
-export async function resetOpenFileRuntimeAfterHostReset({
-  openFiles,
-  activeProjectTab,
-  getSyncPath,
-  getComponent,
-  setComponent,
-  removeRuntime,
-  rebootstrapPath,
-}: ResetOpenFileRuntimeAfterHostResetOpts): Promise<void> {
-  if (openFiles == null || openFiles.size === 0) {
-    return;
-  }
-  const syncPaths: string[] = [];
-  const seenSyncPaths = new Set<string>();
-  openFiles.forEach((_value, path) => {
-    const current = getComponent(path) ?? {};
-    setComponent(path, {
-      ...current,
-      redux_name: undefined,
-      Editor: undefined,
-    });
-    const syncPath = getSyncPath(path);
-    if (!seenSyncPaths.has(syncPath)) {
-      seenSyncPaths.add(syncPath);
-      syncPaths.push(syncPath);
-    }
-  });
-  for (const syncPath of syncPaths) {
-    await removeRuntime(syncPath);
-  }
-  const activePath =
-    typeof activeProjectTab === "string" &&
-    activeProjectTab.startsWith("editor-")
-      ? misc.tab_to_path(activeProjectTab)
-      : undefined;
-  const pathsToRebootstrap =
-    activePath != null && openFiles.has(activePath)
-      ? [
-          activePath,
-          ...openFiles.keySeq().filter((path) => path !== activePath),
-        ]
-      : openFiles.keySeq().toArray();
-  for (const path of pathsToRebootstrap) {
-    await rebootstrapPath?.(path, {
-      noFocus: path !== activePath,
-    });
-  }
-}
-
-function selectOpenFilesForSyncPath({
-  openFiles,
-  targetSyncPath,
-  getSyncPath,
-}: {
-  openFiles?: Map<string, any>;
-  targetSyncPath: string;
-  getSyncPath: (path: string) => string;
-}): Map<string, any> {
-  if (openFiles == null || openFiles.size === 0) {
-    return Map<string, any>();
-  }
-  let matches = Map<string, any>();
-  openFiles.forEach((value, path) => {
-    if (getSyncPath(path) !== targetSyncPath) {
-      return;
-    }
-    matches = matches.set(path, value);
-  });
-  return matches;
-}
-
-export async function callFilesystemClientWithRecovery({
-  getClient,
-  clearClient,
-  prop,
-  args,
-}: {
-  getClient: (forceRefresh?: boolean) => Promise<FilesystemClient>;
-  clearClient: () => void;
-  prop: PropertyKey;
-  args: any[];
-}) {
-  let forceRefresh = false;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fs = await getClient(forceRefresh);
-      const value = (fs as any)[prop];
-      if (typeof value !== "function") {
-        return value;
-      }
-      return await value.apply(fs, args);
-    } catch (err) {
-      if (attempt === 0 && isRecoverableFilesystemClientError(err)) {
-        forceRefresh = true;
-        clearClient();
-        continue;
-      }
-      throw err;
-    }
-  }
-}
 
 export const QUERIES = {
   project_log: {
@@ -861,106 +746,37 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return getProjectHomeDirectory(this.project_id);
   };
 
-  private getSnapshotHomeDirectoryForPaths = (): string => {
-    const home = this.getHomeDirectoryForPaths();
-    return home === "/" ? DEFAULT_PROJECT_RUNTIME_HOME : home;
-  };
-
-  private getSnapshotsRouteRelativePath = (
-    path: string,
-  ): string | undefined => {
-    const normalized = normalize(path);
-    if (isSnapshotsPath(normalized) && !normalized.startsWith("/")) {
-      return normalized.replace(/^\/+/, "").replace(/\/+$/, "");
-    }
-    const relative = projectRuntimeHomeRelativePath(normalized);
-    if (relative != null && isSnapshotsPath(relative)) {
-      return relative.replace(/^\/+/, "").replace(/\/+$/, "");
-    }
-  };
-
   private isVirtualListingPath = (path: string): boolean => {
-    return isBackupsPath(path);
+    return isVirtualListingPath(path);
   };
 
   private toAbsoluteCurrentPath = (path: string): string => {
-    const normalized = normalize(path);
-    if (this.isVirtualListingPath(normalized)) {
-      return normalized;
-    }
-    const snapshotRelative = this.getSnapshotsRouteRelativePath(normalized);
-    if (snapshotRelative != null) {
-      return normalizeAbsolutePath(
-        snapshotRelative,
-        this.getSnapshotHomeDirectoryForPaths(),
-      );
-    }
-    return normalizeAbsolutePath(normalized, this.getHomeDirectoryForPaths());
-  };
-
-  private getPathRoute = (path: string): { relativePath: string } => {
-    const normalized = normalize(path);
-    if (this.isVirtualListingPath(normalized)) {
-      return {
-        relativePath: normalized.replace(/^\/+/, "").replace(/\/+$/, ""),
-      };
-    }
-    const snapshotRelative = this.getSnapshotsRouteRelativePath(normalized);
-    if (snapshotRelative != null) {
-      return { relativePath: snapshotRelative };
-    }
-    const homeDirectory = normalizeAbsolutePath(
-      this.getHomeDirectoryForPaths(),
-    );
-    if (
-      normalized === "/" ||
-      normalizeAbsolutePath(normalized, homeDirectory) === homeDirectory
-    ) {
-      return { relativePath: "" };
-    }
-    const absolute = normalizeAbsolutePath(normalized, homeDirectory);
-    return {
-      relativePath: absolute === "/" ? "" : absolute.slice(1),
-    };
+    return toAbsoluteCurrentPath({
+      path,
+      homeDirectory: this.getHomeDirectoryForPaths(),
+    });
   };
 
   private toUrlPath = (path: string, isDirectory: boolean): string => {
-    return buildProjectFilesTarget(path, isDirectory, {
-      encodeRelativePath: (nextPath) =>
-        this.getPathRoute(nextPath).relativePath,
+    return toUrlPath({
+      path,
+      isDirectory,
+      homeDirectory: this.getHomeDirectoryForPaths(),
     });
   };
 
   private fromUrlDirectoryPath = (path: string): string => {
-    let normalized = normalize(path);
-    const trimmed = normalized.replace(/^\/+/, "");
-    if (trimmed === "files") {
-      normalized = "";
-    } else if (trimmed.startsWith("files/")) {
-      normalized = trimmed.slice("files/".length);
-    }
-    if (normalized === "" || normalized === "." || normalized === "/") {
-      return this.getHomeDirectoryForPaths();
-    }
-    if (this.isVirtualListingPath(normalized)) {
-      return normalized;
-    }
-    if (isSnapshotsPath(normalized)) {
-      return normalizeAbsolutePath(
-        normalized.replace(/^\/+/, ""),
-        this.getSnapshotHomeDirectoryForPaths(),
-      );
-    }
-    return normalizeAbsolutePath(
-      `/${normalized}`,
-      this.getHomeDirectoryForPaths(),
-    );
+    return fromUrlDirectoryPath({
+      path,
+      homeDirectory: this.getHomeDirectoryForPaths(),
+    });
   };
 
   private toAuxTabPath = (tab: "new" | "search", path: string): string => {
-    return buildProjectScopedTarget(tab, path, {
-      encodeRelativePath: (nextPath) =>
-        this.getPathRoute(nextPath).relativePath,
+    return toAuxTabPath({
+      tab,
+      path,
+      homeDirectory: this.getHomeDirectoryForPaths(),
     });
   };
 
@@ -2157,10 +1973,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return;
     }
-    const selected_index = store.get("selected_file_index") ?? 0;
-    const numDisplayedFiles = store.get("numDisplayedFiles") ?? 0;
-    if (selected_index + 1 < numDisplayedFiles) {
-      this.setState({ selected_file_index: selected_index + 1 });
+    const selected_file_index = nextSelectedFileIndex({
+      selectedFileIndex: store.get("selected_file_index"),
+      numDisplayedFiles: store.get("numDisplayedFiles"),
+      delta: 1,
+    });
+    if (selected_file_index != null) {
+      this.setState({ selected_file_index });
     }
   }
 
@@ -2172,9 +1991,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return;
     }
-    const selected_index = store.get("selected_file_index") ?? 0;
-    if (selected_index > 0) {
-      this.setState({ selected_file_index: selected_index - 1 });
+    const selected_file_index = nextSelectedFileIndex({
+      selectedFileIndex: store.get("selected_file_index"),
+      delta: -1,
+    });
+    if (selected_file_index != null) {
+      this.setState({ selected_file_index });
     }
   }
 
@@ -2198,23 +2020,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     listing,
     current_path?: string,
   ): void {
-    let range;
     const store = this.get_store();
     if (store == undefined) {
       return;
     }
-    const most_recent = store.get("most_recent_file_click");
-    if (most_recent == null) {
-      // nothing had been clicked before, treat as normal click
-      range = [file];
-    } else {
-      // get the range of files
-      const listing_path = current_path ?? store.get("current_path_abs") ?? "/";
-      const names = listing.map(({ name }) =>
-        misc.path_to_file(listing_path, name),
-      );
-      range = misc.get_array_range(names, most_recent, file);
-    }
+    const range = selectedFileRange({
+      file,
+      listing,
+      currentPath: current_path ?? store.get("current_path_abs") ?? "/",
+      mostRecentFileClick: store.get("most_recent_file_click"),
+    });
 
     if (checked) {
       this.set_file_list_checked(range);
@@ -2229,28 +2044,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return;
     }
-    const changes: {
-      checked_files?: immutableSet<string>;
-      file_action?: FileAction | undefined;
-    } = {};
-    if (checked) {
-      changes.checked_files = store.get("checked_files").add(file);
-      const file_action = store.get("file_action");
-      if (
-        file_action != null &&
-        changes.checked_files.size > 1 &&
-        !FILE_ACTIONS[file_action].allows_multiple_files
-      ) {
-        changes.file_action = undefined;
-      }
-    } else {
-      changes.checked_files = store.get("checked_files").delete(file);
-      if (changes.checked_files.size === 0) {
-        changes.file_action = undefined;
-      }
-    }
-
-    this.setState(changes);
+    this.setState(
+      setFileCheckedState<FileAction>({
+        checkedFiles: store.get("checked_files"),
+        fileAction: store.get("file_action"),
+        allowsMultipleFiles: (action) =>
+          FILE_ACTIONS[action].allows_multiple_files,
+        file,
+        checked,
+      }),
+    );
   }
 
   // check all files in the given file_list
@@ -2259,38 +2062,29 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return;
     }
-    const changes: {
-      checked_files: immutableSet<string>;
-      file_action?: FileAction | undefined;
-    } = { checked_files: store.get("checked_files").union(file_list) };
-    const file_action = store.get("file_action");
-    if (
-      file_action != undefined &&
-      changes.checked_files.size > 1 &&
-      !FILE_ACTIONS[file_action].allows_multiple_files
-    ) {
-      changes.file_action = undefined;
-    }
-
-    this.setState(changes);
+    this.setState(
+      setFileListCheckedState<FileAction>({
+        checkedFiles: store.get("checked_files"),
+        fileAction: store.get("file_action"),
+        allowsMultipleFiles: (action) =>
+          FILE_ACTIONS[action].allows_multiple_files,
+        fileList: file_list,
+      }),
+    );
   }
 
   // uncheck all files in the given file_list
-  set_file_list_unchecked(file_list: List<string>): void {
+  set_file_list_unchecked(file_list: List<string> | string[]): void {
     const store = this.get_store();
     if (store == undefined) {
       return;
     }
-    const changes: {
-      checked_files: immutableSet<string>;
-      file_action?: FileAction | undefined;
-    } = { checked_files: store.get("checked_files").subtract(file_list) };
-
-    if (changes.checked_files.size === 0) {
-      changes.file_action = undefined;
-    }
-
-    this.setState(changes);
+    this.setState(
+      setFileListUncheckedState<FileAction>({
+        checkedFiles: store.get("checked_files"),
+        fileList: file_list,
+      }),
+    );
   }
 
   // uncheck all files
@@ -2312,16 +2106,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return;
     }
 
-    // fallback to name, simple fallback
-    const filesInDir = this.get_filenames_in_current_dir() || name;
-    // This loop will keep trying new names until one isn't in the directory,
-    // because the name keeps changing and filesInDir is finite.
-    while (true) {
-      name = misc.suggest_duplicate_filename(name);
-      if (!filesInDir[name]) {
-        return name;
-      }
-    }
+    return suggestDuplicateFilenameInDirectory({
+      name,
+      filesInDir: this.get_filenames_in_current_dir() || {},
+    });
   };
 
   set_file_action = (action?: FileAction): void => {
@@ -2407,7 +2195,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     paths: string[];
     action: FileAction;
   }) => {
-    const uniquePaths = Array.from(new Set(paths.filter(Boolean)));
+    const uniquePaths = uniqueFileActionPaths(paths);
     if (uniquePaths.length === 0) {
       return;
     }
@@ -2448,26 +2236,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     } catch (err) {
       alert_message({ type: "error", message: err, timeout: 15 });
     }
-  }
-
-  // function used internally by things that call webapp_client.project_client.exec
-  private _finish_exec(id, cb?) {
-    // returns a function that takes the err and output and
-    // does the right activity logging stuff.
-    return (err?, output?) => {
-      if (err) {
-        this.set_activity({ id, error: err });
-      } else if (
-        (output != null ? output.event : undefined) === "error" ||
-        (output != null ? output.error : undefined)
-      ) {
-        this.set_activity({ id, error: output.error });
-      }
-      this.set_activity({ id, stop: "" });
-      if (cb != null) {
-        cb(err);
-      }
-    };
   }
 
   private appendSlashToDirectoryPaths = async (
@@ -2636,38 +2404,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     id?: string;
     only_contents?: boolean;
   }) => {
-    const withSlashes = await this.appendSlashToDirectoryPaths(src);
-
-    this.log({
-      event: "file_action",
-      action: "copied",
-      files: withSlashes,
-      count: src.length,
-      dest: only_contents ? dest : normalizeDirectoryDestination(dest),
-    });
-
-    if (only_contents) {
-      src = withSlashes;
-    }
-
-    src = src.map(normalizeCpSourcePath);
-
-    id ??= misc.uuid();
-    this.set_activity({
+    await copyPaths({
+      src,
+      dest,
       id,
-      status: `Copying ${src.length} ${misc.plural(
-        src.length,
-        "file",
-      )} to ${dest}`,
+      only_contents,
+      fs: () => this.fs(),
+      setActivity: (opts) => this.set_activity(opts),
+      log: (event) => this.log(event),
+      appendSlashToDirectoryPaths: this.appendSlashToDirectoryPaths,
     });
-
-    const fs = this.fs();
-    try {
-      await fs.cp(src, dest, { recursive: true, reflink: true });
-      this._finish_exec(id)();
-    } catch (err) {
-      this._finish_exec(id)(`${err}`);
-    }
   };
 
   // Copy 1 or more paths from one project to another (possibly the same) project.
@@ -2677,90 +2423,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     dest: { project_id: string; path: string };
     options?: CopyOptions;
   }) => {
-    const id = misc.uuid();
-    const files =
-      typeof opts.src.path == "string" ? [opts.src.path] : opts.src.path;
-    this.set_activity({
-      id,
-      status: `Copying ${files.length} ${misc.plural(
-        files.length,
-        "path",
-      )} to a project`,
+    await copyPathBetweenProjects({
+      opts,
+      projectId: this.project_id,
+      copyOpsTrack: (op) => this.copyOpsManager.track(op),
+      appendSlashToDirectoryPaths: this.appendSlashToDirectoryPaths,
+      setActivity: (activity) => this.set_activity(activity),
+      log: (event) => this.log(event),
     });
-    let error: any = undefined;
-    try {
-      const src_home =
-        opts.src_home ??
-        (opts.src.project_id === this.project_id
-          ? getProjectHomeDirectory(this.project_id)
-          : undefined);
-      const resp = await webapp_client.project_client.copyPathBetweenProjects({
-        ...opts,
-        ...(src_home ? { src_home } : {}),
-      });
-      this.copyOpsManager.track(resp);
-      this.set_activity({
-        id,
-        status: `Copy queued (${resp.op_id.slice(0, 8)})`,
-      });
-      const summary = await webapp_client.conat_client.lroWait({
-        op_id: resp.op_id,
-        scope_type: resp.scope_type,
-        scope_id: resp.scope_id,
-        onProgress: (event) => {
-          const phase =
-            typeof event.phase == "string" && event.phase.length > 0
-              ? event.phase
-              : typeof event.message == "string" && event.message.length > 0
-                ? event.message
-                : "running";
-          const pct =
-            typeof event.progress == "number" && Number.isFinite(event.progress)
-              ? ` (${Math.max(0, Math.min(100, Math.round(event.progress)))}%)`
-              : "";
-          this.set_activity({
-            id,
-            status: `Copy ${phase}${pct}`,
-          });
-        },
-      });
-      if (summary.status === "succeeded") {
-        notifyProjectFilesystemChange(opts.src.project_id);
-        notifyProjectFilesystemChange(opts.dest.project_id);
-        const withSlashes = await this.appendSlashToDirectoryPaths(files);
-        this.log({
-          event: "file_action",
-          action: "copied",
-          dest: opts.dest.path,
-          files: withSlashes,
-          count: files.length,
-          project: opts.dest.project_id,
-        });
-      } else if (summary.status === "canceled") {
-        error = summary.error ?? "Copy canceled";
-        alert_message({
-          type: "warning",
-          title: "Copy canceled",
-          message: error,
-        });
-      } else {
-        error = summary.error ?? `Copy failed (${summary.status})`;
-        alert_message({
-          type: "error",
-          title: "Copy failed",
-          message: error,
-        });
-      }
-    } catch (err) {
-      error = `${err}`;
-      alert_message({
-        type: "error",
-        title: "Copy failed",
-        message: error,
-      });
-    } finally {
-      this.set_activity({ id, stop: "", error });
-    }
   };
 
   renameFile = async ({
@@ -2770,24 +2440,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     src: string;
     dest: string;
   }): Promise<void> => {
-    let error: any = undefined;
-    const id = misc.uuid();
-    const status = `Renaming ${src} to ${dest}`;
-    this.set_activity({ id, status });
-    try {
-      const fs = this.fs();
-      await fs.rename(src, dest);
-      this.log({
-        event: "file_action",
-        action: "renamed",
-        src,
-        dest: dest + ((await this.isDir(dest)) ? "/" : ""),
-      });
-    } catch (err) {
-      error = err;
-    } finally {
-      this.set_activity({ id, stop: "", error });
-    }
+    await renameFile({
+      src,
+      dest,
+      fs: () => this.fs(),
+      isDir: (path) => this.isDir(path),
+      setActivity: (opts) => this.set_activity(opts),
+      log: (event) => this.log(event),
+    });
   };
 
   // note: there is no need to explicitly close or await what is returned by
@@ -2975,32 +2635,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     src: string[];
     dest: string;
   }): Promise<void> => {
-    const id = misc.uuid();
-    const status = `Moving ${src.length} ${misc.plural(
-      src.length,
-      "file",
-    )} to ${dest}`;
-    this.set_activity({ id, status });
-    let error: any = undefined;
-    try {
-      const fs = this.fs();
-      await Promise.all(
-        src.map(async (path) =>
-          fs.move(path, moveDestinationPath(dest, path), { overwrite: true }),
-        ),
-      );
-      await migrateStarsOnMove(this.project_id, src, dest);
-      this.log({
-        event: "file_action",
-        action: "moved",
-        files: src,
-        dest: normalizeDirectoryDestination(dest),
-      });
-    } catch (err) {
-      error = err;
-    } finally {
-      this.set_activity({ id, stop: "", error });
-    }
+    await moveFiles({
+      src,
+      dest,
+      projectId: this.project_id,
+      fs: () => this.fs(),
+      setActivity: (opts) => this.set_activity(opts),
+      log: (event) => this.log(event),
+    });
   };
 
   deleteFiles = async ({
@@ -3010,71 +2652,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     paths: string[];
     sudo?: boolean;
   }): Promise<void> => {
-    if (paths.length == 0) {
-      // nothing to do
-      return;
-    }
-    const id = misc.uuid();
-    let mesg;
-    if (paths.length === 1) {
-      mesg = `${paths[0]}`;
-    } else {
-      mesg = `${paths.length} files`;
-    }
-    this.set_activity({ id, status: `Deleting ${mesg}...` });
-
-    try {
-      // delete any snapshots:
-      const snapshots: string[] = [];
-      const nonSnapshotPaths: string[] = [];
-      for (const path of paths) {
-        const target = getSnapshotPathTarget(path);
-        if (target?.kind === "snapshot") {
-          snapshots.push(target.name);
-          continue;
-        }
-        if (target?.kind === "snapshots-root") {
-          throw new Error(
-            "Delete snapshots individually, not the .snapshots directory.",
-          );
-        }
-        if (target?.kind === "snapshot-entry") {
-          throw new Error(
-            `Snapshots are read-only. Delete the snapshot '${target.name}' instead of files inside it.`,
-          );
-        }
-        nonSnapshotPaths.push(path);
-      }
-      if (snapshots.length > 0) {
-        for (const name of snapshots) {
-          await webapp_client.conat_client.hub.projects.deleteSnapshot({
-            project_id: this.project_id,
-            name,
-          });
-        }
-      }
-      if (nonSnapshotPaths.length > 0) {
-        const fs = this.fs();
-        await fs.rm(nonSnapshotPaths, { force: true, recursive: true, sudo });
-      }
-
-      this.log({
-        event: "file_action",
-        action: "deleted",
-        files: paths,
-      });
-      this.set_activity({
-        id,
-        status: `Successfully deleted ${mesg}.`,
-        stop: "",
-      });
-    } catch (err) {
-      this.set_activity({
-        id,
-        error: `Error deleting ${mesg} -- ${err}`,
-        stop: "",
-      });
-    }
+    await deleteFiles({
+      paths,
+      sudo,
+      projectId: this.project_id,
+      fs: () => this.fs(),
+      setActivity: (opts) => this.set_activity(opts),
+      log: (event) => this.log(event),
+    });
   };
 
   // remove all files in the given path (or subtree of that path)
@@ -3091,22 +2676,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     filter: (path: string) => boolean;
     recursive?: boolean;
   }): Promise<string[]> => {
-    const fs = this.fs();
-    const options: string[] = ["-H", "-I"];
-    if (!recursive) {
-      options.push("-d", "1");
-    }
-    const { stdout } = await fs.fd(path, { options });
-    const paths = Buffer.from(stdout)
-      .toString()
-      .split("\n")
-      .slice(0, -1)
-      .map((p) => join(path, p))
-      .filter(filter);
-    if (paths.length > 0) {
-      await this.deleteFiles({ paths });
-    }
-    return paths;
+    return await deleteMatchingFiles({
+      path,
+      filter,
+      recursive,
+      fs: () => this.fs(),
+      deleteFiles: (opts) => this.deleteFiles(opts),
+    });
   };
 
   download_file = async ({
@@ -3201,21 +2777,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     current_path?: string,
     ext?: string,
   ): string => {
-    if (name.length === 0) {
-      throw Error("Cannot use empty filename");
-    }
-    for (const bad_char of BAD_FILENAME_CHARACTERS) {
-      if (name.indexOf(bad_char) !== -1) {
-        throw Error(`Cannot use '${bad_char}' in a filename`);
-      }
-    }
     const store = this.get_store();
-    const basePath = current_path ?? store?.get("current_path_abs") ?? "/";
-    let s = misc.path_to_file(this.toAbsoluteCurrentPath(basePath), name);
-    if (ext != null && misc.filename_extension(s) !== ext) {
-      s = `${s}.${ext}`;
-    }
-    return s;
+    return constructAbsolutePath({
+      name,
+      currentPath: current_path ?? store?.get("current_path_abs") ?? "/",
+      ext,
+      toAbsoluteCurrentPath: (path) => this.toAbsoluteCurrentPath(path),
+    });
   };
 
   createFolder = async ({
@@ -3229,21 +2797,17 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     switch_over?: boolean;
   }): Promise<void> => {
     const store = this.get_store();
-    const basePath = this.toAbsoluteCurrentPath(
-      current_path ?? store?.get("current_path_abs") ?? "/",
-    );
-    const path = join(basePath, name);
-    const fs = this.fs();
-    try {
-      await fs.mkdir(path, { recursive: true });
-    } catch (err) {
-      this.setState({ file_creation_error: `${err}` });
-    }
-    if (switch_over) {
-      this.open_directory(path);
-    }
-    // Log directory creation to the event log.  / at end of path says it is a directory.
-    this.log({ event: "file_action", action: "created", files: [path + "/"] });
+    await createProjectFolder({
+      name,
+      currentPath: current_path ?? store?.get("current_path_abs") ?? "/",
+      switch_over,
+      fs: () => this.fs(),
+      toAbsoluteCurrentPath: (path) => this.toAbsoluteCurrentPath(path),
+      setFileCreationError: (error) =>
+        this.setState({ file_creation_error: error }),
+      openDirectory: (path) => this.open_directory(path),
+      log: (event) => this.log(event),
+    });
   };
 
   createFile = async ({
@@ -3257,96 +2821,30 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     current_path?: string;
     switch_over?: boolean;
   }) => {
-    this.setState({ file_creation_error: undefined }); // clear any create file display state
-    if ((name === ".." || name === ".") && ext == null) {
-      this.setState({
-        file_creation_error: "Cannot create a file named . or ..",
-      });
-      return;
-    }
-    if (misc.is_only_downloadable(name)) {
-      const store = this.get_store();
-      const basePath = this.toAbsoluteCurrentPath(
-        current_path ?? store?.get("current_path_abs") ?? "/",
-      );
-      this.new_file_from_web(name, basePath);
-      return;
-    }
-
-    if (name[name.length - 1] === "/") {
-      if (ext == null) {
-        this.createFolder({
-          name,
-          current_path,
-        });
-        return;
-      } else {
-        name = name.slice(0, name.length - 1);
-      }
-    }
-
     const store = this.get_store();
-    const basePath = this.toAbsoluteCurrentPath(
-      current_path ?? store?.get("current_path_abs") ?? "/",
-    );
-    let path = join(basePath, name);
-    if (ext) {
-      path += "." + ext;
-    }
-    ext = misc.filename_extension(path);
-
-    if (BANNED_FILE_TYPES.has(ext)) {
-      this.setState({
-        file_creation_error: `Cannot create a file with the ${ext} extension`,
-      });
-      return;
-    }
-    if (ext === "tex") {
-      const filename = misc.path_split(name).tail;
-      for (const bad_char of BAD_LATEX_FILENAME_CHARACTERS) {
-        if (filename.includes(bad_char)) {
-          this.setState({
-            file_creation_error: `Cannot use '${bad_char}' in a LaTeX filename '${filename}'`,
-          });
-          return;
-        }
-      }
-    }
-    const preferredKernel =
-      ext === "ipynb"
-        ? redux
-            .getStore("account")
-            ?.getIn(["editor_settings", "jupyter", "kernel"])
-        : undefined;
-    const content =
-      ext === "ipynb"
-        ? await (
-            await import("@cocalc/frontend/jupyter/new-notebook")
-          ).createInitialIpynbContent(this.project_id, preferredKernel)
-        : getFileTemplate(ext);
-    await this.ensureContainingDirectoryExists(path);
-    const fs = this.fs();
-    try {
-      await fs.writeFile(path, content);
-    } catch (err) {
-      this.setState({
-        file_creation_error: `${err}`,
-      });
-      return;
-    }
-    this.log({ event: "file_action", action: "created", files: [path] });
-    if (ext) {
-      redux.getActions("account")?.addTag(`create-${ext}`);
-    }
-    if (switch_over) {
-      this.open_file({
-        path,
-        // so opens immediately, since switch_over is only something
-        // we do when user is explicitly opening the file
-        explicit: true,
-        foreground: true,
-      });
-    }
+    await createProjectFile({
+      name,
+      ext,
+      currentPath: current_path ?? store?.get("current_path_abs") ?? "/",
+      switch_over,
+      projectId: this.project_id,
+      fs: () => this.fs(),
+      toAbsoluteCurrentPath: (path) => this.toAbsoluteCurrentPath(path),
+      setFileCreationError: (error) =>
+        this.setState({ file_creation_error: error }),
+      createFolder: (opts) => this.createFolder(opts),
+      newFileFromWeb: (url, currentPath) =>
+        this.new_file_from_web(url, currentPath),
+      ensureContainingDirectoryExists: (path) =>
+        this.ensureContainingDirectoryExists(path),
+      log: (event) => this.log(event),
+      getPreferredKernel: () =>
+        redux
+          .getStore("account")
+          ?.getIn(["editor_settings", "jupyter", "kernel"]),
+      addCreatedTag: (tag) => redux.getActions("account")?.addTag(tag),
+      openFile: (opts) => this.open_file(opts),
+    });
   };
 
   private new_file_from_web = async (
@@ -3661,26 +3159,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }
 
   ensureContainingDirectoryExists = async (path: string) => {
-    await this.ensureDirectoryExists(dirname(path));
+    await ensureProjectContainingDirectoryExists({
+      path,
+      ensureDirectoryExists: (path) => this.ensureDirectoryExists(path),
+    });
   };
 
   ensureDirectoryExists = async (path: string): Promise<void> => {
-    const v = this.getFilesCache(dirname(path));
-    if (v?.[basename(path)]) {
-      // already exists
-      return;
-    }
-    // create it -- just make it and if it already exists, not an error
-    // (this avoids race conditions and is the right way)
-    const fs = this.fs();
-    try {
-      await fs.mkdir(path, { recursive: true });
-    } catch (err) {
-      if (err.code == "EEXISTS") {
-        return;
-      }
-      throw err;
-    }
+    await ensureProjectDirectoryExists({
+      path,
+      fs: () => this.fs(),
+      getFilesCache: (path) => this.getFilesCache(path),
+    });
   };
 
   /* NOTE!  Below we store the modal state *both* in a private
