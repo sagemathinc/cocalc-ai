@@ -116,8 +116,6 @@ import { MoveOpsManager } from "@cocalc/frontend/project/move-ops";
 import { StartOpsManager } from "@cocalc/frontend/project/start-ops";
 import { isCollaboratorRealtimeAccessError } from "@cocalc/frontend/project/collaborator-realtime";
 import { canUseCollaboratorProjectRealtime } from "@cocalc/frontend/project/realtime-access";
-import { isBackupsPath } from "@cocalc/util/consts/backups";
-import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
 import dust from "@cocalc/frontend/project/disk-usage/dust";
 import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
@@ -125,15 +123,9 @@ import { EditorLoadError } from "../../file-editors-error";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import { isJupyterPath } from "@cocalc/util/jupyter/names";
-import {
-  DEFAULT_PROJECT_RUNTIME_HOME,
-  projectRuntimeHomeRelativePath,
-} from "@cocalc/util/project-runtime";
 import { canonicalSyncPath } from "@cocalc/frontend/project/sync-path";
 import {
-  buildProjectFilesTarget,
   getProjectUrlPath,
-  buildProjectScopedTarget,
   parseProjectTarget,
 } from "@cocalc/frontend/project-routing";
 import {
@@ -169,6 +161,13 @@ import {
   ensureContainingDirectoryExists as ensureProjectContainingDirectoryExists,
   ensureDirectoryExists as ensureProjectDirectoryExists,
 } from "./file-creation";
+import {
+  isVirtualListingPath,
+  toAbsoluteCurrentPath,
+  toAuxTabPath,
+  toUrlPath,
+  fromUrlDirectoryPath,
+} from "./path-routing";
 export { callFilesystemClientWithRecovery } from "./filesystem-client";
 export { resetOpenFileRuntimeAfterHostReset } from "./open-file-runtime";
 
@@ -738,106 +737,37 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     return getProjectHomeDirectory(this.project_id);
   };
 
-  private getSnapshotHomeDirectoryForPaths = (): string => {
-    const home = this.getHomeDirectoryForPaths();
-    return home === "/" ? DEFAULT_PROJECT_RUNTIME_HOME : home;
-  };
-
-  private getSnapshotsRouteRelativePath = (
-    path: string,
-  ): string | undefined => {
-    const normalized = normalize(path);
-    if (isSnapshotsPath(normalized) && !normalized.startsWith("/")) {
-      return normalized.replace(/^\/+/, "").replace(/\/+$/, "");
-    }
-    const relative = projectRuntimeHomeRelativePath(normalized);
-    if (relative != null && isSnapshotsPath(relative)) {
-      return relative.replace(/^\/+/, "").replace(/\/+$/, "");
-    }
-  };
-
   private isVirtualListingPath = (path: string): boolean => {
-    return isBackupsPath(path);
+    return isVirtualListingPath(path);
   };
 
   private toAbsoluteCurrentPath = (path: string): string => {
-    const normalized = normalize(path);
-    if (this.isVirtualListingPath(normalized)) {
-      return normalized;
-    }
-    const snapshotRelative = this.getSnapshotsRouteRelativePath(normalized);
-    if (snapshotRelative != null) {
-      return normalizeAbsolutePath(
-        snapshotRelative,
-        this.getSnapshotHomeDirectoryForPaths(),
-      );
-    }
-    return normalizeAbsolutePath(normalized, this.getHomeDirectoryForPaths());
-  };
-
-  private getPathRoute = (path: string): { relativePath: string } => {
-    const normalized = normalize(path);
-    if (this.isVirtualListingPath(normalized)) {
-      return {
-        relativePath: normalized.replace(/^\/+/, "").replace(/\/+$/, ""),
-      };
-    }
-    const snapshotRelative = this.getSnapshotsRouteRelativePath(normalized);
-    if (snapshotRelative != null) {
-      return { relativePath: snapshotRelative };
-    }
-    const homeDirectory = normalizeAbsolutePath(
-      this.getHomeDirectoryForPaths(),
-    );
-    if (
-      normalized === "/" ||
-      normalizeAbsolutePath(normalized, homeDirectory) === homeDirectory
-    ) {
-      return { relativePath: "" };
-    }
-    const absolute = normalizeAbsolutePath(normalized, homeDirectory);
-    return {
-      relativePath: absolute === "/" ? "" : absolute.slice(1),
-    };
+    return toAbsoluteCurrentPath({
+      path,
+      homeDirectory: this.getHomeDirectoryForPaths(),
+    });
   };
 
   private toUrlPath = (path: string, isDirectory: boolean): string => {
-    return buildProjectFilesTarget(path, isDirectory, {
-      encodeRelativePath: (nextPath) =>
-        this.getPathRoute(nextPath).relativePath,
+    return toUrlPath({
+      path,
+      isDirectory,
+      homeDirectory: this.getHomeDirectoryForPaths(),
     });
   };
 
   private fromUrlDirectoryPath = (path: string): string => {
-    let normalized = normalize(path);
-    const trimmed = normalized.replace(/^\/+/, "");
-    if (trimmed === "files") {
-      normalized = "";
-    } else if (trimmed.startsWith("files/")) {
-      normalized = trimmed.slice("files/".length);
-    }
-    if (normalized === "" || normalized === "." || normalized === "/") {
-      return this.getHomeDirectoryForPaths();
-    }
-    if (this.isVirtualListingPath(normalized)) {
-      return normalized;
-    }
-    if (isSnapshotsPath(normalized)) {
-      return normalizeAbsolutePath(
-        normalized.replace(/^\/+/, ""),
-        this.getSnapshotHomeDirectoryForPaths(),
-      );
-    }
-    return normalizeAbsolutePath(
-      `/${normalized}`,
-      this.getHomeDirectoryForPaths(),
-    );
+    return fromUrlDirectoryPath({
+      path,
+      homeDirectory: this.getHomeDirectoryForPaths(),
+    });
   };
 
   private toAuxTabPath = (tab: "new" | "search", path: string): string => {
-    return buildProjectScopedTarget(tab, path, {
-      encodeRelativePath: (nextPath) =>
-        this.getPathRoute(nextPath).relativePath,
+    return toAuxTabPath({
+      tab,
+      path,
+      homeDirectory: this.getHomeDirectoryForPaths(),
     });
   };
 
