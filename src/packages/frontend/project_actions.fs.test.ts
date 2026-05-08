@@ -1,4 +1,4 @@
-import { callFilesystemClientWithRecovery } from "./project_actions";
+import { callFilesystemClientWithRecovery } from "./project/redux/filesystem-client";
 
 describe("ProjectActions.fs recovery", () => {
   beforeEach(() => {
