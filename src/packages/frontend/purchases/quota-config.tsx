@@ -152,7 +152,7 @@ export default function QuotaConfig({
               : getChargeAmount({
                   cost,
                   balance,
-                  minBalance: quotas.minBalance,
+                  minBalance: 0,
                   minPayment: 0,
                 }).amountDue
           }

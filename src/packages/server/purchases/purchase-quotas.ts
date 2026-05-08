@@ -49,6 +49,7 @@ export async function setPurchaseQuota({
 
 export interface PurchaseQuotas {
   services: { [service: string]: MoneyValue };
+  // Deprecated compatibility field; the effective minimum balance is always 0.
   minBalance: MoneyValue;
 }
 

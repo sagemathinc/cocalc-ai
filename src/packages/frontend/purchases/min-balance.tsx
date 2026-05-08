@@ -1,9 +1,5 @@
-import { Card, Space } from "antd";
-import { Tooltip } from "@cocalc/frontend/components";
-import Support from "./support";
+import { Alert, Card } from "antd";
 import MoneyStatistic from "./money-statistic";
-import ClosingDate from "./closing-date";
-import { Icon } from "@cocalc/frontend/components/icon";
 import type { MoneyValue } from "@cocalc/util/money";
 
 interface Props {
@@ -19,14 +15,12 @@ export default function MinBalance({ minBalance, style }: Props) {
   return (
     <Card style={style}>
       <MoneyStatistic title={"Minimum Balance"} value={minBalance} />
-      <Space orientation="vertical">
-        <ClosingDate type="link" />
-        <Support>
-          <Tooltip title="Create support request to allow your balance to be negative for Pay As You Go purchases.">
-            <Icon name="rise-outlined" rotate="90" /> Allow Negative
-          </Tooltip>
-        </Support>
-      </Space>
+      <Alert
+        showIcon
+        type="info"
+        message="Deprecated"
+        description="Minimum balance is no longer used to extend negative-balance credit. Purchases now stop at zero balance."
+      />
     </Card>
   );
 }

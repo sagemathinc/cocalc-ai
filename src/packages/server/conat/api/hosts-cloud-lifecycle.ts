@@ -54,6 +54,8 @@ import { enqueueCloudVmWork } from "@cocalc/server/cloud";
 import { normalizeSpotRecoveryPolicy } from "@cocalc/server/cloud/spot-restore";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
+  applyDedicatedHostFundingModeOverride,
+  type DedicatedHostFundingMode,
   getDedicatedHostPolicySnapshotForAccount,
   isBillableDedicatedHostCloud,
   selectDedicatedHostFundingLane,
@@ -78,6 +80,11 @@ function billingMetadataFromSession({
         hourly_cost_usd: MoneyValue;
       }
     | {
+        funding_mode: "account-postpaid";
+        funding_lane: "credit";
+        hourly_cost_usd: MoneyValue;
+      }
+    | {
         funding_mode: "site-funded";
       };
   started_at?: string;
@@ -89,11 +96,25 @@ function billingMetadataFromSession({
     };
   }
   return {
-    funding_mode: "account-prepaid" as const,
+    funding_mode: billableSession.funding_mode,
     funding_lane: billableSession.funding_lane,
     hourly_cost_usd: billableSession.hourly_cost_usd,
     ...(started_at ? { started_at } : {}),
   };
+}
+
+function currentBillingFundingMode(
+  metadata: any,
+): DedicatedHostFundingMode | undefined {
+  const value = `${metadata?.billing?.funding_mode ?? ""}`.trim().toLowerCase();
+  if (
+    value === "account-prepaid" ||
+    value === "account-postpaid" ||
+    value === "site-funded"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 async function resolveBillableHostSessionConfig({
@@ -104,6 +125,7 @@ async function resolveBillableHostSessionConfig({
   size,
   machine,
   pricing_model,
+  funding_mode_override,
 }: {
   account_id: string;
   action: "create" | "start";
@@ -112,10 +134,16 @@ async function resolveBillableHostSessionConfig({
   size?: string | null;
   machine?: Host["machine"];
   pricing_model?: HostPricingModel;
+  funding_mode_override?: DedicatedHostFundingMode;
 }): Promise<
   | {
       funding_mode: "account-prepaid";
       funding_lane: "prepaid";
+      hourly_cost_usd: MoneyValue;
+    }
+  | {
+      funding_mode: "account-postpaid";
+      funding_lane: "credit";
       hourly_cost_usd: MoneyValue;
     }
   | {
@@ -126,9 +154,12 @@ async function resolveBillableHostSessionConfig({
   if (!isBillableDedicatedHostCloud(provider)) {
     return undefined;
   }
-  const snapshot = await getDedicatedHostPolicySnapshotForAccount({
-    account_id,
-  });
+  const snapshot = applyDedicatedHostFundingModeOverride(
+    await getDedicatedHostPolicySnapshotForAccount({
+      account_id,
+    }),
+    funding_mode_override,
+  );
   if (snapshot.funding_mode === "site-funded") {
     return { funding_mode: "site-funded" };
   }
@@ -155,7 +186,20 @@ async function resolveBillableHostSessionConfig({
       `unable to determine the ${action} hourly rate for provider '${provider}'`,
     );
   }
-  return { funding_mode: "account-prepaid", funding_lane, hourly_cost_usd };
+  if (snapshot.funding_mode === "account-prepaid") {
+    if (funding_lane !== "prepaid") {
+      throw new Error(
+        `unexpected dedicated-host funding lane '${funding_lane}' for prepaid mode`,
+      );
+    }
+    return { funding_mode: "account-prepaid", funding_lane, hourly_cost_usd };
+  }
+  if (funding_lane !== "credit") {
+    throw new Error(
+      `unexpected dedicated-host funding lane '${funding_lane}' for postpaid mode`,
+    );
+  }
+  return { funding_mode: "account-postpaid", funding_lane, hourly_cost_usd };
 }
 
 export async function createHostInternalHelper({
@@ -345,7 +389,7 @@ export async function createHostInternalHelper({
       getConfiguredBayId(),
     ],
   );
-  if (billableSession?.funding_mode === "account-prepaid") {
+  if (billableSession && billableSession.funding_mode !== "site-funded") {
     await reconcileDedicatedHostPurchaseSessionForAccount({
       account_id: owner,
       host_id: id,
@@ -477,8 +521,9 @@ export async function startHostInternalHelper({
           provider: machineCloud,
           region: row.region,
           size: nextMetadata?.size ?? row.metadata?.size,
-          machine: machine,
+          machine: nextMetadata?.machine ?? machine,
           pricing_model: effectivePricingModel,
+          funding_mode_override: currentBillingFundingMode(nextMetadata),
         })
       : undefined;
   const billingStartedAt = billableSession
@@ -491,7 +536,7 @@ export async function startHostInternalHelper({
       started_at: billingStartedAt,
     });
   }
-  if (billableSession?.funding_mode === "account-prepaid") {
+  if (billableSession && billableSession.funding_mode !== "site-funded") {
     await reconcileDedicatedHostPurchaseSessionForAccount({
       account_id: owner!,
       host_id: row.id,

@@ -9,8 +9,10 @@ import { uuid } from "@cocalc/util/misc";
 import { toDecimal } from "@cocalc/util/money";
 import { after, before } from "@cocalc/server/test";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
+import { setClosingDay } from "@cocalc/server/purchases/closing-date";
 import {
   closeDedicatedHostPurchaseSessionLocal,
+  getDedicatedHostPostpaidUnbilledExposureLocal,
   getDedicatedHostWindowUsageLocal,
   reconcileDedicatedHostPurchaseSessionLocal,
 } from "./spend";
@@ -156,5 +158,113 @@ describe("dedicated host spend accounting", () => {
       [account_id, "dedicated-host", `dedicated-host:${host_id}`],
     );
     expect(openRows).toHaveLength(0);
+
+    const { rows: finalRows } = await getPool().query(
+      `
+        SELECT cost
+        FROM purchases
+        WHERE account_id=$1
+          AND service=$2
+          AND tag=$3
+        ORDER BY id ASC
+      `,
+      [account_id, "dedicated-host", `dedicated-host:${host_id}`],
+    );
+    expect(finalRows.every((row) => row.cost != null)).toBe(true);
+  });
+
+  it("computes postpaid unbilled exposure from credit-funded host segments", async () => {
+    const account_id = uuid();
+    await createPurchase({
+      account_id,
+      service: "dedicated-host",
+      description: {
+        type: "dedicated-host",
+        host_id: uuid(),
+        provider: "gcp",
+        funding_lane: "credit",
+        hourly_cost_usd: "10",
+      } as any,
+      client: null,
+      cost_per_hour: "10",
+      period_start: dayjs().subtract(2, "hour").toDate(),
+      tag: `dedicated-host:${uuid()}`,
+    });
+    await createPurchase({
+      account_id,
+      service: "dedicated-host",
+      description: {
+        type: "dedicated-host",
+        host_id: uuid(),
+        provider: "gcp",
+        funding_lane: "credit",
+        hourly_cost_usd: "5",
+      } as any,
+      client: null,
+      cost: "7.5",
+      cost_per_hour: "5",
+      period_start: dayjs().subtract(3, "hour").toDate(),
+      period_end: dayjs().subtract(90, "minute").toDate(),
+      tag: `dedicated-host:${uuid()}`,
+    });
+
+    const exposure =
+      await getDedicatedHostPostpaidUnbilledExposureLocal(account_id);
+    expect(toDecimal(exposure).toNumber()).toBeCloseTo(27.5, 1);
+  });
+
+  it("rotates open postpaid host segments at the account closing boundary", async () => {
+    const account_id = uuid();
+    const host_id = uuid();
+    await getPool().query(
+      "INSERT INTO accounts (account_id, email_address) VALUES ($1, $2)",
+      [account_id, `${account_id}@example.com`],
+    );
+    await setClosingDay(account_id, 5);
+    const started_at = new Date(Date.UTC(2026, 4, 4, 23, 0, 0));
+
+    await reconcileDedicatedHostPurchaseSessionLocal({
+      account_id,
+      host_id,
+      host_name: "GPU Host",
+      host_bay_id: "bay-0",
+      provider: "gcp",
+      region: "us-central1",
+      machine_type: "n1-standard-4",
+      pricing_model: "on_demand",
+      funding_lane: "credit",
+      hourly_cost_usd: "12",
+      started_at,
+    });
+
+    await reconcileDedicatedHostPurchaseSessionLocal({
+      account_id,
+      host_id,
+      host_name: "GPU Host",
+      host_bay_id: "bay-0",
+      provider: "gcp",
+      region: "us-central1",
+      machine_type: "n1-standard-4",
+      pricing_model: "on_demand",
+      funding_lane: "credit",
+      hourly_cost_usd: "12",
+      started_at: new Date(Date.UTC(2026, 4, 5, 1, 0, 0)),
+    });
+
+    const { rows } = await getPool().query(
+      `
+        SELECT period_start, period_end, cost
+        FROM purchases
+        WHERE account_id=$1
+          AND service=$2
+          AND tag=$3
+        ORDER BY id ASC
+      `,
+      [account_id, "dedicated-host", `dedicated-host:${host_id}`],
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0].period_end).not.toBeNull();
+    expect(rows[0].cost).not.toBeNull();
+    expect(rows[1].period_end).toBeNull();
   });
 });

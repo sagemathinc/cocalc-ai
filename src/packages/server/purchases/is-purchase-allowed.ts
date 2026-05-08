@@ -143,9 +143,9 @@ export async function isPurchaseAllowed({
   }
 
   // Below this is payg services only:
-  const { services, minBalance } = await getPurchaseQuotas(account_id, client);
+  const { services } = await getPurchaseQuotas(account_id, client);
 
-  // First check that making purchase won't reduce our balance below the minBalance.
+  // First check that making the purchase won't reduce the account below zero.
   // Also, we round balance down since fractional pennies don't count, and
   // can cause required to be off by 1 below.
   const balance = moneyRound2Down(
@@ -153,19 +153,15 @@ export async function isPurchaseAllowed({
   ).add(marginValue);
   const balanceAfterPurchase = balance.sub(costValue);
   // add 0.01 due to potential rounding errors
-  const minBalanceValue = toDecimal(minBalance);
-  if (balanceAfterPurchase.add("0.01").lt(minBalanceValue)) {
+  if (balanceAfterPurchase.add("0.01").lt(0)) {
     // You do not have enough money, so obviously deny the purchase.
 
-    const required = moneyRound2Up(costValue.sub(balance.sub(minBalanceValue)));
+    const required = moneyRound2Up(costValue.sub(balance));
     const chargeAmount = max(minPayment, required);
     const v: string[] = [];
     if (!balance.eq(0)) {
       v.push(`Your Balance: ${moneyToCurrency(moneyRound2Down(balance))}`);
       v.push(`Required: ${moneyToCurrency(costValue)}`);
-      if (!minBalanceValue.eq(0)) {
-        v.push(`Minimum Allowed Balance: ${moneyToCurrency(minBalanceValue)}`);
-      }
       if (required.lt(minPayment)) {
         v.push(`Minimum Payment: ${moneyToCurrency(minPayment)}`);
       }

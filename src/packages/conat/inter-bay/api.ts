@@ -556,11 +556,14 @@ export interface AccountLocalDedicatedHostPolicySnapshot {
   account_id: string;
   membership_class: string;
   can_create_hosts: boolean;
-  funding_mode: "account-prepaid" | "site-funded";
+  funding_mode: "account-prepaid" | "account-postpaid" | "site-funded";
   effective_limits: MembershipEffectiveLimits;
   has_active_second_factor: boolean;
   has_payment_method: boolean;
+  has_usage_subscription: boolean;
   balance: MoneyValue;
+  postpaid_unbilled_exposure_usd: MoneyValue;
+  postpaid_unbilled_limit_usd: MoneyValue;
   dedicated_host_window_usage: {
     prepaid_5h_usd: MoneyValue;
     prepaid_7d_usd: MoneyValue;

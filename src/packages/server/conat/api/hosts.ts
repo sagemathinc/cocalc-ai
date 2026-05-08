@@ -889,11 +889,11 @@ async function maybeRequireFreshAuthForBrowserHostAction({
 }: {
   account_id?: string;
   browser_id?: string;
-}): Promise<{ allow_second_factor_override: boolean }> {
+}): Promise<{ allow_second_factor_override?: boolean }> {
   const owner = requireAccount(account_id);
   const cleanedBrowserId = `${browser_id ?? ""}`.trim();
   if (!cleanedBrowserId) {
-    return { allow_second_factor_override: false };
+    return {};
   }
   const session_hash = getBrowserAuthSessionHash({
     account_id: owner,
@@ -909,14 +909,27 @@ async function maybeRequireFreshAuthForBrowserHostAction({
     session_hash,
     allow_actor_impersonation: true,
   });
+  const impersonation = await getImpersonationSessionBySessionHash({
+    session_hash,
+    subject_account_id: owner,
+  });
   return {
-    allow_second_factor_override: !!(await getImpersonationSessionBySessionHash(
-      {
-        session_hash,
-        subject_account_id: owner,
-      },
-    )),
+    allow_second_factor_override: impersonation ? true : undefined,
   };
+}
+
+function currentHostFundingMode(
+  metadata: any,
+): "account-prepaid" | "account-postpaid" | "site-funded" | undefined {
+  const value = `${metadata?.billing?.funding_mode ?? ""}`.trim().toLowerCase();
+  if (
+    value === "account-prepaid" ||
+    value === "account-postpaid" ||
+    value === "site-funded"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 export { rolloutComponentsForUpgradeResultsInternal as rolloutComponentsForUpgradeResults };
@@ -3456,6 +3469,7 @@ export async function startHost({
     action: "start",
     machine_cloud: row.metadata?.machine?.cloud,
     has_active_second_factor_override: auth.allow_second_factor_override,
+    funding_mode_override: currentHostFundingMode(row.metadata),
   });
   return await createHostLro({
     kind: HOST_START_LRO_KIND,
@@ -4033,6 +4047,7 @@ export async function updateHostMachine({
     action: "resize",
     machine_cloud: requestedCloud ?? machineCloud,
     has_active_second_factor_override: auth.allow_second_factor_override,
+    funding_mode_override: currentHostFundingMode(metadata),
   });
   const cloudChanged =
     requestedCloudRaw !== undefined && requestedCloud !== machineCloud;

@@ -7,7 +7,7 @@ export default function Support({ children, style }: { children; style? }) {
       type="link"
       href={getSupportURL({
         body: "",
-        subject: "Request: Change Minimum Allowed Balance",
+        subject: "Request: Pay As You Go Billing Help",
         type: "question",
         hideExtra: true,
       })}

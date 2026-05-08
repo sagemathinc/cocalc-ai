@@ -128,12 +128,7 @@ describe("creates an account, then creates statements and corresponding emails a
     expect(body).toMatch("NO PAYMENT IS REQUIRED");
   });
 
-  it("No payment is currently required. -- it sets min balance and makes a purchase that puts the balance below 0 but above the thresh to 'demand' payment.", async () => {
-    const pool = getPool();
-    await pool.query("UPDATE accounts SET min_balance=$1 WHERE account_id=$2", [
-      -10,
-      account_id,
-    ]);
+  it("No payment is currently required for a small negative balance within the minimum payment threshold.", async () => {
     await createPurchase({
       account_id,
       service: "student-pay",

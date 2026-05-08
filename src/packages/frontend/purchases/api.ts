@@ -506,31 +506,24 @@ export async function claimMembershipPackageSeat(opts: {
   return await (await getPurchasesHubRpc()).claimMembershipPackageSeat(opts);
 }
 
-// get your own min balance
+// Deprecated compatibility API; the effective minimum balance is always 0.
 export async function getMinBalance(): Promise<MoneyValue> {
   return await api("purchases/get-min-balance");
 }
 
-// Get the min balance for user with given account_id.  This is only
-// for use by admins.
+// Deprecated compatibility API; the effective minimum balance is always 0.
 export async function adminGetMinBalance(
-  account_id: string,
+  _account_id: string,
 ): Promise<MoneyValue> {
-  const x = await api("user-query", {
-    query: { crm_accounts: { account_id, min_balance: null } },
-  });
-  return x.query.crm_accounts.min_balance ?? 0;
+  return 0;
 }
 
-// Set the min allowed balance of user with given account_id.  This is only
-// for use by admins.
+// The legacy min_balance credit model is deprecated and no longer editable.
 export async function adminSetMinBalance(
-  account_id: string,
-  min_balance: number,
+  _account_id: string,
+  _min_balance: number,
 ) {
-  await api("user-query", {
-    query: { crm_accounts: { account_id, min_balance } },
-  });
+  throw Error("Minimum allowed balance is deprecated and no longer editable.");
 }
 
 export async function adminCreateRefund(opts: {

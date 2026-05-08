@@ -365,12 +365,12 @@ Table({
     min_balance: {
       type: "number",
       pg_type: "numeric(20,10)",
-      desc: "The minimum allowed balance for this user. This is a quota we impose for safety, not something they set. Admins may change this in response to a support request.  For most users this is not set at all hence 0, but for some special enterprise-style customers to whom we extend 'credit', it will be set.",
+      desc: "Deprecated legacy field for the old negative-balance credit model. The effective minimum balance is now always 0 and this column is ignored at runtime.",
       render: {
-        title: "Minimum Allowed Balance (USD)",
+        title: "Minimum Allowed Balance (deprecated)",
         type: "number",
         integer: false,
-        editable: true,
+        editable: false,
         max: 0,
       },
     },
@@ -780,7 +780,6 @@ Table({
           tags: true,
           salesloft_id: true,
           purchase_closing_day: true,
-          min_balance: true, // admins can set this
         },
         on_change(database, old_val, new_val, account_id, cb) {
           database._user_set_query_account_change_after(
