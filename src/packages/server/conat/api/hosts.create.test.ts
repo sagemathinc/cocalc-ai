@@ -128,7 +128,10 @@ describe("hosts.createHost", () => {
       funding_mode: "account-prepaid",
       has_active_second_factor: true,
       has_payment_method: true,
+      has_usage_subscription: false,
       balance: "25",
+      postpaid_unbilled_exposure_usd: "0",
+      postpaid_unbilled_limit_usd: "1000",
       effective_limits: {
         prepaid_host_usage_limit_5h_usd: 300,
         prepaid_host_usage_limit_7d_usd: 1000,
@@ -236,7 +239,10 @@ describe("hosts.createHost", () => {
       funding_mode: "site-funded",
       has_active_second_factor: true,
       has_payment_method: false,
+      has_usage_subscription: false,
       balance: "0",
+      postpaid_unbilled_exposure_usd: "0",
+      postpaid_unbilled_limit_usd: "0",
       effective_limits: {},
       dedicated_host_window_usage: {
         prepaid_5h_usd: "0",
@@ -295,6 +301,91 @@ describe("hosts.createHost", () => {
     expect(
       reconcileDedicatedHostPurchaseSessionForAccountMock,
     ).not.toHaveBeenCalled();
+  });
+
+  it("creates postpaid cloud hosts with a credit-funded purchase session", async () => {
+    getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      can_create_hosts: true,
+      funding_mode: "account-postpaid",
+      has_active_second_factor: true,
+      has_payment_method: true,
+      has_usage_subscription: true,
+      balance: "0",
+      postpaid_unbilled_exposure_usd: "0",
+      postpaid_unbilled_limit_usd: "1000",
+      effective_limits: {
+        credit_spend_limit_5h_usd: 300,
+        credit_spend_limit_7d_usd: 1000,
+      },
+      dedicated_host_window_usage: {
+        prepaid_5h_usd: "0",
+        prepaid_7d_usd: "0",
+        credit_5h_usd: "0",
+        credit_7d_usd: "0",
+      },
+    }));
+    selectDedicatedHostFundingLaneMock = jest.fn(() => "credit");
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.startsWith("INSERT INTO project_hosts ")) {
+        expect(params[4]?.billing).toEqual({
+          funding_mode: "account-postpaid",
+          funding_lane: "credit",
+          hourly_cost_usd: "1.25",
+          started_at: expect.any(String),
+        });
+        return { rowCount: 1 };
+      }
+      if (
+        sql.includes(
+          "SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              name: "fresh-gcp",
+              region: "us-west1",
+              status: "starting",
+              metadata: {
+                owner: ACCOUNT_ID,
+                size: "e2-standard-2",
+                gpu: false,
+                pricing_model: "spot",
+                interruption_restore_policy: "immediate",
+                desired_state: "running",
+                machine: { cloud: "gcp" },
+              },
+              last_seen: null,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { createHost } = await import("./hosts");
+    const host = await createHost({
+      account_id: ACCOUNT_ID,
+      name: "fresh-gcp",
+      region: "us-west1",
+      size: "e2-standard-2",
+      pricing_model: "spot",
+      machine: { cloud: "gcp" },
+    });
+
+    expect(
+      reconcileDedicatedHostPurchaseSessionForAccountMock,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        host_id: host.id,
+        provider: "gcp",
+        funding_lane: "credit",
+        hourly_cost_usd: "1.25",
+      }),
+    );
   });
 
   it("requires two-factor authentication for billable cloud hosts", async () => {

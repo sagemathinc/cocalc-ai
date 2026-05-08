@@ -17,15 +17,20 @@ import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/eff
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import getBalance from "@cocalc/server/purchases/get-balance";
+import { hasUsageSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
 import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import {
+  getDedicatedHostPostpaidUnbilledExposureLocal,
   getDedicatedHostWindowUsageLocal,
   isDedicatedHostLaneCurrentlyAllowed,
 } from "./spend";
 
 export type DedicatedHostAction = "create" | "start" | "resize";
-export type DedicatedHostFundingMode = "account-prepaid" | "site-funded";
+export type DedicatedHostFundingMode =
+  | "account-prepaid"
+  | "account-postpaid"
+  | "site-funded";
 
 export interface DedicatedHostAdmissionDecision {
   allowed: boolean;
@@ -33,11 +38,14 @@ export interface DedicatedHostAdmissionDecision {
     | "membership_hosts_not_allowed"
     | "two_factor_required"
     | "payment_method_required"
+    | "automatic_billing_required"
     | "membership_host_spend_not_configured"
     | "prepaid_balance_required"
-    | "prepaid_usage_window_exceeded";
+    | "prepaid_usage_window_exceeded"
+    | "postpaid_usage_window_exceeded"
+    | "postpaid_unbilled_limit_exceeded";
   reason?: string;
-  funding_lane?: "prepaid";
+  funding_lane?: "prepaid" | "credit";
 }
 
 function actionLabel(action: DedicatedHostAction): string {
@@ -57,6 +65,14 @@ function hasPositiveLimit(value: unknown): boolean {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function hasPositiveMoneyValue(value: unknown): boolean {
+  try {
+    return toDecimal(value as any).gt(0);
+  } catch {
+    return false;
+  }
+}
+
 export function isBillableDedicatedHostCloud(cloud?: string | null): boolean {
   const provider = normalizeProviderId(cloud);
   return !!provider && provider !== "self-host" && provider !== "local";
@@ -64,25 +80,40 @@ export function isBillableDedicatedHostCloud(cloud?: string | null): boolean {
 
 export function selectDedicatedHostFundingLane(
   snapshot: AccountLocalDedicatedHostPolicySnapshot,
-): "prepaid" | undefined {
-  if (snapshot.funding_mode !== "account-prepaid") {
+): "prepaid" | "credit" | undefined {
+  if (snapshot.funding_mode === "site-funded") {
     return undefined;
   }
   const limits = snapshot.effective_limits ?? {};
-  const balance = toDecimal(snapshot.balance ?? 0);
-  const prepaidEnabled =
-    hasPositiveLimit(limits.prepaid_host_usage_limit_5h_usd) ||
-    hasPositiveLimit(limits.prepaid_host_usage_limit_7d_usd);
+  if (snapshot.funding_mode === "account-prepaid") {
+    const balance = toDecimal(snapshot.balance ?? 0);
+    const prepaidEnabled =
+      hasPositiveLimit(limits.prepaid_host_usage_limit_5h_usd) ||
+      hasPositiveLimit(limits.prepaid_host_usage_limit_7d_usd);
 
+    if (
+      prepaidEnabled &&
+      balance.gt(0) &&
+      isDedicatedHostLaneCurrentlyAllowed({
+        snapshot,
+        funding_lane: "prepaid",
+      })
+    ) {
+      return "prepaid";
+    }
+    return undefined;
+  }
+  const postpaidEnabled =
+    hasPositiveLimit(limits.credit_spend_limit_5h_usd) ||
+    hasPositiveLimit(limits.credit_spend_limit_7d_usd);
   if (
-    prepaidEnabled &&
-    balance.gt(0) &&
+    postpaidEnabled &&
     isDedicatedHostLaneCurrentlyAllowed({
       snapshot,
-      funding_lane: "prepaid",
+      funding_lane: "credit",
     })
   ) {
-    return "prepaid";
+    return "credit";
   }
   return undefined;
 }
@@ -134,20 +165,6 @@ export function evaluateDedicatedHostAdmission({
   }
 
   const limits = snapshot.effective_limits ?? {};
-  const balance = toDecimal(snapshot.balance ?? 0);
-  const prepaidEnabled =
-    hasPositiveLimit(limits.prepaid_host_usage_limit_5h_usd) ||
-    hasPositiveLimit(limits.prepaid_host_usage_limit_7d_usd);
-
-  if (!prepaidEnabled) {
-    return {
-      allowed: false,
-      code: "membership_host_spend_not_configured",
-      reason:
-        "membership tier does not currently configure prepaid dedicated-host spending",
-    };
-  }
-
   const funding_lane = selectDedicatedHostFundingLane(snapshot);
   if (funding_lane) {
     return {
@@ -156,27 +173,81 @@ export function evaluateDedicatedHostAdmission({
     };
   }
 
-  if (prepaidEnabled && balance.gt(0)) {
+  if (snapshot.funding_mode === "account-prepaid") {
+    const balance = toDecimal(snapshot.balance ?? 0);
+    const prepaidEnabled =
+      hasPositiveLimit(limits.prepaid_host_usage_limit_5h_usd) ||
+      hasPositiveLimit(limits.prepaid_host_usage_limit_7d_usd);
+    if (!prepaidEnabled) {
+      return {
+        allowed: false,
+        code: "membership_host_spend_not_configured",
+        reason:
+          "membership tier does not currently configure prepaid dedicated-host spending",
+      };
+    }
+    if (prepaidEnabled && balance.gt(0)) {
+      return {
+        allowed: false,
+        code: "prepaid_usage_window_exceeded",
+        reason: `your dedicated-host prepaid usage window is exhausted; wait for it to reset before trying to ${actionLabel(action)}`,
+      };
+    }
     return {
       allowed: false,
-      code: "prepaid_usage_window_exceeded",
-      reason: `your dedicated-host prepaid usage window is exhausted; wait for it to reset before trying to ${actionLabel(action)}`,
+      code: "prepaid_balance_required",
+      reason: `add prepaid credit before trying to ${actionLabel(action)}`,
     };
   }
 
+  const postpaidEnabled =
+    hasPositiveLimit(limits.credit_spend_limit_5h_usd) ||
+    hasPositiveLimit(limits.credit_spend_limit_7d_usd);
+  if (!postpaidEnabled) {
+    return {
+      allowed: false,
+      code: "membership_host_spend_not_configured",
+      reason:
+        "membership tier does not currently configure postpaid dedicated-host spending",
+    };
+  }
+  if (!snapshot.has_usage_subscription) {
+    return {
+      allowed: false,
+      code: "automatic_billing_required",
+      reason: `set up automatic billing before trying to ${actionLabel(action)}`,
+    };
+  }
+  if (
+    hasPositiveMoneyValue(snapshot.postpaid_unbilled_limit_usd) &&
+    !toDecimal(snapshot.postpaid_unbilled_exposure_usd).lt(
+      toDecimal(snapshot.postpaid_unbilled_limit_usd),
+    )
+  ) {
+    return {
+      allowed: false,
+      code: "postpaid_unbilled_limit_exceeded",
+      reason: `your dedicated-host postpaid exposure limit is exhausted; wait for billing to catch up before trying to ${actionLabel(action)}`,
+    };
+  }
   return {
     allowed: false,
-    code: "prepaid_balance_required",
-    reason: `add prepaid credit before trying to ${actionLabel(action)}`,
+    code: "postpaid_usage_window_exceeded",
+    reason: `your dedicated-host postpaid usage window is exhausted; wait for it to reset before trying to ${actionLabel(action)}`,
   };
 }
 
 export function getDedicatedHostFundingModeFromSettings(
   settings: Awaited<ReturnType<typeof getServerSettings>>,
 ): DedicatedHostFundingMode {
-  return settings.project_hosts_funding_mode === "account-prepaid"
-    ? "account-prepaid"
-    : "site-funded";
+  switch (settings.project_hosts_funding_mode) {
+    case "account-prepaid":
+      return "account-prepaid";
+    case "account-postpaid":
+      return "account-postpaid";
+    default:
+      return "site-funded";
+  }
 }
 
 export async function getDedicatedHostPolicySnapshotLocal(
@@ -200,7 +271,10 @@ export async function getDedicatedHostPolicySnapshotLocal(
       effective_limits,
       has_active_second_factor,
       has_payment_method: false,
+      has_usage_subscription: false,
       balance: moneyToDbString(0),
+      postpaid_unbilled_exposure_usd: moneyToDbString(0),
+      postpaid_unbilled_limit_usd: moneyToDbString(0),
       dedicated_host_window_usage: {
         prepaid_5h_usd: moneyToDbString(0),
         prepaid_7d_usd: moneyToDbString(0),
@@ -210,12 +284,19 @@ export async function getDedicatedHostPolicySnapshotLocal(
     };
   }
 
-  const [has_payment_method, balance, dedicated_host_window_usage] =
-    await Promise.all([
-      hasPaymentMethod(account_id),
-      getBalance({ account_id }),
-      getDedicatedHostWindowUsageLocal(account_id),
-    ]);
+  const [
+    has_payment_method,
+    has_usage_subscription,
+    balance,
+    dedicated_host_window_usage,
+    postpaid_unbilled_exposure_usd,
+  ] = await Promise.all([
+    hasPaymentMethod(account_id),
+    hasUsageSubscription(account_id),
+    getBalance({ account_id }),
+    getDedicatedHostWindowUsageLocal(account_id),
+    getDedicatedHostPostpaidUnbilledExposureLocal(account_id),
+  ]);
 
   return {
     account_id,
@@ -225,7 +306,12 @@ export async function getDedicatedHostPolicySnapshotLocal(
     effective_limits,
     has_active_second_factor,
     has_payment_method,
+    has_usage_subscription,
     balance,
+    postpaid_unbilled_exposure_usd,
+    postpaid_unbilled_limit_usd: moneyToDbString(
+      settings.project_hosts_postpaid_unbilled_limit_usd ?? 0,
+    ),
     dedicated_host_window_usage,
   };
 }

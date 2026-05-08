@@ -14,6 +14,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { loadNebiusInstanceTypes } from "@cocalc/server/cloud/providers";
+import { getNextClosingDateAfter } from "@cocalc/server/purchases/closing-date";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import {
   DEDICATED_HOST_USAGE,
@@ -60,6 +61,14 @@ function hasPositiveLimit(value: unknown): boolean {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function hasPositiveMoneyValue(value: unknown): boolean {
+  try {
+    return toDecimal(value as any).gt(0);
+  } catch {
+    return false;
+  }
+}
+
 function isLaneWindowAvailable({
   used,
   limit,
@@ -87,12 +96,12 @@ export function isDedicatedHostLaneCurrentlyAllowed({
   snapshot: AccountLocalDedicatedHostPolicySnapshot;
   funding_lane: DedicatedHostFundingLane;
 }): boolean {
-  if (snapshot.funding_mode !== "account-prepaid") {
-    return false;
-  }
   const limits = snapshot.effective_limits ?? {};
   const usage = snapshot.dedicated_host_window_usage;
   if (funding_lane === "prepaid") {
+    if (snapshot.funding_mode !== "account-prepaid") {
+      return false;
+    }
     if (toDecimal(snapshot.balance ?? 0).lte(0)) return false;
     return (
       isLaneWindowAvailable({
@@ -105,7 +114,36 @@ export function isDedicatedHostLaneCurrentlyAllowed({
       })
     );
   }
-  return false;
+  if (snapshot.funding_mode !== "account-postpaid") {
+    return false;
+  }
+  if (!snapshot.has_payment_method || !snapshot.has_usage_subscription) {
+    return false;
+  }
+  if (
+    !hasPositiveLimit(limits.credit_spend_limit_5h_usd) &&
+    !hasPositiveLimit(limits.credit_spend_limit_7d_usd)
+  ) {
+    return false;
+  }
+  if (
+    hasPositiveMoneyValue(snapshot.postpaid_unbilled_limit_usd) &&
+    !toDecimal(snapshot.postpaid_unbilled_exposure_usd).lt(
+      toDecimal(snapshot.postpaid_unbilled_limit_usd),
+    )
+  ) {
+    return false;
+  }
+  return (
+    isLaneWindowAvailable({
+      used: usage.credit_5h_usd,
+      limit: limits.credit_spend_limit_5h_usd,
+    }) &&
+    isLaneWindowAvailable({
+      used: usage.credit_7d_usd,
+      limit: limits.credit_spend_limit_7d_usd,
+    })
+  );
 }
 
 export async function getDedicatedHostWindowUsageLocal(
@@ -206,7 +244,9 @@ export async function getDedicatedHostWindowUsageLocal(
 
 type OpenHostPurchaseRow = {
   id: number;
+  time: Date | string;
   cost_per_hour: string | null;
+  period_start: Date | string | null;
   description: DedicatedHostPurchase | null;
 };
 
@@ -222,7 +262,7 @@ async function listOpenDedicatedHostPurchasesLocal({
   const pool = client ?? getPool();
   const { rows } = await pool.query<OpenHostPurchaseRow>(
     `
-      SELECT id, cost_per_hour, description
+      SELECT id, time, cost_per_hour, period_start, description
       FROM purchases
       WHERE account_id=$1
         AND service=$2
@@ -235,6 +275,158 @@ async function listOpenDedicatedHostPurchasesLocal({
   return rows;
 }
 
+export async function getDedicatedHostPostpaidUnbilledExposureLocal(
+  account_id: string,
+): Promise<MoneyValue> {
+  const { rows } = await getPool("medium").query<{ exposure: string | null }>(
+    `
+      SELECT COALESCE(
+        SUM(
+          COALESCE(
+            cost,
+            cost_per_hour * (
+              EXTRACT(EPOCH FROM (COALESCE(period_end, NOW()) - period_start))::numeric / 3600
+            )
+          )
+        ),
+        0::numeric
+      ) AS exposure
+      FROM purchases
+      WHERE account_id=$1
+        AND service=$2
+        AND description->>'funding_lane' = 'credit'
+        AND month_statement_id IS NULL
+    `,
+    [account_id, "dedicated-host"],
+  );
+  return moneyToDbString(rows[0]?.exposure ?? 0);
+}
+
+function computeSegmentCost({
+  cost_per_hour,
+  period_start,
+  period_end,
+}: {
+  cost_per_hour: MoneyValue;
+  period_start: Date;
+  period_end: Date;
+}): MoneyValue {
+  const hours =
+    Math.max(0, period_end.valueOf() - period_start.valueOf()) / 3600_000;
+  return moneyToDbString(toDecimal(cost_per_hour).mul(hours));
+}
+
+async function finalizeDedicatedHostPurchaseRowByIdLocal({
+  purchase_id,
+  ended_at,
+  client,
+}: {
+  purchase_id: number;
+  ended_at: Date;
+  client?: PoolClient;
+}): Promise<void> {
+  const pool = client ?? getPool();
+  await pool.query(
+    `
+      UPDATE purchases
+      SET period_end = $2::timestamp,
+          cost = COALESCE(
+            cost,
+            cost_per_hour * GREATEST(
+              0::numeric,
+              EXTRACT(EPOCH FROM ($2::timestamp - period_start))::numeric / 3600
+            )
+          )
+      WHERE id=$1
+    `,
+    [purchase_id, ended_at],
+  );
+}
+
+async function insertDedicatedHostPurchaseSegmentLocal({
+  account_id,
+  host_id,
+  description,
+  cost_per_hour,
+  period_start,
+  period_end,
+  client,
+}: {
+  account_id: string;
+  host_id: string;
+  description: DedicatedHostPurchase;
+  cost_per_hour: MoneyValue;
+  period_start: Date;
+  period_end?: Date;
+  client?: PoolClient;
+}): Promise<number> {
+  return await createPurchase({
+    account_id,
+    time: period_start,
+    service: "dedicated-host",
+    description,
+    client: client ?? null,
+    cost:
+      period_end == null
+        ? undefined
+        : computeSegmentCost({ cost_per_hour, period_start, period_end }),
+    cost_per_hour,
+    period_start,
+    period_end,
+    tag: purchaseTag(host_id),
+    notes: DEDICATED_HOST_USAGE,
+  });
+}
+
+export async function rotateDedicatedHostPostpaidSegmentForClosingDateLocal({
+  account_id,
+  host_id,
+  through,
+  client,
+}: {
+  account_id: string;
+  host_id: string;
+  through?: Date;
+  client?: PoolClient;
+}): Promise<void> {
+  const open = await listOpenDedicatedHostPurchasesLocal({
+    account_id,
+    host_id,
+    client,
+  });
+  const newest = open[0];
+  if (
+    open.length !== 1 ||
+    !newest?.period_start ||
+    newest.description?.funding_lane !== "credit" ||
+    !newest.cost_per_hour
+  ) {
+    return;
+  }
+  const now = through ?? new Date();
+  const periodStart = new Date(newest.period_start);
+  const nextClosingDate = await getNextClosingDateAfter(
+    account_id,
+    periodStart,
+  );
+  if (nextClosingDate > now) {
+    return;
+  }
+  await finalizeDedicatedHostPurchaseRowByIdLocal({
+    purchase_id: newest.id,
+    ended_at: nextClosingDate,
+    client,
+  });
+  await insertDedicatedHostPurchaseSegmentLocal({
+    account_id,
+    host_id,
+    description: newest.description,
+    cost_per_hour: newest.cost_per_hour,
+    period_start: nextClosingDate,
+    client,
+  });
+}
+
 export async function closeDedicatedHostPurchaseSessionLocal({
   account_id,
   host_id,
@@ -243,18 +435,58 @@ export async function closeDedicatedHostPurchaseSessionLocal({
 }: AccountLocalCloseDedicatedHostPurchaseSessionRequest & {
   client?: PoolClient;
 }): Promise<void> {
-  const pool = client ?? getPool();
-  await pool.query(
-    `
-      UPDATE purchases
-      SET period_end = COALESCE($4::timestamp, NOW())
-      WHERE account_id=$1
-        AND service=$2
-        AND tag=$3
-        AND period_end IS NULL
-    `,
-    [account_id, "dedicated-host", purchaseTag(host_id), ended_at ?? null],
-  );
+  const now = ended_at == null ? new Date() : new Date(ended_at as any);
+  while (true) {
+    const open = await listOpenDedicatedHostPurchasesLocal({
+      account_id,
+      host_id,
+      client,
+    });
+    const newest = open[0];
+    if (!newest) {
+      return;
+    }
+    if (
+      newest.description?.funding_lane === "credit" &&
+      newest.period_start &&
+      newest.cost_per_hour
+    ) {
+      const nextClosingDate = await getNextClosingDateAfter(
+        account_id,
+        new Date(newest.period_start),
+      );
+      if (nextClosingDate <= now) {
+        await finalizeDedicatedHostPurchaseRowByIdLocal({
+          purchase_id: newest.id,
+          ended_at: nextClosingDate,
+          client,
+        });
+        await insertDedicatedHostPurchaseSegmentLocal({
+          account_id,
+          host_id,
+          description: newest.description,
+          cost_per_hour: newest.cost_per_hour,
+          period_start: nextClosingDate,
+          period_end: now,
+          client,
+        });
+        continue;
+      }
+    }
+    await finalizeDedicatedHostPurchaseRowByIdLocal({
+      purchase_id: newest.id,
+      ended_at: now,
+      client,
+    });
+    for (const stale of open.slice(1)) {
+      await finalizeDedicatedHostPurchaseRowByIdLocal({
+        purchase_id: stale.id,
+        ended_at: now,
+        client,
+      });
+    }
+    return;
+  }
 }
 
 export async function reconcileDedicatedHostPurchaseSessionLocal({
@@ -286,6 +518,17 @@ export async function reconcileDedicatedHostPurchaseSessionLocal({
     moneyToDbString(newest.cost_per_hour ?? 0) === normalizedRate &&
     newest.description?.funding_lane === funding_lane
   ) {
+    if (funding_lane === "credit") {
+      await rotateDedicatedHostPostpaidSegmentForClosingDateLocal({
+        account_id,
+        host_id,
+        through:
+          started_at == null
+            ? new Date()
+            : new Date(started_at as string | number | Date),
+        client,
+      });
+    }
     return;
   }
   await closeDedicatedHostPurchaseSessionLocal({
@@ -319,6 +562,17 @@ export async function reconcileDedicatedHostPurchaseSessionLocal({
     tag: purchaseTag(host_id),
     notes: DEDICATED_HOST_USAGE,
   });
+  if (funding_lane === "credit") {
+    await rotateDedicatedHostPostpaidSegmentForClosingDateLocal({
+      account_id,
+      host_id,
+      through:
+        started_at == null
+          ? new Date()
+          : new Date(started_at as string | number | Date),
+      client,
+    });
+  }
 }
 
 export async function reconcileDedicatedHostPurchaseSessionForAccount(

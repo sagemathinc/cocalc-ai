@@ -99,6 +99,20 @@ function currentFundingLane(
   return undefined;
 }
 
+function currentFundingMode(
+  metadata: any,
+): "account-prepaid" | "account-postpaid" | "site-funded" | undefined {
+  const value = `${metadata?.billing?.funding_mode ?? ""}`.trim().toLowerCase();
+  if (
+    value === "account-prepaid" ||
+    value === "account-postpaid" ||
+    value === "site-funded"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 async function updateHostBillingMetadata({
   host_id,
   metadata,
@@ -245,18 +259,22 @@ async function runPass(): Promise<void> {
       continue;
     }
 
-    let funding_lane = currentFundingLane(metadata);
+    const selectedFundingLane = selectDedicatedHostFundingLane(snapshot);
+    let funding_lane = selectedFundingLane ?? currentFundingLane(metadata);
     if (!funding_lane) {
-      funding_lane = selectDedicatedHostFundingLane(snapshot);
-      if (!funding_lane) {
-        await requestHostStopForExceededLane({
-          row,
-          provider,
-          reason: "dedicated-host funding is not currently available",
-        });
-        continue;
-      }
+      await requestHostStopForExceededLane({
+        row,
+        provider,
+        reason: "dedicated-host funding is not currently available",
+      });
+      continue;
     }
+    const existingFundingMode = currentFundingMode(metadata);
+    const preserveStartedAt =
+      existingFundingMode === snapshot.funding_mode &&
+      currentFundingLane(metadata) === funding_lane
+        ? metadata?.billing?.started_at
+        : undefined;
 
     await reconcileDedicatedHostPurchaseSessionForAccount({
       account_id: owner,
@@ -269,16 +287,16 @@ async function runPass(): Promise<void> {
       pricing_model,
       funding_lane,
       hourly_cost_usd,
-      started_at: metadata?.billing?.started_at ?? undefined,
+      started_at: preserveStartedAt,
     });
 
     const nextMetadata = {
       ...metadata,
       billing: {
-        funding_mode: "account-prepaid" as const,
+        funding_mode: snapshot.funding_mode,
         funding_lane,
         hourly_cost_usd,
-        started_at: metadata?.billing?.started_at ?? new Date().toISOString(),
+        started_at: preserveStartedAt ?? new Date().toISOString(),
       },
     };
     if (
