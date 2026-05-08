@@ -12,7 +12,7 @@ import {
   shouldLoadCodexPreviewBody,
   shouldShowCodexShowActivityButton,
   shouldSuppressAcpPlaceholderBody,
-} from "../message";
+} from "../message-state";
 
 describe("resolveRenderedMessageValue", () => {
   it("prefers row content when not generating and row has text", () => {

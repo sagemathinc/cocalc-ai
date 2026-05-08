@@ -2,7 +2,7 @@ import {
   getQueuedMessageEditHelpText,
   resolveEditedMessageForSave,
   shouldShowQueuedMessageEditedVersionSent,
-} from "../message";
+} from "../message-state";
 
 describe("resolveEditedMessageForSave", () => {
   it("prefers non-empty mention-substituted text", () => {
