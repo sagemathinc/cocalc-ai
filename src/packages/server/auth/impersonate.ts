@@ -16,6 +16,10 @@ import {
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
+import {
+  consumeImpersonationGrantLocal,
+  createImpersonationSessionLocal,
+} from "@cocalc/server/auth/impersonation";
 
 export async function signInUsingImpersonateToken({ req, res }) {
   try {
@@ -26,9 +30,17 @@ export async function signInUsingImpersonateToken({ req, res }) {
 }
 
 async function doIt({ req, res }) {
-  const { auth_token, retry_token, lang_temp } = req.query;
+  const {
+    auth_token,
+    retry_token,
+    grant_id,
+    account_id: account_id_param,
+    lang_temp,
+  } = req.query;
   const local_bay_id = getConfiguredBayId();
   let account_id: string;
+  const grantId = `${grant_id ?? ""}`.trim();
+  const hasGrantId = !!grantId;
 
   if (`${retry_token ?? ""}`.trim()) {
     const claims = verifyHomeBayRetryToken({
@@ -39,6 +51,11 @@ async function doIt({ req, res }) {
     account_id = `${claims.account_id ?? ""}`.trim();
     if (!account_id) {
       throw Error("invalid impersonation retry token");
+    }
+  } else if (hasGrantId) {
+    account_id = `${account_id_param ?? ""}`.trim();
+    if (!account_id) {
+      throw Error("account_id is required for impersonation grants");
     }
   } else {
     if (!auth_token) {
@@ -71,6 +88,10 @@ async function doIt({ req, res }) {
         `${req.protocol === "https" ? "https" : "http"}://${req.headers.host}`,
     );
     target.searchParams.set("retry_token", retry.token);
+    if (hasGrantId) {
+      target.searchParams.set("grant_id", grantId);
+      target.searchParams.set("account_id", account_id);
+    }
     if (isLocale(lang_temp)) {
       target.searchParams.set("lang_temp", lang_temp);
     }
@@ -78,8 +99,41 @@ async function doIt({ req, res }) {
     return;
   }
 
-  // maxAge = 12 hours
-  await setSignInCookies({ req, res, account_id, maxAge: 12 * 3600 * 1000 });
+  if (hasGrantId) {
+    const grant = await consumeImpersonationGrantLocal({
+      grant_id: grantId,
+      subject_account_id: account_id,
+    });
+    const remember = await setSignInCookies({
+      req,
+      res,
+      account_id,
+      maxAge: 12 * 3600 * 1000,
+      session: {
+        authenticated_at: new Date(),
+        password_verified_at: null,
+        factor_verified_at: null,
+        factor_level: "none",
+        fresh_auth_until: null,
+        metadata: {
+          session_mode: "impersonation",
+          actor_account_id: grant.actor_account_id,
+          grant_id: grant.id,
+        },
+      },
+    });
+    await createImpersonationSessionLocal({
+      session_hash: remember.hash,
+      expire: remember.expire,
+      grant,
+      metadata: {
+        lang_temp: isLocale(lang_temp) ? lang_temp : undefined,
+      },
+    });
+  } else {
+    // maxAge = 12 hours
+    await setSignInCookies({ req, res, account_id, maxAge: 12 * 3600 * 1000 });
+  }
 
   const target = new URL(
     basePath === "/" ? "/app" : `${basePath}/app`,

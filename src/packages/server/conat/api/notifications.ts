@@ -18,8 +18,10 @@ import {
   resolveNotificationTargetHomeBays,
   type NotificationKind,
 } from "@cocalc/database/postgres/notifications-core";
+import getPool from "@cocalc/database/pool";
 import type {
   CreateAccountNoticeOptions,
+  CreateCodexTurnNoticeOptions,
   ArchiveNotificationOptions,
   CreateMentionNotificationOptions,
   CreateNotificationResult,
@@ -76,6 +78,28 @@ function normalizeSeverity(value?: string): NotificationSeverity {
     throw Error(`invalid severity '${value ?? ""}'`);
   }
   return severity as NotificationSeverity;
+}
+
+async function assertHostCodexTurnNoticeAccess(opts: {
+  host_id: string;
+  project_id: string;
+  account_id: string;
+}): Promise<void> {
+  const { rowCount } = await getPool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE project_id=$1
+        AND host_id=$2
+        AND deleted IS NOT true
+        AND users ? $3::text
+      LIMIT 1
+    `,
+    [opts.project_id, opts.host_id, opts.account_id],
+  );
+  if (!rowCount) {
+    throw Error("host is not authorized to create codex turn notices");
+  }
 }
 
 async function authorizeActor(opts: {
@@ -249,6 +273,19 @@ export async function createAccountNotice(
     opts.dedupe_key == null || `${opts.dedupe_key}`.trim() === ""
       ? null
       : `${opts.dedupe_key}`.trim();
+  const source_project_id =
+    opts.source_project_id == null || `${opts.source_project_id}`.trim() === ""
+      ? null
+      : requireUuid(opts.source_project_id, "source project id");
+  const source_path =
+    opts.source_path == null || `${opts.source_path}`.trim() === ""
+      ? null
+      : `${opts.source_path}`.trim();
+  const source_fragment_id =
+    opts.source_fragment_id == null ||
+    `${opts.source_fragment_id}`.trim() === ""
+      ? null
+      : `${opts.source_fragment_id}`.trim();
 
   return await createNotificationResult({
     kind: "account_notice",
@@ -257,9 +294,11 @@ export async function createAccountNotice(
     buildEvent: async () => ({
       kind: "account_notice",
       source_bay_id,
-      source_project_id: null,
+      source_project_id,
+      source_path,
+      source_fragment_id,
       actor_account_id: account_id,
-      origin_kind: "system",
+      origin_kind: source_project_id ? "project" : "system",
       payload_json: {
         severity,
         title,
@@ -282,8 +321,110 @@ export async function createAccountNotice(
           origin_label,
           action_link,
           action_label,
+          path: source_path,
+          fragment_id: source_fragment_id,
         },
       })),
+  });
+}
+
+export async function createCodexTurnNotice(
+  opts: CreateCodexTurnNoticeOptions,
+): Promise<CreateNotificationResult> {
+  const account_id = requireAccountId(opts.account_id);
+  const source_project_id = requireUuid(
+    opts.source_project_id,
+    "source project id",
+  );
+  const host_id = opts.host_id
+    ? requireUuid(opts.host_id, "host id")
+    : undefined;
+  if (host_id) {
+    await assertHostCodexTurnNoticeAccess({
+      host_id,
+      project_id: source_project_id,
+      account_id,
+    });
+  } else {
+    await assertProjectCollaboratorAccessAllowRemote({
+      account_id,
+      project_id: source_project_id,
+    });
+  }
+  const source_path = requireNonEmptyString(opts.source_path, "source_path");
+  const source_fragment_id =
+    opts.source_fragment_id == null ||
+    `${opts.source_fragment_id}`.trim() === ""
+      ? null
+      : `${opts.source_fragment_id}`.trim();
+  const thread_id = requireNonEmptyString(opts.thread_id, "thread_id");
+  const thread_label =
+    opts.thread_label == null || `${opts.thread_label}`.trim() === ""
+      ? null
+      : `${opts.thread_label}`.trim();
+  const title = requireNonEmptyString(opts.title, "title");
+  const body_markdown = requireNonEmptyString(
+    opts.body_markdown,
+    "body_markdown",
+  );
+  const severity = normalizeSeverity(opts.severity ?? "info");
+  const stable_source_id =
+    opts.stable_source_id == null || `${opts.stable_source_id}`.trim() === ""
+      ? null
+      : `${opts.stable_source_id}`.trim();
+  const source_bay_id = getConfiguredBayId();
+
+  return await createNotificationResult({
+    kind: "account_notice",
+    source_bay_id,
+    targets: [account_id],
+    buildEvent: async () => ({
+      kind: "account_notice",
+      source_bay_id,
+      source_project_id,
+      source_path,
+      source_fragment_id,
+      actor_account_id: account_id,
+      origin_kind: "project",
+      payload_json: {
+        title,
+        body_markdown,
+        severity,
+        origin_label: "Codex",
+        notice_type: "codex_turn_completion",
+        thread_id,
+        thread_label,
+        stable_source_id,
+      },
+    }),
+    buildTargets: async (targetHomeBays) => [
+      {
+        target_account_id: account_id,
+        target_home_bay_id: targetHomeBays[account_id],
+        dedupe_key: stable_source_id
+          ? [
+              "codex_turn_completion",
+              source_project_id,
+              source_path,
+              thread_id,
+              stable_source_id,
+              account_id,
+            ].join(":")
+          : null,
+        summary_json: {
+          title,
+          body_markdown,
+          severity,
+          origin_label: "Codex",
+          notice_type: "codex_turn_completion",
+          path: source_path,
+          fragment_id: source_fragment_id,
+          thread_id,
+          thread_label,
+          stable_source_id,
+        },
+      },
+    ],
   });
 }
 

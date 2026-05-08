@@ -42,6 +42,23 @@ export interface CreateAccountNoticeOptions {
   action_link?: string;
   action_label?: string;
   dedupe_key?: string;
+  source_project_id?: string | null;
+  source_path?: string;
+  source_fragment_id?: string;
+}
+
+export interface CreateCodexTurnNoticeOptions {
+  account_id?: string;
+  host_id?: string;
+  source_project_id: string;
+  source_path: string;
+  source_fragment_id?: string;
+  thread_id: string;
+  thread_label?: string;
+  title: string;
+  body_markdown: string;
+  severity?: NotificationSeverity;
+  stable_source_id?: string;
 }
 
 export interface NotificationListRow {
@@ -131,6 +148,9 @@ export interface Notifications {
   createAccountNotice: (
     opts: CreateAccountNoticeOptions,
   ) => Promise<CreateNotificationResult>;
+  createCodexTurnNotice: (
+    opts: CreateCodexTurnNoticeOptions,
+  ) => Promise<CreateNotificationResult>;
   list: (opts?: ListNotificationsOptions) => Promise<NotificationListRow[]>;
   counts: (opts?: { account_id?: string }) => Promise<NotificationCountsResult>;
   markRead: (
@@ -145,6 +165,33 @@ export interface Notifications {
 export const notifications = {
   createMention: authFirstRequireAccount,
   createAccountNotice: authFirstRequireAccount,
+  createCodexTurnNotice: async ({ args, account_id, project_id, host_id }) => {
+    if (args[0] == null) {
+      args[0] = {} as any;
+    }
+    if (account_id) {
+      args[0].account_id = account_id;
+      return args;
+    }
+    if (project_id) {
+      if (!args[0].account_id) {
+        throw Error(
+          "project-authenticated codex turn notices require an account_id target",
+        );
+      }
+      return args;
+    }
+    if (host_id) {
+      if (!args[0].account_id) {
+        throw Error(
+          "host-authenticated codex turn notices require an account_id target",
+        );
+      }
+      args[0].host_id = host_id;
+      return args;
+    }
+    throw Error("must be signed in as an account, project, or host");
+  },
   list: authFirstRequireAccount,
   counts: authFirstRequireAccount,
   markRead: authFirstRequireAccount,

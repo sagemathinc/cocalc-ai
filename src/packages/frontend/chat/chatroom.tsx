@@ -4,12 +4,7 @@
  */
 
 import { IS_MOBILE } from "@cocalc/frontend/feature";
-import { Button, Checkbox, Modal, Popconfirm, Space, Tag } from "antd";
-import {
-  delete_local_storage,
-  get_local_storage,
-  set_local_storage,
-} from "@cocalc/frontend/misc";
+import { Button, Modal, Popconfirm, Space, Tag } from "antd";
 import {
   React,
   redux,
@@ -95,6 +90,7 @@ import {
   setWorkspaceReadyForReviewNotice,
 } from "@cocalc/frontend/project/workspaces/runtime";
 import {
+  DEFAULT_CODEX_MODEL_NAME,
   isCodexModelName,
   resolveCodexSessionMode,
 } from "@cocalc/util/ai/codex";
@@ -129,16 +125,11 @@ const GRID_STYLE: React.CSSProperties = {
 
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const ACP_ACTIVE_STATES = new Set(["queue", "sending", "sent", "running"]);
-const CODEX_TURN_NOTIFY_STORAGE_KEY = "cocalc:chat:codex-turn-notify";
 
 function normalizeThreadKey(value?: string | null): string | undefined {
   const key = `${value ?? ""}`.trim();
   if (!key) return undefined;
   return key;
-}
-
-function readCodexTurnNotifyPreference(): boolean {
-  return get_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY) === "true";
 }
 
 export type CodexTurnNotificationWatch = {
@@ -256,6 +247,12 @@ export function appendCompletedCodexTurnNotifications({
     next.push(notification);
   }
   return next;
+}
+
+function threadNotifyOnTurnFinishEnabled(
+  config?: Partial<CodexThreadConfig> | null,
+): boolean {
+  return config?.notifyOnTurnFinish === true;
 }
 
 function buildChatThreadCompletionSnapshots({
@@ -625,12 +622,6 @@ export function ChatPanel({
   ]);
 
   const [composerSession, setComposerSession] = useState(0);
-  const [codexTurnNotificationWatches, setCodexTurnNotificationWatches] =
-    useState<CodexTurnNotificationWatch[]>([]);
-  const [completedCodexTurnNotifications, setCompletedCodexTurnNotifications] =
-    useState<CompletedCodexTurnNotification[]>([]);
-  const [codexTurnNotifyDefaultEnabled, setCodexTurnNotifyDefaultEnabled] =
-    useState<boolean>(() => readCodexTurnNotifyPreference());
   const accountOtherSettings = useTypedRedux("account", "other_settings");
   const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(path);
@@ -836,19 +827,6 @@ export function ChatPanel({
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
   );
-  const notifyOnSelectedTurnFinish = useMemo(
-    () =>
-      !!selectedThreadKey &&
-      (codexTurnNotifyDefaultEnabled ||
-        codexTurnNotificationWatches.some(
-          (watch) => watch.threadKey === selectedThreadKey,
-        )),
-    [
-      codexTurnNotifyDefaultEnabled,
-      codexTurnNotificationWatches,
-      selectedThreadKey,
-    ],
-  );
   const selectedThreadMetadata = useMemo(
     () =>
       selectedThreadKey
@@ -857,6 +835,10 @@ export function ChatPanel({
           })
         : undefined,
     [actions, selectedThreadKey, selectedThreadId, docVersion],
+  );
+  const notifyOnSelectedTurnFinish = useMemo(
+    () => threadNotifyOnTurnFinishEnabled(selectedThreadMetadata?.acp_config),
+    [selectedThreadMetadata?.acp_config],
   );
   const selectedThreadAutomationConfig = useMemo(
     () => visibleAutomationConfig(selectedThreadMetadata?.automation_config),
@@ -1055,70 +1037,14 @@ export function ChatPanel({
   const setNotifyOnSelectedTurnFinish = useCallback(
     (checked: boolean) => {
       if (!selectedThreadKey || !selectedThreadId) return;
-      setCodexTurnNotifyDefaultEnabled(checked);
-      if (checked) {
-        set_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY, "true");
-      } else {
-        delete_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY);
-      }
-      if (!checked) {
-        setCodexTurnNotificationWatches((prev) =>
-          prev.filter((watch) => watch.threadKey !== selectedThreadKey),
-        );
-        return;
-      }
-      const nextWatch = {
-        threadKey: selectedThreadKey,
-        threadId: selectedThreadId,
-        threadLabel:
-          `${selectedThread?.displayLabel ?? selectedThread?.label ?? ""}`.trim() ||
-          "this chat",
-      } satisfies CodexTurnNotificationWatch;
-      setCodexTurnNotificationWatches((prev) => [
-        ...prev.filter((watch) => watch.threadKey !== nextWatch.threadKey),
-        nextWatch,
-      ]);
+      const currentConfig = selectedThreadMetadata?.acp_config ?? {};
+      actions.setCodexConfig(selectedThreadKey, {
+        ...currentConfig,
+        model: currentConfig.model ?? DEFAULT_CODEX_MODEL_NAME,
+        notifyOnTurnFinish: checked,
+      });
     },
-    [selectedThread, selectedThreadId, selectedThreadKey],
-  );
-  const setNotifyForThread = useCallback(
-    ({
-      checked,
-      threadKey,
-      threadId,
-      threadLabel,
-    }: {
-      checked: boolean;
-      threadKey: string;
-      threadId: string;
-      threadLabel: string;
-    }) => {
-      const normalizedThreadKey = `${threadKey ?? ""}`.trim();
-      const normalizedThreadId = `${threadId ?? ""}`.trim();
-      if (!normalizedThreadKey || !normalizedThreadId) return;
-      setCodexTurnNotifyDefaultEnabled(checked);
-      if (checked) {
-        set_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY, "true");
-      } else {
-        delete_local_storage(CODEX_TURN_NOTIFY_STORAGE_KEY);
-      }
-      if (!checked) {
-        setCodexTurnNotificationWatches((prev) =>
-          prev.filter((watch) => watch.threadKey !== normalizedThreadKey),
-        );
-        return;
-      }
-      const nextWatch = {
-        threadKey: normalizedThreadKey,
-        threadId: normalizedThreadId,
-        threadLabel: `${threadLabel ?? ""}`.trim() || "this chat",
-      } satisfies CodexTurnNotificationWatch;
-      setCodexTurnNotificationWatches((prev) => [
-        ...prev.filter((watch) => watch.threadKey !== nextWatch.threadKey),
-        nextWatch,
-      ]);
-    },
-    [],
+    [actions, selectedThreadId, selectedThreadKey, selectedThreadMetadata],
   );
   const hasRunningAcpTurn = useMemo(() => {
     return hasActiveAcpTurnForComposer({
@@ -1128,75 +1054,6 @@ export function ChatPanel({
       acpState,
     });
   }, [isSelectedThreadAI, selectedThreadId, selectedThreadMessages, acpState]);
-  useEffect(() => {
-    if (
-      !codexTurnNotifyDefaultEnabled ||
-      !hasRunningAcpTurn ||
-      !selectedThreadKey ||
-      !selectedThreadId
-    ) {
-      return;
-    }
-    const nextWatch = {
-      threadKey: selectedThreadKey,
-      threadId: selectedThreadId,
-      threadLabel:
-        `${selectedThread?.displayLabel ?? selectedThread?.label ?? ""}`.trim() ||
-        "this chat",
-    } satisfies CodexTurnNotificationWatch;
-    setCodexTurnNotificationWatches((prev) => {
-      const existing = prev.find(
-        (watch) => watch.threadKey === nextWatch.threadKey,
-      );
-      if (
-        existing &&
-        existing.threadId === nextWatch.threadId &&
-        existing.threadLabel === nextWatch.threadLabel
-      ) {
-        return prev;
-      }
-      return [
-        ...prev.filter((watch) => watch.threadKey !== nextWatch.threadKey),
-        nextWatch,
-      ];
-    });
-  }, [
-    codexTurnNotifyDefaultEnabled,
-    hasRunningAcpTurn,
-    selectedThread,
-    selectedThreadId,
-    selectedThreadKey,
-  ]);
-  useEffect(() => {
-    if (codexTurnNotificationWatches.length === 0) return;
-    const snapshots = new Map<string, CodexTurnNotificationSnapshot>();
-    for (const watch of codexTurnNotificationWatches) {
-      const threadMessages = actions.getMessagesInThread(watch.threadId) ?? [];
-      snapshots.set(watch.threadKey, {
-        active: hasActiveAcpTurnForComposer({
-          isSelectedThreadAI: true,
-          selectedThreadId: watch.threadId,
-          selectedThreadMessages: threadMessages,
-          acpState,
-        }),
-        interrupted: latestThreadAcpInterrupted(threadMessages),
-        newestMessageDate: getLatestThreadMessageDate(threadMessages),
-      });
-    }
-    const { remainingWatches, completedNotifications } =
-      splitCompletedCodexTurnNotifications({
-        watches: codexTurnNotificationWatches,
-        snapshots,
-      });
-    if (completedNotifications.length === 0) return;
-    setCodexTurnNotificationWatches(remainingWatches);
-    setCompletedCodexTurnNotifications((prev) =>
-      appendCompletedCodexTurnNotifications({
-        existing: prev,
-        incoming: completedNotifications,
-      }),
-    );
-  }, [actions, acpState, codexTurnNotificationWatches, messages]);
 
   useEffect(() => {
     if (!project_id || !path?.trim() || !account_id?.trim()) {
@@ -1765,68 +1622,6 @@ export function ChatPanel({
     setNewThreadSetup(defaultNewThreadSetup);
   }
 
-  const activeCompletedCodexTurnNotification =
-    completedCodexTurnNotifications[0];
-  const notifyEnabledForCompletedCodexTurn = useMemo(() => {
-    const notification = activeCompletedCodexTurnNotification;
-    if (!notification) return codexTurnNotifyDefaultEnabled;
-    return (
-      codexTurnNotificationWatches.some(
-        (watch) => watch.threadKey === notification.threadKey,
-      ) || codexTurnNotifyDefaultEnabled
-    );
-  }, [
-    activeCompletedCodexTurnNotification,
-    codexTurnNotificationWatches,
-    codexTurnNotifyDefaultEnabled,
-  ]);
-
-  const dismissCompletedCodexTurnNotification = useCallback(() => {
-    setCompletedCodexTurnNotifications((prev) => prev.slice(1));
-  }, []);
-
-  const showCompletedCodexTurnNotification = useCallback(() => {
-    const notification = activeCompletedCodexTurnNotification;
-    if (!notification) return;
-    dismissCompletedCodexTurnNotification();
-    void (async () => {
-      try {
-        if (project_id && path?.trim()) {
-          await redux.getProjectActions(project_id)?.open_file({
-            path,
-            foreground: true,
-            foreground_project: true,
-          });
-        }
-      } catch (err) {
-        console.warn("chatroom: unable to foreground chat file", err);
-      }
-      setAllowAutoSelectThread(false);
-      setSelectedThreadKey(notification.threadKey);
-      const newestMessageDate = Number(notification.newestMessageDate);
-      const scrollToNewest = () => {
-        if (Number.isFinite(newestMessageDate)) {
-          actions.scrollToDate(newestMessageDate, {
-            persistFragment: false,
-          });
-        } else {
-          scrollToBottomRef.current?.(true);
-        }
-      };
-      for (const delayMs of [0, 50, 150, 300]) {
-        window.setTimeout(scrollToNewest, delayMs);
-      }
-    })();
-  }, [
-    actions,
-    activeCompletedCodexTurnNotification,
-    dismissCompletedCodexTurnNotification,
-    path,
-    project_id,
-    setAllowAutoSelectThread,
-    setSelectedThreadKey,
-  ]);
-
   const openGitBrowserForThread = useCallback(
     (threadKey: string) => {
       const threadId = normalizeThreadKey(threadKey);
@@ -2259,49 +2054,6 @@ export function ChatPanel({
         refreshPaymentSource={refreshCodexPaymentSource}
         onClose={() => setCodexPaymentConfigOpen(false)}
       />
-      <Modal
-        title="Codex turn finished"
-        open={activeCompletedCodexTurnNotification != null}
-        destroyOnHidden
-        onCancel={dismissCompletedCodexTurnNotification}
-        footer={[
-          <Button key="cancel" onClick={dismissCompletedCodexTurnNotification}>
-            Cancel
-          </Button>,
-          <Button
-            key="show"
-            type="primary"
-            onClick={showCompletedCodexTurnNotification}
-          >
-            Show
-          </Button>,
-        ]}
-      >
-        <p style={{ marginBottom: 0 }}>
-          Codex finished working in{" "}
-          <strong>
-            {activeCompletedCodexTurnNotification?.threadLabel ?? "this chat"}
-          </strong>
-          .
-        </p>
-        {activeCompletedCodexTurnNotification ? (
-          <div style={{ marginTop: 12 }}>
-            <Checkbox
-              checked={notifyEnabledForCompletedCodexTurn}
-              onChange={(e) =>
-                setNotifyForThread({
-                  checked: e.target.checked,
-                  threadKey: activeCompletedCodexTurnNotification.threadKey,
-                  threadId: activeCompletedCodexTurnNotification.threadId,
-                  threadLabel: activeCompletedCodexTurnNotification.threadLabel,
-                })
-              }
-            >
-              Notify
-            </Checkbox>
-          </div>
-        ) : null}
-      </Modal>
       <Modal
         title="Thread automation"
         open={automationModalOpen}

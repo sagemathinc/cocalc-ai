@@ -79,7 +79,11 @@ export function NotificationRow(props: Props) {
     markReadState(is_read ? "unread" : "read");
   }
 
-  function clickMentionRow(): void {
+  function clickNotificationTarget(): void {
+    if (!project_id || !path) {
+      markReadState("read");
+      return;
+    }
     redux.getProjectActions(project_id).open_file({
       path,
       chat: !!fragmentId?.chat,
@@ -148,8 +152,8 @@ export function NotificationRow(props: Props) {
   }
 
   const onClick =
-    kind === "mention" && project_id
-      ? clickMentionRow
+    project_id && path && (kind === "mention" || kind === "account_notice")
+      ? clickNotificationTarget
       : () => markReadState("read");
 
   return (

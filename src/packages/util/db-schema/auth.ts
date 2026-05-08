@@ -263,6 +263,175 @@ Table({
 });
 
 Table({
+  name: "account_impersonation_grants",
+  rules: {
+    primary_key: "id",
+    durability: "soft",
+    pg_indexes: [
+      "subject_account_id",
+      "actor_account_id",
+      "expire",
+      "consumed_at",
+      "revoked_at",
+      "created",
+    ],
+  },
+  fields: {
+    id: {
+      type: "uuid",
+      desc: "Opaque one-time impersonation grant id.",
+    },
+    subject_account_id: {
+      type: "uuid",
+      desc: "Account being impersonated.",
+    },
+    actor_account_id: {
+      type: "uuid",
+      desc: "Admin account starting the impersonation.",
+    },
+    created: {
+      type: "timestamp",
+      desc: "When this grant was created.",
+    },
+    expire: {
+      type: "timestamp",
+      desc: "When this grant expires.",
+    },
+    consumed_at: {
+      type: "timestamp",
+      desc: "When this grant was redeemed into a browser session.",
+    },
+    revoked_at: {
+      type: "timestamp",
+      desc: "When this grant was revoked before use.",
+    },
+    created_on_bay_id: {
+      type: "string",
+      desc: "Bay that created this grant.",
+    },
+    subject_home_bay_id: {
+      type: "string",
+      desc: "Subject account home bay when the grant was created.",
+    },
+    actor_session_hash: {
+      type: "string",
+      pg_type: "char(127)",
+      desc: "Admin browser session hash that created the grant.",
+    },
+    actor_authenticated_at: {
+      type: "timestamp",
+      desc: "Admin session authenticated_at copied into the grant.",
+    },
+    actor_password_verified_at: {
+      type: "timestamp",
+      desc: "Admin password verification timestamp copied into the grant.",
+    },
+    actor_factor_verified_at: {
+      type: "timestamp",
+      desc: "Admin factor verification timestamp copied into the grant.",
+    },
+    actor_fresh_auth_until: {
+      type: "timestamp",
+      desc: "Admin fresh-auth deadline copied into the grant.",
+    },
+    actor_factor_level: {
+      type: "string",
+      pg_type: "varchar(32)",
+      desc: "Admin factor level copied into the grant.",
+    },
+    reason: {
+      type: "string",
+      desc: "Optional operator reason for impersonation.",
+    },
+    metadata: {
+      type: "map",
+      desc: "Non-secret grant metadata for diagnostics and audit context.",
+    },
+  },
+});
+
+Table({
+  name: "account_impersonation_sessions",
+  rules: {
+    primary_key: "session_hash",
+    durability: "soft",
+    pg_indexes: [
+      "subject_account_id",
+      "actor_account_id",
+      "grant_id",
+      "status",
+      "expire",
+      "updated",
+    ],
+  },
+  fields: {
+    session_hash: {
+      type: "string",
+      pg_type: "char(127)",
+      desc: "Subject browser session hash from remember_me.",
+    },
+    subject_account_id: {
+      type: "uuid",
+      desc: "Account currently being impersonated in this browser session.",
+    },
+    actor_account_id: {
+      type: "uuid",
+      desc: "Admin account acting as the subject.",
+    },
+    grant_id: {
+      type: "uuid",
+      desc: "Grant that created this impersonation session.",
+    },
+    created: {
+      type: "timestamp",
+      desc: "When this impersonation session row was created.",
+    },
+    updated: {
+      type: "timestamp",
+      desc: "When this impersonation session row was last updated.",
+    },
+    expire: {
+      type: "timestamp",
+      desc: "When the subject browser session expires.",
+    },
+    actor_authenticated_at: {
+      type: "timestamp",
+      desc: "Admin authenticated_at copied into the impersonation session.",
+    },
+    actor_password_verified_at: {
+      type: "timestamp",
+      desc: "Admin password verification timestamp copied into the session.",
+    },
+    actor_factor_verified_at: {
+      type: "timestamp",
+      desc: "Admin factor verification timestamp copied into the session.",
+    },
+    actor_fresh_auth_until: {
+      type: "timestamp",
+      desc: "Fresh-auth deadline for dangerous actions during impersonation.",
+    },
+    actor_factor_level: {
+      type: "string",
+      pg_type: "varchar(32)",
+      desc: "Most recent admin second-factor level for this impersonation session.",
+    },
+    status: {
+      type: "string",
+      pg_type: "varchar(32)",
+      desc: "Lifecycle status such as active, ended, or revoked.",
+    },
+    reason: {
+      type: "string",
+      desc: "Optional operator reason carried from the grant.",
+    },
+    metadata: {
+      type: "map",
+      desc: "Non-secret impersonation session metadata and audit context.",
+    },
+  },
+});
+
+Table({
   name: "auth_tokens",
   fields: {
     auth_token: {

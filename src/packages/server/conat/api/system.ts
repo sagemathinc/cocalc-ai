@@ -111,7 +111,13 @@ import {
 } from "./browser-sessions";
 import { getLiveBrowserSessionInfo } from "./browser-sessions-live";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
-import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
+import {
+  recordNewAuthSession,
+  requireFreshAuthForSessionHash,
+} from "@cocalc/server/auth/auth-sessions";
+import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
+import { createImpersonationGrantLocal } from "@cocalc/server/auth/impersonation";
+import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import {
   getProjectAppPublicPolicy as getProjectAppPublicPolicyRaw,
   getPublicAppRouteByHostname as getPublicAppRouteByHostnameRaw,
@@ -119,7 +125,9 @@ import {
   resolvePublicAppDnsTarget,
   reserveProjectAppPublicSubdomain as reserveProjectAppPublicSubdomainRaw,
 } from "@cocalc/server/app-public-subdomains";
+import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
 import { conat } from "@cocalc/backend/conat";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { sysApiMany } from "@cocalc/conat/core/sys";
 import type { ConnectionStats } from "@cocalc/conat/core/types";
 import { getParallelOpsStatus as getParallelOpsStatus0 } from "@cocalc/server/lro/worker-status";
@@ -159,6 +167,7 @@ import type {
 } from "@cocalc/conat/hub/api/system";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getClusterConfig } from "@cocalc/server/cluster-config";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 
 const logger = getLogger("server:conat:api:system");
 // Non-serializable capability used only by trusted in-process inter-bay handlers.
@@ -1433,6 +1442,122 @@ export {
   generateUserAuthToken,
   revokeUserAuthToken,
 } from "@cocalc/server/auth/auth-token";
+
+export async function createImpersonationGrant({
+  account_id,
+  browser_id,
+  subject_account_id,
+  reason,
+  lang_temp,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  subject_account_id: string;
+  reason?: string | null;
+  lang_temp?: string | null;
+}): Promise<{
+  grant_id: string;
+  subject_account_id: string;
+  subject_home_bay_id: string;
+  home_bay_url?: string;
+  url: string;
+  expires_at: Date;
+}> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const subjectAccountId = `${subject_account_id ?? ""}`.trim();
+  if (!subjectAccountId) {
+    throw Error("subject_account_id is required");
+  }
+  const cleanedBrowserId = `${browser_id ?? ""}`.trim();
+  const session_hash = getBrowserAuthSessionHash({
+    account_id,
+    browser_id: cleanedBrowserId,
+  });
+  if (!session_hash) {
+    throw Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+  }
+  const session = await requireFreshAuthForSessionHash({
+    account_id,
+    session_hash,
+  });
+  if (!(await hasActiveSecondFactor(account_id))) {
+    throw Object.assign(
+      new Error(
+        "admins must enable two-factor authentication before impersonating users",
+      ),
+      {
+        code: "two_factor_required",
+      },
+    );
+  }
+  if ((session.factor_level ?? "none") === "none") {
+    throw Object.assign(
+      new Error("recent admin two-factor verification is required"),
+      {
+        code: "fresh_auth_required",
+      },
+    );
+  }
+  const location = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: subjectAccountId,
+  });
+  const subject_home_bay_id =
+    `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  const createOpts = {
+    actor_account_id: account_id,
+    subject_account_id: subjectAccountId,
+    actor_session_hash: session_hash,
+    subject_home_bay_id,
+    actor_authenticated_at: session.authenticated_at ?? null,
+    actor_password_verified_at: session.password_verified_at ?? null,
+    actor_factor_verified_at: session.factor_verified_at ?? null,
+    actor_fresh_auth_until: session.fresh_auth_until ?? null,
+    actor_factor_level: session.factor_level ?? "none",
+    reason,
+    metadata: {
+      created_via: "admin-ui",
+      browser_id: cleanedBrowserId || undefined,
+    },
+  };
+  const grant =
+    subject_home_bay_id === getConfiguredBayId()
+      ? await (async () => {
+          const localGrant = await createImpersonationGrantLocal(createOpts);
+          return {
+            grant_id: localGrant.id,
+            subject_account_id: subjectAccountId,
+            subject_home_bay_id,
+            expires_at: localGrant.expire,
+          };
+        })()
+      : await createInterBayAccountLocalClient({
+          client: getInterBayFabricClient(),
+          dest_bay: subject_home_bay_id,
+        }).createImpersonationGrant(createOpts);
+  const home_bay_url = await getBayPublicOrigin(subject_home_bay_id);
+  const target = new URL(
+    basePath === "/" ? "/auth/impersonate" : `${basePath}/auth/impersonate`,
+    home_bay_url ?? "http://localhost",
+  );
+  target.searchParams.set("grant_id", grant.grant_id);
+  target.searchParams.set("account_id", subjectAccountId);
+  if (`${lang_temp ?? ""}`.trim()) {
+    target.searchParams.set("lang_temp", `${lang_temp}`.trim());
+  }
+  return {
+    grant_id: grant.grant_id,
+    subject_account_id: subjectAccountId,
+    subject_home_bay_id,
+    home_bay_url,
+    url: target.toString(),
+    expires_at: new Date(grant.expires_at),
+  };
+}
 
 export async function userSearch({
   account_id,

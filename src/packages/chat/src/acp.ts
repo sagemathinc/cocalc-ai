@@ -19,6 +19,7 @@ export interface CodexThreadConfig {
   sessionMode?: CodexSessionMode;
   allowWrite?: boolean;
   codexPathOverride?: string;
+  notifyOnTurnFinish?: boolean;
 }
 
 export function appendStreamMessage(

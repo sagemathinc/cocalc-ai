@@ -11,6 +11,7 @@ import {
   assertAccountWriteOnHomeBay,
 } from "@cocalc/server/accounts/rehome-fence";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
+import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
 import { isValidUUID } from "@cocalc/util/misc";
 
 export type SecondFactorMethod = "totp" | "recovery_code";
@@ -442,11 +443,34 @@ export async function revokeOtherAuthSessions({
 export async function requireFreshAuth({
   req,
   account_id,
+  allow_actor_impersonation = false,
 }: {
   req: Request;
   account_id: string;
+  allow_actor_impersonation?: boolean;
 }): Promise<AccountAuthSessionRow> {
   const session = await getCurrentAuthSession({ req, account_id });
+  if (allow_actor_impersonation) {
+    const impersonation = await getImpersonationSessionBySessionHash({
+      session_hash: session.session_hash,
+      subject_account_id: account_id,
+    });
+    if (impersonation) {
+      if (!impersonation.actor_fresh_auth_until) {
+        throw Object.assign(new Error("fresh auth is required"), {
+          code: "fresh_auth_required",
+        });
+      }
+      if (
+        new Date(impersonation.actor_fresh_auth_until).valueOf() < Date.now()
+      ) {
+        throw Object.assign(new Error("fresh auth is required"), {
+          code: "fresh_auth_required",
+        });
+      }
+      return session;
+    }
+  }
   if (!session.fresh_auth_until) {
     throw Object.assign(new Error("fresh auth is required"), {
       code: "fresh_auth_required",
@@ -463,14 +487,37 @@ export async function requireFreshAuth({
 export async function requireFreshAuthForSessionHash({
   session_hash,
   account_id,
+  allow_actor_impersonation = false,
 }: {
   session_hash: string;
   account_id: string;
+  allow_actor_impersonation?: boolean;
 }): Promise<AccountAuthSessionRow> {
   const session = await getCurrentAuthSessionForSessionHash({
     session_hash,
     account_id,
   });
+  if (allow_actor_impersonation) {
+    const impersonation = await getImpersonationSessionBySessionHash({
+      session_hash,
+      subject_account_id: account_id,
+    });
+    if (impersonation) {
+      if (!impersonation.actor_fresh_auth_until) {
+        throw Object.assign(new Error("fresh auth is required"), {
+          code: "fresh_auth_required",
+        });
+      }
+      if (
+        new Date(impersonation.actor_fresh_auth_until).valueOf() < Date.now()
+      ) {
+        throw Object.assign(new Error("fresh auth is required"), {
+          code: "fresh_auth_required",
+        });
+      }
+      return session;
+    }
+  }
   if (!session.fresh_auth_until) {
     throw Object.assign(new Error("fresh auth is required"), {
       code: "fresh_auth_required",

@@ -21,7 +21,7 @@ async function get(req) {
   if (account_id == null) {
     throw Error("must be signed in");
   }
-  await requireFreshAuth({ req, account_id });
+  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   throttle({ account_id, endpoint: "purchases/stripe/create-setup-intent" });
   const { description } = getParams(req);
   return await createSetupIntent({

@@ -13,6 +13,7 @@ currently set for the account, you have to set one as part of this request.
 import setEmailAddress from "@cocalc/server/accounts/set-email-address";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { assertNoImpersonationForSubjectSecurityAction } from "@cocalc/server/auth/impersonation";
 
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
@@ -29,6 +30,11 @@ async function handle(req, res) {
   }
   const { email_address, password } = getParams(req);
   try {
+    await assertNoImpersonationForSubjectSecurityAction({
+      req,
+      account_id,
+      action: "change the account email address",
+    });
     await setEmailAddress({ account_id, email_address, password });
     res.json(SuccessStatus);
   } catch (err) {

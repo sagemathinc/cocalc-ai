@@ -4,6 +4,12 @@ let queryMock: jest.Mock;
 let resolveMembershipForAccountMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
 let enqueueCloudVmWorkMock: jest.Mock;
+let hasActiveSecondFactorMock: jest.Mock;
+let hasPaymentMethodMock: jest.Mock;
+let getBalanceMock: jest.Mock;
+let getMinBalanceMock: jest.Mock;
+let resolveAccountHomeBayMock: jest.Mock;
+let assertDedicatedHostAdmissionForAccountMock: jest.Mock;
 
 const ACCOUNT_ID = "81e787c4-8705-46c5-86df-9d07bc424a01";
 
@@ -16,6 +22,37 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
   __esModule: true,
   resolveMembershipForAccount: (...args: any[]) =>
     resolveMembershipForAccountMock(...args),
+}));
+
+jest.mock("@cocalc/server/auth/two-factor", () => ({
+  __esModule: true,
+  hasActiveSecondFactor: (...args: any[]) => hasActiveSecondFactorMock(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/stripe/get-payment-methods", () => ({
+  __esModule: true,
+  hasPaymentMethod: (...args: any[]) => hasPaymentMethodMock(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/get-balance", () => ({
+  __esModule: true,
+  default: (...args: any[]) => getBalanceMock(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/get-min-balance", () => ({
+  __esModule: true,
+  default: (...args: any[]) => getMinBalanceMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-directory", () => ({
+  __esModule: true,
+  resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/project-host/admission", () => ({
+  __esModule: true,
+  assertDedicatedHostAdmissionForAccount: (...args: any[]) =>
+    assertDedicatedHostAdmissionForAccountMock(...args),
 }));
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
@@ -52,11 +89,27 @@ jest.mock("@cocalc/server/accounts/is-banned", () => ({
 describe("hosts.createHost", () => {
   beforeEach(() => {
     jest.resetModules();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
     resolveMembershipForAccountMock = jest.fn(async () => ({
+      class: "member",
       entitlements: { features: { create_hosts: true } },
+      effective_limits: {
+        prepaid_host_usage_limit_5h_usd: 300,
+        prepaid_host_usage_limit_7d_usd: 1000,
+      },
     }));
     getServerSettingsMock = jest.fn(async () => ({}));
     enqueueCloudVmWorkMock = jest.fn(async () => undefined);
+    hasActiveSecondFactorMock = jest.fn(async () => true);
+    hasPaymentMethodMock = jest.fn(async () => true);
+    getBalanceMock = jest.fn(async () => "25");
+    getMinBalanceMock = jest.fn(async () => "0");
+    resolveAccountHomeBayMock = jest.fn(async () => ({
+      home_bay_id: "bay-0",
+      epoch: 1,
+    }));
+    assertDedicatedHostAdmissionForAccountMock = jest.fn(async () => undefined);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[4]?.pricing_model).toBe("spot");
@@ -119,5 +172,28 @@ describe("hosts.createHost", () => {
         payload: { provider: "gcp" },
       }),
     );
+  });
+
+  it("requires two-factor authentication for billable cloud hosts", async () => {
+    assertDedicatedHostAdmissionForAccountMock = jest.fn(async () => {
+      throw new Error("enable two-factor authentication");
+    });
+    const { createHost } = await import("./hosts");
+    await expect(
+      createHost({
+        account_id: ACCOUNT_ID,
+        name: "fresh-gcp",
+        region: "us-west1",
+        size: "e2-standard-2",
+        pricing_model: "spot",
+        machine: { cloud: "gcp" },
+      }),
+    ).rejects.toThrow("enable two-factor authentication");
+    expect(assertDedicatedHostAdmissionForAccountMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      action: "create",
+      has_active_second_factor_override: false,
+      machine_cloud: "gcp",
+    });
   });
 });

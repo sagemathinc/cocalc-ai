@@ -13,9 +13,13 @@ function quotaTemplate(overrides: Record<string, number>) {
 
 const MIN_AI_LIMIT = 50;
 
-function usageLimitsTemplate(shared_compute_priority: number) {
+function usageLimitsTemplate(
+  shared_compute_priority: number,
+  overrides: Record<string, number> = {},
+) {
   return {
     shared_compute_priority,
+    ...overrides,
   };
 }
 
@@ -93,7 +97,10 @@ export const TIER_TEMPLATES = {
       create_hosts: true,
       project_host_tier: 1,
     },
-    usage_limits: usageLimitsTemplate(3),
+    usage_limits: usageLimitsTemplate(3, {
+      prepaid_host_usage_limit_5h_usd: 300,
+      prepaid_host_usage_limit_7d_usd: 1000,
+    }),
   },
   pro: {
     id: "pro",
@@ -115,7 +122,12 @@ export const TIER_TEMPLATES = {
       create_hosts: true,
       project_host_tier: 2,
     },
-    usage_limits: usageLimitsTemplate(4),
+    usage_limits: usageLimitsTemplate(4, {
+      credit_spend_limit_5h_usd: 300,
+      credit_spend_limit_7d_usd: 1000,
+      prepaid_host_usage_limit_5h_usd: 1000,
+      prepaid_host_usage_limit_7d_usd: 3000,
+    }),
   },
 } as const;
 
@@ -141,6 +153,14 @@ export function applyMembershipTierTemplateFallbacks<
     project_defaults: tier.project_defaults ?? template.project_defaults,
     ai_limits: tier.ai_limits ?? template.ai_limits,
     features: tier.features ?? template.features,
-    usage_limits: tier.usage_limits ?? template.usage_limits,
+    usage_limits:
+      tier.usage_limits != null &&
+      typeof tier.usage_limits === "object" &&
+      !Array.isArray(tier.usage_limits)
+        ? {
+            ...(template.usage_limits ?? {}),
+            ...(tier.usage_limits as Record<string, unknown>),
+          }
+        : (tier.usage_limits ?? template.usage_limits),
   };
 }

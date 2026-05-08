@@ -7,6 +7,10 @@ const path = require("node:path");
 const DEFAULT_TASKS_FILE =
   process.env.COCALC_BUG_HUNT_TASKS ||
   "/home/wstein/cocalc.com/work/wstein.tasks";
+const DEFAULT_TASKS_FILE_FALLBACKS = [
+  DEFAULT_TASKS_FILE,
+  "/home/user/wstein-todo/wstein.tasks",
+];
 const DEFAULT_LIMIT = 25;
 const DEFAULT_STALE_DAYS = 14;
 const BUG_TAGS = new Set(["bug", "blocker"]);
@@ -113,8 +117,32 @@ function parseArgs(argv) {
   return options;
 }
 
-function readTasksFile(tasksFile) {
-  const text = fs.readFileSync(tasksFile, "utf8");
+function resolveTasksFile(tasksFile, options = {}) {
+  const candidates = options.candidates ?? [tasksFile];
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return tasksFile;
+}
+
+function readTasksFile(tasksFile, options = {}) {
+  const allowMissing = !!options.allowMissing;
+  let text;
+  try {
+    text = fs.readFileSync(tasksFile, "utf8");
+  } catch (err) {
+    if (
+      allowMissing &&
+      err &&
+      typeof err === "object" &&
+      err.code === "ENOENT"
+    ) {
+      return [];
+    }
+    throw err;
+  }
   const rows = [];
   for (const [index, rawLine] of text.split(/\r?\n/).entries()) {
     const line = rawLine.trim();
@@ -413,7 +441,18 @@ function formatCandidate(candidate) {
 
 function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
-  const tasks = readTasksFile(options.tasksFile);
+  const tasksFileExplicit =
+    argv.includes("--tasks") || !!process.env.COCALC_BUG_HUNT_TASKS;
+  const resolvedTasksFile = !tasksFileExplicit
+    ? resolveTasksFile(options.tasksFile, {
+        candidates: DEFAULT_TASKS_FILE_FALLBACKS,
+      })
+    : options.tasksFile;
+  const missingDefaultTasksFile =
+    !tasksFileExplicit && resolvedTasksFile === DEFAULT_TASKS_FILE;
+  const tasks = readTasksFile(resolvedTasksFile, {
+    allowMissing: missingDefaultTasksFile,
+  });
   const candidates = filterCandidates(tasks, options);
   const areaGroups = options.groupByArea
     ? groupCandidatesByArea(candidates)
@@ -422,7 +461,10 @@ function main(argv = process.argv.slice(2)) {
     process.stdout.write(
       `${JSON.stringify(
         {
-          tasksFile: options.tasksFile,
+          tasksFile: resolvedTasksFile,
+          ...(missingDefaultTasksFile && tasks.length === 0
+            ? { missingTasksFile: true }
+            : {}),
           count: candidates.length,
           candidates,
           ...(options.groupByArea ? { area_groups: areaGroups } : {}),
@@ -433,7 +475,10 @@ function main(argv = process.argv.slice(2)) {
     );
     return;
   }
-  console.log(`# open bug candidates from ${options.tasksFile}`);
+  if (missingDefaultTasksFile && tasks.length === 0) {
+    console.log(`# tasks file not found: ${resolvedTasksFile}`);
+  }
+  console.log(`# open bug candidates from ${resolvedTasksFile}`);
   if (options.groupByArea) {
     for (const group of areaGroups) {
       console.log(`## ${group.area}`);
@@ -461,6 +506,7 @@ module.exports = {
   isBugCandidate,
   isOpenTask,
   parseArgs,
+  resolveTasksFile,
   readTasksFile,
   toCandidate,
   groupCandidatesByArea,

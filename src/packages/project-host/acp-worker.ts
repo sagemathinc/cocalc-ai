@@ -18,6 +18,7 @@ import { initCodexGeneratedImageBlobWriter } from "./codex/generated-image-blobs
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { configureProjectHostAcpContainerFileIO } from "./file-server";
 import { wireHostsApi } from "./hub/hosts";
+import { wireNotificationsApi } from "./hub/notifications";
 import { wireSystemApi } from "./hub/system";
 import { PROJECT_RUNNER_RPC_TIMEOUT_MS, wireProjectsApi } from "./hub/projects";
 import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
@@ -75,6 +76,7 @@ function configureProjectHostAcpRuntime(): void {
   setPreferContainerExecutor(true);
   wireSystemApi();
   wireHostsApi();
+  wireNotificationsApi();
   setContainerExec((opts) =>
     sandboxExec({
       ...opts,

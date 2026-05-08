@@ -91,6 +91,7 @@ async function maybeRequireFreshAuthForBrowserPurchaseAction({
   await requireFreshAuthForSessionHash({
     account_id: owner,
     session_hash,
+    allow_actor_impersonation: true,
   });
 }
 

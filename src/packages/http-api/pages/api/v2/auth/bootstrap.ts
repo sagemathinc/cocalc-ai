@@ -7,6 +7,7 @@ import { HOME_BAY_ID_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
+import { getImpersonationBootstrapInfo } from "@cocalc/server/auth/impersonation";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 
 export default async function bootstrap(req, res) {
@@ -30,5 +31,6 @@ export default async function bootstrap(req, res) {
     account_id,
     home_bay_id,
     home_bay_url: await getBayPublicOriginForRequest(req, home_bay_id),
+    impersonation: await getImpersonationBootstrapInfo({ req, account_id }),
   });
 }

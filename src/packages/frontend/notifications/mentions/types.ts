@@ -22,6 +22,7 @@ export type MentionInfo = TypedMap<{
   title?: string;
   body_markdown?: string;
   origin_label?: string;
+  notice_type?: string;
   action_link?: string;
   action_label?: string;
   severity?: string;
@@ -29,6 +30,8 @@ export type MentionInfo = TypedMap<{
   error?: string;
   description?: string;
   fragment_id?: string;
+  thread_id?: string;
+  thread_label?: string;
   users?: Map<
     string, // UUIDs
     TypedMap<{

@@ -1,5 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const {
   extractTags,
@@ -8,6 +11,8 @@ const {
   inferSeverity,
   inferStatusHint,
   parseArgs,
+  readTasksFile,
+  resolveTasksFile,
 } = require("./extract-open-bugs.js");
 
 test("extractTags finds hashtags and lowercases them", () => {
@@ -147,4 +152,49 @@ test("groupCandidatesByArea builds a strict area plan after per-area filtering",
       { area: "jupyter", ids: ["jupyter-1"] },
     ],
   );
+});
+
+test("readTasksFile returns an empty list for missing optional defaults", () => {
+  const missing = path.join(
+    os.tmpdir(),
+    `cocalc-bug-hunt-missing-${process.pid}.tasks`,
+  );
+  assert.deepEqual(readTasksFile(missing, { allowMissing: true }), []);
+});
+
+test("resolveTasksFile falls back to the first existing candidate", () => {
+  const tmp = fs.mkdtempSync(
+    path.join(os.tmpdir(), "cocalc-bug-hunt-resolve-tasks-"),
+  );
+  const fallback = path.join(tmp, "fallback.tasks");
+  fs.writeFileSync(fallback, "");
+  assert.equal(
+    resolveTasksFile("/missing/default.tasks", {
+      candidates: ["/missing/default.tasks", fallback],
+    }),
+    fallback,
+  );
+});
+
+test("readTasksFile still throws for missing explicit task files", () => {
+  const missing = path.join(
+    os.tmpdir(),
+    `cocalc-bug-hunt-missing-explicit-${process.pid}.tasks`,
+  );
+  assert.throws(() => readTasksFile(missing), /ENOENT/);
+});
+
+test("readTasksFile still parses newline-delimited json rows", () => {
+  const tmp = fs.mkdtempSync(
+    path.join(os.tmpdir(), "cocalc-bug-hunt-extract-open-bugs-"),
+  );
+  const file = path.join(tmp, "tasks.jsonl");
+  fs.writeFileSync(
+    file,
+    `${JSON.stringify({ task_id: "1", desc: "#bug hello" })}\n${JSON.stringify({ task_id: "2", desc: "#bug world" })}\n`,
+  );
+  assert.deepEqual(readTasksFile(file), [
+    { task_id: "1", desc: "#bug hello" },
+    { task_id: "2", desc: "#bug world" },
+  ]);
 });

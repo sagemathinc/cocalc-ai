@@ -3,6 +3,7 @@ import type {
   HostLroResponse,
   HostSpotRecoveryPolicy,
 } from "@cocalc/conat/hub/api/hosts";
+import { alert_message } from "@cocalc/frontend/alerts";
 import { isFreshAuthRequiredError } from "@cocalc/frontend/auth/fresh-auth";
 import type { HostDrainOptions } from "../types";
 
@@ -123,6 +124,10 @@ export const useHostActions = ({
         }
         throw err;
       }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
       console.error(err);
       return;
     }
@@ -152,6 +157,10 @@ export const useHostActions = ({
         } catch {}
         throw err;
       }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
       console.error(err);
       return;
     }
@@ -174,6 +183,10 @@ export const useHostActions = ({
       if (isFreshAuthRequiredError(err)) {
         throw err;
       }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
       console.error(err);
     }
   };
@@ -196,6 +209,10 @@ export const useHostActions = ({
       if (isFreshAuthRequiredError(err)) {
         throw err;
       }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
       console.error(err);
     }
   };
@@ -220,6 +237,10 @@ export const useHostActions = ({
       if (isFreshAuthRequiredError(err)) {
         throw err;
       }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
       console.error(err);
     }
   };
@@ -247,6 +268,10 @@ export const useHostActions = ({
       if (isFreshAuthRequiredError(err)) {
         throw err;
       }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
       console.error(err);
     }
   };
@@ -274,6 +299,10 @@ export const useHostActions = ({
       if (isFreshAuthRequiredError(err)) {
         throw err;
       }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
       console.error(err);
     }
   };

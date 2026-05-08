@@ -143,6 +143,10 @@ describe("resolveMembershipForAccount", () => {
       egress_7d_bytes: undefined,
       egress_policy: undefined,
       dedicated_host_egress_policy: undefined,
+      credit_spend_limit_5h_usd: undefined,
+      credit_spend_limit_7d_usd: undefined,
+      prepaid_host_usage_limit_5h_usd: undefined,
+      prepaid_host_usage_limit_7d_usd: undefined,
     });
   });
 });

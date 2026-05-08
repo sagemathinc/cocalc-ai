@@ -641,9 +641,9 @@ export function AgentMessageStatus({
           </Button>
         ) : null}
         {generating && onNotifyOnTurnFinishChange ? (
-          <Tooltip title="Show a modal in this browser tab when this Codex turn finishes.">
+          <Tooltip title="Create a notification and show a small toast when this Codex turn finishes.">
             <span
-              title="Show a modal in this browser tab when this Codex turn finishes."
+              title="Create a notification and show a small toast when this Codex turn finishes."
               style={{ display: "inline-flex", alignItems: "center" }}
             >
               <Checkbox
