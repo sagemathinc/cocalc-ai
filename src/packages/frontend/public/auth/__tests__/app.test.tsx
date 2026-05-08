@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import api from "@cocalc/frontend/client/api";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
 import type { PublicConfig } from "@cocalc/frontend/public/common";
@@ -225,6 +225,7 @@ describe("PublicAuthApp", () => {
       state: "pending",
       expires_at: "2026-05-08T18:00:00.000Z",
     } as any);
+    mockedPostAuthApi.mockResolvedValueOnce({ success: true } as any);
 
     render(
       <PublicAuthApp
@@ -238,13 +239,31 @@ describe("PublicAuthApp", () => {
         /This browser is signed in as wstein@gmail.com \(William Stein\)\./,
       ),
     ).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Sign out" })).not.toBeNull();
     expect(
       screen.getByText(
-        /Sign out, then sign in as bella-1@gmail.com \(Bella1 Boo\) and reload this page to approve the CLI login request\./,
+        /and then sign in as bella-1@gmail.com \(Bella1 Boo\) to approve the CLI login request\./,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /If that is inconvenient, open this link in a new temporary incognito or private browser window and sign in there as bella-1@gmail.com \(Bella1 Boo\)\./,
       ),
     ).not.toBeNull();
     expect(
       screen.queryByRole("button", { name: "Approve CLI Login" }),
     ).toBeNull();
+
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {
+      // jsdom does not implement full-page reloads.
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    await waitFor(() =>
+      expect(mockedPostAuthApi).toHaveBeenCalledWith({
+        endpoint: "accounts/sign-out",
+        body: { all: false },
+      }),
+    );
+    consoleError.mockRestore();
   });
 });

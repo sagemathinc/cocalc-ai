@@ -58,6 +58,16 @@ const ALERT_STYLE: CSSProperties = {
   fontSize: "14px",
 } as const;
 
+const ACTION_LINK_STYLE: CSSProperties = {
+  background: "transparent",
+  border: "none",
+  color: "inherit",
+  cursor: "pointer",
+  font: "inherit",
+  padding: 0,
+  textDecoration: "underline",
+} as const;
+
 type ChallengeInfo = {
   challenge_id: string;
   kind: "login" | "elevate";
@@ -182,6 +192,25 @@ function isWrongSignedInAccount(info: ChallengeInfo | null): boolean {
   return info?.current_matches_account === false;
 }
 
+function InlineActionLink(props: {
+  children: ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      disabled={props.disabled}
+      style={{
+        ...ACTION_LINK_STYLE,
+        opacity: props.disabled ? 0.65 : 1,
+      }}
+      onClick={props.onClick}
+    >
+      {props.children}
+    </button>
+  );
+}
+
 export function PublicCliLoginApprovalView({
   challengeId,
   isAuthenticated,
@@ -193,6 +222,7 @@ export function PublicCliLoginApprovalView({
   const [approving, setApproving] = useState(false);
   const [approved, setApproved] = useState(false);
   const [error, setError] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -233,6 +263,22 @@ export function PublicCliLoginApprovalView({
     }
   }
 
+  async function signOut() {
+    setSigningOut(true);
+    setError("");
+    try {
+      await postAuthApi({
+        endpoint: "accounts/sign-out",
+        body: { all: false },
+      });
+      window.location.reload();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
   if (!isAuthenticated) {
     return (
       <div style={STACK_STYLE}>
@@ -249,9 +295,17 @@ export function PublicCliLoginApprovalView({
       <div style={STACK_STYLE}>
         {error ? <Alert kind="error">{error}</Alert> : undefined}
         <Alert kind="error">
-          This browser is signed in as {currentAccountLabel(info)}. Sign out,
-          then sign in as {requestedAccountLabel(info)} and reload this page to
-          approve the CLI login request.
+          This browser is signed in as {currentAccountLabel(info)}.{" "}
+          <InlineActionLink disabled={signingOut} onClick={signOut}>
+            {signingOut ? "Signing out..." : "Sign out"}
+          </InlineActionLink>{" "}
+          and then sign in as {requestedAccountLabel(info)} to approve the CLI
+          login request.
+        </Alert>
+        <Alert kind="info">
+          If that is inconvenient, open this link in a new temporary incognito
+          or private browser window and sign in there as{" "}
+          {requestedAccountLabel(info)}.
         </Alert>
       </div>
     );
@@ -292,6 +346,7 @@ export function PublicCliElevateApprovalView({
   const [saving, setSaving] = useState(false);
   const [approved, setApproved] = useState(false);
   const [error, setError] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
   const inferredMethod = inferSecondFactorInputMethod(code);
 
   useEffect(() => {
@@ -343,6 +398,22 @@ export function PublicCliElevateApprovalView({
     }
   }
 
+  async function signOut() {
+    setSigningOut(true);
+    setError("");
+    try {
+      await postAuthApi({
+        endpoint: "accounts/sign-out",
+        body: { all: false },
+      });
+      window.location.reload();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSigningOut(false);
+    }
+  }
+
   if (!isAuthenticated) {
     return (
       <div style={STACK_STYLE}>
@@ -359,9 +430,17 @@ export function PublicCliElevateApprovalView({
       <div style={STACK_STYLE}>
         {error ? <Alert kind="error">{error}</Alert> : undefined}
         <Alert kind="error">
-          This browser is signed in as {currentAccountLabel(info)}. Sign out,
-          then sign in as {requestedAccountLabel(info)} and reload this page to
-          verify the CLI elevation request.
+          This browser is signed in as {currentAccountLabel(info)}.{" "}
+          <InlineActionLink disabled={signingOut} onClick={signOut}>
+            {signingOut ? "Signing out..." : "Sign out"}
+          </InlineActionLink>{" "}
+          and then sign in as {requestedAccountLabel(info)} to verify the CLI
+          elevation request.
+        </Alert>
+        <Alert kind="info">
+          If that is inconvenient, open this link in a new temporary incognito
+          or private browser window and sign in there as{" "}
+          {requestedAccountLabel(info)}.
         </Alert>
       </div>
     );
