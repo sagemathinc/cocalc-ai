@@ -45,9 +45,11 @@ import {
   shouldApplyGitFileOpenScopedResult,
   matchGitDrawerScrollCommand,
   resolveGitCommitSearchChange,
+  resolveEffectiveGitCommitSelection,
   restoreGitDiffScrollAnchor,
   runGitDrawerScrollCommand,
   scrollGitDrawerElementIntoView,
+  shouldDisplayGitCommitData,
   shouldFinalizeGitFileOpenAction,
   shouldRefreshGitReviewStateOnReconnect,
   shouldCaptureGitDrawerFindShortcut,
@@ -240,6 +242,47 @@ describe("git commit drawer merge commit formatting", () => {
     expect(onOpenDraft).not.toHaveBeenCalled();
 
     selection!.removeAllRanges();
+  });
+
+  it("keeps native diff text selection events from bubbling to drawer actions", () => {
+    const onMouseDown = jest.fn();
+    const onOpenDraft = jest.fn();
+    const { container } = render(
+      React.createElement(
+        "div",
+        { onMouseDown },
+        React.createElement(DiffBlock, {
+          filePath: "src/example.ts",
+          fileIndex: 0,
+          lines: stableDiffLines,
+          languageHint: "typescript",
+          fontSize: 14,
+          comments: stableComments,
+          showResolvedComments: false,
+          commentEnabled: true,
+          activeDraftBody: "",
+          activeEditingBody: "",
+          pendingKey: "",
+          onOpenDraft,
+          onDraftBodyChange: () => {},
+          onCancelDraft: () => {},
+          onOpenEdit: () => {},
+          onEditingBodyChange: () => {},
+          onCancelEdit: () => {},
+          onCreateComment: noopAsync,
+          onUpdateComment: noopAsync,
+          onResolveComment: noopAsync,
+          onReopenComment: noopAsync,
+        }),
+      ),
+    );
+
+    const textRoot = container.querySelector(".cocalc-git-diff-line-text");
+    expect(textRoot).toBeTruthy();
+    fireEvent.mouseDown(textRoot!, { button: 0 });
+
+    expect(onMouseDown).not.toHaveBeenCalled();
+    expect(onOpenDraft).not.toHaveBeenCalled();
   });
 
   it("scopes git review editor cache ids by both account and commit", () => {
@@ -530,6 +573,54 @@ describe("git commit drawer merge commit formatting", () => {
       resolveIncomingGitCommitSelection({
         open: false,
         currentSelectedCommit: "deadbeef",
+        incomingCommit: "abc1234",
+        requestTokenChanged: true,
+      }),
+    ).toBe("deadbeef");
+  });
+
+  it("only displays git show data loaded for the active commit", () => {
+    expect(
+      shouldDisplayGitCommitData({
+        commit: "abc1234",
+        loadedCommit: "abc1234",
+      }),
+    ).toBe(true);
+    expect(
+      shouldDisplayGitCommitData({
+        commit: "abc1234",
+        loadedCommit: "deadbeef",
+      }),
+    ).toBe(false);
+    expect(
+      shouldDisplayGitCommitData({
+        commit: undefined,
+        loadedCommit: "abc1234",
+      }),
+    ).toBe(false);
+  });
+
+  it("uses a fresh explicit commit-link request before the selection effect runs", () => {
+    expect(
+      resolveEffectiveGitCommitSelection({
+        open: true,
+        selectedCommit: "deadbeef",
+        incomingCommit: "abc1234",
+        requestTokenChanged: true,
+      }),
+    ).toBe("abc1234");
+    expect(
+      resolveEffectiveGitCommitSelection({
+        open: true,
+        selectedCommit: "deadbeef",
+        incomingCommit: "abc1234",
+        requestTokenChanged: false,
+      }),
+    ).toBe("deadbeef");
+    expect(
+      resolveEffectiveGitCommitSelection({
+        open: false,
+        selectedCommit: "deadbeef",
         incomingCommit: "abc1234",
         requestTokenChanged: true,
       }),
