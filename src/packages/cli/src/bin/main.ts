@@ -2352,6 +2352,8 @@ const authCommandDeps = {
   durationToMs,
   connectRemote,
   resolveAccountIdFromRemote,
+  buildCookieHeader,
+  cookieNameFor,
   normalizeSecretValue,
   maskSecret,
   sanitizeProfileName,
@@ -2487,7 +2489,6 @@ registerOpCommand(program, opCommandDeps);
 const adminCommandDeps = {
   withContext,
   resolveAccountByIdentifier,
-  normalizeUrl,
   isValidUUID,
 } satisfies AdminCommandDeps;
 

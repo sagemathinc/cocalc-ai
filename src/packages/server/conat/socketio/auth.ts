@@ -238,7 +238,7 @@ export async function getUser(
     browser_id: readBrowserId(socket),
     session_hash: hash,
   });
-  const user = { account_id };
+  const user = { account_id, auth_session_hash: hash };
   assertHubInteractiveEgressAllowed(socket, user);
   return user;
 }

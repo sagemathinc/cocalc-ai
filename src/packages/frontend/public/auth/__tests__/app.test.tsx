@@ -75,6 +75,18 @@ describe("getPublicAuthRouteFromPath", () => {
       code: "CODE12345",
       kind: "redeem",
     });
+    expect(
+      getPublicAuthRouteFromPath("/base/auth/cli-login/challenge-1"),
+    ).toEqual({
+      challengeId: "challenge-1",
+      kind: "auth-cli-login",
+    });
+    expect(
+      getPublicAuthRouteFromPath("/base/auth/cli-elevate/challenge-2"),
+    ).toEqual({
+      challengeId: "challenge-2",
+      kind: "auth-cli-elevate",
+    });
   });
 });
 

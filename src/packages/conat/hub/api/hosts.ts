@@ -1317,6 +1317,7 @@ export interface Hosts {
   createHost: (opts: {
     account_id?: string;
     browser_id?: string;
+    session_hash?: string;
     name: string;
     region: string;
     size: string;
@@ -1330,6 +1331,7 @@ export interface Hosts {
   startHost: (opts: {
     account_id?: string;
     browser_id?: string;
+    session_hash?: string;
     id: string;
   }) => Promise<HostLroResponse>;
   stopHost: (opts: {
@@ -1394,6 +1396,7 @@ export interface Hosts {
   updateHostMachine: (opts: {
     account_id?: string;
     browser_id?: string;
+    session_hash?: string;
     id: string;
     cloud?: HostMachine["cloud"];
     cpu?: number;

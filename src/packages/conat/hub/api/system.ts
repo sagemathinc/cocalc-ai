@@ -1123,6 +1123,7 @@ export interface System {
   createImpersonationGrant: (opts: {
     account_id?: string;
     browser_id?: string;
+    session_hash?: string;
     subject_account_id: string;
     reason?: string | null;
     lang_temp?: string | null;

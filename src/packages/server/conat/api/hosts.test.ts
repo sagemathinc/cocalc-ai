@@ -1267,7 +1267,7 @@ describe("hosts.createHost", () => {
       name: "host-name",
       region: "us-central1",
       size: "small",
-      machine: { cloud: "local", metadata: {} },
+      machine: { cloud: "gcp", machine_type: "e2-standard-4", metadata: {} },
     });
 
     expect(getBrowserAuthSessionHashMock).toHaveBeenCalledWith({
@@ -1297,6 +1297,28 @@ describe("hosts browser fresh auth gating", () => {
   });
 
   it("rejects browser host start without a fresh-auth browser session", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
     const { startHost } = await import("./hosts");
     await expect(
       startHost({
@@ -1322,7 +1344,7 @@ describe("hosts browser fresh auth gating", () => {
               metadata: {
                 owner: ACCOUNT_ID,
                 machine: {
-                  cloud: "local",
+                  cloud: "gcp",
                   machine_type: "e2-standard-4",
                   metadata: { cpu: 4, ram_gb: 16 },
                 },
@@ -1343,6 +1365,48 @@ describe("hosts browser fresh auth gating", () => {
     await updateHostMachine({
       account_id: ACCOUNT_ID,
       browser_id: "browser-1",
+      id: HOST_ID,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
+      session_hash: "session-hash",
+    });
+  });
+
+  it("checks fresh auth before host starts when a CLI session hash is provided", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              bay_id: "bay-0",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { startHost } = await import("./hosts");
+    await startHost({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
     });
 
@@ -1374,6 +1438,9 @@ describe("hosts browser fresh auth gating", () => {
             },
           ],
         };
+      }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
       }
       if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
         return {
@@ -1417,6 +1484,7 @@ describe("hosts browser fresh auth gating", () => {
     const { startHost } = await import("./hosts");
     const result = await startHost({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
     });
 
@@ -1462,6 +1530,9 @@ describe("hosts browser fresh auth gating", () => {
           ],
         };
       }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
       if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
         return {
           rows: [{ stripe_usage_subscription: null }],
@@ -1486,6 +1557,7 @@ describe("hosts browser fresh auth gating", () => {
     const { startHost } = await import("./hosts");
     const result = await startHost({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
     });
 
@@ -1529,6 +1601,9 @@ describe("hosts browser fresh auth gating", () => {
           ],
         };
       }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
 
@@ -1536,6 +1611,7 @@ describe("hosts browser fresh auth gating", () => {
     await expect(
       startHost({
         account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
         id: HOST_ID,
       }),
     ).rejects.toMatchObject({
