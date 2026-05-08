@@ -676,6 +676,42 @@ export function registerAuthCommand(
     });
 
   auth
+    .command("rename <from> <to>")
+    .description("rename an auth profile")
+    .action(async (fromName: string, toName: string, command: Command) => {
+      await runLocalCommand(command, "auth rename", async () => {
+        const configPath = authConfigPath();
+        const config = loadAuthConfig(configPath);
+        const from = sanitizeProfileName(fromName);
+        const to = sanitizeProfileName(toName);
+        if (!config.profiles[from]) {
+          throw new Error(`auth profile '${from}' not found`);
+        }
+        if (from === to) {
+          return {
+            renamed: from,
+            to,
+            current_profile: config.current_profile ?? null,
+          };
+        }
+        if (config.profiles[to]) {
+          throw new Error(`auth profile '${to}' already exists`);
+        }
+        config.profiles[to] = config.profiles[from];
+        delete config.profiles[from];
+        if (config.current_profile === from) {
+          config.current_profile = to;
+        }
+        saveAuthConfig(config, configPath);
+        return {
+          renamed: from,
+          to,
+          current_profile: config.current_profile ?? null,
+        };
+      });
+    });
+
+  auth
     .command("logout")
     .description("remove stored auth profile(s)")
     .option("--all", "remove all auth profiles")

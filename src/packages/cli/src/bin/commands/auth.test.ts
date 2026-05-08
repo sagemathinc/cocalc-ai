@@ -333,3 +333,65 @@ test("auth elevate approves the current CLI session via browser polling", async 
     global.fetch = originalFetch;
   }
 });
+
+test("auth rename renames the selected profile and preserves current selection", async () => {
+  const capture: { data?: any } = {};
+  let config: any = {
+    current_profile: "default",
+    profiles: {
+      default: {
+        api: "https://lite4.cocalc.ai",
+        account_id: "acct-123",
+        email_address: "user@example.com",
+      },
+    },
+  };
+  const program = new Command();
+  registerAuthCommand(
+    program,
+    makeDeps(capture, {
+      loadAuthConfig: () => config,
+      saveAuthConfig: (next: any) => {
+        config = next;
+      },
+    }),
+  );
+  await program.parseAsync([
+    "node",
+    "test",
+    "auth",
+    "rename",
+    "default",
+    "wstein",
+  ]);
+  assert.deepEqual(capture.data, {
+    renamed: "default",
+    to: "wstein",
+    current_profile: "wstein",
+  });
+  assert.equal(config.current_profile, "wstein");
+  assert.equal(config.profiles.default, undefined);
+  assert.equal(config.profiles.wstein.account_id, "acct-123");
+});
+
+test("auth rename rejects conflicting target profiles", async () => {
+  const capture: { data?: any } = {};
+  const config: any = {
+    current_profile: "default",
+    profiles: {
+      default: { account_id: "acct-123" },
+      wstein: { account_id: "acct-456" },
+    },
+  };
+  const program = new Command();
+  registerAuthCommand(
+    program,
+    makeDeps(capture, {
+      loadAuthConfig: () => config,
+    }),
+  );
+  await assert.rejects(
+    program.parseAsync(["node", "test", "auth", "rename", "default", "wstein"]),
+    /auth profile 'wstein' already exists/,
+  );
+});

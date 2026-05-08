@@ -141,6 +141,7 @@ env vars) to avoid discovery calls that may require broader hub permissions.
 - `auth list`
 - `auth login [--profile <name>] [--api ...] [--api-key ...] [--account-id ...]`
 - `auth setup ...` (alias for `auth login`)
+- `auth rename <from> <to>`
 - `auth use <profile>`
 - `auth logout [--target-profile <name>]`
 - `auth logout --all`
