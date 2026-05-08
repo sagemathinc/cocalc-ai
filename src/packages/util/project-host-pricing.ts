@@ -79,6 +79,14 @@ export type NebiusCatalogInstanceType = {
   gpu_label?: string | null;
 };
 
+function isNebiusGpuProductLabel(value?: string | null): boolean {
+  return /^(?:preemptible\s+)?nvidia\b/i.test(`${value ?? ""}`.trim());
+}
+
+function isNebiusCpuProductLabel(value?: string | null): boolean {
+  return /^(?:preemptible\s+)?non-gpu\b/i.test(`${value ?? ""}`.trim());
+}
+
 const GCP_MACHINE_TYPE_FAMILY_RULES: Array<{
   family: GcpPricingFamily;
   prefixes: readonly SupportedGcpMachineTypePrefix[];
@@ -344,10 +352,10 @@ function selectNebiusFamilyRate(opts: {
   }
   for (const [family, items] of families) {
     if ((opts.instance.gpus ?? 0) > 0) {
-      if (!/^nvidia\b/i.test(items[0]?.product ?? "")) continue;
+      if (!isNebiusGpuProductLabel(items[0]?.product)) continue;
       if (!matchesNebiusPriceFamily(opts.instance, family)) continue;
     } else {
-      if (!/^non-gpu\b/i.test(items[0]?.product ?? "")) continue;
+      if (!isNebiusCpuProductLabel(items[0]?.product)) continue;
       if (!matchesNebiusPriceFamily(opts.instance, family)) continue;
     }
     return {

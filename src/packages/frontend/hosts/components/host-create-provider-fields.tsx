@@ -17,6 +17,7 @@ import {
 } from "@cocalc/util/consts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import type { HostFieldId } from "../providers/registry";
+import { HostOptionsSelect } from "./host-options-select";
 import { SshTargetLabel } from "./ssh-target-help";
 
 const MIN_DISK_SIZE = 50;
@@ -196,7 +197,10 @@ export const HostCreateProviderFields: React.FC<
         tooltip={tooltip}
         initialValue={fieldOptions[0]?.value}
       >
-        <Select options={fieldOptions} disabled={!fieldOptions.length} />
+        <HostOptionsSelect
+          options={fieldOptions}
+          disabled={!fieldOptions.length}
+        />
       </Form.Item>
     );
     if (field === "region" && selectedProvider !== "self-host") {
@@ -237,6 +241,7 @@ export const HostCreateProviderFields: React.FC<
           description={
             gcpCompatibilityWarning.compatibleRegions.length ? (
               <Select
+                popupMatchSelectWidth={false}
                 placeholder="Choose a compatible region"
                 options={gcpCompatibilityWarning.compatibleRegions}
                 onChange={(value) => {
@@ -268,6 +273,7 @@ export const HostCreateProviderFields: React.FC<
           description={
             gcpCompatibilityWarning.compatibleZones.length ? (
               <Select
+                popupMatchSelectWidth={false}
                 placeholder="Choose a compatible zone"
                 options={gcpCompatibilityWarning.compatibleZones}
                 onChange={(value) => {

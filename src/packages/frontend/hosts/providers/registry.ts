@@ -51,6 +51,7 @@ export const HOST_FIELDS: HostFieldId[] = [
 export type HostFieldOption<T = unknown> = {
   value: string;
   label: string;
+  selectionLabel?: string;
   disabled?: boolean;
   meta?: T;
 };
@@ -646,6 +647,7 @@ export const getGcpRegionOptions = (
         formatRegionLabel(r.name, zoneWithMeta?.location, zoneWithMeta?.lowC02),
         hourlyRate,
       ),
+      selectionLabel: r.name,
       meta: { compatible, compatibleZone },
     };
   });
@@ -754,6 +756,7 @@ export const getGcpMachineTypeOptions = (
         machine_type: mt.name ?? undefined,
       }),
     ),
+    selectionLabel: mt.name ?? "unknown",
     meta: mt,
   }));
 };
@@ -1144,6 +1147,7 @@ export const getNebiusRegionOptions = (
           region: r.name,
         }),
       ),
+      selectionLabel: r.name,
     }));
   }
   const images =
@@ -1161,6 +1165,7 @@ export const getNebiusRegionOptions = (
         region: name,
       }),
     ),
+    selectionLabel: name,
   }));
 };
 
@@ -1306,6 +1311,7 @@ export const getNebiusInstanceTypeOptions = (
         `${entry.name} (${cpuRamLabel}${gpuLabel}${platformLabel})`,
         hourlyRate,
       ),
+      selectionLabel: entry.name,
       entry,
     };
   });

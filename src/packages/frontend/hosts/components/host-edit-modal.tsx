@@ -21,6 +21,7 @@ import type {
 import type { HostProvider } from "../types";
 import { getDiskTypeOptions } from "../constants";
 import { HostCreateForm } from "./host-create-form";
+import { HostOptionsSelect } from "./host-options-select";
 import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
 import { useHostForm } from "../hooks/use-host-form";
 import { useHostFormValues } from "../hooks/use-host-form-values";
@@ -568,7 +569,10 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
         tooltip={tooltip}
         initialValue={fieldOpts[0]?.value}
       >
-        <Select options={fieldOpts} disabled={!fieldOpts.length || isLocked} />
+        <HostOptionsSelect
+          options={fieldOpts}
+          disabled={!fieldOpts.length || isLocked}
+        />
       </Form.Item>
     );
   };
@@ -696,6 +700,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
               gcpCompatibilityWarning.compatibleRegions.length &&
               !lockRegionZone ? (
                 <Select
+                  popupMatchSelectWidth={false}
                   placeholder="Choose a compatible region"
                   options={gcpCompatibilityWarning.compatibleRegions}
                   onChange={(value) => {
@@ -728,6 +733,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
               gcpCompatibilityWarning.compatibleZones.length &&
               !lockRegionZone ? (
                 <Select
+                  popupMatchSelectWidth={false}
                   placeholder="Choose a compatible zone"
                   options={gcpCompatibilityWarning.compatibleZones}
                   onChange={(value) => {

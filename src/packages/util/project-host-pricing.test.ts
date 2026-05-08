@@ -74,4 +74,54 @@ describe("project host pricing", () => {
       }),
     ).toBeCloseTo(0.114183323, 9);
   });
+
+  it("estimates Nebius spot GPU hourly rates from preemptible catalog rows", () => {
+    expect(
+      estimateNebiusCatalogRateUsdPerHour({
+        prices: [
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. CPU",
+            region: "eu-north1",
+            price_usd: "0.018",
+            unit: "vCPU hour",
+          },
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. RAM",
+            region: "eu-north1",
+            price_usd: "0.0045",
+            unit: "GiB hour",
+          },
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. GPU",
+            region: "eu-north1",
+            price_usd: "0.834",
+            unit: "GPU hour",
+          },
+          {
+            product: "Network SSD IO M3 disk",
+            region: "eu-north1",
+            price_usd: "0.000161111",
+            unit: "GiB hour",
+          },
+        ],
+        region: "eu-north1",
+        pricing_model: "spot",
+        instance: {
+          name: "gpu-h100-80gb-1",
+          platform: "gpu-h100-sxm",
+          platform_label: "H100 NVLink",
+          vcpus: 16,
+          memory_gib: 200,
+          gpus: 1,
+          gpu_label: "NVIDIA H100",
+        },
+        disk_type: "ssd_io_m3",
+        disk_gb: 93,
+        storage_mode: "persistent",
+      }),
+    ).toBeCloseTo(2.036983323, 9);
+  });
 });

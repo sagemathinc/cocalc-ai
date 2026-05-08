@@ -260,4 +260,69 @@ describe("catalog-backed pricing labels", () => {
     expect(estimate?.hourly_label).toContain("/hr");
     expect(estimate?.monthly_label).toContain("/mo");
   });
+
+  it("returns a provider price estimate for Nebius spot GPU selections", () => {
+    const catalog = testCatalog([
+      {
+        kind: "instance_types",
+        scope: "global",
+        payload: [
+          {
+            name: "gpu-h100-80gb-1",
+            platform: "gpu-h100-sxm",
+            platform_label: "H100 NVLink",
+            vcpus: 16,
+            memory_gib: 200,
+            gpus: 1,
+            gpu_label: "NVIDIA H100",
+          },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: [
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. CPU",
+            region: "eu-north1",
+            price_usd: "0.018",
+            unit: "vCPU hour",
+          },
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. RAM",
+            region: "eu-north1",
+            price_usd: "0.0045",
+            unit: "GiB hour",
+          },
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. GPU",
+            region: "eu-north1",
+            price_usd: "0.834",
+            unit: "GPU hour",
+          },
+          {
+            product: "Network SSD IO M3 disk",
+            region: "eu-north1",
+            price_usd: "0.000161111",
+            unit: "GiB hour",
+          },
+        ],
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate("nebius", catalog, {
+      region: "eu-north1",
+      machine_type: "gpu-h100-80gb-1",
+      pricing_model: "spot",
+      storage_mode: "persistent",
+      disk_type: "ssd_io_m3",
+      disk_gb: 93,
+    });
+
+    expect(estimate?.usd_per_hour).toBeCloseTo(2.036983323, 9);
+    expect(estimate?.hourly_label).toContain("/hr");
+  });
 });

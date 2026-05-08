@@ -3,6 +3,7 @@ import { React } from "@cocalc/frontend/app-framework";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { getDiskTypeOptions } from "../constants";
 import type { HostFieldId } from "../providers/registry";
+import { HostOptionsSelect } from "./host-options-select";
 import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
 
 type HostCreateAdvancedFieldsProps = {
@@ -56,7 +57,10 @@ export const HostCreateAdvancedFields: React.FC<
           tooltip={tooltip}
           initialValue={fieldOptions[0]?.value}
         >
-          <Select options={fieldOptions} disabled={!fieldOptions.length} />
+          <HostOptionsSelect
+            options={fieldOptions}
+            disabled={!fieldOptions.length}
+          />
         </Form.Item>
       </Col>
     );
