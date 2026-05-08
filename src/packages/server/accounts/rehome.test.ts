@@ -206,6 +206,20 @@ describe("account rehome", () => {
       ) {
         return { rows: [], rowCount: 0 };
       }
+      if (
+        sql.includes(
+          'DELETE FROM "account_impersonation_grants" WHERE subject_account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_impersonation_sessions" WHERE subject_account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('DELETE FROM "auth_tokens" WHERE account_id=$1')) {
         return { rows: [], rowCount: 0 };
       }
@@ -388,6 +402,12 @@ describe("account rehome", () => {
       if (sql.includes('FROM "account_second_factor_recovery_codes"')) {
         return { rows: [{ rows: [] }] };
       }
+      if (sql.includes('FROM "account_impersonation_grants"')) {
+        return { rows: [{ rows: [] }] };
+      }
+      if (sql.includes('FROM "account_impersonation_sessions"')) {
+        return { rows: [{ rows: [] }] };
+      }
       if (sql.includes('FROM "auth_tokens"')) {
         return { rows: [{ rows: [] }] };
       }
@@ -511,6 +531,20 @@ describe("account rehome", () => {
       if (
         sql.includes(
           'DELETE FROM "account_second_factor_recovery_codes" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_impersonation_grants" WHERE subject_account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_impersonation_sessions" WHERE subject_account_id=$1',
         )
       ) {
         return { rows: [], rowCount: 0 };

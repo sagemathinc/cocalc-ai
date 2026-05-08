@@ -33,7 +33,11 @@ async function get(req) {
     if (!(await userIsInGroup(admin_account_id, "admin"))) {
       throw Error("only admins can create a payment");
     }
-    await requireFreshAuth({ req, account_id: admin_account_id });
+    await requireFreshAuth({
+      req,
+      account_id: admin_account_id,
+      allow_actor_impersonation: true,
+    });
     await createPaymentIntent({
       account_id: user_account_id,
       lineItems,
@@ -50,7 +54,11 @@ async function get(req) {
       account_id,
       endpoint: "purchases/stripe/create-payment-intent",
     });
-    await requireFreshAuth({ req, account_id });
+    await requireFreshAuth({
+      req,
+      account_id,
+      allow_actor_impersonation: true,
+    });
     await createPaymentIntent({
       account_id,
       description,

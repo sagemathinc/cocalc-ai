@@ -11,8 +11,15 @@ import passwordHash, {
 import getCustomize from "@cocalc/database/settings/customize";
 import { getSecretSettingsKey } from "@cocalc/database/settings/secret-settings";
 import getPool from "@cocalc/database/pool";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import hasPassword from "@cocalc/server/auth/has-password";
+import {
+  getImpersonationBootstrapInfo,
+  getCurrentImpersonationSession,
+  setImpersonationActorFreshAuth,
+} from "@cocalc/server/auth/impersonation";
 import isPasswordCorrect from "@cocalc/server/auth/is-password-correct";
 import {
   getCurrentAuthSession,
@@ -35,6 +42,8 @@ import {
   deleteOtherRememberMe,
   getRememberMeHash,
 } from "@cocalc/server/auth/remember-me";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { decryptSecretSettingValue } from "@cocalc/util/secret-settings-crypto";
 import { encryptSecretSettingValue } from "@cocalc/util/secret-settings-crypto";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -311,6 +320,27 @@ function ensureFreshAuthCodeMethod(value: string): SecondFactorMethod {
   throw new Error("invalid second factor method");
 }
 
+function assertFreshAuthDurationMethodCompatible({
+  duration,
+  method,
+}: {
+  duration?: FreshAuthDuration;
+  method?: string;
+}): void {
+  if (duration !== "extended") {
+    return;
+  }
+  const normalizedMethod = `${method ?? ""}`.trim();
+  if (!normalizedMethod || normalizedMethod === "recovery_code") {
+    throw new Error(
+      "extended fresh auth requires a TOTP verification in this browser session",
+    );
+  }
+  if (normalizedMethod !== "totp") {
+    ensureFreshAuthCodeMethod(normalizedMethod);
+  }
+}
+
 function normalizeTotpIssuerHostname(value: string | undefined): string {
   const raw = `${value ?? ""}`.trim();
   if (!raw) return "";
@@ -417,6 +447,35 @@ async function verifyFreshAuthInputs({
   return resolvedMethod;
 }
 
+export async function verifyFreshAuthCredentials({
+  account_id,
+  current_password,
+  method,
+  code,
+}: {
+  account_id: string;
+  current_password: string;
+  method?: string;
+  code?: string;
+}): Promise<AuthSessionFactorLevel> {
+  const accountId = ensureAccountId(account_id);
+  let factor_level: AuthSessionFactorLevel = "none";
+  await withAccountRehomeWriteFence({
+    account_id: accountId,
+    action: "verify fresh auth credentials",
+    fn: async (db) => {
+      factor_level = await verifyFreshAuthInputs({
+        account_id: accountId,
+        current_password,
+        method,
+        code,
+        db,
+      });
+    },
+  });
+  return factor_level;
+}
+
 export async function hasActiveSecondFactor(
   account_id: string,
 ): Promise<boolean> {
@@ -457,6 +516,78 @@ export async function getTwoFactorStatus({
     last_used_at: activeFactor?.last_used_at ?? null,
     pending_setup_count: Number(pendingCount.rows[0]?.count ?? 0) || 0,
     fresh_auth_until,
+  };
+}
+
+async function verifyFreshAuthCredentialsForAccount({
+  account_id,
+  current_password,
+  method,
+  code,
+}: {
+  account_id: string;
+  current_password: string;
+  method?: string;
+  code?: string;
+}): Promise<AuthSessionFactorLevel> {
+  const accountId = ensureAccountId(account_id);
+  const location = await resolveAccountHomeBay({
+    account_id: accountId,
+    user_account_id: accountId,
+  });
+  const home_bay_id =
+    `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  if (home_bay_id === getConfiguredBayId()) {
+    return await verifyFreshAuthCredentials({
+      account_id: accountId,
+      current_password,
+      method,
+      code,
+    });
+  }
+  return (
+    await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: home_bay_id,
+    }).verifyFreshAuthCredentials({
+      account_id: accountId,
+      current_password,
+      method,
+      code,
+    })
+  ).factor_level;
+}
+
+export async function getFreshAuthStatus({
+  req,
+  account_id,
+}: {
+  req: any;
+  account_id: string;
+}): Promise<{
+  mode: "account" | "impersonation_actor";
+  enabled: boolean;
+  actor_account_id?: string;
+  actor_email_address?: string | null;
+  actor_name?: string | null;
+}> {
+  const accountId = ensureAccountId(account_id);
+  const impersonation = await getImpersonationBootstrapInfo({
+    req,
+    account_id: accountId,
+  });
+  if (impersonation?.active) {
+    return {
+      mode: "impersonation_actor",
+      enabled: true,
+      actor_account_id: impersonation.actor_account_id,
+      actor_email_address: impersonation.actor_email_address ?? null,
+      actor_name: impersonation.actor_name ?? null,
+    };
+  }
+  return {
+    mode: "account",
+    enabled: await hasActiveSecondFactor(accountId),
   };
 }
 
@@ -840,6 +971,45 @@ export async function freshAuthSession({
   duration?: FreshAuthDuration;
 }): Promise<{ fresh_auth_until: Date; factor_level: AuthSessionFactorLevel }> {
   const accountId = ensureAccountId(account_id);
+  assertFreshAuthDurationMethodCompatible({ duration, method });
+  const impersonation = await getCurrentImpersonationSession({
+    req,
+    account_id: accountId,
+  });
+  if (impersonation) {
+    const session_hash = getRememberMeHash(req);
+    if (!session_hash) {
+      throw new Error("browser sign-in is required");
+    }
+    const factor_level = await verifyFreshAuthCredentialsForAccount({
+      account_id: impersonation.actor_account_id,
+      current_password,
+      method,
+      code,
+    });
+    if (factor_level === "none") {
+      throw new Error(
+        "a second factor is required when verifying impersonated admin actions",
+      );
+    }
+    const fresh_auth_until = new Date(
+      Date.now() +
+        resolveFreshAuthDurationMs({
+          duration,
+          factor_level,
+        }),
+    );
+    await setImpersonationActorFreshAuth({
+      subject_account_id: accountId,
+      session_hash,
+      factor_level,
+      fresh_auth_until,
+    });
+    return {
+      fresh_auth_until,
+      factor_level,
+    };
+  }
   const session = await getCurrentAuthSession({ req, account_id: accountId });
   let factor_level: AuthSessionFactorLevel = "none";
   await withAccountRehomeWriteFence({

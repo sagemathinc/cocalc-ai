@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@cocalc/frontend/antd-bootstrap";
 import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { SettingBox } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
@@ -50,6 +51,10 @@ function RecoveryCodesBlock({ codes }: { codes: string[] }) {
 }
 
 export default function TwoFactorAuthSetting() {
+  const rawImpersonation = useTypedRedux("account", "impersonation") as any;
+  const impersonation =
+    rawImpersonation?.toJS?.() ?? rawImpersonation ?? undefined;
+  const isImpersonating = impersonation?.active === true;
   const [status, setStatus] = useState<TwoFactorStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -151,6 +156,14 @@ export default function TwoFactorAuthSetting() {
         {loading ? (
           <Alert type="info" showIcon message="Loading security status..." />
         ) : undefined}
+        {isImpersonating ? (
+          <Alert
+            type="warning"
+            showIcon
+            message="Two-factor settings are unavailable while impersonating this account."
+            description="End impersonation and sign in directly as the user to manage their security settings."
+          />
+        ) : undefined}
         {status && !status.enabled && !setup ? (
           <Alert
             type="info"
@@ -182,7 +195,7 @@ export default function TwoFactorAuthSetting() {
             }
           />
         ) : undefined}
-        {setup ? (
+        {isImpersonating ? null : setup ? (
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
             <Alert
               type="info"
@@ -236,7 +249,7 @@ export default function TwoFactorAuthSetting() {
         <RecoveryCodesBlock codes={recoveryCodes} />
       </Space>
       <FreshAuthModal
-        open={freshAction != null}
+        open={freshAction != null && !isImpersonating}
         onCancel={() => setFreshAction(null)}
         onSuccess={async () => {
           if (freshAction === "rotate") {

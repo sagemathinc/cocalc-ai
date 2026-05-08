@@ -1,4 +1,5 @@
 import { useState } from "@cocalc/frontend/app-framework";
+import { alert_message } from "@cocalc/frontend/alerts";
 import { isFreshAuthRequiredError } from "@cocalc/frontend/auth/fresh-auth";
 import {
   buildCreateHostPayload,
@@ -59,6 +60,10 @@ export const useHostCreate = ({
       if (isFreshAuthRequiredError(err)) {
         throw err;
       }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
       console.error(err);
       return false;
     } finally {

@@ -205,6 +205,18 @@ function useMembershipTiers() {
         usage_limit_egress_7d_gb: bytesToGigabytes(
           editing.usage_limits?.egress_7d_bytes,
         ),
+        usage_limit_credit_spend_limit_5h_usd: normalizedOptionalNumber(
+          editing.usage_limits?.credit_spend_limit_5h_usd,
+        ),
+        usage_limit_credit_spend_limit_7d_usd: normalizedOptionalNumber(
+          editing.usage_limits?.credit_spend_limit_7d_usd,
+        ),
+        usage_limit_prepaid_host_usage_limit_5h_usd: normalizedOptionalNumber(
+          editing.usage_limits?.prepaid_host_usage_limit_5h_usd,
+        ),
+        usage_limit_prepaid_host_usage_limit_7d_usd: normalizedOptionalNumber(
+          editing.usage_limits?.prepaid_host_usage_limit_7d_usd,
+        ),
         active: !editing.disabled,
       });
     }
@@ -268,6 +280,26 @@ function useMembershipTiers() {
         usage_limits,
         "egress_7d_bytes",
         gigabytesToBytes(values.usage_limit_egress_7d_gb),
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "credit_spend_limit_5h_usd",
+        values.usage_limit_credit_spend_limit_5h_usd,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "credit_spend_limit_7d_usd",
+        values.usage_limit_credit_spend_limit_7d_usd,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "prepaid_host_usage_limit_5h_usd",
+        values.usage_limit_prepaid_host_usage_limit_5h_usd,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "prepaid_host_usage_limit_7d_usd",
+        values.usage_limit_prepaid_host_usage_limit_7d_usd,
       );
 
       const payload = pick(
@@ -562,6 +594,30 @@ export function MembershipTiers() {
             label="Egress 7d window (GB)"
           >
             <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_credit_spend_limit_5h_usd"
+            label="Dedicated host credit 5h ($)"
+          >
+            <InputNumber min={0} step={1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_credit_spend_limit_7d_usd"
+            label="Dedicated host credit 7d ($)"
+          >
+            <InputNumber min={0} step={1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_prepaid_host_usage_limit_5h_usd"
+            label="Dedicated host prepaid 5h ($)"
+          >
+            <InputNumber min={0} step={1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_prepaid_host_usage_limit_7d_usd"
+            label="Dedicated host prepaid 7d ($)"
+          >
+            <InputNumber min={0} step={1} style={{ width: "100%" }} />
           </Form.Item>
           <Paragraph style={{ color: COLORS.GRAY }}>
             These fields populate the standard shared-host usage limit keys. Use

@@ -514,6 +514,7 @@ describe("purchases membership packages", () => {
 
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: "owner-1",
+      allow_actor_impersonation: true,
       session_hash: "session-1",
     });
     expect(purchaseMembershipPackageMock).toHaveBeenCalledWith({

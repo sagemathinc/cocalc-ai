@@ -55,6 +55,8 @@ const PORTABLE_STATE_TABLES = [
   "account_auth_challenges",
   "account_second_factors",
   "account_second_factor_recovery_codes",
+  "account_impersonation_grants",
+  "account_impersonation_sessions",
   "auth_tokens",
   "api_keys",
   "membership_grants",
@@ -299,7 +301,8 @@ async function replacePortableRows({
           ? ["account_id", "notification_id"]
           : table === "remember_me"
             ? ["hash"]
-            : table === "account_auth_sessions"
+            : table === "account_auth_sessions" ||
+                table === "account_impersonation_sessions"
               ? ["session_hash"]
               : table === "auth_tokens"
                 ? ["auth_token"]
@@ -317,7 +320,12 @@ async function replacePortableRows({
       [account_id],
     );
   } else {
-    await getPool().query(`DELETE FROM "${table}" WHERE account_id=$1`, [
+    const accountColumn =
+      table === "account_impersonation_grants" ||
+      table === "account_impersonation_sessions"
+        ? "subject_account_id"
+        : "account_id";
+    await getPool().query(`DELETE FROM "${table}" WHERE ${accountColumn}=$1`, [
       account_id,
     ]);
   }
@@ -404,7 +412,12 @@ async function clearPortableRows({
     );
     return;
   }
-  await getPool().query(`DELETE FROM "${table}" WHERE account_id=$1`, [
+  const accountColumn =
+    table === "account_impersonation_grants" ||
+    table === "account_impersonation_sessions"
+      ? "subject_account_id"
+      : "account_id";
+  await getPool().query(`DELETE FROM "${table}" WHERE ${accountColumn}=$1`, [
     account_id,
   ]);
 }
@@ -604,7 +617,12 @@ async function loadPortableRows(
         FROM (
           SELECT *
             FROM "${table}"
-           WHERE account_id=$1
+           WHERE ${
+             table === "account_impersonation_grants" ||
+             table === "account_impersonation_sessions"
+               ? "subject_account_id"
+               : "account_id"
+           }=$1
         ) t
     `,
     [account_id],
@@ -624,6 +642,8 @@ async function loadPortableState(
     account_auth_challenges,
     account_second_factors,
     account_second_factor_recovery_codes,
+    account_impersonation_grants,
+    account_impersonation_sessions,
     auth_tokens,
     api_keys,
     membershipPortableState,
@@ -636,6 +656,8 @@ async function loadPortableState(
     loadPortableRows("account_auth_challenges", account_id),
     loadPortableRows("account_second_factors", account_id),
     loadPortableRows("account_second_factor_recovery_codes", account_id),
+    loadPortableRows("account_impersonation_grants", account_id),
+    loadPortableRows("account_impersonation_sessions", account_id),
     loadPortableRows("auth_tokens", account_id),
     loadAccountWidePortableApiKeyRows(account_id),
     getMembershipPortableState(account_id),
@@ -652,6 +674,8 @@ async function loadPortableState(
     account_auth_challenges,
     account_second_factors,
     account_second_factor_recovery_codes,
+    account_impersonation_grants,
+    account_impersonation_sessions,
     auth_tokens,
     api_keys,
     membership_grants: membershipPortableState.membership_grants,
@@ -1075,6 +1099,8 @@ export async function copyAccountRehomeState({
   account_auth_challenges,
   account_second_factors,
   account_second_factor_recovery_codes,
+  account_impersonation_grants,
+  account_impersonation_sessions,
   auth_tokens,
   api_keys,
   membership_grants,
@@ -1132,6 +1158,16 @@ export async function copyAccountRehomeState({
     rows: account_second_factor_recovery_codes ?? [],
   });
   await replacePortableRows({
+    table: "account_impersonation_grants",
+    account_id: accountId,
+    rows: account_impersonation_grants ?? [],
+  });
+  await replacePortableRows({
+    table: "account_impersonation_sessions",
+    account_id: accountId,
+    rows: account_impersonation_sessions ?? [],
+  });
+  await replacePortableRows({
     table: "auth_tokens",
     account_id: accountId,
     rows: auth_tokens ?? [],
@@ -1173,6 +1209,10 @@ export async function copyAccountRehomeState({
     account_collaborator_index_rows: account_collaborator_index?.length ?? 0,
     account_notification_index_rows: account_notification_index?.length ?? 0,
     remember_me_rows: remember_me?.length ?? 0,
+    account_impersonation_grants_rows:
+      account_impersonation_grants?.length ?? 0,
+    account_impersonation_sessions_rows:
+      account_impersonation_sessions?.length ?? 0,
     auth_tokens_rows: auth_tokens?.length ?? 0,
     api_keys_rows: api_keys?.length ?? 0,
     membership_grants_rows: membership_grants?.length ?? 0,

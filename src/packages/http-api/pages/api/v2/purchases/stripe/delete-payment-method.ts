@@ -21,7 +21,7 @@ async function set(req): Promise<{ success: true }> {
   if (account_id == null) {
     throw Error("must be signed in to delete payment method");
   }
-  await requireFreshAuth({ req, account_id });
+  await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   throttle({ account_id, endpoint: "purchases/stripe/delete-payment-method" });
   const { payment_method } = getParams(req);
   if (!payment_method) {

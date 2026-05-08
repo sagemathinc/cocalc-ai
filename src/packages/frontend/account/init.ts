@@ -22,6 +22,7 @@ import { initAccountTable } from "./table-bootstrap";
 import Cookies from "js-cookie";
 import { ACCOUNT_ID_COOKIE } from "@cocalc/frontend/client/client";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
+import { getAuthBootstrap } from "@cocalc/frontend/auth/api";
 
 export function init(redux) {
   // Register account store
@@ -52,6 +53,45 @@ export function init(redux) {
   // Password reset
   actions.setState({ reset_key: reset_password_key() });
 
+  let authBootstrapLoadingFor: string | undefined = undefined;
+  let authBootstrapLoadedFor: string | undefined = undefined;
+
+  async function loadAuthBootstrap(opts?: {
+    account_id?: string;
+    force?: boolean;
+  }) {
+    const account_id =
+      `${opts?.account_id ?? store.get("account_id") ?? ""}`.trim();
+    if (!account_id) {
+      return;
+    }
+    if (
+      !opts?.force &&
+      (authBootstrapLoadingFor === account_id ||
+        authBootstrapLoadedFor === account_id)
+    ) {
+      return;
+    }
+    authBootstrapLoadingFor = account_id;
+    try {
+      const bootstrap = await getAuthBootstrap();
+      actions.setState({
+        home_bay_id: bootstrap.home_bay_id,
+        home_bay_source: bootstrap.home_bay_id
+          ? "cluster-directory"
+          : undefined,
+        impersonation: bootstrap.impersonation ?? null,
+      });
+      authBootstrapLoadedFor = account_id;
+    } catch {
+      authBootstrapLoadedFor = account_id;
+    } finally {
+      if (authBootstrapLoadingFor === account_id) {
+        authBootstrapLoadingFor = undefined;
+      }
+    }
+  }
+
   // Login status
   webapp_client.on("signed_in", async (mesg) => {
     const actions = redux.getActions("account");
@@ -69,20 +109,26 @@ export function init(redux) {
       // pre-sign-in state.
       await once(table, "connected");
     }
+    await loadAuthBootstrap({ account_id: mesg?.account_id, force: true });
     actions.set_user_type("signed_in");
   });
 
   webapp_client.on("signed_out", () => {
+    authBootstrapLoadingFor = undefined;
+    authBootstrapLoadedFor = undefined;
     const actions = redux.getActions("account");
     actions.setState({
       home_bay_id: undefined,
       home_bay_source: undefined,
+      impersonation: null,
       managed_egress_blocked_error: undefined,
     });
     actions.set_user_type("public");
   });
 
   webapp_client.on("remember_me_failed", ({ error } = {}) => {
+    authBootstrapLoadingFor = undefined;
+    authBootstrapLoadedFor = undefined;
     const actions = redux.getActions("account");
     const blocked = parseManagedEgressBlockedError(error);
     if (blocked != null) {
@@ -91,6 +137,7 @@ export function init(redux) {
           webapp_client.account_id ?? Cookies.get(ACCOUNT_ID_COOKIE) ?? "",
         home_bay_id: undefined,
         home_bay_source: undefined,
+        impersonation: null,
         managed_egress_blocked_error: blocked.raw,
         remember_me: false,
         sign_in_error: blocked.raw,
@@ -102,6 +149,7 @@ export function init(redux) {
     actions.setState({
       home_bay_id: undefined,
       home_bay_source: undefined,
+      impersonation: null,
       managed_egress_blocked_error: undefined,
     });
     actions.set_user_type("public");
@@ -130,6 +178,15 @@ export function init(redux) {
 
   let _last_autosave_interval_s = undefined;
   store.on("change", function () {
+    const account_id = `${store.get("account_id") ?? ""}`.trim();
+    if (
+      account_id &&
+      store.get("is_logged_in") &&
+      store.get("impersonation") === undefined
+    ) {
+      void loadAuthBootstrap({ account_id });
+    }
+
     const interval_s = store.get("autosave");
     if (interval_s !== _last_autosave_interval_s) {
       _last_autosave_interval_s = interval_s;

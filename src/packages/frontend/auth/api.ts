@@ -27,6 +27,15 @@ export type AuthBootstrapResponse = {
   account_id?: string;
   home_bay_id?: string;
   home_bay_url?: string;
+  impersonation?: {
+    active: true;
+    actor_account_id: string;
+    actor_email_address?: string | null;
+    actor_name?: string | null;
+    subject_account_id: string;
+    fresh_auth_until?: string | Date | null;
+    factor_level?: "none" | "totp" | "recovery_code" | null;
+  } | null;
 };
 
 export function isWrongBayAuthResponse(

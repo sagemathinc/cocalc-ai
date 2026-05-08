@@ -23,6 +23,7 @@ import type {
 import type {
   ClaimableMembershipPackage,
   MembershipDetails,
+  MembershipEffectiveLimits,
   MembershipPackageAssignment,
   MembershipPackageDetails,
   MembershipResolution,
@@ -68,6 +69,7 @@ import type {
 } from "@cocalc/conat/project-host/api";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
+import type { MoneyValue } from "@cocalc/util/money";
 
 export interface BayOwnership {
   bay_id: string;
@@ -511,6 +513,8 @@ export interface AccountRehomeStateCopyRequest {
   account_auth_challenges?: Record<string, unknown>[];
   account_second_factors?: Record<string, unknown>[];
   account_second_factor_recovery_codes?: Record<string, unknown>[];
+  account_impersonation_grants?: Record<string, unknown>[];
+  account_impersonation_sessions?: Record<string, unknown>[];
   auth_tokens?: Record<string, unknown>[];
   api_keys?: Record<string, unknown>[];
   membership_grants?: Record<string, unknown>[];
@@ -546,6 +550,53 @@ export interface AccountLocalGetMembershipRequest {
 export interface AccountLocalGetMembershipDetailsRequest {
   account_id: string;
   refresh_usage_status?: boolean;
+}
+
+export interface AccountLocalDedicatedHostPolicySnapshot {
+  account_id: string;
+  membership_class: string;
+  can_create_hosts: boolean;
+  effective_limits: MembershipEffectiveLimits;
+  has_active_second_factor: boolean;
+  has_payment_method: boolean;
+  balance: MoneyValue;
+  min_balance: MoneyValue;
+}
+
+export interface AccountLocalGetDedicatedHostPolicySnapshotRequest {
+  account_id: string;
+}
+
+export interface AccountLocalCreateImpersonationGrantRequest {
+  actor_account_id: string;
+  subject_account_id: string;
+  actor_session_hash: string;
+  subject_home_bay_id: string;
+  actor_authenticated_at?: Date | string | number | null;
+  actor_password_verified_at?: Date | string | number | null;
+  actor_factor_verified_at?: Date | string | number | null;
+  actor_fresh_auth_until?: Date | string | number | null;
+  actor_factor_level?: "none" | "totp" | "recovery_code" | null;
+  reason?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AccountLocalCreateImpersonationGrantResult {
+  grant_id: string;
+  subject_account_id: string;
+  subject_home_bay_id: string;
+  expires_at: Date | string | number;
+}
+
+export interface AccountLocalVerifyFreshAuthCredentialsRequest {
+  account_id: string;
+  current_password: string;
+  method?: string;
+  code?: string;
+}
+
+export interface AccountLocalVerifyFreshAuthCredentialsResult {
+  factor_level: "none" | "totp" | "recovery_code";
 }
 
 export interface AccountLocalGetMembershipPackagesRequest {
@@ -851,10 +902,13 @@ export type AccountLocalMethod =
   | "copy-rehome-state"
   | "get-rehome-operation"
   | "reconcile-rehome"
+  | "create-impersonation-grant"
+  | "verify-fresh-auth-credentials"
   | "upsert-membership-grant"
   | "revoke-membership-grant"
   | "get-membership"
   | "get-membership-details"
+  | "get-dedicated-host-policy-snapshot"
   | "get-membership-packages"
   | "get-claimable-membership-packages"
   | "claim-membership-package-seat"
@@ -1421,6 +1475,12 @@ export interface InterBayAccountLocalApi {
     op_id: string;
     source_bay_id?: string;
   }) => Promise<AccountRehomeResponse>;
+  createImpersonationGrant: (
+    opts: AccountLocalCreateImpersonationGrantRequest,
+  ) => Promise<AccountLocalCreateImpersonationGrantResult>;
+  verifyFreshAuthCredentials: (
+    opts: AccountLocalVerifyFreshAuthCredentialsRequest,
+  ) => Promise<AccountLocalVerifyFreshAuthCredentialsResult>;
   upsertMembershipGrant: (
     opts: AccountLocalUpsertMembershipGrantRequest,
   ) => Promise<{ grant_id: string }>;
@@ -1433,6 +1493,9 @@ export interface InterBayAccountLocalApi {
   getMembershipDetails: (
     opts: AccountLocalGetMembershipDetailsRequest,
   ) => Promise<MembershipDetails>;
+  getDedicatedHostPolicySnapshot: (
+    opts: AccountLocalGetDedicatedHostPolicySnapshotRequest,
+  ) => Promise<AccountLocalDedicatedHostPolicySnapshot>;
   getMembershipPackages: (
     opts: AccountLocalGetMembershipPackagesRequest,
   ) => Promise<MembershipPackageDetails[]>;
@@ -2588,6 +2651,24 @@ export function createInterBayAccountLocalClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountLocalSubject({ dest_bay, method: "reconcile-rehome" }),
   });
+  const createImpersonationGrantClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "createImpersonationGrant">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "create-impersonation-grant",
+    }),
+  });
+  const verifyFreshAuthCredentialsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "verifyFreshAuthCredentials">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "verify-fresh-auth-credentials",
+    }),
+  });
   const upsertMembershipGrantClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "upsertMembershipGrant">
   >({
@@ -2622,6 +2703,15 @@ export function createInterBayAccountLocalClient({
     subject: accountLocalSubject({
       dest_bay,
       method: "get-membership-details",
+    }),
+  });
+  const getDedicatedHostPolicySnapshotClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getDedicatedHostPolicySnapshot">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-dedicated-host-policy-snapshot",
     }),
   });
   const getMembershipPackagesClient = createServiceClient<
@@ -2680,6 +2770,10 @@ export function createInterBayAccountLocalClient({
       await getRehomeOperationClient.getRehomeOperation(opts),
     reconcileRehome: async (opts) =>
       await reconcileRehomeClient.reconcileRehome(opts),
+    createImpersonationGrant: async (opts) =>
+      await createImpersonationGrantClient.createImpersonationGrant(opts),
+    verifyFreshAuthCredentials: async (opts) =>
+      await verifyFreshAuthCredentialsClient.verifyFreshAuthCredentials(opts),
     upsertMembershipGrant: async (opts) =>
       await upsertMembershipGrantClient.upsertMembershipGrant(opts),
     revokeMembershipGrant: async (opts) =>
@@ -2688,6 +2782,10 @@ export function createInterBayAccountLocalClient({
       await getMembershipClient.getMembership(opts),
     getMembershipDetails: async (opts) =>
       await getMembershipDetailsClient.getMembershipDetails(opts),
+    getDedicatedHostPolicySnapshot: async (opts) =>
+      await getDedicatedHostPolicySnapshotClient.getDedicatedHostPolicySnapshot(
+        opts,
+      ),
     getMembershipPackages: async (opts) =>
       await getMembershipPackagesClient.getMembershipPackages(opts),
     getClaimableMembershipPackages: async (opts) =>
@@ -2783,6 +2881,34 @@ export function createInterBayAccountLocalHandler({
       },
     }),
     createServiceHandler<
+      Pick<InterBayAccountLocalApi, "createImpersonationGrant">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "create-impersonation-grant",
+      }),
+      impl: {
+        createImpersonationGrant: async (opts) =>
+          await impl.createImpersonationGrant(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "verifyFreshAuthCredentials">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "verify-fresh-auth-credentials",
+      }),
+      impl: {
+        verifyFreshAuthCredentials: async (opts) =>
+          await impl.verifyFreshAuthCredentials(opts),
+      },
+    }),
+    createServiceHandler<
       Pick<InterBayAccountLocalApi, "upsertMembershipGrant">
     >({
       ...options,
@@ -2835,6 +2961,20 @@ export function createInterBayAccountLocalHandler({
         },
       },
     ),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getDedicatedHostPolicySnapshot">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-dedicated-host-policy-snapshot",
+      }),
+      impl: {
+        getDedicatedHostPolicySnapshot: async (opts) =>
+          await impl.getDedicatedHostPolicySnapshot(opts),
+      },
+    }),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "getMembershipPackages">
     >({

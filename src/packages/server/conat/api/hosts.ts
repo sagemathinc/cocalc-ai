@@ -39,6 +39,7 @@ import type {
   ProjectBackupIndexRecord,
 } from "@cocalc/conat/hub/api/hosts";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
+import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import type {
   HostManagedComponentRolloutResponse,
   HostManagedComponentStatus,
@@ -73,7 +74,6 @@ import {
 } from "@cocalc/server/cloud";
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
-import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import {
   gcpSafeName,
   getProviderPrefix,
@@ -153,7 +153,9 @@ import {
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { assertDedicatedHostAdmissionForAccount } from "@cocalc/server/project-host/admission";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
+import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
 import {
   ensureHostOwnerSshTrust as ensureHostOwnerSshTrustInternal,
   getHostRehomeOperation as getHostRehomeOperationInternal,
@@ -887,11 +889,11 @@ async function maybeRequireFreshAuthForBrowserHostAction({
 }: {
   account_id?: string;
   browser_id?: string;
-}): Promise<void> {
+}): Promise<{ allow_second_factor_override: boolean }> {
   const owner = requireAccount(account_id);
   const cleanedBrowserId = `${browser_id ?? ""}`.trim();
   if (!cleanedBrowserId) {
-    return;
+    return { allow_second_factor_override: false };
   }
   const session_hash = getBrowserAuthSessionHash({
     account_id: owner,
@@ -905,7 +907,16 @@ async function maybeRequireFreshAuthForBrowserHostAction({
   await requireFreshAuthForSessionHash({
     account_id: owner,
     session_hash,
+    allow_actor_impersonation: true,
   });
+  return {
+    allow_second_factor_override: !!(await getImpersonationSessionBySessionHash(
+      {
+        session_hash,
+        subject_account_id: owner,
+      },
+    )),
+  };
 }
 
 export { rolloutComponentsForUpgradeResultsInternal as rolloutComponentsForUpgradeResults };
@@ -3338,9 +3349,18 @@ export async function createHost({
   machine?: Host["machine"];
 }): Promise<Host> {
   const owner = requireAccount(account_id);
-  await maybeRequireFreshAuthForBrowserHostAction({ account_id, browser_id });
+  const auth = await maybeRequireFreshAuthForBrowserHostAction({
+    account_id,
+    browser_id,
+  });
   const membership = await loadMembership(owner);
   requireCreateHosts(membership.entitlements);
+  await assertDedicatedHostAdmissionForAccount({
+    account_id: owner,
+    action: "create",
+    machine_cloud: machine?.cloud,
+    has_active_second_factor_override: auth.allow_second_factor_override,
+  });
   return await createHostInternalHelper({
     owner,
     name,
@@ -3418,7 +3438,10 @@ export async function startHost({
   browser_id?: string;
   id: string;
 }): Promise<HostLroResponse> {
-  await maybeRequireFreshAuthForBrowserHostAction({ account_id, browser_id });
+  const auth = await maybeRequireFreshAuthForBrowserHostAction({
+    account_id,
+    browser_id,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge().hostConnection(remoteBay).startHost({
@@ -3428,6 +3451,12 @@ export async function startHost({
     });
   }
   const row = await loadHostForStartStop(id, account_id);
+  await assertDedicatedHostAdmissionForAccount({
+    account_id: requireAccount(account_id),
+    action: "start",
+    machine_cloud: row.metadata?.machine?.cloud,
+    has_active_second_factor_override: auth.allow_second_factor_override,
+  });
   return await createHostLro({
     kind: HOST_START_LRO_KIND,
     row,
@@ -3974,8 +4003,12 @@ export async function updateHostMachine({
   interruption_restore_policy?: HostInterruptionRestorePolicy;
   spot_recovery_policy?: HostSpotRecoveryPolicy;
 }): Promise<Host> {
-  await maybeRequireFreshAuthForBrowserHostAction({ account_id, browser_id });
-  const row = await loadOwnedHost(id, account_id);
+  const owner = requireAccount(account_id);
+  const auth = await maybeRequireFreshAuthForBrowserHostAction({
+    account_id: owner,
+    browser_id,
+  });
+  const row = await loadOwnedHost(id, owner);
   const metadata = row.metadata ?? {};
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
@@ -3995,6 +4028,12 @@ export async function updateHostMachine({
   let nextRegion = row.region ?? "";
   const requestedCloudRaw = typeof cloud === "string" ? cloud : undefined;
   const requestedCloud = normalizeProviderId(requestedCloudRaw);
+  await assertDedicatedHostAdmissionForAccount({
+    account_id: owner,
+    action: "resize",
+    machine_cloud: requestedCloud ?? machineCloud,
+    has_active_second_factor_override: auth.allow_second_factor_override,
+  });
   const cloudChanged =
     requestedCloudRaw !== undefined && requestedCloud !== machineCloud;
   const buildConfigSpec = (

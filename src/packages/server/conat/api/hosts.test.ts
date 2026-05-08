@@ -79,6 +79,11 @@ let bumpReconcileMock: jest.Mock;
 let runReconcileOnceMock: jest.Mock;
 let getBrowserAuthSessionHashMock: jest.Mock;
 let requireFreshAuthForSessionHashMock: jest.Mock;
+let hasActiveSecondFactorMock: jest.Mock;
+let hasPaymentMethodMock: jest.Mock;
+let getBalanceMock: jest.Mock;
+let getMinBalanceMock: jest.Mock;
+let resolveAccountHomeBayMock: jest.Mock;
 const originalFetch = global.fetch;
 
 jest.mock("node:child_process", () => {
@@ -156,6 +161,31 @@ jest.mock("@cocalc/server/auth/auth-sessions", () => ({
   __esModule: true,
   requireFreshAuthForSessionHash: (...args: any[]) =>
     requireFreshAuthForSessionHashMock(...args),
+}));
+
+jest.mock("@cocalc/server/auth/two-factor", () => ({
+  __esModule: true,
+  hasActiveSecondFactor: (...args: any[]) => hasActiveSecondFactorMock(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/stripe/get-payment-methods", () => ({
+  __esModule: true,
+  hasPaymentMethod: (...args: any[]) => hasPaymentMethodMock(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/get-balance", () => ({
+  __esModule: true,
+  default: (...args: any[]) => getBalanceMock(...args),
+}));
+
+jest.mock("@cocalc/server/purchases/get-min-balance", () => ({
+  __esModule: true,
+  default: (...args: any[]) => getMinBalanceMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-directory", () => ({
+  __esModule: true,
+  resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBayMock(...args),
 }));
 
 jest.mock("@cocalc/server/projects/move", () => ({
@@ -436,6 +466,28 @@ beforeEach(() => {
   getProjectUsageAccountIdMock = jest.fn(async () => undefined);
   getBrowserAuthSessionHashMock = jest.fn(() => undefined);
   requireFreshAuthForSessionHashMock = jest.fn(async () => undefined);
+  resolveMembershipForAccountMock = jest.fn(async () => ({
+    class: "member",
+    entitlements: {
+      features: { create_hosts: true },
+      usage_limits: {
+        prepaid_host_usage_limit_5h_usd: 300,
+        prepaid_host_usage_limit_7d_usd: 1000,
+      },
+    },
+    effective_limits: {
+      prepaid_host_usage_limit_5h_usd: 300,
+      prepaid_host_usage_limit_7d_usd: 1000,
+    },
+  }));
+  hasActiveSecondFactorMock = jest.fn(async () => true);
+  hasPaymentMethodMock = jest.fn(async () => true);
+  getBalanceMock = jest.fn(async () => "25");
+  getMinBalanceMock = jest.fn(async () => "0");
+  resolveAccountHomeBayMock = jest.fn(async () => ({
+    home_bay_id: "bay-0",
+    epoch: 1,
+  }));
   fetchMock = jest.fn();
   global.fetch = fetchMock as any;
   hostConnectionGetMock = jest.fn();
@@ -1012,7 +1064,18 @@ describe("hosts.createHost", () => {
     isBannedMock = jest.fn(async () => false);
     moveProjectToHostMock = jest.fn();
     resolveMembershipForAccountMock = jest.fn(async () => ({
-      entitlements: { features: { create_hosts: true } },
+      class: "member",
+      entitlements: {
+        features: { create_hosts: true },
+        usage_limits: {
+          prepaid_host_usage_limit_5h_usd: 300,
+          prepaid_host_usage_limit_7d_usd: 1000,
+        },
+      },
+      effective_limits: {
+        prepaid_host_usage_limit_5h_usd: 300,
+        prepaid_host_usage_limit_7d_usd: 1000,
+      },
     }));
     loadProjectHostMetricsHistoryMock = jest.fn(async () => new Map());
     syncProjectUsersOnHostMock = jest.fn(async () => undefined);
@@ -1106,7 +1169,7 @@ describe("hosts.createHost", () => {
       name: "host-name",
       region: "us-central1",
       size: "small",
-      machine: { cloud: "gcp", metadata: {} },
+      machine: { cloud: "local", metadata: {} },
     });
 
     expect(insertedMetadata.bootstrap_channel).toBeUndefined();
@@ -1151,7 +1214,7 @@ describe("hosts.createHost", () => {
       region: "us-central1",
       size: "small",
       machine: {
-        cloud: "gcp",
+        cloud: "local",
         metadata: {
           bootstrap_channel: "staging",
           bootstrap_version: "bootstrap-v2",
@@ -1185,6 +1248,9 @@ describe("hosts.createHost", () => {
           ],
         };
       }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
       throw new Error(`unexpected query: ${sql}`);
     });
     getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
@@ -1196,7 +1262,7 @@ describe("hosts.createHost", () => {
       name: "host-name",
       region: "us-central1",
       size: "small",
-      machine: { cloud: "gcp", metadata: {} },
+      machine: { cloud: "local", metadata: {} },
     });
 
     expect(getBrowserAuthSessionHashMock).toHaveBeenCalledWith({
@@ -1205,6 +1271,7 @@ describe("hosts.createHost", () => {
     });
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
       session_hash: "session-hash",
     });
   });
@@ -1250,7 +1317,7 @@ describe("hosts browser fresh auth gating", () => {
               metadata: {
                 owner: ACCOUNT_ID,
                 machine: {
-                  cloud: "gcp",
+                  cloud: "local",
                   machine_type: "e2-standard-4",
                   metadata: { cpu: 4, ram_gb: 16 },
                 },
@@ -1259,6 +1326,9 @@ describe("hosts browser fresh auth gating", () => {
             },
           ],
         };
+      }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
       }
       throw new Error(`unexpected query: ${sql}`);
     });
@@ -1273,6 +1343,7 @@ describe("hosts browser fresh auth gating", () => {
 
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
       session_hash: "session-hash",
     });
   });

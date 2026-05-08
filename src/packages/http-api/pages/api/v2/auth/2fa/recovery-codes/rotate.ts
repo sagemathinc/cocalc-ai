@@ -4,6 +4,7 @@
  */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
+import { assertNoImpersonationForSubjectSecurityAction } from "@cocalc/server/auth/impersonation";
 import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { rotateRecoveryCodes } from "@cocalc/server/auth/two-factor";
 
@@ -16,6 +17,11 @@ export default async function rotateRecoveryCodesApi(req, res) {
     if (!getRememberMeHash(req)) {
       throw new Error("browser sign-in is required");
     }
+    await assertNoImpersonationForSubjectSecurityAction({
+      req,
+      account_id,
+      action: "rotate recovery codes",
+    });
     res.json(await rotateRecoveryCodes({ req, account_id }));
   } catch (err) {
     res.json({
