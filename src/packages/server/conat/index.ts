@@ -19,6 +19,7 @@ import { startHostLroWorker } from "@cocalc/server/hosts/start-worker";
 import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
 import { startRootfsReleaseGcMaintenance } from "@cocalc/server/rootfs/gc-maintenance";
 import { startBackgroundAutoGrowMaintenance } from "@cocalc/server/project-host/auto-grow-maintenance";
+import { startDedicatedHostSpendMaintenance } from "@cocalc/server/project-host/spend-maintenance";
 import { startAccountProjectIndexProjectionMaintenance } from "@cocalc/server/projections/account-project-index-maintenance";
 import { startAccountCollaboratorIndexProjectionMaintenance } from "@cocalc/server/projections/account-collaborator-index-maintenance";
 import { startAccountNotificationIndexProjectionMaintenance } from "@cocalc/server/projections/account-notification-index-maintenance";
@@ -85,6 +86,7 @@ export async function initConatApi() {
   startProjectHardDeleteWorker();
   startMoveLroWorker();
   startBackgroundAutoGrowMaintenance();
+  startDedicatedHostSpendMaintenance();
   startRootfsPublishLroWorker();
   startRootfsReleaseGcMaintenance();
   startRestoreLroWorker();

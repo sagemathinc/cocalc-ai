@@ -82,7 +82,6 @@ let requireFreshAuthForSessionHashMock: jest.Mock;
 let hasActiveSecondFactorMock: jest.Mock;
 let hasPaymentMethodMock: jest.Mock;
 let getBalanceMock: jest.Mock;
-let getMinBalanceMock: jest.Mock;
 let resolveAccountHomeBayMock: jest.Mock;
 const originalFetch = global.fetch;
 
@@ -176,11 +175,6 @@ jest.mock("@cocalc/server/purchases/stripe/get-payment-methods", () => ({
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
   __esModule: true,
   default: (...args: any[]) => getBalanceMock(...args),
-}));
-
-jest.mock("@cocalc/server/purchases/get-min-balance", () => ({
-  __esModule: true,
-  default: (...args: any[]) => getMinBalanceMock(...args),
 }));
 
 jest.mock("@cocalc/server/bay-directory", () => ({
@@ -483,7 +477,6 @@ beforeEach(() => {
   hasActiveSecondFactorMock = jest.fn(async () => true);
   hasPaymentMethodMock = jest.fn(async () => true);
   getBalanceMock = jest.fn(async () => "25");
-  getMinBalanceMock = jest.fn(async () => "0");
   resolveAccountHomeBayMock = jest.fn(async () => ({
     home_bay_id: "bay-0",
     epoch: 1,

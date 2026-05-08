@@ -105,6 +105,7 @@ export type SiteSettingsKeys =
   | "project_hosts_local_enabled"
   | "project_hosts_self_host_alpha_enabled"
   | "project_hosts_nebius_enabled"
+  | "project_hosts_funding_mode"
   | "cloudflare_mode"
   | "project_hosts_dns"
   | "project_hosts_app_public_subdomain_suffix"
@@ -278,6 +279,31 @@ const commercial_to_val: ToValFunc<boolean> = (
     return to_bool(val);
   }
   return false;
+};
+
+const PROJECT_HOSTS_FUNDING_MODES = [
+  "auto",
+  "account-prepaid",
+  "site-funded",
+] as const;
+export type ProjectHostsFundingMode = "account-prepaid" | "site-funded";
+
+const project_hosts_funding_mode_to_val: ToValFunc<ProjectHostsFundingMode> = (
+  val?,
+  conf?: { [key in SiteSettingsKeys]: string },
+) => {
+  const mode = to_trimmed_str(val).toLowerCase();
+  if (mode === "account-prepaid" || mode === "site-funded") {
+    return mode;
+  }
+  return commercial_to_val(
+    conf != null
+      ? fallback(conf, "commercial")
+      : site_settings_conf.commercial.default,
+    conf,
+  )
+    ? "account-prepaid"
+    : "site-funded";
 };
 
 export const DATASTORE_TITLE = "Cloud Storage & Remote Filesystems";
@@ -903,6 +929,21 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Project Hosts", "On-Prem"],
     group: "Compute / Project Hosts",
     subgroup: "Enable Providers",
+  },
+  project_hosts_funding_mode: {
+    name: "Project Hosts: Funding Mode",
+    desc: "Choose how billable cloud project hosts are funded. Use **account-prepaid** for the SaaS/commercial path where each user must fund their own hosts. Use **site-funded** when the installation operator pays for cloud hosts directly, such as non-commercial alpha deployments or self-hosted Launchpad sites.",
+    default: "auto",
+    valid: [...PROJECT_HOSTS_FUNDING_MODES],
+    valid_labels: {
+      auto: "Auto",
+      "account-prepaid": "Account prepaid",
+      "site-funded": "Site funded",
+    },
+    to_val: project_hosts_funding_mode_to_val,
+    tags: ["Project Hosts", "Cloud", "Commercialization", "On-Prem"],
+    group: "Compute / Project Hosts",
+    subgroup: "Billing",
   },
   project_hosts_dns: {
     name: "Project Hosts: Domain name",
