@@ -110,6 +110,9 @@ test("auth login stores a dedicated browser-approved CLI session", async () => {
           account_id: "acct-123",
           remember_me: "remember-cookie-1",
           expire: "2026-11-08T10:00:00.000Z",
+          email_address: "user@example.com",
+          first_name: "User",
+          last_name: "Example",
         }),
       } as any;
     }
@@ -136,10 +139,16 @@ test("auth login stores a dedicated browser-approved CLI session", async () => {
     ]);
     assert.equal(capture.data.profile, "default");
     assert.equal(capture.data.account_id, "acct-123");
+    assert.equal(capture.data.email_address, "user@example.com");
+    assert.equal(capture.data.first_name, "User");
+    assert.equal(capture.data.last_name, "Example");
     assert.equal(capture.data.interactive_session, true);
     assert.equal(config.current_profile, "default");
     assert.equal(config.profiles.default.api, "https://lite4.cocalc.ai");
     assert.equal(config.profiles.default.account_id, "acct-123");
+    assert.equal(config.profiles.default.email_address, "user@example.com");
+    assert.equal(config.profiles.default.first_name, "User");
+    assert.equal(config.profiles.default.last_name, "Example");
     assert.match(
       config.profiles.default.cookie,
       /remember_me=remember-cookie-1/,
@@ -153,6 +162,94 @@ test("auth login stores a dedicated browser-approved CLI session", async () => {
         "/api/v2/auth/cli/login/redeem",
       ],
     );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("auth list includes stored account identity details", async () => {
+  const capture: { data?: any } = {};
+  const program = new Command();
+  registerAuthCommand(
+    program,
+    makeDeps(capture, {
+      loadAuthConfig: () => ({
+        current_profile: "default",
+        profiles: {
+          default: {
+            api: "https://lite4.cocalc.ai",
+            account_id: "acct-123",
+            email_address: "user@example.com",
+            first_name: "User",
+            last_name: "Example",
+            cookie: "remember_me=remember-cookie-1",
+          },
+        },
+      }),
+    }),
+  );
+  await program.parseAsync(["node", "test", "auth", "list"]);
+  assert.deepEqual(capture.data, [
+    {
+      profile: "default",
+      current: true,
+      api: "https://lite4.cocalc.ai",
+      account_id: "acct-123",
+      email_address: "user@example.com",
+      first_name: "User",
+      last_name: "Example",
+      api_key: null,
+      cookie: null,
+      bearer: null,
+      hub_password: null,
+    },
+  ]);
+});
+
+test("auth list backfills missing identity details for cookie-backed profiles", async () => {
+  const capture: { data?: any } = {};
+  let config: any = {
+    current_profile: "default",
+    profiles: {
+      default: {
+        api: "https://lite4.cocalc.ai",
+        account_id: "acct-123",
+        cookie: "remember_me=remember-cookie-1",
+      },
+    },
+  };
+  const originalFetch = global.fetch;
+  global.fetch = (async (url: string | URL | Request) => {
+    if (`${url}`.endsWith("/api/v2/accounts/profile")) {
+      return {
+        json: async () => ({
+          profile: {
+            account_id: "acct-123",
+            email_address: "user@example.com",
+            first_name: "User",
+            last_name: "Example",
+          },
+        }),
+      } as any;
+    }
+    throw new Error(`unexpected fetch url ${url}`);
+  }) as any;
+  try {
+    const program = new Command();
+    registerAuthCommand(
+      program,
+      makeDeps(capture, {
+        loadAuthConfig: () => config,
+        saveAuthConfig: (next: any) => {
+          config = next;
+        },
+      }),
+    );
+    await program.parseAsync(["node", "test", "auth", "list"]);
+    assert.equal(config.profiles.default.email_address, "user@example.com");
+    assert.equal(config.profiles.default.first_name, "User");
+    assert.equal(config.profiles.default.last_name, "Example");
+    assert.equal(capture.data[0].email_address, "user@example.com");
   } finally {
     global.fetch = originalFetch;
   }

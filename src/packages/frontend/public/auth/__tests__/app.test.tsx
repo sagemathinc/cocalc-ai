@@ -2,13 +2,18 @@
 
 import { render, screen } from "@testing-library/react";
 import api from "@cocalc/frontend/client/api";
+import { postAuthApi } from "@cocalc/frontend/auth/api";
 import type { PublicConfig } from "@cocalc/frontend/public/common";
 import PublicAuthApp, { getPublicAuthRouteFromPath } from "../app";
 import { getPublicAuthRedirectTargetFromSearch } from "../routes";
 
 jest.mock("@cocalc/frontend/client/api", () => jest.fn());
+jest.mock("@cocalc/frontend/auth/api", () => ({
+  postAuthApi: jest.fn(),
+}));
 
 const mockedApi = jest.mocked(api);
+const mockedPostAuthApi = jest.mocked(postAuthApi);
 const config = (overrides: Partial<PublicConfig> = {}): PublicConfig => ({
   site_name: "Launchpad",
   ...overrides,
@@ -32,6 +37,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   mockedApi.mockReset();
+  mockedPostAuthApi.mockReset();
 });
 
 describe("getPublicAuthRouteFromPath", () => {
@@ -203,5 +209,42 @@ describe("PublicAuthApp", () => {
     expect(
       screen.getByText("Sign in or create an account to redeem this voucher"),
     ).not.toBeNull();
+  });
+
+  it("shows a clear wrong-account warning for CLI login approvals", async () => {
+    mockedPostAuthApi.mockResolvedValueOnce({
+      challenge_id: "challenge-1",
+      kind: "login",
+      account_id: "acct-target",
+      email_address: "bella-1@gmail.com",
+      display_name: "Bella1 Boo",
+      current_account_id: "acct-viewer",
+      current_email_address: "wstein@gmail.com",
+      current_display_name: "William Stein",
+      current_matches_account: false,
+      state: "pending",
+      expires_at: "2026-05-08T18:00:00.000Z",
+    } as any);
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: true })}
+        initialRoute={{ challengeId: "challenge-1", kind: "auth-cli-login" }}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        /This browser is signed in as wstein@gmail.com \(William Stein\)\./,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /Sign out, then sign in as bella-1@gmail.com \(Bella1 Boo\) and reload this page to approve the CLI login request\./,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Approve CLI Login" }),
+    ).toBeNull();
   });
 });

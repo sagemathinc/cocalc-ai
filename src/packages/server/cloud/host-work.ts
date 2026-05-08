@@ -1826,6 +1826,9 @@ async function handleVerifyHostReady(row: any) {
         });
       }
     }
+    throw new Error(
+      `host did not become ready before the startup deadline (${deadlineAt.toISOString()})`,
+    );
   }
 
   await enqueueCloudVmWork({

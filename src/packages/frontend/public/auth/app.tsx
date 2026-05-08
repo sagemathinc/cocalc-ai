@@ -174,22 +174,10 @@ export default function PublicAuthApp({
         )}
         {route.kind === "auth-cli-login" && (
           <>
-            {!config?.is_authenticated ? (
-              <PublicSignInForm
-                onNavigate={onNavigate}
-                redirectToPath={() =>
-                  window.location.pathname + window.location.search
-                }
-              />
-            ) : null}
             <PublicCliLoginApprovalView
               challengeId={route.challengeId}
               isAuthenticated={!!config?.is_authenticated}
             />
-          </>
-        )}
-        {route.kind === "auth-cli-elevate" && (
-          <>
             {!config?.is_authenticated ? (
               <PublicSignInForm
                 onNavigate={onNavigate}
@@ -198,10 +186,22 @@ export default function PublicAuthApp({
                 }
               />
             ) : null}
+          </>
+        )}
+        {route.kind === "auth-cli-elevate" && (
+          <>
             <PublicCliElevateApprovalView
               challengeId={route.challengeId}
               isAuthenticated={!!config?.is_authenticated}
             />
+            {!config?.is_authenticated ? (
+              <PublicSignInForm
+                onNavigate={onNavigate}
+                redirectToPath={() =>
+                  window.location.pathname + window.location.search
+                }
+              />
+            ) : null}
           </>
         )}
         {route.kind === "auth-password-reset-done" && (

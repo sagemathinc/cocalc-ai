@@ -5,6 +5,9 @@ import { dirname, join } from "node:path";
 export type AuthProfile = {
   api?: string;
   account_id?: string;
+  email_address?: string;
+  first_name?: string;
+  last_name?: string;
   api_key?: string;
   cookie?: string;
   bearer?: string;

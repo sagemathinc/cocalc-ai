@@ -537,6 +537,9 @@ export async function redeemCliLoginChallenge({
   expire: Date;
   home_bay_id: string;
   home_bay_url?: string;
+  email_address?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
 }> {
   const row = await getChallengeRow(cleanChallengeId(challenge_id));
   if (!row || row.kind !== "login") {
@@ -603,6 +606,9 @@ export async function redeemCliLoginChallenge({
     expire,
     home_bay_id,
     home_bay_url: undefined,
+    email_address: account?.email_address ?? null,
+    first_name: account?.first_name ?? null,
+    last_name: account?.last_name ?? null,
   };
 }
 

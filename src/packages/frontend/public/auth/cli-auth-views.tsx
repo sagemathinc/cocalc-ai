@@ -64,6 +64,10 @@ type ChallengeInfo = {
   account_id: string;
   email_address?: string | null;
   display_name?: string | null;
+  current_account_id?: string | null;
+  current_email_address?: string | null;
+  current_display_name?: string | null;
+  current_matches_account?: boolean | null;
   requested_duration?: "default" | "extended" | null;
   state: "pending" | "approved" | "redeemed" | "canceled";
   expires_at: string;
@@ -146,15 +150,36 @@ function ActionButton(props: {
   );
 }
 
-function accountLabel(info: ChallengeInfo | null): string {
-  if (!info) {
-    return "this account";
+function formatAccountIdentity(opts: {
+  email_address?: string | null;
+  display_name?: string | null;
+  fallback?: string;
+}): string {
+  const email = `${opts.email_address ?? ""}`.trim();
+  const display = `${opts.display_name ?? ""}`.trim();
+  if (email && display) {
+    return `${email} (${display})`;
   }
-  return (
-    `${info.display_name ?? ""}`.trim() ||
-    `${info.email_address ?? ""}`.trim() ||
-    "this account"
-  );
+  return email || display || opts.fallback || "this account";
+}
+
+function requestedAccountLabel(info: ChallengeInfo | null): string {
+  return formatAccountIdentity({
+    email_address: info?.email_address,
+    display_name: info?.display_name,
+  });
+}
+
+function currentAccountLabel(info: ChallengeInfo | null): string {
+  return formatAccountIdentity({
+    email_address: info?.current_email_address,
+    display_name: info?.current_display_name,
+    fallback: "another account",
+  });
+}
+
+function isWrongSignedInAccount(info: ChallengeInfo | null): boolean {
+  return info?.current_matches_account === false;
 }
 
 export function PublicCliLoginApprovalView({
@@ -212,8 +237,21 @@ export function PublicCliLoginApprovalView({
     return (
       <div style={STACK_STYLE}>
         <Alert kind="info">
-          Sign in with {accountLabel(info)} in this browser, then approve the
-          CLI login request.
+          Sign in as {requestedAccountLabel(info)} in this browser, then approve
+          the CLI login request.
+        </Alert>
+      </div>
+    );
+  }
+
+  if (isWrongSignedInAccount(info)) {
+    return (
+      <div style={STACK_STYLE}>
+        {error ? <Alert kind="error">{error}</Alert> : undefined}
+        <Alert kind="error">
+          This browser is signed in as {currentAccountLabel(info)}. Sign out,
+          then sign in as {requestedAccountLabel(info)} and reload this page to
+          approve the CLI login request.
         </Alert>
       </div>
     );
@@ -228,8 +266,8 @@ export function PublicCliLoginApprovalView({
         </Alert>
       ) : (
         <Alert kind="info">
-          Approve a CLI sign-in for {accountLabel(info)}. This creates a
-          separate CLI session and does not reuse your browser session.
+          Approve a CLI sign-in for {requestedAccountLabel(info)}. This creates
+          a separate CLI session and does not reuse your browser session.
         </Alert>
       )}
       {!approved ? (
@@ -309,8 +347,21 @@ export function PublicCliElevateApprovalView({
     return (
       <div style={STACK_STYLE}>
         <Alert kind="info">
-          Sign in with {accountLabel(info)} in this browser, then verify the CLI
-          elevation request.
+          Sign in as {requestedAccountLabel(info)} in this browser, then verify
+          the CLI elevation request.
+        </Alert>
+      </div>
+    );
+  }
+
+  if (isWrongSignedInAccount(info)) {
+    return (
+      <div style={STACK_STYLE}>
+        {error ? <Alert kind="error">{error}</Alert> : undefined}
+        <Alert kind="error">
+          This browser is signed in as {currentAccountLabel(info)}. Sign out,
+          then sign in as {requestedAccountLabel(info)} and reload this page to
+          verify the CLI elevation request.
         </Alert>
       </div>
     );
@@ -325,7 +376,7 @@ export function PublicCliElevateApprovalView({
         </Alert>
       ) : (
         <Alert kind="info">
-          Verify a CLI security action for {accountLabel(info)}.
+          Verify a CLI security action for {requestedAccountLabel(info)}.
           {allowExtended
             ? " This terminal session will stay elevated for 8 hours."
             : ""}
