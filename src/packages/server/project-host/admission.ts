@@ -16,9 +16,8 @@ import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/eff
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import getBalance from "@cocalc/server/purchases/get-balance";
-import getMinBalance from "@cocalc/server/purchases/get-min-balance";
 import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
-import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
+import { toDecimal } from "@cocalc/util/money";
 import {
   getDedicatedHostWindowUsageLocal,
   isDedicatedHostLaneCurrentlyAllowed,
@@ -34,11 +33,9 @@ export interface DedicatedHostAdmissionDecision {
     | "payment_method_required"
     | "membership_host_spend_not_configured"
     | "prepaid_balance_required"
-    | "credit_line_required"
-    | "prepaid_usage_window_exceeded"
-    | "credit_usage_window_exceeded";
+    | "prepaid_usage_window_exceeded";
   reason?: string;
-  funding_lane?: "prepaid" | "credit";
+  funding_lane?: "prepaid";
 }
 
 function actionLabel(action: DedicatedHostAction): string {
@@ -65,16 +62,12 @@ export function isBillableDedicatedHostCloud(cloud?: string | null): boolean {
 
 export function selectDedicatedHostFundingLane(
   snapshot: AccountLocalDedicatedHostPolicySnapshot,
-): "prepaid" | "credit" | undefined {
+): "prepaid" | undefined {
   const limits = snapshot.effective_limits ?? {};
   const balance = toDecimal(snapshot.balance ?? 0);
-  const minBalance = toDecimal(snapshot.min_balance ?? 0);
   const prepaidEnabled =
     hasPositiveLimit(limits.prepaid_host_usage_limit_5h_usd) ||
     hasPositiveLimit(limits.prepaid_host_usage_limit_7d_usd);
-  const creditEnabled =
-    hasPositiveLimit(limits.credit_spend_limit_5h_usd) ||
-    hasPositiveLimit(limits.credit_spend_limit_7d_usd);
 
   if (
     prepaidEnabled &&
@@ -85,17 +78,6 @@ export function selectDedicatedHostFundingLane(
     })
   ) {
     return "prepaid";
-  }
-  if (
-    creditEnabled &&
-    minBalance.lt(0) &&
-    balance.gt(minBalance) &&
-    isDedicatedHostLaneCurrentlyAllowed({
-      snapshot,
-      funding_lane: "credit",
-    })
-  ) {
-    return "credit";
   }
   return undefined;
 }
@@ -144,20 +126,16 @@ export function evaluateDedicatedHostAdmission({
 
   const limits = snapshot.effective_limits ?? {};
   const balance = toDecimal(snapshot.balance ?? 0);
-  const minBalance = toDecimal(snapshot.min_balance ?? 0);
   const prepaidEnabled =
     hasPositiveLimit(limits.prepaid_host_usage_limit_5h_usd) ||
     hasPositiveLimit(limits.prepaid_host_usage_limit_7d_usd);
-  const creditEnabled =
-    hasPositiveLimit(limits.credit_spend_limit_5h_usd) ||
-    hasPositiveLimit(limits.credit_spend_limit_7d_usd);
 
-  if (!prepaidEnabled && !creditEnabled) {
+  if (!prepaidEnabled) {
     return {
       allowed: false,
       code: "membership_host_spend_not_configured",
       reason:
-        "membership tier does not currently configure dedicated-host spending",
+        "membership tier does not currently configure prepaid dedicated-host spending",
     };
   }
 
@@ -177,28 +155,10 @@ export function evaluateDedicatedHostAdmission({
     };
   }
 
-  if (creditEnabled && minBalance.lt(0) && balance.gt(minBalance)) {
-    return {
-      allowed: false,
-      code: "credit_usage_window_exceeded",
-      reason: `your dedicated-host credit usage window is exhausted; wait for it to reset before trying to ${actionLabel(action)}`,
-    };
-  }
-
-  if (prepaidEnabled) {
-    return {
-      allowed: false,
-      code: "prepaid_balance_required",
-      reason: `add prepaid credit before trying to ${actionLabel(action)}`,
-    };
-  }
-
   return {
     allowed: false,
-    code: "credit_line_required",
-    reason: minBalance.lt(0)
-      ? `your account is already at its dedicated-host credit limit (${moneyToCurrency(minBalance)})`
-      : `your membership tier allows dedicated-host credit, but no credit line is configured for your account`,
+    code: "prepaid_balance_required",
+    reason: `add prepaid credit before trying to ${actionLabel(action)}`,
   };
 }
 
@@ -211,13 +171,11 @@ export async function getDedicatedHostPolicySnapshotLocal(
     has_active_second_factor,
     has_payment_method,
     balance,
-    min_balance,
     dedicated_host_window_usage,
   ] = await Promise.all([
     hasActiveSecondFactor(account_id),
     hasPaymentMethod(account_id),
     getBalance({ account_id }),
-    getMinBalance(account_id),
     getDedicatedHostWindowUsageLocal(account_id),
   ]);
 
@@ -229,7 +187,6 @@ export async function getDedicatedHostPolicySnapshotLocal(
     has_active_second_factor,
     has_payment_method,
     balance,
-    min_balance,
     dedicated_host_window_usage,
   };
 }

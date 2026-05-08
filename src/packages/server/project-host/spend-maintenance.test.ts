@@ -118,7 +118,6 @@ describe("dedicated host spend maintenance", () => {
       has_active_second_factor: true,
       has_payment_method: true,
       balance: "0",
-      min_balance: "0",
       dedicated_host_window_usage: {
         prepaid_5h_usd: "300",
         prepaid_7d_usd: "400",

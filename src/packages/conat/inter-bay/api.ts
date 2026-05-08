@@ -560,7 +560,6 @@ export interface AccountLocalDedicatedHostPolicySnapshot {
   has_active_second_factor: boolean;
   has_payment_method: boolean;
   balance: MoneyValue;
-  min_balance: MoneyValue;
   dedicated_host_window_usage: {
     prepaid_5h_usd: MoneyValue;
     prepaid_7d_usd: MoneyValue;

@@ -19,7 +19,6 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     has_active_second_factor: true,
     has_payment_method: true,
     balance: "25",
-    min_balance: "0",
     dedicated_host_window_usage: {
       prepaid_5h_usd: "0",
       prepaid_7d_usd: "0",
@@ -97,7 +96,7 @@ describe("evaluateDedicatedHostAdmission", () => {
     });
   });
 
-  it("allows credit-funded dedicated host actions when the tier enables credit and the account has headroom", () => {
+  it("does not allow credit-funded dedicated host actions", () => {
     expect(
       evaluateDedicatedHostAdmission({
         action: "start",
@@ -108,12 +107,11 @@ describe("evaluateDedicatedHostAdmission", () => {
             credit_spend_limit_7d_usd: 1000,
           },
           balance: "-25",
-          min_balance: "-100",
         }) as any,
       }),
     ).toMatchObject({
-      allowed: true,
-      funding_lane: "credit",
+      allowed: false,
+      code: "membership_host_spend_not_configured",
     });
   });
 
@@ -153,7 +151,7 @@ describe("evaluateDedicatedHostAdmission", () => {
     });
   });
 
-  it("falls through to credit when prepaid is exhausted but credit headroom remains", () => {
+  it("does not fall through to credit when prepaid is exhausted", () => {
     expect(
       evaluateDedicatedHostAdmission({
         action: "start",
@@ -165,7 +163,6 @@ describe("evaluateDedicatedHostAdmission", () => {
             credit_spend_limit_5h_usd: 300,
             credit_spend_limit_7d_usd: 1000,
           },
-          min_balance: "-100",
           dedicated_host_window_usage: {
             prepaid_5h_usd: "300",
             prepaid_7d_usd: "400",
@@ -175,8 +172,8 @@ describe("evaluateDedicatedHostAdmission", () => {
         }) as any,
       }),
     ).toMatchObject({
-      allowed: true,
-      funding_lane: "credit",
+      allowed: false,
+      code: "prepaid_usage_window_exceeded",
     });
   });
 });

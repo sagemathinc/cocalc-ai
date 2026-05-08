@@ -102,22 +102,7 @@ export function isDedicatedHostLaneCurrentlyAllowed({
       })
     );
   }
-  if (!toDecimal(snapshot.min_balance ?? 0).lt(0)) return false;
-  if (
-    toDecimal(snapshot.balance ?? 0).lte(toDecimal(snapshot.min_balance ?? 0))
-  ) {
-    return false;
-  }
-  return (
-    isLaneWindowAvailable({
-      used: usage.credit_5h_usd,
-      limit: limits.credit_spend_limit_5h_usd,
-    }) &&
-    isLaneWindowAvailable({
-      used: usage.credit_7d_usd,
-      limit: limits.credit_spend_limit_7d_usd,
-    })
-  );
+  return false;
 }
 
 export async function getDedicatedHostWindowUsageLocal(

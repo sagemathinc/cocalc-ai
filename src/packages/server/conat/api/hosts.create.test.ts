@@ -7,7 +7,6 @@ let enqueueCloudVmWorkMock: jest.Mock;
 let hasActiveSecondFactorMock: jest.Mock;
 let hasPaymentMethodMock: jest.Mock;
 let getBalanceMock: jest.Mock;
-let getMinBalanceMock: jest.Mock;
 let resolveAccountHomeBayMock: jest.Mock;
 let assertDedicatedHostAdmissionForAccountMock: jest.Mock;
 let getDedicatedHostPolicySnapshotForAccountMock: jest.Mock;
@@ -42,11 +41,6 @@ jest.mock("@cocalc/server/purchases/stripe/get-payment-methods", () => ({
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
   __esModule: true,
   default: (...args: any[]) => getBalanceMock(...args),
-}));
-
-jest.mock("@cocalc/server/purchases/get-min-balance", () => ({
-  __esModule: true,
-  default: (...args: any[]) => getMinBalanceMock(...args),
 }));
 
 jest.mock("@cocalc/server/bay-directory", () => ({
@@ -123,7 +117,6 @@ describe("hosts.createHost", () => {
     hasActiveSecondFactorMock = jest.fn(async () => true);
     hasPaymentMethodMock = jest.fn(async () => true);
     getBalanceMock = jest.fn(async () => "25");
-    getMinBalanceMock = jest.fn(async () => "0");
     resolveAccountHomeBayMock = jest.fn(async () => ({
       home_bay_id: "bay-0",
       epoch: 1,
@@ -135,7 +128,6 @@ describe("hosts.createHost", () => {
       has_active_second_factor: true,
       has_payment_method: true,
       balance: "25",
-      min_balance: "0",
       effective_limits: {
         prepaid_host_usage_limit_5h_usd: 300,
         prepaid_host_usage_limit_7d_usd: 1000,
