@@ -30,6 +30,7 @@ import type {
   HostBootstrapLifecycleItem,
   HostBootstrapStatus,
   HostCurrentMetrics,
+  HostFundingMode,
   HostMachine,
   HostPressureState,
   HostInterruptionRestorePolicy,
@@ -77,6 +78,20 @@ function normalizeManagedComponentUpgradePolicy(
     default:
       return undefined;
   }
+}
+
+function hostFundingModeFromMetadata(
+  metadata: any,
+): HostFundingMode | undefined {
+  const value = `${metadata?.billing?.funding_mode ?? ""}`.trim().toLowerCase();
+  if (
+    value === "account-prepaid" ||
+    value === "account-postpaid" ||
+    value === "site-funded"
+  ) {
+    return value;
+  }
+  return undefined;
 }
 
 function normalizeManagedComponentRuntimeState(
@@ -1048,6 +1063,7 @@ export function parseRow(
     can_place: opts.can_place,
     reason_unavailable: opts.reason_unavailable,
     starred: opts.starred,
+    funding_mode: hostFundingModeFromMetadata(metadata),
     pricing_model: pricingModel,
     desired_pricing_model: desiredPricingModel,
     effective_pricing_model: effectivePricingModel,

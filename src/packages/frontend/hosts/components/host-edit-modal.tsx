@@ -13,6 +13,7 @@ import type {
   Host,
   HostAutoGrowConfig,
   HostCatalog,
+  HostFundingMode,
   HostInterruptionRestorePolicy,
   HostPricingModel,
   HostSpotRecoveryPolicy,
@@ -35,6 +36,10 @@ import {
   activeSpotRecoveryPolicy,
   defaultRestorePolicy,
 } from "../utils/spot-recovery-policy";
+import {
+  type HostFundingModeOption,
+  isBillableHostProvider,
+} from "../utils/funding-mode";
 import { SshTargetLabel } from "./ssh-target-help";
 
 const NEBIUS_IO_M3_GB = 93;
@@ -44,6 +49,7 @@ type HostEditModalProps = {
   host?: Host;
   catalog?: HostCatalog;
   providerOptions?: Array<{ value: HostProvider; label: string }>;
+  fundingModeOptions?: HostFundingModeOption[];
   catalogError?: string;
   saving?: boolean;
   onCancel: () => void;
@@ -52,6 +58,7 @@ type HostEditModalProps = {
     values: {
       name: string;
       provider?: HostProvider;
+      funding_mode?: HostFundingMode;
       cpu?: number;
       ram_gb?: number;
       disk_gb?: number;
@@ -79,6 +86,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   host,
   catalog,
   providerOptions = [],
+  fundingModeOptions = [],
   catalogError,
   saving,
   onCancel,
@@ -197,7 +205,11 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedSize = Form.useWatch("size", form);
   const watchedPricingModel = Form.useWatch("pricing_model", form);
+  const watchedFundingMode = Form.useWatch("funding_mode", form);
   const hideAdvanced = providerId === "self-host";
+  const showFundingMode =
+    providerId !== undefined && isBillableHostProvider(providerId);
+  const canEditFundingMode = canEditMachine;
   const selection: ProviderSelection = {
     region: watchedRegion ?? host?.region ?? undefined,
     zone: watchedZone ?? host?.machine?.zone ?? undefined,
@@ -375,6 +387,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       size: host.machine?.machine_type ?? host.size ?? undefined,
       storage_mode: storageMode,
       disk_type: host.machine?.disk_type,
+      funding_mode: host.funding_mode ?? undefined,
       pricing_model: host.pricing_model ?? "on_demand",
       interruption_restore_policy:
         host.interruption_restore_policy ??
@@ -568,8 +581,10 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             form={form}
             canCreateHosts={true}
             provider={createProviderVm}
+            billing={{ fundingModeOptions }}
             onProviderChange={handleProviderChange}
             wrapForm={false}
+            autoSelectFundingMode={false}
           />
         ) : (
           <>
@@ -583,6 +598,40 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             >
               <Input placeholder="Host name" />
             </Form.Item>
+            {showFundingMode && (
+              <Form.Item
+                name="funding_mode"
+                label="Billing"
+                extra={
+                  canEditFundingMode
+                    ? undefined
+                    : "Stop the host before changing how it is funded."
+                }
+                rules={
+                  canEditFundingMode
+                    ? [
+                        {
+                          required: true,
+                          message:
+                            "Please choose how this host will be funded.",
+                        },
+                      ]
+                    : undefined
+                }
+              >
+                <Select
+                  options={fundingModeOptions}
+                  disabled={!canEditFundingMode || !fundingModeOptions.length}
+                  placeholder={
+                    canEditFundingMode
+                      ? "Select funding mode"
+                      : watchedFundingMode
+                        ? undefined
+                        : "No explicit funding mode"
+                  }
+                />
+              </Form.Item>
+            )}
             {showSpotFields && (
               <>
                 <Form.Item

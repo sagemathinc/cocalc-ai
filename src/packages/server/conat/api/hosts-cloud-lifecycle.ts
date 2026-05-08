@@ -208,6 +208,7 @@ export async function createHostInternalHelper({
   region,
   size,
   gpu,
+  funding_mode,
   pricing_model,
   interruption_restore_policy,
   spot_recovery_policy,
@@ -222,6 +223,7 @@ export async function createHostInternalHelper({
   region: string;
   size: string;
   gpu: boolean;
+  funding_mode?: DedicatedHostFundingMode;
   pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
   spot_recovery_policy?: HostSpotRecoveryPolicy;
@@ -335,6 +337,7 @@ export async function createHostInternalHelper({
     size,
     machine: normalizedMachine,
     pricing_model: pricingModel,
+    funding_mode_override: funding_mode,
   });
   const billingStartedAt = billableSession
     ? new Date().toISOString()

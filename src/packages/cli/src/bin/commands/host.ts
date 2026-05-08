@@ -55,6 +55,11 @@ const HOST_DEPLOY_HISTORY_KINDS = new Set([
   "host-rollout-managed-components",
 ]);
 const HOST_RUNTIME_LOG_SOURCES_SET = new Set<string>(HOST_RUNTIME_LOG_SOURCES);
+const HOST_CREATE_FUNDING_MODES = new Set([
+  "account-prepaid",
+  "account-postpaid",
+  "site-funded",
+]);
 
 export function assertHostRehomeConfirmed({
   host_id,
@@ -3086,6 +3091,10 @@ Examples:
       "storage mode: persistent|ephemeral",
       "persistent",
     )
+    .option(
+      "--funding-mode <fundingMode>",
+      "account-prepaid|account-postpaid|site-funded",
+    )
     .option("--machine-json <json>", "additional machine JSON object")
     .option("--wait", "wait for host to become running")
     .action(
@@ -3103,6 +3112,7 @@ Examples:
           diskGb?: string;
           diskType?: string;
           storageMode?: string;
+          fundingMode?: string;
           machineJson?: string;
           wait?: boolean;
         },
@@ -3155,6 +3165,17 @@ Examples:
             machine.storage_mode =
               storageModeRaw as HostMachine["storage_mode"];
           }
+          const fundingModeRaw = `${opts.fundingMode ?? ""}`
+            .trim()
+            .toLowerCase();
+          if (
+            fundingModeRaw &&
+            !HOST_CREATE_FUNDING_MODES.has(fundingModeRaw)
+          ) {
+            throw new Error(
+              `--funding-mode must be one of: ${Array.from(HOST_CREATE_FUNDING_MODES).join(", ")}`,
+            );
+          }
 
           const region =
             `${opts.region ?? ""}`.trim() || inferRegionFromZone(machine.zone);
@@ -3177,6 +3198,7 @@ Examples:
             region,
             size,
             gpu,
+            funding_mode: fundingModeRaw || undefined,
             pricing_model: opts.pricingModel as any,
             interruption_restore_policy:
               (opts.interruptionRestorePolicy as any) ?? undefined,
