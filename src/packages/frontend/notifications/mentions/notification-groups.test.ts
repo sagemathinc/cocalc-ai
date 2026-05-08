@@ -14,6 +14,7 @@ describe("notification grouping", () => {
         title: "Codex turn finished",
         body_markdown: "Done",
         notice_type: "codex_turn_completion",
+        fragment_id: "turn-1",
         thread_id: "thread-1",
         time: new Date("2026-05-08T10:00:00.000Z"),
       }),
@@ -25,6 +26,7 @@ describe("notification grouping", () => {
         title: "Codex turn finished",
         body_markdown: "Done",
         notice_type: "codex_turn_completion",
+        fragment_id: "turn-2",
         thread_id: "thread-1",
         time: new Date("2026-05-08T10:10:00.000Z"),
       }),
@@ -49,6 +51,7 @@ describe("notification grouping", () => {
     expect(groups[1].mention.get("time")).toEqual(
       new Date("2026-05-08T10:10:00.000Z"),
     );
+    expect(groups[1].mention.get("fragment_id")).toBe("turn-2");
     expect(groups[1].firstTime).toEqual(new Date("2026-05-08T10:00:00.000Z"));
     expect(groups[1].latestTime).toEqual(new Date("2026-05-08T10:10:00.000Z"));
   });
