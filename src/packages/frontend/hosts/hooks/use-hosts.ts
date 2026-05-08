@@ -5,13 +5,16 @@ import {
   useState,
 } from "@cocalc/frontend/app-framework";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
+import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
 
 type HubClient = {
   hosts: {
     listHosts: (opts: Record<string, unknown>) => Promise<Host[]>;
   };
   purchases: {
-    getMembership: (opts: Record<string, unknown>) => Promise<any>;
+    getMembership: (
+      opts: Record<string, unknown>,
+    ) => Promise<MembershipResolution>;
   };
 };
 
@@ -40,6 +43,9 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
     showAll = false,
   } = options;
   const [hosts, setHosts] = useState<Host[]>([]);
+  const [membership, setMembership] = useState<MembershipResolution | null>(
+    null,
+  );
   const [canCreateHosts, setCanCreateHosts] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
   const [loaded, setLoaded] = useState<boolean>(false);
@@ -65,6 +71,7 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
     lastMembershipRef.current = now;
     try {
       const membership = await hub.purchases.getMembership({});
+      setMembership(membership ?? null);
       setCanCreateHosts(
         membership?.entitlements?.features?.create_hosts === true,
       );
@@ -129,5 +136,14 @@ export const useHosts = (hub: HubClient, options: UseHostsOptions = {}) => {
     return () => clearInterval(timer);
   }, [refresh, pollMs]);
 
-  return { hosts, setHosts, refresh, canCreateHosts, loading, loaded, error };
+  return {
+    hosts,
+    setHosts,
+    refresh,
+    membership,
+    canCreateHosts,
+    loading,
+    loaded,
+    error,
+  };
 };

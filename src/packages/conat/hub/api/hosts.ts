@@ -33,6 +33,10 @@ export type HostStatus =
 
 export type HostPricingModel = "on_demand" | "spot";
 export type HostInterruptionRestorePolicy = "none" | "immediate";
+export type HostFundingMode =
+  | "account-prepaid"
+  | "account-postpaid"
+  | "site-funded";
 export type HostSpotRecoveryPhase =
   | "idle"
   | "retrying_spot"
@@ -580,6 +584,7 @@ export interface Host {
   can_place?: boolean;
   reason_unavailable?: string;
   starred?: boolean;
+  funding_mode?: HostFundingMode;
   pricing_model?: HostPricingModel;
   desired_pricing_model?: HostPricingModel;
   effective_pricing_model?: HostPricingModel;
@@ -1316,6 +1321,7 @@ export interface Hosts {
     region: string;
     size: string;
     gpu?: boolean;
+    funding_mode?: HostFundingMode;
     pricing_model?: HostPricingModel;
     interruption_restore_policy?: HostInterruptionRestorePolicy;
     machine?: HostMachine;
@@ -1406,6 +1412,7 @@ export interface Hosts {
     auto_grow_max_disk_gb?: number;
     auto_grow_growth_step_gb?: number;
     auto_grow_min_grow_interval_minutes?: number;
+    funding_mode?: HostFundingMode;
     pricing_model?: HostPricingModel;
     interruption_restore_policy?: HostInterruptionRestorePolicy;
   }) => Promise<Host>;

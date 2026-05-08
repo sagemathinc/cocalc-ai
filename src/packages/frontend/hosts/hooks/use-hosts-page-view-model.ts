@@ -31,6 +31,10 @@ import {
   getSelfHostConnectors,
 } from "../providers/registry";
 import {
+  defaultHostFundingMode,
+  getHostFundingModeOptions,
+} from "../utils/funding-mode";
+import {
   runtimeDeploymentsForManagedComponentVersion,
   shouldAlignRuntimeStackForSoftwareArtifacts,
 } from "../utils/runtime-deployments";
@@ -47,6 +51,7 @@ import type {
 } from "../types";
 import type {
   Host,
+  HostFundingMode,
   HostInterruptionRestorePolicy,
   HostPricingModel,
   HostSpotRecoveryPolicy,
@@ -324,6 +329,7 @@ export const useHostsPageViewModel = () => {
     hosts,
     setHosts,
     refresh,
+    membership,
     canCreateHosts,
     loading: hostsLoading,
     loaded: hostsLoaded,
@@ -1526,6 +1532,14 @@ export const useHostsPageViewModel = () => {
     onHostOp: trackHostOp,
     browser_id,
   });
+  const fundingModeOptions = React.useMemo(
+    () => getHostFundingModeOptions({ isAdmin, membership }),
+    [isAdmin, membership],
+  );
+  const defaultFundingMode = React.useMemo(
+    () => defaultHostFundingMode({ options: fundingModeOptions }),
+    [fundingModeOptions],
+  );
 
   const createVm = useHostCreateViewModel({
     permissions: { isAdmin, canCreateHosts },
@@ -1547,6 +1561,10 @@ export const useHostsPageViewModel = () => {
       },
       catalogLoading,
       catalogError,
+    },
+    billing: {
+      fundingModeOptions,
+      defaultFundingMode,
     },
     catalogRefresh: {
       refreshProviders,
@@ -1721,6 +1739,7 @@ export const useHostsPageViewModel = () => {
       values: {
         name: string;
         provider?: HostProvider;
+        funding_mode?: HostFundingMode;
         disk?: number;
         cpu?: number;
         ram_gb?: number;
@@ -1763,6 +1782,7 @@ export const useHostsPageViewModel = () => {
           const nextProvider = (values.provider ??
             (editingHost.machine?.cloud as HostProvider | undefined) ??
             "none") as HostProvider;
+          const currentFundingMode = editingHost.funding_mode;
           const nextStorageMode =
             values.storage_mode ??
             editingHost.machine?.storage_mode ??
@@ -1809,6 +1829,9 @@ export const useHostsPageViewModel = () => {
             const metadata = (machine.metadata ?? {}) as Record<string, any>;
             const update: Record<string, any> = {};
             if (machine.cloud) update.cloud = machine.cloud;
+            if (payload.funding_mode !== undefined) {
+              update.funding_mode = payload.funding_mode;
+            }
             if (payload.region) update.region = payload.region;
             if (machine.zone) update.zone = machine.zone;
             if (machine.machine_type) {
@@ -1947,6 +1970,12 @@ export const useHostsPageViewModel = () => {
           ) {
             update.interruption_restore_policy =
               values.interruption_restore_policy;
+          }
+          if (
+            values.funding_mode !== undefined &&
+            values.funding_mode !== currentFundingMode
+          ) {
+            update.funding_mode = values.funding_mode;
           }
           const nextSpotRecoveryPolicy = activeSpotRecoveryPolicy({
             pricingModel: values.pricing_model ?? currentPricingModel,
@@ -2101,6 +2130,7 @@ export const useHostsPageViewModel = () => {
     catalog: editCatalog,
     catalogError: editCatalogError,
     providerOptions,
+    fundingModeOptions,
     onProviderChange: setEditProvider,
   };
 

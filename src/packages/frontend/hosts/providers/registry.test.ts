@@ -67,6 +67,7 @@ describe("buildCreateHostPayload", () => {
         name: "Spot Host",
         region: "us-west1",
         size: "n2-standard-4",
+        funding_mode: "account-postpaid",
         pricing_model: "spot",
         interruption_restore_policy: "none",
         spot_recovery_policy: {
@@ -82,6 +83,7 @@ describe("buildCreateHostPayload", () => {
     );
 
     expect(payload.pricing_model).toBe("spot");
+    expect(payload.funding_mode).toBe("account-postpaid");
     expect(payload.interruption_restore_policy).toBe("none");
     expect(payload.spot_recovery_policy).toBeUndefined();
   });

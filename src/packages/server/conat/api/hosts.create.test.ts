@@ -412,6 +412,7 @@ describe("hosts.createHost", () => {
     expect(assertDedicatedHostAdmissionForAccountMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       action: "create",
+      funding_mode_override: undefined,
       has_active_second_factor_override: undefined,
       machine_cloud: "gcp",
     });
