@@ -17,6 +17,7 @@ const initCodexGeneratedImageBlobWriterMock = jest.fn();
 const initCodexSiteKeyGovernorMock = jest.fn();
 const configureProjectHostAcpContainerFileIOMock = jest.fn();
 const wireHostsApiMock = jest.fn();
+const wireNotificationsApiMock = jest.fn();
 const wireSystemApiMock = jest.fn();
 const wireProjectsApiMock = jest.fn();
 const resolveProjectHostPreferredMasterConatServerMock = jest.fn(
@@ -109,6 +110,10 @@ jest.mock("./hub/hosts", () => ({
   wireHostsApi: (...args: any[]) => wireHostsApiMock(...args),
 }));
 
+jest.mock("./hub/notifications", () => ({
+  wireNotificationsApi: (...args: any[]) => wireNotificationsApiMock(...args),
+}));
+
 jest.mock("./hub/system", () => ({
   wireSystemApi: (...args: any[]) => wireSystemApiMock(...args),
 }));
@@ -176,6 +181,7 @@ describe("project-host ACP worker runtime wiring", () => {
 
     expect(wireSystemApiMock).toHaveBeenCalledTimes(1);
     expect(wireHostsApiMock).toHaveBeenCalledTimes(1);
+    expect(wireNotificationsApiMock).toHaveBeenCalledTimes(1);
     expect(wireProjectsApiMock).toHaveBeenCalledTimes(1);
     expect(runDetachedAcpQueueWorkerMock).toHaveBeenCalledTimes(1);
   });

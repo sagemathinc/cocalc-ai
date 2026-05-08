@@ -41,6 +41,10 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(tier.project_defaults).toEqual({ memory: 1234 });
     expect(tier.ai_limits).toEqual({ units_5h: 7 });
     expect(tier.features).toEqual({ create_hosts: false });
-    expect(tier.usage_limits).toEqual({ shared_compute_priority: 99 });
+    expect(tier.usage_limits).toEqual({
+      shared_compute_priority: 99,
+      prepaid_host_usage_limit_5h_usd: 300,
+      prepaid_host_usage_limit_7d_usd: 1000,
+    });
   });
 });
