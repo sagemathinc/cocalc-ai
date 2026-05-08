@@ -301,6 +301,10 @@ async function waitForHostStatus({
   allowDeleted,
   onUpdate,
   bootstrapFailureSince,
+  shouldCancel,
+  loadStatus = loadHostStatus,
+  delayFn = delay,
+  pollMs = POLL_MS,
 }: {
   host_id: string;
   desired: string[];
@@ -308,11 +312,18 @@ async function waitForHostStatus({
   allowDeleted?: boolean;
   onUpdate: (status: string, metadata?: any) => Promise<void>;
   bootstrapFailureSince?: number;
+  shouldCancel?: () => Promise<boolean>;
+  loadStatus?: typeof loadHostStatus;
+  delayFn?: (ms: number) => Promise<void>;
+  pollMs?: number;
 }) {
   const startedAt = Date.now();
   let lastStatus = "";
   while (Date.now() - startedAt < MAX_WAIT_MS) {
-    const row = await loadHostStatus(host_id);
+    if ((await shouldCancel?.()) === true) {
+      throw new HostOpCanceledError();
+    }
+    const row = await loadStatus(host_id);
     if (!row) {
       throw new Error("host not found");
     }
@@ -347,7 +358,7 @@ async function waitForHostStatus({
         lastError ? `host ${status}: ${lastError}` : `host ${status}`,
       );
     }
-    await delay(POLL_MS);
+    await delayFn(pollMs);
   }
   throw new Error(`timeout waiting for host: ${desired.join(", ")}`);
 }
@@ -1598,6 +1609,7 @@ async function handleOp(op: LroSummary): Promise<void> {
       desired: wait.desired,
       failOn: wait.failOn,
       allowDeleted: wait.allowDeleted,
+      shouldCancel,
       bootstrapFailureSince,
       onUpdate: async (status, metadata) => {
         logger.debug("host op status update", {
@@ -1759,4 +1771,5 @@ export function startHostLroWorker({
 export const __test__ = {
   currentBootstrapFailure,
   completedProjectHostUpgradeVersion,
+  waitForHostStatus,
 };

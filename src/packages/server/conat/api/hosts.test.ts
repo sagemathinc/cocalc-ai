@@ -60,6 +60,8 @@ let loadEffectiveProjectHostRuntimeDeploymentsMock: jest.Mock;
 let setProjectHostRuntimeDeploymentsMock: jest.Mock;
 let updateProjectUsersMock: jest.Mock;
 let createLroMock: jest.Mock;
+let listLroMock: jest.Mock;
+let updateLroMock: jest.Mock;
 let createProjectHostBootstrapTokenMock: jest.Mock;
 let buildCloudInitStartupScriptMock: jest.Mock;
 let getHostOwnerBaySshIdentityMock: jest.Mock;
@@ -103,9 +105,10 @@ jest.mock("@cocalc/server/lro/lro-db", () => ({
   __esModule: true,
   claimLroOps: jest.fn(async () => []),
   createLro: (...args: any[]) => createLroMock(...args),
+  listLro: (...args: any[]) => listLroMock(...args),
   getLro: jest.fn(async () => null),
   touchLro: jest.fn(async () => undefined),
-  updateLro: jest.fn(async () => null),
+  updateLro: (...args: any[]) => updateLroMock(...args),
 }));
 
 jest.mock("@cocalc/server/lro/stream", () => ({
@@ -421,6 +424,15 @@ beforeEach(() => {
     owner_id: opts.owner_id ?? null,
     routing: opts.routing ?? "hub",
     input: opts.input ?? null,
+  }));
+  listLroMock = jest.fn(async () => []);
+  updateLroMock = jest.fn(async ({ op_id, status, error }: any) => ({
+    op_id,
+    kind: "host-start",
+    scope_type: "host",
+    scope_id: HOST_ID,
+    status: status ?? "queued",
+    error: error ?? null,
   }));
   spawnMock = jest.fn(() => {
     const child = new EventEmitter() as EventEmitter & {
@@ -1478,6 +1490,120 @@ describe("hosts browser fresh auth gating", () => {
     });
 
     expect(result.kind).toBe("host-start");
+  });
+
+  it("blocks host start when a destructive host op is already pending", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      project_hosts_funding_mode: "site-funded",
+    }));
+    listLroMock = jest.fn(async () => [
+      {
+        op_id: "delete-op-1",
+        kind: "host-deprovision",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        status: "queued",
+      },
+    ]);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+                pricing_model: "on_demand",
+                billing: {
+                  funding_mode: "site-funded",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { startHost } = await import("./hosts");
+    await expect(
+      startHost({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({
+      code: "host_deprovision_pending",
+    });
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels queued start and restart ops before queueing delete", async () => {
+    listLroMock = jest.fn(async () => [
+      {
+        op_id: "start-op-1",
+        kind: "host-start",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        status: "queued",
+      },
+      {
+        op_id: "restart-op-1",
+        kind: "host-restart",
+        scope_type: "host",
+        scope_id: HOST_ID,
+        status: "running",
+      },
+    ]);
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { deleteHost } = await import("./hosts");
+    const result = await deleteHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+
+    expect(result.kind).toBe("host-deprovision");
+    expect(updateLroMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        op_id: "start-op-1",
+        status: "canceled",
+      }),
+    );
+    expect(updateLroMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        op_id: "restart-op-1",
+        status: "canceled",
+      }),
+    );
   });
 });
 
