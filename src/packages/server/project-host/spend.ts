@@ -87,6 +87,9 @@ export function isDedicatedHostLaneCurrentlyAllowed({
   snapshot: AccountLocalDedicatedHostPolicySnapshot;
   funding_lane: DedicatedHostFundingLane;
 }): boolean {
+  if (snapshot.funding_mode !== "account-prepaid") {
+    return false;
+  }
   const limits = snapshot.effective_limits ?? {};
   const usage = snapshot.dedicated_host_window_usage;
   if (funding_lane === "prepaid") {

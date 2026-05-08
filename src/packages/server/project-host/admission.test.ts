@@ -10,6 +10,7 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     account_id: "acc-1",
     membership_class: "member",
     can_create_hosts: true,
+    funding_mode: "account-prepaid",
     effective_limits: {
       prepaid_host_usage_limit_5h_usd: 300,
       prepaid_host_usage_limit_7d_usd: 1000,
@@ -80,6 +81,23 @@ describe("evaluateDedicatedHostAdmission", () => {
     ).toMatchObject({
       allowed: false,
       code: "payment_method_required",
+    });
+  });
+
+  it("allows site-funded dedicated host actions without payment-method or prepaid checks", () => {
+    expect(
+      evaluateDedicatedHostAdmission({
+        action: "start",
+        machine_cloud: "gcp",
+        snapshot: snapshot({
+          funding_mode: "site-funded",
+          has_payment_method: false,
+          balance: "0",
+          effective_limits: {},
+        }) as any,
+      }),
+    ).toMatchObject({
+      allowed: true,
     });
   });
 

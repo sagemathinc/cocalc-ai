@@ -556,6 +556,7 @@ export interface AccountLocalDedicatedHostPolicySnapshot {
   account_id: string;
   membership_class: string;
   can_create_hosts: boolean;
+  funding_mode: "account-prepaid" | "site-funded";
   effective_limits: MembershipEffectiveLimits;
   has_active_second_factor: boolean;
   has_payment_method: boolean;

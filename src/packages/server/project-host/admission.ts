@@ -12,18 +12,20 @@ import { normalizeProviderId } from "@cocalc/cloud";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
-import { toDecimal } from "@cocalc/util/money";
+import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import {
   getDedicatedHostWindowUsageLocal,
   isDedicatedHostLaneCurrentlyAllowed,
 } from "./spend";
 
 export type DedicatedHostAction = "create" | "start" | "resize";
+export type DedicatedHostFundingMode = "account-prepaid" | "site-funded";
 
 export interface DedicatedHostAdmissionDecision {
   allowed: boolean;
@@ -63,6 +65,9 @@ export function isBillableDedicatedHostCloud(cloud?: string | null): boolean {
 export function selectDedicatedHostFundingLane(
   snapshot: AccountLocalDedicatedHostPolicySnapshot,
 ): "prepaid" | undefined {
+  if (snapshot.funding_mode !== "account-prepaid") {
+    return undefined;
+  }
   const limits = snapshot.effective_limits ?? {};
   const balance = toDecimal(snapshot.balance ?? 0);
   const prepaidEnabled =
@@ -116,6 +121,10 @@ export function evaluateDedicatedHostAdmission({
     };
   }
 
+  if (snapshot.funding_mode === "site-funded") {
+    return { allowed: true };
+  }
+
   if (!snapshot.has_payment_method) {
     return {
       allowed: false,
@@ -162,27 +171,57 @@ export function evaluateDedicatedHostAdmission({
   };
 }
 
+export function getDedicatedHostFundingModeFromSettings(
+  settings: Awaited<ReturnType<typeof getServerSettings>>,
+): DedicatedHostFundingMode {
+  return settings.project_hosts_funding_mode === "account-prepaid"
+    ? "account-prepaid"
+    : "site-funded";
+}
+
 export async function getDedicatedHostPolicySnapshotLocal(
   account_id: string,
 ): Promise<AccountLocalDedicatedHostPolicySnapshot> {
-  const membership = await resolveMembershipForAccount(account_id);
-  const effective_limits = getEffectiveMembershipUsageLimits(membership);
-  const [
-    has_active_second_factor,
-    has_payment_method,
-    balance,
-    dedicated_host_window_usage,
-  ] = await Promise.all([
-    hasActiveSecondFactor(account_id),
-    hasPaymentMethod(account_id),
-    getBalance({ account_id }),
-    getDedicatedHostWindowUsageLocal(account_id),
+  const [membership, settings] = await Promise.all([
+    resolveMembershipForAccount(account_id),
+    getServerSettings(),
   ]);
+  const effective_limits = getEffectiveMembershipUsageLimits(membership);
+  const funding_mode = getDedicatedHostFundingModeFromSettings(settings);
+  const has_active_second_factor = await hasActiveSecondFactor(account_id);
+
+  if (funding_mode === "site-funded") {
+    return {
+      account_id,
+      membership_class: membership.class,
+      can_create_hosts:
+        membership.entitlements?.features?.create_hosts === true,
+      funding_mode,
+      effective_limits,
+      has_active_second_factor,
+      has_payment_method: false,
+      balance: moneyToDbString(0),
+      dedicated_host_window_usage: {
+        prepaid_5h_usd: moneyToDbString(0),
+        prepaid_7d_usd: moneyToDbString(0),
+        credit_5h_usd: moneyToDbString(0),
+        credit_7d_usd: moneyToDbString(0),
+      },
+    };
+  }
+
+  const [has_payment_method, balance, dedicated_host_window_usage] =
+    await Promise.all([
+      hasPaymentMethod(account_id),
+      getBalance({ account_id }),
+      getDedicatedHostWindowUsageLocal(account_id),
+    ]);
 
   return {
     account_id,
     membership_class: membership.class,
     can_create_hosts: membership.entitlements?.features?.create_hosts === true,
+    funding_mode,
     effective_limits,
     has_active_second_factor,
     has_payment_method,

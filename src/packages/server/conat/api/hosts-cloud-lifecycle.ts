@@ -67,6 +67,35 @@ function pool() {
   return getPool();
 }
 
+function billingMetadataFromSession({
+  billableSession,
+  started_at,
+}: {
+  billableSession:
+    | {
+        funding_mode: "account-prepaid";
+        funding_lane: "prepaid";
+        hourly_cost_usd: MoneyValue;
+      }
+    | {
+        funding_mode: "site-funded";
+      };
+  started_at?: string;
+}) {
+  if (billableSession.funding_mode === "site-funded") {
+    return {
+      funding_mode: "site-funded" as const,
+      ...(started_at ? { started_at } : {}),
+    };
+  }
+  return {
+    funding_mode: "account-prepaid" as const,
+    funding_lane: billableSession.funding_lane,
+    hourly_cost_usd: billableSession.hourly_cost_usd,
+    ...(started_at ? { started_at } : {}),
+  };
+}
+
 async function resolveBillableHostSessionConfig({
   account_id,
   action,
@@ -85,13 +114,29 @@ async function resolveBillableHostSessionConfig({
   pricing_model?: HostPricingModel;
 }): Promise<
   | {
-      funding_lane: "prepaid" | "credit";
+      funding_mode: "account-prepaid";
+      funding_lane: "prepaid";
       hourly_cost_usd: MoneyValue;
+    }
+  | {
+      funding_mode: "site-funded";
     }
   | undefined
 > {
   if (!isBillableDedicatedHostCloud(provider)) {
     return undefined;
+  }
+  const snapshot = await getDedicatedHostPolicySnapshotForAccount({
+    account_id,
+  });
+  if (snapshot.funding_mode === "site-funded") {
+    return { funding_mode: "site-funded" };
+  }
+  const funding_lane = selectDedicatedHostFundingLane(snapshot);
+  if (!funding_lane) {
+    throw new Error(
+      `dedicated-host funding is not currently available for account ${account_id}`,
+    );
   }
   const hourly_cost_usd = await estimateDedicatedHostRateUsdPerHour({
     provider,
@@ -110,16 +155,7 @@ async function resolveBillableHostSessionConfig({
       `unable to determine the ${action} hourly rate for provider '${provider}'`,
     );
   }
-  const snapshot = await getDedicatedHostPolicySnapshotForAccount({
-    account_id,
-  });
-  const funding_lane = selectDedicatedHostFundingLane(snapshot);
-  if (!funding_lane) {
-    throw new Error(
-      `dedicated-host funding is not currently available for account ${account_id}`,
-    );
-  }
-  return { funding_lane, hourly_cost_usd };
+  return { funding_mode: "account-prepaid", funding_lane, hourly_cost_usd };
 }
 
 export async function createHostInternalHelper({
@@ -298,11 +334,10 @@ export async function createHostInternalHelper({
           : {}),
         ...(billableSession
           ? {
-              billing: {
-                funding_lane: billableSession.funding_lane,
-                hourly_cost_usd: billableSession.hourly_cost_usd,
+              billing: billingMetadataFromSession({
+                billableSession,
                 started_at: billingStartedAt,
-              },
+              }),
             }
           : {}),
       },
@@ -310,7 +345,7 @@ export async function createHostInternalHelper({
       getConfiguredBayId(),
     ],
   );
-  if (billableSession) {
+  if (billableSession?.funding_mode === "account-prepaid") {
     await reconcileDedicatedHostPurchaseSessionForAccount({
       account_id: owner,
       host_id: id,
@@ -451,12 +486,12 @@ export async function startHostInternalHelper({
     : undefined;
   nextMetadata.desired_state = "running";
   if (billableSession) {
-    nextMetadata.billing = {
-      ...(nextMetadata.billing ?? {}),
-      funding_lane: billableSession.funding_lane,
-      hourly_cost_usd: billableSession.hourly_cost_usd,
+    nextMetadata.billing = billingMetadataFromSession({
+      billableSession,
       started_at: billingStartedAt,
-    };
+    });
+  }
+  if (billableSession?.funding_mode === "account-prepaid") {
     await reconcileDedicatedHostPurchaseSessionForAccount({
       account_id: owner!,
       host_id: row.id,

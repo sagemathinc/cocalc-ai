@@ -201,6 +201,28 @@ async function runPass(): Promise<void> {
       continue;
     }
 
+    const snapshot = await getSnapshot(owner);
+    if (snapshot.funding_mode === "site-funded") {
+      await closeDedicatedHostPurchaseSessionForAccount({
+        account_id: owner,
+        host_id: row.id,
+      });
+      const nextBilling = {
+        funding_mode: "site-funded" as const,
+        started_at: metadata?.billing?.started_at ?? new Date().toISOString(),
+      };
+      if (
+        JSON.stringify(nextBilling) !== JSON.stringify(metadata?.billing ?? {})
+      ) {
+        await updateHostBillingMetadata({
+          host_id: row.id,
+          metadata: { ...metadata, billing: nextBilling },
+        });
+      }
+      snapshotCache.delete(owner);
+      continue;
+    }
+
     const pricing_model = currentPricingModel(metadata);
     const hourly_cost_usd = await estimateDedicatedHostRateUsdPerHour({
       provider,
@@ -225,7 +247,6 @@ async function runPass(): Promise<void> {
 
     let funding_lane = currentFundingLane(metadata);
     if (!funding_lane) {
-      const snapshot = await getSnapshot(owner);
       funding_lane = selectDedicatedHostFundingLane(snapshot);
       if (!funding_lane) {
         await requestHostStopForExceededLane({
@@ -254,7 +275,7 @@ async function runPass(): Promise<void> {
     const nextMetadata = {
       ...metadata,
       billing: {
-        ...(metadata.billing ?? {}),
+        funding_mode: "account-prepaid" as const,
         funding_lane,
         hourly_cost_usd,
         started_at: metadata?.billing?.started_at ?? new Date().toISOString(),
@@ -270,10 +291,10 @@ async function runPass(): Promise<void> {
       });
     }
     snapshotCache.delete(owner);
-    const snapshot = await getSnapshot(owner);
+    const refreshedSnapshot = await getSnapshot(owner);
     if (
       !isDedicatedHostLaneCurrentlyAllowed({
-        snapshot,
+        snapshot: refreshedSnapshot,
         funding_lane,
       })
     ) {

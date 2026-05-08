@@ -94,11 +94,21 @@ describe("dedicated host spend maintenance", () => {
           ],
         };
       }
-      if (sql.includes("UPDATE project_hosts")) {
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET status=$2")
+      ) {
         expect(params?.[0]).toBe("host-1");
         expect(params?.[1]).toBe("stopping");
         expect(params?.[3].desired_state).toBe("stopped");
         expect(params?.[3].billing.stop_reason).toMatch(/window exhausted/i);
+        return { rows: [] };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET metadata=$2")
+      ) {
+        expect(params?.[0]).toBe("host-1");
         return { rows: [] };
       }
       if (sql.includes("pg_advisory_unlock")) {
@@ -111,6 +121,7 @@ describe("dedicated host spend maintenance", () => {
       account_id: "acc-1",
       membership_class: "member",
       can_create_hosts: true,
+      funding_mode: "account-prepaid",
       effective_limits: {
         prepaid_host_usage_limit_5h_usd: 300,
         prepaid_host_usage_limit_7d_usd: 1000,
@@ -154,5 +165,40 @@ describe("dedicated host spend maintenance", () => {
       action: "stop",
       payload: { provider: "gcp" },
     });
+  });
+
+  it("keeps running site-funded hosts and closes any metered purchase session", async () => {
+    getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
+      account_id: "acc-1",
+      membership_class: "member",
+      can_create_hosts: true,
+      funding_mode: "site-funded",
+      effective_limits: {},
+      has_active_second_factor: true,
+      has_payment_method: false,
+      balance: "0",
+      dedicated_host_window_usage: {
+        prepaid_5h_usd: "0",
+        prepaid_7d_usd: "0",
+        credit_5h_usd: "0",
+        credit_7d_usd: "0",
+      },
+    }));
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(
+      closeDedicatedHostPurchaseSessionForAccountMock,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "acc-1",
+        host_id: "host-1",
+      }),
+    );
+    expect(
+      reconcileDedicatedHostPurchaseSessionForAccountMock,
+    ).not.toHaveBeenCalled();
+    expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
   });
 });
