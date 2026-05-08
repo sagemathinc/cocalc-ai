@@ -106,6 +106,7 @@ export type SiteSettingsKeys =
   | "project_hosts_self_host_alpha_enabled"
   | "project_hosts_nebius_enabled"
   | "project_hosts_funding_mode"
+  | "project_hosts_postpaid_unbilled_limit_usd"
   | "cloudflare_mode"
   | "project_hosts_dns"
   | "project_hosts_app_public_subdomain_suffix"
@@ -284,16 +285,24 @@ const commercial_to_val: ToValFunc<boolean> = (
 const PROJECT_HOSTS_FUNDING_MODES = [
   "auto",
   "account-prepaid",
+  "account-postpaid",
   "site-funded",
 ] as const;
-export type ProjectHostsFundingMode = "account-prepaid" | "site-funded";
+export type ProjectHostsFundingMode =
+  | "account-prepaid"
+  | "account-postpaid"
+  | "site-funded";
 
 const project_hosts_funding_mode_to_val: ToValFunc<ProjectHostsFundingMode> = (
   val?,
   conf?: { [key in SiteSettingsKeys]: string },
 ) => {
   const mode = to_trimmed_str(val).toLowerCase();
-  if (mode === "account-prepaid" || mode === "site-funded") {
+  if (
+    mode === "account-prepaid" ||
+    mode === "account-postpaid" ||
+    mode === "site-funded"
+  ) {
     return mode;
   }
   return commercial_to_val(
@@ -302,7 +311,7 @@ const project_hosts_funding_mode_to_val: ToValFunc<ProjectHostsFundingMode> = (
       : site_settings_conf.commercial.default,
     conf,
   )
-    ? "account-prepaid"
+    ? "account-postpaid"
     : "site-funded";
 };
 
@@ -932,16 +941,27 @@ export const site_settings_conf: SiteSettings = {
   },
   project_hosts_funding_mode: {
     name: "Project Hosts: Funding Mode",
-    desc: "Choose how billable cloud project hosts are funded. Use **account-prepaid** for the SaaS/commercial path where each user must fund their own hosts. Use **site-funded** when the installation operator pays for cloud hosts directly, such as non-commercial alpha deployments or self-hosted Launchpad sites.",
+    desc: "Choose how billable cloud project hosts are funded. Use **account-prepaid** when each user must fund their own hosts with prepaid balance. Use **account-postpaid** when usage is billed later through statements and automatic billing. Use **site-funded** when the installation operator pays for cloud hosts directly, such as non-commercial alpha deployments or self-hosted Launchpad sites.",
     default: "auto",
     valid: [...PROJECT_HOSTS_FUNDING_MODES],
     valid_labels: {
       auto: "Auto",
       "account-prepaid": "Account prepaid",
+      "account-postpaid": "Account postpaid",
       "site-funded": "Site funded",
     },
     to_val: project_hosts_funding_mode_to_val,
     tags: ["Project Hosts", "Cloud", "Commercialization", "On-Prem"],
+    group: "Compute / Project Hosts",
+    subgroup: "Billing",
+  },
+  project_hosts_postpaid_unbilled_limit_usd: {
+    name: "Project Hosts: Postpaid Unbilled Limit (USD)",
+    desc: "Maximum unbilled dedicated-host exposure allowed for one account in **account-postpaid** mode before running hosts are stopped or new ones are denied. This applies alongside the membership rolling 5-hour and 7-day credit windows.",
+    default: "1000",
+    valid: onlyNonnegFloat,
+    to_val: toFloat,
+    tags: ["Project Hosts", "Cloud", "Commercialization"],
     group: "Compute / Project Hosts",
     subgroup: "Billing",
   },

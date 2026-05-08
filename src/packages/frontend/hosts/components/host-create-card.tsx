@@ -15,6 +15,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import type { HostFieldId } from "../providers/registry";
 import type { HostProvider } from "../types";
+import { isBillableHostProvider } from "../utils/funding-mode";
 import { HostCreateForm } from "./host-create-form";
 
 type HostCreateCardProps = {
@@ -22,7 +23,7 @@ type HostCreateCardProps = {
 };
 
 export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
-  const { permissions, form, provider, catalogRefresh } = vm;
+  const { permissions, form, provider, billing, catalogRefresh } = vm;
   const { isAdmin, canCreateHosts } = permissions;
   const {
     form: formInstance,
@@ -104,14 +105,21 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     watchedZone,
   ]);
   const watchedSshTarget = Form.useWatch("self_host_ssh_target", formInstance);
+  const watchedFundingMode = Form.useWatch("funding_mode", formInstance);
   const missingSelfHostTarget =
     provider.selectedProvider === "self-host" &&
     !(watchedSshTarget ?? "").trim();
+  const billableProvider = isBillableHostProvider(provider.selectedProvider);
+  const noFundingModes =
+    billableProvider && billing.fundingModeOptions.length === 0;
+  const missingFundingMode = billableProvider && !watchedFundingMode;
   const createDisabled =
     !canCreateHosts ||
     gcpRegionIncompatible ||
     gcpZoneIncompatible ||
-    missingSelfHostTarget;
+    missingSelfHostTarget ||
+    noFundingModes ||
+    missingFundingMode;
   const requiredCatalogFields = React.useMemo<HostFieldId[]>(
     () =>
       (["region", "machine_type", "size"] as HostFieldId[]).filter((field) =>
@@ -164,6 +172,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
             form={formInstance}
             canCreateHosts={canCreateHosts}
             provider={provider}
+            billing={billing}
             onProviderChange={onProviderChange}
             showOnlyProviderSelect
           />
@@ -180,6 +189,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
             form={formInstance}
             canCreateHosts={canCreateHosts}
             provider={provider}
+            billing={billing}
             onProviderChange={onProviderChange}
             showOnlyProviderSelect
           />
@@ -216,8 +226,18 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
             form={formInstance}
             canCreateHosts={canCreateHosts}
             provider={provider}
+            billing={billing}
             onProviderChange={onProviderChange}
           />
+          {noFundingModes && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              title="No billing mode available for this host"
+              description="This account cannot currently fund billable dedicated hosts with the selected provider."
+            />
+          )}
           <Divider style={{ margin: "8px 0" }} />
           <Space orientation="vertical" style={{ width: "100%" }} size="small">
             {provider.selectedProvider !== "self-host" && (

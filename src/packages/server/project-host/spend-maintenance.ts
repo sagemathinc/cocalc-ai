@@ -10,6 +10,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { enqueueCloudVmWork } from "@cocalc/server/cloud";
 import type { AccountLocalDedicatedHostPolicySnapshot } from "@cocalc/conat/inter-bay/api";
 import {
+  applyDedicatedHostFundingModeOverride,
   getDedicatedHostPolicySnapshotForAccount,
   isBillableDedicatedHostCloud,
   selectDedicatedHostFundingLane,
@@ -97,6 +98,35 @@ function currentFundingLane(
     return value;
   }
   return undefined;
+}
+
+function currentFundingMode(
+  metadata: any,
+): "account-prepaid" | "account-postpaid" | "site-funded" | undefined {
+  const value = `${metadata?.billing?.funding_mode ?? ""}`.trim().toLowerCase();
+  if (
+    value === "account-prepaid" ||
+    value === "account-postpaid" ||
+    value === "site-funded"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function retainedBillingPolicy(metadata: any): any {
+  const funding_mode = currentFundingMode(metadata);
+  if (!funding_mode) {
+    return null;
+  }
+  const started_at =
+    typeof metadata?.billing?.started_at === "string"
+      ? metadata.billing.started_at.trim()
+      : "";
+  return {
+    funding_mode,
+    ...(started_at ? { started_at } : {}),
+  };
 }
 
 async function updateHostBillingMetadata({
@@ -191,7 +221,10 @@ async function runPass(): Promise<void> {
         host_id: row.id,
       });
       if (metadata?.billing) {
-        const nextMetadata = { ...metadata, billing: null };
+        const nextMetadata = {
+          ...metadata,
+          billing: retainedBillingPolicy(metadata),
+        };
         await updateHostBillingMetadata({
           host_id: row.id,
           metadata: nextMetadata,
@@ -201,7 +234,10 @@ async function runPass(): Promise<void> {
       continue;
     }
 
-    const snapshot = await getSnapshot(owner);
+    const snapshot = applyDedicatedHostFundingModeOverride(
+      await getSnapshot(owner),
+      currentFundingMode(metadata),
+    );
     if (snapshot.funding_mode === "site-funded") {
       await closeDedicatedHostPurchaseSessionForAccount({
         account_id: owner,
@@ -245,18 +281,22 @@ async function runPass(): Promise<void> {
       continue;
     }
 
-    let funding_lane = currentFundingLane(metadata);
+    const selectedFundingLane = selectDedicatedHostFundingLane(snapshot);
+    let funding_lane = selectedFundingLane ?? currentFundingLane(metadata);
     if (!funding_lane) {
-      funding_lane = selectDedicatedHostFundingLane(snapshot);
-      if (!funding_lane) {
-        await requestHostStopForExceededLane({
-          row,
-          provider,
-          reason: "dedicated-host funding is not currently available",
-        });
-        continue;
-      }
+      await requestHostStopForExceededLane({
+        row,
+        provider,
+        reason: "dedicated-host funding is not currently available",
+      });
+      continue;
     }
+    const existingFundingMode = currentFundingMode(metadata);
+    const preserveStartedAt =
+      existingFundingMode === snapshot.funding_mode &&
+      currentFundingLane(metadata) === funding_lane
+        ? metadata?.billing?.started_at
+        : undefined;
 
     await reconcileDedicatedHostPurchaseSessionForAccount({
       account_id: owner,
@@ -269,16 +309,16 @@ async function runPass(): Promise<void> {
       pricing_model,
       funding_lane,
       hourly_cost_usd,
-      started_at: metadata?.billing?.started_at ?? undefined,
+      started_at: preserveStartedAt,
     });
 
     const nextMetadata = {
       ...metadata,
       billing: {
-        funding_mode: "account-prepaid" as const,
+        funding_mode: snapshot.funding_mode,
         funding_lane,
         hourly_cost_usd,
-        started_at: metadata?.billing?.started_at ?? new Date().toISOString(),
+        started_at: preserveStartedAt ?? new Date().toISOString(),
       },
     };
     if (
@@ -291,7 +331,10 @@ async function runPass(): Promise<void> {
       });
     }
     snapshotCache.delete(owner);
-    const refreshedSnapshot = await getSnapshot(owner);
+    const refreshedSnapshot = applyDedicatedHostFundingModeOverride(
+      await getSnapshot(owner),
+      currentFundingMode(nextMetadata),
+    );
     if (
       !isDedicatedHostLaneCurrentlyAllowed({
         snapshot: refreshedSnapshot,

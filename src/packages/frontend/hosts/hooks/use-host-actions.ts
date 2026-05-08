@@ -1,5 +1,6 @@
 import type {
   Host,
+  HostFundingMode,
   HostLroResponse,
   HostSpotRecoveryPolicy,
 } from "@cocalc/conat/hub/api/hosts";
@@ -65,6 +66,7 @@ type HubClient = {
       storage_mode?: "ephemeral" | "persistent";
       region?: string;
       zone?: string;
+      funding_mode?: HostFundingMode;
       self_host_ssh_target?: string;
       auto_grow_enabled?: boolean;
       auto_grow_max_disk_gb?: number;

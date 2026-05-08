@@ -12,18 +12,22 @@ type HostCreateFormProps = {
   form: FormInstance;
   canCreateHosts: boolean;
   provider: HostCreateViewModel["provider"];
+  billing?: HostCreateViewModel["billing"];
   onProviderChange?: (value: string) => void;
   wrapForm?: boolean;
   showOnlyProviderSelect?: boolean;
+  autoSelectFundingMode?: boolean;
 };
 
 export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   form,
   canCreateHosts,
   provider,
+  billing,
   onProviderChange,
   wrapForm = true,
   showOnlyProviderSelect = false,
+  autoSelectFundingMode = true,
 }) => {
   const isSelfHost = provider.selectedProvider === "self-host";
   const hideAdvanced = isSelfHost;
@@ -34,6 +38,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
   const watchedMachineType = Form.useWatch("machine_type", form);
   const watchedPricingModel = Form.useWatch("pricing_model", form);
   const watchedSshTarget = Form.useWatch("self_host_ssh_target", form);
+  const watchedFundingMode = Form.useWatch("funding_mode", form);
   const nebiusSpotSupported = React.useMemo(
     () =>
       provider.selectedProvider !== "nebius" ||
@@ -106,6 +111,29 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
     provider.selectedProvider,
     watchedPricingModel,
   ]);
+  React.useEffect(() => {
+    if (!autoSelectFundingMode || !showSpotFields) {
+      return;
+    }
+    const defaultFundingMode =
+      billing?.defaultFundingMode ?? billing?.fundingModeOptions?.[0]?.value;
+    if (!defaultFundingMode) {
+      return;
+    }
+    const isAllowed = billing?.fundingModeOptions?.some(
+      (option) => option.value === watchedFundingMode,
+    );
+    if (!isAllowed) {
+      form.setFieldsValue({ funding_mode: defaultFundingMode });
+    }
+  }, [
+    autoSelectFundingMode,
+    billing?.defaultFundingMode,
+    billing?.fundingModeOptions,
+    form,
+    showSpotFields,
+    watchedFundingMode,
+  ]);
   const providerField = (
     <Form.Item
       name="provider"
@@ -153,6 +181,20 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
               <Form.Item name="name" label="Name" initialValue="My host">
                 <Input placeholder="My host" />
               </Form.Item>
+              {showSpotFields && (
+                <Form.Item
+                  name="funding_mode"
+                  label="Billing"
+                  rules={[
+                    {
+                      required: true,
+                      message: "Please choose how this host will be funded.",
+                    },
+                  ]}
+                >
+                  <Select options={billing?.fundingModeOptions ?? []} />
+                </Form.Item>
+              )}
               <HostCreateProviderFields
                 provider={provider}
                 onProviderChange={onProviderChange}

@@ -1340,6 +1340,145 @@ describe("hosts browser fresh auth gating", () => {
       session_hash: "session-hash",
     });
   });
+
+  it("does not force a false second-factor override for non-browser host starts", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+                pricing_model: "on_demand",
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+        return {
+          rows: [{ stripe_usage_subscription: null }],
+        };
+      }
+      if (sql.includes("FROM purchases")) {
+        return {
+          rows: [
+            {
+              prepaid_5h_usd: "0",
+              prepaid_7d_usd: "0",
+              credit_5h_usd: "0",
+              credit_7d_usd: "0",
+              exposure: "0",
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+        return {
+          rows: [{ stripe_usage_subscription: null }],
+        };
+      }
+      if (sql.includes("FROM purchases")) {
+        return {
+          rows: [
+            {
+              prepaid_5h_usd: "0",
+              prepaid_7d_usd: "0",
+              credit_5h_usd: "0",
+              credit_7d_usd: "0",
+              exposure: "0",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { startHost } = await import("./hosts");
+    const result = await startHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+
+    expect(result.kind).toBe("host-start");
+    expect(getBrowserAuthSessionHashMock).not.toHaveBeenCalled();
+  });
+
+  it("allows host start when the host itself is marked site-funded", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      project_hosts_funding_mode: "account-prepaid",
+    }));
+    hasPaymentMethodMock = jest.fn(async () => false);
+    getBalanceMock = jest.fn(async () => "0");
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      class: "member",
+      entitlements: {
+        features: { create_hosts: true },
+      },
+      effective_limits: {},
+    }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+                pricing_model: "on_demand",
+                billing: {
+                  funding_mode: "site-funded",
+                  started_at: "2026-05-07T00:00:00.000Z",
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+        return {
+          rows: [{ stripe_usage_subscription: null }],
+        };
+      }
+      if (sql.includes("FROM purchases")) {
+        return {
+          rows: [
+            {
+              prepaid_5h_usd: "0",
+              prepaid_7d_usd: "0",
+              credit_5h_usd: "0",
+              credit_7d_usd: "0",
+              exposure: "0",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { startHost } = await import("./hosts");
+    const result = await startHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+
+    expect(result.kind).toBe("host-start");
+  });
 });
 
 describe("hosts.getHostRuntimeDeploymentStatus", () => {

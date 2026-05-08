@@ -1,5 +1,6 @@
 import { useMemo } from "@cocalc/frontend/app-framework";
 import type { FormInstance } from "antd/es/form";
+import type { HostFundingMode } from "@cocalc/conat/hub/api/hosts";
 import type { HostProvider } from "../types";
 import type {
   FieldOptionsMap,
@@ -7,6 +8,7 @@ import type {
   HostFieldTooltips,
   ProviderFieldSchema,
 } from "../providers/registry";
+import type { HostFundingModeOption } from "../utils/funding-mode";
 
 export type HostCreateViewModel = {
   permissions: {
@@ -37,6 +39,10 @@ export type HostCreateViewModel = {
     };
     catalogLoading?: boolean;
     catalogError?: string;
+  };
+  billing: {
+    fundingModeOptions: HostFundingModeOption[];
+    defaultFundingMode?: HostFundingMode;
   };
   catalogRefresh: {
     refreshProviders: Array<{ value: HostProvider; label: string }>;

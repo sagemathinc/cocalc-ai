@@ -39,6 +39,7 @@ import {
   buildGitLogArgs,
   buildGitShowArgs,
   formatMergeCommitBodyMarkdown,
+  hasExpandedTextSelectionWithin,
   isMergeCommitSummary,
   shouldDisableGitReviewSubmission,
   shouldApplyGitFileOpenScopedResult,
@@ -165,6 +166,80 @@ describe("git commit drawer merge commit formatting", () => {
     expect(latestMarkdownInputProps.saveDebounceMs).toBe(0);
     expect(latestMarkdownInputProps.undoMode).toBe("local");
     expect(latestMarkdownInputProps.redoMode).toBe("local");
+  });
+
+  it("detects an expanded text selection within a diff container", () => {
+    const container = document.createElement("div");
+    const text = document.createTextNode("hello world");
+    container.appendChild(text);
+    document.body.appendChild(container);
+
+    const selection = window.getSelection();
+    expect(selection).toBeTruthy();
+    selection!.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 5);
+    selection!.addRange(range);
+
+    expect(hasExpandedTextSelectionWithin(container)).toBe(true);
+
+    selection!.removeAllRanges();
+    container.remove();
+  });
+
+  it("does not open an inline draft while text is actively selected", () => {
+    const onOpenDraft = jest.fn();
+    const { container } = render(
+      React.createElement(DiffBlock, {
+        filePath: "src/example.ts",
+        fileIndex: 0,
+        lines: stableDiffLines,
+        languageHint: "typescript",
+        fontSize: 14,
+        comments: stableComments,
+        showResolvedComments: false,
+        commentEnabled: true,
+        activeDraftBody: "",
+        activeEditingBody: "",
+        pendingKey: "",
+        onOpenDraft,
+        onDraftBodyChange: () => {},
+        onCancelDraft: () => {},
+        onOpenEdit: () => {},
+        onEditingBodyChange: () => {},
+        onCancelEdit: () => {},
+        onCreateComment: noopAsync,
+        onUpdateComment: noopAsync,
+        onResolveComment: noopAsync,
+        onReopenComment: noopAsync,
+      }),
+    );
+
+    const textRoot = container.querySelector(".cocalc-git-diff-line-text");
+    const textWalker = document.createTreeWalker(
+      textRoot ?? container,
+      NodeFilter.SHOW_TEXT,
+    );
+    const textNode = textWalker.nextNode() as Text | null;
+    expect(textNode).toBeTruthy();
+    const selection = window.getSelection();
+    expect(selection).toBeTruthy();
+    selection!.removeAllRanges();
+    const range = document.createRange();
+    range.setStart(textNode!, 0);
+    range.setEnd(textNode!, Math.min(2, textNode!.textContent?.length ?? 0));
+    selection!.addRange(range);
+
+    const addButtons = Array.from(container.querySelectorAll("button")).filter(
+      (button) => button.textContent?.trim() === "+",
+    );
+    expect(addButtons.length).toBeGreaterThan(0);
+    fireEvent.click(addButtons[0]);
+
+    expect(onOpenDraft).not.toHaveBeenCalled();
+
+    selection!.removeAllRanges();
   });
 
   it("scopes git review editor cache ids by both account and commit", () => {

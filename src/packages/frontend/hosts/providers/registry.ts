@@ -283,6 +283,9 @@ const buildBasePayload = (
     region: getDefaultRegion(vals, options),
     size: machine_type ?? vals.size ?? SIZES[0].value,
     gpu: wantsGpu,
+    ...(vals.provider !== "none" && vals.provider !== "self-host"
+      ? { funding_mode: vals.funding_mode }
+      : {}),
     pricing_model,
     interruption_restore_policy,
     ...(spot_recovery_policy ? { spot_recovery_policy } : {}),

@@ -755,3 +755,136 @@ Before writing code, review and confirm these implementation choices:
 
 Once those are confirmed, implementation should start with Phase 1 schema and
 server primitives.
+
+## Required Follow-Up: CLI / Elevated Auth / Automation
+
+This plan is not complete just because browser 2FA and fresh-auth work.
+
+Do not mark this 2FA plan done until the CLI / automation follow-up below is
+implemented and validated after the next smoke-test round.
+
+### Why this follow-up is required
+
+The current implementation is browser-first:
+
+- browser-driven dangerous actions can prove fresh auth
+- browser sessions can prove recent TOTP
+- impersonation can carry admin fresh-auth state
+
+But CLI and automation still need a first-class story for:
+
+- dangerous account-spend actions
+- dedicated host control
+- payment and billing operations
+- supply-chain-sensitive workflows
+
+This matters because modern package registries and developer platforms have
+shifted toward stronger 2FA-aware CLI integration after repeated supply-chain
+attacks.
+
+### Target model
+
+We should not prompt for TOTP on every CLI command.
+
+The correct model is:
+
+1. interactive CLI login that can prove 2FA once
+2. short-lived elevated CLI auth for dangerous actions
+3. separate automation credentials for CI / publishing / non-human workflows
+4. explicit policy about which actions require elevated auth
+
+### Phase A: interactive CLI login with factor-aware session state
+
+Add a proper human CLI login flow, ideally browser/device based:
+
+- `cocalc auth login`
+- `cocalc auth setup`
+
+That flow should:
+
+- complete password + 2FA through a browser/device challenge
+- issue a CLI-usable auth profile/token
+- record the factor level at issue time
+- preserve account-home-bay authority for auth state
+
+Important requirement:
+
+- the resulting CLI auth state must distinguish:
+  - authenticated
+  - password-verified
+  - factor-verified
+
+### Phase B: elevated CLI auth for dangerous actions
+
+Add an explicit short-lived elevation flow, e.g.:
+
+- `cocalc auth fresh`
+- `cocalc auth elevate`
+
+This should:
+
+- perform a fresh-auth challenge
+- require TOTP for accounts with 2FA enabled
+- mint a short-lived elevated token/profile/session
+- be the CLI analogue of browser fresh-auth
+
+This elevated state should be required for dangerous account-spend actions such
+as:
+
+- dedicated host create/start/resize in commercial account-funded modes
+- payment method changes
+- automatic billing changes
+- admin impersonation start
+- other future high-risk billing/security mutations
+
+### Phase C: scoped automation auth
+
+Do not use ordinary personal interactive auth for CI or unattended flows.
+
+Define separate automation credentials with narrower semantics, such as:
+
+- scoped automation tokens
+- explicit capability bits
+- optional future OIDC / trusted-publishing style exchange
+
+Automation auth should be clearly separate from:
+
+- human interactive CLI auth
+- elevated fresh-auth state
+- browser sessions
+
+### Phase D: policy boundaries
+
+Document and enforce which auth modes satisfy which action classes.
+
+Recommended boundary:
+
+- ordinary CLI/project workflows:
+  - API key or browser/device-backed auth is acceptable
+- dangerous account-spend actions:
+  - require elevated CLI auth or browser fresh-auth
+- automation / CI:
+  - require dedicated automation credentials
+
+Long-lived account API keys should not be treated as sufficient for dangerous
+actions by default.
+
+### Required tests for this follow-up
+
+At minimum:
+
+1. browser/device-backed CLI login works on the correct account home bay
+2. CLI auth profile records factor-aware session state
+3. `cocalc auth elevate` produces short-lived elevated auth
+4. dangerous CLI host/billing actions fail without elevation
+5. the same actions succeed with elevation
+6. automation credentials cannot silently satisfy human-elevation requirements
+7. account rehome does not break CLI elevated auth semantics
+
+### Completion criterion
+
+This 2FA plan remains open until:
+
+- browser 2FA/fresh-auth is fully smoke tested
+- CLI elevated auth exists
+- automation auth boundaries are defined and tested for dangerous actions

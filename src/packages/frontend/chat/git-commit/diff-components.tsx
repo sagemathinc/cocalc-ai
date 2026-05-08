@@ -6,7 +6,7 @@
 // Focus: virtualized per-file diff rendering, including inline review comment display and editing controls.
 
 import { Button, Space, Typography } from "antd";
-import { useMemo } from "@cocalc/frontend/app-framework";
+import { useMemo, useRef } from "@cocalc/frontend/app-framework";
 import { alert_message } from "@cocalc/frontend/alerts";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { filenameMode } from "@cocalc/frontend/file-associations";
@@ -31,6 +31,7 @@ import {
   InlineEditCommentEditor,
 } from "./review-editors";
 import type { CommentAnchor, GitDiffFindMatch, GitShowFile } from "./types";
+import { hasExpandedTextSelectionWithin } from "./utils";
 import { highlightPrismLines, languageHintFromPath } from "../diff-prism";
 import type { GitReviewCommentV2 } from "../git-review-store";
 
@@ -98,6 +99,7 @@ export const DiffBlock = memo(function DiffBlock({
   matchedLineIndexes?: Set<number>;
   activeMatchedLineIndex?: number;
 }) {
+  const diffRootRef = useRef<HTMLDivElement | null>(null);
   const codeFontSize = Math.max(11, fontSize - 1);
   const commentFontSize = Math.max(13, fontSize);
   const commentFontFamily =
@@ -145,8 +147,13 @@ export const DiffBlock = memo(function DiffBlock({
     await onReopenComment(id);
   };
 
+  const shouldSuppressActionForSelection = (): boolean =>
+    hasExpandedTextSelectionWithin(diffRootRef.current);
+
   return (
     <div
+      ref={diffRootRef}
+      data-git-diff-root="true"
       className="cocalc-slate-code-block"
       style={{
         border: `1px solid ${COLORS.GRAY_L}`,
@@ -247,7 +254,15 @@ export const DiffBlock = memo(function DiffBlock({
                       width: 22,
                       height: 22,
                     }}
+                    onMouseDown={(evt) => {
+                      if (!shouldSuppressActionForSelection()) return;
+                      evt.preventDefault();
+                      evt.stopPropagation();
+                    }}
                     onClick={() => {
+                      if (shouldSuppressActionForSelection()) {
+                        return;
+                      }
                       if (!commentEnabled) {
                         alert_message({
                           type: "info",
@@ -501,6 +516,9 @@ export const DiffFileSection = memo(function DiffFileSection({
   activeFindMatchKind?: GitDiffFindMatch["kind"];
   activeFindLineIndex?: number;
 }) {
+  const fileSectionRef = useRef<HTMLDivElement | null>(null);
+  const shouldSuppressActionForSelection = (): boolean =>
+    hasExpandedTextSelectionWithin(fileSectionRef.current);
   const languageHint = languageHintFromPath(file.path);
   const sectionId = buildGitReviewFileSectionId(file.path, index);
   const visibleLines = file.lines.slice(0, visibleLineLimit);
@@ -509,7 +527,12 @@ export const DiffFileSection = memo(function DiffFileSection({
     file.lines.length - visibleLines.length,
   );
   return (
-    <div id={sectionId} style={{ marginBottom: 18 }}>
+    <div
+      ref={fileSectionRef}
+      id={sectionId}
+      data-git-diff-section="true"
+      style={{ marginBottom: 18 }}
+    >
       <div
         style={{
           position: "sticky",
@@ -544,7 +567,17 @@ export const DiffFileSection = memo(function DiffFileSection({
             fontSize: Math.max(13, fontSize),
             color: DIFF_FILE_HEADER_TEXT,
           }}
-          onClick={() => void onOpenFile(file.path)}
+          onMouseDown={(evt) => {
+            if (!shouldSuppressActionForSelection()) return;
+            evt.preventDefault();
+            evt.stopPropagation();
+          }}
+          onClick={() => {
+            if (shouldSuppressActionForSelection()) {
+              return;
+            }
+            void onOpenFile(file.path);
+          }}
         >
           {file.path}
         </Button>

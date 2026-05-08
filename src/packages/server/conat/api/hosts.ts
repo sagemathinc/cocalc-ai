@@ -4,6 +4,7 @@ import type {
   HostBackupStatus,
   HostConnectionInfo,
   HostDrainResult,
+  HostFundingMode,
   HostMachine,
   HostCatalog,
   HostSoftwareArtifact,
@@ -153,7 +154,12 @@ import {
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
-import { assertDedicatedHostAdmissionForAccount } from "@cocalc/server/project-host/admission";
+import {
+  assertDedicatedHostAdmissionForAccount,
+  getDedicatedHostPolicySnapshotForAccount,
+  isBillableDedicatedHostCloud,
+  type DedicatedHostFundingMode,
+} from "@cocalc/server/project-host/admission";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
 import {
@@ -889,11 +895,11 @@ async function maybeRequireFreshAuthForBrowserHostAction({
 }: {
   account_id?: string;
   browser_id?: string;
-}): Promise<{ allow_second_factor_override: boolean }> {
+}): Promise<{ allow_second_factor_override?: boolean }> {
   const owner = requireAccount(account_id);
   const cleanedBrowserId = `${browser_id ?? ""}`.trim();
   if (!cleanedBrowserId) {
-    return { allow_second_factor_override: false };
+    return {};
   }
   const session_hash = getBrowserAuthSessionHash({
     account_id: owner,
@@ -909,14 +915,110 @@ async function maybeRequireFreshAuthForBrowserHostAction({
     session_hash,
     allow_actor_impersonation: true,
   });
+  const impersonation = await getImpersonationSessionBySessionHash({
+    session_hash,
+    subject_account_id: owner,
+  });
   return {
-    allow_second_factor_override: !!(await getImpersonationSessionBySessionHash(
-      {
-        session_hash,
-        subject_account_id: owner,
-      },
-    )),
+    allow_second_factor_override: impersonation ? true : undefined,
   };
+}
+
+function currentHostFundingMode(
+  metadata: any,
+): "account-prepaid" | "account-postpaid" | "site-funded" | undefined {
+  const value = `${metadata?.billing?.funding_mode ?? ""}`.trim().toLowerCase();
+  if (
+    value === "account-prepaid" ||
+    value === "account-postpaid" ||
+    value === "site-funded"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeRequestedHostFundingMode(
+  value: unknown,
+): DedicatedHostFundingMode | undefined {
+  if (value == null || value === "") {
+    return undefined;
+  }
+  const normalized = `${value}`.trim().toLowerCase();
+  if (
+    normalized === "account-prepaid" ||
+    normalized === "account-postpaid" ||
+    normalized === "site-funded"
+  ) {
+    return normalized;
+  }
+  throw new Error(`invalid funding_mode '${value}'`);
+}
+
+function hasPositiveDedicatedHostLimit(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+async function assertRequestedHostFundingModeAllowed({
+  account_id,
+  machine_cloud,
+  funding_mode,
+}: {
+  account_id: string;
+  machine_cloud?: string | null;
+  funding_mode?: DedicatedHostFundingMode;
+}): Promise<void> {
+  if (funding_mode == null) {
+    return;
+  }
+  if (!isBillableDedicatedHostCloud(machine_cloud)) {
+    throw new Error(
+      "funding_mode is only supported for billable dedicated cloud hosts",
+    );
+  }
+  if (funding_mode === "site-funded") {
+    if (!(await isAdmin(account_id))) {
+      throw Object.assign(
+        new Error("site-funded dedicated hosts are limited to admins"),
+        {
+          code: "site_funded_requires_admin",
+        },
+      );
+    }
+    return;
+  }
+  const snapshot = await getDedicatedHostPolicySnapshotForAccount({
+    account_id,
+  });
+  const limits = snapshot.effective_limits ?? {};
+  if (
+    funding_mode === "account-prepaid" &&
+    !(
+      hasPositiveDedicatedHostLimit(limits.prepaid_host_usage_limit_5h_usd) ||
+      hasPositiveDedicatedHostLimit(limits.prepaid_host_usage_limit_7d_usd)
+    )
+  ) {
+    throw Object.assign(
+      new Error(
+        "membership tier does not currently configure prepaid dedicated-host spending",
+      ),
+      { code: "membership_host_spend_not_configured" },
+    );
+  }
+  if (
+    funding_mode === "account-postpaid" &&
+    !(
+      hasPositiveDedicatedHostLimit(limits.credit_spend_limit_5h_usd) ||
+      hasPositiveDedicatedHostLimit(limits.credit_spend_limit_7d_usd)
+    )
+  ) {
+    throw Object.assign(
+      new Error(
+        "membership tier does not currently configure postpaid dedicated-host spending",
+      ),
+      { code: "membership_host_spend_not_configured" },
+    );
+  }
 }
 
 export { rolloutComponentsForUpgradeResultsInternal as rolloutComponentsForUpgradeResults };
@@ -3332,6 +3434,7 @@ export async function createHost({
   region,
   size,
   gpu = false,
+  funding_mode,
   pricing_model,
   interruption_restore_policy,
   spot_recovery_policy,
@@ -3343,23 +3446,31 @@ export async function createHost({
   region: string;
   size: string;
   gpu?: boolean;
+  funding_mode?: HostFundingMode;
   pricing_model?: HostPricingModel;
   interruption_restore_policy?: HostInterruptionRestorePolicy;
   spot_recovery_policy?: HostSpotRecoveryPolicy;
   machine?: Host["machine"];
 }): Promise<Host> {
   const owner = requireAccount(account_id);
+  const requestedFundingMode = normalizeRequestedHostFundingMode(funding_mode);
   const auth = await maybeRequireFreshAuthForBrowserHostAction({
     account_id,
     browser_id,
   });
   const membership = await loadMembership(owner);
   requireCreateHosts(membership.entitlements);
+  await assertRequestedHostFundingModeAllowed({
+    account_id: owner,
+    machine_cloud: machine?.cloud,
+    funding_mode: requestedFundingMode,
+  });
   await assertDedicatedHostAdmissionForAccount({
     account_id: owner,
     action: "create",
     machine_cloud: machine?.cloud,
     has_active_second_factor_override: auth.allow_second_factor_override,
+    funding_mode_override: requestedFundingMode,
   });
   return await createHostInternalHelper({
     owner,
@@ -3367,6 +3478,7 @@ export async function createHost({
     region,
     size,
     gpu,
+    funding_mode: requestedFundingMode,
     pricing_model,
     interruption_restore_policy,
     spot_recovery_policy,
@@ -3456,6 +3568,7 @@ export async function startHost({
     action: "start",
     machine_cloud: row.metadata?.machine?.cloud,
     has_active_second_factor_override: auth.allow_second_factor_override,
+    funding_mode_override: currentHostFundingMode(row.metadata),
   });
   return await createHostLro({
     kind: HOST_START_LRO_KIND,
@@ -3961,6 +4074,7 @@ export async function updateHostMachine({
   browser_id,
   id,
   cloud,
+  funding_mode,
   cpu,
   ram_gb,
   disk_gb,
@@ -3984,6 +4098,7 @@ export async function updateHostMachine({
   browser_id?: string;
   id: string;
   cloud?: HostMachine["cloud"];
+  funding_mode?: HostFundingMode;
   cpu?: number;
   ram_gb?: number;
   disk_gb?: number;
@@ -4012,6 +4127,7 @@ export async function updateHostMachine({
   const metadata = row.metadata ?? {};
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
+  const requestedFundingMode = normalizeRequestedHostFundingMode(funding_mode);
   const isSelfHost = machineCloud === "self-host";
   const isDeprovisioned = row.status === "deprovisioned";
   let nextMachine: HostMachine = {
@@ -4028,14 +4144,34 @@ export async function updateHostMachine({
   let nextRegion = row.region ?? "";
   const requestedCloudRaw = typeof cloud === "string" ? cloud : undefined;
   const requestedCloud = normalizeProviderId(requestedCloudRaw);
+  const effectiveFundingCloud = requestedCloud ?? machineCloud;
+  const currentFundingMode = currentHostFundingMode(metadata);
+  await assertRequestedHostFundingModeAllowed({
+    account_id: owner,
+    machine_cloud: effectiveFundingCloud,
+    funding_mode: requestedFundingMode,
+  });
   await assertDedicatedHostAdmissionForAccount({
     account_id: owner,
     action: "resize",
-    machine_cloud: requestedCloud ?? machineCloud,
+    machine_cloud: effectiveFundingCloud,
     has_active_second_factor_override: auth.allow_second_factor_override,
+    funding_mode_override:
+      requestedFundingMode ?? currentHostFundingMode(metadata),
   });
   const cloudChanged =
     requestedCloudRaw !== undefined && requestedCloud !== machineCloud;
+  if (
+    requestedFundingMode !== undefined &&
+    requestedFundingMode !== currentFundingMode &&
+    !(
+      isDeprovisioned ||
+      row.status === "off" ||
+      (row.status === "error" && !!metadata.reprovision_required)
+    )
+  ) {
+    throw new Error("host must be stopped before changing how it is funded");
+  }
   const buildConfigSpec = (
     specMachine: HostMachine,
     regionValue: string | null | undefined,
@@ -4342,12 +4478,22 @@ export async function updateHostMachine({
     }
     changed = true;
   }
+  if (
+    requestedFundingMode !== undefined &&
+    requestedFundingMode !== currentFundingMode
+  ) {
+    changed = true;
+  }
 
   if (!changed) {
     return parseRow(row);
   }
 
   normalizeMachineGpuInPlace(nextMachine);
+  const nextMachineCloud = normalizeProviderId(nextMachine.cloud);
+  const nextBillingFundingMode = isBillableDedicatedHostCloud(nextMachineCloud)
+    ? (requestedFundingMode ?? currentFundingMode)
+    : undefined;
 
   if (isDeprovisioned) {
     const nextMetadata = { ...metadata, machine: nextMachine };
@@ -4355,6 +4501,11 @@ export async function updateHostMachine({
       nextMetadata.size = machine_type;
     }
     nextMetadata.gpu = machineHasGpu(nextMachine);
+    if (nextBillingFundingMode) {
+      nextMetadata.billing = { funding_mode: nextBillingFundingMode };
+    } else {
+      delete nextMetadata.billing;
+    }
     delete nextMetadata.reprovision_required;
     await pool().query(
       `UPDATE project_hosts SET region=$2, metadata=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,
@@ -4402,15 +4553,6 @@ export async function updateHostMachine({
     throw new Error(
       "host must be stopped before changing CPU/RAM/machine type",
     );
-  }
-
-  if (
-    !isSelfHost &&
-    nextDisk == null &&
-    !requiresReprovision &&
-    !autoGrowChanged
-  ) {
-    return parseRow(row);
   }
 
   let resizeWarning: string | undefined;
@@ -4501,6 +4643,11 @@ export async function updateHostMachine({
   };
   if (machineChanged && nextMachine.machine_type) {
     nextMetadata.size = nextMachine.machine_type;
+  }
+  if (nextBillingFundingMode) {
+    nextMetadata.billing = { funding_mode: nextBillingFundingMode };
+  } else {
+    delete nextMetadata.billing;
   }
   await pool().query(
     `UPDATE project_hosts SET region=$2, metadata=$3, updated=NOW() WHERE id=$1 AND deleted IS NULL`,

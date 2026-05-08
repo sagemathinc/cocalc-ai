@@ -64,6 +64,39 @@ export function isEditableEventTarget(target: EventTarget | null): boolean {
   );
 }
 
+export function hasExpandedTextSelectionWithin(
+  container: Node | null | undefined,
+): boolean {
+  if (
+    container == null ||
+    typeof Node === "undefined" ||
+    !(container instanceof Node)
+  ) {
+    return false;
+  }
+  const doc = container.ownerDocument;
+  const selection =
+    doc?.getSelection?.() ??
+    (typeof window !== "undefined" ? window.getSelection?.() : null);
+  if (!selection || selection.isCollapsed) {
+    return false;
+  }
+  const text = selection.toString();
+  if (!`${text ?? ""}`.trim()) {
+    return false;
+  }
+  if (selection.rangeCount > 0) {
+    const commonAncestor = selection.getRangeAt(0).commonAncestorContainer;
+    return container.contains(commonAncestor);
+  }
+  const anchorNode = selection.anchorNode;
+  const focusNode = selection.focusNode;
+  return Boolean(
+    (anchorNode && container.contains(anchorNode)) ||
+    (focusNode && container.contains(focusNode)),
+  );
+}
+
 export function shouldCaptureGitDrawerFindShortcut({
   key,
   altKey,
