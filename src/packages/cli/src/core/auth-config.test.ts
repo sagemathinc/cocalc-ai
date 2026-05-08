@@ -99,3 +99,28 @@ test("applyAuthProfile does not override explicit globals", () => {
   assert.equal(result.globals.api, "http://127.0.0.1:9999");
   assert.equal(result.globals.apiKey, "xyz");
 });
+
+test("applyAuthProfile overrides ambient env defaults with selected profile values", () => {
+  const config: AuthConfig = {
+    current_profile: "bella",
+    profiles: {
+      bella: {
+        api: "https://lite4b.cocalc.ai",
+        account_id: "00000000-1000-4000-8000-000000000056",
+        cookie: "remember_me=bella-cookie",
+      },
+    },
+  };
+  const result = applyAuthProfile({}, config, {
+    COCALC_API_URL: "http://alpha.c.projecthosts.internal:9102",
+    COCALC_ACCOUNT_ID: "00000000-1000-4000-8000-000000000999",
+    COCALC_BEARER_TOKEN: "agent-token",
+  } as any);
+  assert.equal(result.globals.api, "https://lite4b.cocalc.ai");
+  assert.equal(
+    result.globals.accountId,
+    "00000000-1000-4000-8000-000000000056",
+  );
+  assert.equal(result.globals.cookie, "remember_me=bella-cookie");
+  assert.equal(result.globals.disableEnvAuthDefaults, true);
+});

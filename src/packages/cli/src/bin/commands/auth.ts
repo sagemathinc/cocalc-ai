@@ -251,23 +251,42 @@ export function registerAuthCommand(
         const applied = applyAuthProfile(globals, config);
         const effective = applied.globals as any;
         const accountId =
-          getExplicitAccountId(effective) ?? env.COCALC_ACCOUNT_ID ?? null;
+          getExplicitAccountId(effective) ??
+          (!effective.disableEnvAuthDefaults
+            ? env.COCALC_ACCOUNT_ID
+            : undefined) ??
+          null;
         const apiBaseUrl = effective.api
           ? normalizeUrl(effective.api)
           : defaultApiBaseUrl();
-        const projectAuth = describeProjectScopedAuth(env);
-        const effective_remote_auth = projectAuth.has_project_scoped_auth
-          ? "project_scoped"
-          : (effective.bearer ?? env.COCALC_BEARER_TOKEN)
+        const allowEnvAuthDefaults = !effective.disableEnvAuthDefaults;
+        const projectAuth = allowEnvAuthDefaults
+          ? describeProjectScopedAuth(env)
+          : {
+              has_project_secret: false,
+              has_project_id: false,
+              has_project_scoped_auth: false,
+              project_auth_source: null,
+              project_id: null,
+              project_auth_message: "no project-scoped auth detected",
+            };
+        const effective_remote_auth = effective.cookie
+          ? "cookie"
+          : (effective.bearer ??
+              (allowEnvAuthDefaults ? env.COCALC_BEARER_TOKEN : undefined))
             ? "bearer"
-            : effective.cookie
-              ? "cookie"
-              : (effective.apiKey ?? env.COCALC_API_KEY)
-                ? "api_key"
-                : normalizeSecretValue(
-                      effective.hubPassword ?? env.COCALC_HUB_PASSWORD,
-                    )
-                  ? "hub_password"
+            : (effective.apiKey ??
+                (allowEnvAuthDefaults ? env.COCALC_API_KEY : undefined))
+              ? "api_key"
+              : normalizeSecretValue(
+                    effective.hubPassword ??
+                      (allowEnvAuthDefaults
+                        ? env.COCALC_HUB_PASSWORD
+                        : undefined),
+                  )
+                ? "hub_password"
+                : projectAuth.has_project_scoped_auth
+                  ? "project_scoped"
                   : "none";
 
         let check:
@@ -353,11 +372,18 @@ export function registerAuthCommand(
           profiles_count: Object.keys(config.profiles).length,
           api: apiBaseUrl,
           account_id: accountId,
-          has_api_key: !!(effective.apiKey ?? env.COCALC_API_KEY),
+          has_api_key: !!(
+            effective.apiKey ??
+            (allowEnvAuthDefaults ? env.COCALC_API_KEY : undefined)
+          ),
           has_cookie: !!effective.cookie,
-          has_bearer: !!(effective.bearer ?? env.COCALC_BEARER_TOKEN),
+          has_bearer: !!(
+            effective.bearer ??
+            (allowEnvAuthDefaults ? env.COCALC_BEARER_TOKEN : undefined)
+          ),
           has_hub_password: !!normalizeSecretValue(
-            effective.hubPassword ?? env.COCALC_HUB_PASSWORD,
+            effective.hubPassword ??
+              (allowEnvAuthDefaults ? env.COCALC_HUB_PASSWORD : undefined),
           ),
           ...projectAuth,
           effective_remote_auth,

@@ -76,6 +76,52 @@ test("auth status reports project-scoped auth clearly", async () => {
   }
 });
 
+test("auth status prefers selected cookie-backed profiles over ambient project auth", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-status-"));
+  const tokenPath = join(dir, "secret-token");
+  writeFileSync(tokenPath, "project-secret-token\n", "utf8");
+  try {
+    const capture: { data?: any } = {};
+    const program = new Command();
+    registerAuthCommand(
+      program,
+      makeDeps(capture, {
+        env: {
+          COCALC_API_URL: "http://alpha.c.projecthosts.internal:9102",
+          COCALC_ACCOUNT_ID: "00000000-1000-4000-8000-000000000999",
+          COCALC_SECRET_TOKEN: tokenPath,
+          COCALC_PROJECT_ID: "890afc74-9156-4386-a395-afd4bebab4dd",
+        },
+        getExplicitAccountId: (globals: any) =>
+          globals.accountId ?? globals.account_id,
+        applyAuthProfile: (globals: any) => ({
+          globals: {
+            ...globals,
+            api: "https://lite4b.cocalc.ai",
+            accountId: "00000000-1000-4000-8000-000000000056",
+            cookie: "remember_me=bella-cookie",
+            disableEnvAuthDefaults: true,
+          },
+          profile: "bella",
+          fromProfile: true,
+        }),
+      }),
+    );
+    await program.parseAsync(["node", "test", "auth", "status"]);
+    assert.equal(capture.data.api, "https://lite4b.cocalc.ai");
+    assert.equal(
+      capture.data.account_id,
+      "00000000-1000-4000-8000-000000000056",
+    );
+    assert.equal(capture.data.has_cookie, true);
+    assert.equal(capture.data.has_bearer, false);
+    assert.equal(capture.data.has_project_scoped_auth, false);
+    assert.equal(capture.data.effective_remote_auth, "cookie");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("auth login stores a dedicated browser-approved CLI session", async () => {
   const capture: { data?: any } = {};
   let config: any = { profiles: {} };
