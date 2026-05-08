@@ -1340,6 +1340,41 @@ describe("hosts browser fresh auth gating", () => {
       session_hash: "session-hash",
     });
   });
+
+  it("does not force a false second-factor override for non-browser host starts", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+                pricing_model: "on_demand",
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { startHost } = await import("./hosts");
+    const result = await startHost({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+
+    expect(result.kind).toBe("host-start");
+    expect(getBrowserAuthSessionHashMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("hosts.getHostRuntimeDeploymentStatus", () => {

@@ -889,11 +889,11 @@ async function maybeRequireFreshAuthForBrowserHostAction({
 }: {
   account_id?: string;
   browser_id?: string;
-}): Promise<{ allow_second_factor_override: boolean }> {
+}): Promise<{ allow_second_factor_override?: boolean }> {
   const owner = requireAccount(account_id);
   const cleanedBrowserId = `${browser_id ?? ""}`.trim();
   if (!cleanedBrowserId) {
-    return { allow_second_factor_override: false };
+    return {};
   }
   const session_hash = getBrowserAuthSessionHash({
     account_id: owner,
@@ -909,13 +909,12 @@ async function maybeRequireFreshAuthForBrowserHostAction({
     session_hash,
     allow_actor_impersonation: true,
   });
+  const impersonation = await getImpersonationSessionBySessionHash({
+    session_hash,
+    subject_account_id: owner,
+  });
   return {
-    allow_second_factor_override: !!(await getImpersonationSessionBySessionHash(
-      {
-        session_hash,
-        subject_account_id: owner,
-      },
-    )),
+    allow_second_factor_override: impersonation ? true : undefined,
   };
 }
 
