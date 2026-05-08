@@ -1,4 +1,17 @@
-import { buildCreateHostPayload, isNebiusSpotSupported } from "./registry";
+import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
+import {
+  buildCreateHostPayload,
+  getGcpMachineTypeOptions,
+  getProviderPriceEstimate,
+  isNebiusSpotSupported,
+} from "./registry";
+
+function testCatalog(entries: HostCatalog["entries"]): HostCatalog {
+  return {
+    entries,
+    provider_capabilities: {},
+  };
+}
 
 describe("buildCreateHostPayload", () => {
   it("adds derived cpu and ram metadata for gcp machine types", () => {
@@ -146,5 +159,105 @@ describe("isNebiusSpotSupported", () => {
         "unknown",
       ),
     ).toBe(true);
+  });
+});
+
+describe("catalog-backed pricing labels", () => {
+  it("shows GCP machine type pricing in option labels", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-08T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-balanced": { "us-west1": 0.0001 },
+          },
+        },
+      },
+    ]);
+
+    const options = getGcpMachineTypeOptions(catalog, {
+      region: "us-west1",
+      zone: "us-west1-a",
+      machine_type: "n2d-standard-4",
+      pricing_model: "on_demand",
+      storage_mode: "persistent",
+      disk_type: "balanced",
+      disk_gb: 100,
+    });
+
+    expect(options[0].label).toContain("/hr");
+  });
+
+  it("returns a provider price estimate for Nebius selections", () => {
+    const catalog = testCatalog([
+      {
+        kind: "instance_types",
+        scope: "global",
+        payload: [
+          {
+            name: "cpu-standard-v3",
+            platform: "amd-epyc-genoa",
+            platform_label: "AMD Epyc Genoa",
+            vcpus: 4,
+            memory_gib: 16,
+            gpus: 0,
+          },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: [
+          {
+            product: "Non-GPU AMD Epyc Genoa. CPU",
+            region: "eu-north1",
+            price_usd: "0.012",
+            unit: "vCPU hour",
+          },
+          {
+            product: "Non-GPU AMD Epyc Genoa. RAM",
+            region: "eu-north1",
+            price_usd: "0.0032",
+            unit: "GiB hour",
+          },
+          {
+            product: "Network SSD IO M3 disk",
+            region: "eu-north1",
+            price_usd: "0.000161111",
+            unit: "GiB hour",
+          },
+        ],
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate("nebius", catalog, {
+      region: "eu-north1",
+      machine_type: "cpu-standard-v3",
+      pricing_model: "on_demand",
+      storage_mode: "persistent",
+      disk_type: "ssd_io_m3",
+      disk_gb: 93,
+    });
+
+    expect(estimate?.usd_per_hour).toBeCloseTo(0.114183323, 9);
+    expect(estimate?.hourly_label).toContain("/hr");
+    expect(estimate?.monthly_label).toContain("/mo");
   });
 });

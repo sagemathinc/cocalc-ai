@@ -6,6 +6,17 @@ import type {
   HostCatalogRegion,
   HostCatalogZone,
 } from "@cocalc/conat/hub/api/hosts";
+import type {
+  GcpCatalogPrices,
+  NebiusCatalogPriceItem,
+} from "@cocalc/util/project-host-pricing";
+import {
+  estimateGcpCatalogRateUsdPerHour,
+  estimateNebiusCatalogRateUsdPerHour,
+  getNebiusPlatformAliases,
+  normalizeNebiusPricingProduct,
+  normalizeNebiusPricingToken,
+} from "@cocalc/util/project-host-pricing";
 import {
   formatCpuRamLabel,
   formatGpuLabel,
@@ -93,15 +104,6 @@ const getMachineTypeArchitecture = (
   }
   return "x86_64";
 };
-type NebiusPriceItem = {
-  service: string;
-  product: string;
-  region: string;
-  price_usd?: string | null;
-  unit?: string | null;
-  valid_from?: string | null;
-};
-
 export type LambdaInstanceOption = HostFieldOption<LambdaInstance> & {
   entry: LambdaInstance;
   hasRegions: boolean;
@@ -132,6 +134,10 @@ export type ProviderSelection = {
   zone?: string;
   machine_type?: string;
   gpu_type?: string;
+  pricing_model?: string;
+  storage_mode?: string;
+  disk_type?: string;
+  disk_gb?: number;
   self_host_kind?: string;
   self_host_mode?: string;
   size?: string;
@@ -324,6 +330,114 @@ const getCatalogEntryPayload = <T>(
   return (entry?.payload as T | undefined) ?? undefined;
 };
 
+const getGcpPriceCatalog = (catalog?: HostCatalog) =>
+  getCatalogEntryPayload<GcpCatalogPrices>(catalog, "prices", "global");
+
+const getNebiusPriceItems = (catalog?: HostCatalog) =>
+  getCatalogEntryPayload<NebiusCatalogPriceItem[]>(
+    catalog,
+    "prices",
+    "global",
+  ) ?? [];
+
+const estimateGcpSelectionUsdPerHour = (
+  catalog: HostCatalog | undefined,
+  selection: ProviderSelection,
+  overrides?: Partial<ProviderSelection>,
+) => {
+  const next = { ...selection, ...overrides };
+  const gpuType =
+    next.gpu_type && next.gpu_type !== "none" ? next.gpu_type : undefined;
+  return estimateGcpCatalogRateUsdPerHour(getGcpPriceCatalog(catalog), {
+    region: next.region,
+    zone: next.zone,
+    machine_type: next.machine_type,
+    pricing_model: next.pricing_model === "spot" ? "spot" : "on_demand",
+    gpu_type: gpuType,
+    gpu_count: gpuType ? 1 : undefined,
+    disk_type: next.disk_type,
+    disk_gb: next.disk_gb,
+    storage_mode: next.storage_mode,
+  });
+};
+
+const estimateNebiusSelectionUsdPerHour = (
+  catalog: HostCatalog | undefined,
+  selection: ProviderSelection,
+  overrides?: Partial<ProviderSelection>,
+) => {
+  const next = { ...selection, ...overrides };
+  const machineType = `${next.machine_type ?? ""}`.trim();
+  if (!machineType) return undefined;
+  const instance = (
+    getCatalogEntryPayload<NebiusInstance[]>(
+      catalog,
+      "instance_types",
+      "global",
+    ) ?? []
+  ).find((entry) => entry.name === machineType);
+  if (!instance) return undefined;
+  return estimateNebiusCatalogRateUsdPerHour({
+    prices: getNebiusPriceItems(catalog),
+    region: next.region,
+    pricing_model: next.pricing_model === "spot" ? "spot" : "on_demand",
+    instance,
+    disk_type: next.disk_type,
+    disk_gb: next.disk_gb,
+    storage_mode: next.storage_mode,
+  });
+};
+
+const MONTHLY_HOURS = 730;
+
+const formatUsdAmount = (value: number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: value >= 10 ? 2 : 3,
+  }).format(value);
+
+const formatUsdHourlyLabel = (value: number) => `${formatUsdAmount(value)}/hr`;
+
+const formatUsdMonthlyLabel = (value: number) =>
+  `${formatUsdAmount(value * MONTHLY_HOURS)}/mo`;
+
+const appendHourlyPriceLabel = (label: string, hourlyRate?: number) =>
+  typeof hourlyRate === "number" && Number.isFinite(hourlyRate)
+    ? `${label} · ${formatUsdHourlyLabel(hourlyRate)}`
+    : label;
+
+export type ProviderPriceEstimate = {
+  usd_per_hour: number;
+  usd_per_month: number;
+  hourly_label: string;
+  monthly_label: string;
+};
+
+export const getProviderPriceEstimate = (
+  provider: HostProvider,
+  catalog: HostCatalog | undefined,
+  selection: ProviderSelection,
+): ProviderPriceEstimate | undefined => {
+  const hourlyRate =
+    provider === "gcp"
+      ? estimateGcpSelectionUsdPerHour(catalog, selection)
+      : provider === "nebius"
+        ? estimateNebiusSelectionUsdPerHour(catalog, selection)
+        : undefined;
+  if (typeof hourlyRate !== "number" || !Number.isFinite(hourlyRate)) {
+    return undefined;
+  }
+  const usd_per_hour = hourlyRate;
+  const usd_per_month = hourlyRate * MONTHLY_HOURS;
+  return {
+    usd_per_hour,
+    usd_per_month,
+    hourly_label: formatUsdHourlyLabel(usd_per_hour),
+    monthly_label: formatUsdMonthlyLabel(usd_per_hour),
+  };
+};
+
 type SelfHostConnector = {
   id: string;
   name?: string;
@@ -481,8 +595,7 @@ const gcpZoneHasMachinePrefix = (
 
 export const getGcpRegionOptions = (
   catalog?: HostCatalog,
-  selectedMachineType?: string,
-  selectedGpuType?: string,
+  selection: ProviderSelection = {},
 ): HostFieldOption[] => {
   const regions = getCatalogEntryPayload<HostCatalogRegion[]>(
     catalog,
@@ -500,19 +613,19 @@ export const getGcpRegionOptions = (
       (z) => z.region === r.name && (z.location || z.lowC02),
     );
     const gpuType =
-      selectedGpuType && selectedGpuType !== "none"
-        ? selectedGpuType
+      selection.gpu_type && selection.gpu_type !== "none"
+        ? selection.gpu_type
         : undefined;
     const gpuPrefixes = gcpMachinePrefixesForGpuType(gpuType);
     let compatible = true;
     let compatibleZone: string | undefined;
-    if (gpuType || selectedMachineType) {
+    if (gpuType || selection.machine_type) {
       const regionZones = r.zones ?? [];
       compatible = regionZones.some((zone) => {
         if (!gcpZoneHasGpuType(catalog, zone, gpuType)) return false;
         if (
-          selectedMachineType
-            ? !gcpZoneHasMachineType(catalog, zone, selectedMachineType)
+          selection.machine_type
+            ? !gcpZoneHasMachineType(catalog, zone, selection.machine_type)
             : !gcpZoneHasMachinePrefix(catalog, zone, gpuPrefixes)
         ) {
           return false;
@@ -521,12 +634,17 @@ export const getGcpRegionOptions = (
         return true;
       });
     }
+    const hourlyRate = compatible
+      ? estimateGcpSelectionUsdPerHour(catalog, selection, {
+          region: r.name,
+          zone: compatibleZone,
+        })
+      : undefined;
     return {
       value: r.name,
-      label: formatRegionLabel(
-        r.name,
-        zoneWithMeta?.location,
-        zoneWithMeta?.lowC02,
+      label: appendHourlyPriceLabel(
+        formatRegionLabel(r.name, zoneWithMeta?.location, zoneWithMeta?.lowC02),
+        hourlyRate,
       ),
       meta: { compatible, compatibleZone },
     };
@@ -535,9 +653,7 @@ export const getGcpRegionOptions = (
 
 export const getGcpZoneOptions = (
   catalog: HostCatalog | undefined,
-  selectedRegion?: string,
-  selectedMachineType?: string,
-  selectedGpuType?: string,
+  selection: ProviderSelection = {},
 ): HostFieldOption[] => {
   const regions = getCatalogEntryPayload<HostCatalogRegion[]>(
     catalog,
@@ -549,24 +665,26 @@ export const getGcpZoneOptions = (
     "zones",
     "global",
   );
-  if (!regions?.length || !selectedRegion) return [];
-  const zones = regions.find((r) => r.name === selectedRegion)?.zones;
+  if (!regions?.length || !selection.region) return [];
+  const zones = regions.find((r) => r.name === selection.region)?.zones;
   if (!zones?.length) return [];
   const gpuType =
-    selectedGpuType && selectedGpuType !== "none" ? selectedGpuType : undefined;
+    selection.gpu_type && selection.gpu_type !== "none"
+      ? selection.gpu_type
+      : undefined;
   const gpuPrefixes = gcpMachinePrefixesForGpuType(gpuType);
   return zones.map((z) => {
     const meta = zonesMeta?.find((zone) => zone.name === z);
     const gpuCompatible = gcpZoneHasGpuType(catalog, z, gpuType);
-    const machineCompatible = selectedMachineType
-      ? gcpZoneHasMachineType(catalog, z, selectedMachineType)
+    const machineCompatible = selection.machine_type
+      ? gcpZoneHasMachineType(catalog, z, selection.machine_type)
       : gcpZoneHasMachinePrefix(catalog, z, gpuPrefixes);
     const compatible = gpuCompatible && machineCompatible;
     return {
       value: z,
       label: formatRegionLabel(z, meta?.location, meta?.lowC02),
       meta: {
-        region: meta?.region ?? selectedRegion,
+        region: meta?.region ?? selection.region,
         gpuCompatible,
         machineCompatible,
         compatible,
@@ -606,21 +724,20 @@ const gcpMachinePrefixesForGpuType = (
 
 export const getGcpMachineTypeOptions = (
   catalog: HostCatalog | undefined,
-  selectedZone?: string,
-  selectedGpuType?: string,
+  selection: ProviderSelection = {},
 ): HostFieldOption[] => {
-  if (!selectedZone) return [];
+  if (!selection.zone) return [];
   const types = getCatalogEntryPayload<HostCatalogMachineType[]>(
     catalog,
     "machine_types",
-    `zone/${selectedZone}`,
+    `zone/${selection.zone}`,
   );
   if (!types?.length) return [];
-  const gpuPrefixes = gcpMachinePrefixesForGpuType(selectedGpuType);
+  const gpuPrefixes = gcpMachinePrefixesForGpuType(selection.gpu_type);
   const filtered = types.filter((mt) => {
     const name = mt.name ?? "";
     if (!name) return false;
-    if (!selectedGpuType || selectedGpuType === "none") {
+    if (!selection.gpu_type || selection.gpu_type === "none") {
       return !GCP_GPU_ONLY_MACHINE_PREFIXES.some((prefix) =>
         name.startsWith(prefix),
       );
@@ -631,7 +748,12 @@ export const getGcpMachineTypeOptions = (
   });
   return filtered.map((mt) => ({
     value: mt.name ?? "",
-    label: mt.name ?? "unknown",
+    label: appendHourlyPriceLabel(
+      mt.name ?? "unknown",
+      estimateGcpSelectionUsdPerHour(catalog, selection, {
+        machine_type: mt.name ?? undefined,
+      }),
+    ),
     meta: mt,
   }));
 };
@@ -1006,6 +1128,7 @@ const summarizeLambdaCatalog = (catalog: HostCatalog) => {
 
 export const getNebiusRegionOptions = (
   catalog?: HostCatalog,
+  selection: ProviderSelection = {},
 ): HostFieldOption[] => {
   const regions = getCatalogEntryPayload<{ name: string }[]>(
     catalog,
@@ -1013,7 +1136,15 @@ export const getNebiusRegionOptions = (
     "global",
   );
   if (regions?.length) {
-    return regions.map((r) => ({ value: r.name, label: r.name }));
+    return regions.map((r) => ({
+      value: r.name,
+      label: appendHourlyPriceLabel(
+        r.name,
+        estimateNebiusSelectionUsdPerHour(catalog, selection, {
+          region: r.name,
+        }),
+      ),
+    }));
   }
   const images =
     getCatalogEntryPayload<NebiusImage[]>(catalog, "images", "global") ?? [];
@@ -1022,21 +1153,15 @@ export const getNebiusRegionOptions = (
       .map((img) => img.region ?? undefined)
       .filter((value): value is string => !!value),
   );
-  return Array.from(regionSet).map((name) => ({ value: name, label: name }));
-};
-
-const normalizeNebiusPricingToken = (value: string) =>
-  value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-
-const normalizeNebiusPricingProduct = (value: string) => {
-  let normalized = value.trim();
-  normalized = normalized.replace(/^preemptible\s+/i, "");
-  normalized = normalized.replace(/\.\s*(cpu|ram|gpu)$/i, "");
-  return normalizeNebiusPricingToken(normalized);
+  return Array.from(regionSet).map((name) => ({
+    value: name,
+    label: appendHourlyPriceLabel(
+      name,
+      estimateNebiusSelectionUsdPerHour(catalog, selection, {
+        region: name,
+      }),
+    ),
+  }));
 };
 
 const getNebiusPricingProductsByRegion = (
@@ -1047,8 +1172,11 @@ const getNebiusPricingProductsByRegion = (
   const cpuProducts = new Set<string>();
   if (!region) return { gpu: gpuProducts, cpu: cpuProducts };
   const prices =
-    getCatalogEntryPayload<NebiusPriceItem[]>(catalog, "prices", "global") ??
-    [];
+    getCatalogEntryPayload<NebiusCatalogPriceItem[]>(
+      catalog,
+      "prices",
+      "global",
+    ) ?? [];
   for (const item of prices) {
     if (!item?.product || item.region !== region) continue;
     if (!/^(preemptible\s+)?(nvidia|non-gpu)\b/i.test(item.product)) continue;
@@ -1061,18 +1189,6 @@ const getNebiusPricingProductsByRegion = (
     }
   }
   return { gpu: gpuProducts, cpu: cpuProducts };
-};
-
-const getNebiusPlatformAliases = (platform?: string | null): string[] => {
-  if (!platform) return [];
-  const aliases: string[] = [];
-  const value = platform.toLowerCase();
-  if (value.includes("h100")) aliases.push("h100 nvlink");
-  if (value.includes("h200")) aliases.push("h200 nvlink");
-  if (value.includes("b200")) aliases.push("b200 nvlink");
-  if (value.includes("b300")) aliases.push("b300 nvlink");
-  if (value.includes("l40s")) aliases.push("l40s pcie");
-  return aliases;
 };
 
 const matchesNebiusPricing = (
@@ -1101,8 +1217,9 @@ const matchesNebiusPricing = (
 
 export const getNebiusInstanceTypeOptions = (
   catalog?: HostCatalog,
-  region?: string,
+  selection: ProviderSelection = {},
 ): NebiusInstanceOption[] => {
+  const region = selection.region;
   const instances = getCatalogEntryPayload<NebiusInstance[]>(
     catalog,
     "instance_types",
@@ -1180,9 +1297,15 @@ export const getNebiusInstanceTypeOptions = (
       : "";
     const cpuRamLabel = formatCpuRamLabel(entry.vcpus, entry.memory_gib);
     const gpuLabel = formatGpuLabel(entry.gpus, entry.gpu_label);
+    const hourlyRate = estimateNebiusSelectionUsdPerHour(catalog, selection, {
+      machine_type: entry.name,
+    });
     return {
       value: entry.name,
-      label: `${entry.name} (${cpuRamLabel}${gpuLabel}${platformLabel})`,
+      label: appendHourlyPriceLabel(
+        `${entry.name} (${cpuRamLabel}${gpuLabel}${platformLabel})`,
+        hourlyRate,
+      ),
       entry,
     };
   });
@@ -1547,22 +1670,9 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
     storage: { supported: true, growable: true },
     getOptions: (catalog, selection) => ({
       ...emptyOptions(),
-      region: getGcpRegionOptions(
-        catalog,
-        selection.machine_type,
-        selection.gpu_type,
-      ),
-      zone: getGcpZoneOptions(
-        catalog,
-        selection.region,
-        selection.machine_type,
-        selection.gpu_type,
-      ),
-      machine_type: getGcpMachineTypeOptions(
-        catalog,
-        selection.zone,
-        selection.gpu_type,
-      ),
+      region: getGcpRegionOptions(catalog, selection),
+      zone: getGcpZoneOptions(catalog, selection),
+      machine_type: getGcpMachineTypeOptions(catalog, selection),
       gpu_type: [
         { value: "none", label: "No GPU" },
         ...getGcpGpuTypeOptions(catalog),
@@ -1755,14 +1865,14 @@ export const PROVIDER_REGISTRY: Record<HostProvider, HostProviderDescriptor> = {
     storage: { supported: true, growable: true },
     getOptions: (catalog, selection) => ({
       ...emptyOptions(),
-      machine_type: getNebiusInstanceTypeOptions(catalog, selection.region).map(
+      machine_type: getNebiusInstanceTypeOptions(catalog, selection).map(
         (opt) => ({
           value: opt.value,
           label: opt.label,
           meta: opt.entry,
         }),
       ),
-      region: getNebiusRegionOptions(catalog),
+      region: getNebiusRegionOptions(catalog, selection),
     }),
     buildCreatePayload: (vals, ctx) => {
       const instance = findOption<NebiusInstance>(

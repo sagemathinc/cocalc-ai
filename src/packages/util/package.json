@@ -10,6 +10,7 @@
     "./consts": "./dist/consts/index.js",
     "./consts/*": "./dist/consts/*.js",
     "./i18n": "./dist/i18n/index.js",
+    "./project-host-pricing": "./dist/project-host-pricing.js",
     "./sync/table": "./dist/sync/table/index.js",
     "./sync/editor/db": "./dist/sync/editor/db/index.js",
     "./purchases/quota/*": "./dist/purchases/quota/*.js",

@@ -113,6 +113,9 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const noFundingModes =
     billableProvider && billing.fundingModeOptions.length === 0;
   const missingFundingMode = billableProvider && !watchedFundingMode;
+  const supportsCatalogPricing =
+    provider.selectedProvider === "gcp" ||
+    provider.selectedProvider === "nebius";
   const createDisabled =
     !canCreateHosts ||
     gcpRegionIncompatible ||
@@ -240,11 +243,16 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
           )}
           <Divider style={{ margin: "8px 0" }} />
           <Space orientation="vertical" style={{ width: "100%" }} size="small">
-            {provider.selectedProvider !== "self-host" && (
-              <Typography.Text type="secondary">
-                Cost estimate (placeholder): updates with size/region
-              </Typography.Text>
-            )}
+            {provider.selectedProvider !== "none" &&
+              provider.selectedProvider !== "self-host" && (
+                <Typography.Text type="secondary">
+                  {provider.priceEstimate
+                    ? `Estimated cost: ${provider.priceEstimate.hourly_label} · ${provider.priceEstimate.monthly_label}`
+                    : supportsCatalogPricing
+                      ? "Estimated cost updates when region, machine type, pricing model, and disk are fully selected."
+                      : "Catalog pricing is not wired for this provider yet."}
+                </Typography.Text>
+              )}
             <Popconfirm
               title={
                 <div>

@@ -60,7 +60,7 @@ describe("GCP catalog normalization", () => {
       ],
       machine_types_by_zone: {
         "us-east1-b": [
-          { name: "n2-standard-8", guestCpus: 8, memoryMb: 32768 },
+          { name: "n2d-standard-8", guestCpus: 8, memoryMb: 32768 },
         ],
       },
       gpu_types_by_zone: {
@@ -77,7 +77,7 @@ describe("GCP catalog normalization", () => {
     expect(families).toContain("ubuntu-accelerator-2404-amd64-with-nvidia-580");
     expect(families).not.toContain("ubuntu-2004-lts");
     expect(catalog.machine_types_by_zone["us-east1-b"][0].name).toBe(
-      "n2-standard-8",
+      "n2d-standard-8",
     );
     expect(catalog.gpu_types_by_zone["us-east1-b"][0].name).toBe(
       "nvidia-tesla-t4",

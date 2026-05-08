@@ -25,7 +25,13 @@ import {
   toDecimal,
   type MoneyValue,
 } from "@cocalc/util/money";
-import { getData as getGcpPricingData } from "@cocalc/gcloud-pricing-calculator";
+import {
+  estimateGcpCatalogRateUsdPerHour,
+  estimateNebiusCatalogRateUsdPerHour,
+  type GcpCatalogPrices,
+  type NebiusCatalogInstanceType,
+  type NebiusCatalogPriceItem,
+} from "@cocalc/util/project-host-pricing";
 
 export type DedicatedHostFundingLane = "prepaid" | "credit";
 
@@ -613,131 +619,33 @@ export async function closeDedicatedHostPurchaseSessionForAccount(
   }).closeDedicatedHostPurchaseSession(opts);
 }
 
-function regionFromZone(zone?: string | null): string | undefined {
-  const text = `${zone ?? ""}`.trim();
-  if (!text) return undefined;
-  const idx = text.lastIndexOf("-");
-  if (idx <= 0) return undefined;
-  return text.slice(0, idx);
-}
-
-function mapGcpDiskType({
-  disk_type,
-  storage_mode,
-}: {
-  disk_type?: string | null;
-  storage_mode?: string | null;
-}): string | undefined {
-  if (storage_mode === "ephemeral") return "local-ssd";
-  switch (`${disk_type ?? ""}`.trim()) {
-    case "standard":
-      return "pd-standard";
-    case "balanced":
-      return "pd-balanced";
-    case "ssd":
-      return "pd-ssd";
-    default:
-      return undefined;
-  }
+async function loadGcpPriceCatalog(): Promise<GcpCatalogPrices | undefined> {
+  const { rows } = await getPool("medium").query(
+    `
+      SELECT payload
+      FROM cloud_catalog_cache
+      WHERE provider=$1
+        AND kind=$2
+      ORDER BY updated DESC
+      LIMIT 1
+    `,
+    ["gcp", "prices"],
+  );
+  const payload = rows[0]?.payload;
+  return payload && typeof payload === "object"
+    ? (payload as GcpCatalogPrices)
+    : undefined;
 }
 
 async function estimateGcpRateUsdPerHour(
   input: DedicatedHostRateEstimateInput,
 ): Promise<MoneyValue | undefined> {
-  const region =
-    `${input.region ?? ""}`.trim() || regionFromZone(input.zone) || "";
-  const machineType = `${input.machine_type ?? ""}`.trim();
-  if (!region || !machineType) return undefined;
-  const pricingModel = input.pricing_model === "spot" ? "spot" : "prices";
-  const data = await getGcpPricingData();
-  const machineRate =
-    data?.machineTypes?.[machineType]?.[pricingModel]?.[region];
-  if (!Number.isFinite(machineRate)) return undefined;
-  let total = toDecimal(machineRate);
-  const gpuType = `${input.gpu_type ?? ""}`.trim();
-  const gpuCount = Number(input.gpu_count ?? 0);
-  const zone = `${input.zone ?? ""}`.trim();
-  if (gpuType && gpuCount > 0 && zone) {
-    const gpuRate =
-      data?.accelerators?.[gpuType]?.[pricingModel]?.[zone] ??
-      data?.accelerators?.[gpuType]?.prices?.[zone];
-    if (!Number.isFinite(gpuRate)) return undefined;
-    total = total.add(toDecimal(gpuRate).mul(gpuCount));
-  }
-  const diskType = mapGcpDiskType(input);
-  const diskGb = Number(input.disk_gb ?? 0);
-  if (diskType && diskGb > 0) {
-    const diskRate = data?.disks?.[diskType]?.prices?.[region];
-    if (!Number.isFinite(diskRate)) return undefined;
-    total = total.add(toDecimal(diskRate).mul(diskGb));
-  }
-  return moneyToDbString(total);
+  const data = await loadGcpPriceCatalog();
+  const estimate = estimateGcpCatalogRateUsdPerHour(data, input);
+  return estimate == null ? undefined : moneyToDbString(estimate);
 }
 
-type NebiusInstanceType = {
-  name: string;
-  platform?: string | null;
-  platform_label?: string | null;
-  vcpus?: number | null;
-  memory_gib?: number | null;
-  gpus?: number | null;
-};
-
-type NebiusPriceItem = {
-  product: string;
-  region: string;
-  price_usd: string;
-  unit: string;
-};
-
-function normalizeNebiusPricingToken(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-function normalizeNebiusPricingProduct(value: string): string {
-  let normalized = value.trim();
-  normalized = normalized.replace(/^preemptible\s+/i, "");
-  normalized = normalized.replace(/\.\s*(cpu|ram|gpu)$/i, "");
-  return normalizeNebiusPricingToken(normalized);
-}
-
-function getNebiusPlatformAliases(platform?: string | null): string[] {
-  if (!platform) return [];
-  const aliases: string[] = [];
-  const value = platform.toLowerCase();
-  if (value.includes("h100")) aliases.push("h100 nvlink");
-  if (value.includes("h200")) aliases.push("h200 nvlink");
-  if (value.includes("b200")) aliases.push("b200 nvlink");
-  if (value.includes("b300")) aliases.push("b300 nvlink");
-  if (value.includes("l40s")) aliases.push("l40s pcie");
-  return aliases;
-}
-
-function matchesNebiusPriceFamily(
-  instance: NebiusInstanceType,
-  family: string,
-): boolean {
-  const normalizedFamily = normalizeNebiusPricingToken(family);
-  const candidates = [
-    instance.platform_label,
-    instance.platform,
-    ...getNebiusPlatformAliases(instance.platform),
-  ]
-    .filter(Boolean)
-    .map((value) => normalizeNebiusPricingToken(String(value)))
-    .filter(Boolean);
-  return candidates.some(
-    (candidate) =>
-      normalizedFamily.includes(candidate) ||
-      candidate.includes(normalizedFamily),
-  );
-}
-
-async function loadNebiusPriceItems(): Promise<NebiusPriceItem[]> {
+async function loadNebiusPriceItems(): Promise<NebiusCatalogPriceItem[]> {
   const { rows } = await getPool("medium").query(
     `
       SELECT payload
@@ -753,86 +661,6 @@ async function loadNebiusPriceItems(): Promise<NebiusPriceItem[]> {
   return Array.isArray(payload) ? payload : [];
 }
 
-function selectNebiusFamilyRate({
-  prices,
-  region,
-  pricing_model,
-  instance,
-}: {
-  prices: NebiusPriceItem[];
-  region: string;
-  pricing_model?: "on_demand" | "spot" | null;
-  instance: NebiusInstanceType;
-}): {
-  family: string;
-  cpuRate?: MoneyValue;
-  ramRate?: MoneyValue;
-  gpuRate?: MoneyValue;
-} | null {
-  const wantPreemptible = pricing_model === "spot";
-  const matching = prices.filter((item) => {
-    if (item.region !== region || !item.product || !item.unit) return false;
-    const isPreemptible = /^preemptible\s+/i.test(item.product);
-    if (isPreemptible !== wantPreemptible) return false;
-    return true;
-  });
-  const families = new Map<string, NebiusPriceItem[]>();
-  for (const item of matching) {
-    const family = normalizeNebiusPricingProduct(item.product);
-    if (!family) continue;
-    const list = families.get(family) ?? [];
-    list.push(item);
-    families.set(family, list);
-  }
-  for (const [family, items] of families) {
-    if ((instance.gpus ?? 0) > 0) {
-      if (!/^nvidia\b/i.test(items[0]?.product ?? "")) continue;
-      if (!matchesNebiusPriceFamily(instance, family)) continue;
-    } else {
-      if (!/^non-gpu\b/i.test(items[0]?.product ?? "")) continue;
-      if (!matchesNebiusPriceFamily(instance, family)) continue;
-    }
-    return {
-      family,
-      cpuRate: items.find((item) => item.unit === "vCPU hour")?.price_usd,
-      ramRate: items.find((item) => item.unit === "GiB hour")?.price_usd,
-      gpuRate: items.find((item) => item.unit === "GPU hour")?.price_usd,
-    };
-  }
-  if ((instance.gpus ?? 0) <= 0) {
-    const fallback = Array.from(families.entries()).find(([family]) =>
-      family.startsWith("non gpu"),
-    );
-    if (fallback) {
-      return {
-        family: fallback[0],
-        cpuRate: fallback[1].find((item) => item.unit === "vCPU hour")
-          ?.price_usd,
-        ramRate: fallback[1].find((item) => item.unit === "GiB hour")
-          ?.price_usd,
-      };
-    }
-  }
-  return null;
-}
-
-function nebiusDiskProductForType(
-  disk_type?: string | null,
-): string | undefined {
-  switch (`${disk_type ?? ""}`.trim()) {
-    case "standard":
-      return "Network HDD disk";
-    case "balanced":
-      return "Network SSD Non-replicated disk";
-    case "ssd":
-      return "Network SSD disk";
-    case "ssd_io_m3":
-      return "Network SSD IO M3 disk";
-    default:
-      return undefined;
-  }
-}
-
 async function estimateNebiusRateUsdPerHour(
   input: DedicatedHostRateEstimateInput,
 ): Promise<MoneyValue | undefined> {
@@ -843,37 +671,20 @@ async function estimateNebiusRateUsdPerHour(
     loadNebiusInstanceTypes(),
     loadNebiusPriceItems(),
   ]);
-  const instance = (instances as NebiusInstanceType[]).find(
+  const instance = (instances as NebiusCatalogInstanceType[]).find(
     (entry) => entry.name === machineType,
   );
   if (!instance) return undefined;
-  const family = selectNebiusFamilyRate({
+  const estimate = estimateNebiusCatalogRateUsdPerHour({
     prices,
     region,
     pricing_model: input.pricing_model,
     instance,
+    disk_type: input.disk_type,
+    disk_gb: input.disk_gb,
+    storage_mode: input.storage_mode,
   });
-  if (!family?.cpuRate || !family?.ramRate) return undefined;
-  let total = toDecimal(family.cpuRate)
-    .mul(instance.vcpus ?? 0)
-    .add(toDecimal(family.ramRate).mul(instance.memory_gib ?? 0));
-  if ((instance.gpus ?? 0) > 0) {
-    if (!family.gpuRate) return undefined;
-    total = total.add(toDecimal(family.gpuRate).mul(instance.gpus ?? 0));
-  }
-  const diskGb = Number(input.disk_gb ?? 0);
-  const diskProduct = nebiusDiskProductForType(input.disk_type);
-  if (diskGb > 0 && diskProduct) {
-    const diskRate = prices.find(
-      (item) =>
-        item.region === region &&
-        item.unit === "GiB hour" &&
-        item.product === diskProduct,
-    )?.price_usd;
-    if (!diskRate) return undefined;
-    total = total.add(toDecimal(diskRate).mul(diskGb));
-  }
-  return moneyToDbString(total);
+  return estimate == null ? undefined : moneyToDbString(estimate);
 }
 
 export async function estimateDedicatedHostRateUsdPerHour(

@@ -16,6 +16,7 @@ import {
   ListPlatformsRequest,
 } from "@nebius/js-sdk/api/nebius/compute/v1/index";
 import { Long } from "@nebius/js-sdk/runtime/protos/index";
+import { fetchNebiusPricingFromDocs } from "./nebius-pricing";
 
 const logger = getLogger("cloud:catalog:nebius");
 
@@ -604,19 +605,35 @@ export async function fetchNebiusCatalog(
   const normalizedRegions = regions.length
     ? regions.filter((region) => regionsWithImages.has(region))
     : Array.from(regionsWithImages);
+  let prices = NEBIUS_CONSOLE_PRICES;
+  try {
+    const fetched = await fetchNebiusPricingFromDocs({
+      regions: normalizedRegions.length ? normalizedRegions : regions,
+    });
+    if (fetched.length) {
+      prices = fetched;
+    }
+  } catch (err) {
+    logger.warn(
+      "fetchNebiusCatalog pricing docs fetch failed; using fallback",
+      {
+        err: `${err}`,
+      },
+    );
+  }
 
   logger.info("fetchNebiusCatalog", {
     regions: normalizedRegions.length,
     platforms: platforms.length,
     images: latestImages.length,
-    prices: NEBIUS_CONSOLE_PRICES.length,
+    prices: prices.length,
   });
 
   return {
     regions: normalizedRegions.length ? normalizedRegions : regions,
     instance_types,
     images: latestImages,
-    prices: NEBIUS_CONSOLE_PRICES,
+    prices,
   };
 }
 

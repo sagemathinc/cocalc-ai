@@ -62,6 +62,7 @@ const GCP_TTLS: Record<string, number> = {
   machine_types: 60 * 60 * 24 * 7,
   gpu_types: 60 * 60 * 24 * 7,
   images: 60 * 60 * 24 * 7,
+  prices: 60 * 60 * 24,
 };
 
 const HYPERSTACK_TTLS: Record<string, number> = {
