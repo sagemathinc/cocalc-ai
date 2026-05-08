@@ -60,7 +60,6 @@ import {
   FLYOUT_LOG_FILTER_DEFAULT,
   FlyoutLogFilter,
 } from "@cocalc/frontend/project/page/flyouts/utils";
-import { migrateStarsOnMove } from "@cocalc/frontend/project/page/flyouts/store";
 import { getValidActivityBarOption } from "@cocalc/frontend/project/page/activity-bar";
 import { ACTIVITY_BAR_KEY } from "@cocalc/frontend/project/page/activity-bar-consts";
 import {
@@ -119,22 +118,13 @@ import { isCollaboratorRealtimeAccessError } from "@cocalc/frontend/project/coll
 import { canUseCollaboratorProjectRealtime } from "@cocalc/frontend/project/realtime-access";
 import { getFileTemplate } from "../templates";
 import { isBackupsPath } from "@cocalc/util/consts/backups";
-import {
-  getSnapshotPathTarget,
-  isSnapshotsPath,
-} from "@cocalc/util/consts/snapshots";
+import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
 import dust from "@cocalc/frontend/project/disk-usage/dust";
 import { withProjectHostBase } from "@cocalc/frontend/project/host-url";
 import { EditorLoadError } from "../../file-editors-error";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
-import { normalizeCpSourcePath } from "@cocalc/frontend/project/copy-paths";
-import { notifyProjectFilesystemChange } from "@cocalc/frontend/project/user-filesystem-change";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
-import {
-  moveDestinationPath,
-  normalizeDirectoryDestination,
-} from "@cocalc/frontend/project/action-paths";
 import { isJupyterPath } from "@cocalc/util/jupyter/names";
 import {
   DEFAULT_PROJECT_RUNTIME_HOME,
@@ -165,6 +155,14 @@ import {
   resetOpenFileRuntimeAfterHostReset,
   selectOpenFilesForSyncPath,
 } from "./open-file-runtime";
+import {
+  copyPathBetweenProjects,
+  copyPaths,
+  deleteFiles,
+  deleteMatchingFiles,
+  moveFiles,
+  renameFile,
+} from "./file-operations";
 export { callFilesystemClientWithRecovery } from "./filesystem-client";
 export { resetOpenFileRuntimeAfterHostReset } from "./open-file-runtime";
 
@@ -2327,26 +2325,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     }
   }
 
-  // function used internally by things that call webapp_client.project_client.exec
-  private _finish_exec(id, cb?) {
-    // returns a function that takes the err and output and
-    // does the right activity logging stuff.
-    return (err?, output?) => {
-      if (err) {
-        this.set_activity({ id, error: err });
-      } else if (
-        (output != null ? output.event : undefined) === "error" ||
-        (output != null ? output.error : undefined)
-      ) {
-        this.set_activity({ id, error: output.error });
-      }
-      this.set_activity({ id, stop: "" });
-      if (cb != null) {
-        cb(err);
-      }
-    };
-  }
-
   private appendSlashToDirectoryPaths = async (
     paths: string[],
   ): Promise<string[]> => {
@@ -2513,38 +2491,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     id?: string;
     only_contents?: boolean;
   }) => {
-    const withSlashes = await this.appendSlashToDirectoryPaths(src);
-
-    this.log({
-      event: "file_action",
-      action: "copied",
-      files: withSlashes,
-      count: src.length,
-      dest: only_contents ? dest : normalizeDirectoryDestination(dest),
-    });
-
-    if (only_contents) {
-      src = withSlashes;
-    }
-
-    src = src.map(normalizeCpSourcePath);
-
-    id ??= misc.uuid();
-    this.set_activity({
+    await copyPaths({
+      src,
+      dest,
       id,
-      status: `Copying ${src.length} ${misc.plural(
-        src.length,
-        "file",
-      )} to ${dest}`,
+      only_contents,
+      fs: () => this.fs(),
+      setActivity: (opts) => this.set_activity(opts),
+      log: (event) => this.log(event),
+      appendSlashToDirectoryPaths: this.appendSlashToDirectoryPaths,
     });
-
-    const fs = this.fs();
-    try {
-      await fs.cp(src, dest, { recursive: true, reflink: true });
-      this._finish_exec(id)();
-    } catch (err) {
-      this._finish_exec(id)(`${err}`);
-    }
   };
 
   // Copy 1 or more paths from one project to another (possibly the same) project.
@@ -2554,90 +2510,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     dest: { project_id: string; path: string };
     options?: CopyOptions;
   }) => {
-    const id = misc.uuid();
-    const files =
-      typeof opts.src.path == "string" ? [opts.src.path] : opts.src.path;
-    this.set_activity({
-      id,
-      status: `Copying ${files.length} ${misc.plural(
-        files.length,
-        "path",
-      )} to a project`,
+    await copyPathBetweenProjects({
+      opts,
+      projectId: this.project_id,
+      copyOpsTrack: (op) => this.copyOpsManager.track(op),
+      appendSlashToDirectoryPaths: this.appendSlashToDirectoryPaths,
+      setActivity: (activity) => this.set_activity(activity),
+      log: (event) => this.log(event),
     });
-    let error: any = undefined;
-    try {
-      const src_home =
-        opts.src_home ??
-        (opts.src.project_id === this.project_id
-          ? getProjectHomeDirectory(this.project_id)
-          : undefined);
-      const resp = await webapp_client.project_client.copyPathBetweenProjects({
-        ...opts,
-        ...(src_home ? { src_home } : {}),
-      });
-      this.copyOpsManager.track(resp);
-      this.set_activity({
-        id,
-        status: `Copy queued (${resp.op_id.slice(0, 8)})`,
-      });
-      const summary = await webapp_client.conat_client.lroWait({
-        op_id: resp.op_id,
-        scope_type: resp.scope_type,
-        scope_id: resp.scope_id,
-        onProgress: (event) => {
-          const phase =
-            typeof event.phase == "string" && event.phase.length > 0
-              ? event.phase
-              : typeof event.message == "string" && event.message.length > 0
-                ? event.message
-                : "running";
-          const pct =
-            typeof event.progress == "number" && Number.isFinite(event.progress)
-              ? ` (${Math.max(0, Math.min(100, Math.round(event.progress)))}%)`
-              : "";
-          this.set_activity({
-            id,
-            status: `Copy ${phase}${pct}`,
-          });
-        },
-      });
-      if (summary.status === "succeeded") {
-        notifyProjectFilesystemChange(opts.src.project_id);
-        notifyProjectFilesystemChange(opts.dest.project_id);
-        const withSlashes = await this.appendSlashToDirectoryPaths(files);
-        this.log({
-          event: "file_action",
-          action: "copied",
-          dest: opts.dest.path,
-          files: withSlashes,
-          count: files.length,
-          project: opts.dest.project_id,
-        });
-      } else if (summary.status === "canceled") {
-        error = summary.error ?? "Copy canceled";
-        alert_message({
-          type: "warning",
-          title: "Copy canceled",
-          message: error,
-        });
-      } else {
-        error = summary.error ?? `Copy failed (${summary.status})`;
-        alert_message({
-          type: "error",
-          title: "Copy failed",
-          message: error,
-        });
-      }
-    } catch (err) {
-      error = `${err}`;
-      alert_message({
-        type: "error",
-        title: "Copy failed",
-        message: error,
-      });
-    } finally {
-      this.set_activity({ id, stop: "", error });
-    }
   };
 
   renameFile = async ({
@@ -2647,24 +2527,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     src: string;
     dest: string;
   }): Promise<void> => {
-    let error: any = undefined;
-    const id = misc.uuid();
-    const status = `Renaming ${src} to ${dest}`;
-    this.set_activity({ id, status });
-    try {
-      const fs = this.fs();
-      await fs.rename(src, dest);
-      this.log({
-        event: "file_action",
-        action: "renamed",
-        src,
-        dest: dest + ((await this.isDir(dest)) ? "/" : ""),
-      });
-    } catch (err) {
-      error = err;
-    } finally {
-      this.set_activity({ id, stop: "", error });
-    }
+    await renameFile({
+      src,
+      dest,
+      fs: () => this.fs(),
+      isDir: (path) => this.isDir(path),
+      setActivity: (opts) => this.set_activity(opts),
+      log: (event) => this.log(event),
+    });
   };
 
   // note: there is no need to explicitly close or await what is returned by
@@ -2852,32 +2722,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     src: string[];
     dest: string;
   }): Promise<void> => {
-    const id = misc.uuid();
-    const status = `Moving ${src.length} ${misc.plural(
-      src.length,
-      "file",
-    )} to ${dest}`;
-    this.set_activity({ id, status });
-    let error: any = undefined;
-    try {
-      const fs = this.fs();
-      await Promise.all(
-        src.map(async (path) =>
-          fs.move(path, moveDestinationPath(dest, path), { overwrite: true }),
-        ),
-      );
-      await migrateStarsOnMove(this.project_id, src, dest);
-      this.log({
-        event: "file_action",
-        action: "moved",
-        files: src,
-        dest: normalizeDirectoryDestination(dest),
-      });
-    } catch (err) {
-      error = err;
-    } finally {
-      this.set_activity({ id, stop: "", error });
-    }
+    await moveFiles({
+      src,
+      dest,
+      projectId: this.project_id,
+      fs: () => this.fs(),
+      setActivity: (opts) => this.set_activity(opts),
+      log: (event) => this.log(event),
+    });
   };
 
   deleteFiles = async ({
@@ -2887,71 +2739,14 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     paths: string[];
     sudo?: boolean;
   }): Promise<void> => {
-    if (paths.length == 0) {
-      // nothing to do
-      return;
-    }
-    const id = misc.uuid();
-    let mesg;
-    if (paths.length === 1) {
-      mesg = `${paths[0]}`;
-    } else {
-      mesg = `${paths.length} files`;
-    }
-    this.set_activity({ id, status: `Deleting ${mesg}...` });
-
-    try {
-      // delete any snapshots:
-      const snapshots: string[] = [];
-      const nonSnapshotPaths: string[] = [];
-      for (const path of paths) {
-        const target = getSnapshotPathTarget(path);
-        if (target?.kind === "snapshot") {
-          snapshots.push(target.name);
-          continue;
-        }
-        if (target?.kind === "snapshots-root") {
-          throw new Error(
-            "Delete snapshots individually, not the .snapshots directory.",
-          );
-        }
-        if (target?.kind === "snapshot-entry") {
-          throw new Error(
-            `Snapshots are read-only. Delete the snapshot '${target.name}' instead of files inside it.`,
-          );
-        }
-        nonSnapshotPaths.push(path);
-      }
-      if (snapshots.length > 0) {
-        for (const name of snapshots) {
-          await webapp_client.conat_client.hub.projects.deleteSnapshot({
-            project_id: this.project_id,
-            name,
-          });
-        }
-      }
-      if (nonSnapshotPaths.length > 0) {
-        const fs = this.fs();
-        await fs.rm(nonSnapshotPaths, { force: true, recursive: true, sudo });
-      }
-
-      this.log({
-        event: "file_action",
-        action: "deleted",
-        files: paths,
-      });
-      this.set_activity({
-        id,
-        status: `Successfully deleted ${mesg}.`,
-        stop: "",
-      });
-    } catch (err) {
-      this.set_activity({
-        id,
-        error: `Error deleting ${mesg} -- ${err}`,
-        stop: "",
-      });
-    }
+    await deleteFiles({
+      paths,
+      sudo,
+      projectId: this.project_id,
+      fs: () => this.fs(),
+      setActivity: (opts) => this.set_activity(opts),
+      log: (event) => this.log(event),
+    });
   };
 
   // remove all files in the given path (or subtree of that path)
@@ -2968,22 +2763,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     filter: (path: string) => boolean;
     recursive?: boolean;
   }): Promise<string[]> => {
-    const fs = this.fs();
-    const options: string[] = ["-H", "-I"];
-    if (!recursive) {
-      options.push("-d", "1");
-    }
-    const { stdout } = await fs.fd(path, { options });
-    const paths = Buffer.from(stdout)
-      .toString()
-      .split("\n")
-      .slice(0, -1)
-      .map((p) => join(path, p))
-      .filter(filter);
-    if (paths.length > 0) {
-      await this.deleteFiles({ paths });
-    }
-    return paths;
+    return await deleteMatchingFiles({
+      path,
+      filter,
+      recursive,
+      fs: () => this.fs(),
+      deleteFiles: (opts) => this.deleteFiles(opts),
+    });
   };
 
   download_file = async ({
