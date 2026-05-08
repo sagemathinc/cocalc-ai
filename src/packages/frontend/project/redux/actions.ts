@@ -9,7 +9,7 @@ declare let window, document;
 import { callback } from "awaiting";
 import { List, Map, fromJS, Set as immutableSet } from "immutable";
 import { throttle } from "lodash";
-import { basename, dirname, join } from "path";
+import { join } from "path";
 import { defineMessage } from "react-intl";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { get as getProjectStatus } from "@cocalc/conat/project/project-status";
@@ -116,7 +116,6 @@ import { MoveOpsManager } from "@cocalc/frontend/project/move-ops";
 import { StartOpsManager } from "@cocalc/frontend/project/start-ops";
 import { isCollaboratorRealtimeAccessError } from "@cocalc/frontend/project/collaborator-realtime";
 import { canUseCollaboratorProjectRealtime } from "@cocalc/frontend/project/realtime-access";
-import { getFileTemplate } from "../templates";
 import { isBackupsPath } from "@cocalc/util/consts/backups";
 import { isSnapshotsPath } from "@cocalc/util/consts/snapshots";
 import { getSearch } from "@cocalc/frontend/project/explorer/config";
@@ -163,14 +162,17 @@ import {
   moveFiles,
   renameFile,
 } from "./file-operations";
+import {
+  constructAbsolutePath,
+  createFile as createProjectFile,
+  createFolder as createProjectFolder,
+  ensureContainingDirectoryExists as ensureProjectContainingDirectoryExists,
+  ensureDirectoryExists as ensureProjectDirectoryExists,
+} from "./file-creation";
 export { callFilesystemClientWithRecovery } from "./filesystem-client";
 export { resetOpenFileRuntimeAfterHostReset } from "./open-file-runtime";
 
 const { defaults, required } = misc;
-
-const BAD_FILENAME_CHARACTERS = "\\";
-const BAD_LATEX_FILENAME_CHARACTERS = '\'"()"~%$';
-const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
 
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
@@ -2864,21 +2866,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     current_path?: string,
     ext?: string,
   ): string => {
-    if (name.length === 0) {
-      throw Error("Cannot use empty filename");
-    }
-    for (const bad_char of BAD_FILENAME_CHARACTERS) {
-      if (name.indexOf(bad_char) !== -1) {
-        throw Error(`Cannot use '${bad_char}' in a filename`);
-      }
-    }
     const store = this.get_store();
-    const basePath = current_path ?? store?.get("current_path_abs") ?? "/";
-    let s = misc.path_to_file(this.toAbsoluteCurrentPath(basePath), name);
-    if (ext != null && misc.filename_extension(s) !== ext) {
-      s = `${s}.${ext}`;
-    }
-    return s;
+    return constructAbsolutePath({
+      name,
+      currentPath: current_path ?? store?.get("current_path_abs") ?? "/",
+      ext,
+      toAbsoluteCurrentPath: (path) => this.toAbsoluteCurrentPath(path),
+    });
   };
 
   createFolder = async ({
@@ -2892,21 +2886,17 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     switch_over?: boolean;
   }): Promise<void> => {
     const store = this.get_store();
-    const basePath = this.toAbsoluteCurrentPath(
-      current_path ?? store?.get("current_path_abs") ?? "/",
-    );
-    const path = join(basePath, name);
-    const fs = this.fs();
-    try {
-      await fs.mkdir(path, { recursive: true });
-    } catch (err) {
-      this.setState({ file_creation_error: `${err}` });
-    }
-    if (switch_over) {
-      this.open_directory(path);
-    }
-    // Log directory creation to the event log.  / at end of path says it is a directory.
-    this.log({ event: "file_action", action: "created", files: [path + "/"] });
+    await createProjectFolder({
+      name,
+      currentPath: current_path ?? store?.get("current_path_abs") ?? "/",
+      switch_over,
+      fs: () => this.fs(),
+      toAbsoluteCurrentPath: (path) => this.toAbsoluteCurrentPath(path),
+      setFileCreationError: (error) =>
+        this.setState({ file_creation_error: error }),
+      openDirectory: (path) => this.open_directory(path),
+      log: (event) => this.log(event),
+    });
   };
 
   createFile = async ({
@@ -2920,96 +2910,30 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     current_path?: string;
     switch_over?: boolean;
   }) => {
-    this.setState({ file_creation_error: undefined }); // clear any create file display state
-    if ((name === ".." || name === ".") && ext == null) {
-      this.setState({
-        file_creation_error: "Cannot create a file named . or ..",
-      });
-      return;
-    }
-    if (misc.is_only_downloadable(name)) {
-      const store = this.get_store();
-      const basePath = this.toAbsoluteCurrentPath(
-        current_path ?? store?.get("current_path_abs") ?? "/",
-      );
-      this.new_file_from_web(name, basePath);
-      return;
-    }
-
-    if (name[name.length - 1] === "/") {
-      if (ext == null) {
-        this.createFolder({
-          name,
-          current_path,
-        });
-        return;
-      } else {
-        name = name.slice(0, name.length - 1);
-      }
-    }
-
     const store = this.get_store();
-    const basePath = this.toAbsoluteCurrentPath(
-      current_path ?? store?.get("current_path_abs") ?? "/",
-    );
-    let path = join(basePath, name);
-    if (ext) {
-      path += "." + ext;
-    }
-    ext = misc.filename_extension(path);
-
-    if (BANNED_FILE_TYPES.has(ext)) {
-      this.setState({
-        file_creation_error: `Cannot create a file with the ${ext} extension`,
-      });
-      return;
-    }
-    if (ext === "tex") {
-      const filename = misc.path_split(name).tail;
-      for (const bad_char of BAD_LATEX_FILENAME_CHARACTERS) {
-        if (filename.includes(bad_char)) {
-          this.setState({
-            file_creation_error: `Cannot use '${bad_char}' in a LaTeX filename '${filename}'`,
-          });
-          return;
-        }
-      }
-    }
-    const preferredKernel =
-      ext === "ipynb"
-        ? redux
-            .getStore("account")
-            ?.getIn(["editor_settings", "jupyter", "kernel"])
-        : undefined;
-    const content =
-      ext === "ipynb"
-        ? await (
-            await import("@cocalc/frontend/jupyter/new-notebook")
-          ).createInitialIpynbContent(this.project_id, preferredKernel)
-        : getFileTemplate(ext);
-    await this.ensureContainingDirectoryExists(path);
-    const fs = this.fs();
-    try {
-      await fs.writeFile(path, content);
-    } catch (err) {
-      this.setState({
-        file_creation_error: `${err}`,
-      });
-      return;
-    }
-    this.log({ event: "file_action", action: "created", files: [path] });
-    if (ext) {
-      redux.getActions("account")?.addTag(`create-${ext}`);
-    }
-    if (switch_over) {
-      this.open_file({
-        path,
-        // so opens immediately, since switch_over is only something
-        // we do when user is explicitly opening the file
-        explicit: true,
-        foreground: true,
-      });
-    }
+    await createProjectFile({
+      name,
+      ext,
+      currentPath: current_path ?? store?.get("current_path_abs") ?? "/",
+      switch_over,
+      projectId: this.project_id,
+      fs: () => this.fs(),
+      toAbsoluteCurrentPath: (path) => this.toAbsoluteCurrentPath(path),
+      setFileCreationError: (error) =>
+        this.setState({ file_creation_error: error }),
+      createFolder: (opts) => this.createFolder(opts),
+      newFileFromWeb: (url, currentPath) =>
+        this.new_file_from_web(url, currentPath),
+      ensureContainingDirectoryExists: (path) =>
+        this.ensureContainingDirectoryExists(path),
+      log: (event) => this.log(event),
+      getPreferredKernel: () =>
+        redux
+          .getStore("account")
+          ?.getIn(["editor_settings", "jupyter", "kernel"]),
+      addCreatedTag: (tag) => redux.getActions("account")?.addTag(tag),
+      openFile: (opts) => this.open_file(opts),
+    });
   };
 
   private new_file_from_web = async (
@@ -3324,26 +3248,18 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   }
 
   ensureContainingDirectoryExists = async (path: string) => {
-    await this.ensureDirectoryExists(dirname(path));
+    await ensureProjectContainingDirectoryExists({
+      path,
+      ensureDirectoryExists: (path) => this.ensureDirectoryExists(path),
+    });
   };
 
   ensureDirectoryExists = async (path: string): Promise<void> => {
-    const v = this.getFilesCache(dirname(path));
-    if (v?.[basename(path)]) {
-      // already exists
-      return;
-    }
-    // create it -- just make it and if it already exists, not an error
-    // (this avoids race conditions and is the right way)
-    const fs = this.fs();
-    try {
-      await fs.mkdir(path, { recursive: true });
-    } catch (err) {
-      if (err.code == "EEXISTS") {
-        return;
-      }
-      throw err;
-    }
+    await ensureProjectDirectoryExists({
+      path,
+      fs: () => this.fs(),
+      getFilesCache: (path) => this.getFilesCache(path),
+    });
   };
 
   /* NOTE!  Below we store the modal state *both* in a private
