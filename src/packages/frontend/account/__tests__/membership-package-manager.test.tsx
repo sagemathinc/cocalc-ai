@@ -185,6 +185,45 @@ describe("MembershipPackageManager", () => {
     });
   });
 
+  it("shows seats after purchase as a plain count when adding team seats", async () => {
+    getMembershipPackages.mockResolvedValue([
+      {
+        id: "team-1",
+        owner_account_id: "owner-1",
+        kind: "team",
+        membership_class: "member",
+        seat_count: 5,
+        active_assignment_count: 0,
+        available_seat_count: 5,
+        assignments: [],
+        metadata: { interval: "month", seat_price: 10 },
+      },
+    ]);
+    getMembershipPackageQuote.mockResolvedValue({
+      kind: "team",
+      membership_class: "member",
+      seat_count: 1,
+      seat_price: 10,
+      total_price: 10,
+      interval: "month",
+    });
+    isPurchaseAllowed.mockResolvedValue({ allowed: true, chargeAmount: 10 });
+
+    render(<MembershipPackageManager tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Add seats")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Add seats"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Seats after purchase")).toBeTruthy();
+      expect(screen.getByText("6")).toBeTruthy();
+    });
+    expect(screen.queryByText("Seats after purchase: 6")).toBeNull();
+  });
+
   it("assigns a seat from an existing package", async () => {
     getMembershipPackages.mockResolvedValue([
       {
