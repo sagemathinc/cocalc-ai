@@ -20,6 +20,12 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     has_payment_method: true,
     balance: "25",
     min_balance: "0",
+    dedicated_host_window_usage: {
+      prepaid_5h_usd: "0",
+      prepaid_7d_usd: "0",
+      credit_5h_usd: "0",
+      credit_7d_usd: "0",
+    },
     ...overrides,
   };
 }
@@ -124,6 +130,53 @@ describe("evaluateDedicatedHostAdmission", () => {
     ).toMatchObject({
       allowed: false,
       code: "membership_host_spend_not_configured",
+    });
+  });
+
+  it("denies prepaid-funded actions when the prepaid usage window is exhausted", () => {
+    expect(
+      evaluateDedicatedHostAdmission({
+        action: "start",
+        machine_cloud: "gcp",
+        snapshot: snapshot({
+          dedicated_host_window_usage: {
+            prepaid_5h_usd: "300",
+            prepaid_7d_usd: "400",
+            credit_5h_usd: "0",
+            credit_7d_usd: "0",
+          },
+        }) as any,
+      }),
+    ).toMatchObject({
+      allowed: false,
+      code: "prepaid_usage_window_exceeded",
+    });
+  });
+
+  it("falls through to credit when prepaid is exhausted but credit headroom remains", () => {
+    expect(
+      evaluateDedicatedHostAdmission({
+        action: "start",
+        machine_cloud: "gcp",
+        snapshot: snapshot({
+          effective_limits: {
+            prepaid_host_usage_limit_5h_usd: 300,
+            prepaid_host_usage_limit_7d_usd: 1000,
+            credit_spend_limit_5h_usd: 300,
+            credit_spend_limit_7d_usd: 1000,
+          },
+          min_balance: "-100",
+          dedicated_host_window_usage: {
+            prepaid_5h_usd: "300",
+            prepaid_7d_usd: "400",
+            credit_5h_usd: "0",
+            credit_7d_usd: "0",
+          },
+        }) as any,
+      }),
+    ).toMatchObject({
+      allowed: true,
+      funding_lane: "credit",
     });
   });
 });

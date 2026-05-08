@@ -30,6 +30,7 @@ import type {
   HostPricingModel,
   HostSpotRecoveryPolicy,
 } from "@cocalc/conat/hub/api/hosts";
+import type { MoneyValue } from "@cocalc/util/money";
 import { randomUUID } from "crypto";
 import getPool from "@cocalc/database/pool";
 import { normalizeProviderId } from "@cocalc/cloud";
@@ -52,9 +53,73 @@ import { hasCloudflareTunnel } from "@cocalc/server/cloud/cloudflare-tunnel";
 import { enqueueCloudVmWork } from "@cocalc/server/cloud";
 import { normalizeSpotRecoveryPolicy } from "@cocalc/server/cloud/spot-restore";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import {
+  getDedicatedHostPolicySnapshotForAccount,
+  isBillableDedicatedHostCloud,
+  selectDedicatedHostFundingLane,
+} from "@cocalc/server/project-host/admission";
+import {
+  estimateDedicatedHostRateUsdPerHour,
+  reconcileDedicatedHostPurchaseSessionForAccount,
+} from "@cocalc/server/project-host/spend";
 
 function pool() {
   return getPool();
+}
+
+async function resolveBillableHostSessionConfig({
+  account_id,
+  action,
+  provider,
+  region,
+  size,
+  machine,
+  pricing_model,
+}: {
+  account_id: string;
+  action: "create" | "start";
+  provider?: string | null;
+  region?: string | null;
+  size?: string | null;
+  machine?: Host["machine"];
+  pricing_model?: HostPricingModel;
+}): Promise<
+  | {
+      funding_lane: "prepaid" | "credit";
+      hourly_cost_usd: MoneyValue;
+    }
+  | undefined
+> {
+  if (!isBillableDedicatedHostCloud(provider)) {
+    return undefined;
+  }
+  const hourly_cost_usd = await estimateDedicatedHostRateUsdPerHour({
+    provider,
+    region,
+    zone: machine?.zone,
+    machine_type: machine?.machine_type ?? size,
+    disk_gb: machine?.disk_gb,
+    disk_type: machine?.disk_type,
+    storage_mode: machine?.storage_mode,
+    gpu_type: machine?.gpu_type,
+    gpu_count: machine?.gpu_count,
+    pricing_model,
+  });
+  if (!hourly_cost_usd) {
+    throw new Error(
+      `unable to determine the ${action} hourly rate for provider '${provider}'`,
+    );
+  }
+  const snapshot = await getDedicatedHostPolicySnapshotForAccount({
+    account_id,
+  });
+  const funding_lane = selectDedicatedHostFundingLane(snapshot);
+  if (!funding_lane) {
+    throw new Error(
+      `dedicated-host funding is not currently available for account ${account_id}`,
+    );
+  }
+  return { funding_lane, hourly_cost_usd };
 }
 
 export async function createHostInternalHelper({
@@ -182,6 +247,18 @@ export async function createHostInternalHelper({
     gpu,
   );
   const gpuEnabled = machineHasGpu(normalizedMachine);
+  const billableSession = await resolveBillableHostSessionConfig({
+    account_id: owner,
+    action: "create",
+    provider: machineCloud,
+    region: resolvedRegion,
+    size,
+    machine: normalizedMachine,
+    pricing_model: pricingModel,
+  });
+  const billingStartedAt = billableSession
+    ? new Date().toISOString()
+    : undefined;
 
   await pool().query(
     `INSERT INTO project_hosts (id, name, region, status, metadata, created, updated, last_seen, bay_id)
@@ -219,11 +296,35 @@ export async function createHostInternalHelper({
         ...(requestedBootstrapVersion
           ? { bootstrap_version: requestedBootstrapVersion }
           : {}),
+        ...(billableSession
+          ? {
+              billing: {
+                funding_lane: billableSession.funding_lane,
+                hourly_cost_usd: billableSession.hourly_cost_usd,
+                started_at: billingStartedAt,
+              },
+            }
+          : {}),
       },
       null,
       getConfiguredBayId(),
     ],
   );
+  if (billableSession) {
+    await reconcileDedicatedHostPurchaseSessionForAccount({
+      account_id: owner,
+      host_id: id,
+      host_name: name,
+      host_bay_id: getConfiguredBayId(),
+      provider: machineCloud!,
+      region: resolvedRegion,
+      machine_type: normalizedMachine.machine_type ?? size,
+      pricing_model: pricingModel,
+      funding_lane: billableSession.funding_lane,
+      hourly_cost_usd: billableSession.hourly_cost_usd,
+      started_at: billingStartedAt,
+    });
+  }
   if (machineCloud && !isSelfHost) {
     await enqueueCloudVmWork({
       vm_id: id,
@@ -264,6 +365,10 @@ export async function startHostInternalHelper({
   const owner = metadata.owner ?? account_id;
   const machine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
+  const effectivePricingModel =
+    row.metadata?.effective_pricing_model ??
+    row.metadata?.desired_pricing_model ??
+    row.metadata?.pricing_model;
   const sshTarget = String(machine.metadata?.self_host_ssh_target ?? "").trim();
   if (machineCloud === "self-host" && sshTarget && owner) {
     await ensureSelfHostReverseTunnel({
@@ -329,7 +434,43 @@ export async function startHostInternalHelper({
     [row.id],
   );
   const nextMetadata = metaRowsFinal[0]?.metadata ?? metadata;
+  const billableSession =
+    owner && machineCloud
+      ? await resolveBillableHostSessionConfig({
+          account_id: owner,
+          action: "start",
+          provider: machineCloud,
+          region: row.region,
+          size: nextMetadata?.size ?? row.metadata?.size,
+          machine: machine,
+          pricing_model: effectivePricingModel,
+        })
+      : undefined;
+  const billingStartedAt = billableSession
+    ? new Date().toISOString()
+    : undefined;
   nextMetadata.desired_state = "running";
+  if (billableSession) {
+    nextMetadata.billing = {
+      ...(nextMetadata.billing ?? {}),
+      funding_lane: billableSession.funding_lane,
+      hourly_cost_usd: billableSession.hourly_cost_usd,
+      started_at: billingStartedAt,
+    };
+    await reconcileDedicatedHostPurchaseSessionForAccount({
+      account_id: owner!,
+      host_id: row.id,
+      host_name: row.name ?? undefined,
+      host_bay_id: getConfiguredBayId(),
+      provider: machineCloud!,
+      region: row.region,
+      machine_type: machine.machine_type ?? nextMetadata?.size,
+      pricing_model: effectivePricingModel,
+      funding_lane: billableSession.funding_lane,
+      hourly_cost_usd: billableSession.hourly_cost_usd,
+      started_at: billingStartedAt,
+    });
+  }
   if (nextMetadata?.self_host?.auto_start_pending) {
     const nextSelfHost = {
       ...(nextMetadata.self_host ?? {}),

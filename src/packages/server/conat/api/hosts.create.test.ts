@@ -10,6 +10,11 @@ let getBalanceMock: jest.Mock;
 let getMinBalanceMock: jest.Mock;
 let resolveAccountHomeBayMock: jest.Mock;
 let assertDedicatedHostAdmissionForAccountMock: jest.Mock;
+let getDedicatedHostPolicySnapshotForAccountMock: jest.Mock;
+let isBillableDedicatedHostCloudMock: jest.Mock;
+let selectDedicatedHostFundingLaneMock: jest.Mock;
+let estimateDedicatedHostRateUsdPerHourMock: jest.Mock;
+let reconcileDedicatedHostPurchaseSessionForAccountMock: jest.Mock;
 
 const ACCOUNT_ID = "81e787c4-8705-46c5-86df-9d07bc424a01";
 
@@ -53,6 +58,20 @@ jest.mock("@cocalc/server/project-host/admission", () => ({
   __esModule: true,
   assertDedicatedHostAdmissionForAccount: (...args: any[]) =>
     assertDedicatedHostAdmissionForAccountMock(...args),
+  getDedicatedHostPolicySnapshotForAccount: (...args: any[]) =>
+    getDedicatedHostPolicySnapshotForAccountMock(...args),
+  isBillableDedicatedHostCloud: (...args: any[]) =>
+    isBillableDedicatedHostCloudMock(...args),
+  selectDedicatedHostFundingLane: (...args: any[]) =>
+    selectDedicatedHostFundingLaneMock(...args),
+}));
+
+jest.mock("@cocalc/server/project-host/spend", () => ({
+  __esModule: true,
+  estimateDedicatedHostRateUsdPerHour: (...args: any[]) =>
+    estimateDedicatedHostRateUsdPerHourMock(...args),
+  reconcileDedicatedHostPurchaseSessionForAccount: (...args: any[]) =>
+    reconcileDedicatedHostPurchaseSessionForAccountMock(...args),
 }));
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
@@ -110,11 +129,42 @@ describe("hosts.createHost", () => {
       epoch: 1,
     }));
     assertDedicatedHostAdmissionForAccountMock = jest.fn(async () => undefined);
+    getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      can_create_hosts: true,
+      has_active_second_factor: true,
+      has_payment_method: true,
+      balance: "25",
+      min_balance: "0",
+      effective_limits: {
+        prepaid_host_usage_limit_5h_usd: 300,
+        prepaid_host_usage_limit_7d_usd: 1000,
+      },
+      dedicated_host_window_usage: {
+        prepaid_5h_usd: "0",
+        prepaid_7d_usd: "0",
+        credit_5h_usd: "0",
+        credit_7d_usd: "0",
+      },
+    }));
+    isBillableDedicatedHostCloudMock = jest.fn(
+      (provider?: string | null) => provider === "gcp",
+    );
+    selectDedicatedHostFundingLaneMock = jest.fn(() => "prepaid");
+    estimateDedicatedHostRateUsdPerHourMock = jest.fn(async () => "1.25");
+    reconcileDedicatedHostPurchaseSessionForAccountMock = jest.fn(
+      async () => undefined,
+    );
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.startsWith("INSERT INTO project_hosts ")) {
         expect(params[4]?.pricing_model).toBe("spot");
         expect(params[4]?.interruption_restore_policy).toBe("immediate");
         expect(params[4]?.desired_state).toBe("running");
+        expect(params[4]?.billing).toEqual({
+          funding_lane: "prepaid",
+          hourly_cost_usd: "1.25",
+          started_at: expect.any(String),
+        });
         expect(params[5]).toBeNull();
         expect(params[6]).toBe("bay-0");
         return { rowCount: 1 };
@@ -170,6 +220,17 @@ describe("hosts.createHost", () => {
         vm_id: host.id,
         action: "provision",
         payload: { provider: "gcp" },
+      }),
+    );
+    expect(
+      reconcileDedicatedHostPurchaseSessionForAccountMock,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        host_id: host.id,
+        provider: "gcp",
+        funding_lane: "prepaid",
+        hourly_cost_usd: "1.25",
       }),
     );
   });
