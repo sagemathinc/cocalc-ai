@@ -117,6 +117,9 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedZone,
     selectedMachineType,
     selectedGpuType,
+    selectedPricingModel,
+    selectedDiskType,
+    selectedDiskGb,
     selectedSelfHostKind,
     selectedSelfHostMode,
     selectedGpu,
@@ -148,6 +151,9 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedZone,
     selectedMachineType,
     selectedGpuType,
+    selectedPricingModel,
+    selectedDiskType,
+    selectedDiskGb,
     selectedSelfHostKind,
     selectedSelfHostMode,
     selectedSize,
@@ -216,6 +222,11 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     machine_type:
       watchedMachineType ?? host?.machine?.machine_type ?? undefined,
     gpu_type: watchedGpuType ?? host?.machine?.gpu_type ?? undefined,
+    pricing_model: watchedPricingModel ?? host?.pricing_model ?? undefined,
+    storage_mode:
+      selectedStorageMode ?? host?.machine?.storage_mode ?? undefined,
+    disk_type: selectedDiskType ?? host?.machine?.disk_type ?? undefined,
+    disk_gb: selectedDiskGb ?? host?.machine?.disk_gb ?? undefined,
     size:
       watchedMachineType ??
       watchedSize ??

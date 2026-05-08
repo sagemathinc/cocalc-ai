@@ -120,16 +120,20 @@ export const HostCreateAdvancedFields: React.FC<
             label="Storage mode"
             initialValue="persistent"
             tooltip={
-              supportsPersistentStorage
-                ? persistentGrowable
-                  ? "Ephemeral uses fast local disks; persistent uses a separate growable disk."
-                  : "Ephemeral uses fast local disks; persistent uses a separate fixed-size disk."
-                : "Only ephemeral storage is available for this provider."
+              selectedProvider === "gcp"
+                ? "Persistent disk only for GCP hosts in this release. Local SSD and newer Hyperdisk-style storage are not offered yet."
+                : supportsPersistentStorage
+                  ? persistentGrowable
+                    ? "Ephemeral uses fast local disks; persistent uses a separate growable disk."
+                    : "Ephemeral uses fast local disks; persistent uses a separate fixed-size disk."
+                  : "Only ephemeral storage is available for this provider."
             }
           >
             <Select
               options={storageModeOptions}
-              disabled={!supportsPersistentStorage}
+              disabled={
+                !supportsPersistentStorage || storageModeOptions.length === 1
+              }
             />
           </Form.Item>
         </Col>

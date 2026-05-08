@@ -1,3 +1,5 @@
+import type { GcpCatalogPrices } from "@cocalc/util/project-host-pricing";
+
 export type GcpRegion = {
   name: string;
   status?: string | null;
@@ -33,6 +35,7 @@ export type GcpCatalog = {
   machine_types_by_zone: Record<string, GcpMachineType[]>;
   gpu_types_by_zone: Record<string, GcpGpuType[]>;
   images?: GcpImage[];
+  prices?: GcpCatalogPrices;
 };
 
 export type GcpImage = {

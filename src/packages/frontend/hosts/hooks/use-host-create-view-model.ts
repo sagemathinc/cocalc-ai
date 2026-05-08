@@ -6,6 +6,7 @@ import type {
   FieldOptionsMap,
   HostFieldLabels,
   HostFieldTooltips,
+  ProviderPriceEstimate,
   ProviderFieldSchema,
 } from "../providers/registry";
 import type { HostFundingModeOption } from "../utils/funding-mode";
@@ -37,6 +38,7 @@ export type HostCreateViewModel = {
       persistentGrowable: boolean;
       showDiskFields: boolean;
     };
+    priceEstimate?: ProviderPriceEstimate;
     catalogLoading?: boolean;
     catalogError?: string;
   };

@@ -17,6 +17,7 @@ import {
   HOST_FIELDS,
   buildRecommendationUpdate,
   getProviderDescriptor,
+  getProviderPriceEstimate,
   getProviderStorageSupport,
   getProviderOptions,
   filterFieldSchemaForCaps,
@@ -24,6 +25,7 @@ import {
   type ProviderSelection,
   type FieldOptionsMap,
   type ProviderFieldSchema,
+  type ProviderPriceEstimate,
 } from "../providers/registry";
 
 type SelectOption = { value: string; disabled?: boolean };
@@ -36,6 +38,9 @@ type UseHostFormArgs = {
   selectedZone?: string;
   selectedMachineType?: string;
   selectedGpuType?: string;
+  selectedPricingModel?: string;
+  selectedDiskType?: string;
+  selectedDiskGb?: number;
   selectedSelfHostKind?: string;
   selectedSelfHostMode?: string;
   selectedSize?: string;
@@ -71,6 +76,9 @@ export const useHostForm = ({
   selectedZone,
   selectedMachineType,
   selectedGpuType,
+  selectedPricingModel,
+  selectedDiskType,
+  selectedDiskGb,
   selectedSelfHostKind,
   selectedSelfHostMode,
   selectedSize,
@@ -107,6 +115,10 @@ export const useHostForm = ({
       zone: selectedZone,
       machine_type: selectedMachineType,
       gpu_type: selectedGpuType,
+      pricing_model: selectedPricingModel,
+      storage_mode: selectedStorageMode,
+      disk_type: selectedDiskType,
+      disk_gb: selectedDiskGb,
       self_host_kind: selectedSelfHostKind,
       self_host_mode: selectedSelfHostMode,
       size: selectedSize,
@@ -117,6 +129,10 @@ export const useHostForm = ({
       selectedZone,
       selectedMachineType,
       selectedGpuType,
+      selectedPricingModel,
+      selectedStorageMode,
+      selectedDiskType,
+      selectedDiskGb,
       selectedSelfHostKind,
       selectedSelfHostMode,
       selectedSize,
@@ -162,19 +178,35 @@ export const useHostForm = ({
   );
   const supportsPersistentStorage = storageSupport.supported;
   const persistentGrowable = storageSupport.growable ?? true;
-  const storageModeOptions = supportsPersistentStorage
-    ? [
-        { value: "ephemeral", label: "Ephemeral (local)" },
-        {
-          value: "persistent",
-          label: persistentGrowable
-            ? "Persistent (growable disk)"
-            : "Persistent (fixed size)",
-        },
-      ]
-    : [{ value: "ephemeral", label: "Ephemeral (local)" }];
+  const persistentOption = {
+    value: "persistent",
+    label: persistentGrowable
+      ? "Persistent (growable disk)"
+      : "Persistent (fixed size)",
+  };
+  const storageModeOptions = !supportsPersistentStorage
+    ? [{ value: "ephemeral", label: "Ephemeral (local)" }]
+    : provider === "gcp"
+      ? [
+          ...(selectedStorageMode === "ephemeral"
+            ? [
+                {
+                  value: "ephemeral",
+                  label:
+                    "Ephemeral (legacy local, not offered for new GCP hosts)",
+                  disabled: true,
+                },
+              ]
+            : []),
+          persistentOption,
+        ]
+      : [{ value: "ephemeral", label: "Ephemeral (local)" }, persistentOption];
   const showDiskFields =
     supportsPersistentStorage && selectedStorageMode !== "ephemeral";
+  const priceEstimate: ProviderPriceEstimate | undefined = useMemo(
+    () => getProviderPriceEstimate(provider, catalog, selection),
+    [provider, catalog, selection],
+  );
 
   const catalogSummary = useMemo(
     () =>
@@ -186,12 +218,23 @@ export const useHostForm = ({
   );
 
   useEffect(() => {
+    const currentStorageMode = form.getFieldValue("storage_mode");
     if (!supportsPersistentStorage) {
-      form.setFieldsValue({ storage_mode: "ephemeral" });
-    } else if (!form.getFieldValue("storage_mode")) {
-      form.setFieldsValue({ storage_mode: "persistent" });
+      if (currentStorageMode !== "ephemeral") {
+        form.setFieldsValue({ storage_mode: "ephemeral" });
+      }
+      return;
     }
-  }, [supportsPersistentStorage, form]);
+    if (
+      !currentStorageMode ||
+      !storageModeOptions.some((opt) => opt.value === currentStorageMode)
+    ) {
+      const nextStorageMode = firstValue(storageModeOptions);
+      if (nextStorageMode) {
+        form.setFieldsValue({ storage_mode: nextStorageMode });
+      }
+    }
+  }, [supportsPersistentStorage, storageModeOptions, form]);
 
   useEffect(() => {
     if (!selectedProvider || selectedProvider === "none") return;
@@ -273,6 +316,7 @@ export const useHostForm = ({
     persistentGrowable,
     storageModeOptions,
     showDiskFields,
+    priceEstimate,
     catalogSummary,
     applyRecommendation,
   };

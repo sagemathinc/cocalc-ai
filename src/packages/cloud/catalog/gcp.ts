@@ -1,5 +1,9 @@
 import { v1 as compute } from "@google-cloud/compute";
 import { map } from "awaiting";
+import {
+  gcpCatalogMachineTypeSortKey,
+  isSupportedCatalogGcpMachineType,
+} from "@cocalc/util/project-host-pricing";
 import logger from "../logger";
 import type {
   GcpCatalog,
@@ -10,6 +14,7 @@ import type {
   GcpZone,
   CatalogEntry,
 } from "./types";
+import { fetchGcpCatalogPrices } from "./gcp-pricing";
 
 export type GcpCatalogOptions = {
   projectId: string;
@@ -43,6 +48,7 @@ export function normalizeGcpCatalog(opts: {
   machine_types_by_zone: Record<string, GcpMachineType[]>;
   gpu_types_by_zone: Record<string, GcpGpuType[]>;
   images?: GcpImage[];
+  prices?: GcpCatalog["prices"];
 }): GcpCatalog {
   const regions: GcpRegion[] = opts.regions.map((region) => ({
     name: region.name ?? "",
@@ -69,12 +75,19 @@ export function normalizeGcpCatalog(opts: {
 
   const machine_types_by_zone: Record<string, GcpMachineType[]> = {};
   for (const [zone, types] of Object.entries(opts.machine_types_by_zone)) {
-    machine_types_by_zone[zone] = (types ?? []).filter((entry) => {
-      const name = entry?.name ?? "";
-      if (!name) return false;
-      if (isUnsupportedMachineType(name)) return false;
-      return true;
-    });
+    machine_types_by_zone[zone] = (types ?? [])
+      .filter((entry) => {
+        const name = entry?.name ?? "";
+        if (!name) return false;
+        if (isUnsupportedMachineType(name)) return false;
+        if (!isSupportedCatalogGcpMachineType(name)) return false;
+        return true;
+      })
+      .sort((left, right) =>
+        gcpCatalogMachineTypeSortKey(left.name).localeCompare(
+          gcpCatalogMachineTypeSortKey(right.name),
+        ),
+      );
   }
 
   return {
@@ -83,6 +96,7 @@ export function normalizeGcpCatalog(opts: {
     machine_types_by_zone,
     gpu_types_by_zone: opts.gpu_types_by_zone,
     images,
+    prices: opts.prices,
   };
 }
 
@@ -119,6 +133,13 @@ export function gcpCatalogEntries(catalog: GcpCatalog): CatalogEntry[] {
     scope: "global",
     payload: catalog.images ?? [],
   });
+  if (catalog.prices) {
+    entries.push({
+      kind: "prices",
+      scope: "global",
+      payload: catalog.prices,
+    });
+  }
 
   return entries;
 }
@@ -141,7 +162,8 @@ function ubuntuVersionCode(name?: string | null): number | undefined {
 }
 
 function isUnsupportedMachineType(name: string): boolean {
-  // These machine families require Hyperdisk; we only support pd-* disks.
+  // These newer machine families require Hyperdisk / newer pooled persistent
+  // storage paths. V1 only supports the older pd-* disk families globally.
   // Reference: https://chatgpt.com/share/69629fbc-a008-800e-887f-c04d76aa1f9b
   if (/^(c4|c4a|c4d|n4|n4a|n4d|h4d|a4|a4x|g4)-/i.test(name)) return true;
   // Too small to run a project-host reliably.
@@ -321,6 +343,9 @@ export async function fetchGcpCatalog(
     machine_types_by_zone,
     gpu_types_by_zone,
     images: filteredImages,
+    prices: await fetchGcpCatalogPrices({
+      credentials: opts.credentials,
+    }),
   });
   logger.info("fetchGcpCatalog done", {
     regions: catalog.regions.length,
