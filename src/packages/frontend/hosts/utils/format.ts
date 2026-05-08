@@ -77,13 +77,15 @@ export function getHostSizeDisplay(host: Host): {
   secondary?: string;
 } {
   const configuredMachineType = `${host.machine?.machine_type ?? ""}`.trim();
-  const storedSize = `${host.size ?? ""}`.trim();
-  const nonRunningConfiguredShapeMismatch =
-    !!configuredMachineType &&
-    !!storedSize &&
-    configuredMachineType !== storedSize &&
-    host.status !== "running";
-  if (nonRunningConfiguredShapeMismatch) {
+  const isManagedCloudHost =
+    !!host.machine?.cloud &&
+    host.machine.cloud !== "self-host" &&
+    host.machine.cloud !== "local";
+  if (
+    isManagedCloudHost &&
+    configuredMachineType &&
+    host.status !== "running"
+  ) {
     return { primary: configuredMachineType };
   }
   const cpu = getHostCpuCount(host);

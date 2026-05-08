@@ -1996,6 +1996,19 @@ export const useHostsPageViewModel = () => {
 
           if (canEditMachine) {
             const nextMachineType = values.machine_type || values.size;
+            const machineSelection = {
+              region: values.region ?? editingHost.region ?? undefined,
+              zone: values.zone ?? editingHost.machine?.zone ?? undefined,
+              machine_type:
+                nextMachineType ?? editingHost.machine?.machine_type,
+              gpu_type: values.gpu_type ?? editingHost.machine?.gpu_type,
+              size:
+                values.size ??
+                nextMachineType ??
+                editingHost.machine?.machine_type ??
+                editingHost.size,
+              gpu: editingHost.gpu ? "true" : undefined,
+            };
             if (isDeprovisioned) {
               if (
                 values.provider &&
@@ -2016,43 +2029,44 @@ export const useHostsPageViewModel = () => {
             ) {
               update.machine_type = nextMachineType;
             }
-            if (nextProvider === "nebius" && nextMachineType) {
-              const selection = {
-                region: values.region ?? editingHost.region ?? undefined,
-                zone: values.zone ?? editingHost.machine?.zone ?? undefined,
-                machine_type: nextMachineType,
-                gpu_type: values.gpu_type ?? editingHost.machine?.gpu_type,
-                size: values.size ?? nextMachineType,
-                gpu: editingHost.gpu ? "true" : undefined,
-              };
+            if (nextMachineType) {
               const fieldOptions = getProviderOptions(
                 nextProvider,
                 editCatalog,
-                selection,
+                machineSelection,
               );
               const payload = buildCreateHostPayload(
                 {
                   ...values,
                   provider: nextProvider,
-                  region: selection.region,
-                  zone: selection.zone,
-                  machine_type: selection.machine_type,
-                  size: selection.size,
+                  region: machineSelection.region,
+                  zone: machineSelection.zone,
+                  machine_type: machineSelection.machine_type,
+                  size: machineSelection.size,
                 },
                 { fieldOptions, catalog: editCatalog },
               );
               const machine = payload.machine ?? {};
-              const nextDerivedGpuType = machine.gpu_type ?? "none";
-              const currentDerivedGpuType =
-                editingHost.machine?.gpu_type ?? "none";
-              const nextDerivedGpuCount = machine.gpu_count ?? 0;
-              const currentDerivedGpuCount =
-                editingHost.machine?.gpu_count ?? 0;
-              if (nextDerivedGpuType !== currentDerivedGpuType) {
-                update.gpu_type = nextDerivedGpuType;
+              const metadata = (machine.metadata ?? {}) as Record<string, any>;
+              if (typeof metadata.cpu === "number") {
+                update.cpu = metadata.cpu;
               }
-              if (nextDerivedGpuCount !== currentDerivedGpuCount) {
-                update.gpu_count = nextDerivedGpuCount;
+              if (typeof metadata.ram_gb === "number") {
+                update.ram_gb = metadata.ram_gb;
+              }
+              if (nextProvider === "nebius") {
+                const nextDerivedGpuType = machine.gpu_type ?? "none";
+                const currentDerivedGpuType =
+                  editingHost.machine?.gpu_type ?? "none";
+                const nextDerivedGpuCount = machine.gpu_count ?? 0;
+                const currentDerivedGpuCount =
+                  editingHost.machine?.gpu_count ?? 0;
+                if (nextDerivedGpuType !== currentDerivedGpuType) {
+                  update.gpu_type = nextDerivedGpuType;
+                }
+                if (nextDerivedGpuCount !== currentDerivedGpuCount) {
+                  update.gpu_count = nextDerivedGpuCount;
+                }
               }
             }
             if (values.gpu_type !== undefined) {
