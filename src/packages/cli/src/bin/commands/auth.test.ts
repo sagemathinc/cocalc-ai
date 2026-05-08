@@ -122,6 +122,82 @@ test("auth status prefers selected cookie-backed profiles over ambient project a
   }
 });
 
+test("auth status --check validates cookie-backed profiles over HTTP", async () => {
+  const capture: { data?: any } = {};
+  const originalFetch = global.fetch;
+  const fetchCalls: string[] = [];
+  global.fetch = (async (url: string | URL | Request, init?: any) => {
+    const asString = `${url}`;
+    fetchCalls.push(asString.replace(/^https?:\/\/[^/]+/, ""));
+    if (asString.endsWith("/api/v2/accounts/profile")) {
+      assert.equal(init?.headers?.Cookie, "remember_me=bella-cookie");
+      return {
+        json: async () => ({
+          profile: {
+            account_id: "00000000-1000-4000-8000-000000000056",
+          },
+        }),
+      } as any;
+    }
+    if (asString.endsWith("/api/v2/auth/cli/session-status")) {
+      assert.equal(init?.headers?.Cookie, "remember_me=bella-cookie");
+      return {
+        json: async () => ({
+          auth_client: "cli",
+          factor_level: "totp",
+          fresh_auth_until: "2026-05-08T12:00:00.000Z",
+          expire: "2026-11-08T12:00:00.000Z",
+          auth_session_hash: "session-hash-1",
+        }),
+      } as any;
+    }
+    throw new Error(`unexpected fetch url ${url}`);
+  }) as any;
+  try {
+    const program = new Command();
+    registerAuthCommand(
+      program,
+      makeDeps(capture, {
+        applyAuthProfile: (globals: any) => ({
+          globals: {
+            ...globals,
+            api: "https://lite4b.cocalc.ai",
+            accountId: "00000000-1000-4000-8000-000000000056",
+            cookie: "remember_me=bella-cookie",
+            disableEnvAuthDefaults: true,
+          },
+          profile: "bella",
+          fromProfile: true,
+        }),
+        connectRemote: async () => {
+          throw new Error("connectRemote should not be used for cookie checks");
+        },
+        buildCookieHeader: () => "remember_me=bella-cookie",
+      }),
+    );
+    await program.parseAsync(["node", "test", "auth", "status", "--check"]);
+    assert.equal(capture.data.effective_remote_auth, "cookie");
+    assert.deepEqual(capture.data.check, {
+      ok: true,
+      account_id: "00000000-1000-4000-8000-000000000056",
+      project_id: null,
+      auth_actor: "account",
+      auth_session_hash: "session-hash-1",
+      interactive_session: true,
+      auth_client: "cli",
+      factor_level: "totp",
+      fresh_auth_until: "2026-05-08T12:00:00.000Z",
+      session_expire: "2026-11-08T12:00:00.000Z",
+    });
+    assert.deepEqual(fetchCalls, [
+      "/api/v2/accounts/profile",
+      "/api/v2/auth/cli/session-status",
+    ]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("auth login stores a dedicated browser-approved CLI session", async () => {
   const capture: { data?: any } = {};
   let config: any = { profiles: {} };

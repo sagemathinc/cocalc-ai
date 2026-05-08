@@ -53,12 +53,14 @@ export function transformArgs({
   name,
   args,
   account_id,
+  auth_session_hash,
   project_id,
   host_id,
 }: {
   name: string;
   args: any[];
   account_id?: string;
+  auth_session_hash?: string | null;
   project_id?: string;
   host_id?: string;
 }) {
@@ -66,6 +68,7 @@ export function transformArgs({
   return HubApiStructure[group]?.[functionName]({
     args,
     account_id,
+    auth_session_hash,
     project_id,
     host_id,
   });

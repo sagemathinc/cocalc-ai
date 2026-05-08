@@ -852,7 +852,7 @@ async function handleMessage(mesg, client) {
       project_id = undefined;
       host_id = undefined;
     }
-    const { name, args } = request as any;
+    const { name, args, auth_session_hash } = request as any;
     logger.debug("handling hub.api request:", {
       account_id,
       project_id,
@@ -864,6 +864,7 @@ async function handleMessage(mesg, client) {
         name,
         args,
         account_id,
+        auth_session_hash,
         project_id,
         host_id,
         client,
@@ -1623,6 +1624,7 @@ async function getResponse({
   name,
   args,
   account_id,
+  auth_session_hash,
   project_id,
   host_id,
   client,
@@ -1640,6 +1642,7 @@ async function getResponse({
     name,
     args,
     account_id,
+    auth_session_hash,
     project_id,
     host_id,
   });

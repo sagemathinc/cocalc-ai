@@ -306,43 +306,41 @@ export function registerAuthCommand(
           | undefined;
         if (opts.check) {
           try {
-            const timeoutMs = durationToMs(effective.timeout, 15_000);
-            const remote = await connectRemote({
-              globals: effective,
-              apiBaseUrl,
-              timeoutMs,
-            });
-            check = {
-              ok: true,
-              account_id: resolveAccountIdFromRemote(remote) ?? null,
-              project_id:
-                typeof remote.user?.project_id === "string"
-                  ? remote.user.project_id
-                  : null,
-              auth_actor:
-                typeof remote.user?.auth_actor === "string"
-                  ? remote.user.auth_actor
-                  : null,
-              auth_session_hash:
-                typeof (remote.user as any)?.auth_session_hash === "string"
-                  ? (remote.user as any).auth_session_hash
-                  : null,
-            };
             if (effective_remote_auth === "cookie") {
               const cookieHeader = buildCookieHeader(apiBaseUrl, effective);
+              const profile = await postCliAuthApi<{
+                profile?: {
+                  account_id?: string | null;
+                };
+              }>({
+                apiBaseUrl,
+                endpoint: "accounts/profile",
+                body: {},
+                cookieHeader,
+              });
               const sessionStatus = await postCliAuthApi<{
                 auth_client?: string;
                 factor_level?: string;
                 fresh_auth_until?: string | Date | null;
                 expire?: string | Date | null;
+                auth_session_hash?: string | null;
               }>({
                 apiBaseUrl,
                 endpoint: "auth/cli/session-status",
                 body: {},
                 cookieHeader,
               });
-              check.interactive_session = true;
-              check.auth_client = `${sessionStatus?.auth_client ?? "cli"}`;
+              check = {
+                ok: true,
+                account_id:
+                  `${profile?.profile?.account_id ?? ""}`.trim() || null,
+                project_id: null,
+                auth_actor: "account",
+                auth_session_hash:
+                  `${sessionStatus?.auth_session_hash ?? ""}`.trim() || null,
+                interactive_session: true,
+                auth_client: `${sessionStatus?.auth_client ?? "cli"}`,
+              };
               check.factor_level =
                 `${sessionStatus?.factor_level ?? ""}`.trim() || null;
               check.fresh_auth_until = sessionStatus?.fresh_auth_until
@@ -352,9 +350,31 @@ export function registerAuthCommand(
                 ? new Date(sessionStatus.expire).toISOString()
                 : null;
             } else {
-              check.interactive_session = false;
+              const timeoutMs = durationToMs(effective.timeout, 15_000);
+              const remote = await connectRemote({
+                globals: effective,
+                apiBaseUrl,
+                timeoutMs,
+              });
+              check = {
+                ok: true,
+                account_id: resolveAccountIdFromRemote(remote) ?? null,
+                project_id:
+                  typeof remote.user?.project_id === "string"
+                    ? remote.user.project_id
+                    : null,
+                auth_actor:
+                  typeof remote.user?.auth_actor === "string"
+                    ? remote.user.auth_actor
+                    : null,
+                auth_session_hash:
+                  typeof (remote.user as any)?.auth_session_hash === "string"
+                    ? (remote.user as any).auth_session_hash
+                    : null,
+                interactive_session: false,
+              };
+              remote.client.close();
             }
-            remote.client.close();
           } catch (err) {
             check = {
               ok: false,

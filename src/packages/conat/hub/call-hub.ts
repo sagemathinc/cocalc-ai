@@ -4,6 +4,7 @@ const DEFAULT_TIMEOUT = 15000;
 export default async function callHub({
   client,
   account_id,
+  auth_session_hash,
   project_id,
   host_id,
   name,
@@ -12,6 +13,7 @@ export default async function callHub({
 }: {
   client: Client;
   account_id?: string;
+  auth_session_hash?: string | null;
   project_id?: string;
   host_id?: string;
   name: string;
@@ -20,7 +22,11 @@ export default async function callHub({
 }) {
   const subject = getSubject({ account_id, project_id, host_id });
   try {
-    const data = { name, args };
+    const data = {
+      name,
+      args,
+      ...(auth_session_hash ? { auth_session_hash } : {}),
+    };
     const resp = await client.request(subject, data, { timeout });
     return resp.data;
   } catch (err) {

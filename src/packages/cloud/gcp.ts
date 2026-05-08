@@ -163,6 +163,19 @@ function spotScheduling() {
   } as const;
 }
 
+function pricingModelFromInstance(
+  instance: any,
+): NonNullable<HostSpec["pricing_model"]> {
+  const scheduling = instance?.scheduling ?? {};
+  const provisioningModel = `${scheduling?.provisioningModel ?? ""}`
+    .trim()
+    .toUpperCase();
+  if (provisioningModel === "SPOT" || scheduling?.preemptible === true) {
+    return "spot";
+  }
+  return "on_demand";
+}
+
 function onDemandScheduling(opts: { gpu?: boolean }) {
   return {
     onHostMaintenance: opts.gpu ? "TERMINATE" : "MIGRATE",
@@ -361,6 +374,34 @@ async function waitUntilOperationComplete({
       .join("; ");
     throw new Error(summary || "gcp operation failed");
   }
+}
+
+async function waitForInstanceLifecycleStatus(opts: {
+  client: InstancesClient;
+  credentials: any;
+  runtime: HostRuntime;
+  desired: string[];
+  timeoutMs?: number;
+  intervalMs?: number;
+}): Promise<any | undefined> {
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  const intervalMs = opts.intervalMs ?? 5_000;
+  const deadline = Date.now() + timeoutMs;
+  let lastInstance: any | undefined;
+  while (Date.now() < deadline) {
+    const [instance] = await opts.client.get({
+      project: opts.credentials.projectId,
+      zone: opts.runtime.zone,
+      instance: opts.runtime.instance_id,
+    });
+    lastInstance = instance;
+    const status = `${instance?.status ?? ""}`.trim().toUpperCase();
+    if (opts.desired.includes(status)) {
+      return instance;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return lastInstance;
 }
 
 async function setStandardSchedulingViaRest(opts: {
@@ -662,6 +703,27 @@ export class GcpProvider implements CloudProvider {
     const client = new InstancesClient(credentials);
     await ensureSshMetadata(runtime, credentials, client);
     await ensureStartupScriptMetadata(runtime, credentials, client);
+    const [existing] = await client.get({
+      project: credentials.projectId,
+      zone: runtime.zone,
+      instance: runtime.instance_id,
+    });
+    const initialStatus = `${existing?.status ?? ""}`.trim().toUpperCase();
+    if (initialStatus === "RUNNING") {
+      logger.info("gcp.startHost no-op; instance already running", {
+        instance_id: runtime.instance_id,
+        zone: runtime.zone,
+      });
+      return;
+    }
+    if (initialStatus === "STOPPING") {
+      await waitForInstanceLifecycleStatus({
+        client,
+        credentials,
+        runtime,
+        desired: ["TERMINATED"],
+      });
+    }
     const maxAttempts = 3;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -747,6 +809,51 @@ export class GcpProvider implements CloudProvider {
       Number(
         (runtime.metadata as { gpu_count?: number } | undefined)?.gpu_count,
       ) > 0;
+    const [instance] = await client.get({
+      project: credentials.projectId,
+      zone: runtime.zone,
+      instance: runtime.instance_id,
+    });
+    const currentPricingModel = pricingModelFromInstance(instance);
+    if (currentPricingModel === pricingModel) {
+      logger.info("gcp.setPricingModel no-op; pricing already matches", {
+        instance_id: runtime.instance_id,
+        zone: runtime.zone,
+        pricing_model: pricingModel,
+        status: instance?.status,
+      });
+      return;
+    }
+    const status = `${instance?.status ?? ""}`.trim().toUpperCase();
+    if (
+      status === "RUNNING" ||
+      status === "PROVISIONING" ||
+      status === "STAGING"
+    ) {
+      const [stopResponse] = await client.stop({
+        project: credentials.projectId,
+        zone: runtime.zone,
+        instance: runtime.instance_id,
+      });
+      await waitUntilOperationComplete({
+        response: stopResponse,
+        zone: runtime.zone,
+        credentials,
+      });
+      await waitForInstanceLifecycleStatus({
+        client,
+        credentials,
+        runtime,
+        desired: ["TERMINATED"],
+      });
+    } else if (status === "STOPPING") {
+      await waitForInstanceLifecycleStatus({
+        client,
+        credentials,
+        runtime,
+        desired: ["TERMINATED"],
+      });
+    }
     if (pricingModel === "on_demand") {
       await setStandardSchedulingViaRest({
         client,
