@@ -566,6 +566,14 @@ export function registerAuthCommand(
     .option("--email <email>", "account email address for browser login")
     .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
     .option("--no-set-current", "do not set this profile as current")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  cocalc --profile wstein --api https://lite4b.cocalc.ai auth login --email wstein@gmail.com
+  cocalc --profile bella --api https://lite4b.cocalc.ai auth login --email bella-1@gmail.com
+`,
+    )
     .action(
       async (
         opts: { email?: string; pollMs?: string; setCurrent?: boolean },
@@ -586,6 +594,13 @@ export function registerAuthCommand(
     .option("--email <email>", "account email address for browser login")
     .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
     .option("--no-set-current", "do not set this profile as current")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  cocalc --profile wstein --api https://lite4b.cocalc.ai auth setup --email wstein@gmail.com
+`,
+    )
     .action(
       async (
         opts: { email?: string; pollMs?: string; setCurrent?: boolean },

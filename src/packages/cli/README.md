@@ -146,6 +146,12 @@ env vars) to avoid discovery calls that may require broader hub permissions.
 - `auth logout [--target-profile <name>]`
 - `auth logout --all`
 
+Example:
+
+```bash
+cocalc --profile wstein --api https://lite4b.cocalc.ai auth login --email wstein@gmail.com
+```
+
 ## Phase 0 Commands
 
 - `plus ...` (forward to `cocalc-plus`; installs if missing)
