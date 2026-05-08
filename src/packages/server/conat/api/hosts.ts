@@ -89,7 +89,7 @@ import {
   updateCopyStatus as updateCopyStatusDb,
 } from "@cocalc/server/projects/copy-db";
 import sshKeys from "@cocalc/server/projects/get-ssh-keys";
-import { createLro } from "@cocalc/server/lro/lro-db";
+import { createLro, listLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { DEFAULT_PROJECT_IMAGE } from "@cocalc/util/db-schema/defaults";
@@ -424,6 +424,16 @@ const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const HOST_DELETE_LRO_KIND = "host-delete";
 const HOST_FORCE_DEPROVISION_LRO_KIND = "host-force-deprovision";
 const HOST_REMOVE_CONNECTOR_LRO_KIND = "host-remove-connector";
+const HOST_DESTRUCTIVE_LRO_KINDS = [
+  HOST_DEPROVISION_LRO_KIND,
+  HOST_DELETE_LRO_KIND,
+  HOST_FORCE_DEPROVISION_LRO_KIND,
+  HOST_REMOVE_CONNECTOR_LRO_KIND,
+] as const;
+const HOST_PREEMPTED_BY_DESTRUCTIVE_LRO_KINDS = [
+  HOST_START_LRO_KIND,
+  HOST_RESTART_LRO_KIND,
+] as const;
 const logger = getLogger("server:conat:api:hosts");
 const PROJECT_HOST_LOCAL_ROLLBACK_ERROR_CODE = "PROJECT_HOST_LOCAL_ROLLBACK";
 
@@ -3541,6 +3551,65 @@ async function createHostLro({
   };
 }
 
+async function listActiveHostLrosForKinds({
+  host_id,
+  kinds,
+}: {
+  host_id: string;
+  kinds: readonly string[];
+}) {
+  const active = await listLro({
+    scope_type: "host",
+    scope_id: host_id,
+  });
+  return active.filter(
+    (op) =>
+      (op.status === "queued" || op.status === "running") &&
+      kinds.includes(op.kind),
+  );
+}
+
+async function assertNoPendingDestructiveHostOp(host_id: string) {
+  const active = await listActiveHostLrosForKinds({
+    host_id,
+    kinds: HOST_DESTRUCTIVE_LRO_KINDS,
+  });
+  if (active.length === 0) {
+    return;
+  }
+  const kinds = Array.from(new Set(active.map((op) => op.kind)))
+    .sort()
+    .join(", ");
+  throw Object.assign(
+    new Error(
+      `host already has a pending destructive operation (${kinds}); wait for it to finish before starting or restarting`,
+    ),
+    { code: "host_deprovision_pending" },
+  );
+}
+
+async function cancelHostOpsPreemptedByDestructiveAction(host_id: string) {
+  const active = await listActiveHostLrosForKinds({
+    host_id,
+    kinds: HOST_PREEMPTED_BY_DESTRUCTIVE_LRO_KINDS,
+  });
+  for (const op of active) {
+    const updated = await updateLro({
+      op_id: op.op_id,
+      status: "canceled",
+      error:
+        "canceled because a destructive host operation was requested for this host",
+    });
+    if (updated) {
+      await publishLroSummary({
+        scope_type: updated.scope_type,
+        scope_id: updated.scope_id,
+        summary: updated,
+      });
+    }
+  }
+}
+
 export async function startHost({
   account_id,
   browser_id,
@@ -3563,6 +3632,7 @@ export async function startHost({
     });
   }
   const row = await loadHostForStartStop(id, account_id);
+  await assertNoPendingDestructiveHostOp(row.id);
   await assertDedicatedHostAdmissionForAccount({
     account_id: requireAccount(account_id),
     action: "start",
@@ -3658,6 +3728,7 @@ export async function restartHost({
     });
   }
   const row = await loadHostForStartStop(id, account_id);
+  await assertNoPendingDestructiveHostOp(row.id);
   return await createHostLro({
     kind: HOST_RESTART_LRO_KIND,
     row,
@@ -3804,6 +3875,7 @@ export async function forceDeprovisionHost({
   if (machineCloud !== "self-host") {
     throw new Error("force deprovision is only supported for self-hosted VMs");
   }
+  await cancelHostOpsPreemptedByDestructiveAction(row.id);
   return await createHostLro({
     kind: HOST_FORCE_DEPROVISION_LRO_KIND,
     row,
@@ -3964,6 +4036,7 @@ export async function removeSelfHostConnector({
   if (machineCloud !== "self-host") {
     throw new Error("host is not self-hosted");
   }
+  await cancelHostOpsPreemptedByDestructiveAction(row.id);
   return await createHostLro({
     kind: HOST_REMOVE_CONNECTOR_LRO_KIND,
     row,
@@ -5640,6 +5713,7 @@ export async function deleteHost({
     row.status === "deprovisioned"
       ? HOST_DELETE_LRO_KIND
       : HOST_DEPROVISION_LRO_KIND;
+  await cancelHostOpsPreemptedByDestructiveAction(row.id);
   return await createHostLro({
     kind,
     row,

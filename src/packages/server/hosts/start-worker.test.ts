@@ -103,3 +103,26 @@ describe("hosts start-worker project-host upgrade convergence detection", () => 
     ).toBeUndefined();
   });
 });
+
+describe("hosts start-worker wait cancellation", () => {
+  test("stops waiting when the host op is canceled mid-wait", async () => {
+    let checks = 0;
+    await expect(
+      __test__.waitForHostStatus({
+        host_id: "host-1",
+        desired: ["running"],
+        onUpdate: async () => {},
+        shouldCancel: async () => {
+          checks += 1;
+          return checks >= 2;
+        },
+        loadStatus: async () => ({
+          status: "starting",
+          metadata: {},
+        }),
+        delayFn: async () => {},
+        pollMs: 0,
+      }),
+    ).rejects.toMatchObject({ code: "host-op-canceled" });
+  });
+});
