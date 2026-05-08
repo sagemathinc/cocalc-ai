@@ -1495,6 +1495,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     })();
   };
 
+  public ensure_open_file_component = (
+    path: string,
+    opts: { noFocus?: boolean } = {},
+  ): void => {
+    this.ensureOpenFileComponent(path, opts);
+  };
+
   private get_sync_path(path: string): string {
     const homeDirectory = this.getHomeDirectoryForPaths();
     const sync_path = this.open_files?.get(path, "sync_path");
