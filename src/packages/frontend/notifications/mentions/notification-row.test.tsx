@@ -7,11 +7,12 @@ import { NotificationRow } from "./notification-row";
 
 const open_file = jest.fn();
 const mark = jest.fn();
+const markMany = jest.fn();
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
     getProjectActions: () => ({ open_file }),
-    getActions: () => ({ mark }),
+    getActions: () => ({ mark, markMany }),
   },
 }));
 
@@ -46,6 +47,7 @@ describe("NotificationRow", () => {
   beforeEach(() => {
     open_file.mockReset();
     mark.mockReset();
+    markMany.mockReset();
   });
 
   it("opens account notices that target a chat location", () => {
@@ -78,5 +80,39 @@ describe("NotificationRow", () => {
       fragmentId: { chat: "1234" },
     });
     expect(mark).toHaveBeenCalled();
+  });
+
+  it("shows grouped account notice counts and marks all grouped notices", () => {
+    render(
+      <NotificationRow
+        id="notice-1"
+        groupedIds={["notice-1", "notice-2"]}
+        groupCount={2}
+        firstTime={new Date("2026-05-07T00:00:00.000Z")}
+        latestTime={new Date("2026-05-07T00:10:00.000Z")}
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            project_id: "project-1",
+            path: "work/chat.chat",
+            target: "acct-1",
+            time: new Date("2026-05-07T00:10:00.000Z"),
+            title: "Codex turn finished",
+            body_markdown: "done",
+            origin_label: "Codex",
+            users: { "acct-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+
+    expect(screen.getByText("2 times")).toBeInTheDocument();
+    expect(screen.getByText(/Received from/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Mark Read"));
+
+    expect(markMany).toHaveBeenCalledWith(["notice-1", "notice-2"], "read");
+    expect(mark).not.toHaveBeenCalled();
   });
 });

@@ -396,17 +396,36 @@ export class MentionsActions extends Actions<MentionsState> {
   }
 
   public mark(mention: MentionInfo, id: string, type: "read" | "unread"): void {
+    this.markMany([id], type, [[id, mention]]);
+  }
+
+  public markMany(
+    ids: string[],
+    type: "read" | "unread",
+    mentions?: Iterable<readonly [string, MentionInfo]>,
+  ): void {
     const account_id = this.getAccountId();
     if (account_id == null) {
       return;
     }
-    const adjusted_mention = mention.setIn(
-      ["users", account_id, "read"],
-      type === "read",
-    );
-    this.updateMention(adjusted_mention, id);
+    if (ids.length === 0) {
+      return;
+    }
+    let current_mentions = this.getMentions();
+    const providedMentions = new globalThis.Map(mentions ?? []);
+    for (const id of ids) {
+      const mention = providedMentions.get(id) ?? current_mentions.get(id);
+      if (mention == null) {
+        continue;
+      }
+      current_mentions = current_mentions.set(
+        id,
+        mention.setIn(["users", account_id, "read"], type === "read"),
+      );
+    }
+    this.setState({ mentions: current_mentions });
     void this.updateReadState({
-      notification_ids: [id],
+      notification_ids: ids,
       read: type === "read",
     }).catch(async (err) => {
       console.warn("WARNING: notifications mark error -- ", err);

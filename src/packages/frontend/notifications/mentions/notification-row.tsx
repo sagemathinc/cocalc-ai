@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button } from "antd";
+import { Button, Tag } from "antd";
 
 import { A } from "@cocalc/frontend/components";
 import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
@@ -32,6 +32,10 @@ const ACTION_ICONS_WRAPPING_STYLE: CSS = {
 interface Props {
   id: string;
   mention: MentionInfo;
+  groupedIds?: string[];
+  groupCount?: number;
+  firstTime?: Date;
+  latestTime?: Date;
   user_map: any;
 }
 
@@ -47,7 +51,15 @@ function severityIcon(severity?: string): IconName {
 }
 
 export function NotificationRow(props: Props) {
-  const { id, mention, user_map } = props;
+  const {
+    id,
+    mention,
+    groupedIds,
+    groupCount,
+    firstTime,
+    latestTime,
+    user_map,
+  } = props;
   const {
     kind,
     path,
@@ -68,8 +80,15 @@ export function NotificationRow(props: Props) {
   const is_read = mention.getIn(["users", target, "read"]);
 
   const row_style: CSS = is_read ? { color: "rgb(88, 96, 105)" } : {};
+  const count = groupCount ?? groupedIds?.length ?? 1;
+  const groupIds =
+    groupedIds != null && groupedIds.length > 0 ? groupedIds : [id];
 
   function markReadState(how: "read" | "unread") {
+    if (groupIds.length > 1) {
+      redux.getActions("mentions")?.markMany(groupIds, how);
+      return;
+    }
     redux.getActions("mentions")?.mark(mention, id, how);
   }
 
@@ -118,8 +137,18 @@ export function NotificationRow(props: Props) {
         <>
           <strong>{title ?? "Notification"}</strong>
           <div style={{ color: "rgb(100, 100, 100)" }}>
-            {origin_label ?? "System"} <TimeAgo date={time.getTime()} />
+            {origin_label ?? "System"}{" "}
+            <TimeAgo date={(latestTime ?? time).getTime()} />
+            {count > 1 ? (
+              <Tag style={{ marginLeft: 8 }}>{count} times</Tag>
+            ) : null}
           </div>
+          {count > 1 ? (
+            <div style={{ color: "rgb(100, 100, 100)", marginTop: 2 }}>
+              Received from <TimeAgo date={(firstTime ?? time).getTime()} /> to{" "}
+              <TimeAgo date={(latestTime ?? time).getTime()} />.
+            </div>
+          ) : null}
           {body_markdown ? (
             <StaticMarkdown
               style={{ color: "rgb(100, 100, 100)", margin: "4px 10px" }}
@@ -174,7 +203,7 @@ export function NotificationRow(props: Props) {
       </div>
       <div style={DESCRIPTION_STYLE}>{renderBody()}</div>
       <div style={ACTION_ICONS_WRAPPING_STYLE}>
-        <Button type="text" ghost={true} onClick={on_read_unread_click}>
+        <Button type="text" onClick={on_read_unread_click}>
           <Icon name={is_read ? "square" : "check-square"} />{" "}
           {is_read ? "Mark Unread" : "Mark Read"}
         </Button>

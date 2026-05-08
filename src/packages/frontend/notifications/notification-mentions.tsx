@@ -17,6 +17,7 @@ import {
 import { isNewsFilter } from "./news/types";
 import { NoMentions } from "./notification-no-mentions";
 import { NotificationRow } from "./mentions/notification-row";
+import { groupNotificationMentions } from "./mentions/notification-groups";
 
 interface MentionsPanelProps {
   filter: MentionsFilter;
@@ -79,7 +80,7 @@ export function MentionsPanel(props: MentionsPanelProps) {
   const project_panels: any = [];
   const project_id_order: Array<string | null> = [];
 
-  mentions
+  const visibleMentions = mentions
     .filter((m) => m.get("target") === account_id)
     .filter((m) => {
       if (filter !== "read") {
@@ -105,25 +106,28 @@ export function MentionsPanel(props: MentionsPanelProps) {
         default:
           unreachable(filter);
       }
-    })
-    .map((m, id) => {
-      const path = m.get("path");
-      const time = m.get("time");
-      const project_id = m.get("project_id") ?? null;
-      const project_key = project_id ?? "__general__";
-      if (mentions_per_project[project_key] == undefined) {
-        mentions_per_project[project_key] = [];
-        project_id_order.push(project_id);
-      }
-      mentions_per_project[project_key].push(
-        <NotificationRow
-          key={path + time.getTime()}
-          id={id}
-          mention={m}
-          user_map={user_map}
-        />,
-      );
-    });
+    }) as MentionsMap;
+
+  for (const group of groupNotificationMentions(visibleMentions)) {
+    const project_id = group.mention.get("project_id") ?? null;
+    const project_key = project_id ?? "__general__";
+    if (mentions_per_project[project_key] == undefined) {
+      mentions_per_project[project_key] = [];
+      project_id_order.push(project_id);
+    }
+    mentions_per_project[project_key].push(
+      <NotificationRow
+        key={group.key}
+        id={group.ids[0]}
+        mention={group.mention}
+        groupedIds={group.ids}
+        groupCount={group.ids.length}
+        firstTime={group.firstTime}
+        latestTime={group.latestTime}
+        user_map={user_map}
+      />,
+    );
+  }
 
   // Check if this user has only made mentions and no one has mentioned them
   if (project_id_order.length == 0) {
