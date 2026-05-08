@@ -126,6 +126,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedGpu,
     selectedSize,
     selectedStorageMode,
+    selectedRegionPreference,
   } = useHostFormValues(form);
   const selfHostKind = (selectedSelfHostKind ??
     host?.machine?.metadata?.self_host_kind ??
@@ -160,6 +161,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedSize,
     selectedGpu,
     selectedStorageMode,
+    selectedRegionPreference,
     enabledProviders,
   });
   const createProviderVm = React.useMemo(
@@ -214,6 +216,10 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const watchedPricingModel = Form.useWatch("pricing_model", form);
   const watchedFundingMode = Form.useWatch("funding_mode", form);
   const hideAdvanced = providerId === "self-host";
+  const showRegionPreference =
+    canEditMachine &&
+    (providerId === "gcp" || providerId === "nebius") &&
+    fieldSchema.primary.includes("region");
   const showFundingMode =
     providerId !== undefined && isBillableHostProvider(providerId);
   const canEditFundingMode = canEditMachine;
@@ -644,6 +650,22 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                         ? undefined
                         : "No explicit funding mode"
                   }
+                />
+              </Form.Item>
+            )}
+            {showRegionPreference && (
+              <Form.Item
+                name="region_preference"
+                label="Region preference"
+                initialValue="balanced"
+                extra="Sort regions using your approximate location and the current machine pricing."
+              >
+                <Select
+                  options={[
+                    { value: "balanced", label: "Balanced" },
+                    { value: "closest", label: "Closest" },
+                    { value: "cheapest", label: "Cheapest" },
+                  ]}
                 />
               </Form.Item>
             )}

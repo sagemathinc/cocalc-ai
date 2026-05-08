@@ -56,6 +56,24 @@ export type HostFieldOption<T = unknown> = {
   meta?: T;
 };
 
+function appendPriceStateLabel(opts: {
+  label: string;
+  hourlyRate?: number;
+  expectPrice?: boolean;
+  compatible?: boolean;
+}): string {
+  if (opts.compatible === false) {
+    return `${opts.label} · unavailable`;
+  }
+  if (typeof opts.hourlyRate === "number" && Number.isFinite(opts.hourlyRate)) {
+    return `${opts.label} · ${formatUsdHourlyLabel(opts.hourlyRate)}`;
+  }
+  if (opts.expectPrice) {
+    return `${opts.label} · price unavailable`;
+  }
+  return opts.label;
+}
+
 export type HostFieldLabels = Record<HostFieldId, string>;
 export type HostFieldTooltips = Partial<Record<HostFieldId, string>>;
 
@@ -403,11 +421,6 @@ const formatUsdHourlyLabel = (value: number) => `${formatUsdAmount(value)}/hr`;
 const formatUsdMonthlyLabel = (value: number) =>
   `${formatUsdAmount(value * MONTHLY_HOURS)}/mo`;
 
-const appendHourlyPriceLabel = (label: string, hourlyRate?: number) =>
-  typeof hourlyRate === "number" && Number.isFinite(hourlyRate)
-    ? `${label} · ${formatUsdHourlyLabel(hourlyRate)}`
-    : label;
-
 export type ProviderPriceEstimate = {
   usd_per_hour: number;
   usd_per_month: number;
@@ -641,14 +654,22 @@ export const getGcpRegionOptions = (
           zone: compatibleZone,
         })
       : undefined;
+    const expectPrice = !!selection.machine_type;
+    const regionLabel = formatRegionLabel(
+      r.name,
+      zoneWithMeta?.location,
+      zoneWithMeta?.lowC02,
+    );
     return {
       value: r.name,
-      label: appendHourlyPriceLabel(
-        formatRegionLabel(r.name, zoneWithMeta?.location, zoneWithMeta?.lowC02),
+      label: appendPriceStateLabel({
+        label: regionLabel,
         hourlyRate,
-      ),
-      selectionLabel: r.name,
-      meta: { compatible, compatibleZone },
+        compatible,
+        expectPrice,
+      }),
+      selectionLabel: regionLabel,
+      meta: { compatible, compatibleZone, hourlyRate, expectPrice },
     };
   });
 };
@@ -750,12 +771,13 @@ export const getGcpMachineTypeOptions = (
   });
   return filtered.map((mt) => ({
     value: mt.name ?? "",
-    label: appendHourlyPriceLabel(
-      mt.name ?? "unknown",
-      estimateGcpSelectionUsdPerHour(catalog, selection, {
+    label: appendPriceStateLabel({
+      label: mt.name ?? "unknown",
+      hourlyRate: estimateGcpSelectionUsdPerHour(catalog, selection, {
         machine_type: mt.name ?? undefined,
       }),
-    ),
+      expectPrice: true,
+    }),
     selectionLabel: mt.name ?? "unknown",
     meta: mt,
   }));
@@ -1139,16 +1161,25 @@ export const getNebiusRegionOptions = (
     "global",
   );
   if (regions?.length) {
-    return regions.map((r) => ({
-      value: r.name,
-      label: appendHourlyPriceLabel(
-        r.name,
-        estimateNebiusSelectionUsdPerHour(catalog, selection, {
-          region: r.name,
+    return regions.map((r) => {
+      const hourlyRate = estimateNebiusSelectionUsdPerHour(catalog, selection, {
+        region: r.name,
+      });
+      return {
+        value: r.name,
+        label: appendPriceStateLabel({
+          label: r.name,
+          hourlyRate,
+          expectPrice: !!selection.machine_type,
         }),
-      ),
-      selectionLabel: r.name,
-    }));
+        selectionLabel: r.name,
+        meta: {
+          compatible: true,
+          hourlyRate,
+          expectPrice: !!selection.machine_type,
+        },
+      };
+    });
   }
   const images =
     getCatalogEntryPayload<NebiusImage[]>(catalog, "images", "global") ?? [];
@@ -1157,16 +1188,25 @@ export const getNebiusRegionOptions = (
       .map((img) => img.region ?? undefined)
       .filter((value): value is string => !!value),
   );
-  return Array.from(regionSet).map((name) => ({
-    value: name,
-    label: appendHourlyPriceLabel(
-      name,
-      estimateNebiusSelectionUsdPerHour(catalog, selection, {
-        region: name,
+  return Array.from(regionSet).map((name) => {
+    const hourlyRate = estimateNebiusSelectionUsdPerHour(catalog, selection, {
+      region: name,
+    });
+    return {
+      value: name,
+      label: appendPriceStateLabel({
+        label: name,
+        hourlyRate,
+        expectPrice: !!selection.machine_type,
       }),
-    ),
-    selectionLabel: name,
-  }));
+      selectionLabel: name,
+      meta: {
+        compatible: true,
+        hourlyRate,
+        expectPrice: !!selection.machine_type,
+      },
+    };
+  });
 };
 
 const getNebiusPricingProductsByRegion = (
@@ -1307,10 +1347,11 @@ export const getNebiusInstanceTypeOptions = (
     });
     return {
       value: entry.name,
-      label: appendHourlyPriceLabel(
-        `${entry.name} (${cpuRamLabel}${gpuLabel}${platformLabel})`,
+      label: appendPriceStateLabel({
+        label: `${entry.name} (${cpuRamLabel}${gpuLabel}${platformLabel})`,
         hourlyRate,
-      ),
+        expectPrice: true,
+      }),
       selectionLabel: entry.name,
       entry,
     };

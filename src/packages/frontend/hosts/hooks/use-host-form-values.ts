@@ -15,6 +15,7 @@ export const useHostFormValues = (form: FormInstance) => {
   const selectedGpu = Form.useWatch("gpu", form);
   const selectedSize = Form.useWatch("size", form);
   const selectedStorageMode = Form.useWatch("storage_mode", form);
+  const selectedRegionPreference = Form.useWatch("region_preference", form);
   const selectedDiskGb =
     typeof selectedDiskGbValue === "number"
       ? selectedDiskGbValue
@@ -35,5 +36,6 @@ export const useHostFormValues = (form: FormInstance) => {
     selectedGpu,
     selectedSize,
     selectedStorageMode,
+    selectedRegionPreference,
   };
 };

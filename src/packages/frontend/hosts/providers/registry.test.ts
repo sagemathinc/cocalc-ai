@@ -2,6 +2,7 @@ import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import {
   buildCreateHostPayload,
   getGcpMachineTypeOptions,
+  getNebiusRegionOptions,
   getProviderPriceEstimate,
   isNebiusSpotSupported,
 } from "./registry";
@@ -324,5 +325,69 @@ describe("catalog-backed pricing labels", () => {
 
     expect(estimate?.usd_per_hour).toBeCloseTo(2.036983323, 9);
     expect(estimate?.hourly_label).toContain("/hr");
+  });
+
+  it("labels missing Nebius regional prices explicitly once a machine is selected", () => {
+    const catalog = testCatalog([
+      {
+        kind: "regions",
+        scope: "global",
+        payload: [{ name: "eu-north1" }, { name: "us-central1" }],
+      },
+      {
+        kind: "instance_types",
+        scope: "global",
+        payload: [
+          {
+            name: "gpu-h100-80gb-1",
+            platform: "gpu-h100-sxm",
+            platform_label: "H100 NVLink",
+            vcpus: 16,
+            memory_gib: 200,
+            gpus: 1,
+            gpu_label: "NVIDIA H100",
+          },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: [
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. CPU",
+            region: "eu-north1",
+            price_usd: "0.018",
+            unit: "vCPU hour",
+          },
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. RAM",
+            region: "eu-north1",
+            price_usd: "0.0045",
+            unit: "GiB hour",
+          },
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. GPU",
+            region: "eu-north1",
+            price_usd: "0.834",
+            unit: "GPU hour",
+          },
+        ],
+      },
+    ]);
+
+    const options = getNebiusRegionOptions(catalog, {
+      machine_type: "gpu-h100-80gb-1",
+      pricing_model: "spot",
+    });
+
+    expect(options.find((opt) => opt.value === "eu-north1")?.label).toContain(
+      "/hr",
+    );
+    expect(options.find((opt) => opt.value === "us-central1")?.label).toContain(
+      "price unavailable",
+    );
   });
 });

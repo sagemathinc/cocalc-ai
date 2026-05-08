@@ -49,6 +49,9 @@ export const HostCreateProviderFields: React.FC<
   const watchedSelfHostKind = Form.useWatch("self_host_kind", form);
   const watchedSelfHostMode = Form.useWatch("self_host_mode", form);
   const watchedSelfHostTarget = Form.useWatch("self_host_ssh_target", form);
+  const showRegionPreference =
+    (selectedProvider === "gcp" || selectedProvider === "nebius") &&
+    schema.primary.includes("region");
   const selfHostAlphaEnabled = !!useTypedRedux(
     "customize",
     "project_hosts_self_host_alpha_enabled",
@@ -230,6 +233,22 @@ export const HostCreateProviderFields: React.FC<
           initialValue={providerOptions[0]?.value ?? "none"}
         >
           <Select options={providerOptions} onChange={onProviderChange} />
+        </Form.Item>
+      )}
+      {showRegionPreference && (
+        <Form.Item
+          name="region_preference"
+          label="Region preference"
+          initialValue="balanced"
+          extra="Sort regions using your approximate location and the current machine pricing."
+        >
+          <Select
+            options={[
+              { value: "balanced", label: "Balanced" },
+              { value: "closest", label: "Closest" },
+              { value: "cheapest", label: "Cheapest" },
+            ]}
+          />
         </Form.Item>
       )}
       {gcpCompatibilityWarning?.type === "region" && (

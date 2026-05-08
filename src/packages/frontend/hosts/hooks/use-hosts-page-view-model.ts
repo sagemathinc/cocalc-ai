@@ -630,6 +630,7 @@ export const useHostsPageViewModel = () => {
     selectedGpu,
     selectedSize,
     selectedStorageMode,
+    selectedRegionPreference,
   } = useHostFormValues(form);
 
   const {
@@ -1528,6 +1529,7 @@ export const useHostsPageViewModel = () => {
     selectedGpu,
     selectedSize,
     selectedStorageMode,
+    selectedRegionPreference,
     enabledProviders,
   });
 
