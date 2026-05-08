@@ -40,7 +40,7 @@ and you'll always get back undefined.
 
 import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { redux, ProjectActions, ProjectStore } from "../app-framework";
-import { ProjectStoreState } from "../project_store";
+import { ProjectStoreState } from "../project/redux/store";
 import React, { useEffect, useRef } from "react";
 import * as types from "./actions-and-stores";
 

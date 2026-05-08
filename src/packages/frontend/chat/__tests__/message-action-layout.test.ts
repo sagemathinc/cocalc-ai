@@ -1,8 +1,8 @@
+import { getFocusMessageButtonStyle } from "../message";
 import {
-  getFocusMessageButtonStyle,
   resolveMessageBodyMode,
   shouldUseCodexSelectToolbar,
-} from "../message";
+} from "../message-state";
 
 describe("message action layout", () => {
   it("does not vertically offset the focus icon button", () => {

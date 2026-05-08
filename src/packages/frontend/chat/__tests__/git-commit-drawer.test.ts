@@ -1394,12 +1394,12 @@ describe("git commit drawer merge commit formatting", () => {
   });
 
   it("caps rendered diff blocks per file and grows them in fixed increments", () => {
-    expect(getRenderedDiffLineLimit(undefined)).toBe(300);
-    expect(getRenderedDiffLineLimit(1)).toBe(300);
-    expect(getRenderedDiffLineLimit(420)).toBe(420);
-    expect(getNextRenderedDiffLineLimit(undefined)).toBe(500);
-    expect(getNextRenderedDiffLineLimit(300)).toBe(500);
-    expect(getNextRenderedDiffLineLimit(420)).toBe(620);
+    expect(getRenderedDiffLineLimit(undefined)).toBe(1000);
+    expect(getRenderedDiffLineLimit(1)).toBe(1000);
+    expect(getRenderedDiffLineLimit(1420)).toBe(1420);
+    expect(getNextRenderedDiffLineLimit(undefined)).toBe(2500);
+    expect(getNextRenderedDiffLineLimit(1000)).toBe(2500);
+    expect(getNextRenderedDiffLineLimit(1420)).toBe(2920);
   });
 
   it("adds a footer spacer below the virtualized diff list", () => {
@@ -1496,20 +1496,20 @@ describe("git commit drawer merge commit formatting", () => {
       files: [
         {
           path: "src/alpha.ts",
-          lines: Array.from({ length: 600 }, (_, idx) => `alpha ${idx}`),
+          lines: Array.from({ length: 1600 }, (_, idx) => `alpha ${idx}`),
         },
         {
           path: "src/beta.ts",
-          lines: Array.from({ length: 600 }, (_, idx) => `beta ${idx}`),
+          lines: Array.from({ length: 1600 }, (_, idx) => `beta ${idx}`),
         },
       ],
     } as any;
     const activeLineMatch = {
-      id: "line:0:450",
+      id: "line:0:1450",
       kind: "line",
       fileIndex: 0,
-      lineIndex: 450,
-      preview: "alpha 450",
+      lineIndex: 1450,
+      preview: "alpha 1450",
     } as const;
     const alphaSectionId = buildGitReviewFileSectionId("src/alpha.ts", 0);
     const betaSectionId = buildGitReviewFileSectionId("src/beta.ts", 1);
@@ -1527,7 +1527,7 @@ describe("git commit drawer merge commit formatting", () => {
         data,
         match: activeLineMatch,
         visibleDiffLinesByFile: {
-          [betaSectionId]: 520,
+          [betaSectionId]: 1520,
         },
       }),
     ).toBe(false);
@@ -1537,7 +1537,7 @@ describe("git commit drawer merge commit formatting", () => {
         data,
         match: activeLineMatch,
         visibleDiffLinesByFile: {
-          [alphaSectionId]: 451,
+          [alphaSectionId]: 1451,
         },
       }),
     ).toBe(true);
@@ -1548,20 +1548,20 @@ describe("git commit drawer merge commit formatting", () => {
       files: [
         {
           path: "src/alpha.ts",
-          lines: Array.from({ length: 600 }, (_, idx) => `alpha ${idx}`),
+          lines: Array.from({ length: 1600 }, (_, idx) => `alpha ${idx}`),
         },
         {
           path: "src/beta.ts",
-          lines: Array.from({ length: 600 }, (_, idx) => `beta ${idx}`),
+          lines: Array.from({ length: 1600 }, (_, idx) => `beta ${idx}`),
         },
       ],
     } as any;
     const activeLineMatch = {
-      id: "line:0:450",
+      id: "line:0:1450",
       kind: "line",
       fileIndex: 0,
-      lineIndex: 450,
-      preview: "alpha 450",
+      lineIndex: 1450,
+      preview: "alpha 1450",
     } as const;
     const visibleLineMatch = {
       id: "line:0:120",
@@ -1589,7 +1589,7 @@ describe("git commit drawer merge commit formatting", () => {
       }),
     ).toEqual({
       sectionId: alphaSectionId,
-      neededLimit: 451,
+      neededLimit: 1451,
     });
 
     expect(
@@ -1597,12 +1597,12 @@ describe("git commit drawer merge commit formatting", () => {
         data,
         match: activeLineMatch,
         visibleDiffLinesByFile: {
-          [betaSectionId]: 520,
+          [betaSectionId]: 1520,
         },
       }),
     ).toEqual({
       sectionId: alphaSectionId,
-      neededLimit: 451,
+      neededLimit: 1451,
     });
 
     expect(
@@ -1610,7 +1610,7 @@ describe("git commit drawer merge commit formatting", () => {
         data,
         match: activeLineMatch,
         visibleDiffLinesByFile: {
-          [alphaSectionId]: 451,
+          [alphaSectionId]: 1451,
         },
       }),
     ).toBeUndefined();

@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { computeAcpStateToRender } from "../message";
+import { computeAcpStateToRender } from "../message-state";
 
 describe("computeAcpStateToRender", () => {
   it("hides queue state for non-viewer messages", () => {

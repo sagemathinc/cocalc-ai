@@ -30,7 +30,7 @@ import type { ChatActions } from "./actions";
 import { type AttachedSteerMessage } from "./agent-message-status";
 import Composing from "./composing";
 import Message from "./message";
-import type { InlineCodexActivityBlock } from "./message";
+import type { InlineCodexActivityBlock } from "./message-state";
 import type {
   ChatMessageTyped,
   ChatMessages,

@@ -39,8 +39,8 @@ export { redux_name, project_redux_name };
 import { NEWS } from "@cocalc/frontend/notifications/news/init";
 
 import * as types from "./actions-and-stores";
-import type { ProjectStore } from "../project_store";
-import type { ProjectActions } from "../project_actions";
+import type { ProjectActions } from "../project/redux/actions";
+import type { ProjectStore } from "../project/redux/store";
 export type { ProjectStore, ProjectActions };
 
 export class AppRedux extends AppReduxBase {
@@ -144,9 +144,7 @@ export class AppRedux extends AppReduxBase {
       throw Error(`getProjectStore: INVALID project_id -- "${project_id}"`);
     }
     if (!this.hasProjectStore(project_id)) {
-      // Right now importing project_store breaks the share server,
-      // so we don't yet.
-      return require("../project_store").init(project_id, this);
+      return require("../project/redux/store").init(project_id, this);
     } else {
       return this.getStore(project_redux_name(project_id)) as any;
     }
@@ -159,7 +157,7 @@ export class AppRedux extends AppReduxBase {
       throw Error(`getProjectActions: INVALID project_id -- "${project_id}"`);
     }
     if (!this.hasProjectStore(project_id)) {
-      require("../project_store").init(project_id, this);
+      require("../project/redux/store").init(project_id, this);
     }
     return this.getActions(project_redux_name(project_id)) as any;
   }
@@ -169,7 +167,7 @@ export class AppRedux extends AppReduxBase {
       throw Error(`getProjectTable: INVALID project_id -- "${project_id}"`);
     }
     if (!this.hasProjectStore(project_id)) {
-      require("../project_store").init(project_id, this);
+      require("../project/redux/store").init(project_id, this);
     }
     return this.getTable(project_redux_name(project_id, name));
   }
