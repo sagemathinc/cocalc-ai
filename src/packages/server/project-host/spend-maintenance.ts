@@ -10,6 +10,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { enqueueCloudVmWork } from "@cocalc/server/cloud";
 import type { AccountLocalDedicatedHostPolicySnapshot } from "@cocalc/conat/inter-bay/api";
 import {
+  applyDedicatedHostFundingModeOverride,
   getDedicatedHostPolicySnapshotForAccount,
   isBillableDedicatedHostCloud,
   selectDedicatedHostFundingLane,
@@ -113,6 +114,21 @@ function currentFundingMode(
   return undefined;
 }
 
+function retainedBillingPolicy(metadata: any): any {
+  const funding_mode = currentFundingMode(metadata);
+  if (!funding_mode) {
+    return null;
+  }
+  const started_at =
+    typeof metadata?.billing?.started_at === "string"
+      ? metadata.billing.started_at.trim()
+      : "";
+  return {
+    funding_mode,
+    ...(started_at ? { started_at } : {}),
+  };
+}
+
 async function updateHostBillingMetadata({
   host_id,
   metadata,
@@ -205,7 +221,10 @@ async function runPass(): Promise<void> {
         host_id: row.id,
       });
       if (metadata?.billing) {
-        const nextMetadata = { ...metadata, billing: null };
+        const nextMetadata = {
+          ...metadata,
+          billing: retainedBillingPolicy(metadata),
+        };
         await updateHostBillingMetadata({
           host_id: row.id,
           metadata: nextMetadata,
@@ -215,7 +234,10 @@ async function runPass(): Promise<void> {
       continue;
     }
 
-    const snapshot = await getSnapshot(owner);
+    const snapshot = applyDedicatedHostFundingModeOverride(
+      await getSnapshot(owner),
+      currentFundingMode(metadata),
+    );
     if (snapshot.funding_mode === "site-funded") {
       await closeDedicatedHostPurchaseSessionForAccount({
         account_id: owner,
@@ -309,7 +331,10 @@ async function runPass(): Promise<void> {
       });
     }
     snapshotCache.delete(owner);
-    const refreshedSnapshot = await getSnapshot(owner);
+    const refreshedSnapshot = applyDedicatedHostFundingModeOverride(
+      await getSnapshot(owner),
+      currentFundingMode(nextMetadata),
+    );
     if (
       !isDedicatedHostLaneCurrentlyAllowed({
         snapshot: refreshedSnapshot,

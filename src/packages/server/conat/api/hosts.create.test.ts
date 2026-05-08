@@ -50,6 +50,12 @@ jest.mock("@cocalc/server/bay-directory", () => ({
 
 jest.mock("@cocalc/server/project-host/admission", () => ({
   __esModule: true,
+  applyDedicatedHostFundingModeOverride: jest.fn(
+    (snapshot: any, funding_mode_override?: string) =>
+      funding_mode_override == null
+        ? snapshot
+        : { ...snapshot, funding_mode: funding_mode_override },
+  ),
   assertDedicatedHostAdmissionForAccount: (...args: any[]) =>
     assertDedicatedHostAdmissionForAccountMock(...args),
   getDedicatedHostPolicySnapshotForAccount: (...args: any[]) =>
@@ -409,5 +415,144 @@ describe("hosts.createHost", () => {
       has_active_second_factor_override: undefined,
       machine_cloud: "gcp",
     });
+  });
+});
+
+describe("hosts.startHostInternal", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.COCALC_BAY_ID = "bay-0";
+    process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1,bay-2";
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      class: "member",
+      entitlements: { features: { create_hosts: true } },
+      effective_limits: {},
+    }));
+    getServerSettingsMock = jest.fn(async () => ({}));
+    enqueueCloudVmWorkMock = jest.fn(async () => undefined);
+    hasActiveSecondFactorMock = jest.fn(async () => true);
+    hasPaymentMethodMock = jest.fn(async () => false);
+    getBalanceMock = jest.fn(async () => "0");
+    resolveAccountHomeBayMock = jest.fn(async () => ({
+      home_bay_id: "bay-0",
+      epoch: 1,
+    }));
+    assertDedicatedHostAdmissionForAccountMock = jest.fn(async () => undefined);
+    getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      can_create_hosts: true,
+      funding_mode: "account-prepaid",
+      has_active_second_factor: true,
+      has_payment_method: false,
+      has_usage_subscription: false,
+      balance: "0",
+      postpaid_unbilled_exposure_usd: "0",
+      postpaid_unbilled_limit_usd: "1000",
+      effective_limits: {},
+      dedicated_host_window_usage: {
+        prepaid_5h_usd: "0",
+        prepaid_7d_usd: "0",
+        credit_5h_usd: "0",
+        credit_7d_usd: "0",
+      },
+    }));
+    isBillableDedicatedHostCloudMock = jest.fn(
+      (provider?: string | null) => provider === "gcp",
+    );
+    selectDedicatedHostFundingLaneMock = jest.fn(() => {
+      throw new Error("should not select an account-funded lane");
+    });
+    estimateDedicatedHostRateUsdPerHourMock = jest.fn(async () => "1.25");
+    reconcileDedicatedHostPurchaseSessionForAccountMock = jest.fn(
+      async () => undefined,
+    );
+  });
+
+  it("honors an existing host-level site-funded override during start", async () => {
+    let selectCount = 0;
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql.includes(
+          "SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        selectCount += 1;
+        return {
+          rows: [
+            {
+              id: params[0],
+              name: "existing-gcp",
+              region: "us-west1",
+              status: selectCount >= 2 ? "starting" : "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                size: "e2-standard-2",
+                pricing_model: "on_demand",
+                desired_state: "stopped",
+                machine: { cloud: "gcp", machine_type: "e2-standard-2" },
+                billing: {
+                  funding_mode: "site-funded",
+                  started_at: "2026-05-07T00:00:00.000Z",
+                },
+              },
+              last_seen: null,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT metadata FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              metadata: {
+                owner: ACCOUNT_ID,
+                size: "e2-standard-2",
+                pricing_model: "on_demand",
+                desired_state: "stopped",
+                machine: { cloud: "gcp", machine_type: "e2-standard-2" },
+                billing: {
+                  funding_mode: "site-funded",
+                  started_at: "2026-05-07T00:00:00.000Z",
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts SET status=$2") &&
+        sql.includes("metadata=$4")
+      ) {
+        expect(params[1]).toBe("starting");
+        expect(params[3]?.billing).toEqual({
+          funding_mode: "site-funded",
+          started_at: expect.any(String),
+        });
+        return { rows: [] };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET metadata = jsonb_set")
+      ) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { startHostInternal } = await import("./hosts");
+    const host = await startHostInternal({
+      account_id: ACCOUNT_ID,
+      id: "host-1",
+    });
+
+    expect(host.status).toBe("starting");
+    expect(enqueueCloudVmWorkMock).toHaveBeenCalledWith({
+      vm_id: "host-1",
+      action: "start",
+      payload: { provider: "gcp" },
+    });
+    expect(
+      reconcileDedicatedHostPurchaseSessionForAccountMock,
+    ).not.toHaveBeenCalled();
   });
 });

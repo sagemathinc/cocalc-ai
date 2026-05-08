@@ -54,6 +54,8 @@ import { enqueueCloudVmWork } from "@cocalc/server/cloud";
 import { normalizeSpotRecoveryPolicy } from "@cocalc/server/cloud/spot-restore";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
+  applyDedicatedHostFundingModeOverride,
+  type DedicatedHostFundingMode,
   getDedicatedHostPolicySnapshotForAccount,
   isBillableDedicatedHostCloud,
   selectDedicatedHostFundingLane,
@@ -101,6 +103,20 @@ function billingMetadataFromSession({
   };
 }
 
+function currentBillingFundingMode(
+  metadata: any,
+): DedicatedHostFundingMode | undefined {
+  const value = `${metadata?.billing?.funding_mode ?? ""}`.trim().toLowerCase();
+  if (
+    value === "account-prepaid" ||
+    value === "account-postpaid" ||
+    value === "site-funded"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 async function resolveBillableHostSessionConfig({
   account_id,
   action,
@@ -109,6 +125,7 @@ async function resolveBillableHostSessionConfig({
   size,
   machine,
   pricing_model,
+  funding_mode_override,
 }: {
   account_id: string;
   action: "create" | "start";
@@ -117,6 +134,7 @@ async function resolveBillableHostSessionConfig({
   size?: string | null;
   machine?: Host["machine"];
   pricing_model?: HostPricingModel;
+  funding_mode_override?: DedicatedHostFundingMode;
 }): Promise<
   | {
       funding_mode: "account-prepaid";
@@ -136,9 +154,12 @@ async function resolveBillableHostSessionConfig({
   if (!isBillableDedicatedHostCloud(provider)) {
     return undefined;
   }
-  const snapshot = await getDedicatedHostPolicySnapshotForAccount({
-    account_id,
-  });
+  const snapshot = applyDedicatedHostFundingModeOverride(
+    await getDedicatedHostPolicySnapshotForAccount({
+      account_id,
+    }),
+    funding_mode_override,
+  );
   if (snapshot.funding_mode === "site-funded") {
     return { funding_mode: "site-funded" };
   }
@@ -500,8 +521,9 @@ export async function startHostInternalHelper({
           provider: machineCloud,
           region: row.region,
           size: nextMetadata?.size ?? row.metadata?.size,
-          machine: machine,
+          machine: nextMetadata?.machine ?? machine,
           pricing_model: effectivePricingModel,
+          funding_mode_override: currentBillingFundingMode(nextMetadata),
         })
       : undefined;
   const billingStartedAt = billableSession

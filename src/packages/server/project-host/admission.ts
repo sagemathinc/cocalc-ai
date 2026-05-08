@@ -118,22 +118,44 @@ export function selectDedicatedHostFundingLane(
   return undefined;
 }
 
+export function applyDedicatedHostFundingModeOverride(
+  snapshot: AccountLocalDedicatedHostPolicySnapshot,
+  funding_mode_override?: DedicatedHostFundingMode,
+): AccountLocalDedicatedHostPolicySnapshot {
+  if (
+    funding_mode_override == null ||
+    funding_mode_override === snapshot.funding_mode
+  ) {
+    return snapshot;
+  }
+  return {
+    ...snapshot,
+    funding_mode: funding_mode_override,
+  };
+}
+
 export function evaluateDedicatedHostAdmission({
   action,
   machine_cloud,
   snapshot,
   has_active_second_factor_override,
+  funding_mode_override,
 }: {
   action: DedicatedHostAction;
   machine_cloud?: string | null;
   snapshot: AccountLocalDedicatedHostPolicySnapshot;
   has_active_second_factor_override?: boolean;
+  funding_mode_override?: DedicatedHostFundingMode;
 }): DedicatedHostAdmissionDecision {
+  const effectiveSnapshot = applyDedicatedHostFundingModeOverride(
+    snapshot,
+    funding_mode_override,
+  );
   if (!isBillableDedicatedHostCloud(machine_cloud)) {
     return { allowed: true };
   }
 
-  if (!snapshot.can_create_hosts) {
+  if (!effectiveSnapshot.can_create_hosts) {
     return {
       allowed: false,
       code: "membership_hosts_not_allowed",
@@ -142,7 +164,8 @@ export function evaluateDedicatedHostAdmission({
   }
 
   const hasSecondFactor =
-    has_active_second_factor_override ?? snapshot.has_active_second_factor;
+    has_active_second_factor_override ??
+    effectiveSnapshot.has_active_second_factor;
 
   if (!hasSecondFactor) {
     return {
@@ -152,11 +175,11 @@ export function evaluateDedicatedHostAdmission({
     };
   }
 
-  if (snapshot.funding_mode === "site-funded") {
+  if (effectiveSnapshot.funding_mode === "site-funded") {
     return { allowed: true };
   }
 
-  if (!snapshot.has_payment_method) {
+  if (!effectiveSnapshot.has_payment_method) {
     return {
       allowed: false,
       code: "payment_method_required",
@@ -164,8 +187,8 @@ export function evaluateDedicatedHostAdmission({
     };
   }
 
-  const limits = snapshot.effective_limits ?? {};
-  const funding_lane = selectDedicatedHostFundingLane(snapshot);
+  const limits = effectiveSnapshot.effective_limits ?? {};
+  const funding_lane = selectDedicatedHostFundingLane(effectiveSnapshot);
   if (funding_lane) {
     return {
       allowed: true,
@@ -173,8 +196,8 @@ export function evaluateDedicatedHostAdmission({
     };
   }
 
-  if (snapshot.funding_mode === "account-prepaid") {
-    const balance = toDecimal(snapshot.balance ?? 0);
+  if (effectiveSnapshot.funding_mode === "account-prepaid") {
+    const balance = toDecimal(effectiveSnapshot.balance ?? 0);
     const prepaidEnabled =
       hasPositiveLimit(limits.prepaid_host_usage_limit_5h_usd) ||
       hasPositiveLimit(limits.prepaid_host_usage_limit_7d_usd);
@@ -211,7 +234,7 @@ export function evaluateDedicatedHostAdmission({
         "membership tier does not currently configure postpaid dedicated-host spending",
     };
   }
-  if (!snapshot.has_usage_subscription) {
+  if (!effectiveSnapshot.has_usage_subscription) {
     return {
       allowed: false,
       code: "automatic_billing_required",
@@ -219,9 +242,9 @@ export function evaluateDedicatedHostAdmission({
     };
   }
   if (
-    hasPositiveMoneyValue(snapshot.postpaid_unbilled_limit_usd) &&
-    !toDecimal(snapshot.postpaid_unbilled_exposure_usd).lt(
-      toDecimal(snapshot.postpaid_unbilled_limit_usd),
+    hasPositiveMoneyValue(effectiveSnapshot.postpaid_unbilled_limit_usd) &&
+    !toDecimal(effectiveSnapshot.postpaid_unbilled_exposure_usd).lt(
+      toDecimal(effectiveSnapshot.postpaid_unbilled_limit_usd),
     )
   ) {
     return {
@@ -341,11 +364,13 @@ export async function assertDedicatedHostAdmissionForAccount({
   action,
   machine_cloud,
   has_active_second_factor_override,
+  funding_mode_override,
 }: {
   account_id: string;
   action: DedicatedHostAction;
   machine_cloud?: string | null;
   has_active_second_factor_override?: boolean;
+  funding_mode_override?: DedicatedHostFundingMode;
 }): Promise<void> {
   if (!isBillableDedicatedHostCloud(machine_cloud)) {
     return;
@@ -355,6 +380,7 @@ export async function assertDedicatedHostAdmissionForAccount({
     machine_cloud,
     snapshot: await getDedicatedHostPolicySnapshotForAccount({ account_id }),
     has_active_second_factor_override,
+    funding_mode_override,
   });
   if (decision.allowed) {
     return;

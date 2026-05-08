@@ -918,6 +918,20 @@ async function maybeRequireFreshAuthForBrowserHostAction({
   };
 }
 
+function currentHostFundingMode(
+  metadata: any,
+): "account-prepaid" | "account-postpaid" | "site-funded" | undefined {
+  const value = `${metadata?.billing?.funding_mode ?? ""}`.trim().toLowerCase();
+  if (
+    value === "account-prepaid" ||
+    value === "account-postpaid" ||
+    value === "site-funded"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
 export { rolloutComponentsForUpgradeResultsInternal as rolloutComponentsForUpgradeResults };
 
 export async function getBackupConfig({
@@ -3455,6 +3469,7 @@ export async function startHost({
     action: "start",
     machine_cloud: row.metadata?.machine?.cloud,
     has_active_second_factor_override: auth.allow_second_factor_override,
+    funding_mode_override: currentHostFundingMode(row.metadata),
   });
   return await createHostLro({
     kind: HOST_START_LRO_KIND,
@@ -4032,6 +4047,7 @@ export async function updateHostMachine({
     action: "resize",
     machine_cloud: requestedCloud ?? machineCloud,
     has_active_second_factor_override: auth.allow_second_factor_override,
+    funding_mode_override: currentHostFundingMode(metadata),
   });
   const cloudChanged =
     requestedCloudRaw !== undefined && requestedCloud !== machineCloud;
