@@ -7,7 +7,7 @@
 declare let window, document;
 
 import { callback } from "awaiting";
-import { List, Map, fromJS, Set as immutableSet } from "immutable";
+import { List, Map, fromJS } from "immutable";
 import { throttle } from "lodash";
 import { join } from "path";
 import { defineMessage } from "react-intl";
@@ -168,6 +168,15 @@ import {
   toUrlPath,
   fromUrlDirectoryPath,
 } from "./path-routing";
+import {
+  nextSelectedFileIndex,
+  selectedFileRange,
+  setFileCheckedState,
+  setFileListCheckedState,
+  setFileListUncheckedState,
+  suggestDuplicateFilenameInDirectory,
+  uniqueFileActionPaths,
+} from "./file-selection";
 export { callFilesystemClientWithRecovery } from "./filesystem-client";
 export { resetOpenFileRuntimeAfterHostReset } from "./open-file-runtime";
 
@@ -1964,10 +1973,13 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return;
     }
-    const selected_index = store.get("selected_file_index") ?? 0;
-    const numDisplayedFiles = store.get("numDisplayedFiles") ?? 0;
-    if (selected_index + 1 < numDisplayedFiles) {
-      this.setState({ selected_file_index: selected_index + 1 });
+    const selected_file_index = nextSelectedFileIndex({
+      selectedFileIndex: store.get("selected_file_index"),
+      numDisplayedFiles: store.get("numDisplayedFiles"),
+      delta: 1,
+    });
+    if (selected_file_index != null) {
+      this.setState({ selected_file_index });
     }
   }
 
@@ -1979,9 +1991,12 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return;
     }
-    const selected_index = store.get("selected_file_index") ?? 0;
-    if (selected_index > 0) {
-      this.setState({ selected_file_index: selected_index - 1 });
+    const selected_file_index = nextSelectedFileIndex({
+      selectedFileIndex: store.get("selected_file_index"),
+      delta: -1,
+    });
+    if (selected_file_index != null) {
+      this.setState({ selected_file_index });
     }
   }
 
@@ -2005,23 +2020,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     listing,
     current_path?: string,
   ): void {
-    let range;
     const store = this.get_store();
     if (store == undefined) {
       return;
     }
-    const most_recent = store.get("most_recent_file_click");
-    if (most_recent == null) {
-      // nothing had been clicked before, treat as normal click
-      range = [file];
-    } else {
-      // get the range of files
-      const listing_path = current_path ?? store.get("current_path_abs") ?? "/";
-      const names = listing.map(({ name }) =>
-        misc.path_to_file(listing_path, name),
-      );
-      range = misc.get_array_range(names, most_recent, file);
-    }
+    const range = selectedFileRange({
+      file,
+      listing,
+      currentPath: current_path ?? store.get("current_path_abs") ?? "/",
+      mostRecentFileClick: store.get("most_recent_file_click"),
+    });
 
     if (checked) {
       this.set_file_list_checked(range);
@@ -2036,28 +2044,16 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return;
     }
-    const changes: {
-      checked_files?: immutableSet<string>;
-      file_action?: FileAction | undefined;
-    } = {};
-    if (checked) {
-      changes.checked_files = store.get("checked_files").add(file);
-      const file_action = store.get("file_action");
-      if (
-        file_action != null &&
-        changes.checked_files.size > 1 &&
-        !FILE_ACTIONS[file_action].allows_multiple_files
-      ) {
-        changes.file_action = undefined;
-      }
-    } else {
-      changes.checked_files = store.get("checked_files").delete(file);
-      if (changes.checked_files.size === 0) {
-        changes.file_action = undefined;
-      }
-    }
-
-    this.setState(changes);
+    this.setState(
+      setFileCheckedState<FileAction>({
+        checkedFiles: store.get("checked_files"),
+        fileAction: store.get("file_action"),
+        allowsMultipleFiles: (action) =>
+          FILE_ACTIONS[action].allows_multiple_files,
+        file,
+        checked,
+      }),
+    );
   }
 
   // check all files in the given file_list
@@ -2066,38 +2062,29 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (store == undefined) {
       return;
     }
-    const changes: {
-      checked_files: immutableSet<string>;
-      file_action?: FileAction | undefined;
-    } = { checked_files: store.get("checked_files").union(file_list) };
-    const file_action = store.get("file_action");
-    if (
-      file_action != undefined &&
-      changes.checked_files.size > 1 &&
-      !FILE_ACTIONS[file_action].allows_multiple_files
-    ) {
-      changes.file_action = undefined;
-    }
-
-    this.setState(changes);
+    this.setState(
+      setFileListCheckedState<FileAction>({
+        checkedFiles: store.get("checked_files"),
+        fileAction: store.get("file_action"),
+        allowsMultipleFiles: (action) =>
+          FILE_ACTIONS[action].allows_multiple_files,
+        fileList: file_list,
+      }),
+    );
   }
 
   // uncheck all files in the given file_list
-  set_file_list_unchecked(file_list: List<string>): void {
+  set_file_list_unchecked(file_list: List<string> | string[]): void {
     const store = this.get_store();
     if (store == undefined) {
       return;
     }
-    const changes: {
-      checked_files: immutableSet<string>;
-      file_action?: FileAction | undefined;
-    } = { checked_files: store.get("checked_files").subtract(file_list) };
-
-    if (changes.checked_files.size === 0) {
-      changes.file_action = undefined;
-    }
-
-    this.setState(changes);
+    this.setState(
+      setFileListUncheckedState<FileAction>({
+        checkedFiles: store.get("checked_files"),
+        fileList: file_list,
+      }),
+    );
   }
 
   // uncheck all files
@@ -2119,16 +2106,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       return;
     }
 
-    // fallback to name, simple fallback
-    const filesInDir = this.get_filenames_in_current_dir() || name;
-    // This loop will keep trying new names until one isn't in the directory,
-    // because the name keeps changing and filesInDir is finite.
-    while (true) {
-      name = misc.suggest_duplicate_filename(name);
-      if (!filesInDir[name]) {
-        return name;
-      }
-    }
+    return suggestDuplicateFilenameInDirectory({
+      name,
+      filesInDir: this.get_filenames_in_current_dir() || {},
+    });
   };
 
   set_file_action = (action?: FileAction): void => {
@@ -2214,7 +2195,7 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     paths: string[];
     action: FileAction;
   }) => {
-    const uniquePaths = Array.from(new Set(paths.filter(Boolean)));
+    const uniquePaths = uniqueFileActionPaths(paths);
     if (uniquePaths.length === 0) {
       return;
     }
