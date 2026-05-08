@@ -1,11 +1,13 @@
 /** @jest-environment jsdom */
 
 import {
-  linkifyCommitHashes,
-  resolveMessageGitBrowserRequest,
   resolveForkThreadNavigation,
   resolveThreadMetadataLookup,
 } from "../message";
+import {
+  linkifyCommitHashes,
+  resolveMessageGitBrowserRequest,
+} from "../git-commit-links";
 
 describe("resolveThreadMetadataLookup", () => {
   it("prefers message thread_id over root timestamp lookup", () => {
