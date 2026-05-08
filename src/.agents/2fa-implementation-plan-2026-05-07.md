@@ -1,5 +1,20 @@
 # Two-Factor Auth / Fresh-Auth Implementation Plan
 
+## Status
+
+As of 2026-05-08, the browser/admin portion of this plan is substantially
+implemented:
+
+- TOTP + recovery codes
+- fresh-auth for dangerous browser actions
+- wrong-bay sign-in integration
+- rehome portability for auth-local state
+- admin impersonation integration
+- repeated live/manual smoke coverage
+
+This plan is still open because the CLI / elevated-auth / automation follow-up
+has not been implemented yet.
+
 ## Purpose
 
 This plan covers the first real 2FA / MFA implementation for `cocalc-ai`,

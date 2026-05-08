@@ -16,6 +16,20 @@ This version treats:
 - account home bay, project owning bay, and seed-global state as separate
   authorities with explicit responsibilities
 
+As of 2026-05-08:
+
+- the dedicated-host safety foundation from this document is materially
+  implemented:
+  - browser 2FA / fresh-auth
+  - dedicated-host funding lanes
+  - host spend-lane enforcement
+  - host-level site-funded/account-funded selection
+- student pay and minimal domain/site licensing remain critical open release
+  blockers
+- broader package/team/institutional architecture in this document should not
+  be treated as mandatory for first public release unless it is explicitly kept
+  in the master release plan
+
 ## Purpose
 
 This plan covers the remaining major user-visible release work in `cocalc-ai`:
@@ -1419,14 +1433,17 @@ under the real multi-bay deployment.
 
 ## Further TODO
 
-- [ ] update the master release plan to remove the obsolete `seed-owned purchases/billing authority for first release` assumption
+- [x] update the master release plan to remove the obsolete `seed-owned purchases/billing authority for first release` assumption
 - [ ] implement canonical `+alias` identity dedupe for domain/site claims
-      [ ] ensure that subscription maintenance, statements, payment-intent processing, and automatic payments DO run. Right now gated behind kucalc and commercial flags.
+- [ ] ensure that subscription maintenance, statements, payment-intent
+      processing, and automatic payments DO run. Right now gated behind kucalc
+      and commercial flags.
 - [ ] add Cloudflare Email Service support for verification and notifications
 - [ ] add `cocalc-cli` operator/testing support for package, claim, and rehome flows
 - [ ] abuse mitigation:
-  - [ ] 2FA / MFA for paid-compute accounts
-  - [ ] fresh-auth checkpoints for dangerous billing and host actions
+  - [x] browser 2FA / MFA for paid-compute accounts
+  - [x] browser fresh-auth checkpoints for dangerous billing and host actions
+  - [ ] CLI elevated auth for dangerous actions
   - [ ] captcha -- finish implementing support
   - [ ] Stripe Radar integration and payment-risk handling policy
   - [ ] chargeback/refund-driven entitlement suspension policy
