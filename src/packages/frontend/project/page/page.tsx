@@ -76,6 +76,7 @@ import {
   handleProjectNavigationKeydown,
 } from "./keyboard-navigation";
 import { shouldRenderMoveStatus } from "./move-status";
+import { getRecoverableActiveEditorPath } from "./active-editor-recovery";
 
 const START_BANNER = false;
 
@@ -275,6 +276,47 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
       actions.set_active_tab("home", { change_history: false });
     }
   }, [archivedLike, actions, active_project_tab, is_active, open_files_order]);
+
+  const recoverActiveEditorComponent = React.useCallback(() => {
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "hidden"
+    ) {
+      return;
+    }
+    const path = getRecoverableActiveEditorPath({
+      isActive: is_active,
+      activeTopTab: active_top_tab,
+      projectId: project_id,
+      activeProjectTab: active_project_tab,
+      openFiles: open_files,
+    });
+    if (path == null) return;
+    actions?.ensure_open_file_component?.(path);
+  }, [
+    actions,
+    active_project_tab,
+    active_top_tab,
+    is_active,
+    open_files,
+    project_id,
+  ]);
+
+  useEffect(() => {
+    recoverActiveEditorComponent();
+  }, [recoverActiveEditorComponent]);
+
+  useEffect(() => {
+    const recoverIfVisible = () => {
+      recoverActiveEditorComponent();
+    };
+    document.addEventListener("visibilitychange", recoverIfVisible);
+    window.addEventListener("focus", recoverIfVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", recoverIfVisible);
+      window.removeEventListener("focus", recoverIfVisible);
+    };
+  }, [recoverActiveEditorComponent]);
 
   useEffect(() => {
     const name = getFlyoutExpanded(project_id);
