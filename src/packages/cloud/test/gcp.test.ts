@@ -249,6 +249,7 @@ describe("GcpProvider", () => {
   });
 
   it("starts, stops, and deletes a host", async () => {
+    getMock.mockResolvedValueOnce([{ status: "TERMINATED" }]);
     startMock.mockResolvedValueOnce([{}]);
     stopMock.mockResolvedValueOnce([{}]);
     deleteMock.mockResolvedValueOnce([{}]);
@@ -286,7 +287,37 @@ describe("GcpProvider", () => {
     });
   });
 
+  it("treats start as a no-op when the instance is already running", async () => {
+    getMock.mockResolvedValueOnce([{ status: "RUNNING" }]);
+
+    const provider = new GcpProvider();
+    await provider.startHost(
+      {
+        provider: "gcp",
+        instance_id: "ph-test",
+        zone: "us-west1-a",
+        ssh_user: "ubuntu",
+      },
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+    );
+
+    expect(startMock).not.toHaveBeenCalled();
+  });
+
   it("changes scheduling when switching pricing models", async () => {
+    getMock.mockResolvedValueOnce([
+      {
+        status: "TERMINATED",
+        scheduling: {
+          preemptible: true,
+          provisioningModel: "SPOT",
+        },
+      },
+    ]);
     authRequestMock.mockResolvedValueOnce({
       data: { name: "op-scheduling", status: "DONE" },
     });
@@ -323,6 +354,60 @@ describe("GcpProvider", () => {
       }),
     );
     expect(setSchedulingMock).not.toHaveBeenCalled();
+  });
+
+  it("stops a running instance before changing pricing models", async () => {
+    getMock
+      .mockResolvedValueOnce([
+        {
+          status: "RUNNING",
+          scheduling: {
+            preemptible: true,
+            provisioningModel: "SPOT",
+          },
+        },
+      ])
+      .mockResolvedValueOnce([{ status: "TERMINATED" }]);
+    stopMock.mockResolvedValueOnce([
+      { latestResponse: { name: "op-stop", status: "DONE" } },
+    ]);
+    authRequestMock.mockResolvedValueOnce({
+      data: { name: "op-scheduling", status: "DONE" },
+    });
+    waitMock
+      .mockResolvedValueOnce([{ status: "DONE" }])
+      .mockResolvedValueOnce([{ status: "DONE" }]);
+
+    const provider = new GcpProvider();
+    await provider.setPricingModel?.(
+      {
+        provider: "gcp",
+        instance_id: "ph-test",
+        zone: "us-west1-a",
+        ssh_user: "ubuntu",
+        metadata: { gpu_count: 0 },
+      },
+      "on_demand",
+      {
+        project_id: "proj-1",
+        client_email: "svc@example.com",
+        private_key: "key",
+      },
+    );
+
+    expect(stopMock).toHaveBeenCalledWith({
+      project: "proj-1",
+      zone: "us-west1-a",
+      instance: "ph-test",
+    });
+    expect(authRequestMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "POST",
+        url: expect.stringContaining(
+          "/projects/proj-1/zones/us-west1-a/instances/ph-test/setScheduling",
+        ),
+      }),
+    );
   });
 
   it("probes same-shape spot availability with a temporary instance", async () => {
@@ -364,6 +449,7 @@ describe("GcpProvider", () => {
   });
 
   it("throws when start operation completes with an error", async () => {
+    getMock.mockResolvedValueOnce([{ status: "TERMINATED" }]);
     startMock.mockResolvedValueOnce([
       { latestResponse: { name: "op-start", status: "PENDING" } },
     ]);
