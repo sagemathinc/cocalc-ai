@@ -115,6 +115,21 @@ describe("resolveMessageGitBrowserRequest", () => {
       commitHash: "HEAD",
     });
   });
+
+  it("ignores bare decimal numbers that only look hex-like", () => {
+    expect(
+      resolveMessageGitBrowserRequest({
+        messageThreadId: "thread-abc",
+        date: 1700000000000,
+        activityBasePath: "/work/repo",
+        renderedMessageValue: "The computed value is 614889782588491410.",
+      }),
+    ).toEqual({
+      threadKey: "thread-abc",
+      cwdOverride: "/work/repo",
+      commitHash: "HEAD",
+    });
+  });
 });
 
 describe("linkifyCommitHashes", () => {
@@ -131,5 +146,18 @@ describe("linkifyCommitHashes", () => {
   it("keeps fenced code blocks unchanged", () => {
     const text = "```md\n`29cbc87b15 project-host: subject`\n```";
     expect(linkifyCommitHashes(text)).toBe(text);
+  });
+
+  it("does not link bare decimal numbers", () => {
+    const text = "The computed value is 614889782588491410.";
+    expect(linkifyCommitHashes(text)).toBe(text);
+  });
+
+  it("still links explicit inline numeric commit summaries", () => {
+    expect(
+      linkifyCommitHashes("- `6148897825 project-host: fix queueing`"),
+    ).toBe(
+      '- [Commit 6148897825](cocalc-commit://6148897825 "Open commit 6148897825") project-host: fix queueing',
+    );
   });
 });
