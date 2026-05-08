@@ -260,6 +260,30 @@ export function resolveIncomingGitCommitSelection({
   return incomingCommit;
 }
 
+export function shouldDisplayGitCommitData({
+  commit,
+  loadedCommit,
+}: {
+  commit?: string;
+  loadedCommit?: string;
+}): boolean {
+  return Boolean(commit) && loadedCommit === commit;
+}
+
+export function resolveEffectiveGitCommitSelection({
+  open,
+  selectedCommit,
+  incomingCommit,
+  requestTokenChanged,
+}: {
+  open: boolean;
+  selectedCommit?: string;
+  incomingCommit?: string;
+  requestTokenChanged: boolean;
+}): string | undefined {
+  return open && requestTokenChanged ? incomingCommit : selectedCommit;
+}
+
 export function applyGitReviewedByCommitEntries({
   previous,
   entries,
@@ -349,6 +373,9 @@ export function GitCommitDrawer({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [data, setData] = useState<GitShowParsed | undefined>(undefined);
+  const [loadedCommit, setLoadedCommit] = useState<string | undefined>(
+    undefined,
+  );
   const [repoRoot, setRepoRoot] = useState<string>("");
   const [gitLog, setGitLog] = useState<GitLogEntry[]>([]);
   const [gitLogError, setGitLogError] = useState<string>("");
@@ -376,13 +403,21 @@ export function GitCommitDrawer({
     incomingCommit,
   );
   const commitSelectionRequestTokenRef = useRef(commitSelectionRequestToken);
+  const hasPendingCommitSelectionRequest =
+    open &&
+    commitSelectionRequestToken !== commitSelectionRequestTokenRef.current;
   const [commitSearch, setCommitSearch] = useState("");
   const [diffFindQuery, setDiffFindQuery] = useState("");
   const [activeDiffFindMatchIndex, setActiveDiffFindMatchIndex] =
     useState<number>(-1);
   const [showOnlyUnreviewedCommits, setShowOnlyUnreviewedCommits] =
     useState(false);
-  const commit = selectedCommit;
+  const commit = resolveEffectiveGitCommitSelection({
+    open,
+    selectedCommit,
+    incomingCommit,
+    requestTokenChanged: hasPendingCommitSelectionRequest,
+  });
   const isHeadSelected = isHeadCommit(commit);
 
   const [reviewLoading, setReviewLoading] = useState(false);
@@ -545,13 +580,17 @@ export function GitCommitDrawer({
     setInlineCommentPendingKey("");
   }, [open, commit, contextLines, reloadCounter]);
 
+  const currentData = shouldDisplayGitCommitData({ commit, loadedCommit })
+    ? data
+    : undefined;
+
   const diffFindMatches = useMemo(
     () =>
       buildGitDiffFindMatches({
-        data,
+        data: currentData,
         query: diffFindQuery,
       }),
-    [data, diffFindQuery],
+    [currentData, diffFindQuery],
   );
 
   const activeDiffFindMatch =
@@ -579,21 +618,21 @@ export function GitCommitDrawer({
   const activeDiffFindTargetRendered = useMemo(
     () =>
       isGitDiffFindTargetRendered({
-        data,
+        data: currentData,
         match: activeDiffFindMatch,
         visibleDiffLinesByFile,
       }),
-    [data, activeDiffFindMatch, visibleDiffLinesByFile],
+    [currentData, activeDiffFindMatch, visibleDiffLinesByFile],
   );
 
   const activeDiffFindVisibleLineLimitUpdate = useMemo(
     () =>
       getGitDiffFindVisibleLineLimitUpdate({
-        data,
+        data: currentData,
         match: activeDiffFindMatch,
         visibleDiffLinesByFile,
       }),
-    [data, activeDiffFindMatch, visibleDiffLinesByFile],
+    [currentData, activeDiffFindMatch, visibleDiffLinesByFile],
   );
 
   useEffect(() => {
@@ -663,7 +702,7 @@ export function GitCommitDrawer({
     }
     restore();
     return;
-  }, [open, loading, error, data, nonRepoError, scrollStorageId]);
+  }, [open, loading, error, currentData, nonRepoError, scrollStorageId]);
 
   useEffect(() => {
     if (!open || !projectId) return;
@@ -820,6 +859,7 @@ export function GitCommitDrawer({
       setError("");
       setLoading(false);
       setData(undefined);
+      setLoadedCommit(undefined);
     }
   }, [open, nonRepoError]);
 
@@ -1755,8 +1795,8 @@ export function GitCommitDrawer({
   }, [diffFindMatches.length]);
 
   useEffect(() => {
-    if (!open || !data || !activeDiffFindMatch) return;
-    const file = data.files[activeDiffFindMatch.fileIndex];
+    if (!open || !currentData || !activeDiffFindMatch) return;
+    const file = currentData.files[activeDiffFindMatch.fileIndex];
     if (!file) return;
     if (activeDiffFindVisibleLineLimitUpdate) {
       setVisibleDiffLinesByFile((prev) => {
@@ -1777,14 +1817,14 @@ export function GitCommitDrawer({
   }, [
     activeDiffFindMatch,
     activeDiffFindVisibleLineLimitUpdate,
-    data,
+    currentData,
     open,
     scrollToDiffFile,
   ]);
 
   useEffect(() => {
-    if (!open || !data || !activeDiffFindMatch) return;
-    const file = data.files[activeDiffFindMatch.fileIndex];
+    if (!open || !currentData || !activeDiffFindMatch) return;
+    const file = currentData.files[activeDiffFindMatch.fileIndex];
     if (!file) return;
     let attempts = 0;
     let frame = 0;
@@ -1823,7 +1863,7 @@ export function GitCommitDrawer({
         window.cancelAnimationFrame(frame);
       }
     };
-  }, [activeDiffFindMatch, activeDiffFindTargetRendered, data, open]);
+  }, [activeDiffFindMatch, activeDiffFindTargetRendered, currentData, open]);
 
   const sendInlineReviewToAgent = async () => {
     if (!onRequestAgentTurn || !commit || isHeadSelected) return;
@@ -1959,23 +1999,28 @@ export function GitCommitDrawer({
       setLoading(false);
       setError("");
       setData(undefined);
+      setLoadedCommit(undefined);
       return;
     }
     if (!projectId) {
       setError("Invalid commit or missing project.");
       setData(undefined);
+      setLoadedCommit(undefined);
       return;
     }
     if (!commit) {
       setLoading(false);
       setError("");
       setData(undefined);
+      setLoadedCommit(undefined);
       return;
     }
     let cancelled = false;
+    const requestedCommit = commit;
     setLoading(true);
     setError("");
     setData(undefined);
+    setLoadedCommit(undefined);
     (async () => {
       try {
         const args = buildGitShowArgs({
@@ -2003,6 +2048,7 @@ export function GitCommitDrawer({
         );
         if (!cancelled) {
           setData(parsed);
+          setLoadedCommit(requestedCommit);
           setError("");
         }
       } catch (err) {
@@ -2010,6 +2056,7 @@ export function GitCommitDrawer({
         const message = `${err ?? "Unable to load commit."}`;
         setError(message);
         setData(undefined);
+        setLoadedCommit(undefined);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -2265,7 +2312,7 @@ export function GitCommitDrawer({
     openFileActionScopeRef.current = startedScope;
     try {
       await projectActions.open_file({
-        path: resolveOpenPath(repoRoot || data?.repoRoot, filePath),
+        path: resolveOpenPath(repoRoot || currentData?.repoRoot, filePath),
         foreground: true,
         explicit: true,
       });
@@ -2599,6 +2646,14 @@ export function GitCommitDrawer({
     scrollStorageId,
   ]);
 
+  const showCommitLoading =
+    loading ||
+    (Boolean(commit) &&
+      !error &&
+      !nonRepoError &&
+      data != null &&
+      !currentData);
+
   return (
     <Drawer
       title={
@@ -2818,12 +2873,12 @@ export function GitCommitDrawer({
             }}
           />
         )}
-        {loading ? (
+        {showCommitLoading ? (
           <div style={{ padding: "32px 0", textAlign: "center" }}>
             <Spin />
           </div>
         ) : null}
-        {!loading && error ? (
+        {!showCommitLoading && error ? (
           <Alert
             type="error"
             title={error}
@@ -2831,11 +2886,11 @@ export function GitCommitDrawer({
             style={{ marginBottom: 12 }}
           />
         ) : null}
-        {!loading && !error && data ? (
+        {!showCommitLoading && !error && currentData ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {data.summaryLines.length ? (
+            {currentData.summaryLines.length ? (
               <GitCommitDetailsPanel
-                summary={data.summary}
+                summary={currentData.summary}
                 commit={commit}
                 isHeadSelected={isHeadSelected}
                 fontSize={fontSize}
@@ -2843,17 +2898,17 @@ export function GitCommitDrawer({
                 headRefLabel={HEAD_REF}
               />
             ) : null}
-            {data.files.length === 0 ? (
+            {currentData.files.length === 0 ? (
               <GitEmptyCommitDiff />
             ) : (
               <>
                 <GitChangedFilesPanel
-                  files={data.files}
+                  files={currentData.files}
                   inlineCommentsByFile={inlineCommentsByFile}
                   onOpenFileDiff={scrollToDiffFile}
                 />
                 <GitDiffFilesPanel
-                  files={data.files}
+                  files={currentData.files}
                   drawerScrollParent={drawerScrollParent}
                   virtuosoRef={virtuosoRef}
                   fontSize={fontSize}
@@ -2893,11 +2948,11 @@ export function GitCommitDrawer({
                 />
               </>
             )}
-            {data.linesTruncated ? (
+            {currentData.linesTruncated ? (
               <Alert
                 type="warning"
                 showIcon
-                title={`Showing first ${MAX_GIT_SHOW_LINES.toLocaleString()} lines (${data.shownLineCount.toLocaleString()} loaded of ${data.originalLineCount.toLocaleString()}).`}
+                title={`Showing first ${MAX_GIT_SHOW_LINES.toLocaleString()} lines (${currentData.shownLineCount.toLocaleString()} loaded of ${currentData.originalLineCount.toLocaleString()}).`}
                 description={
                   <span>
                     Output was truncated for UI performance. Use terminal for

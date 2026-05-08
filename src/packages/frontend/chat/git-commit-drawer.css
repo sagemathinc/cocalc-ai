@@ -3,6 +3,11 @@
   pointer-events: none;
 }
 
+.cocalc-git-diff-line-comment-slot {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .cocalc-git-diff-line:hover .cocalc-git-diff-line-comment-button,
 .cocalc-git-diff-line:focus-within .cocalc-git-diff-line-comment-button {
   opacity: 1;
@@ -20,6 +25,7 @@
 }
 
 .cocalc-git-diff-line-text {
+  min-width: 0;
   user-select: text;
   -webkit-user-select: text;
 }
