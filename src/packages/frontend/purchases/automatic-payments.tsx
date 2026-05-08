@@ -1,42 +1,33 @@
 import { Space } from "antd";
-import MinBalance from "./min-balance";
 import SpendRate from "./spend-rate";
 import { useEffect, useState } from "react";
-import {
-  getMinBalance as getMinBalanceUsingApi,
-  getSpendRate as getSpendRateUsingApi,
-} from "./api";
+import { getSpendRate as getSpendRateUsingApi } from "./api";
 import ShowError from "@cocalc/frontend/components/error";
 import { SectionDivider } from "./util";
 import Balance from "./balance";
 import type { MoneyValue } from "@cocalc/util/money";
 
 export default function AutomaticPayments({
-  compact,
+  compact: _compact,
   style,
 }: {
   compact?;
   style?;
 }) {
   const [loading, setLoading] = useState<boolean>(true);
-  const [minBalance, setMinBalance] = useState<MoneyValue | null>(null);
   const [error, setError] = useState<string>("");
   const [spendRate, setSpendRate] = useState<MoneyValue | null>(null);
 
   const getSpendRate = async () => {
     setSpendRate(await getSpendRateUsingApi());
   };
-  const getMinBalance = async () => {
-    setMinBalance(await getMinBalanceUsingApi());
-  };
 
   const handleRefresh = async () => {
     try {
       setError("");
       setLoading(true);
-      setMinBalance(null);
       setSpendRate(null);
-      await Promise.all([getSpendRate(), getMinBalance()]);
+      await getSpendRate();
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -50,7 +41,7 @@ export default function AutomaticPayments({
   return (
     <div style={style}>
       <SectionDivider onRefresh={handleRefresh} loading={loading}>
-        Automatic Deposits, Spend Rate and Minimum Balance
+        Automatic Deposits and Spend Rate
       </SectionDivider>
       <ShowError
         error={error}
@@ -61,7 +52,6 @@ export default function AutomaticPayments({
         <Space wrap size="large">
           <Balance />
           <SpendRate spendRate={spendRate} />
-          {!compact && <MinBalance minBalance={minBalance} />}
         </Space>
       </div>
     </div>

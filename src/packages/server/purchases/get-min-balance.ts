@@ -1,29 +1,18 @@
 /*
-Return the minimum allowed balance for a user.  This defaults to 0. 
-If set to be negative, this gives the user a "credit limit", i.e., if
-it is 100, then they can spend up to $100 via pay-as-you-go, etc.,
-before having to pay us.
+The legacy min_balance "credit line" model is deprecated. Purchases must not
+intentionally drive an account below zero, so the effective minimum balance is
+always exactly zero.
 
-Our intention for now is that the default is 0, but users can make a support 
-request to set their limit to be lower. We may change things so the default
-is lower than 0 for some users, as defined by a database setting... but that's
-pretty frightening.
-
-NOTE: result of this query is aggressively cached via "long", since
-it rarely changes -- only when an admin manually changes something.
+The accounts.min_balance column still exists for compatibility with legacy data
+and admin views, but it is intentionally ignored here.
 */
 
-import getPool, { PoolClient, Pool } from "@cocalc/database/pool";
+import type { PoolClient, Pool } from "@cocalc/database/pool";
 import { moneyToDbString, type MoneyValue } from "@cocalc/util/money";
 
 export default async function getMinBalance(
-  account_id: string,
-  client?: PoolClient | Pool,
+  _account_id: string,
+  _client?: PoolClient | Pool,
 ): Promise<MoneyValue> {
-  const pool = client ?? getPool("long");
-  const { rows } = await pool.query(
-    "SELECT min_balance FROM accounts WHERE account_id=$1",
-    [account_id],
-  );
-  return moneyToDbString(rows[0]?.min_balance ?? 0); // defaults to 0
+  return moneyToDbString(0);
 }
