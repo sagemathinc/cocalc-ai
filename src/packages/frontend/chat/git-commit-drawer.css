@@ -6,9 +6,25 @@
 .cocalc-git-diff-line:hover .cocalc-git-diff-line-comment-button,
 .cocalc-git-diff-line:focus-within .cocalc-git-diff-line-comment-button {
   opacity: 1;
+}
+
+.cocalc-git-diff-line-comment-slot:hover .cocalc-git-diff-line-comment-button,
+.cocalc-git-diff-line-comment-slot:focus-within
+  .cocalc-git-diff-line-comment-button {
   pointer-events: auto;
+}
+
+.cocalc-git-diff-line {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .cocalc-git-diff-line-text {
   user-select: text;
+  -webkit-user-select: text;
+}
+
+.cocalc-git-diff-line-text * {
+  user-select: text;
+  -webkit-user-select: text;
 }

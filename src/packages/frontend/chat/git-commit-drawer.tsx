@@ -117,6 +117,7 @@ import {
 } from "./git-commit/drawer-scroll";
 import {
   formatMergeCommitBodyMarkdown,
+  hasExpandedTextSelectionWithin,
   getCommitReviewIndicatorState,
   isEditableEventTarget,
   isMergeCommitSummary,
@@ -177,6 +178,7 @@ export {
   GitDiffFilesPanel,
   GitDiffListFooterSpacer,
   getCommitReviewIndicatorState,
+  hasExpandedTextSelectionWithin,
   isMergeCommitSummary,
   shouldHighlightGitCommitNeedsReview,
   shouldApplyGitFileOpenScopedResult,
