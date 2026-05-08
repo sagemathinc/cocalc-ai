@@ -8,8 +8,8 @@
 import { buildGitReviewFileSectionId } from "./ids";
 import type { GitDiffFindMatch, GitShowParsed } from "./types";
 
-export const INITIAL_RENDERED_DIFF_LINES = 300;
-export const RENDERED_DIFF_LINES_INCREMENT = 200;
+export const INITIAL_RENDERED_DIFF_LINES = 1000;
+export const RENDERED_DIFF_LINES_INCREMENT = 1500;
 
 function countCaseInsensitiveMatches(text: string, needle: string): number {
   const haystack = `${text ?? ""}`.toLowerCase();
