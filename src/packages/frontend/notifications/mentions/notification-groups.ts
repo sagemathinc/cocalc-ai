@@ -27,7 +27,6 @@ function dedupeKey(mention: MentionInfo): string | undefined {
     mention.get("notice_type") ?? "",
     mention.get("project_id") ?? null,
     mention.get("path") ?? "",
-    mention.get("fragment_id") ?? "",
     mention.get("thread_id") ?? "",
     mention.get("title") ?? "",
     mention.get("body_markdown") ?? "",
