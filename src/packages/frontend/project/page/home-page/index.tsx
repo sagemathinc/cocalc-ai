@@ -75,6 +75,7 @@ export default function HomePage() {
       {showLifecycleBanner ? (
         <Col md={24}>
           <Alert
+            style={{ width: "100%" }}
             type="info"
             showIcon
             message={
@@ -151,7 +152,7 @@ export default function HomePage() {
                   />
                 )}
                 <div style={{ marginTop: "12px" }}>
-                  <StartButton project_id={project_id} />
+                  <StartButton project_id={project_id} minimal />
                 </div>
               </div>
             }
