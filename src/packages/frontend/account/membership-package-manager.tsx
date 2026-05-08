@@ -15,6 +15,7 @@ import {
   Radio,
   Space,
   Spin,
+  Statistic,
   Tag,
   Typography,
 } from "antd";
@@ -981,9 +982,10 @@ function TeamPackagePurchaseModal({
             <Space wrap>
               <MoneyStatistic title="Total price" value={quote.total_price} />
               <MoneyStatistic title="Seat price" value={quote.seat_price} />
-              <MoneyStatistic
+              <Statistic
                 title="Seats after purchase"
                 value={(membershipPackage?.seat_count ?? 0) + seatCount}
+                precision={0}
               />
             </Space>
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>
