@@ -602,7 +602,10 @@ function getExplicitAccountId(globals: GlobalOptions): string | undefined {
 
 function hasHubPassword(globals: GlobalOptions): boolean {
   return !!normalizeSecretValue(
-    globals.hubPassword ?? process.env.COCALC_HUB_PASSWORD,
+    globals.hubPassword ??
+      (!globals.disableEnvAuthDefaults
+        ? process.env.COCALC_HUB_PASSWORD
+        : undefined),
   );
 }
 
@@ -930,9 +933,22 @@ async function connectRemote({
   if (cookie) {
     extraHeaders.Cookie = cookie;
   }
-  const bearer = globals.bearer ?? process.env.COCALC_BEARER_TOKEN;
-  const effectiveBearer = bearer ?? process.env.COCALC_AGENT_TOKEN;
-  const projectScopedAuth = resolveProjectScopedAuth(process.env);
+  const allowEnvAuthDefaults = !globals.disableEnvAuthDefaults;
+  const hasDirectAuth =
+    !!cookie ||
+    !!normalizeOptionalSecret(globals.apiKey) ||
+    !!normalizeSecretValue(globals.hubPassword) ||
+    !!normalizeOptionalSecret(globals.bearer);
+  const bearer =
+    globals.bearer ??
+    (allowEnvAuthDefaults ? process.env.COCALC_BEARER_TOKEN : undefined);
+  const effectiveBearer =
+    bearer ??
+    (allowEnvAuthDefaults ? process.env.COCALC_AGENT_TOKEN : undefined);
+  const projectScopedAuth =
+    !hasDirectAuth && !effectiveBearer && allowEnvAuthDefaults
+      ? resolveProjectScopedAuth(process.env)
+      : undefined;
   const agentProjectId = `${process.env.COCALC_PROJECT_ID ?? ""}`.trim();
   const client = connectConat({
     address: conatAddress,
@@ -1140,7 +1156,10 @@ async function maybeReconnectAsRequestedAccount({
   | undefined
 > {
   const requestedAccountId =
-    getExplicitAccountId(globals) ?? process.env.COCALC_ACCOUNT_ID;
+    getExplicitAccountId(globals) ??
+    (!globals.disableEnvAuthDefaults
+      ? process.env.COCALC_ACCOUNT_ID
+      : undefined);
   if (!isValidUUID(requestedAccountId)) {
     return;
   }
@@ -1159,8 +1178,9 @@ async function maybeReconnectAsRequestedAccount({
     normalizeOptionalSecret(globals.cookie) ||
     normalizeOptionalSecret(globals.bearer) ||
     normalizeOptionalSecret(globals.apiKey) ||
-    normalizeOptionalSecret(process.env.COCALC_BEARER_TOKEN) ||
-    normalizeOptionalSecret(process.env.COCALC_API_KEY)
+    (!globals.disableEnvAuthDefaults &&
+      (normalizeOptionalSecret(process.env.COCALC_BEARER_TOKEN) ||
+        normalizeOptionalSecret(process.env.COCALC_API_KEY)))
   ) {
     return;
   }
@@ -1267,7 +1287,9 @@ async function contextForGlobals(
   let accountId =
     getExplicitAccountId(effectiveGlobals) ??
     resolveAccountIdFromRemote(remote) ??
-    process.env.COCALC_ACCOUNT_ID;
+    (!effectiveGlobals.disableEnvAuthDefaults
+      ? process.env.COCALC_ACCOUNT_ID
+      : undefined);
 
   const projectScopedProjectId = `${remote.user?.project_id ?? ""}`.trim();
   if (!accountId && isValidUUID(projectScopedProjectId)) {
@@ -2352,6 +2374,8 @@ const authCommandDeps = {
   durationToMs,
   connectRemote,
   resolveAccountIdFromRemote,
+  buildCookieHeader,
+  cookieNameFor,
   normalizeSecretValue,
   maskSecret,
   sanitizeProfileName,
@@ -2487,7 +2511,6 @@ registerOpCommand(program, opCommandDeps);
 const adminCommandDeps = {
   withContext,
   resolveAccountByIdentifier,
-  normalizeUrl,
   isValidUUID,
 } satisfies AdminCommandDeps;
 

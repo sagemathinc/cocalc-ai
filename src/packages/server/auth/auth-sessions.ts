@@ -340,6 +340,29 @@ export async function setCurrentSessionFreshAuth({
   if (!session_hash) {
     throw new Error("browser sign-in is required");
   }
+  await setSessionFreshAuth({
+    account_id,
+    session_hash,
+    factor_level,
+    fresh_auth_until,
+  });
+}
+
+export async function setSessionFreshAuth({
+  account_id,
+  session_hash,
+  factor_level,
+  fresh_auth_until,
+}: {
+  account_id: string;
+  session_hash: string;
+  factor_level: AuthSessionFactorLevel;
+  fresh_auth_until: Date;
+}): Promise<void> {
+  const cleanedSessionHash = `${session_hash ?? ""}`.trim();
+  if (!cleanedSessionHash) {
+    throw new Error("session_hash is required");
+  }
   await withAccountRehomeWriteFence({
     account_id,
     action: "set fresh auth",
@@ -368,7 +391,7 @@ export async function setCurrentSessionFreshAuth({
                  revoked_at = NULL
            WHERE session_hash = $1::CHAR(127)
         `,
-        [session_hash, fresh_auth_until, factor_level],
+        [cleanedSessionHash, fresh_auth_until, factor_level],
       );
     },
   });

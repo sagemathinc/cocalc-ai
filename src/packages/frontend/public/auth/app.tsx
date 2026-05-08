@@ -11,6 +11,10 @@ import { getSiteName, type PublicConfig } from "../common";
 import { navigatePublic } from "../navigation";
 
 import {
+  PublicCliElevateApprovalView,
+  PublicCliLoginApprovalView,
+} from "./cli-auth-views";
+import {
   PublicPasswordResetDoneView,
   PublicRedeemPasswordResetView,
   PublicVerifyEmailView,
@@ -52,6 +56,10 @@ function titleForRoute(route: PublicAuthRoute, siteName: string): string {
         default:
           return `Sign in to ${siteName}`;
       }
+    case "auth-cli-login":
+      return `Approve CLI sign-in for ${siteName}`;
+    case "auth-cli-elevate":
+      return `Approve CLI security action for ${siteName}`;
     case "auth-password-reset-done":
       return `${siteName} password updated`;
     case "auth-password-reset-redeem":
@@ -73,6 +81,10 @@ function subtitleForRoute(route: PublicAuthRoute, siteName: string): string {
     case "sso-detail":
     case "sso-index":
       return `Single sign-on for ${siteName}`;
+    case "auth-cli-login":
+      return `Approve a terminal sign-in request for ${siteName}`;
+    case "auth-cli-elevate":
+      return `Verify a terminal security action for ${siteName}`;
     case "auth-password-reset-done":
       return siteName;
     case "redeem":
@@ -88,6 +100,8 @@ function cardWidthForRoute(route: PublicAuthRoute): string | undefined {
       return "min(760px, 96vw)";
     case "sso-index":
       return "min(900px, 96vw)";
+    case "auth-cli-login":
+    case "auth-cli-elevate":
     case "auth-password-reset-redeem":
     case "auth-password-reset-done":
     case "auth-verify-email":
@@ -138,7 +152,10 @@ export default function PublicAuthApp({
         {route.kind === "auth-form" && route.view === "sign-in" && (
           <PublicSignInForm
             onNavigate={onNavigate}
-            redirectToPath={redirectToPath}
+            redirectToPath={
+              redirectToPath ??
+              (() => window.location.pathname + window.location.search)
+            }
           />
         )}
         {route.kind === "auth-form" && route.view === "sign-up" && (
@@ -154,6 +171,38 @@ export default function PublicAuthApp({
           <PublicRedeemPasswordResetView
             passwordResetId={route.passwordResetId}
           />
+        )}
+        {route.kind === "auth-cli-login" && (
+          <>
+            <PublicCliLoginApprovalView
+              challengeId={route.challengeId}
+              isAuthenticated={!!config?.is_authenticated}
+            />
+            {!config?.is_authenticated ? (
+              <PublicSignInForm
+                onNavigate={onNavigate}
+                redirectToPath={() =>
+                  window.location.pathname + window.location.search
+                }
+              />
+            ) : null}
+          </>
+        )}
+        {route.kind === "auth-cli-elevate" && (
+          <>
+            <PublicCliElevateApprovalView
+              challengeId={route.challengeId}
+              isAuthenticated={!!config?.is_authenticated}
+            />
+            {!config?.is_authenticated ? (
+              <PublicSignInForm
+                onNavigate={onNavigate}
+                redirectToPath={() =>
+                  window.location.pathname + window.location.search
+                }
+              />
+            ) : null}
+          </>
         )}
         {route.kind === "auth-password-reset-done" && (
           <PublicPasswordResetDoneView />

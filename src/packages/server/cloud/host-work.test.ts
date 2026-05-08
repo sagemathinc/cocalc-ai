@@ -385,6 +385,8 @@ describe("cloud host start failures", () => {
 
   it("reschedules verify_host_ready while the current check is in progress", async () => {
     const hostId = "d848a2ca-5f63-4473-b01d-2b4a7e8bdd90";
+    const startedAt = new Date(Date.now() - 60_000).toISOString();
+    const deadlineAt = new Date(Date.now() + 5 * 60_000).toISOString();
     await upsertProjectHost({
       id: hostId,
       name: "Verify retry host",
@@ -407,8 +409,8 @@ describe("cloud host start failures", () => {
         spot_recovery_state: {
           phase: "returning_to_spot",
           outage_started_at: "2026-05-04T03:00:00.000Z",
-          verification_started_at: "2026-05-04T03:20:00.000Z",
-          verification_deadline_at: "2026-05-04T03:30:00.000Z",
+          verification_started_at: startedAt,
+          verification_deadline_at: deadlineAt,
         },
       },
     });
@@ -422,8 +424,8 @@ describe("cloud host start failures", () => {
         hostId,
         {
           provider: "gcp",
-          started_at: "2026-05-04T03:20:00.000Z",
-          deadline_at: "2026-05-04T03:30:00.000Z",
+          started_at: startedAt,
+          deadline_at: deadlineAt,
         },
       ],
     );
@@ -435,8 +437,8 @@ describe("cloud host start failures", () => {
       action: "verify_host_ready",
       payload: {
         provider: "gcp",
-        started_at: "2026-05-04T03:20:00.000Z",
-        deadline_at: "2026-05-04T03:30:00.000Z",
+        started_at: startedAt,
+        deadline_at: deadlineAt,
       },
     } as any);
 
@@ -457,6 +459,61 @@ describe("cloud host start failures", () => {
       "verify_host_ready",
       "verify_host_ready",
     ]);
+  });
+
+  it("marks the host error and stops rescheduling when verify_host_ready times out", async () => {
+    const hostId = "7cc7a0cb-a4ad-4629-bb9d-cafc6ddb9874";
+    await upsertProjectHost({
+      id: hostId,
+      name: "Verify timeout host",
+      region: "us-west3",
+      status: "starting",
+      metadata: {
+        owner: "acct-owner",
+        machine: {
+          cloud: "gcp",
+          zone: "us-west3-b",
+          machine_type: "t2d-standard-4",
+          disk_gb: 50,
+          disk_type: "balanced",
+          storage_mode: "persistent",
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await expect(
+      cloudHostHandlers.verify_host_ready({
+        id: "verify-timeout-1",
+        vm_id: hostId,
+        action: "verify_host_ready",
+        payload: {
+          provider: "gcp",
+          started_at: "2026-05-04T03:20:00.000Z",
+          deadline_at: "2026-05-04T03:30:00.000Z",
+        },
+      } as any),
+    ).rejects.toThrow("host did not become ready before the startup deadline");
+
+    const hostRows = await getPool().query(
+      "SELECT status, last_seen, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].status).toBe("error");
+    expect(hostRows.rows[0].last_seen).toBeNull();
+    expect(hostRows.rows[0].metadata.last_error).toContain(
+      "host did not become ready before the startup deadline",
+    );
+
+    const workRows = await getPool().query(
+      `
+        SELECT action, state
+        FROM cloud_vm_work
+        WHERE vm_id=$1
+      `,
+      [hostId],
+    );
+    expect(workRows.rows).toEqual([]);
   });
 
   it("clears stale last_error when spot recovery completes", async () => {

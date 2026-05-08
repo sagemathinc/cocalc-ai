@@ -5,7 +5,6 @@ import { readFile } from "node:fs/promises";
 export type AdminCommandDeps = {
   withContext: any;
   resolveAccountByIdentifier: any;
-  normalizeUrl: any;
   isValidUUID: any;
 };
 
@@ -36,8 +35,7 @@ export function registerAdminCommand(
   program: Command,
   deps: AdminCommandDeps,
 ): Command {
-  const { withContext, resolveAccountByIdentifier, normalizeUrl, isValidUUID } =
-    deps;
+  const { withContext, resolveAccountByIdentifier, isValidUUID } = deps;
 
   const admin = program.command("admin").description("site admin operations");
   const adminUser = admin.command("user").description("admin user management");
@@ -191,74 +189,36 @@ export function registerAdminCommand(
   adminUser
     .command("issue-auth-token <user>")
     .description(
-      "issue an impersonation auth token for a user (account id, email, or name query)",
+      "create an impersonation sign-in link for a user (account id, email, or name query)",
     )
-    .option(
-      "--password <password>",
-      "password fallback for non-admin callers (normally not needed for admins)",
-    )
-    .option(
-      "--lang <locale>",
-      "optional lang_temp query parameter in generated sign-in URL",
-    )
-    .action(
-      async (
-        user: string,
-        opts: {
-          password?: string;
-          lang?: string;
-        },
-        command: Command,
-      ) => {
-        await withContext(
-          command,
-          "admin user issue-auth-token",
-          async (ctx) => {
-            const identifier = `${user ?? ""}`.trim();
-            if (!identifier) {
-              throw new Error("user identifier must be non-empty");
-            }
+    .action(async (user: string, _opts: {}, command: Command) => {
+      await withContext(command, "admin user issue-auth-token", async (ctx) => {
+        const identifier = `${user ?? ""}`.trim();
+        if (!identifier) {
+          throw new Error("user identifier must be non-empty");
+        }
 
-            const resolved = isValidUUID(identifier)
-              ? { account_id: identifier }
-              : await resolveAccountByIdentifier(ctx, identifier);
-            const userAccountId = `${resolved?.account_id ?? ""}`.trim();
-            if (!userAccountId) {
-              throw new Error(`unable to resolve account for '${identifier}'`);
-            }
+        const resolved = isValidUUID(identifier)
+          ? { account_id: identifier }
+          : await resolveAccountByIdentifier(ctx, identifier);
+        const userAccountId = `${resolved?.account_id ?? ""}`.trim();
+        if (!userAccountId) {
+          throw new Error(`unable to resolve account for '${identifier}'`);
+        }
 
-            const token = await ctx.hub.system.generateUserAuthToken({
-              user_account_id: userAccountId,
-              password: opts.password,
-            });
+        const grant = await ctx.hub.system.createImpersonationGrant({
+          subject_account_id: userAccountId,
+        });
 
-            // Prefer the configured public DNS/site URL when available so generated
-            // impersonation links work from other machines/browsers.
-            let base = normalizeUrl(ctx.apiBaseUrl).replace(/\/+$/, "");
-            try {
-              const site = await ctx.hub.system.getPublicSiteUrl({});
-              const publicUrl = `${site?.url ?? ""}`.trim();
-              if (publicUrl) {
-                base = normalizeUrl(publicUrl).replace(/\/+$/, "");
-              }
-            } catch {
-              // Keep fallback to current apiBaseUrl for older hubs / local-only setups.
-            }
-            const signInUrl = new URL(`${base}/auth/impersonate`);
-            signInUrl.searchParams.set("auth_token", token);
-            if (opts.lang?.trim()) {
-              signInUrl.searchParams.set("lang_temp", opts.lang.trim());
-            }
-
-            return {
-              user_account_id: userAccountId,
-              token,
-              url: signInUrl.toString(),
-            };
-          },
-        );
-      },
-    );
+        return {
+          user_account_id: userAccountId,
+          grant_id: grant.grant_id,
+          subject_home_bay_id: grant.subject_home_bay_id,
+          url: grant.url,
+          expires_at: grant.expires_at,
+        };
+      });
+    });
 
   adminMessage
     .command("send-system-notice")

@@ -28,7 +28,7 @@ export interface HomeBayRetryClaims {
   email?: string;
   account_id?: string;
   home_bay_id: string;
-  purpose: "sign-in" | "sign-up" | "impersonate";
+  purpose: "sign-in" | "sign-up" | "impersonate" | "cli-login";
 }
 
 function base64UrlEncode(input: Buffer | string): string {
@@ -102,7 +102,7 @@ export function issueHomeBayRetryToken({
   email?: string;
   account_id?: string;
   home_bay_id: string;
-  purpose: "sign-in" | "sign-up" | "impersonate";
+  purpose: "sign-in" | "sign-up" | "impersonate" | "cli-login";
   ttl_seconds?: number;
   now_ms?: number;
 }): {
@@ -162,7 +162,7 @@ export function verifyHomeBayRetryToken({
   home_bay_id: string;
   email?: string;
   account_id?: string;
-  purpose?: "sign-in" | "sign-up" | "impersonate";
+  purpose?: "sign-in" | "sign-up" | "impersonate" | "cli-login";
   now_ms?: number;
 }): HomeBayRetryClaims {
   const { header, claims, signingInput, signature } = parseClaims(token);

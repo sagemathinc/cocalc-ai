@@ -1,14 +1,19 @@
 /** @jest-environment jsdom */
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import api from "@cocalc/frontend/client/api";
+import { postAuthApi } from "@cocalc/frontend/auth/api";
 import type { PublicConfig } from "@cocalc/frontend/public/common";
 import PublicAuthApp, { getPublicAuthRouteFromPath } from "../app";
 import { getPublicAuthRedirectTargetFromSearch } from "../routes";
 
 jest.mock("@cocalc/frontend/client/api", () => jest.fn());
+jest.mock("@cocalc/frontend/auth/api", () => ({
+  postAuthApi: jest.fn(),
+}));
 
 const mockedApi = jest.mocked(api);
+const mockedPostAuthApi = jest.mocked(postAuthApi);
 const config = (overrides: Partial<PublicConfig> = {}): PublicConfig => ({
   site_name: "Launchpad",
   ...overrides,
@@ -32,6 +37,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   mockedApi.mockReset();
+  mockedPostAuthApi.mockReset();
 });
 
 describe("getPublicAuthRouteFromPath", () => {
@@ -74,6 +80,18 @@ describe("getPublicAuthRouteFromPath", () => {
     expect(getPublicAuthRouteFromPath("/base/redeem/CODE12345")).toEqual({
       code: "CODE12345",
       kind: "redeem",
+    });
+    expect(
+      getPublicAuthRouteFromPath("/base/auth/cli-login/challenge-1"),
+    ).toEqual({
+      challengeId: "challenge-1",
+      kind: "auth-cli-login",
+    });
+    expect(
+      getPublicAuthRouteFromPath("/base/auth/cli-elevate/challenge-2"),
+    ).toEqual({
+      challengeId: "challenge-2",
+      kind: "auth-cli-elevate",
     });
   });
 });
@@ -191,5 +209,61 @@ describe("PublicAuthApp", () => {
     expect(
       screen.getByText("Sign in or create an account to redeem this voucher"),
     ).not.toBeNull();
+  });
+
+  it("shows a clear wrong-account warning for CLI login approvals", async () => {
+    mockedPostAuthApi.mockResolvedValueOnce({
+      challenge_id: "challenge-1",
+      kind: "login",
+      account_id: "acct-target",
+      email_address: "bella@example.com",
+      display_name: "Bella Example",
+      current_account_id: "acct-viewer",
+      current_email_address: "alice@example.com",
+      current_display_name: "Alice Example",
+      current_matches_account: false,
+      state: "pending",
+      expires_at: "2026-05-08T18:00:00.000Z",
+    } as any);
+    mockedPostAuthApi.mockResolvedValueOnce({ success: true } as any);
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: true })}
+        initialRoute={{ challengeId: "challenge-1", kind: "auth-cli-login" }}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        /This browser is signed in as alice@example.com \(Alice Example\)\./,
+      ),
+    ).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Sign out" })).not.toBeNull();
+    expect(
+      screen.getByText(
+        /and then sign in as bella@example.com \(Bella Example\) to approve the CLI login request\./,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /If that is inconvenient, open this link in a new temporary incognito or private browser window and sign in there as bella@example.com \(Bella Example\)\./,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Approve CLI Login" }),
+    ).toBeNull();
+
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {
+      // jsdom does not implement full-page reloads.
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    await waitFor(() =>
+      expect(mockedPostAuthApi).toHaveBeenCalledWith({
+        endpoint: "accounts/sign-out",
+        body: { all: false },
+      }),
+    );
+    consoleError.mockRestore();
   });
 });

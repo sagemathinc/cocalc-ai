@@ -5,6 +5,9 @@ import { dirname, join } from "node:path";
 export type AuthProfile = {
   api?: string;
   account_id?: string;
+  email_address?: string;
+  first_name?: string;
+  last_name?: string;
   api_key?: string;
   cookie?: string;
   bearer?: string;
@@ -28,6 +31,7 @@ export type GlobalAuthOptions = {
   cookie?: string;
   bearer?: string;
   hubPassword?: string;
+  disableEnvAuthDefaults?: boolean;
 };
 
 const DEFAULT_PROFILE = "default";
@@ -135,51 +139,35 @@ export function applyAuthProfile(
   }
 
   const resolved: GlobalAuthOptions = { ...globals };
-  const requestedApiScope =
-    normalizeApiScope(globals.api) ?? normalizeApiScope(env.COCALC_API_URL);
+  const requestedApiScope = normalizeApiScope(globals.api);
   const profileApiScope = normalizeApiScope(data.api);
   const allowSecretInheritance =
     !requestedApiScope ||
     !profileApiScope ||
     requestedApiScope === profileApiScope;
-  if (!resolved.api && !env.COCALC_API_URL && data.api) {
+  if (!resolved.api && data.api) {
     resolved.api = data.api;
   }
   if (
     allowSecretInheritance &&
     !resolved.accountId &&
     !resolved.account_id &&
-    !env.COCALC_ACCOUNT_ID &&
     data.account_id
   ) {
     resolved.accountId = data.account_id;
   }
-  if (
-    allowSecretInheritance &&
-    !resolved.apiKey &&
-    !env.COCALC_API_KEY &&
-    data.api_key
-  ) {
+  if (allowSecretInheritance && !resolved.apiKey && data.api_key) {
     resolved.apiKey = data.api_key;
   }
   if (allowSecretInheritance && !resolved.cookie && data.cookie) {
     resolved.cookie = data.cookie;
   }
-  if (
-    allowSecretInheritance &&
-    !resolved.bearer &&
-    !env.COCALC_BEARER_TOKEN &&
-    data.bearer
-  ) {
+  if (allowSecretInheritance && !resolved.bearer && data.bearer) {
     resolved.bearer = data.bearer;
   }
-  if (
-    allowSecretInheritance &&
-    !resolved.hubPassword &&
-    !env.COCALC_HUB_PASSWORD &&
-    data.hub_password
-  ) {
+  if (allowSecretInheritance && !resolved.hubPassword && data.hub_password) {
     resolved.hubPassword = data.hub_password;
   }
+  resolved.disableEnvAuthDefaults = true;
   return { globals: resolved, profile, fromProfile: true };
 }

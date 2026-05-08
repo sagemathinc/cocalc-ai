@@ -263,6 +263,82 @@ Table({
 });
 
 Table({
+  name: "account_cli_auth_challenges",
+  rules: {
+    primary_key: "id",
+    durability: "soft",
+    pg_indexes: [
+      "account_id",
+      "kind",
+      "status",
+      "expire",
+      "created",
+      "target_session_hash",
+    ],
+  },
+  fields: {
+    id: {
+      type: "uuid",
+      desc: "CLI auth challenge id.",
+    },
+    account_id: {
+      type: "uuid",
+      desc: "Account that owns this CLI auth challenge.",
+    },
+    kind: {
+      type: "string",
+      pg_type: "varchar(32)",
+      desc: "Challenge kind such as login or elevate.",
+    },
+    status: {
+      type: "string",
+      pg_type: "varchar(32)",
+      desc: "Challenge lifecycle status.",
+    },
+    poll_token_hash: {
+      type: "string",
+      pg_type: "char(64)",
+      desc: "SHA-256 hash of the CLI poll token.",
+    },
+    redeem_token_hash: {
+      type: "string",
+      pg_type: "char(64)",
+      desc: "Optional SHA-256 hash of the one-time redeem token.",
+    },
+    target_session_hash: {
+      type: "string",
+      pg_type: "char(127)",
+      desc: "Optional auth session hash targeted by this challenge.",
+    },
+    requested_duration: {
+      type: "string",
+      pg_type: "varchar(32)",
+      desc: "Requested fresh-auth duration for elevate challenges.",
+    },
+    approved_at: {
+      type: "timestamp",
+      desc: "When this challenge was approved in the browser.",
+    },
+    redeemed_at: {
+      type: "timestamp",
+      desc: "When this login challenge was redeemed by the CLI.",
+    },
+    expire: {
+      type: "timestamp",
+      desc: "When this CLI auth challenge expires.",
+    },
+    created: {
+      type: "timestamp",
+      desc: "When this CLI auth challenge was created.",
+    },
+    metadata: {
+      type: "map",
+      desc: "Reserved CLI auth challenge metadata.",
+    },
+  },
+});
+
+Table({
   name: "account_impersonation_grants",
   rules: {
     primary_key: "id",

@@ -50,6 +50,29 @@ test("buildCookieHeader skips project auth when project_id is invalid", () => {
   assert.equal(header, undefined);
 });
 
+test("buildCookieHeader skips ambient project auth when direct cookie auth is present", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-cookie-"));
+  const tokenPath = join(dir, "secret-token");
+  writeFileSync(tokenPath, "project-secret-token\n", "utf8");
+  try {
+    const header = buildCookieHeader(
+      "https://lite2.cocalc.ai",
+      {
+        cookie: "remember_me=bella-cookie",
+        disableEnvAuthDefaults: true,
+      },
+      {},
+      {
+        COCALC_SECRET_TOKEN: tokenPath,
+        COCALC_PROJECT_ID: "890afc74-9156-4386-a395-afd4bebab4dd",
+      } as any,
+    );
+    assert.equal(header, "remember_me=bella-cookie");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("describeProjectScopedAuth explains when project-scoped auth is active", () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-cookie-"));
   const tokenPath = join(dir, "secret-token");

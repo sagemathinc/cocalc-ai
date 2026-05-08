@@ -1446,12 +1446,14 @@ export {
 export async function createImpersonationGrant({
   account_id,
   browser_id,
+  session_hash,
   subject_account_id,
   reason,
   lang_temp,
 }: {
   account_id?: string;
   browser_id?: string;
+  session_hash?: string;
   subject_account_id: string;
   reason?: string | null;
   lang_temp?: string | null;
@@ -1470,19 +1472,22 @@ export async function createImpersonationGrant({
   if (!subjectAccountId) {
     throw Error("subject_account_id is required");
   }
+  const cleanedSessionHash = `${session_hash ?? ""}`.trim();
   const cleanedBrowserId = `${browser_id ?? ""}`.trim();
-  const session_hash = getBrowserAuthSessionHash({
-    account_id,
-    browser_id: cleanedBrowserId,
-  });
-  if (!session_hash) {
+  const resolvedSessionHash =
+    cleanedSessionHash ||
+    getBrowserAuthSessionHash({
+      account_id,
+      browser_id: cleanedBrowserId,
+    });
+  if (!resolvedSessionHash) {
     throw Object.assign(new Error("fresh auth is required"), {
       code: "fresh_auth_required",
     });
   }
   const session = await requireFreshAuthForSessionHash({
     account_id,
-    session_hash,
+    session_hash: resolvedSessionHash,
   });
   if (!(await hasActiveSecondFactor(account_id))) {
     throw Object.assign(
@@ -1511,7 +1516,7 @@ export async function createImpersonationGrant({
   const createOpts = {
     actor_account_id: account_id,
     subject_account_id: subjectAccountId,
-    actor_session_hash: session_hash,
+    actor_session_hash: resolvedSessionHash,
     subject_home_bay_id,
     actor_authenticated_at: session.authenticated_at ?? null,
     actor_password_verified_at: session.password_verified_at ?? null,
@@ -1522,6 +1527,7 @@ export async function createImpersonationGrant({
     metadata: {
       created_via: "admin-ui",
       browser_id: cleanedBrowserId || undefined,
+      cli_session_hash: cleanedSessionHash || undefined,
     },
   };
   const grant =

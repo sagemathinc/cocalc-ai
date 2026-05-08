@@ -1,5 +1,20 @@
 # Two-Factor Auth / Fresh-Auth Implementation Plan
 
+## Status
+
+As of 2026-05-08, the browser/admin portion of this plan is substantially
+implemented:
+
+- TOTP + recovery codes
+- fresh-auth for dangerous browser actions
+- wrong-bay sign-in integration
+- rehome portability for auth-local state
+- admin impersonation integration
+- repeated live/manual smoke coverage
+
+This plan is still open because the CLI / elevated-auth / automation follow-up
+has not been implemented yet.
+
 ## Purpose
 
 This plan covers the first real 2FA / MFA implementation for `cocalc-ai`,
@@ -793,19 +808,98 @@ The correct model is:
 3. separate automation credentials for CI / publishing / non-human workflows
 4. explicit policy about which actions require elevated auth
 
-### Phase A: interactive CLI login with factor-aware session state
+### Concrete V1 decisions
+
+These decisions are now fixed unless implementation proves a real blocker.
+
+1. CLI login is browser/device based, not terminal-password based.
+2. CLI elevation is browser/device based, not terminal-password based.
+3. CLI login and elevation should never require the user to type or paste their
+   password into the terminal.
+4. CLI uses a dedicated CLI session, not the browser's own live session.
+5. Long-lived API keys do not satisfy dangerous-action elevation requirements.
+6. V1 dangerous CLI actions in scope are:
+   - dedicated host create/start/resize
+   - admin impersonation start
+7. V1 dangerous billing actions that involve Stripe/browser checkout remain
+   browser-first:
+   - adding/removing payment methods
+   - prepaid top-ups / payment intents
+   - similar browser-Stripe flows
+8. CLI fresh-auth duration policy matches browser policy:
+   - default: `15 minutes`
+   - explicit extended window: `8 hours`
+   - extended requires TOTP, not a recovery code
+9. V1 automation credentials do not satisfy human elevation requirements for
+   dangerous actions.
+
+### Concrete V1 UX
+
+#### `cocalc auth login`
+
+The intended V1 flow is:
+
+1. CLI starts a login challenge with the account home bay.
+2. CLI prints an approval URL and attempts to open it in the browser.
+3. Browser page requires a normal authenticated browser session for the target
+   account:
+   - if not signed in, user completes ordinary sign-in
+   - if 2FA is enabled, ordinary sign-in includes second factor
+4. Browser approval page shows the target API origin and optional CLI session
+   label.
+5. On approval, the home bay mints a brand-new dedicated CLI `remember_me`
+   session with account-auth-session metadata marking it as CLI-issued.
+6. CLI polls until approved, then stores the resulting cookie-backed profile.
+
+Important consequence:
+
+- the browser session is only used to authorize the CLI session
+- the browser's own session cookie is never copied into the CLI profile
+
+#### `cocalc auth elevate`
+
+The intended V1 flow is:
+
+1. CLI starts an elevation challenge for the currently selected CLI session.
+2. CLI prints an approval URL and attempts to open it in the browser.
+3. Browser page shows the existing fresh-auth UI:
+   - current password
+   - TOTP or recovery code if required
+   - optional `8 hours` choice
+4. On success, the home bay updates `fresh_auth_until` on the target CLI
+   session itself.
+5. CLI polls until completion, then reports the new expiration time.
+
+Important consequence:
+
+- passwords stay in the browser/password-manager flow
+- elevation updates the dedicated CLI session rather than piggybacking on the
+  browser session
+
+### Phase A: server-side CLI session primitives
 
 Add a proper human CLI login flow, ideally browser/device based:
 
 - `cocalc auth login`
 - `cocalc auth setup`
 
-That flow should:
+Implementation details:
 
-- complete password + 2FA through a browser/device challenge
-- issue a CLI-usable auth profile/token
-- record the factor level at issue time
-- preserve account-home-bay authority for auth state
+1. keep using the existing `remember_me` + `account_auth_sessions` model
+2. extend auth-session metadata to distinguish at least:
+   - `session_kind = browser | cli`
+   - `issued_via = sign_in | cli_login | impersonation`
+   - optional CLI label / local machine descriptor
+3. add server helpers to:
+   - mint a dedicated CLI session from an approved browser/device challenge
+   - report factor/fresh-auth status for a given session hash
+   - apply fresh-auth to a target CLI session hash
+4. preserve account-home-bay authority for all of the above
+
+Important non-goal:
+
+- do not invent a second parallel auth-token type if a CLI `remember_me`
+  session can express the required semantics cleanly
 
 Important requirement:
 
@@ -814,30 +908,75 @@ Important requirement:
   - password-verified
   - factor-verified
 
-### Phase B: elevated CLI auth for dangerous actions
+### Phase B: browser/device approval challenges
 
-Add an explicit short-lived elevation flow, e.g.:
+Add explicit challenge state for:
 
-- `cocalc auth fresh`
-- `cocalc auth elevate`
+- CLI login approval
+- CLI elevation approval
 
-This should:
+This challenge state should:
 
-- perform a fresh-auth challenge
-- require TOTP for accounts with 2FA enabled
-- mint a short-lived elevated token/profile/session
-- be the CLI analogue of browser fresh-auth
+1. be home-bay authoritative
+2. be one-time and expiring
+3. be bound to:
+   - target account
+   - target CLI session or requested profile
+   - requested duration for elevation challenges
+4. support polling by the initiating CLI
+5. support approval in a normal browser tab without requiring terminal secrets
+
+Recommended surface:
+
+- `POST /api/v2/auth/cli/login/start`
+- `GET /api/v2/auth/cli/login/status`
+- `POST /api/v2/auth/cli/elevate/start`
+- `GET /api/v2/auth/cli/elevate/status`
+- browser pages/routes for approval UX
+
+Exact endpoint names can vary, but the interaction model above should remain.
+
+### Phase C: CLI command implementation
+
+Implement or replace the current placeholder profile-storage commands in
+`src/packages/cli/src/bin/commands/auth.ts` with real flows:
+
+1. `cocalc auth login`
+   - start browser/device login
+   - optionally `--no-wait`
+   - store resulting dedicated CLI cookie profile
+2. `cocalc auth setup`
+   - alias for `auth login`
+3. `cocalc auth elevate`
+   - start browser/device elevation for the selected profile
+   - support `--duration default|extended`
+4. `cocalc auth status --check`
+   - surface:
+     - auth mode
+     - whether the profile is an interactive CLI session or only api-key/bearer
+     - factor level
+     - fresh-auth expiration
+     - whether dangerous CLI actions are currently eligible
+
+### Phase D: dangerous CLI action policy
 
 This elevated state should be required for dangerous account-spend actions such
 as:
 
-- dedicated host create/start/resize in commercial account-funded modes
-- payment method changes
-- automatic billing changes
+- dedicated host create/start/resize
 - admin impersonation start
 - other future high-risk billing/security mutations
 
-### Phase C: scoped automation auth
+For V1, explicitly do **not** promise CLI support for browser-Stripe flows such
+as:
+
+- add/remove payment method
+- top up prepaid balance
+- create payment intent / complete checkout
+
+Those should fail clearly and direct the user to the browser flow.
+
+### Phase E: scoped automation auth
 
 Do not use ordinary personal interactive auth for CI or unattended flows.
 
@@ -852,8 +991,11 @@ Automation auth should be clearly separate from:
 - human interactive CLI auth
 - elevated fresh-auth state
 - browser sessions
+Automation credentials may continue to support ordinary non-dangerous actions,
+but they should not silently satisfy human-elevation requirements for dangerous
+host or billing actions in V1.
 
-### Phase D: policy boundaries
+### Phase F: policy boundaries
 
 Document and enforce which auth modes satisfy which action classes.
 
@@ -874,12 +1016,20 @@ actions by default.
 At minimum:
 
 1. browser/device-backed CLI login works on the correct account home bay
-2. CLI auth profile records factor-aware session state
-3. `cocalc auth elevate` produces short-lived elevated auth
-4. dangerous CLI host/billing actions fail without elevation
-5. the same actions succeed with elevation
-6. automation credentials cannot silently satisfy human-elevation requirements
-7. account rehome does not break CLI elevated auth semantics
+2. CLI login creates a dedicated CLI session instead of reusing the browser
+   session
+3. CLI auth profile records factor-aware session state
+4. `cocalc auth elevate` produces short-lived elevated auth
+5. extended elevation requires TOTP and is rejected for recovery-code-only
+   completion
+6. dangerous CLI host actions fail without elevation
+7. the same host actions succeed with elevation
+8. admin impersonation start fails without elevation and succeeds with
+   elevation
+9. browser-Stripe billing flows are not silently exposed through the CLI
+10. automation credentials cannot silently satisfy human-elevation
+    requirements
+11. account rehome does not break CLI elevated auth semantics
 
 ### Completion criterion
 

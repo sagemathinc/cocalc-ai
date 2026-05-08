@@ -1,3 +1,4 @@
+import { createInterface } from "node:readline/promises";
 import { Command } from "commander";
 import { describeProjectScopedAuth } from "../../core/auth-cookies";
 
@@ -14,6 +15,8 @@ export type AuthCommandDeps = {
   durationToMs: any;
   connectRemote: any;
   resolveAccountIdFromRemote: any;
+  buildCookieHeader: any;
+  cookieNameFor: any;
   normalizeSecretValue: any;
   maskSecret: any;
   sanitizeProfileName: any;
@@ -38,6 +41,8 @@ export function registerAuthCommand(
     durationToMs,
     connectRemote,
     resolveAccountIdFromRemote,
+    buildCookieHeader,
+    cookieNameFor,
     normalizeSecretValue,
     maskSecret,
     sanitizeProfileName,
@@ -46,6 +51,192 @@ export function registerAuthCommand(
   } = deps;
 
   const auth = program.command("auth").description("auth profile management");
+
+  type CliChallengeStart = {
+    challenge_id: string;
+    poll_token: string;
+    approval_url: string;
+    expires_at: string | Date;
+    home_bay_id?: string;
+    home_bay_url?: string;
+  };
+
+  type CliChallengeStatus = {
+    challenge_id: string;
+    kind: "login" | "elevate";
+    state: "pending" | "approved" | "redeemed";
+    expires_at: string | Date;
+    redeem_token?: string;
+    fresh_auth_until?: string | Date | null;
+    factor_level?: string | null;
+  };
+
+  function apiUrl(apiBaseUrl: string, endpoint: string): string {
+    const base = `${normalizeUrl(apiBaseUrl)}`.replace(/\/+$/, "");
+    return `${base}/api/v2/${endpoint.replace(/^\/+/, "")}`;
+  }
+
+  async function postCliAuthApi<T = any>({
+    apiBaseUrl,
+    endpoint,
+    body,
+    cookieHeader,
+  }: {
+    apiBaseUrl: string;
+    endpoint: string;
+    body: object;
+    cookieHeader?: string;
+  }): Promise<T> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (cookieHeader?.trim()) {
+      headers.Cookie = cookieHeader.trim();
+    }
+    const response = await fetch(apiUrl(apiBaseUrl, endpoint), {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const json = await response.json();
+    if (json?.error) {
+      const err: any = new Error(`${json.error}`);
+      if (json?.code != null) {
+        err.code = json.code;
+      }
+      throw err;
+    }
+    return json;
+  }
+
+  async function promptForEmail(): Promise<string> {
+    if (!process.stdin.isTTY || !process.stderr.isTTY) {
+      throw new Error("email is required when stdin is not interactive");
+    }
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stderr,
+    });
+    try {
+      return (await rl.question("Email address: ")).trim();
+    } finally {
+      rl.close();
+    }
+  }
+
+  async function waitForCliChallenge({
+    apiBaseUrl,
+    endpoint,
+    challenge_id,
+    poll_token,
+    pollMs,
+  }: {
+    apiBaseUrl: string;
+    endpoint: string;
+    challenge_id: string;
+    poll_token: string;
+    pollMs: number;
+  }): Promise<CliChallengeStatus> {
+    while (true) {
+      const status = await postCliAuthApi<CliChallengeStatus>({
+        apiBaseUrl,
+        endpoint,
+        body: { challenge_id, poll_token },
+      });
+      if (status.state !== "pending") {
+        return status;
+      }
+      const expiresAt = new Date(status.expires_at).valueOf();
+      if (Number.isFinite(expiresAt) && Date.now() >= expiresAt) {
+        throw new Error("CLI auth challenge expired before approval");
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+  }
+
+  function buildRememberMeCookieHeader(
+    apiBaseUrl: string,
+    rememberMeCookie: string,
+  ): string {
+    const value = `${rememberMeCookie ?? ""}`.trim();
+    const names = Array.from(
+      new Set([cookieNameFor(apiBaseUrl, "remember_me"), "remember_me"]),
+    ).filter(Boolean);
+    return names.map((name) => `${name}=${value}`).join("; ");
+  }
+
+  async function resolveBrowserLoginEmail(
+    explicitEmail: string | undefined,
+  ): Promise<string> {
+    const email = `${explicitEmail ?? ""}`.trim();
+    return email || (await promptForEmail());
+  }
+
+  function hasLegacyStoredCredentials(globals: any): boolean {
+    const accountId = getExplicitAccountId(globals);
+    return !!(
+      accountId?.trim() ||
+      normalizeSecretValue(globals.apiKey) ||
+      normalizeSecretValue(globals.cookie) ||
+      normalizeSecretValue(globals.bearer) ||
+      normalizeSecretValue(globals.hubPassword)
+    );
+  }
+
+  async function maybeRefreshProfileIdentity(profile: any): Promise<{
+    email_address?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+  }> {
+    if (
+      `${profile?.email_address ?? ""}`.trim() ||
+      `${profile?.first_name ?? ""}`.trim() ||
+      `${profile?.last_name ?? ""}`.trim()
+    ) {
+      return {
+        email_address: profile?.email_address ?? null,
+        first_name: profile?.first_name ?? null,
+        last_name: profile?.last_name ?? null,
+      };
+    }
+    const apiBaseUrl = `${profile?.api ?? ""}`.trim();
+    const cookieHeader = `${profile?.cookie ?? ""}`.trim();
+    if (!apiBaseUrl || !cookieHeader) {
+      return {};
+    }
+    try {
+      const response = await postCliAuthApi<{
+        profile?: {
+          account_id?: string | null;
+          email_address?: string | null;
+          first_name?: string | null;
+          last_name?: string | null;
+        } | null;
+      }>({
+        apiBaseUrl,
+        endpoint: "accounts/profile",
+        body: {},
+        cookieHeader,
+      });
+      const next = response?.profile ?? {};
+      const nextAccountId = `${next.account_id ?? ""}`.trim();
+      const expectedAccountId = `${profile?.account_id ?? ""}`.trim();
+      if (
+        expectedAccountId &&
+        nextAccountId &&
+        nextAccountId !== expectedAccountId
+      ) {
+        return {};
+      }
+      return {
+        email_address: `${next.email_address ?? ""}`.trim() || null,
+        first_name: `${next.first_name ?? ""}`.trim() || null,
+        last_name: `${next.last_name ?? ""}`.trim() || null,
+      };
+    } catch {
+      return {};
+    }
+  }
 
   auth
     .command("status")
@@ -60,23 +251,42 @@ export function registerAuthCommand(
         const applied = applyAuthProfile(globals, config);
         const effective = applied.globals as any;
         const accountId =
-          getExplicitAccountId(effective) ?? env.COCALC_ACCOUNT_ID ?? null;
+          getExplicitAccountId(effective) ??
+          (!effective.disableEnvAuthDefaults
+            ? env.COCALC_ACCOUNT_ID
+            : undefined) ??
+          null;
         const apiBaseUrl = effective.api
           ? normalizeUrl(effective.api)
           : defaultApiBaseUrl();
-        const projectAuth = describeProjectScopedAuth(env);
-        const effective_remote_auth = projectAuth.has_project_scoped_auth
-          ? "project_scoped"
-          : (effective.bearer ?? env.COCALC_BEARER_TOKEN)
+        const allowEnvAuthDefaults = !effective.disableEnvAuthDefaults;
+        const projectAuth = allowEnvAuthDefaults
+          ? describeProjectScopedAuth(env)
+          : {
+              has_project_secret: false,
+              has_project_id: false,
+              has_project_scoped_auth: false,
+              project_auth_source: null,
+              project_id: null,
+              project_auth_message: "no project-scoped auth detected",
+            };
+        const effective_remote_auth = effective.cookie
+          ? "cookie"
+          : (effective.bearer ??
+              (allowEnvAuthDefaults ? env.COCALC_BEARER_TOKEN : undefined))
             ? "bearer"
-            : effective.cookie
-              ? "cookie"
-              : (effective.apiKey ?? env.COCALC_API_KEY)
-                ? "api_key"
-                : normalizeSecretValue(
-                      effective.hubPassword ?? env.COCALC_HUB_PASSWORD,
-                    )
-                  ? "hub_password"
+            : (effective.apiKey ??
+                (allowEnvAuthDefaults ? env.COCALC_API_KEY : undefined))
+              ? "api_key"
+              : normalizeSecretValue(
+                    effective.hubPassword ??
+                      (allowEnvAuthDefaults
+                        ? env.COCALC_HUB_PASSWORD
+                        : undefined),
+                  )
+                ? "hub_password"
+                : projectAuth.has_project_scoped_auth
+                  ? "project_scoped"
                   : "none";
 
         let check:
@@ -85,6 +295,12 @@ export function registerAuthCommand(
               account_id?: string | null;
               project_id?: string | null;
               auth_actor?: string | null;
+              auth_session_hash?: string | null;
+              interactive_session?: boolean | null;
+              auth_client?: string | null;
+              factor_level?: string | null;
+              fresh_auth_until?: string | null;
+              session_expire?: string | null;
               error?: string;
             }
           | undefined;
@@ -107,7 +323,37 @@ export function registerAuthCommand(
                 typeof remote.user?.auth_actor === "string"
                   ? remote.user.auth_actor
                   : null,
+              auth_session_hash:
+                typeof (remote.user as any)?.auth_session_hash === "string"
+                  ? (remote.user as any).auth_session_hash
+                  : null,
             };
+            if (effective_remote_auth === "cookie") {
+              const cookieHeader = buildCookieHeader(apiBaseUrl, effective);
+              const sessionStatus = await postCliAuthApi<{
+                auth_client?: string;
+                factor_level?: string;
+                fresh_auth_until?: string | Date | null;
+                expire?: string | Date | null;
+              }>({
+                apiBaseUrl,
+                endpoint: "auth/cli/session-status",
+                body: {},
+                cookieHeader,
+              });
+              check.interactive_session = true;
+              check.auth_client = `${sessionStatus?.auth_client ?? "cli"}`;
+              check.factor_level =
+                `${sessionStatus?.factor_level ?? ""}`.trim() || null;
+              check.fresh_auth_until = sessionStatus?.fresh_auth_until
+                ? new Date(sessionStatus.fresh_auth_until).toISOString()
+                : null;
+              check.session_expire = sessionStatus?.expire
+                ? new Date(sessionStatus.expire).toISOString()
+                : null;
+            } else {
+              check.interactive_session = false;
+            }
             remote.client.close();
           } catch (err) {
             check = {
@@ -126,11 +372,18 @@ export function registerAuthCommand(
           profiles_count: Object.keys(config.profiles).length,
           api: apiBaseUrl,
           account_id: accountId,
-          has_api_key: !!(effective.apiKey ?? env.COCALC_API_KEY),
+          has_api_key: !!(
+            effective.apiKey ??
+            (allowEnvAuthDefaults ? env.COCALC_API_KEY : undefined)
+          ),
           has_cookie: !!effective.cookie,
-          has_bearer: !!(effective.bearer ?? env.COCALC_BEARER_TOKEN),
+          has_bearer: !!(
+            effective.bearer ??
+            (allowEnvAuthDefaults ? env.COCALC_BEARER_TOKEN : undefined)
+          ),
           has_hub_password: !!normalizeSecretValue(
-            effective.hubPassword ?? env.COCALC_HUB_PASSWORD,
+            effective.hubPassword ??
+              (allowEnvAuthDefaults ? env.COCALC_HUB_PASSWORD : undefined),
           ),
           ...projectAuth,
           effective_remote_auth,
@@ -144,19 +397,56 @@ export function registerAuthCommand(
     .description("list auth profiles")
     .action(async (command: Command) => {
       await runLocalCommand(command, "auth list", async () => {
-        const config = loadAuthConfig();
-        return Object.entries(config.profiles)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([name, profile]: any) => ({
-            profile: name,
-            current: config.current_profile === name,
-            api: profile.api ?? null,
-            account_id: profile.account_id ?? null,
-            api_key: maskSecret(profile.api_key),
-            cookie: maskSecret(profile.cookie),
-            bearer: maskSecret(profile.bearer),
-            hub_password: maskSecret(profile.hub_password),
-          }));
+        const configPath = authConfigPath();
+        const config = loadAuthConfig(configPath);
+        let changed = false;
+        const rows = await Promise.all(
+          Object.entries(config.profiles)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(async ([name, profile]: any) => {
+              const identity = await maybeRefreshProfileIdentity(profile);
+              if (
+                (identity.email_address != null &&
+                  identity.email_address !== profile.email_address) ||
+                (identity.first_name != null &&
+                  identity.first_name !== profile.first_name) ||
+                (identity.last_name != null &&
+                  identity.last_name !== profile.last_name)
+              ) {
+                config.profiles[name] = {
+                  ...profile,
+                  ...(identity.email_address != null
+                    ? { email_address: identity.email_address }
+                    : {}),
+                  ...(identity.first_name != null
+                    ? { first_name: identity.first_name }
+                    : {}),
+                  ...(identity.last_name != null
+                    ? { last_name: identity.last_name }
+                    : {}),
+                };
+                changed = true;
+              }
+              const nextProfile = config.profiles[name] ?? profile;
+              return {
+                profile: name,
+                current: config.current_profile === name,
+                api: nextProfile.api ?? null,
+                account_id: nextProfile.account_id ?? null,
+                email_address: nextProfile.email_address ?? null,
+                first_name: nextProfile.first_name ?? null,
+                last_name: nextProfile.last_name ?? null,
+                api_key: maskSecret(nextProfile.api_key),
+                cookie: maskSecret(nextProfile.cookie),
+                bearer: maskSecret(nextProfile.bearer),
+                hub_password: maskSecret(nextProfile.hub_password),
+              };
+            }),
+        );
+        if (changed) {
+          saveAuthConfig(config, configPath);
+        }
+        return rows;
       });
     });
 
@@ -198,25 +488,214 @@ export function registerAuthCommand(
     };
   }
 
+  function resolveEffectiveGlobals(globals: any): any {
+    const configPath = authConfigPath();
+    const config = loadAuthConfig(configPath);
+    return applyAuthProfile(globals, config).globals;
+  }
+
+  async function runBrowserLogin(
+    globals: any,
+    opts: { email?: string; pollMs?: string; setCurrent?: boolean },
+  ): Promise<Record<string, unknown>> {
+    const effective = resolveEffectiveGlobals(globals);
+    const email = await resolveBrowserLoginEmail(opts.email);
+    let apiBaseUrl = effective.api
+      ? normalizeUrl(effective.api)
+      : defaultApiBaseUrl();
+    let start = await postCliAuthApi<CliChallengeStart | any>({
+      apiBaseUrl,
+      endpoint: "auth/cli/login/start",
+      body: { email },
+    });
+    if (start?.wrong_bay === true) {
+      const homeBayUrl = `${start.home_bay_url ?? ""}`.trim();
+      if (!homeBayUrl) {
+        throw new Error("missing home bay url for CLI login");
+      }
+      apiBaseUrl = normalizeUrl(homeBayUrl);
+      start = await postCliAuthApi<CliChallengeStart>({
+        apiBaseUrl,
+        endpoint: "auth/cli/login/start",
+        body: { email, retry_token: start.retry_token },
+      });
+    }
+
+    process.stderr.write(
+      `Open this URL in your browser to approve CLI login:\n${start.approval_url}\n`,
+    );
+
+    const status = await waitForCliChallenge({
+      apiBaseUrl,
+      endpoint: "auth/cli/login/status",
+      challenge_id: start.challenge_id,
+      poll_token: start.poll_token,
+      pollMs: Math.max(200, durationToMs(opts.pollMs, 1_500)),
+    });
+    if (status.state !== "approved" || !status.redeem_token) {
+      throw new Error(`unexpected CLI login challenge state '${status.state}'`);
+    }
+
+    const redeemed = await postCliAuthApi<{
+      account_id: string;
+      remember_me: string;
+      expire: string | Date;
+      email_address?: string | null;
+      first_name?: string | null;
+      last_name?: string | null;
+    }>({
+      apiBaseUrl,
+      endpoint: "auth/cli/login/redeem",
+      body: {
+        challenge_id: start.challenge_id,
+        redeem_token: status.redeem_token,
+      },
+    });
+
+    const configPath = authConfigPath();
+    const config = loadAuthConfig(configPath);
+    const profileName = sanitizeProfileName(globals.profile);
+    const next = {
+      ...(config.profiles[profileName] ?? {}),
+      api: apiBaseUrl,
+      account_id: redeemed.account_id,
+      email_address:
+        `${redeemed.email_address ?? ""}`.trim() || `${email}`.trim() || null,
+      first_name: `${redeemed.first_name ?? ""}`.trim() || null,
+      last_name: `${redeemed.last_name ?? ""}`.trim() || null,
+      cookie: buildRememberMeCookieHeader(apiBaseUrl, redeemed.remember_me),
+    };
+    delete (next as any).api_key;
+    delete (next as any).bearer;
+    delete (next as any).hub_password;
+    config.profiles[profileName] = next;
+    if (opts.setCurrent !== false) {
+      config.current_profile = profileName;
+    }
+    saveAuthConfig(config, configPath);
+    return {
+      profile: profileName,
+      current_profile: config.current_profile ?? null,
+      api: apiBaseUrl,
+      account_id: redeemed.account_id,
+      email_address: next.email_address,
+      first_name: next.first_name,
+      last_name: next.last_name,
+      expires_at: new Date(redeemed.expire).toISOString(),
+      interactive_session: true,
+    };
+  }
+
   auth
     .command("login")
-    .description("store credentials in an auth profile")
+    .description("sign in via browser approval or store explicit credentials")
+    .option("--email <email>", "account email address for browser login")
+    .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
     .option("--no-set-current", "do not set this profile as current")
-    .action(async (opts: { setCurrent?: boolean }, command: Command) => {
-      await runLocalCommand(command, "auth login", async (globals: any) => {
-        return await saveAuthProfile(globals, opts);
-      });
-    });
+    .addHelpText(
+      "after",
+      `
+Examples:
+  cocalc --profile alice --api https://lite4b.cocalc.ai auth login --email alice@example.com
+  cocalc --profile bella --api https://lite4b.cocalc.ai auth login --email bella@example.com
+`,
+    )
+    .action(
+      async (
+        opts: { email?: string; pollMs?: string; setCurrent?: boolean },
+        command: Command,
+      ) => {
+        await runLocalCommand(command, "auth login", async (globals: any) => {
+          if (hasLegacyStoredCredentials(globals)) {
+            return await saveAuthProfile(globals, opts);
+          }
+          return await runBrowserLogin(globals, opts);
+        });
+      },
+    );
 
   auth
     .command("setup")
     .description("alias for auth login")
+    .option("--email <email>", "account email address for browser login")
+    .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
     .option("--no-set-current", "do not set this profile as current")
-    .action(async (opts: { setCurrent?: boolean }, command: Command) => {
-      await runLocalCommand(command, "auth setup", async (globals: any) => {
-        return await saveAuthProfile(globals, opts);
-      });
-    });
+    .addHelpText(
+      "after",
+      `
+Examples:
+  cocalc --profile alice --api https://lite4b.cocalc.ai auth setup --email alice@example.com
+`,
+    )
+    .action(
+      async (
+        opts: { email?: string; pollMs?: string; setCurrent?: boolean },
+        command: Command,
+      ) => {
+        await runLocalCommand(command, "auth setup", async (globals: any) => {
+          if (hasLegacyStoredCredentials(globals)) {
+            return await saveAuthProfile(globals, opts);
+          }
+          return await runBrowserLogin(globals, opts);
+        });
+      },
+    );
+
+  auth
+    .command("elevate")
+    .description("elevate the current CLI session via browser approval")
+    .option("--extended", "keep this elevation active for 8 hours")
+    .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
+    .action(
+      async (
+        opts: { extended?: boolean; pollMs?: string },
+        command: Command,
+      ) => {
+        await runLocalCommand(command, "auth elevate", async (globals: any) => {
+          const effective = resolveEffectiveGlobals(globals);
+          const apiBaseUrl = effective.api
+            ? normalizeUrl(effective.api)
+            : defaultApiBaseUrl();
+          const cookieHeader = buildCookieHeader(apiBaseUrl, effective);
+          if (!cookieHeader) {
+            throw new Error(
+              "interactive CLI sign-in is required before elevation",
+            );
+          }
+          const start = await postCliAuthApi<CliChallengeStart>({
+            apiBaseUrl,
+            endpoint: "auth/cli/elevate/start",
+            body: {
+              duration: opts.extended ? "extended" : "default",
+            },
+            cookieHeader,
+          });
+          process.stderr.write(
+            `Open this URL in your browser to approve CLI elevation:\n${start.approval_url}\n`,
+          );
+          const status = await waitForCliChallenge({
+            apiBaseUrl,
+            endpoint: "auth/cli/elevate/status",
+            challenge_id: start.challenge_id,
+            poll_token: start.poll_token,
+            pollMs: Math.max(200, durationToMs(opts.pollMs, 1_500)),
+          });
+          if (status.state !== "approved") {
+            throw new Error(
+              `unexpected CLI elevation challenge state '${status.state}'`,
+            );
+          }
+          return {
+            account_id: getExplicitAccountId(effective) ?? null,
+            factor_level: `${status.factor_level ?? ""}`.trim() || null,
+            fresh_auth_until: status.fresh_auth_until
+              ? new Date(status.fresh_auth_until).toISOString()
+              : null,
+            interactive_session: true,
+          };
+        });
+      },
+    );
 
   auth
     .command("use <profile>")
@@ -233,6 +712,42 @@ export function registerAuthCommand(
         saveAuthConfig(config, configPath);
         return {
           current_profile: profile,
+        };
+      });
+    });
+
+  auth
+    .command("rename <from> <to>")
+    .description("rename an auth profile")
+    .action(async (fromName: string, toName: string, command: Command) => {
+      await runLocalCommand(command, "auth rename", async () => {
+        const configPath = authConfigPath();
+        const config = loadAuthConfig(configPath);
+        const from = sanitizeProfileName(fromName);
+        const to = sanitizeProfileName(toName);
+        if (!config.profiles[from]) {
+          throw new Error(`auth profile '${from}' not found`);
+        }
+        if (from === to) {
+          return {
+            renamed: from,
+            to,
+            current_profile: config.current_profile ?? null,
+          };
+        }
+        if (config.profiles[to]) {
+          throw new Error(`auth profile '${to}' already exists`);
+        }
+        config.profiles[to] = config.profiles[from];
+        delete config.profiles[from];
+        if (config.current_profile === from) {
+          config.current_profile = to;
+        }
+        saveAuthConfig(config, configPath);
+        return {
+          renamed: from,
+          to,
+          current_profile: config.current_profile ?? null,
         };
       });
     });

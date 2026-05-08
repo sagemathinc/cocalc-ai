@@ -1,4 +1,10 @@
-export const authFirst = ({ args, account_id, project_id, host_id }) => {
+export const authFirst = ({
+  args,
+  account_id,
+  project_id,
+  host_id,
+  auth_session_hash,
+}) => {
   if (args[0] == null) {
     args[0] = {} as any;
   }
@@ -8,6 +14,9 @@ export const authFirst = ({ args, account_id, project_id, host_id }) => {
     args[0].project_id = project_id;
   } else if (host_id) {
     args[0].host_id = host_id;
+  }
+  if (auth_session_hash && args[0].session_hash == null) {
+    args[0].session_hash = auth_session_hash;
   }
   return args;
 };
@@ -29,7 +38,11 @@ export const requireSignedIn = ({ args, account_id, project_id, host_id }) => {
   return args;
 };
 
-export const authFirstRequireAccount = async ({ args, account_id }) => {
+export const authFirstRequireAccount = async ({
+  args,
+  account_id,
+  auth_session_hash,
+}) => {
   if (args[0] == null) {
     args[0] = {} as any;
   }
@@ -37,6 +50,9 @@ export const authFirstRequireAccount = async ({ args, account_id }) => {
     throw Error("user must be signed in");
   }
   args[0].account_id = account_id;
+  if (auth_session_hash && args[0].session_hash == null) {
+    args[0].session_hash = auth_session_hash;
+  }
   return args;
 };
 

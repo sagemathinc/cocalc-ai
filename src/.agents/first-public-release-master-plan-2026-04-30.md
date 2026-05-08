@@ -1,7 +1,8 @@
 # First Public Release Master Plan
 
-Status: master release planning and execution tracker, refreshed on 2026-05-06
-after hosted-backup sharding, move UX, and start-wedge fixes.
+Status: master release planning and execution tracker, refreshed on 2026-05-08
+after the 2FA/fresh-auth rollout, impersonation redesign, dedicated-host
+funding-lane work, and recent live smoke testing.
 
 This document is the single planning / todo document for the first public
 release of `cocalc-ai`.
@@ -64,7 +65,10 @@ The following scope is in for the first public release:
 - split-ingress multibay routing
 - stable browser URL and home-bay model
 - project-host direct runtime routing where already designed
-- seed-owned purchases/billing authority for first release
+- account home bay owns account/session/purchase/billing authority
+- project owning bay owns project/course authority
+- seed/global is limited to cluster-global directories/projections that are
+  actually required for first release
 - project move between regions with explicit backup-region cutover semantics
 
 ### 2. Rented Dedicated Hosts
@@ -171,9 +175,27 @@ The following scope is **not** in:
   - the move-complete browser UX is now explicit: after a successful move, the
     browser session shows completion and asks the user to reopen the project on
     the destination host
+- browser 2FA/fresh-auth is now a real system instead of a design note:
+  - TOTP + recovery codes
+  - fresh-auth for dangerous billing/host actions
+  - dedicated account settings UX
+  - repeated live/manual smoke on real dev clusters
+- impersonation is no longer just “become the user and lose actor identity”:
+  - actor/subject-aware sessions
+  - admin 2FA/fresh-auth gate for impersonation start
+  - subject-owned security actions blocked while impersonating
+  - explicit UI banner for impersonation state
+- dedicated-host funding and safety are now materially farther along:
+  - explicit `site-funded`, `account-prepaid`, and `account-postpaid` lanes
+  - host-level funding-mode selection and persistence
+  - spend-ledger / lane-enforcement primitives
+  - live smoke of `site-funded` hosts on the 3-bay dogfood cluster
+- the old negative-balance `min_balance` credit model is no longer part of the
+  active purchase path
 - stale/orphaned `project-start` LROs were identified as a real cause of
   “project start wedged” reports and are now cleaned up in the hub start path
   before new starts are evaluated
+- a real start/delete host-op race was found in dogfood and fixed
 - the GCP-in-project Ubuntu mirror bug was fixed by using the zone-scoped
   `gce.clouds.archive.ubuntu.com` mirror path instead of the broken region-only
   hostname synthesis
@@ -207,6 +229,17 @@ correctness and capacity.
   - backup cutover is real
   - the browser reconnect step is explicit instead of pretending in-place
     editor recovery is reliable
+- browser 2FA/fresh-auth is real enough to dogfood:
+  - enrollment
+  - sign-in step-up
+  - recovery codes
+  - billing/host gates
+  - admin impersonation integration
+- dedicated-host funding semantics are now explicit rather than accidental:
+  - `site-funded`
+  - `account-prepaid`
+  - `account-postpaid`
+  - host-level funding overrides
 
 ### What still looks risky
 
@@ -217,8 +250,12 @@ correctness and capacity.
 - sustained soak confidence for the new sharded backup/move path
 - deployment / upgrade / rollback reproducibility
 - operator workflows that remain too environment-sensitive
+- CLI/elevated-auth follow-through for dangerous actions is still not done
 - dedicated-host pricing, billing, and access-control polish
-- student pay and site/domain-license entitlement correctness
+- dedicated-host provider/SKU/pricing research is still open
+- student pay is still unimplemented and remains a hard release blocker
+- minimal site/domain-license entitlement is still unimplemented and remains a
+  hard release blocker
 - release bugs discovered during real canaries
 - soak confidence and test confidence
 
@@ -237,7 +274,9 @@ expanding.
   - account home bay owns account/session authority
   - project owning bay owns project authority
   - project-host runtime traffic bypasses bays whenever possible
-  - billing/purchases remain seed-owned for first release
+  - account home bay owns purchases/billing authority for first release
+  - seed/global only owns cluster-global directories/projections that are
+    explicitly required
 - [ ] Remove or disable project API keys if they are not part of the release
       contract.
 - [ ] Keep account API keys, but narrow the acceptable first-release scope
@@ -374,6 +413,11 @@ This workstream is in scope, but it must stay narrow.
 
 ### Todo
 
+- [x] Implement the dedicated-host safety/funding foundation:
+  - browser fresh-auth on dangerous host/billing actions
+  - explicit `site-funded`, `account-prepaid`, and `account-postpaid` modes
+  - host-level funding-mode selection and persistence
+  - spend-lane enforcement primitives
 - [ ] Choose and document the exact first supported dedicated-host SKUs on GCP
       and Nebius.
   - must include spot instances on both GCP and Nebius
@@ -391,9 +435,10 @@ This workstream is in scope, but it must stay narrow.
 - [ ] Define the exact failure semantics for unpaid, expired, or failed-charge
       dedicated hosts.
 - [ ] Implement host-owner UI to control which users may use a dedicated host.
-- [ ] Verify dedicated-host create/start/stop/delete/status flows end to end.
+- [ ] Verify dedicated-host create/start/stop/delete/status flows end to end on
+      the final supported providers and funding lanes.
 - [ ] Verify dedicated-host auth and subject authorization are
-      production-safe.
+      production-safe across browser, impersonation, and CLI flows.
 - [ ] Document explicit support boundaries:
   - supported providers
   - supported machine sizes / SKUs
@@ -422,6 +467,12 @@ and campus adoption in the first release.
 
 This workstream is in scope because it directly affects near-term revenue and
 real migrations from `cocalc.com`.
+
+This is now an explicit release blocker for the spring/summer launch window:
+
+- student pay is required for a real set of course-adoption and renewal cases
+- minimal site/domain licensing is required to onboard several likely customers
+  with low friction
 
 ### Included
 
@@ -521,6 +572,10 @@ Goal: make operator workflows safe and not context-fragile.
 
 ### Todo
 
+- [ ] Finish the CLI/elevated-auth follow-through for dangerous actions:
+  - factor-aware interactive CLI login
+  - short-lived elevated CLI auth
+  - distinct automation credentials/boundaries
 - [ ] Make benchmark/auth behavior deterministic even in env-heavy shells.
 - [ ] Eliminate ambient auth target confusion caused by `CONAT_SERVER`, bearer,
       or project-secret env.

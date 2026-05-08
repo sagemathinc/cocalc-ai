@@ -6,6 +6,8 @@ type CookieGlobals = {
   cookie?: string;
   apiKey?: string;
   hubPassword?: string;
+  bearer?: string;
+  disableEnvAuthDefaults?: boolean;
 };
 
 export type ProjectScopedAuthStatus = {
@@ -141,21 +143,40 @@ export function buildCookieHeader(
     parts.push(globals.cookie.trim());
   }
 
-  const apiKey = globals.apiKey ?? env.COCALC_API_KEY;
+  const allowEnvAuthDefaults = !globals.disableEnvAuthDefaults;
+  const hasDirectAuth =
+    !!globals.cookie?.trim() ||
+    !!globals.apiKey?.trim() ||
+    !!normalizeSecretValue(globals.hubPassword) ||
+    !!globals.bearer?.trim();
+
+  const apiKey =
+    globals.apiKey ?? (allowEnvAuthDefaults ? env.COCALC_API_KEY : undefined);
   if (apiKey?.trim()) {
     appendCookie(parts, baseUrl, "api_key", apiKey);
   }
 
   if (includeHubPassword) {
     const hubPassword = normalizeSecretValue(
-      globals.hubPassword ?? env.COCALC_HUB_PASSWORD,
+      globals.hubPassword ??
+        (allowEnvAuthDefaults ? env.COCALC_HUB_PASSWORD : undefined),
     );
     if (hubPassword?.trim()) {
       appendCookie(parts, baseUrl, "hub_password", hubPassword);
     }
   }
 
-  const projectAuth = describeProjectScopedAuth(env);
+  const projectAuth =
+    allowEnvAuthDefaults && !hasDirectAuth
+      ? describeProjectScopedAuth(env)
+      : {
+          has_project_secret: false,
+          has_project_id: false,
+          has_project_scoped_auth: false,
+          project_auth_source: null,
+          project_id: null,
+          project_auth_message: "no project-scoped auth detected",
+        };
   if (
     projectAuth.has_project_scoped_auth &&
     projectAuth.project_id &&

@@ -8,6 +8,8 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 
 export type PublicAuthRoute =
   | { kind: "auth-form"; view: AuthView }
+  | { challengeId: string; kind: "auth-cli-elevate" }
+  | { challengeId: string; kind: "auth-cli-login" }
   | { kind: "auth-password-reset-done" }
   | { kind: "auth-password-reset-redeem"; passwordResetId: string }
   | { email?: string; kind: "auth-verify-email"; token: string }
@@ -121,6 +123,28 @@ export function getPublicAuthRouteFromPath(
 
   if (routeParts[0] === "auth" && routeParts[1] === "password-reset-done") {
     return { kind: "auth-password-reset-done" };
+  }
+
+  if (
+    routeParts[0] === "auth" &&
+    routeParts[1] === "cli-login" &&
+    routeParts[2]
+  ) {
+    return {
+      kind: "auth-cli-login",
+      challengeId: routeParts[2],
+    };
+  }
+
+  if (
+    routeParts[0] === "auth" &&
+    routeParts[1] === "cli-elevate" &&
+    routeParts[2]
+  ) {
+    return {
+      kind: "auth-cli-elevate",
+      challengeId: routeParts[2],
+    };
   }
 
   if (

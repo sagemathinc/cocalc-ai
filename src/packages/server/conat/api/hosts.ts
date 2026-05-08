@@ -899,34 +899,46 @@ function requireCreateHosts(entitlements: any) {
   }
 }
 
-async function maybeRequireFreshAuthForBrowserHostAction({
+function hostActionRequiresInteractiveFreshAuth(cloud?: string): boolean {
+  const provider = normalizeProviderId(cloud);
+  return !!provider && provider !== "local" && provider !== "self-host";
+}
+
+async function maybeRequireFreshAuthForInteractiveHostAction({
   account_id,
   browser_id,
+  session_hash,
+  required,
 }: {
   account_id?: string;
   browser_id?: string;
+  session_hash?: string;
+  required: boolean;
 }): Promise<{ allow_second_factor_override?: boolean }> {
   const owner = requireAccount(account_id);
-  const cleanedBrowserId = `${browser_id ?? ""}`.trim();
-  if (!cleanedBrowserId) {
+  if (!required) {
     return {};
   }
-  const session_hash = getBrowserAuthSessionHash({
-    account_id: owner,
-    browser_id: cleanedBrowserId,
-  });
-  if (!session_hash) {
+  const cleanedSessionHash = `${session_hash ?? ""}`.trim();
+  const cleanedBrowserId = `${browser_id ?? ""}`.trim();
+  const resolvedSessionHash =
+    cleanedSessionHash ||
+    getBrowserAuthSessionHash({
+      account_id: owner,
+      browser_id: cleanedBrowserId,
+    });
+  if (!resolvedSessionHash) {
     throw Object.assign(new Error("fresh auth is required"), {
       code: "fresh_auth_required",
     });
   }
   await requireFreshAuthForSessionHash({
     account_id: owner,
-    session_hash,
+    session_hash: resolvedSessionHash,
     allow_actor_impersonation: true,
   });
   const impersonation = await getImpersonationSessionBySessionHash({
-    session_hash,
+    session_hash: resolvedSessionHash,
     subject_account_id: owner,
   });
   return {
@@ -3440,6 +3452,7 @@ export async function removeHostSshAuthorizedKey({
 export async function createHost({
   account_id,
   browser_id,
+  session_hash,
   name,
   region,
   size,
@@ -3452,6 +3465,7 @@ export async function createHost({
 }: {
   account_id?: string;
   browser_id?: string;
+  session_hash?: string;
   name: string;
   region: string;
   size: string;
@@ -3464,9 +3478,11 @@ export async function createHost({
 }): Promise<Host> {
   const owner = requireAccount(account_id);
   const requestedFundingMode = normalizeRequestedHostFundingMode(funding_mode);
-  const auth = await maybeRequireFreshAuthForBrowserHostAction({
+  const auth = await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
+    session_hash,
+    required: hostActionRequiresInteractiveFreshAuth(machine?.cloud),
   });
   const membership = await loadMembership(owner);
   requireCreateHosts(membership.entitlements);
@@ -3613,25 +3629,32 @@ async function cancelHostOpsPreemptedByDestructiveAction(host_id: string) {
 export async function startHost({
   account_id,
   browser_id,
+  session_hash,
   id,
 }: {
   account_id?: string;
   browser_id?: string;
+  session_hash?: string;
   id: string;
 }): Promise<HostLroResponse> {
-  const auth = await maybeRequireFreshAuthForBrowserHostAction({
-    account_id,
-    browser_id,
-  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge().hostConnection(remoteBay).startHost({
       account_id,
       browser_id,
+      session_hash,
       id,
     });
   }
   const row = await loadHostForStartStop(id, account_id);
+  const auth = await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id,
+    session_hash,
+    required: hostActionRequiresInteractiveFreshAuth(
+      row.metadata?.machine?.cloud,
+    ),
+  });
   await assertNoPendingDestructiveHostOp(row.id);
   await assertDedicatedHostAdmissionForAccount({
     account_id: requireAccount(account_id),
@@ -4145,6 +4168,7 @@ export async function setHostStar({
 export async function updateHostMachine({
   account_id,
   browser_id,
+  session_hash,
   id,
   cloud,
   funding_mode,
@@ -4169,6 +4193,7 @@ export async function updateHostMachine({
 }: {
   account_id?: string;
   browser_id?: string;
+  session_hash?: string;
   id: string;
   cloud?: HostMachine["cloud"];
   funding_mode?: HostFundingMode;
@@ -4192,14 +4217,16 @@ export async function updateHostMachine({
   spot_recovery_policy?: HostSpotRecoveryPolicy;
 }): Promise<Host> {
   const owner = requireAccount(account_id);
-  const auth = await maybeRequireFreshAuthForBrowserHostAction({
-    account_id: owner,
-    browser_id,
-  });
   const row = await loadOwnedHost(id, owner);
   const metadata = row.metadata ?? {};
   const machine: HostMachine = metadata.machine ?? {};
   const machineCloud = normalizeProviderId(machine.cloud);
+  const auth = await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id: owner,
+    browser_id,
+    session_hash,
+    required: hostActionRequiresInteractiveFreshAuth(machineCloud),
+  });
   const requestedFundingMode = normalizeRequestedHostFundingMode(funding_mode);
   const isSelfHost = machineCloud === "self-host";
   const isDeprovisioned = row.status === "deprovisioned";
