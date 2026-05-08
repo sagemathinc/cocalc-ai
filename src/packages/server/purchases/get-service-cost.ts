@@ -15,6 +15,7 @@ export default async function getServiceCost(service: Service) {
       return pay_as_you_go_min_payment;
 
     case "membership":
+    case "dedicated-host":
     case "refund":
     case "student-pay":
     case "voucher":

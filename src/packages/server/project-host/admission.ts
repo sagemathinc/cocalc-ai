@@ -12,15 +12,20 @@ import { normalizeProviderId } from "@cocalc/cloud";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import getBalance from "@cocalc/server/purchases/get-balance";
-import getMinBalance from "@cocalc/server/purchases/get-min-balance";
 import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
-import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
+import { moneyToDbString, toDecimal } from "@cocalc/util/money";
+import {
+  getDedicatedHostWindowUsageLocal,
+  isDedicatedHostLaneCurrentlyAllowed,
+} from "./spend";
 
 export type DedicatedHostAction = "create" | "start" | "resize";
+export type DedicatedHostFundingMode = "account-prepaid" | "site-funded";
 
 export interface DedicatedHostAdmissionDecision {
   allowed: boolean;
@@ -30,9 +35,9 @@ export interface DedicatedHostAdmissionDecision {
     | "payment_method_required"
     | "membership_host_spend_not_configured"
     | "prepaid_balance_required"
-    | "credit_line_required";
+    | "prepaid_usage_window_exceeded";
   reason?: string;
-  funding_lane?: "prepaid" | "credit";
+  funding_lane?: "prepaid";
 }
 
 function actionLabel(action: DedicatedHostAction): string {
@@ -55,6 +60,31 @@ function hasPositiveLimit(value: unknown): boolean {
 export function isBillableDedicatedHostCloud(cloud?: string | null): boolean {
   const provider = normalizeProviderId(cloud);
   return !!provider && provider !== "self-host" && provider !== "local";
+}
+
+export function selectDedicatedHostFundingLane(
+  snapshot: AccountLocalDedicatedHostPolicySnapshot,
+): "prepaid" | undefined {
+  if (snapshot.funding_mode !== "account-prepaid") {
+    return undefined;
+  }
+  const limits = snapshot.effective_limits ?? {};
+  const balance = toDecimal(snapshot.balance ?? 0);
+  const prepaidEnabled =
+    hasPositiveLimit(limits.prepaid_host_usage_limit_5h_usd) ||
+    hasPositiveLimit(limits.prepaid_host_usage_limit_7d_usd);
+
+  if (
+    prepaidEnabled &&
+    balance.gt(0) &&
+    isDedicatedHostLaneCurrentlyAllowed({
+      snapshot,
+      funding_lane: "prepaid",
+    })
+  ) {
+    return "prepaid";
+  }
+  return undefined;
 }
 
 export function evaluateDedicatedHostAdmission({
@@ -91,6 +121,10 @@ export function evaluateDedicatedHostAdmission({
     };
   }
 
+  if (snapshot.funding_mode === "site-funded") {
+    return { allowed: true };
+  }
+
   if (!snapshot.has_payment_method) {
     return {
       allowed: false,
@@ -100,81 +134,99 @@ export function evaluateDedicatedHostAdmission({
   }
 
   const limits = snapshot.effective_limits ?? {};
+  const balance = toDecimal(snapshot.balance ?? 0);
   const prepaidEnabled =
     hasPositiveLimit(limits.prepaid_host_usage_limit_5h_usd) ||
     hasPositiveLimit(limits.prepaid_host_usage_limit_7d_usd);
-  const creditEnabled =
-    hasPositiveLimit(limits.credit_spend_limit_5h_usd) ||
-    hasPositiveLimit(limits.credit_spend_limit_7d_usd);
 
-  if (!prepaidEnabled && !creditEnabled) {
+  if (!prepaidEnabled) {
     return {
       allowed: false,
       code: "membership_host_spend_not_configured",
       reason:
-        "membership tier does not currently configure dedicated-host spending",
+        "membership tier does not currently configure prepaid dedicated-host spending",
     };
   }
 
-  const balance = toDecimal(snapshot.balance ?? 0);
-  const minBalance = toDecimal(snapshot.min_balance ?? 0);
-  const hasPrepaidBalance = prepaidEnabled && balance.gt(0);
-  const hasCreditHeadroom =
-    creditEnabled && minBalance.lt(0) && balance.gt(minBalance);
-
-  if (hasPrepaidBalance) {
+  const funding_lane = selectDedicatedHostFundingLane(snapshot);
+  if (funding_lane) {
     return {
       allowed: true,
-      funding_lane: "prepaid",
+      funding_lane,
     };
   }
 
-  if (hasCreditHeadroom) {
-    return {
-      allowed: true,
-      funding_lane: "credit",
-    };
-  }
-
-  if (prepaidEnabled) {
+  if (prepaidEnabled && balance.gt(0)) {
     return {
       allowed: false,
-      code: "prepaid_balance_required",
-      reason: `add prepaid credit before trying to ${actionLabel(action)}`,
+      code: "prepaid_usage_window_exceeded",
+      reason: `your dedicated-host prepaid usage window is exhausted; wait for it to reset before trying to ${actionLabel(action)}`,
     };
   }
 
   return {
     allowed: false,
-    code: "credit_line_required",
-    reason: minBalance.lt(0)
-      ? `your account is already at its dedicated-host credit limit (${moneyToCurrency(minBalance)})`
-      : `your membership tier allows dedicated-host credit, but no credit line is configured for your account`,
+    code: "prepaid_balance_required",
+    reason: `add prepaid credit before trying to ${actionLabel(action)}`,
   };
+}
+
+export function getDedicatedHostFundingModeFromSettings(
+  settings: Awaited<ReturnType<typeof getServerSettings>>,
+): DedicatedHostFundingMode {
+  return settings.project_hosts_funding_mode === "account-prepaid"
+    ? "account-prepaid"
+    : "site-funded";
 }
 
 export async function getDedicatedHostPolicySnapshotLocal(
   account_id: string,
 ): Promise<AccountLocalDedicatedHostPolicySnapshot> {
-  const membership = await resolveMembershipForAccount(account_id);
+  const [membership, settings] = await Promise.all([
+    resolveMembershipForAccount(account_id),
+    getServerSettings(),
+  ]);
   const effective_limits = getEffectiveMembershipUsageLimits(membership);
-  const [has_active_second_factor, has_payment_method, balance, min_balance] =
+  const funding_mode = getDedicatedHostFundingModeFromSettings(settings);
+  const has_active_second_factor = await hasActiveSecondFactor(account_id);
+
+  if (funding_mode === "site-funded") {
+    return {
+      account_id,
+      membership_class: membership.class,
+      can_create_hosts:
+        membership.entitlements?.features?.create_hosts === true,
+      funding_mode,
+      effective_limits,
+      has_active_second_factor,
+      has_payment_method: false,
+      balance: moneyToDbString(0),
+      dedicated_host_window_usage: {
+        prepaid_5h_usd: moneyToDbString(0),
+        prepaid_7d_usd: moneyToDbString(0),
+        credit_5h_usd: moneyToDbString(0),
+        credit_7d_usd: moneyToDbString(0),
+      },
+    };
+  }
+
+  const [has_payment_method, balance, dedicated_host_window_usage] =
     await Promise.all([
-      hasActiveSecondFactor(account_id),
       hasPaymentMethod(account_id),
       getBalance({ account_id }),
-      getMinBalance(account_id),
+      getDedicatedHostWindowUsageLocal(account_id),
     ]);
 
   return {
     account_id,
     membership_class: membership.class,
     can_create_hosts: membership.entitlements?.features?.create_hosts === true,
+    funding_mode,
     effective_limits,
     has_active_second_factor,
     has_payment_method,
     balance,
-    min_balance,
+    dedicated_host_window_usage,
   };
 }
 

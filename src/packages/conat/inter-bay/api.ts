@@ -556,15 +556,41 @@ export interface AccountLocalDedicatedHostPolicySnapshot {
   account_id: string;
   membership_class: string;
   can_create_hosts: boolean;
+  funding_mode: "account-prepaid" | "site-funded";
   effective_limits: MembershipEffectiveLimits;
   has_active_second_factor: boolean;
   has_payment_method: boolean;
   balance: MoneyValue;
-  min_balance: MoneyValue;
+  dedicated_host_window_usage: {
+    prepaid_5h_usd: MoneyValue;
+    prepaid_7d_usd: MoneyValue;
+    credit_5h_usd: MoneyValue;
+    credit_7d_usd: MoneyValue;
+  };
 }
 
 export interface AccountLocalGetDedicatedHostPolicySnapshotRequest {
   account_id: string;
+}
+
+export interface AccountLocalReconcileDedicatedHostPurchaseSessionRequest {
+  account_id: string;
+  host_id: string;
+  host_name?: string | null;
+  host_bay_id?: string | null;
+  provider: string;
+  region?: string | null;
+  machine_type?: string | null;
+  pricing_model?: "on_demand" | "spot" | null;
+  funding_lane: "prepaid" | "credit";
+  hourly_cost_usd: MoneyValue;
+  started_at?: Date | string | number | null;
+}
+
+export interface AccountLocalCloseDedicatedHostPurchaseSessionRequest {
+  account_id: string;
+  host_id: string;
+  ended_at?: Date | string | number | null;
 }
 
 export interface AccountLocalCreateImpersonationGrantRequest {
@@ -904,6 +930,8 @@ export type AccountLocalMethod =
   | "reconcile-rehome"
   | "create-impersonation-grant"
   | "verify-fresh-auth-credentials"
+  | "reconcile-dedicated-host-purchase-session"
+  | "close-dedicated-host-purchase-session"
   | "upsert-membership-grant"
   | "revoke-membership-grant"
   | "get-membership"
@@ -1481,6 +1509,12 @@ export interface InterBayAccountLocalApi {
   verifyFreshAuthCredentials: (
     opts: AccountLocalVerifyFreshAuthCredentialsRequest,
   ) => Promise<AccountLocalVerifyFreshAuthCredentialsResult>;
+  reconcileDedicatedHostPurchaseSession: (
+    opts: AccountLocalReconcileDedicatedHostPurchaseSessionRequest,
+  ) => Promise<void>;
+  closeDedicatedHostPurchaseSession: (
+    opts: AccountLocalCloseDedicatedHostPurchaseSessionRequest,
+  ) => Promise<void>;
   upsertMembershipGrant: (
     opts: AccountLocalUpsertMembershipGrantRequest,
   ) => Promise<{ grant_id: string }>;
@@ -2669,6 +2703,24 @@ export function createInterBayAccountLocalClient({
       method: "verify-fresh-auth-credentials",
     }),
   });
+  const reconcileDedicatedHostPurchaseSessionClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "reconcileDedicatedHostPurchaseSession">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "reconcile-dedicated-host-purchase-session",
+    }),
+  });
+  const closeDedicatedHostPurchaseSessionClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "closeDedicatedHostPurchaseSession">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "close-dedicated-host-purchase-session",
+    }),
+  });
   const upsertMembershipGrantClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "upsertMembershipGrant">
   >({
@@ -2774,6 +2826,14 @@ export function createInterBayAccountLocalClient({
       await createImpersonationGrantClient.createImpersonationGrant(opts),
     verifyFreshAuthCredentials: async (opts) =>
       await verifyFreshAuthCredentialsClient.verifyFreshAuthCredentials(opts),
+    reconcileDedicatedHostPurchaseSession: async (opts) =>
+      await reconcileDedicatedHostPurchaseSessionClient.reconcileDedicatedHostPurchaseSession(
+        opts,
+      ),
+    closeDedicatedHostPurchaseSession: async (opts) =>
+      await closeDedicatedHostPurchaseSessionClient.closeDedicatedHostPurchaseSession(
+        opts,
+      ),
     upsertMembershipGrant: async (opts) =>
       await upsertMembershipGrantClient.upsertMembershipGrant(opts),
     revokeMembershipGrant: async (opts) =>
@@ -2906,6 +2966,34 @@ export function createInterBayAccountLocalHandler({
       impl: {
         verifyFreshAuthCredentials: async (opts) =>
           await impl.verifyFreshAuthCredentials(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "reconcileDedicatedHostPurchaseSession">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "reconcile-dedicated-host-purchase-session",
+      }),
+      impl: {
+        reconcileDedicatedHostPurchaseSession: async (opts) =>
+          await impl.reconcileDedicatedHostPurchaseSession(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "closeDedicatedHostPurchaseSession">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "close-dedicated-host-purchase-session",
+      }),
+      impl: {
+        closeDedicatedHostPurchaseSession: async (opts) =>
+          await impl.closeDedicatedHostPurchaseSession(opts),
       },
     }),
     createServiceHandler<

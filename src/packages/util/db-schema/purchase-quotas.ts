@@ -8,7 +8,7 @@ export type { Service };
 // Users will set their spend limits for these broad categories.
 // TODO: right now there is a separate limit for each quota spec,
 // which has got ridiculous.
-const SERVICE_CATEGORIES = ["money", "license"];
+const SERVICE_CATEGORIES = ["money", "license", "metered"];
 type ServiceCategory = (typeof SERVICE_CATEGORIES)[number];
 
 export interface Spec {
@@ -27,6 +27,7 @@ export type QuotaSpec = Record<Service, Spec>;
 const IS_PAYG: { [name: ServiceCategory]: boolean } = {
   money: false,
   license: false,
+  metered: true,
 } as const;
 
 export function isPaygService(service: Service): boolean {
@@ -65,6 +66,13 @@ export const QUOTA_SPEC: QuotaSpec = {
     noSet: true,
     category: "license",
     description: "Charge for a membership subscription.",
+  },
+  "dedicated-host": {
+    display: "Dedicated Host",
+    color: "volcano",
+    noSet: true,
+    category: "metered",
+    description: "Metered charge for dedicated-host compute usage.",
   },
   "student-pay": {
     display: "Course Fee",

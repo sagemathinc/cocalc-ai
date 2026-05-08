@@ -46,6 +46,9 @@ export const MEMBERSHIP_PACKAGE_PURCHASE = "membership-package-purchase";
 // purchase account credit vouchers directly
 export const VOUCHER_PURCHASE = "voucher-purchase";
 
+// metered dedicated-host compute usage
+export const DEDICATED_HOST_USAGE = "dedicated-host-usage";
+
 // for paying a statement the purpose is `statement-${statement_id}`
 // (Maybe we should be usig metadata for this though?)
 
@@ -66,6 +69,7 @@ export type ComputeService =
   | "auto-credit"
   | "refund"
   | "membership"
+  | "dedicated-host"
   | "student-pay"
   | "voucher";
 export type Service = ComputeService;
@@ -111,6 +115,19 @@ export interface Voucher {
   credit_id?: number;
 }
 
+export interface DedicatedHostPurchase {
+  type: "dedicated-host";
+  host_id: string;
+  host_name?: string | null;
+  host_bay_id?: string | null;
+  provider: string;
+  region?: string | null;
+  machine_type?: string | null;
+  pricing_model?: "on_demand" | "spot" | null;
+  funding_lane: "prepaid" | "credit";
+  hourly_cost_usd: MoneyValue;
+}
+
 export interface Credit {
   type: "credit";
   voucher_code?: string; // if credit is the result of redeeming a voucher code
@@ -136,6 +153,7 @@ export interface Refund {
 export type Description =
   | Credit
   | Refund
+  | DedicatedHostPurchase
   | Membership
   | MembershipPackagePurchase
   | StudentPayPurchase

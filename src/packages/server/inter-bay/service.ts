@@ -114,6 +114,10 @@ import {
 } from "@cocalc/server/membership/resolve";
 import { getDedicatedHostPolicySnapshotLocal } from "@cocalc/server/project-host/admission";
 import {
+  closeDedicatedHostPurchaseSessionLocal,
+  reconcileDedicatedHostPurchaseSessionLocal,
+} from "@cocalc/server/project-host/spend";
+import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
   resolveProjectBayAcrossCluster,
@@ -463,6 +467,12 @@ async function startAccountLocalService(): Promise<void> {
         code,
       }),
     }),
+    reconcileDedicatedHostPurchaseSession: async (opts) => {
+      await reconcileDedicatedHostPurchaseSessionLocal(opts);
+    },
+    closeDedicatedHostPurchaseSession: async (opts) => {
+      await closeDedicatedHostPurchaseSessionLocal(opts);
+    },
     upsertMembershipGrant: async (opts) => ({
       grant_id: await createMembershipGrant({
         ...opts,

@@ -4,7 +4,10 @@
  */
 
 import { Table } from "./types";
-import type { KucalcValues } from "@cocalc/util/db-schema/site-defaults";
+import type {
+  KucalcValues,
+  ProjectHostsFundingMode,
+} from "@cocalc/util/db-schema/site-defaults";
 import type { Strategy } from "@cocalc/util/types/sso";
 
 Table({
@@ -126,6 +129,7 @@ export interface Customize {
   project_hosts_lambda_enabled?: boolean;
   project_hosts_local_enabled?: boolean;
   project_hosts_self_host_alpha_enabled?: boolean;
+  project_hosts_funding_mode?: ProjectHostsFundingMode;
   project_hosts_cloudflare_tunnel_enabled?: boolean;
   cloudflare_mode?: string;
   launchpad_cloudflare_tunnel_status?: {
