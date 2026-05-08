@@ -1,6 +1,9 @@
 import { Map as ImmutableMap } from "immutable";
 
-import { resetOpenFileRuntimeAfterHostReset } from "./project_actions";
+import {
+  resetOpenFileRuntimeAfterHostReset,
+  selectOpenFilesForSyncPath,
+} from "./project/redux/open-file-runtime";
 
 describe("ProjectActions host restart file runtime reset", () => {
   it("clears all open file components, removes each sync runtime once, and reboots all open files with the active editor first", async () => {
@@ -91,5 +94,25 @@ describe("ProjectActions host restart file runtime reset", () => {
     expect(rebootstrapPath).toHaveBeenCalledWith("/notes.md", {
       noFocus: true,
     });
+  });
+
+  it("selects only open files sharing a sync path", () => {
+    const openFiles = ImmutableMap<string, any>({
+      "/display-a.ipynb": ImmutableMap({ label: "a" }),
+      "/same-sync.txt": ImmutableMap({ label: "same" }),
+      "/other.md": ImmutableMap({ label: "other" }),
+    });
+
+    const selected = selectOpenFilesForSyncPath({
+      openFiles,
+      targetSyncPath: "/display-a.ipynb",
+      getSyncPath: (path) =>
+        path === "/same-sync.txt" ? "/display-a.ipynb" : path,
+    });
+
+    expect(selected.keySeq().toArray()).toEqual([
+      "/display-a.ipynb",
+      "/same-sync.txt",
+    ]);
   });
 });

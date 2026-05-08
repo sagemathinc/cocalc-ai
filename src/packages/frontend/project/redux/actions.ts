@@ -161,7 +161,12 @@ import {
   pageProjectLogRows,
 } from "./project-log";
 import { callFilesystemClientWithRecovery } from "./filesystem-client";
+import {
+  resetOpenFileRuntimeAfterHostReset,
+  selectOpenFilesForSyncPath,
+} from "./open-file-runtime";
 export { callFilesystemClientWithRecovery } from "./filesystem-client";
+export { resetOpenFileRuntimeAfterHostReset } from "./open-file-runtime";
 
 const { defaults, required } = misc;
 
@@ -171,90 +176,6 @@ const BANNED_FILE_TYPES = new Set(["doc", "docx", "pdf", "sws"]);
 
 const FROM_WEB_TIMEOUT_S = 45;
 const PROJECT_LOG_BATCH_LIMIT = 750;
-
-type ResetOpenFileRuntimeAfterHostResetOpts = {
-  openFiles?: Map<string, any>;
-  activeProjectTab?: string;
-  getSyncPath: (path: string) => string;
-  getComponent: (path: string) => any;
-  setComponent: (path: string, component: any) => void;
-  removeRuntime: (syncPath: string) => Promise<void> | void;
-  rebootstrapPath?: (
-    path: string,
-    opts?: { noFocus?: boolean },
-  ) => Promise<void> | void;
-};
-
-export async function resetOpenFileRuntimeAfterHostReset({
-  openFiles,
-  activeProjectTab,
-  getSyncPath,
-  getComponent,
-  setComponent,
-  removeRuntime,
-  rebootstrapPath,
-}: ResetOpenFileRuntimeAfterHostResetOpts): Promise<void> {
-  if (openFiles == null || openFiles.size === 0) {
-    return;
-  }
-  const syncPaths: string[] = [];
-  const seenSyncPaths = new Set<string>();
-  openFiles.forEach((_value, path) => {
-    const current = getComponent(path) ?? {};
-    setComponent(path, {
-      ...current,
-      redux_name: undefined,
-      Editor: undefined,
-    });
-    const syncPath = getSyncPath(path);
-    if (!seenSyncPaths.has(syncPath)) {
-      seenSyncPaths.add(syncPath);
-      syncPaths.push(syncPath);
-    }
-  });
-  for (const syncPath of syncPaths) {
-    await removeRuntime(syncPath);
-  }
-  const activePath =
-    typeof activeProjectTab === "string" &&
-    activeProjectTab.startsWith("editor-")
-      ? misc.tab_to_path(activeProjectTab)
-      : undefined;
-  const pathsToRebootstrap =
-    activePath != null && openFiles.has(activePath)
-      ? [
-          activePath,
-          ...openFiles.keySeq().filter((path) => path !== activePath),
-        ]
-      : openFiles.keySeq().toArray();
-  for (const path of pathsToRebootstrap) {
-    await rebootstrapPath?.(path, {
-      noFocus: path !== activePath,
-    });
-  }
-}
-
-function selectOpenFilesForSyncPath({
-  openFiles,
-  targetSyncPath,
-  getSyncPath,
-}: {
-  openFiles?: Map<string, any>;
-  targetSyncPath: string;
-  getSyncPath: (path: string) => string;
-}): Map<string, any> {
-  if (openFiles == null || openFiles.size === 0) {
-    return Map<string, any>();
-  }
-  let matches = Map<string, any>();
-  openFiles.forEach((value, path) => {
-    if (getSyncPath(path) !== targetSyncPath) {
-      return;
-    }
-    matches = matches.set(path, value);
-  });
-  return matches;
-}
 
 export const QUERIES = {
   project_log: {
