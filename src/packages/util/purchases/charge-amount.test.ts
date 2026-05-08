@@ -78,7 +78,7 @@ describe("charge-amount", () => {
       );
     });
 
-    it("uses credit when available", async () => {
+    it("does not extend negative-balance credit", async () => {
       // Arrange
       //
       const testChargeParams = {
@@ -94,12 +94,10 @@ describe("charge-amount", () => {
 
       // Assert
       //
-      expect(charge.chargeAmount).toEqual(5.0);
-      expect(charge.amountDue).toEqual(3.46);
+      expect(charge.chargeAmount).toEqual(8.46);
+      expect(charge.amountDue).toEqual(8.46);
       expect(charge.cureAmount).toEqual(0.0);
-      expect(charge.minimumPaymentCharge.toFixed(3)).toEqual(
-        (1.543).toFixed(3),
-      );
+      expect(charge.minimumPaymentCharge).toEqual(0.0);
     });
 
     it("rounds amount due to two decimal places", async () => {

@@ -14,8 +14,8 @@ Sign up for a new account:
 4. Write account to the database.
 5. Sign user in (if not being used via the API).
 
-This can also be used via the API, but the client must have a minimum balance
-of at least - $100.
+This can also be used via the API by an already authenticated admin account,
+which skips the captcha flow.
 
 
 API Usage:

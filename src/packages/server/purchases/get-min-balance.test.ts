@@ -20,17 +20,13 @@ describe("test that getMinBalance works", () => {
     expect(toDecimal(await getMinBalance(account_id)).toNumber()).toBe(0);
   });
 
-  it("sets the min_balance field in the database and observes that getMinBalance respects the change", async () => {
+  it("ignores any stored min_balance value in the database", async () => {
     const pool = getPool();
     await pool.query("UPDATE accounts SET min_balance=$1 WHERE account_id=$2", [
       -100,
       account_id,
     ]);
-    // still 0 due to cache
     expect(toDecimal(await getMinBalance(account_id)).toNumber()).toBe(0);
-    // have to pass in pool to avoid cache...
-    expect(toDecimal(await getMinBalance(account_id, pool)).toNumber()).toBe(
-      -100,
-    );
+    expect(toDecimal(await getMinBalance(account_id, pool)).toNumber()).toBe(0);
   });
 });
