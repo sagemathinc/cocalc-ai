@@ -40,7 +40,7 @@ export function groupHostOptions(
   }
   return [
     { label: "Available", options: available },
-    { label: "Unavailable", options: unavailable },
+    { label: "Unavailable in this region", options: unavailable },
   ];
 }
 

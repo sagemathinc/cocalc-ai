@@ -24,7 +24,7 @@ describe("groupHostOptions", () => {
         ],
       },
       {
-        label: "Unavailable",
+        label: "Unavailable in this region",
         options: [
           {
             value: "t2a-standard-4",
