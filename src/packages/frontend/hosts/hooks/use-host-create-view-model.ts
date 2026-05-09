@@ -1,6 +1,6 @@
 import { useMemo } from "@cocalc/frontend/app-framework";
+import type { HostCatalog, HostFundingMode } from "@cocalc/conat/hub/api/hosts";
 import type { FormInstance } from "antd/es/form";
-import type { HostFundingMode } from "@cocalc/conat/hub/api/hosts";
 import type { HostProvider } from "../types";
 import type {
   FieldOptionsMap,
@@ -26,6 +26,7 @@ export type HostCreateViewModel = {
   provider: {
     providerOptions: Array<{ value: HostProvider; label: string }>;
     selectedProvider: HostProvider;
+    catalog?: HostCatalog;
     fields: {
       schema: ProviderFieldSchema;
       options: FieldOptionsMap;

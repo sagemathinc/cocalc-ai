@@ -41,11 +41,20 @@ type GcpPricingFetchOptions = {
   credentials: any;
 };
 
+function isPositiveRate(value: number | undefined): value is number {
+  return value != null && Number.isFinite(value) && value > 0;
+}
+
 const GCP_FAMILY_PATTERNS: Array<{
   family: GcpPricingFamily;
   cpu: RegExp;
   ram: RegExp;
 }> = [
+  {
+    family: "t2a",
+    cpu: /^(?:Spot Preemptible )?T2A Arm Instance Core running in /i,
+    ram: /^(?:Spot Preemptible )?T2A Arm Instance Ram running in /i,
+  },
   {
     family: "t2d",
     cpu: /^(?:Spot Preemptible )?T2D AMD Instance Core running in /i,
@@ -60,6 +69,11 @@ const GCP_FAMILY_PATTERNS: Array<{
     family: "c3",
     cpu: /^(?:Spot Preemptible )?C3 Instance Core running in /i,
     ram: /^(?:Spot Preemptible )?C3 Instance Ram running in /i,
+  },
+  {
+    family: "c3d",
+    cpu: /^(?:Spot Preemptible )?C3D (?:AMD )?Instance Core running in /i,
+    ram: /^(?:Spot Preemptible )?C3D (?:AMD )?Instance Ram running in /i,
   },
 ];
 
@@ -187,10 +201,16 @@ async function fetchBillingSkus(credentials: any): Promise<BillingSku[]> {
   return skus;
 }
 
-export async function fetchGcpCatalogPrices(
-  opts: GcpPricingFetchOptions,
-): Promise<GcpCatalogPrices> {
-  const skus = await fetchBillingSkus(opts.credentials);
+function setRegionalRate(
+  rates: Record<string, number>,
+  region: string,
+  price: number | undefined,
+): void {
+  if (!region || !isPositiveRate(price)) return;
+  rates[region] = price;
+}
+
+export function normalizeGcpBillingSkus(skus: BillingSku[]): GcpCatalogPrices {
   const catalog: GcpCatalogPrices = {
     fetched_at: new Date().toISOString(),
     service_id: COMPUTE_ENGINE_SERVICE_ID,
@@ -205,7 +225,7 @@ export async function fetchGcpCatalogPrices(
     if (usageType !== "OnDemand" && usageType !== "Preemptible") continue;
     const region = getSkuRegion(sku);
     const price = getHourlyRateUsd(sku);
-    if (!region || price == null || !Number.isFinite(price)) continue;
+    if (!region || !isPositiveRate(price)) continue;
     if (!catalog.effective_time && sku.pricingInfo?.[0]?.effectiveTime) {
       catalog.effective_time = sku.pricingInfo[0].effectiveTime;
     }
@@ -213,15 +233,21 @@ export async function fetchGcpCatalogPrices(
     for (const family of GCP_FAMILY_PATTERNS) {
       if (family.cpu.test(description)) {
         const entry = familyRateEntry(catalog, family.family);
-        (usageType === "Preemptible" ? entry.spot_cpu : entry.cpu)[region] =
-          price;
+        setRegionalRate(
+          usageType === "Preemptible" ? entry.spot_cpu : entry.cpu,
+          region,
+          price,
+        );
         matched = true;
         break;
       }
       if (family.ram.test(description)) {
         const entry = familyRateEntry(catalog, family.family);
-        (usageType === "Preemptible" ? entry.spot_ram : entry.ram)[region] =
-          price;
+        setRegionalRate(
+          usageType === "Preemptible" ? entry.spot_ram : entry.ram,
+          region,
+          price,
+        );
         matched = true;
         break;
       }
@@ -230,8 +256,11 @@ export async function fetchGcpCatalogPrices(
     for (const gpu of GCP_GPU_PATTERNS) {
       if (!gpu.pattern.test(description)) continue;
       const entry = gpuRateEntry(catalog, gpu.key);
-      (usageType === "Preemptible" ? entry.spot : entry.on_demand)[region] =
-        price;
+      setRegionalRate(
+        usageType === "Preemptible" ? entry.spot : entry.on_demand,
+        region,
+        price,
+      );
       matched = true;
       break;
     }
@@ -240,10 +269,17 @@ export async function fetchGcpCatalogPrices(
     for (const disk of GCP_DISK_PATTERNS) {
       if (!disk.pattern.test(description)) continue;
       const entry = catalog.disks[disk.key] ?? {};
-      entry[region] = price;
+      setRegionalRate(entry, region, price);
       catalog.disks[disk.key] = entry;
       break;
     }
   }
   return catalog;
+}
+
+export async function fetchGcpCatalogPrices(
+  opts: GcpPricingFetchOptions,
+): Promise<GcpCatalogPrices> {
+  const skus = await fetchBillingSkus(opts.credentials);
+  return normalizeGcpBillingSkus(skus);
 }

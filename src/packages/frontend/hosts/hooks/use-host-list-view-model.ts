@@ -59,6 +59,7 @@ type UseHostListViewModelArgs = {
   setSortDirection: (value: HostSortDirection) => void;
   autoResort: boolean;
   setAutoResort: (value: boolean) => void;
+  catalog?: HostCatalog;
   providerCapabilities?: HostCatalog["provider_capabilities"];
   parallelOps?: {
     status: ParallelOpsWorkerStatus[];
@@ -139,6 +140,7 @@ export const useHostListViewModel = ({
   setSortDirection,
   autoResort,
   setAutoResort,
+  catalog,
   providerCapabilities,
   parallelOps,
   runtimeVersions,
@@ -180,6 +182,7 @@ export const useHostListViewModel = ({
     setSortDirection,
     autoResort,
     setAutoResort,
+    catalog,
     providerCapabilities,
     parallelOps,
     runtimeVersions,

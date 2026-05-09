@@ -21,13 +21,17 @@ import type {
 import type { HostProvider } from "../types";
 import { getDiskTypeOptions } from "../constants";
 import { HostCreateForm } from "./host-create-form";
+import { DiskTypeLabel } from "./disk-type-help";
+import { HostOptionsSelect } from "./host-options-select";
 import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
 import { useHostForm } from "../hooks/use-host-form";
 import { useHostFormValues } from "../hooks/use-host-form-values";
+import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import {
   filterFieldSchemaForCaps,
   getProviderDescriptor,
   getProviderOptions,
+  getProviderPriceEstimate,
   getProviderStorageSupport,
   isNebiusSpotSupported,
 } from "../providers/registry";
@@ -41,6 +45,7 @@ import {
   isBillableHostProvider,
 } from "../utils/funding-mode";
 import { SshTargetLabel } from "./ssh-target-help";
+import { HostPriceBreakdown } from "./host-price-breakdown";
 
 const NEBIUS_IO_M3_GB = 93;
 
@@ -104,6 +109,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const watchedProvider = Form.useWatch("provider", form) as
     | HostProvider
     | undefined;
+  const pricingSettings = useHostPricingSettings();
   const hostProviderId = (host?.machine?.cloud ?? "none") as HostProvider;
   const providerId = isDeprovisioned
     ? (watchedProvider ?? hostProviderId)
@@ -125,6 +131,8 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedGpu,
     selectedSize,
     selectedStorageMode,
+    selectedRegionPreference,
+    selectedPriceDisplay,
   } = useHostFormValues(form);
   const selfHostKind = (selectedSelfHostKind ??
     host?.machine?.metadata?.self_host_kind ??
@@ -159,12 +167,15 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedSize,
     selectedGpu,
     selectedStorageMode,
+    selectedRegionPreference,
+    selectedPriceDisplay,
     enabledProviders,
   });
   const createProviderVm = React.useMemo(
     () => ({
       providerOptions,
       selectedProvider: providerId ?? providerOptions[0]?.value ?? "none",
+      catalog,
       fields: {
         schema: createFieldSchema,
         options: createFieldOptions,
@@ -202,6 +213,53 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       : undefined;
   const providerDescriptor =
     providerId !== "none" ? getProviderDescriptor(providerId) : undefined;
+  const watchedFundingMode = Form.useWatch("funding_mode", form);
+  const livePricingSelection = React.useMemo<ProviderSelection>(
+    () => ({
+      region: selectedRegion,
+      zone: selectedZone,
+      machine_type: selectedMachineType,
+      gpu_type: selectedGpuType,
+      funding_mode: watchedFundingMode,
+      pricing_model: selectedPricingModel,
+      storage_mode: selectedStorageMode,
+      disk_type: selectedDiskType,
+      disk_gb: selectedDiskGb,
+      self_host_kind: selectedSelfHostKind,
+      self_host_mode: selectedSelfHostMode,
+      size: selectedSize,
+      gpu: selectedGpu,
+      price_display: selectedPriceDisplay === "monthly" ? "monthly" : "hourly",
+    }),
+    [
+      selectedDiskGb,
+      selectedDiskType,
+      selectedGpu,
+      selectedGpuType,
+      selectedMachineType,
+      watchedFundingMode,
+      selectedPriceDisplay,
+      selectedPricingModel,
+      selectedRegion,
+      selectedSelfHostKind,
+      selectedSelfHostMode,
+      selectedSize,
+      selectedStorageMode,
+      selectedZone,
+    ],
+  );
+  const livePriceEstimate = React.useMemo(
+    () =>
+      providerId === "gcp" || providerId === "nebius"
+        ? getProviderPriceEstimate(
+            providerId,
+            catalog,
+            livePricingSelection,
+            pricingSettings,
+          )
+        : undefined,
+    [catalog, livePricingSelection, pricingSettings, providerId],
+  );
   const fieldSchema = providerDescriptor
     ? filterFieldSchemaForCaps(providerDescriptor.fields, providerCaps)
     : { primary: [], advanced: [] };
@@ -211,8 +269,12 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedSize = Form.useWatch("size", form);
   const watchedPricingModel = Form.useWatch("pricing_model", form);
-  const watchedFundingMode = Form.useWatch("funding_mode", form);
   const hideAdvanced = providerId === "self-host";
+  const showRegionPreference =
+    canEditMachine &&
+    (providerId === "gcp" || providerId === "nebius") &&
+    fieldSchema.primary.includes("region");
+  const showPriceDisplay = showRegionPreference;
   const showFundingMode =
     providerId !== undefined && isBillableHostProvider(providerId);
   const canEditFundingMode = canEditMachine;
@@ -234,6 +296,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       host?.size ??
       undefined,
     gpu: host?.gpu ? "true" : undefined,
+    pricing_settings: pricingSettings,
   };
   const fieldOptions = providerDescriptor
     ? getProviderOptions(providerId, catalog, selection)
@@ -243,9 +306,14 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     const compatibilityOptions = isDeprovisioned
       ? createFieldOptions
       : fieldOptions;
+    const machineType =
+      watchedMachineType && watchedMachineType.trim()
+        ? watchedMachineType.trim()
+        : undefined;
     const gpuType =
       watchedGpuType && watchedGpuType !== "none" ? watchedGpuType : undefined;
-    if (!gpuType) return null;
+    if (!gpuType && !machineType) return null;
+    const subject = gpuType ? "GPU" : "machine type";
     const regionOption = (compatibilityOptions.region ?? []).find(
       (opt) => opt.value === watchedRegion,
     );
@@ -260,7 +328,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
           return meta?.compatible === true;
         },
       );
-      return { type: "region" as const, compatibleRegions };
+      return { type: "region" as const, compatibleRegions, subject };
     }
     if (!watchedZone) return null;
     const zoneOption = (compatibilityOptions.zone ?? []).find(
@@ -275,13 +343,15 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       const meta = opt.meta as { compatible?: boolean } | undefined;
       return meta?.compatible === true;
     });
-    return { type: "zone" as const, compatibleZones };
+    return { type: "zone" as const, compatibleZones, subject };
   }, [
     createFieldOptions,
+    fieldOptions.machine_type,
     fieldOptions.region,
     fieldOptions.zone,
     isDeprovisioned,
     providerId,
+    watchedMachineType,
     watchedGpuType,
     watchedRegion,
     watchedZone,
@@ -371,6 +441,37 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     "on_demand",
   );
   const showSpotFields = providerId !== "none" && providerId !== "self-host";
+  const showSpotHint =
+    canEditMachine &&
+    selectedRegionPreference === "cheapest" &&
+    watchedPricingModel !== "spot" &&
+    (providerId === "gcp" || (providerId === "nebius" && nebiusSpotSupported));
+  const supportsCatalogPricing =
+    providerId === "gcp" || providerId === "nebius";
+  const priceSelectionComplete = React.useMemo(() => {
+    if (!supportsCatalogPricing) return false;
+    const machineType =
+      `${selectedMachineType ?? watchedMachineType ?? ""}`.trim();
+    const region = `${selectedRegion ?? watchedRegion ?? ""}`.trim();
+    if (!machineType || !region) return false;
+    if ((selectedStorageMode ?? "persistent") === "ephemeral") return true;
+    const diskType = `${selectedDiskType ?? ""}`.trim();
+    return (
+      !!diskType &&
+      typeof selectedDiskGb === "number" &&
+      Number.isFinite(selectedDiskGb) &&
+      selectedDiskGb > 0
+    );
+  }, [
+    selectedDiskGb,
+    selectedDiskType,
+    selectedMachineType,
+    selectedRegion,
+    selectedStorageMode,
+    supportsCatalogPricing,
+    watchedMachineType,
+    watchedRegion,
+  ]);
 
   React.useEffect(() => {
     if (!open) {
@@ -568,12 +669,20 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
         tooltip={tooltip}
         initialValue={fieldOpts[0]?.value}
       >
-        <Select options={fieldOpts} disabled={!fieldOpts.length || isLocked} />
+        <HostOptionsSelect
+          options={fieldOpts}
+          disabled={!fieldOpts.length || isLocked}
+        />
       </Form.Item>
     );
   };
 
-  const disableSave = !!gcpCompatibilityWarning;
+  const pricingUnavailable =
+    isDeprovisioned &&
+    supportsCatalogPricing &&
+    priceSelectionComplete &&
+    !livePriceEstimate;
+  const disableSave = !!gcpCompatibilityWarning || pricingUnavailable;
 
   return (
     <Modal
@@ -643,6 +752,64 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                 />
               </Form.Item>
             )}
+            {showRegionPreference && (
+              <Form.Item
+                name="region_preference"
+                label="Region preference"
+                initialValue="balanced"
+                extra="Sort regions using your approximate location and the current machine pricing."
+              >
+                <Select
+                  options={[
+                    { value: "balanced", label: "Balanced" },
+                    { value: "closest", label: "Closest" },
+                    { value: "cheapest", label: "Cheapest" },
+                  ]}
+                />
+              </Form.Item>
+            )}
+            {showPriceDisplay && (
+              <Form.Item
+                name="price_display"
+                label="Show prices as"
+                initialValue="hourly"
+              >
+                <Select
+                  options={[
+                    { value: "hourly", label: "Hourly" },
+                    { value: "monthly", label: "Monthly" },
+                  ]}
+                />
+              </Form.Item>
+            )}
+            {livePriceEstimate && (
+              <div style={{ marginBottom: 12 }}>
+                <HostPriceBreakdown
+                  estimate={livePriceEstimate}
+                  displayMode={
+                    selectedPriceDisplay === "monthly" ? "monthly" : "hourly"
+                  }
+                />
+              </div>
+            )}
+            {pricingUnavailable && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+                title="This configuration is not available for purchase"
+                description="Pricing is unavailable for this region, machine type, or disk choice, so CoCalc cannot provision it."
+              />
+            )}
+            {showSpotHint && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                title="Spot instances can be cheaper"
+                description="Spot instances can be enabled with the pricing model below."
+              />
+            )}
             {showSpotFields && (
               <>
                 <Form.Item
@@ -691,11 +858,12 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            title="Selected GPU isn't available in this region."
+            title={`Selected ${gcpCompatibilityWarning.subject} isn't available in this region.`}
             description={
               gcpCompatibilityWarning.compatibleRegions.length &&
               !lockRegionZone ? (
                 <Select
+                  popupMatchSelectWidth={false}
                   placeholder="Choose a compatible region"
                   options={gcpCompatibilityWarning.compatibleRegions}
                   onChange={(value) => {
@@ -713,7 +881,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                   }}
                 />
               ) : (
-                "Choose a GPU compatible with the selected region."
+                `Choose a ${gcpCompatibilityWarning.subject} compatible with the selected region.`
               )
             }
           />
@@ -723,11 +891,12 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            title="Selected GPU isn't available in this zone."
+            title={`Selected ${gcpCompatibilityWarning.subject} isn't available in this zone.`}
             description={
               gcpCompatibilityWarning.compatibleZones.length &&
               !lockRegionZone ? (
                 <Select
+                  popupMatchSelectWidth={false}
                   placeholder="Choose a compatible zone"
                   options={gcpCompatibilityWarning.compatibleZones}
                   onChange={(value) => {
@@ -745,7 +914,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                   }}
                 />
               ) : (
-                "Choose a GPU compatible with the selected zone."
+                `Choose a ${gcpCompatibilityWarning.subject} compatible with the selected zone.`
               )
             }
           />
@@ -937,7 +1106,10 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                       ]}
                     />
                   </Form.Item>
-                  <Form.Item label="Disk type" name="disk_type">
+                  <Form.Item
+                    label={<DiskTypeLabel provider={providerId} />}
+                    name="disk_type"
+                  >
                     <Select
                       options={diskTypeOptions}
                       disabled={!diskTypeOptions.length}

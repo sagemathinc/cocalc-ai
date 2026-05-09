@@ -2,6 +2,7 @@ import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import {
   buildCreateHostPayload,
   getGcpMachineTypeOptions,
+  getNebiusRegionOptions,
   getProviderPriceEstimate,
   isNebiusSpotSupported,
 } from "./registry";
@@ -197,12 +198,70 @@ describe("catalog-backed pricing labels", () => {
       zone: "us-west1-a",
       machine_type: "n2d-standard-4",
       pricing_model: "on_demand",
+      price_display: "monthly",
       storage_mode: "persistent",
       disk_type: "balanced",
       disk_gb: 100,
     });
 
-    expect(options[0].label).toContain("/hr");
+    expect(options[0].label).toContain("/mo");
+    expect(options[0].priceLabel).toContain("/mo");
+    expect(options[0].mainLabel).toContain("4 vCPU / 16 GiB");
+    expect(options[0].label).toContain("cpu:4");
+    expect(options[0].label).toContain("ram:16");
+  });
+
+  it("shows globally known GCP machine types even when the current zone cannot provision them", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "machine_types",
+        scope: "zone/us-central1-a",
+        payload: [{ name: "t2a-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-08T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            t2a: {
+              cpu: { "us-central1": 0.03 },
+              ram: { "us-central1": 0.004 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {},
+        },
+      },
+    ]);
+
+    const options = getGcpMachineTypeOptions(catalog, {
+      region: "us-west1",
+      zone: "us-west1-a",
+      pricing_model: "on_demand",
+    });
+
+    expect(options.map((opt) => opt.value)).toEqual([
+      "n2d-standard-4",
+      "t2a-standard-4",
+    ]);
+    expect(
+      options.find((opt) => opt.value === "t2a-standard-4")?.stateLabel,
+    ).toBe("unavailable");
   });
 
   it("returns a provider price estimate for Nebius selections", () => {
@@ -259,5 +318,315 @@ describe("catalog-backed pricing labels", () => {
     expect(estimate?.usd_per_hour).toBeCloseTo(0.114183323, 9);
     expect(estimate?.hourly_label).toContain("/hr");
     expect(estimate?.monthly_label).toContain("/mo");
+  });
+
+  it("returns a provider price estimate for GCP standard persistent disks", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-standard": { "us-west1": 0.00006 },
+          },
+        },
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate("gcp", catalog, {
+      zone: "us-west1-a",
+      machine_type: "n2d-standard-4",
+      pricing_model: "on_demand",
+      storage_mode: "persistent",
+      disk_type: "standard",
+      disk_gb: 100,
+    });
+
+    expect(estimate?.usd_per_hour).toBeCloseTo(0.371, 9);
+  });
+
+  it("blends configured surcharges into displayed provider price estimates", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-standard": { "us-west1": 0.00006 },
+          },
+        },
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate(
+      "gcp",
+      catalog,
+      {
+        zone: "us-west1-a",
+        machine_type: "n2d-standard-4",
+        pricing_model: "on_demand",
+        storage_mode: "persistent",
+        disk_type: "standard",
+        disk_gb: 100,
+      },
+      {
+        project_hosts_gcp_surcharge_percent: 20,
+      },
+    );
+
+    expect(estimate?.usd_per_hour).toBeCloseTo(0.4452, 9);
+    expect(estimate?.notes).toContain("Includes a 20% site surcharge.");
+    expect(
+      estimate?.line_items.reduce((sum, item) => sum + item.usd_per_hour, 0),
+    ).toBeCloseTo(0.4452, 9);
+  });
+
+  it("uses a self-hosted provider charge note for site-funded hosts", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-standard": { "us-west1": 0.00006 },
+          },
+        },
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate("gcp", catalog, {
+      zone: "us-west1-a",
+      machine_type: "n2d-standard-4",
+      funding_mode: "site-funded",
+      pricing_model: "on_demand",
+      storage_mode: "persistent",
+      disk_type: "standard",
+      disk_gb: 100,
+    });
+
+    expect(estimate?.notes).toContain(
+      "Provider network egress and similar cloud charges are billed directly by your cloud provider and are not included in this estimate.",
+    );
+  });
+
+  it("uses a CoCalc-covered network note for account-funded hosts", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-standard": { "us-west1": 0.00006 },
+          },
+        },
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate("gcp", catalog, {
+      zone: "us-west1-a",
+      machine_type: "n2d-standard-4",
+      funding_mode: "account-postpaid",
+      pricing_model: "on_demand",
+      storage_mode: "persistent",
+      disk_type: "standard",
+      disk_gb: 100,
+    });
+
+    expect(estimate?.notes).toContain(
+      "There is no additional CoCalc charge to end users for network egress; any provider egress cost is covered by the site's subscription and cloud billing arrangement.",
+    );
+  });
+
+  it("returns a provider price estimate for Nebius spot GPU selections", () => {
+    const catalog = testCatalog([
+      {
+        kind: "instance_types",
+        scope: "global",
+        payload: [
+          {
+            name: "gpu-h100-80gb-1",
+            platform: "gpu-h100-sxm",
+            platform_label: "H100 NVLink",
+            vcpus: 16,
+            memory_gib: 200,
+            gpus: 1,
+            gpu_label: "NVIDIA H100",
+          },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: [
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. CPU",
+            region: "eu-north1",
+            price_usd: "0.018",
+            unit: "vCPU hour",
+          },
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. RAM",
+            region: "eu-north1",
+            price_usd: "0.0045",
+            unit: "GiB hour",
+          },
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. GPU",
+            region: "eu-north1",
+            price_usd: "0.834",
+            unit: "GPU hour",
+          },
+          {
+            product: "Network SSD IO M3 disk",
+            region: "eu-north1",
+            price_usd: "0.000161111",
+            unit: "GiB hour",
+          },
+        ],
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate("nebius", catalog, {
+      region: "eu-north1",
+      machine_type: "gpu-h100-80gb-1",
+      pricing_model: "spot",
+      storage_mode: "persistent",
+      disk_type: "ssd_io_m3",
+      disk_gb: 93,
+    });
+
+    expect(estimate?.usd_per_hour).toBeCloseTo(2.036983323, 9);
+    expect(estimate?.hourly_label).toContain("/hr");
+  });
+
+  it("labels missing Nebius regional prices explicitly once a machine is selected", () => {
+    const catalog = testCatalog([
+      {
+        kind: "regions",
+        scope: "global",
+        payload: [{ name: "eu-north1" }, { name: "us-central1" }],
+      },
+      {
+        kind: "instance_types",
+        scope: "global",
+        payload: [
+          {
+            name: "gpu-h100-80gb-1",
+            platform: "gpu-h100-sxm",
+            platform_label: "H100 NVLink",
+            vcpus: 16,
+            memory_gib: 200,
+            gpus: 1,
+            gpu_label: "NVIDIA H100",
+          },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: [
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. CPU",
+            region: "eu-north1",
+            price_usd: "0.018",
+            unit: "vCPU hour",
+          },
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. RAM",
+            region: "eu-north1",
+            price_usd: "0.0045",
+            unit: "GiB hour",
+          },
+          {
+            product:
+              "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. GPU",
+            region: "eu-north1",
+            price_usd: "0.834",
+            unit: "GPU hour",
+          },
+        ],
+      },
+    ]);
+
+    const options = getNebiusRegionOptions(catalog, {
+      machine_type: "gpu-h100-80gb-1",
+      pricing_model: "spot",
+    });
+
+    expect(
+      options.find((opt) => opt.value === "eu-north1")?.priceLabel,
+    ).toContain("/hr");
+    expect(options.find((opt) => opt.value === "us-central1")?.stateLabel).toBe(
+      "price unavailable",
+    );
   });
 });

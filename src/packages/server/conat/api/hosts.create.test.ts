@@ -325,6 +325,48 @@ describe("hosts.createHost", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("rejects site-funded cloud hosts when pricing is unavailable", async () => {
+    getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      can_create_hosts: true,
+      funding_mode: "site-funded",
+      has_active_second_factor: true,
+      has_payment_method: false,
+      has_usage_subscription: false,
+      balance: "0",
+      postpaid_unbilled_exposure_usd: "0",
+      postpaid_unbilled_limit_usd: "0",
+      effective_limits: {},
+      dedicated_host_window_usage: {
+        prepaid_5h_usd: "0",
+        prepaid_7d_usd: "0",
+        credit_5h_usd: "0",
+        credit_7d_usd: "0",
+      },
+    }));
+    estimateDedicatedHostRateUsdPerHourMock = jest.fn(async () => undefined);
+
+    const { createHost } = await import("./hosts");
+    await expect(
+      createHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        name: "fresh-gcp",
+        region: "us-west1",
+        size: "e2-standard-2",
+        pricing_model: "spot",
+        machine: { cloud: "gcp" },
+      }),
+    ).rejects.toMatchObject({
+      message: "unable to determine the create hourly rate for provider 'gcp'",
+      code: "host_pricing_unavailable",
+    });
+    expect(queryMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO project_hosts"),
+      expect.anything(),
+    );
+  });
+
   it("creates postpaid cloud hosts with a credit-funded purchase session", async () => {
     getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
       account_id: ACCOUNT_ID,
@@ -576,5 +618,73 @@ describe("hosts.startHostInternal", () => {
     expect(
       reconcileDedicatedHostPurchaseSessionForAccountMock,
     ).not.toHaveBeenCalled();
+  });
+
+  it("rejects site-funded starts when pricing is unavailable", async () => {
+    let selectCount = 0;
+    estimateDedicatedHostRateUsdPerHourMock = jest.fn(async () => undefined);
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (
+        sql.includes(
+          "SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL",
+        )
+      ) {
+        selectCount += 1;
+        return {
+          rows: [
+            {
+              id: params[0],
+              name: "existing-gcp",
+              region: "us-west1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                size: "e2-standard-2",
+                pricing_model: "on_demand",
+                desired_state: "stopped",
+                machine: { cloud: "gcp", machine_type: "e2-standard-2" },
+                billing: {
+                  funding_mode: "site-funded",
+                  started_at: "2026-05-07T00:00:00.000Z",
+                },
+              },
+              last_seen: null,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT metadata FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              metadata: {
+                owner: ACCOUNT_ID,
+                size: "e2-standard-2",
+                pricing_model: "on_demand",
+                desired_state: "stopped",
+                machine: { cloud: "gcp", machine_type: "e2-standard-2" },
+                billing: {
+                  funding_mode: "site-funded",
+                  started_at: "2026-05-07T00:00:00.000Z",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { startHostInternal } = await import("./hosts");
+    await expect(
+      startHostInternal({
+        account_id: ACCOUNT_ID,
+        id: "host-1",
+      }),
+    ).rejects.toMatchObject({
+      message: "unable to determine the start hourly rate for provider 'gcp'",
+      code: "host_pricing_unavailable",
+    });
+    expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
   });
 });

@@ -6,11 +6,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import type { FormInstance } from "antd";
 import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
-import {
-  mapCloudRegionToR2Region,
-  mapCountryRegionToR2Region,
-  rankR2RegionDistance,
-} from "@cocalc/util/consts";
+import { mapCountryRegionToR2Region } from "@cocalc/util/consts";
 import type { HostProvider, HostRecommendation } from "../types";
 import { buildCatalogSummary } from "../utils/normalize-catalog";
 import {
@@ -27,6 +23,12 @@ import {
   type ProviderFieldSchema,
   type ProviderPriceEstimate,
 } from "../providers/registry";
+import {
+  markRecommendedRegionOption,
+  sortRegionOptionsByPreference,
+  type RegionPreference,
+} from "../utils/region-ranking";
+import { useHostPricingSettings } from "./use-host-pricing-settings";
 
 type SelectOption = { value: string; disabled?: boolean };
 
@@ -46,6 +48,8 @@ type UseHostFormArgs = {
   selectedSize?: string;
   selectedGpu?: string;
   selectedStorageMode?: string;
+  selectedRegionPreference?: string;
+  selectedPriceDisplay?: string;
   enabledProviders: HostProvider[];
 };
 
@@ -84,6 +88,8 @@ export const useHostForm = ({
   selectedSize,
   selectedGpu,
   selectedStorageMode,
+  selectedRegionPreference,
+  selectedPriceDisplay,
   enabledProviders,
 }: UseHostFormArgs) => {
   const prevProviderRef = useRef<HostProvider | undefined>(undefined);
@@ -109,6 +115,7 @@ export const useHostForm = ({
       ),
     [provider, providerCaps],
   );
+  const pricingSettings = useHostPricingSettings();
   const selection: ProviderSelection = useMemo(
     () => ({
       region: selectedRegion,
@@ -123,6 +130,8 @@ export const useHostForm = ({
       self_host_mode: selectedSelfHostMode,
       size: selectedSize,
       gpu: selectedGpu,
+      price_display: selectedPriceDisplay === "monthly" ? "monthly" : "hourly",
+      pricing_settings: pricingSettings,
     }),
     [
       selectedRegion,
@@ -137,29 +146,31 @@ export const useHostForm = ({
       selectedSelfHostMode,
       selectedSize,
       selectedGpu,
+      selectedPriceDisplay,
+      pricingSettings,
     ],
   );
+  const regionPreference: RegionPreference =
+    selectedRegionPreference === "closest" ||
+    selectedRegionPreference === "cheapest"
+      ? selectedRegionPreference
+      : "balanced";
   const fieldOptions: FieldOptionsMap = useMemo(() => {
     const options = getProviderOptions(provider, catalog, selection);
     const regionOptions = options.region ?? [];
     if (regionOptions.length <= 1) return options;
-    const sortedRegionOptions = [...regionOptions].sort((a, b) => {
-      const aDistance = rankR2RegionDistance(
-        preferredR2Region,
-        mapCloudRegionToR2Region(a.value),
-      );
-      const bDistance = rankR2RegionDistance(
-        preferredR2Region,
-        mapCloudRegionToR2Region(b.value),
-      );
-      if (aDistance !== bDistance) return aDistance - bDistance;
-      return a.label.localeCompare(b.label) || a.value.localeCompare(b.value);
-    });
+    const sortedRegionOptions = markRecommendedRegionOption(
+      sortRegionOptionsByPreference({
+        options: regionOptions,
+        preference: regionPreference,
+        preferredRegion: preferredR2Region,
+      }),
+    );
     return {
       ...options,
       region: sortedRegionOptions,
     };
-  }, [provider, catalog, selection, preferredR2Region]);
+  }, [provider, catalog, selection, preferredR2Region, regionPreference]);
   const fieldLabels = useMemo(
     () => ({
       ...FIELD_LABELS,
@@ -204,8 +215,9 @@ export const useHostForm = ({
   const showDiskFields =
     supportsPersistentStorage && selectedStorageMode !== "ephemeral";
   const priceEstimate: ProviderPriceEstimate | undefined = useMemo(
-    () => getProviderPriceEstimate(provider, catalog, selection),
-    [provider, catalog, selection],
+    () =>
+      getProviderPriceEstimate(provider, catalog, selection, pricingSettings),
+    [provider, catalog, pricingSettings, selection],
   );
 
   const catalogSummary = useMemo(

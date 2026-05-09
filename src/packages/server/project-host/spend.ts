@@ -25,9 +25,12 @@ import {
   toDecimal,
   type MoneyValue,
 } from "@cocalc/util/money";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
+  applyDedicatedHostSurchargeToHourlyRate,
   estimateGcpCatalogRateUsdPerHour,
   estimateNebiusCatalogRateUsdPerHour,
+  getDedicatedHostSurchargeFraction,
   type GcpCatalogPrices,
   type NebiusCatalogInstanceType,
   type NebiusCatalogPriceItem,
@@ -641,7 +644,11 @@ async function estimateGcpRateUsdPerHour(
   input: DedicatedHostRateEstimateInput,
 ): Promise<MoneyValue | undefined> {
   const data = await loadGcpPriceCatalog();
-  const estimate = estimateGcpCatalogRateUsdPerHour(data, input);
+  const settings = await getServerSettings();
+  const estimate = applyDedicatedHostSurchargeToHourlyRate(
+    estimateGcpCatalogRateUsdPerHour(data, input),
+    getDedicatedHostSurchargeFraction("gcp", settings),
+  );
   return estimate == null ? undefined : moneyToDbString(estimate);
 }
 
@@ -675,15 +682,19 @@ async function estimateNebiusRateUsdPerHour(
     (entry) => entry.name === machineType,
   );
   if (!instance) return undefined;
-  const estimate = estimateNebiusCatalogRateUsdPerHour({
-    prices,
-    region,
-    pricing_model: input.pricing_model,
-    instance,
-    disk_type: input.disk_type,
-    disk_gb: input.disk_gb,
-    storage_mode: input.storage_mode,
-  });
+  const settings = await getServerSettings();
+  const estimate = applyDedicatedHostSurchargeToHourlyRate(
+    estimateNebiusCatalogRateUsdPerHour({
+      prices,
+      region,
+      pricing_model: input.pricing_model,
+      instance,
+      disk_type: input.disk_type,
+      disk_gb: input.disk_gb,
+      storage_mode: input.storage_mode,
+    }),
+    getDedicatedHostSurchargeFraction("nebius", settings),
+  );
   return estimate == null ? undefined : moneyToDbString(estimate);
 }
 

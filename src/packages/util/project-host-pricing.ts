@@ -4,17 +4,22 @@
  */
 
 export const SUPPORTED_GCP_MACHINE_TYPE_PREFIXES = [
+  "t2a-standard-",
   "t2d-standard-",
   "n2d-standard-",
   "n2d-highmem-",
+  "c3-highcpu-",
   "c3-standard-",
   "c3-highmem-",
+  "c3d-standard-",
+  "c3d-highcpu-",
+  "c3d-highmem-",
 ] as const;
 
 export type SupportedGcpMachineTypePrefix =
   (typeof SUPPORTED_GCP_MACHINE_TYPE_PREFIXES)[number];
 
-export type GcpPricingFamily = "t2d" | "n2d" | "c3";
+export type GcpPricingFamily = "t2a" | "t2d" | "n2d" | "c3" | "c3d";
 
 export type GcpPriceRateMap = Record<string, number>;
 
@@ -50,10 +55,32 @@ export interface GcpCatalogPrices {
 
 export type HostPricingModel = "on_demand" | "spot";
 
+export type HostPriceBreakdownItemKey = "vm" | "gpu" | "disk" | "public_ipv4";
+
+export type HostPriceBreakdownItem = {
+  key: HostPriceBreakdownItemKey;
+  label: string;
+  usd_per_hour: number;
+};
+
+export type HostPriceBreakdown = {
+  items: HostPriceBreakdownItem[];
+  total_usd_per_hour: number;
+};
+
+export type DedicatedHostPricedProvider = "gcp" | "nebius";
+
+export type DedicatedHostSurchargeSettings = {
+  project_hosts_gcp_surcharge_percent?: number | null;
+  project_hosts_nebius_surcharge_percent?: number | null;
+};
+
 export type GcpCatalogRateEstimateInput = {
   region?: string | null;
   zone?: string | null;
   machine_type?: string | null;
+  cpu_count?: number | null;
+  memory_gib?: number | null;
   disk_gb?: number | null;
   disk_type?: string | null;
   storage_mode?: string | null;
@@ -79,13 +106,85 @@ export type NebiusCatalogInstanceType = {
   gpu_label?: string | null;
 };
 
+const GCP_PUBLIC_IPV4_HOURLY_USD = {
+  on_demand: 0.005,
+  spot: 0.0025,
+} as const;
+
+function normalizeSurchargeFraction(value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return numeric / 100;
+}
+
+export function getDedicatedHostSurchargeFraction(
+  provider: DedicatedHostPricedProvider,
+  settings?: DedicatedHostSurchargeSettings | null,
+): number {
+  if (provider === "gcp") {
+    return normalizeSurchargeFraction(
+      settings?.project_hosts_gcp_surcharge_percent,
+    );
+  }
+  return normalizeSurchargeFraction(
+    settings?.project_hosts_nebius_surcharge_percent,
+  );
+}
+
+export function applyDedicatedHostSurchargeToBreakdown(
+  breakdown: HostPriceBreakdown | undefined,
+  surchargeFraction?: number | null,
+): HostPriceBreakdown | undefined {
+  if (!breakdown) return undefined;
+  const fraction =
+    typeof surchargeFraction === "number" && Number.isFinite(surchargeFraction)
+      ? surchargeFraction
+      : 0;
+  if (fraction <= 0) return breakdown;
+  const factor = 1 + fraction;
+  const items = breakdown.items.map((item) => ({
+    ...item,
+    usd_per_hour: item.usd_per_hour * factor,
+  }));
+  return {
+    items,
+    total_usd_per_hour: breakdown.total_usd_per_hour * factor,
+  };
+}
+
+export function applyDedicatedHostSurchargeToHourlyRate(
+  rate: number | undefined,
+  surchargeFraction?: number | null,
+): number | undefined {
+  if (rate == null || !Number.isFinite(rate)) return undefined;
+  const fraction =
+    typeof surchargeFraction === "number" && Number.isFinite(surchargeFraction)
+      ? surchargeFraction
+      : 0;
+  if (fraction <= 0) return rate;
+  return rate * (1 + fraction);
+}
+
+function isNebiusGpuProductLabel(value?: string | null): boolean {
+  return /^(?:preemptible\s+)?nvidia\b/i.test(`${value ?? ""}`.trim());
+}
+
+function isNebiusCpuProductLabel(value?: string | null): boolean {
+  return /^(?:preemptible\s+)?non-gpu\b/i.test(`${value ?? ""}`.trim());
+}
+
 const GCP_MACHINE_TYPE_FAMILY_RULES: Array<{
   family: GcpPricingFamily;
   prefixes: readonly SupportedGcpMachineTypePrefix[];
 }> = [
+  { family: "t2a", prefixes: ["t2a-standard-"] },
   { family: "t2d", prefixes: ["t2d-standard-"] },
   { family: "n2d", prefixes: ["n2d-standard-", "n2d-highmem-"] },
-  { family: "c3", prefixes: ["c3-standard-", "c3-highmem-"] },
+  { family: "c3", prefixes: ["c3-highcpu-", "c3-standard-", "c3-highmem-"] },
+  {
+    family: "c3d",
+    prefixes: ["c3d-standard-", "c3d-highcpu-", "c3d-highmem-"],
+  },
 ];
 
 export function isSupportedCatalogGcpMachineType(
@@ -135,7 +234,11 @@ export function gcpMemoryGiBForMachineType(
   const cpu = gcpCpuCountForMachineType(name);
   if (!cpu) return undefined;
   const value = `${name ?? ""}`.trim().toLowerCase();
-  const gibPerCpu = value.includes("-highmem-") ? 8 : 4;
+  const gibPerCpu = value.includes("-highmem-")
+    ? 8
+    : value.includes("-highcpu-")
+      ? 2
+      : 4;
   return cpu * gibPerCpu;
 }
 
@@ -184,6 +287,13 @@ export function estimateGcpCatalogRateUsdPerHour(
   catalog: GcpCatalogPrices | undefined,
   input: GcpCatalogRateEstimateInput,
 ): number | undefined {
+  return estimateGcpCatalogRateBreakdown(catalog, input)?.total_usd_per_hour;
+}
+
+export function estimateGcpCatalogRateBreakdown(
+  catalog: GcpCatalogPrices | undefined,
+  input: GcpCatalogRateEstimateInput,
+): HostPriceBreakdown | undefined {
   const region =
     `${input.region ?? ""}`.trim() || gcpRegionFromZone(input.zone) || "";
   const machineType = `${input.machine_type ?? ""}`.trim();
@@ -201,8 +311,14 @@ export function estimateGcpCatalogRateUsdPerHour(
     pricingModel === "spot" ? familyEntry.spot_ram : familyEntry.ram,
     region,
   );
-  const cpus = gcpCpuCountForMachineType(machineType);
-  const memoryGiB = gcpMemoryGiBForMachineType(machineType);
+  const cpus =
+    typeof input.cpu_count === "number" && Number.isFinite(input.cpu_count)
+      ? input.cpu_count
+      : gcpCpuCountForMachineType(machineType);
+  const memoryGiB =
+    typeof input.memory_gib === "number" && Number.isFinite(input.memory_gib)
+      ? input.memory_gib
+      : gcpMemoryGiBForMachineType(machineType);
   if (
     !isFinitePositiveNumber(cpuRate) ||
     !isFinitePositiveNumber(ramRate) ||
@@ -211,7 +327,13 @@ export function estimateGcpCatalogRateUsdPerHour(
   ) {
     return undefined;
   }
-  let total = cpuRate * cpus + ramRate * memoryGiB;
+  const items: HostPriceBreakdownItem[] = [
+    {
+      key: "vm",
+      label: "VM",
+      usd_per_hour: cpuRate * cpus + ramRate * memoryGiB,
+    },
+  ];
   const gpuType = `${input.gpu_type ?? ""}`.trim() as GcpGpuCatalogKey;
   const gpuCount = Number(input.gpu_count ?? 0);
   if (gpuType && gpuCount > 0) {
@@ -221,16 +343,32 @@ export function estimateGcpCatalogRateUsdPerHour(
       region,
     );
     if (!isFinitePositiveNumber(gpuRate)) return undefined;
-    total += gpuRate * gpuCount;
+    items.push({
+      key: "gpu",
+      label: "GPU",
+      usd_per_hour: gpuRate * gpuCount,
+    });
   }
   const diskType = gcpDiskCatalogKeyFromSelection(input);
   const diskGb = Number(input.disk_gb ?? 0);
   if (diskType && diskGb > 0) {
     const diskRate = readRate(catalog.disks?.[diskType], region);
     if (!isFinitePositiveNumber(diskRate)) return undefined;
-    total += diskRate * diskGb;
+    items.push({
+      key: "disk",
+      label: "Persistent disk",
+      usd_per_hour: diskRate * diskGb,
+    });
   }
-  return total;
+  items.push({
+    key: "public_ipv4",
+    label: "Public IPv4",
+    usd_per_hour: GCP_PUBLIC_IPV4_HOURLY_USD[pricingModel],
+  });
+  return {
+    items,
+    total_usd_per_hour: items.reduce((sum, item) => sum + item.usd_per_hour, 0),
+  };
 }
 
 export function normalizeNebiusPricingToken(value: string): string {
@@ -344,10 +482,10 @@ function selectNebiusFamilyRate(opts: {
   }
   for (const [family, items] of families) {
     if ((opts.instance.gpus ?? 0) > 0) {
-      if (!/^nvidia\b/i.test(items[0]?.product ?? "")) continue;
+      if (!isNebiusGpuProductLabel(items[0]?.product)) continue;
       if (!matchesNebiusPriceFamily(opts.instance, family)) continue;
     } else {
-      if (!/^non-gpu\b/i.test(items[0]?.product ?? "")) continue;
+      if (!isNebiusCpuProductLabel(items[0]?.product)) continue;
       if (!matchesNebiusPriceFamily(opts.instance, family)) continue;
     }
     return {
@@ -391,6 +529,18 @@ export function estimateNebiusCatalogRateUsdPerHour(opts: {
   disk_gb?: number | null;
   storage_mode?: string | null;
 }): number | undefined {
+  return estimateNebiusCatalogRateBreakdown(opts)?.total_usd_per_hour;
+}
+
+export function estimateNebiusCatalogRateBreakdown(opts: {
+  prices: NebiusCatalogPriceItem[];
+  region?: string | null;
+  pricing_model?: HostPricingModel | null;
+  instance?: NebiusCatalogInstanceType | null;
+  disk_type?: string | null;
+  disk_gb?: number | null;
+  storage_mode?: string | null;
+}): HostPriceBreakdown | undefined {
   const region = `${opts.region ?? ""}`.trim();
   const instance = opts.instance ?? undefined;
   if (!region || !instance) return undefined;
@@ -406,12 +556,22 @@ export function estimateNebiusCatalogRateUsdPerHour(opts: {
   ) {
     return undefined;
   }
-  let total =
-    family.cpuRate * Number(instance.vcpus ?? 0) +
-    family.ramRate * Number(instance.memory_gib ?? 0);
+  const items: HostPriceBreakdownItem[] = [
+    {
+      key: "vm",
+      label: "VM",
+      usd_per_hour:
+        family.cpuRate * Number(instance.vcpus ?? 0) +
+        family.ramRate * Number(instance.memory_gib ?? 0),
+    },
+  ];
   if ((instance.gpus ?? 0) > 0) {
     if (!isFinitePositiveNumber(family.gpuRate)) return undefined;
-    total += family.gpuRate * Number(instance.gpus ?? 0);
+    items.push({
+      key: "gpu",
+      label: "GPU",
+      usd_per_hour: family.gpuRate * Number(instance.gpus ?? 0),
+    });
   }
   if (`${opts.storage_mode ?? "persistent"}`.trim() === "persistent") {
     const diskGb = Number(opts.disk_gb ?? 0);
@@ -426,8 +586,15 @@ export function estimateNebiusCatalogRateUsdPerHour(opts: {
         ),
       );
       if (!isFinitePositiveNumber(diskRate)) return undefined;
-      total += diskRate * diskGb;
+      items.push({
+        key: "disk",
+        label: "Persistent disk",
+        usd_per_hour: diskRate * diskGb,
+      });
     }
   }
-  return total;
+  return {
+    items,
+    total_usd_per_hour: items.reduce((sum, item) => sum + item.usd_per_hour, 0),
+  };
 }

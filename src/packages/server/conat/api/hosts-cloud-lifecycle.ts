@@ -154,21 +154,6 @@ async function resolveBillableHostSessionConfig({
   if (!isBillableDedicatedHostCloud(provider)) {
     return undefined;
   }
-  const snapshot = applyDedicatedHostFundingModeOverride(
-    await getDedicatedHostPolicySnapshotForAccount({
-      account_id,
-    }),
-    funding_mode_override,
-  );
-  if (snapshot.funding_mode === "site-funded") {
-    return { funding_mode: "site-funded" };
-  }
-  const funding_lane = selectDedicatedHostFundingLane(snapshot);
-  if (!funding_lane) {
-    throw new Error(
-      `dedicated-host funding is not currently available for account ${account_id}`,
-    );
-  }
   const hourly_cost_usd = await estimateDedicatedHostRateUsdPerHour({
     provider,
     region,
@@ -182,8 +167,26 @@ async function resolveBillableHostSessionConfig({
     pricing_model,
   });
   if (!hourly_cost_usd) {
+    throw Object.assign(
+      new Error(
+        `unable to determine the ${action} hourly rate for provider '${provider}'`,
+      ),
+      { code: "host_pricing_unavailable" },
+    );
+  }
+  const snapshot = applyDedicatedHostFundingModeOverride(
+    await getDedicatedHostPolicySnapshotForAccount({
+      account_id,
+    }),
+    funding_mode_override,
+  );
+  if (snapshot.funding_mode === "site-funded") {
+    return { funding_mode: "site-funded" };
+  }
+  const funding_lane = selectDedicatedHostFundingLane(snapshot);
+  if (!funding_lane) {
     throw new Error(
-      `unable to determine the ${action} hourly rate for provider '${provider}'`,
+      `dedicated-host funding is not currently available for account ${account_id}`,
     );
   }
   if (snapshot.funding_mode === "account-prepaid") {

@@ -630,6 +630,8 @@ export const useHostsPageViewModel = () => {
     selectedGpu,
     selectedSize,
     selectedStorageMode,
+    selectedRegionPreference,
+    selectedPriceDisplay,
   } = useHostFormValues(form);
 
   const {
@@ -1528,6 +1530,8 @@ export const useHostsPageViewModel = () => {
     selectedGpu,
     selectedSize,
     selectedStorageMode,
+    selectedRegionPreference,
+    selectedPriceDisplay,
     enabledProviders,
   });
 
@@ -1554,6 +1558,7 @@ export const useHostsPageViewModel = () => {
     provider: {
       providerOptions,
       selectedProvider: selectedProvider ?? providerOptions[0]?.value ?? "none",
+      catalog,
       fields: {
         schema: fieldSchema,
         options: fieldOptions,
@@ -1661,6 +1666,7 @@ export const useHostsPageViewModel = () => {
     setSortDirection,
     autoResort,
     setAutoResort,
+    catalog: catalog ?? selfHostCatalog,
     providerCapabilities:
       catalog?.provider_capabilities ?? selfHostCatalog?.provider_capabilities,
     parallelOps: showParallelLimits ? parallelOps : undefined,

@@ -16,7 +16,9 @@ import {
   R2_REGION_LABELS,
 } from "@cocalc/util/consts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
+import { isNebiusSpotSupported } from "../providers/registry";
 import type { HostFieldId } from "../providers/registry";
+import { HostOptionsSelect } from "./host-options-select";
 import { SshTargetLabel } from "./ssh-target-help";
 
 const MIN_DISK_SIZE = 50;
@@ -43,15 +45,32 @@ export const HostCreateProviderFields: React.FC<
   const watchedMachineType = Form.useWatch("machine_type", form);
   const watchedSize = Form.useWatch("size", form);
   const watchedGpuType = Form.useWatch("gpu_type", form);
+  const watchedPricingModel = Form.useWatch("pricing_model", form);
   const watchedDisk = Form.useWatch("disk", form);
   const watchedDiskType = Form.useWatch("disk_type", form);
   const watchedSelfHostKind = Form.useWatch("self_host_kind", form);
   const watchedSelfHostMode = Form.useWatch("self_host_mode", form);
   const watchedSelfHostTarget = Form.useWatch("self_host_ssh_target", form);
+  const watchedRegionPreference = Form.useWatch("region_preference", form);
+  const showRegionPreference =
+    (selectedProvider === "gcp" || selectedProvider === "nebius") &&
+    schema.primary.includes("region");
+  const showPriceDisplay = showRegionPreference;
   const selfHostAlphaEnabled = !!useTypedRedux(
     "customize",
     "project_hosts_self_host_alpha_enabled",
   );
+  const nebiusSpotSupported = React.useMemo(
+    () =>
+      selectedProvider !== "nebius" ||
+      isNebiusSpotSupported(options.machine_type, watchedMachineType),
+    [options.machine_type, selectedProvider, watchedMachineType],
+  );
+  const showSpotHint =
+    watchedRegionPreference === "cheapest" &&
+    watchedPricingModel !== "spot" &&
+    (selectedProvider === "gcp" ||
+      (selectedProvider === "nebius" && nebiusSpotSupported));
   const defaultDiskType =
     selectedProvider === "nebius" ? "ssd_io_m3" : undefined;
   React.useEffect(() => {
@@ -88,9 +107,14 @@ export const HostCreateProviderFields: React.FC<
   }, [diskValue, form, isNebiusIoM3, normalizeDiskValue]);
   const gcpCompatibilityWarning = React.useMemo(() => {
     if (selectedProvider !== "gcp") return null;
+    const machineType =
+      watchedMachineType && watchedMachineType.trim()
+        ? watchedMachineType.trim()
+        : undefined;
     const gpuType =
       watchedGpuType && watchedGpuType !== "none" ? watchedGpuType : undefined;
-    if (!gpuType) return null;
+    if (!gpuType && !machineType) return null;
+    const subject = gpuType ? "GPU" : "machine type";
     const regionOption = (options.region ?? []).find(
       (opt) => opt.value === watchedRegion,
     );
@@ -103,7 +127,7 @@ export const HostCreateProviderFields: React.FC<
         const meta = opt.meta as { compatible?: boolean } | undefined;
         return meta?.compatible === true;
       });
-      return { type: "region" as const, compatibleRegions };
+      return { type: "region" as const, compatibleRegions, subject };
     }
     if (!watchedZone) return null;
     const zoneOption = (options.zone ?? []).find(
@@ -118,11 +142,13 @@ export const HostCreateProviderFields: React.FC<
       const meta = opt.meta as { compatible?: boolean } | undefined;
       return meta?.compatible === true;
     });
-    return { type: "zone" as const, compatibleZones };
+    return { type: "zone" as const, compatibleZones, subject };
   }, [
+    options.machine_type,
     options.region,
     options.zone,
     selectedProvider,
+    watchedMachineType,
     watchedGpuType,
     watchedRegion,
     watchedZone,
@@ -196,7 +222,10 @@ export const HostCreateProviderFields: React.FC<
         tooltip={tooltip}
         initialValue={fieldOptions[0]?.value}
       >
-        <Select options={fieldOptions} disabled={!fieldOptions.length} />
+        <HostOptionsSelect
+          options={fieldOptions}
+          disabled={!fieldOptions.length}
+        />
       </Form.Item>
     );
     if (field === "region" && selectedProvider !== "self-host") {
@@ -228,15 +257,55 @@ export const HostCreateProviderFields: React.FC<
           <Select options={providerOptions} onChange={onProviderChange} />
         </Form.Item>
       )}
+      {showRegionPreference && (
+        <Form.Item
+          name="region_preference"
+          label="Region preference"
+          initialValue="balanced"
+          extra="Sort regions using your approximate location and the current machine pricing."
+        >
+          <Select
+            options={[
+              { value: "balanced", label: "Balanced" },
+              { value: "closest", label: "Closest" },
+              { value: "cheapest", label: "Cheapest" },
+            ]}
+          />
+        </Form.Item>
+      )}
+      {showPriceDisplay && (
+        <Form.Item
+          name="price_display"
+          label="Show prices as"
+          initialValue="hourly"
+        >
+          <Select
+            options={[
+              { value: "hourly", label: "Hourly" },
+              { value: "monthly", label: "Monthly" },
+            ]}
+          />
+        </Form.Item>
+      )}
+      {showSpotHint && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          title="Spot instances can be cheaper"
+          description="Spot instances can be enabled under Advanced options."
+        />
+      )}
       {gcpCompatibilityWarning?.type === "region" && (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          title="Selected GPU isn't available in this region."
+          title={`Selected ${gcpCompatibilityWarning.subject} isn't available in this region.`}
           description={
             gcpCompatibilityWarning.compatibleRegions.length ? (
               <Select
+                popupMatchSelectWidth={false}
                 placeholder="Choose a compatible region"
                 options={gcpCompatibilityWarning.compatibleRegions}
                 onChange={(value) => {
@@ -254,7 +323,7 @@ export const HostCreateProviderFields: React.FC<
                 }}
               />
             ) : (
-              "Try a different GPU."
+              `Try a different ${gcpCompatibilityWarning.subject}.`
             )
           }
         />
@@ -264,10 +333,11 @@ export const HostCreateProviderFields: React.FC<
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          title="Selected GPU isn't available in this zone."
+          title={`Selected ${gcpCompatibilityWarning.subject} isn't available in this zone.`}
           description={
             gcpCompatibilityWarning.compatibleZones.length ? (
               <Select
+                popupMatchSelectWidth={false}
                 placeholder="Choose a compatible zone"
                 options={gcpCompatibilityWarning.compatibleZones}
                 onChange={(value) => {
@@ -283,7 +353,7 @@ export const HostCreateProviderFields: React.FC<
                 }}
               />
             ) : (
-              "Try a different region to use this GPU."
+              `Try a different region to use this ${gcpCompatibilityWarning.subject}.`
             )
           }
         />
