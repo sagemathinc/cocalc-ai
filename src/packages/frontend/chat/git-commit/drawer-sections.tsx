@@ -23,7 +23,7 @@ import {
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { Icon, TimeAgo, Tooltip } from "@cocalc/frontend/components";
 import { COLORS } from "@cocalc/util/theme";
-import type { ReactNode, RefObject } from "react";
+import { memo, type ReactNode, type RefObject } from "react";
 import { Virtuoso } from "react-virtuoso";
 import { DiffFileSection } from "./diff-components";
 import { getRenderedDiffLineLimit } from "./diff-find";
@@ -48,6 +48,7 @@ import type { GitReviewCommentV2 } from "../git-review-store";
 const CARD_BORDER_COLOR = "#d9d9d9";
 const CARD_SHADOW = "0 1px 2px rgba(0,0,0,0.06)";
 export const GIT_DIFF_LIST_FOOTER_SPACER_HEIGHT = 72;
+const EMPTY_GIT_REVIEW_COMMENTS: GitReviewCommentV2[] = [];
 
 type GitCommitDrawerTitleProps = {
   nonRepoError: string;
@@ -984,7 +985,8 @@ export function GitChangedFilesPanel({
       >
         {files.map((file, idx) => {
           const sectionId = buildGitReviewFileSectionId(file.path, idx);
-          const fileComments = inlineCommentsByFile.get(file.path) ?? [];
+          const fileComments =
+            inlineCommentsByFile.get(file.path) ?? EMPTY_GIT_REVIEW_COMMENTS;
           return (
             <Button
               key={`file-index-${sectionId}`}
@@ -1038,7 +1040,7 @@ type GitDiffFilesPanelProps = {
   activeDiffFindMatch?: GitDiffFindMatch;
 };
 
-export function GitDiffFilesPanel({
+export const GitDiffFilesPanel = memo(function GitDiffFilesPanel({
   files,
   drawerScrollParent,
   virtuosoRef,
@@ -1077,7 +1079,8 @@ export function GitDiffFilesPanel({
       virtuosoRef={virtuosoRef}
       itemContent={(idx, file) => {
         const sectionId = buildGitReviewFileSectionId(file.path, idx);
-        const fileComments = inlineCommentsByFile.get(file.path) ?? [];
+        const fileComments =
+          inlineCommentsByFile.get(file.path) ?? EMPTY_GIT_REVIEW_COMMENTS;
         return (
           <DiffFileSection
             file={file}
@@ -1125,7 +1128,7 @@ export function GitDiffFilesPanel({
       }}
     />
   );
-}
+});
 
 function DiffVirtualizedList({
   files,
