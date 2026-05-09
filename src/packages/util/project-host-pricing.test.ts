@@ -5,10 +5,16 @@ import {
   estimateNebiusCatalogRateBreakdown,
   estimateNebiusCatalogRateUsdPerHour,
   getDedicatedHostSurchargeFraction,
+  isSupportedCatalogGcpMachineType,
   type GcpCatalogPrices,
 } from "./project-host-pricing";
 
 describe("project host pricing", () => {
+  it("filters out local-SSD GCP machine variants from the frozen catalog", () => {
+    expect(isSupportedCatalogGcpMachineType("c3d-standard-8")).toBe(true);
+    expect(isSupportedCatalogGcpMachineType("c3d-standard-8-lssd")).toBe(false);
+  });
+
   it("estimates GCP hourly rates from normalized catalog pricing", () => {
     const catalog: GcpCatalogPrices = {
       fetched_at: "2026-05-08T00:00:00.000Z",

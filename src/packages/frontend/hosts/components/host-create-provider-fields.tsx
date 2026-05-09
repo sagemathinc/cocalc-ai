@@ -21,7 +21,9 @@ import { getDiskTypeOptions } from "../constants";
 import { isNebiusSpotSupported } from "../providers/registry";
 import type { HostFieldId } from "../providers/registry";
 import {
+  getMachineTypeSortOptions,
   HostOptionsSelect,
+  type MachineTypeSortMode,
   sortMachineTypeOptions,
 } from "./host-options-select";
 import { SshTargetLabel } from "./ssh-target-help";
@@ -70,15 +72,22 @@ export const HostCreateProviderFields: React.FC<
   );
   const [machineTypeSortMode, setMachineTypeSortMode] =
     useMachineTypeSortMode();
+  const supportsMachineBenchmarks = selectedProvider === "gcp";
+  const effectiveMachineTypeSortMode: MachineTypeSortMode =
+    supportsMachineBenchmarks
+      ? machineTypeSortMode
+      : machineTypeSortMode === "price"
+        ? "price"
+        : "type";
   const displayOptions = React.useMemo(
     () => ({
       ...options,
       machine_type: sortMachineTypeOptions(
         options.machine_type,
-        machineTypeSortMode,
+        effectiveMachineTypeSortMode,
       ),
     }),
-    [machineTypeSortMode, options],
+    [effectiveMachineTypeSortMode, options],
   );
   const nebiusSpotSupported = React.useMemo(
     () =>
@@ -279,13 +288,10 @@ export const HostCreateProviderFields: React.FC<
         <span>{label}</span>
         <Segmented
           size="small"
-          value={machineTypeSortMode}
-          options={[
-            { label: "Type", value: "type" },
-            { label: "Price", value: "price" },
-          ]}
+          value={effectiveMachineTypeSortMode}
+          options={getMachineTypeSortOptions(supportsMachineBenchmarks)}
           onChange={(value) =>
-            setMachineTypeSortMode(value as "type" | "price")
+            setMachineTypeSortMode(value as MachineTypeSortMode)
           }
         />
       </div>
