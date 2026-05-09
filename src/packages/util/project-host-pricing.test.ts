@@ -35,6 +35,31 @@ describe("project host pricing", () => {
     ).toBeCloseTo(0.138, 9);
   });
 
+  it("supports T2A ARM machine pricing", () => {
+    const catalog: GcpCatalogPrices = {
+      fetched_at: "2026-05-08T00:00:00.000Z",
+      service_id: "compute",
+      families: {
+        t2a: {
+          cpu: { "us-west1": 0.03 },
+          ram: { "us-west1": 0.004 },
+          spot_cpu: { "us-west1": 0.012 },
+          spot_ram: { "us-west1": 0.0016 },
+        },
+      },
+      gpus: {},
+      disks: {},
+    };
+
+    expect(
+      estimateGcpCatalogRateUsdPerHour(catalog, {
+        zone: "us-west1-a",
+        machine_type: "t2a-standard-4",
+        pricing_model: "on_demand",
+      }),
+    ).toBeCloseTo(0.184, 9);
+  });
+
   it("estimates Nebius hourly rates from normalized catalog pricing", () => {
     expect(
       estimateNebiusCatalogRateUsdPerHour({

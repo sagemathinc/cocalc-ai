@@ -198,12 +198,14 @@ describe("catalog-backed pricing labels", () => {
       zone: "us-west1-a",
       machine_type: "n2d-standard-4",
       pricing_model: "on_demand",
+      price_display: "monthly",
       storage_mode: "persistent",
       disk_type: "balanced",
       disk_gb: 100,
     });
 
-    expect(options[0].label).toContain("/hr");
+    expect(options[0].label).toContain("/mo");
+    expect(options[0].priceLabel).toContain("/mo");
   });
 
   it("returns a provider price estimate for Nebius selections", () => {
@@ -383,10 +385,10 @@ describe("catalog-backed pricing labels", () => {
       pricing_model: "spot",
     });
 
-    expect(options.find((opt) => opt.value === "eu-north1")?.label).toContain(
-      "/hr",
-    );
-    expect(options.find((opt) => opt.value === "us-central1")?.label).toContain(
+    expect(
+      options.find((opt) => opt.value === "eu-north1")?.priceLabel,
+    ).toContain("/hr");
+    expect(options.find((opt) => opt.value === "us-central1")?.stateLabel).toBe(
       "price unavailable",
     );
   });

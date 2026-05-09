@@ -16,6 +16,7 @@ export const useHostFormValues = (form: FormInstance) => {
   const selectedSize = Form.useWatch("size", form);
   const selectedStorageMode = Form.useWatch("storage_mode", form);
   const selectedRegionPreference = Form.useWatch("region_preference", form);
+  const selectedPriceDisplay = Form.useWatch("price_display", form);
   const selectedDiskGb =
     typeof selectedDiskGbValue === "number"
       ? selectedDiskGbValue
@@ -37,5 +38,6 @@ export const useHostFormValues = (form: FormInstance) => {
     selectedSize,
     selectedStorageMode,
     selectedRegionPreference,
+    selectedPriceDisplay,
   };
 };

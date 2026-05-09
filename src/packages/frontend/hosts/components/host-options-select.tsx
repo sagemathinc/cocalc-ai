@@ -4,6 +4,7 @@
  */
 
 import { Select } from "antd";
+import { COLORS } from "@cocalc/util/theme";
 import type { HostFieldOption } from "../providers/registry";
 
 type HostOptionsSelectProps = {
@@ -32,6 +33,38 @@ export function HostOptionsSelect({
       onChange={onChange}
       size={size}
       popupMatchSelectWidth={false}
+      optionRender={(option: any) => {
+        const data = option.data as HostFieldOption | undefined;
+        const mainLabel =
+          data?.mainLabel ?? data?.selectionLabel ?? data?.label;
+        const detail = data?.priceLabel ?? data?.stateLabel;
+        if (!detail) {
+          return <span>{mainLabel}</span>;
+        }
+        return (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              gap: 16,
+              width: "100%",
+            }}
+          >
+            <span>{mainLabel}</span>
+            <span
+              style={{
+                color: data?.priceLabel ? COLORS.GRAY_D : COLORS.GRAY_M,
+                fontVariantNumeric: "tabular-nums",
+                textAlign: "right",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {detail}
+            </span>
+          </div>
+        );
+      }}
       labelRender={(item: any) => {
         const selected = options?.find(
           (option) => option.value === item?.value,

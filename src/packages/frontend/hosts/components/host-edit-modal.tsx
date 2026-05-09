@@ -127,6 +127,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedSize,
     selectedStorageMode,
     selectedRegionPreference,
+    selectedPriceDisplay,
   } = useHostFormValues(form);
   const selfHostKind = (selectedSelfHostKind ??
     host?.machine?.metadata?.self_host_kind ??
@@ -162,6 +163,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedGpu,
     selectedStorageMode,
     selectedRegionPreference,
+    selectedPriceDisplay,
     enabledProviders,
   });
   const createProviderVm = React.useMemo(
@@ -220,6 +222,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     canEditMachine &&
     (providerId === "gcp" || providerId === "nebius") &&
     fieldSchema.primary.includes("region");
+  const showPriceDisplay = showRegionPreference;
   const showFundingMode =
     providerId !== undefined && isBillableHostProvider(providerId);
   const canEditFundingMode = canEditMachine;
@@ -378,6 +381,11 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     "on_demand",
   );
   const showSpotFields = providerId !== "none" && providerId !== "self-host";
+  const showSpotHint =
+    canEditMachine &&
+    selectedRegionPreference === "cheapest" &&
+    watchedPricingModel !== "spot" &&
+    (providerId === "gcp" || (providerId === "nebius" && nebiusSpotSupported));
 
   React.useEffect(() => {
     if (!open) {
@@ -668,6 +676,29 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                   ]}
                 />
               </Form.Item>
+            )}
+            {showPriceDisplay && (
+              <Form.Item
+                name="price_display"
+                label="Show prices as"
+                initialValue="hourly"
+              >
+                <Select
+                  options={[
+                    { value: "hourly", label: "Hourly" },
+                    { value: "monthly", label: "Monthly" },
+                  ]}
+                />
+              </Form.Item>
+            )}
+            {showSpotHint && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                title="Spot instances can be cheaper"
+                description="Spot instances can be enabled with the pricing model below."
+              />
             )}
             {showSpotFields && (
               <>

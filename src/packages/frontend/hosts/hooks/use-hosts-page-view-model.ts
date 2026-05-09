@@ -631,6 +631,7 @@ export const useHostsPageViewModel = () => {
     selectedSize,
     selectedStorageMode,
     selectedRegionPreference,
+    selectedPriceDisplay,
   } = useHostFormValues(form);
 
   const {
@@ -1530,6 +1531,7 @@ export const useHostsPageViewModel = () => {
     selectedSize,
     selectedStorageMode,
     selectedRegionPreference,
+    selectedPriceDisplay,
     enabledProviders,
   });
 
@@ -1663,6 +1665,7 @@ export const useHostsPageViewModel = () => {
     setSortDirection,
     autoResort,
     setAutoResort,
+    catalog: catalog ?? selfHostCatalog,
     providerCapabilities:
       catalog?.provider_capabilities ?? selfHostCatalog?.provider_capabilities,
     parallelOps: showParallelLimits ? parallelOps : undefined,

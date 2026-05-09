@@ -24,7 +24,11 @@ import {
   isHostOnline,
   isHostTransitioning,
 } from "../constants";
-import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
+import {
+  getHostPriceEstimate,
+  getProviderDescriptor,
+  isKnownProvider,
+} from "../providers/registry";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
 import {
   describeBlockedHostActions,
@@ -70,6 +74,7 @@ type HostCardProps = {
   onDetails: (host: Host) => void;
   onEdit: (host: Host) => void;
   onToggleStar?: (host: Host) => void;
+  catalog?: HostCatalog;
   providerCapabilities?: HostCatalog["provider_capabilities"];
   selfHost?: {
     isConnectorOnline: (connectorId?: string) => boolean;
@@ -90,6 +95,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   onDetails,
   onEdit,
   onToggleStar,
+  catalog,
   providerCapabilities,
   selfHost,
 }) => {
@@ -145,6 +151,11 @@ export const HostCard: React.FC<HostCardProps> = ({
   const stopLabel = host.status === "stopping" ? "Stopping" : "Stop";
   const providerId = host.machine?.cloud;
   const caps = providerId ? providerCapabilities?.[providerId] : undefined;
+  const priceEstimate = catalog
+    ? getHostPriceEstimate(host, catalog)
+    : undefined;
+  const supportsCatalogPricing =
+    host.machine?.cloud === "gcp" || host.machine?.cloud === "nebius";
   const allowStop =
     !isDeleted &&
     (host.status === "running" || host.status === "error") &&
@@ -439,6 +450,13 @@ export const HostCard: React.FC<HostCardProps> = ({
           Size: {size.primary}
           {size.secondary ? ` · ${size.secondary}` : ""}
         </Typography.Text>
+        {priceEstimate ? (
+          <Typography.Text>
+            Price: {priceEstimate.hourly_label} · {priceEstimate.monthly_label}
+          </Typography.Text>
+        ) : supportsCatalogPricing ? (
+          <Typography.Text type="secondary">Price: unavailable</Typography.Text>
+        ) : null}
         <HostCurrentMetrics host={host} compact />
         <HostPlacementSummary host={host} showNormal />
         <Typography.Text>GPU: {host.gpu ? "Yes" : "No"}</Typography.Text>

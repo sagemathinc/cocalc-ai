@@ -48,6 +48,7 @@ type UseHostFormArgs = {
   selectedGpu?: string;
   selectedStorageMode?: string;
   selectedRegionPreference?: string;
+  selectedPriceDisplay?: string;
   enabledProviders: HostProvider[];
 };
 
@@ -87,6 +88,7 @@ export const useHostForm = ({
   selectedGpu,
   selectedStorageMode,
   selectedRegionPreference,
+  selectedPriceDisplay,
   enabledProviders,
 }: UseHostFormArgs) => {
   const prevProviderRef = useRef<HostProvider | undefined>(undefined);
@@ -126,6 +128,7 @@ export const useHostForm = ({
       self_host_mode: selectedSelfHostMode,
       size: selectedSize,
       gpu: selectedGpu,
+      price_display: selectedPriceDisplay === "monthly" ? "monthly" : "hourly",
     }),
     [
       selectedRegion,
@@ -140,6 +143,7 @@ export const useHostForm = ({
       selectedSelfHostMode,
       selectedSize,
       selectedGpu,
+      selectedPriceDisplay,
     ],
   );
   const regionPreference: RegionPreference =

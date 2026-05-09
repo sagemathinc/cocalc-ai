@@ -38,7 +38,11 @@ import {
 } from "../constants";
 import type { ColumnsType } from "antd/es/table";
 import { COLORS } from "@cocalc/util/theme";
-import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
+import {
+  getHostPriceEstimate,
+  getProviderDescriptor,
+  isKnownProvider,
+} from "../providers/registry";
 import type { HostLroState } from "../hooks/use-host-ops";
 import {
   describeBlockedHostActions,
@@ -168,6 +172,27 @@ function compareNumber(a?: number, b?: number): number {
   return (a ?? 0) - (b ?? 0);
 }
 
+function renderHostPrice(host: Host, catalog?: HostCatalog) {
+  const estimate = catalog ? getHostPriceEstimate(host, catalog) : undefined;
+  if (!estimate) {
+    const pricedProvider =
+      host.machine?.cloud === "gcp" || host.machine?.cloud === "nebius";
+    return (
+      <Typography.Text type="secondary">
+        {pricedProvider ? "unavailable" : "-"}
+      </Typography.Text>
+    );
+  }
+  return (
+    <Space orientation="vertical" size={0}>
+      <span>{estimate.hourly_label}</span>
+      <Typography.Text type="secondary">
+        {estimate.monthly_label}
+      </Typography.Text>
+    </Space>
+  );
+}
+
 function arraysEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) {
@@ -278,6 +303,7 @@ type HostListViewModel = {
   setSortDirection: (value: HostSortDirection) => void;
   autoResort: boolean;
   setAutoResort: (value: boolean) => void;
+  catalog?: HostCatalog;
   providerCapabilities?: HostCatalog["provider_capabilities"];
   parallelOps?: {
     status: ParallelOpsWorkerStatus[];
@@ -361,6 +387,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     setSortDirection,
     autoResort,
     setAutoResort,
+    catalog,
     providerCapabilities,
     parallelOps,
     runtimeVersions,
@@ -791,6 +818,11 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       title: "GPU",
       key: "gpu",
       render: (_: string, host: Host) => (host.gpu ? "Yes" : "No"),
+    },
+    {
+      title: "Price",
+      key: "price",
+      render: (_: string, host: Host) => renderHostPrice(host, catalog),
     },
     {
       title: "Resources",
@@ -1606,6 +1638,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                 onEdit={onEdit}
                 onToggleStar={onToggleStar}
                 selfHost={selfHost}
+                catalog={catalog}
                 providerCapabilities={providerCapabilities}
               />
             </Col>

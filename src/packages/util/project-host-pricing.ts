@@ -4,6 +4,7 @@
  */
 
 export const SUPPORTED_GCP_MACHINE_TYPE_PREFIXES = [
+  "t2a-standard-",
   "t2d-standard-",
   "n2d-standard-",
   "n2d-highmem-",
@@ -14,7 +15,7 @@ export const SUPPORTED_GCP_MACHINE_TYPE_PREFIXES = [
 export type SupportedGcpMachineTypePrefix =
   (typeof SUPPORTED_GCP_MACHINE_TYPE_PREFIXES)[number];
 
-export type GcpPricingFamily = "t2d" | "n2d" | "c3";
+export type GcpPricingFamily = "t2a" | "t2d" | "n2d" | "c3";
 
 export type GcpPriceRateMap = Record<string, number>;
 
@@ -91,6 +92,7 @@ const GCP_MACHINE_TYPE_FAMILY_RULES: Array<{
   family: GcpPricingFamily;
   prefixes: readonly SupportedGcpMachineTypePrefix[];
 }> = [
+  { family: "t2a", prefixes: ["t2a-standard-"] },
   { family: "t2d", prefixes: ["t2d-standard-"] },
   { family: "n2d", prefixes: ["n2d-standard-", "n2d-highmem-"] },
   { family: "c3", prefixes: ["c3-standard-", "c3-highmem-"] },

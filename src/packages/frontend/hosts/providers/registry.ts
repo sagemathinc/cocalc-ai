@@ -1,4 +1,5 @@
 import type {
+  Host,
   HostCatalog,
   HostCatalogEntry,
   HostCatalogGpuType,
@@ -52,26 +53,53 @@ export type HostFieldOption<T = unknown> = {
   value: string;
   label: string;
   selectionLabel?: string;
+  mainLabel?: string;
+  priceLabel?: string;
+  stateLabel?: string;
   disabled?: boolean;
   meta?: T;
 };
+
+export type PriceDisplayMode = "hourly" | "monthly";
+
+type PriceDecoratedLabel = Pick<
+  HostFieldOption,
+  "label" | "mainLabel" | "priceLabel" | "stateLabel"
+>;
 
 function appendPriceStateLabel(opts: {
   label: string;
   hourlyRate?: number;
   expectPrice?: boolean;
   compatible?: boolean;
-}): string {
+  priceDisplay?: PriceDisplayMode;
+}): PriceDecoratedLabel {
   if (opts.compatible === false) {
-    return `${opts.label} · unavailable`;
+    return {
+      label: `${opts.label} · unavailable`,
+      mainLabel: opts.label,
+      stateLabel: "unavailable",
+    };
   }
   if (typeof opts.hourlyRate === "number" && Number.isFinite(opts.hourlyRate)) {
-    return `${opts.label} · ${formatUsdHourlyLabel(opts.hourlyRate)}`;
+    const priceLabel =
+      opts.priceDisplay === "monthly"
+        ? formatUsdMonthlyLabel(opts.hourlyRate)
+        : formatUsdHourlyLabel(opts.hourlyRate);
+    return {
+      label: `${opts.label} · ${priceLabel}`,
+      mainLabel: opts.label,
+      priceLabel,
+    };
   }
   if (opts.expectPrice) {
-    return `${opts.label} · price unavailable`;
+    return {
+      label: `${opts.label} · price unavailable`,
+      mainLabel: opts.label,
+      stateLabel: "price unavailable",
+    };
   }
-  return opts.label;
+  return { label: opts.label, mainLabel: opts.label };
 }
 
 export type HostFieldLabels = Record<HostFieldId, string>;
@@ -161,6 +189,7 @@ export type ProviderSelection = {
   self_host_mode?: string;
   size?: string;
   gpu?: string;
+  price_display?: PriceDisplayMode;
 };
 
 export type FieldOptionsMap = Partial<Record<HostFieldId, HostFieldOption[]>>;
@@ -409,12 +438,16 @@ const estimateNebiusSelectionUsdPerHour = (
 
 const MONTHLY_HOURS = 730;
 
+const ceilUsdDisplayAmount = (value: number) =>
+  Math.ceil((value + Number.EPSILON) * 100) / 100;
+
 const formatUsdAmount = (value: number) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: value >= 10 ? 2 : 3,
-  }).format(value);
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(ceilUsdDisplayAmount(value));
 
 const formatUsdHourlyLabel = (value: number) => `${formatUsdAmount(value)}/hr`;
 
@@ -450,6 +483,30 @@ export const getProviderPriceEstimate = (
     hourly_label: formatUsdHourlyLabel(usd_per_hour),
     monthly_label: formatUsdMonthlyLabel(usd_per_hour),
   };
+};
+
+const hostProviderSelectionForPricing = (host: Host): ProviderSelection => ({
+  region: host.region ?? undefined,
+  zone: host.machine?.zone ?? undefined,
+  machine_type: host.machine?.machine_type ?? undefined,
+  gpu_type: host.machine?.gpu_type ?? undefined,
+  pricing_model: host.pricing_model ?? undefined,
+  storage_mode: host.machine?.storage_mode ?? undefined,
+  disk_type: host.machine?.disk_type ?? undefined,
+  disk_gb: host.machine?.disk_gb ?? undefined,
+});
+
+export const getHostPriceEstimate = (
+  host: Host,
+  catalog: HostCatalog | undefined,
+): ProviderPriceEstimate | undefined => {
+  const provider = host.machine?.cloud;
+  if (provider !== "gcp" && provider !== "nebius") return undefined;
+  return getProviderPriceEstimate(
+    provider,
+    catalog,
+    hostProviderSelectionForPricing(host),
+  );
 };
 
 type SelfHostConnector = {
@@ -622,6 +679,8 @@ export const getGcpRegionOptions = (
     "global",
   );
   if (!regions?.length) return [];
+  const priceDisplay =
+    selection.price_display === "monthly" ? "monthly" : "hourly";
   return regions.map((r) => {
     const zoneWithMeta = zones?.find(
       (z) => z.region === r.name && (z.location || z.lowC02),
@@ -660,14 +719,16 @@ export const getGcpRegionOptions = (
       zoneWithMeta?.location,
       zoneWithMeta?.lowC02,
     );
+    const label = appendPriceStateLabel({
+      label: regionLabel,
+      hourlyRate,
+      compatible,
+      expectPrice,
+      priceDisplay,
+    });
     return {
       value: r.name,
-      label: appendPriceStateLabel({
-        label: regionLabel,
-        hourlyRate,
-        compatible,
-        expectPrice,
-      }),
+      ...label,
       selectionLabel: regionLabel,
       meta: { compatible, compatibleZone, hourlyRate, expectPrice },
     };
@@ -750,6 +811,8 @@ export const getGcpMachineTypeOptions = (
   selection: ProviderSelection = {},
 ): HostFieldOption[] => {
   if (!selection.zone) return [];
+  const priceDisplay =
+    selection.price_display === "monthly" ? "monthly" : "hourly";
   const types = getCatalogEntryPayload<HostCatalogMachineType[]>(
     catalog,
     "machine_types",
@@ -769,18 +832,22 @@ export const getGcpMachineTypeOptions = (
     if (!gpuPrefixes.length) return false;
     return gpuPrefixes.some((prefix) => name.startsWith(prefix));
   });
-  return filtered.map((mt) => ({
-    value: mt.name ?? "",
-    label: appendPriceStateLabel({
+  return filtered.map((mt) => {
+    const label = appendPriceStateLabel({
       label: mt.name ?? "unknown",
       hourlyRate: estimateGcpSelectionUsdPerHour(catalog, selection, {
         machine_type: mt.name ?? undefined,
       }),
       expectPrice: true,
-    }),
-    selectionLabel: mt.name ?? "unknown",
-    meta: mt,
-  }));
+      priceDisplay,
+    });
+    return {
+      value: mt.name ?? "",
+      ...label,
+      selectionLabel: mt.name ?? "unknown",
+      meta: mt,
+    };
+  });
 };
 
 export const getGcpGpuTypeOptions = (
@@ -1160,18 +1227,22 @@ export const getNebiusRegionOptions = (
     "regions",
     "global",
   );
+  const priceDisplay =
+    selection.price_display === "monthly" ? "monthly" : "hourly";
   if (regions?.length) {
     return regions.map((r) => {
       const hourlyRate = estimateNebiusSelectionUsdPerHour(catalog, selection, {
         region: r.name,
       });
+      const label = appendPriceStateLabel({
+        label: r.name,
+        hourlyRate,
+        expectPrice: !!selection.machine_type,
+        priceDisplay,
+      });
       return {
         value: r.name,
-        label: appendPriceStateLabel({
-          label: r.name,
-          hourlyRate,
-          expectPrice: !!selection.machine_type,
-        }),
+        ...label,
         selectionLabel: r.name,
         meta: {
           compatible: true,
@@ -1192,13 +1263,15 @@ export const getNebiusRegionOptions = (
     const hourlyRate = estimateNebiusSelectionUsdPerHour(catalog, selection, {
       region: name,
     });
+    const label = appendPriceStateLabel({
+      label: name,
+      hourlyRate,
+      expectPrice: !!selection.machine_type,
+      priceDisplay,
+    });
     return {
       value: name,
-      label: appendPriceStateLabel({
-        label: name,
-        hourlyRate,
-        expectPrice: !!selection.machine_type,
-      }),
+      ...label,
       selectionLabel: name,
       meta: {
         compatible: true,
@@ -1271,6 +1344,8 @@ export const getNebiusInstanceTypeOptions = (
     "global",
   );
   if (!instances?.length) return [];
+  const priceDisplay =
+    selection.price_display === "monthly" ? "monthly" : "hourly";
   const images =
     getCatalogEntryPayload<NebiusImage[]>(catalog, "images", "global") ?? [];
   const pricingProducts = getNebiusPricingProductsByRegion(catalog, region);
@@ -1345,13 +1420,15 @@ export const getNebiusInstanceTypeOptions = (
     const hourlyRate = estimateNebiusSelectionUsdPerHour(catalog, selection, {
       machine_type: entry.name,
     });
+    const label = appendPriceStateLabel({
+      label: `${entry.name} (${cpuRamLabel}${gpuLabel}${platformLabel})`,
+      hourlyRate,
+      expectPrice: true,
+      priceDisplay,
+    });
     return {
       value: entry.name,
-      label: appendPriceStateLabel({
-        label: `${entry.name} (${cpuRamLabel}${gpuLabel}${platformLabel})`,
-        hourlyRate,
-        expectPrice: true,
-      }),
+      ...label,
       selectionLabel: entry.name,
       entry,
     };

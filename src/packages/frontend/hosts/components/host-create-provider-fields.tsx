@@ -16,6 +16,7 @@ import {
   R2_REGION_LABELS,
 } from "@cocalc/util/consts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
+import { isNebiusSpotSupported } from "../providers/registry";
 import type { HostFieldId } from "../providers/registry";
 import { HostOptionsSelect } from "./host-options-select";
 import { SshTargetLabel } from "./ssh-target-help";
@@ -44,18 +45,32 @@ export const HostCreateProviderFields: React.FC<
   const watchedMachineType = Form.useWatch("machine_type", form);
   const watchedSize = Form.useWatch("size", form);
   const watchedGpuType = Form.useWatch("gpu_type", form);
+  const watchedPricingModel = Form.useWatch("pricing_model", form);
   const watchedDisk = Form.useWatch("disk", form);
   const watchedDiskType = Form.useWatch("disk_type", form);
   const watchedSelfHostKind = Form.useWatch("self_host_kind", form);
   const watchedSelfHostMode = Form.useWatch("self_host_mode", form);
   const watchedSelfHostTarget = Form.useWatch("self_host_ssh_target", form);
+  const watchedRegionPreference = Form.useWatch("region_preference", form);
   const showRegionPreference =
     (selectedProvider === "gcp" || selectedProvider === "nebius") &&
     schema.primary.includes("region");
+  const showPriceDisplay = showRegionPreference;
   const selfHostAlphaEnabled = !!useTypedRedux(
     "customize",
     "project_hosts_self_host_alpha_enabled",
   );
+  const nebiusSpotSupported = React.useMemo(
+    () =>
+      selectedProvider !== "nebius" ||
+      isNebiusSpotSupported(options.machine_type, watchedMachineType),
+    [options.machine_type, selectedProvider, watchedMachineType],
+  );
+  const showSpotHint =
+    watchedRegionPreference === "cheapest" &&
+    watchedPricingModel !== "spot" &&
+    (selectedProvider === "gcp" ||
+      (selectedProvider === "nebius" && nebiusSpotSupported));
   const defaultDiskType =
     selectedProvider === "nebius" ? "ssd_io_m3" : undefined;
   React.useEffect(() => {
@@ -250,6 +265,29 @@ export const HostCreateProviderFields: React.FC<
             ]}
           />
         </Form.Item>
+      )}
+      {showPriceDisplay && (
+        <Form.Item
+          name="price_display"
+          label="Show prices as"
+          initialValue="hourly"
+        >
+          <Select
+            options={[
+              { value: "hourly", label: "Hourly" },
+              { value: "monthly", label: "Monthly" },
+            ]}
+          />
+        </Form.Item>
+      )}
+      {showSpotHint && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          title="Spot instances can be cheaper"
+          description="Spot instances can be enabled under Advanced options."
+        />
       )}
       {gcpCompatibilityWarning?.type === "region" && (
         <Alert

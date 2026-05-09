@@ -47,6 +47,11 @@ const GCP_FAMILY_PATTERNS: Array<{
   ram: RegExp;
 }> = [
   {
+    family: "t2a",
+    cpu: /^(?:Spot Preemptible )?T2A Arm Instance Core running in /i,
+    ram: /^(?:Spot Preemptible )?T2A Arm Instance Ram running in /i,
+  },
+  {
     family: "t2d",
     cpu: /^(?:Spot Preemptible )?T2D AMD Instance Core running in /i,
     ram: /^(?:Spot Preemptible )?T2D AMD Instance Ram running in /i,

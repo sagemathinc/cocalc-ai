@@ -79,10 +79,6 @@ function scoreRegionOption(opts: {
       return (
         incompatiblePenalty + missingPricePenalty + distance * 100 + price * 10
       );
-    case "cheapest":
-      return (
-        incompatiblePenalty + missingPricePenalty + price * 100 + distance * 10
-      );
     case "balanced":
     default:
       return (
@@ -91,11 +87,44 @@ function scoreRegionOption(opts: {
   }
 }
 
+function compareCheapestRegionOptions(
+  a: HostFieldOption,
+  b: HostFieldOption,
+  preferredRegion: R2Region | undefined,
+) {
+  const aCompatible = isCompatible(a);
+  const bCompatible = isCompatible(b);
+  if (aCompatible !== bCompatible) {
+    return aCompatible ? -1 : 1;
+  }
+  const aPrice = getHourlyRate(a);
+  const bPrice = getHourlyRate(b);
+  const aMissingExpected = aPrice == null && shouldExpectPrice(a);
+  const bMissingExpected = bPrice == null && shouldExpectPrice(b);
+  if (aMissingExpected !== bMissingExpected) {
+    return aMissingExpected ? 1 : -1;
+  }
+  if (aPrice != null && bPrice != null && aPrice !== bPrice) {
+    return aPrice - bPrice;
+  }
+  const aDistance = getDistanceRank(a, preferredRegion);
+  const bDistance = getDistanceRank(b, preferredRegion);
+  if (aDistance !== bDistance) {
+    return aDistance - bDistance;
+  }
+  return a.label.localeCompare(b.label) || a.value.localeCompare(b.value);
+}
+
 export function sortRegionOptionsByPreference(opts: {
   options: HostFieldOption[];
   preference: RegionPreference;
   preferredRegion: R2Region | undefined;
 }): HostFieldOption[] {
+  if (opts.preference === "cheapest") {
+    return [...opts.options].sort((a, b) =>
+      compareCheapestRegionOptions(a, b, opts.preferredRegion),
+    );
+  }
   const priced = opts.options
     .map(getHourlyRate)
     .filter((value): value is number => value != null)
@@ -124,10 +153,12 @@ export function markRecommendedRegionOption(
 ): HostFieldOption[] {
   if (options.length <= 1) return options;
   const [first, ...rest] = options;
+  const mainLabel = first.mainLabel ?? first.selectionLabel ?? first.label;
   return [
     {
       ...first,
       label: `${first.label} · recommended`,
+      mainLabel: `${mainLabel} · recommended`,
     },
     ...rest,
   ];
