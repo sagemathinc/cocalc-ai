@@ -91,6 +91,53 @@ type HostEditModalProps = {
   onProviderChange?: (provider: HostProvider) => void;
 };
 
+type HostEditSelectionInputs = {
+  host?: Host;
+  region?: string;
+  zone?: string;
+  machine_type?: string;
+  gpu_type?: string;
+  funding_mode?: HostFundingMode;
+  pricing_model?: HostPricingModel;
+  storage_mode?: string;
+  disk_type?: string;
+  disk_gb?: number;
+  self_host_kind?: string;
+  self_host_mode?: string;
+  size?: string;
+  gpu?: string;
+  price_display?: "hourly" | "monthly";
+  pricing_settings?: ProviderSelection["pricing_settings"];
+};
+
+export function buildHostEditSelection(
+  opts: HostEditSelectionInputs,
+): ProviderSelection {
+  const { host } = opts;
+  return {
+    region: opts.region ?? host?.region ?? undefined,
+    zone: opts.zone ?? host?.machine?.zone ?? undefined,
+    machine_type: opts.machine_type ?? host?.machine?.machine_type ?? undefined,
+    gpu_type: opts.gpu_type ?? host?.machine?.gpu_type ?? undefined,
+    funding_mode: opts.funding_mode ?? host?.funding_mode ?? undefined,
+    pricing_model: opts.pricing_model ?? host?.pricing_model ?? undefined,
+    storage_mode: opts.storage_mode ?? host?.machine?.storage_mode ?? undefined,
+    disk_type: opts.disk_type ?? host?.machine?.disk_type ?? undefined,
+    disk_gb: opts.disk_gb ?? host?.machine?.disk_gb ?? undefined,
+    self_host_kind: opts.self_host_kind,
+    self_host_mode: opts.self_host_mode,
+    size:
+      opts.machine_type ??
+      opts.size ??
+      host?.machine?.machine_type ??
+      host?.size ??
+      undefined,
+    gpu: opts.gpu ?? (host?.gpu ? "true" : undefined),
+    price_display: opts.price_display === "monthly" ? "monthly" : "hourly",
+    pricing_settings: opts.pricing_settings,
+  };
+}
+
 export const HostEditModal: React.FC<HostEditModalProps> = ({
   open,
   host,
@@ -221,52 +268,6 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const providerDescriptor =
     providerId !== "none" ? getProviderDescriptor(providerId) : undefined;
   const watchedFundingMode = Form.useWatch("funding_mode", form);
-  const livePricingSelection = React.useMemo<ProviderSelection>(
-    () => ({
-      region: selectedRegion,
-      zone: selectedZone,
-      machine_type: selectedMachineType,
-      gpu_type: selectedGpuType,
-      funding_mode: watchedFundingMode,
-      pricing_model: selectedPricingModel,
-      storage_mode: selectedStorageMode,
-      disk_type: selectedDiskType,
-      disk_gb: selectedDiskGb,
-      self_host_kind: selectedSelfHostKind,
-      self_host_mode: selectedSelfHostMode,
-      size: selectedSize,
-      gpu: selectedGpu,
-      price_display: selectedPriceDisplay === "monthly" ? "monthly" : "hourly",
-    }),
-    [
-      selectedDiskGb,
-      selectedDiskType,
-      selectedGpu,
-      selectedGpuType,
-      selectedMachineType,
-      watchedFundingMode,
-      selectedPriceDisplay,
-      selectedPricingModel,
-      selectedRegion,
-      selectedSelfHostKind,
-      selectedSelfHostMode,
-      selectedSize,
-      selectedStorageMode,
-      selectedZone,
-    ],
-  );
-  const livePriceEstimate = React.useMemo(
-    () =>
-      providerId === "gcp" || providerId === "nebius"
-        ? getProviderPriceEstimate(
-            providerId,
-            catalog,
-            livePricingSelection,
-            pricingSettings,
-          )
-        : undefined,
-    [catalog, livePricingSelection, pricingSettings, providerId],
-  );
   const fieldSchema = providerDescriptor
     ? filterFieldSchemaForCaps(providerDescriptor.fields, providerCaps)
     : { primary: [], advanced: [] };
@@ -285,26 +286,36 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const showFundingMode =
     providerId !== undefined && isBillableHostProvider(providerId);
   const canEditFundingMode = canEditMachine;
-  const selection: ProviderSelection = {
-    region: watchedRegion ?? host?.region ?? undefined,
-    zone: watchedZone ?? host?.machine?.zone ?? undefined,
-    machine_type:
-      watchedMachineType ?? host?.machine?.machine_type ?? undefined,
-    gpu_type: watchedGpuType ?? host?.machine?.gpu_type ?? undefined,
-    pricing_model: watchedPricingModel ?? host?.pricing_model ?? undefined,
-    storage_mode:
-      selectedStorageMode ?? host?.machine?.storage_mode ?? undefined,
-    disk_type: selectedDiskType ?? host?.machine?.disk_type ?? undefined,
-    disk_gb: selectedDiskGb ?? host?.machine?.disk_gb ?? undefined,
-    size:
-      watchedMachineType ??
-      watchedSize ??
-      host?.machine?.machine_type ??
-      host?.size ??
-      undefined,
-    gpu: host?.gpu ? "true" : undefined,
+  const selection = buildHostEditSelection({
+    host,
+    region: watchedRegion,
+    zone: watchedZone,
+    machine_type: watchedMachineType,
+    gpu_type: watchedGpuType,
+    funding_mode: watchedFundingMode,
+    pricing_model: watchedPricingModel,
+    storage_mode: selectedStorageMode,
+    disk_type: selectedDiskType,
+    disk_gb: selectedDiskGb,
+    self_host_kind: selectedSelfHostKind,
+    self_host_mode: selectedSelfHostMode,
+    size: watchedSize,
+    gpu: selectedGpu,
+    price_display: selectedPriceDisplay === "monthly" ? "monthly" : "hourly",
     pricing_settings: pricingSettings,
-  };
+  });
+  const livePriceEstimate = React.useMemo(
+    () =>
+      providerId === "gcp" || providerId === "nebius"
+        ? getProviderPriceEstimate(
+            providerId,
+            catalog,
+            selection,
+            pricingSettings,
+          )
+        : undefined,
+    [catalog, pricingSettings, providerId, selection],
+  );
   const fieldOptions = providerDescriptor
     ? getProviderOptions(providerId, catalog, selection)
     : {};
@@ -467,27 +478,24 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     providerId === "gcp" || providerId === "nebius";
   const priceSelectionComplete = React.useMemo(() => {
     if (!supportsCatalogPricing) return false;
-    const machineType =
-      `${selectedMachineType ?? watchedMachineType ?? ""}`.trim();
-    const region = `${selectedRegion ?? watchedRegion ?? ""}`.trim();
+    const machineType = `${selection.machine_type ?? ""}`.trim();
+    const region = `${selection.region ?? ""}`.trim();
     if (!machineType || !region) return false;
-    if ((selectedStorageMode ?? "persistent") === "ephemeral") return true;
-    const diskType = `${selectedDiskType ?? ""}`.trim();
+    if ((selection.storage_mode ?? "persistent") === "ephemeral") return true;
+    const diskType = `${selection.disk_type ?? ""}`.trim();
     return (
       !!diskType &&
-      typeof selectedDiskGb === "number" &&
-      Number.isFinite(selectedDiskGb) &&
-      selectedDiskGb > 0
+      typeof selection.disk_gb === "number" &&
+      Number.isFinite(selection.disk_gb) &&
+      selection.disk_gb > 0
     );
   }, [
-    selectedDiskGb,
-    selectedDiskType,
-    selectedMachineType,
-    selectedRegion,
-    selectedStorageMode,
+    selection.disk_gb,
+    selection.disk_type,
+    selection.machine_type,
+    selection.region,
+    selection.storage_mode,
     supportsCatalogPricing,
-    watchedMachineType,
-    watchedRegion,
   ]);
 
   React.useEffect(() => {
