@@ -6,6 +6,7 @@ import test from "node:test";
 import { Command } from "commander";
 
 import { registerAuthCommand, type AuthCommandDeps } from "./auth";
+import { sanitizeProfileName } from "../../core/auth-config";
 import { cookieNameFor, normalizeSecretValue } from "../../core/auth-cookies";
 
 function makeDeps(
@@ -515,5 +516,27 @@ test("auth rename rejects conflicting target profiles", async () => {
   await assert.rejects(
     program.parseAsync(["node", "test", "auth", "rename", "default", "wstein"]),
     /auth profile 'wstein' already exists/,
+  );
+});
+
+test("auth use rejects reserved env auth profile names", async () => {
+  const capture: { data?: any } = {};
+  const config: any = {
+    current_profile: "default",
+    profiles: {
+      default: { account_id: "acct-123" },
+    },
+  };
+  const program = new Command();
+  registerAuthCommand(
+    program,
+    makeDeps(capture, {
+      loadAuthConfig: () => config,
+      sanitizeProfileName,
+    }),
+  );
+  await assert.rejects(
+    program.parseAsync(["node", "test", "auth", "use", "_env"]),
+    /reserved for environment-based auth/,
   );
 });

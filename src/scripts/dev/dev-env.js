@@ -37,8 +37,14 @@ const LOCAL_CLI_BIN_DIR = path.join(
 );
 const LOCAL_PROJECT_ID = "00000000-1000-4000-8000-000000000000";
 const LOCAL_ACCOUNT_ID = "00000000-1000-4000-8000-000000000001";
+const ENV_AUTH_PROFILE = "_env";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isEnvAuthProfileName(value) {
+  const candidate = `${value ?? ""}`.trim();
+  return candidate === ENV_AUTH_PROFILE || candidate === "env";
+}
 
 function usageAndExit(message, code = 1) {
   if (message) console.error(message);
@@ -196,7 +202,11 @@ function chooseProfileForApi(profiles, current, targetApi) {
   if (!names.length) return undefined;
   const normTarget = normalizeUrl(targetApi);
   const explicitProfile = `${process.env.COCALC_PROFILE ?? ""}`.trim();
-  if (explicitProfile && profiles[explicitProfile])
+  if (
+    explicitProfile &&
+    !isEnvAuthProfileName(explicitProfile) &&
+    profiles[explicitProfile]
+  )
     return profiles[explicitProfile];
 
   if (current && profiles[current]) {
@@ -845,6 +855,7 @@ function main() {
     COCALC_ACCOUNT_ID: accountId,
     COCALC_PROJECT_ID: projectId,
     COCALC_BROWSER_ID: browserId,
+    COCALC_PROFILE: ENV_AUTH_PROFILE,
     COCALC_DEV_ENV_MODE: mode,
   };
   let prependPath = "";

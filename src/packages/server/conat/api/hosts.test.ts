@@ -1253,6 +1253,28 @@ describe("hosts.createHost", () => {
           ],
         };
       }
+      if (sql.includes("FROM cloud_catalog_cache")) {
+        return {
+          rows: [
+            {
+              payload: {
+                fetched_at: "2026-05-09T00:00:00.000Z",
+                service_id: "6F81-5844-456A",
+                families: {
+                  e2: {
+                    cpu: { "us-central1": 0.021 },
+                    ram: { "us-central1": 0.0028 },
+                    spot_cpu: { "us-central1": 0.0063 },
+                    spot_ram: { "us-central1": 0.00084 },
+                  },
+                },
+                gpus: {},
+                disks: {},
+              },
+            },
+          ],
+        };
+      }
       if (sql.includes("FROM account_impersonation_sessions")) {
         return { rows: [] };
       }
