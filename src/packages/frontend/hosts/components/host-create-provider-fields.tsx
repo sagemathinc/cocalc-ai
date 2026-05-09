@@ -47,6 +47,7 @@ export const HostCreateProviderFields: React.FC<
   const watchedSize = Form.useWatch("size", form);
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedPricingModel = Form.useWatch("pricing_model", form);
+  const watchedStorageMode = Form.useWatch("storage_mode", form);
   const watchedDisk = Form.useWatch("disk", form);
   const watchedDiskGb = Form.useWatch("disk_gb", form);
   const watchedDiskType = Form.useWatch("disk_type", form);
@@ -87,6 +88,11 @@ export const HostCreateProviderFields: React.FC<
     showDiskFields,
     watchedDiskType,
   ]);
+  React.useEffect(() => {
+    if (selectedProvider !== "gcp") return;
+    if (watchedStorageMode === "persistent") return;
+    form.setFieldsValue({ storage_mode: "persistent" });
+  }, [form, selectedProvider, watchedStorageMode]);
   const effectiveDiskType = watchedDiskType ?? defaultDiskType;
   const isNebiusIoM3 =
     selectedProvider === "nebius" && effectiveDiskType === "ssd_io_m3";
