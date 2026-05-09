@@ -13,6 +13,7 @@ import type {
 } from "@cocalc/util/project-host-pricing";
 import {
   estimateGcpCatalogRateUsdPerHour,
+  gcpCatalogMachineTypeSortKey,
   estimateNebiusCatalogRateUsdPerHour,
   getNebiusPlatformAliases,
   normalizeNebiusPricingProduct,
@@ -746,6 +747,40 @@ const gcpZoneHasMachinePrefix = (
   );
 };
 
+const getAllGcpMachineTypes = (
+  catalog: HostCatalog | undefined,
+): HostCatalogMachineType[] => {
+  const entries =
+    catalog?.entries?.filter((entry) => entry.kind === "machine_types") ?? [];
+  const byName = new Map<string, HostCatalogMachineType>();
+  for (const entry of entries) {
+    const payload = Array.isArray(entry.payload)
+      ? (entry.payload as HostCatalogMachineType[])
+      : [];
+    for (const machineType of payload) {
+      const name = `${machineType?.name ?? ""}`.trim();
+      if (!name) continue;
+      const prev = byName.get(name);
+      if (!prev) {
+        byName.set(name, machineType);
+        continue;
+      }
+      const prevCpu = Number(prev.guestCpus ?? 0);
+      const nextCpu = Number(machineType.guestCpus ?? 0);
+      const prevMem = Number(prev.memoryMb ?? 0);
+      const nextMem = Number(machineType.memoryMb ?? 0);
+      if (nextCpu > prevCpu || nextMem > prevMem) {
+        byName.set(name, machineType);
+      }
+    }
+  }
+  return [...byName.values()].sort((left, right) =>
+    gcpCatalogMachineTypeSortKey(left.name).localeCompare(
+      gcpCatalogMachineTypeSortKey(right.name),
+    ),
+  );
+};
+
 export const getGcpRegionOptions = (
   catalog?: HostCatalog,
   selection: ProviderSelection = {},
@@ -892,15 +927,20 @@ export const getGcpMachineTypeOptions = (
   catalog: HostCatalog | undefined,
   selection: ProviderSelection = {},
 ): HostFieldOption[] => {
-  if (!selection.zone) return [];
   const priceDisplay =
     selection.price_display === "monthly" ? "monthly" : "hourly";
-  const types = getCatalogEntryPayload<HostCatalogMachineType[]>(
-    catalog,
-    "machine_types",
-    `zone/${selection.zone}`,
+  const localTypes = selection.zone
+    ? (getCatalogEntryPayload<HostCatalogMachineType[]>(
+        catalog,
+        "machine_types",
+        `zone/${selection.zone}`,
+      ) ?? [])
+    : [];
+  const localTypeNames = new Set(
+    localTypes.map((entry) => `${entry.name ?? ""}`.trim()).filter(Boolean),
   );
-  if (!types?.length) return [];
+  const types = getAllGcpMachineTypes(catalog);
+  if (!types.length) return [];
   const gpuPrefixes = gcpMachinePrefixesForGpuType(selection.gpu_type);
   const filtered = types.filter((mt) => {
     const name = mt.name ?? "";
@@ -915,15 +955,21 @@ export const getGcpMachineTypeOptions = (
     return gpuPrefixes.some((prefix) => name.startsWith(prefix));
   });
   return filtered.map((mt) => {
+    const compatible = selection.zone
+      ? localTypeNames.has(`${mt.name ?? ""}`.trim())
+      : true;
     const machineLabel = gcpMachineTypeLabel(mt);
     const label = appendPriceStateLabel({
       label: machineLabel.label,
-      hourlyRate: estimateGcpSelectionUsdPerHour(catalog, selection, {
-        machine_type: mt.name ?? undefined,
-        cpu_count: mt.guestCpus ?? undefined,
-        memory_gib:
-          mt.memoryMb != null ? Number(mt.memoryMb) / 1024 : undefined,
-      }),
+      hourlyRate: compatible
+        ? estimateGcpSelectionUsdPerHour(catalog, selection, {
+            machine_type: mt.name ?? undefined,
+            cpu_count: mt.guestCpus ?? undefined,
+            memory_gib:
+              mt.memoryMb != null ? Number(mt.memoryMb) / 1024 : undefined,
+          })
+        : undefined,
+      compatible,
       expectPrice: true,
       priceDisplay,
     });
@@ -932,7 +978,10 @@ export const getGcpMachineTypeOptions = (
       ...label,
       selectionLabel: mt.name ?? "unknown",
       mainLabel: label.mainLabel ?? machineLabel.mainLabel,
-      meta: mt,
+      meta: {
+        ...mt,
+        compatible,
+      },
     };
   });
 };

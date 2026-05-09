@@ -74,34 +74,37 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     }
   };
   const watchedRegion = Form.useWatch("region", formInstance);
+  const watchedMachineType = Form.useWatch("machine_type", formInstance);
   const watchedGpuType = Form.useWatch("gpu_type", formInstance);
+  const needsGcpPlacementCompatibility =
+    provider.selectedProvider === "gcp" &&
+    !!(
+      (watchedGpuType && watchedGpuType !== "none") ||
+      (watchedMachineType ?? "").trim()
+    );
   const gcpRegionIncompatible = React.useMemo(() => {
-    if (provider.selectedProvider !== "gcp") return false;
-    if (!watchedGpuType || watchedGpuType === "none") return false;
+    if (!needsGcpPlacementCompatibility) return false;
     const regionOption = (provider.fields.options.region ?? []).find(
       (opt) => opt.value === watchedRegion,
     );
     const meta = (regionOption?.meta ?? {}) as { compatible?: boolean };
     return meta.compatible === false;
   }, [
+    needsGcpPlacementCompatibility,
     provider.fields.options.region,
-    provider.selectedProvider,
-    watchedGpuType,
     watchedRegion,
   ]);
   const watchedZone = Form.useWatch("zone", formInstance);
   const gcpZoneIncompatible = React.useMemo(() => {
-    if (provider.selectedProvider !== "gcp") return false;
-    if (!watchedGpuType || watchedGpuType === "none") return false;
+    if (!needsGcpPlacementCompatibility) return false;
     const zoneOption = (provider.fields.options.zone ?? []).find(
       (opt) => opt.value === watchedZone,
     );
     const meta = (zoneOption?.meta ?? {}) as { compatible?: boolean };
     return meta.compatible === false;
   }, [
+    needsGcpPlacementCompatibility,
     provider.fields.options.zone,
-    provider.selectedProvider,
-    watchedGpuType,
     watchedZone,
   ]);
   const watchedSshTarget = Form.useWatch("self_host_ssh_target", formInstance);

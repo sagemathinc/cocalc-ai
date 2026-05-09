@@ -253,9 +253,14 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     const compatibilityOptions = isDeprovisioned
       ? createFieldOptions
       : fieldOptions;
+    const machineType =
+      watchedMachineType && watchedMachineType.trim()
+        ? watchedMachineType.trim()
+        : undefined;
     const gpuType =
       watchedGpuType && watchedGpuType !== "none" ? watchedGpuType : undefined;
-    if (!gpuType) return null;
+    if (!gpuType && !machineType) return null;
+    const subject = gpuType ? "GPU" : "machine type";
     const regionOption = (compatibilityOptions.region ?? []).find(
       (opt) => opt.value === watchedRegion,
     );
@@ -270,7 +275,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
           return meta?.compatible === true;
         },
       );
-      return { type: "region" as const, compatibleRegions };
+      return { type: "region" as const, compatibleRegions, subject };
     }
     if (!watchedZone) return null;
     const zoneOption = (compatibilityOptions.zone ?? []).find(
@@ -285,13 +290,15 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       const meta = opt.meta as { compatible?: boolean } | undefined;
       return meta?.compatible === true;
     });
-    return { type: "zone" as const, compatibleZones };
+    return { type: "zone" as const, compatibleZones, subject };
   }, [
     createFieldOptions,
+    fieldOptions.machine_type,
     fieldOptions.region,
     fieldOptions.zone,
     isDeprovisioned,
     providerId,
+    watchedMachineType,
     watchedGpuType,
     watchedRegion,
     watchedZone,
@@ -748,7 +755,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            title="Selected GPU isn't available in this region."
+            title={`Selected ${gcpCompatibilityWarning.subject} isn't available in this region.`}
             description={
               gcpCompatibilityWarning.compatibleRegions.length &&
               !lockRegionZone ? (
@@ -771,7 +778,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                   }}
                 />
               ) : (
-                "Choose a GPU compatible with the selected region."
+                `Choose a ${gcpCompatibilityWarning.subject} compatible with the selected region.`
               )
             }
           />
@@ -781,7 +788,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            title="Selected GPU isn't available in this zone."
+            title={`Selected ${gcpCompatibilityWarning.subject} isn't available in this zone.`}
             description={
               gcpCompatibilityWarning.compatibleZones.length &&
               !lockRegionZone ? (
@@ -804,7 +811,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                   }}
                 />
               ) : (
-                "Choose a GPU compatible with the selected zone."
+                `Choose a ${gcpCompatibilityWarning.subject} compatible with the selected zone.`
               )
             }
           />

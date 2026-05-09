@@ -107,9 +107,14 @@ export const HostCreateProviderFields: React.FC<
   }, [diskValue, form, isNebiusIoM3, normalizeDiskValue]);
   const gcpCompatibilityWarning = React.useMemo(() => {
     if (selectedProvider !== "gcp") return null;
+    const machineType =
+      watchedMachineType && watchedMachineType.trim()
+        ? watchedMachineType.trim()
+        : undefined;
     const gpuType =
       watchedGpuType && watchedGpuType !== "none" ? watchedGpuType : undefined;
-    if (!gpuType) return null;
+    if (!gpuType && !machineType) return null;
+    const subject = gpuType ? "GPU" : "machine type";
     const regionOption = (options.region ?? []).find(
       (opt) => opt.value === watchedRegion,
     );
@@ -122,7 +127,7 @@ export const HostCreateProviderFields: React.FC<
         const meta = opt.meta as { compatible?: boolean } | undefined;
         return meta?.compatible === true;
       });
-      return { type: "region" as const, compatibleRegions };
+      return { type: "region" as const, compatibleRegions, subject };
     }
     if (!watchedZone) return null;
     const zoneOption = (options.zone ?? []).find(
@@ -137,11 +142,13 @@ export const HostCreateProviderFields: React.FC<
       const meta = opt.meta as { compatible?: boolean } | undefined;
       return meta?.compatible === true;
     });
-    return { type: "zone" as const, compatibleZones };
+    return { type: "zone" as const, compatibleZones, subject };
   }, [
+    options.machine_type,
     options.region,
     options.zone,
     selectedProvider,
+    watchedMachineType,
     watchedGpuType,
     watchedRegion,
     watchedZone,
@@ -294,7 +301,7 @@ export const HostCreateProviderFields: React.FC<
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          title="Selected GPU isn't available in this region."
+          title={`Selected ${gcpCompatibilityWarning.subject} isn't available in this region.`}
           description={
             gcpCompatibilityWarning.compatibleRegions.length ? (
               <Select
@@ -316,7 +323,7 @@ export const HostCreateProviderFields: React.FC<
                 }}
               />
             ) : (
-              "Try a different GPU."
+              `Try a different ${gcpCompatibilityWarning.subject}.`
             )
           }
         />
@@ -326,7 +333,7 @@ export const HostCreateProviderFields: React.FC<
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
-          title="Selected GPU isn't available in this zone."
+          title={`Selected ${gcpCompatibilityWarning.subject} isn't available in this zone.`}
           description={
             gcpCompatibilityWarning.compatibleZones.length ? (
               <Select
@@ -346,7 +353,7 @@ export const HostCreateProviderFields: React.FC<
                 }}
               />
             ) : (
-              "Try a different region to use this GPU."
+              `Try a different region to use this ${gcpCompatibilityWarning.subject}.`
             )
           }
         />

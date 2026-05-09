@@ -211,6 +211,59 @@ describe("catalog-backed pricing labels", () => {
     expect(options[0].label).toContain("ram:16");
   });
 
+  it("shows globally known GCP machine types even when the current zone cannot provision them", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "machine_types",
+        scope: "zone/us-central1-a",
+        payload: [{ name: "t2a-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-08T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            t2a: {
+              cpu: { "us-central1": 0.03 },
+              ram: { "us-central1": 0.004 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {},
+        },
+      },
+    ]);
+
+    const options = getGcpMachineTypeOptions(catalog, {
+      region: "us-west1",
+      zone: "us-west1-a",
+      pricing_model: "on_demand",
+    });
+
+    expect(options.map((opt) => opt.value)).toEqual([
+      "n2d-standard-4",
+      "t2a-standard-4",
+    ]);
+    expect(
+      options.find((opt) => opt.value === "t2a-standard-4")?.stateLabel,
+    ).toBe("unavailable");
+  });
+
   it("returns a provider price estimate for Nebius selections", () => {
     const catalog = testCatalog([
       {
