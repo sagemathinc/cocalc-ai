@@ -16,6 +16,34 @@ type HostOptionsSelectProps = {
   size?: "small" | "middle" | "large";
 };
 
+type HostOptionGroup = {
+  label: string;
+  options: HostFieldOption[];
+};
+
+function isUnavailableHostOption(option: HostFieldOption): boolean {
+  return !!option.stateLabel || option.disabled === true;
+}
+
+export function groupHostOptions(
+  options?: HostFieldOption[],
+): HostFieldOption[] | HostOptionGroup[] | undefined {
+  if (!options?.length) return options;
+  const available = options.filter(
+    (option) => !isUnavailableHostOption(option),
+  );
+  const unavailable = options.filter((option) =>
+    isUnavailableHostOption(option),
+  );
+  if (!available.length || !unavailable.length) {
+    return options;
+  }
+  return [
+    { label: "Available", options: available },
+    { label: "Unavailable", options: unavailable },
+  ];
+}
+
 export function HostOptionsSelect({
   options,
   disabled,
@@ -24,9 +52,10 @@ export function HostOptionsSelect({
   onChange,
   size,
 }: HostOptionsSelectProps) {
+  const groupedOptions = groupHostOptions(options);
   return (
     <Select
-      options={options}
+      options={groupedOptions as any}
       disabled={disabled}
       placeholder={placeholder}
       value={value}
