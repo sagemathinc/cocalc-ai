@@ -93,7 +93,8 @@ export const useHostForm = ({
   enabledProviders,
 }: UseHostFormArgs) => {
   const prevProviderRef = useRef<HostProvider | undefined>(undefined);
-  const provider = selectedProvider ?? "none";
+  const provider =
+    selectedProvider ?? enabledProviders[0] ?? ("none" as HostProvider);
   const cloudflareCountry = useTypedRedux("customize", "country");
   const cloudflareRegionCode = useTypedRedux(
     "customize",

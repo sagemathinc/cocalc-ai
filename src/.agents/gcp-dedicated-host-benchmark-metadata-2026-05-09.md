@@ -10,6 +10,8 @@ It exists because raw `vCPU` count is not enough. Two GCP machine types with
 the same nominal `vCPU` count can differ substantially in real compute
 throughput and compute-per-dollar.
 
+Note: I found this useful information to put somewhere from https://docs.cloud.google.com/compute/docs/cpu-platforms which is exactly which machines types have 1 vCPU = 1 core. For compute-intensive work that people are likely to do on cocalc, this can be a very significant thing to know.
+
 ## Scope And Release Status
 
 This is a dedicated-host catalog and UX improvement.
@@ -334,21 +336,51 @@ That would look polished but be technically weak.
 
 ## Curated Family Scope
 
-The first implementation should only cover the GCP families we already expose
-for dedicated hosts:
+The release-frozen GCP family set for dedicated hosts is:
 
-- `t2a`
-- `t2d`
-- `n2d`
-- `c3`
-- `c3d`
+- General purpose:
+  - `E2`
+  - `N2D`
+- Compute:
+  - `T2D`
+  - `C3D`
+  - `C3`
+- Memory:
+  - `N2D highmem`
+  - `N2 highmem`
+- ARM:
+  - `T2A`
+- GPU:
+  - `G2`
 
 This is deliberate:
 
-- it matches the current dedicated-host catalog
+- it covers the concrete CoCalc use cases we care about:
+  - low-cost general use
+  - CPU-heavy compute
+  - large-memory jobs
+  - ARM64 compatibility
+  - one cheap GPU lane
 - it avoids expanding the scope into every GCP family
-- it captures the series where customers are most likely to compare CPU-heavy
-  choices
+- it stays compatible with the current Persistent Disk-based V1 storage model
+- it is narrow enough to support and benchmark honestly
+
+Explicit exclusions for the first release:
+
+- `H3`, `H4D`
+  - too HPC-specific for V1
+  - `H4D` conflicts with the Persistent Disk-first storage policy
+- `C2`, `C2D`
+  - older compute lanes with less product value than `T2D`, `C3D`, and `C3`
+- `A2`, `A3`
+  - too specialized and expensive for the first SaaS release
+- `N1 + T4`
+  - legacy GPU path; revisit only if it is materially better than `G2`
+- `M3`, `M4`
+  - not part of the initial frozen release set
+  - `M4` also conflicts with the current storage policy
+- `C4`, `C4D`, `N4`, `N4A`, `N4D`
+  - defer until Hyperdisk / newer storage policy is in scope
 
 Later additions can include:
 

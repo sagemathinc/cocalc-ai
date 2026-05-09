@@ -67,7 +67,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
       form.setFieldsValue({ self_host_mode: "local" });
     }
     if (form.getFieldValue("disk") == null) {
-      form.setFieldsValue({ disk: 100 });
+      form.setFieldsValue({ disk: 100, disk_gb: 100 });
     }
   }, [form, simpleSelfHost]);
   React.useEffect(() => {
@@ -163,6 +163,9 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
               <Form.Item name="disk" hidden>
                 <Input />
               </Form.Item>
+              <Form.Item name="disk_gb" hidden>
+                <Input />
+              </Form.Item>
               <Form.Item
                 name="self_host_ssh_target"
                 label={<SshTargetLabel label="Host" />}
@@ -203,15 +206,24 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
             </>
           )}
           {!hideAdvanced && (
-            <Collapse ghost style={{ marginBottom: 8 }}>
-              <Collapse.Panel header="Advanced options" key="adv">
-                <HostCreateAdvancedFields
-                  provider={provider}
-                  showSpotFields={showSpotFields}
-                  nebiusSpotSupported={nebiusSpotSupported}
-                />
-              </Collapse.Panel>
-            </Collapse>
+            <Collapse
+              ghost
+              style={{ marginBottom: 8 }}
+              items={[
+                {
+                  key: "adv",
+                  label: "Advanced options",
+                  forceRender: true,
+                  children: (
+                    <HostCreateAdvancedFields
+                      provider={provider}
+                      showSpotFields={showSpotFields}
+                      nebiusSpotSupported={nebiusSpotSupported}
+                    />
+                  ),
+                },
+              ]}
+            />
           )}
         </>
       )}

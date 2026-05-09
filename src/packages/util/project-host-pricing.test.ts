@@ -64,6 +64,88 @@ describe("project host pricing", () => {
     ).toBeCloseTo(0.189, 9);
   });
 
+  it("supports E2 general-purpose pricing", () => {
+    const catalog: GcpCatalogPrices = {
+      fetched_at: "2026-05-08T00:00:00.000Z",
+      service_id: "compute",
+      families: {
+        e2: {
+          cpu: { "us-west1": 0.021 },
+          ram: { "us-west1": 0.0028 },
+          spot_cpu: { "us-west1": 0.0084 },
+          spot_ram: { "us-west1": 0.00112 },
+        },
+      },
+      gpus: {},
+      disks: {},
+    };
+
+    expect(
+      estimateGcpCatalogRateUsdPerHour(catalog, {
+        zone: "us-west1-b",
+        machine_type: "e2-standard-4",
+        pricing_model: "on_demand",
+      }),
+    ).toBeCloseTo(0.1338, 9);
+  });
+
+  it("supports G2 pricing with L4 GPUs", () => {
+    const catalog: GcpCatalogPrices = {
+      fetched_at: "2026-05-08T00:00:00.000Z",
+      service_id: "compute",
+      families: {
+        g2: {
+          cpu: { "us-west1": 0.04 },
+          ram: { "us-west1": 0.005 },
+          spot_cpu: { "us-west1": 0.016 },
+          spot_ram: { "us-west1": 0.002 },
+        },
+      },
+      gpus: {
+        "nvidia-l4": {
+          on_demand: { "us-west1": 0.2 },
+          spot: { "us-west1": 0.08 },
+        },
+      },
+      disks: {},
+    };
+
+    expect(
+      estimateGcpCatalogRateUsdPerHour(catalog, {
+        zone: "us-west1-a",
+        machine_type: "g2-standard-4",
+        pricing_model: "on_demand",
+        gpu_type: "nvidia-l4",
+        gpu_count: 1,
+      }),
+    ).toBeCloseTo(0.445, 9);
+  });
+
+  it("supports N2 highmem pricing", () => {
+    const catalog: GcpCatalogPrices = {
+      fetched_at: "2026-05-08T00:00:00.000Z",
+      service_id: "compute",
+      families: {
+        n2: {
+          cpu: { "us-west1": 0.052 },
+          ram: { "us-west1": 0.007 },
+          spot_cpu: { "us-west1": 0.0208 },
+          spot_ram: { "us-west1": 0.0028 },
+        },
+      },
+      gpus: {},
+      disks: {},
+    };
+
+    expect(
+      estimateGcpCatalogRateUsdPerHour(catalog, {
+        zone: "us-west1-a",
+        machine_type: "n2-highmem-8",
+        pricing_model: "on_demand",
+      }),
+    ).toBeCloseTo(0.869, 9);
+  });
+
   it("supports C3D pricing with explicit machine metadata overrides", () => {
     const catalog: GcpCatalogPrices = {
       fetched_at: "2026-05-08T00:00:00.000Z",

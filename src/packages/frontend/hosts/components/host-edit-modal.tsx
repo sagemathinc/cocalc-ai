@@ -6,6 +6,7 @@ import {
   InputNumber,
   Modal,
   Select,
+  Segmented,
   Switch,
 } from "antd";
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -22,11 +23,15 @@ import type { HostProvider } from "../types";
 import { getDiskTypeOptions } from "../constants";
 import { HostCreateForm } from "./host-create-form";
 import { DiskTypeLabel } from "./disk-type-help";
-import { HostOptionsSelect } from "./host-options-select";
+import {
+  HostOptionsSelect,
+  sortMachineTypeOptions,
+} from "./host-options-select";
 import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
 import { useHostForm } from "../hooks/use-host-form";
 import { useHostFormValues } from "../hooks/use-host-form-values";
 import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
+import { useMachineTypeSortMode } from "../hooks/use-machine-type-sort-mode";
 import {
   filterFieldSchemaForCaps,
   getProviderDescriptor,
@@ -109,6 +114,8 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const watchedProvider = Form.useWatch("provider", form) as
     | HostProvider
     | undefined;
+  const [machineTypeSortMode, setMachineTypeSortMode] =
+    useMachineTypeSortMode();
   const pricingSettings = useHostPricingSettings();
   const hostProviderId = (host?.machine?.cloud ?? "none") as HostProvider;
   const providerId = isDeprovisioned
@@ -301,6 +308,16 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const fieldOptions = providerDescriptor
     ? getProviderOptions(providerId, catalog, selection)
     : {};
+  const displayFieldOptions = React.useMemo(
+    () => ({
+      ...fieldOptions,
+      machine_type: sortMachineTypeOptions(
+        fieldOptions.machine_type,
+        machineTypeSortMode,
+      ),
+    }),
+    [fieldOptions, machineTypeSortMode],
+  );
   const gcpCompatibilityWarning = React.useMemo(() => {
     if (providerId !== "gcp") return null;
     const compatibilityOptions = isDeprovisioned
@@ -592,13 +609,13 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       field: "region" | "zone" | "machine_type" | "size" | "gpu_type",
       current?: string,
     ) => {
-      const options = fieldOptions[field] ?? [];
+      const options = displayFieldOptions[field] ?? [];
       if (!options.length) return;
       if (!current || !options.some((opt) => opt.value === current)) {
         form.setFieldsValue({ [field]: options[0]?.value });
       }
     },
-    [fieldOptions, form],
+    [displayFieldOptions, form],
   );
 
   React.useEffect(() => {
@@ -652,7 +669,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     ) {
       return null;
     }
-    const fieldOpts = fieldOptions[field] ?? [];
+    const fieldOpts = displayFieldOptions[field] ?? [];
     const label =
       fieldSchema.labels?.[field] ??
       field
@@ -661,11 +678,46 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
         .join(" ");
     const tooltip = fieldSchema.tooltips?.[field];
     const isLocked = lockRegionZone && (field === "region" || field === "zone");
+    const showMachineTypeSort =
+      field === "machine_type" &&
+      fieldOpts.length > 1 &&
+      fieldOpts.some(
+        (option) =>
+          !!option.priceLabel ||
+          (typeof option.hourlyRate === "number" &&
+            Number.isFinite(option.hourlyRate)),
+      );
+    const itemLabel = showMachineTypeSort ? (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          width: "100%",
+        }}
+      >
+        <span>{label}</span>
+        <Segmented
+          size="small"
+          value={machineTypeSortMode}
+          options={[
+            { label: "Type", value: "type" },
+            { label: "Price", value: "price" },
+          ]}
+          onChange={(value) =>
+            setMachineTypeSortMode(value as "type" | "price")
+          }
+        />
+      </div>
+    ) : (
+      label
+    );
     return (
       <Form.Item
         key={field}
         name={field}
-        label={label}
+        label={itemLabel}
         tooltip={tooltip}
         initialValue={fieldOpts[0]?.value}
       >
@@ -682,7 +734,29 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     supportsCatalogPricing &&
     priceSelectionComplete &&
     !livePriceEstimate;
-  const disableSave = !!gcpCompatibilityWarning || pricingUnavailable;
+  const selectionHasUnavailablePrice = React.useMemo(() => {
+    const selectedOptions = [
+      (fieldOptions.region ?? []).find((opt) => opt.value === watchedRegion),
+      (fieldOptions.zone ?? []).find((opt) => opt.value === watchedZone),
+      (fieldOptions.machine_type ?? []).find(
+        (opt) => opt.value === watchedMachineType,
+      ),
+    ];
+    return selectedOptions.some(
+      (opt) => opt?.stateLabel === "price unavailable",
+    );
+  }, [
+    fieldOptions.machine_type,
+    fieldOptions.region,
+    fieldOptions.zone,
+    watchedMachineType,
+    watchedRegion,
+    watchedZone,
+  ]);
+  const disableSave =
+    !!gcpCompatibilityWarning ||
+    pricingUnavailable ||
+    selectionHasUnavailablePrice;
 
   return (
     <Modal

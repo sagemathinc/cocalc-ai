@@ -85,11 +85,18 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const watchedStorageMode = Form.useWatch("storage_mode", formInstance);
   const watchedDiskType = Form.useWatch("disk_type", formInstance);
   const watchedDisk = Form.useWatch("disk", formInstance);
+  const watchedDiskGb = Form.useWatch("disk_gb", formInstance);
   const watchedMachineType = Form.useWatch("machine_type", formInstance);
   const watchedGpuType = Form.useWatch("gpu_type", formInstance);
   const watchedPricingModel = Form.useWatch("pricing_model", formInstance);
   const watchedPriceDisplay = Form.useWatch("price_display", formInstance);
   const watchedFundingMode = Form.useWatch("funding_mode", formInstance);
+  const selectedDiskGb =
+    typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb)
+      ? watchedDiskGb
+      : typeof watchedDisk === "number" && Number.isFinite(watchedDisk)
+        ? watchedDisk
+        : undefined;
   const livePricingSelection = React.useMemo<ProviderSelection>(
     () => ({
       region: watchedRegion,
@@ -100,14 +107,11 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
       pricing_model: watchedPricingModel,
       storage_mode: watchedStorageMode,
       disk_type: watchedDiskType,
-      disk_gb:
-        typeof watchedDisk === "number" && Number.isFinite(watchedDisk)
-          ? watchedDisk
-          : undefined,
+      disk_gb: selectedDiskGb,
       price_display: watchedPriceDisplay === "monthly" ? "monthly" : "hourly",
     }),
     [
-      watchedDisk,
+      selectedDiskGb,
       watchedDiskType,
       watchedGpuType,
       watchedMachineType,
@@ -187,17 +191,40 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     const diskType = `${watchedDiskType ?? ""}`.trim();
     return (
       !!diskType &&
-      typeof watchedDisk === "number" &&
-      Number.isFinite(watchedDisk) &&
-      watchedDisk > 0
+      typeof selectedDiskGb === "number" &&
+      Number.isFinite(selectedDiskGb) &&
+      selectedDiskGb > 0
     );
   }, [
     supportsCatalogPricing,
-    watchedDisk,
+    selectedDiskGb,
     watchedDiskType,
     watchedMachineType,
     watchedRegion,
     watchedStorageMode,
+  ]);
+  const selectionHasUnavailablePrice = React.useMemo(() => {
+    const selectedOptions = [
+      (provider.fields.options.region ?? []).find(
+        (opt) => opt.value === watchedRegion,
+      ),
+      (provider.fields.options.zone ?? []).find(
+        (opt) => opt.value === watchedZone,
+      ),
+      (provider.fields.options.machine_type ?? []).find(
+        (opt) => opt.value === watchedMachineType,
+      ),
+    ];
+    return selectedOptions.some(
+      (opt) => opt?.stateLabel === "price unavailable",
+    );
+  }, [
+    provider.fields.options.machine_type,
+    provider.fields.options.region,
+    provider.fields.options.zone,
+    watchedMachineType,
+    watchedRegion,
+    watchedZone,
   ]);
   const createDisabled =
     !canCreateHosts ||
@@ -206,6 +233,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     missingSelfHostTarget ||
     noFundingModes ||
     missingFundingMode ||
+    selectionHasUnavailablePrice ||
     (priceSelectionComplete && supportsCatalogPricing && !livePriceEstimate);
   const requiredCatalogFields = React.useMemo<HostFieldId[]>(
     () =>

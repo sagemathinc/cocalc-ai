@@ -12,6 +12,7 @@ import createPurchase from "@cocalc/server/purchases/create-purchase";
 import { setClosingDay } from "@cocalc/server/purchases/closing-date";
 import {
   closeDedicatedHostPurchaseSessionLocal,
+  estimateDedicatedHostRateUsdPerHour,
   getDedicatedHostPostpaidUnbilledExposureLocal,
   getDedicatedHostWindowUsageLocal,
   reconcileDedicatedHostPurchaseSessionLocal,
@@ -211,6 +212,99 @@ describe("dedicated host spend accounting", () => {
     const exposure =
       await getDedicatedHostPostpaidUnbilledExposureLocal(account_id);
     expect(toDecimal(exposure).toNumber()).toBeCloseTo(27.5, 1);
+  });
+
+  it("estimates Nebius spot rates from the catalog cache using fetched_at ordering", async () => {
+    const instanceTypesId = `nebius/instance_types/global-${uuid()}`;
+    const oldPricesId = `nebius/prices/old-${uuid()}`;
+    const newPricesId = `nebius/prices/global-${uuid()}`;
+
+    try {
+      await getPool("medium").query(
+        `
+          INSERT INTO cloud_catalog_cache
+            (id, provider, kind, scope, payload, fetched_at, ttl_seconds, etag)
+          VALUES
+            ($1, 'nebius', 'instance_types', 'global', $2::jsonb, NOW(), 3600, NULL),
+            ($3, 'nebius', 'prices', 'old', $4::jsonb, NOW() - INTERVAL '2 hour', 3600, NULL),
+            ($5, 'nebius', 'prices', 'global', $6::jsonb, NOW(), 3600, NULL)
+        `,
+        [
+          instanceTypesId,
+          JSON.stringify([
+            {
+              name: "gpu-h100-80gb-1",
+              platform: "gpu-h100-sxm",
+              platform_label: "H100 NVLink",
+              vcpus: 16,
+              memory_gib: 200,
+              gpus: 1,
+              gpu_label: "NVIDIA H100",
+            },
+          ]),
+          oldPricesId,
+          JSON.stringify([
+            {
+              product:
+                "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. CPU",
+              region: "eu-north1",
+              price_usd: "999",
+              unit: "vCPU hour",
+            },
+          ]),
+          newPricesId,
+          JSON.stringify([
+            {
+              product:
+                "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. CPU",
+              region: "eu-north1",
+              price_usd: "0.018",
+              unit: "vCPU hour",
+            },
+            {
+              product:
+                "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. RAM",
+              region: "eu-north1",
+              price_usd: "0.0045",
+              unit: "GiB hour",
+            },
+            {
+              product:
+                "Preemptible NVIDIA® H100 NVLink with Intel Sapphire Rapids. GPU",
+              region: "eu-north1",
+              price_usd: "0.834",
+              unit: "GPU hour",
+            },
+            {
+              product: "Network SSD IO M3 disk",
+              region: "eu-north1",
+              price_usd: "0.000161111",
+              unit: "GiB hour",
+            },
+          ]),
+        ],
+      );
+
+      const rate = await estimateDedicatedHostRateUsdPerHour({
+        provider: "nebius",
+        region: "eu-north1",
+        machine_type: "gpu-h100-80gb-1",
+        pricing_model: "spot",
+        disk_type: "ssd_io_m3",
+        disk_gb: 93,
+        storage_mode: "persistent",
+      });
+
+      expect(toDecimal(rate ?? 0).toNumber()).toBeCloseTo(2.036983323, 9);
+    } finally {
+      await getPool("medium").query(
+        `
+          DELETE FROM cloud_catalog_cache
+          WHERE id = ANY($1::text[])
+        `,
+        [[instanceTypesId, oldPricesId, newPricesId]],
+      );
+    }
   });
 
   it("rotates open postpaid host segments at the account closing boundary", async () => {

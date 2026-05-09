@@ -51,6 +51,11 @@ const GCP_FAMILY_PATTERNS: Array<{
   ram: RegExp;
 }> = [
   {
+    family: "e2",
+    cpu: /^(?:Spot Preemptible )?E2 Instance Core running in /i,
+    ram: /^(?:Spot Preemptible )?E2 Instance Ram running in /i,
+  },
+  {
     family: "t2a",
     cpu: /^(?:Spot Preemptible )?T2A Arm Instance Core running in /i,
     ram: /^(?:Spot Preemptible )?T2A Arm Instance Ram running in /i,
@@ -61,9 +66,19 @@ const GCP_FAMILY_PATTERNS: Array<{
     ram: /^(?:Spot Preemptible )?T2D AMD Instance Ram running in /i,
   },
   {
+    family: "n2",
+    cpu: /^(?:Spot Preemptible )?N2 Instance Core running in /i,
+    ram: /^(?:Spot Preemptible )?N2 Instance Ram running in /i,
+  },
+  {
     family: "n2d",
     cpu: /^(?:Spot Preemptible )?N2D AMD Instance Core running in /i,
     ram: /^(?:Spot Preemptible )?N2D AMD Instance Ram running in /i,
+  },
+  {
+    family: "g2",
+    cpu: /^(?:Spot Preemptible )?G2 Instance Core running in /i,
+    ram: /^(?:Spot Preemptible )?G2 Instance Ram running in /i,
   },
   {
     family: "c3",

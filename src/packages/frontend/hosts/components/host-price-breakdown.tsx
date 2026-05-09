@@ -17,10 +17,14 @@ export const HostPriceBreakdown: React.FC<HostPriceBreakdownProps> = ({
   title = "Estimated cost breakdown",
 }) => {
   const emphasizeHourly = displayMode !== "monthly";
+  const amountColumnWidth = 110;
   const amountTextStyle = (emphasized: boolean) => ({
     fontVariantNumeric: "tabular-nums" as const,
     fontWeight: emphasized ? 600 : 400,
     opacity: emphasized ? 1 : 0.85,
+    textAlign: "right" as const,
+    justifySelf: "end" as const,
+    width: amountColumnWidth,
   });
 
   return (
@@ -37,7 +41,7 @@ export const HostPriceBreakdown: React.FC<HostPriceBreakdownProps> = ({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) auto auto",
+            gridTemplateColumns: `minmax(0, 1fr) ${amountColumnWidth}px ${amountColumnWidth}px`,
             columnGap: 12,
             alignItems: "baseline",
           }}
@@ -53,7 +57,7 @@ export const HostPriceBreakdown: React.FC<HostPriceBreakdownProps> = ({
               alignItems: "baseline",
               columnGap: 12,
               display: "grid",
-              gridTemplateColumns: "minmax(0, 1fr) auto auto",
+              gridTemplateColumns: `minmax(0, 1fr) ${amountColumnWidth}px ${amountColumnWidth}px`,
             }}
           >
             <Typography.Text type="secondary">{item.label}</Typography.Text>
@@ -71,7 +75,7 @@ export const HostPriceBreakdown: React.FC<HostPriceBreakdownProps> = ({
             alignItems: "baseline",
             columnGap: 12,
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) auto auto",
+            gridTemplateColumns: `minmax(0, 1fr) ${amountColumnWidth}px ${amountColumnWidth}px`,
           }}
         >
           <Typography.Text strong>Total</Typography.Text>

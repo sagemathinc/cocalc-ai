@@ -6,6 +6,7 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostListViewMode,
+  HostProvider,
   HostSortDirection,
   HostSortField,
   HostStopOptions,
@@ -60,6 +61,7 @@ type UseHostListViewModelArgs = {
   autoResort: boolean;
   setAutoResort: (value: boolean) => void;
   catalog?: HostCatalog;
+  pricingCatalogs?: Partial<Record<HostProvider, HostCatalog | undefined>>;
   providerCapabilities?: HostCatalog["provider_capabilities"];
   parallelOps?: {
     status: ParallelOpsWorkerStatus[];
@@ -141,6 +143,7 @@ export const useHostListViewModel = ({
   autoResort,
   setAutoResort,
   catalog,
+  pricingCatalogs,
   providerCapabilities,
   parallelOps,
   runtimeVersions,
@@ -183,6 +186,7 @@ export const useHostListViewModel = ({
     autoResort,
     setAutoResort,
     catalog,
+    pricingCatalogs,
     providerCapabilities,
     parallelOps,
     runtimeVersions,

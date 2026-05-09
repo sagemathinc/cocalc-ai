@@ -77,4 +77,86 @@ describe("GCP billing catalog pricing", () => {
 
     expect(catalog.disks["pd-standard"]?.["us-west1"]).toBeGreaterThan(0);
   });
+
+  it("normalizes E2, N2, and G2 family SKU rows", () => {
+    const catalog = normalizeGcpBillingSkus([
+      {
+        description: "E2 Instance Core running in Oregon",
+        serviceRegions: ["us-west1"],
+        category: { usageType: "OnDemand" },
+        pricingInfo: [
+          {
+            pricingExpression: {
+              usageUnit: "h",
+              tieredRates: [
+                {
+                  startUsageAmount: 0,
+                  unitPrice: { units: "0", nanos: 21000000 },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        description: "N2 Instance Ram running in Oregon",
+        serviceRegions: ["us-west1"],
+        category: { usageType: "OnDemand" },
+        pricingInfo: [
+          {
+            pricingExpression: {
+              usageUnit: "GiBy.h",
+              tieredRates: [
+                {
+                  startUsageAmount: 0,
+                  unitPrice: { units: "0", nanos: 7000000 },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        description: "G2 Instance Core running in Oregon",
+        serviceRegions: ["us-west1"],
+        category: { usageType: "OnDemand" },
+        pricingInfo: [
+          {
+            pricingExpression: {
+              usageUnit: "h",
+              tieredRates: [
+                {
+                  startUsageAmount: 0,
+                  unitPrice: { units: "0", nanos: 40000000 },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      {
+        description: "G2 Instance Ram running in Oregon",
+        serviceRegions: ["us-west1"],
+        category: { usageType: "OnDemand" },
+        pricingInfo: [
+          {
+            pricingExpression: {
+              usageUnit: "GiBy.h",
+              tieredRates: [
+                {
+                  startUsageAmount: 0,
+                  unitPrice: { units: "0", nanos: 5000000 },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+
+    expect(catalog.families.e2?.cpu["us-west1"]).toBeCloseTo(0.021, 9);
+    expect(catalog.families.n2?.ram["us-west1"]).toBeCloseTo(0.007, 9);
+    expect(catalog.families.g2?.cpu["us-west1"]).toBeCloseTo(0.04, 9);
+    expect(catalog.families.g2?.ram["us-west1"]).toBeCloseTo(0.005, 9);
+  });
 });

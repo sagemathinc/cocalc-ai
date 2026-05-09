@@ -629,7 +629,7 @@ async function loadGcpPriceCatalog(): Promise<GcpCatalogPrices | undefined> {
       FROM cloud_catalog_cache
       WHERE provider=$1
         AND kind=$2
-      ORDER BY updated DESC
+      ORDER BY fetched_at DESC NULLS LAST
       LIMIT 1
     `,
     ["gcp", "prices"],
@@ -659,7 +659,7 @@ async function loadNebiusPriceItems(): Promise<NebiusCatalogPriceItem[]> {
       FROM cloud_catalog_cache
       WHERE provider=$1
         AND kind=$2
-      ORDER BY updated DESC
+      ORDER BY fetched_at DESC NULLS LAST
       LIMIT 1
     `,
     ["nebius", "prices"],

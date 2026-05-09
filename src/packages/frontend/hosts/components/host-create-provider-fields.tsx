@@ -6,6 +6,7 @@ import {
   InputNumber,
   Row,
   Select,
+  Segmented,
   Slider,
   Tag,
 } from "antd";
@@ -16,10 +17,15 @@ import {
   R2_REGION_LABELS,
 } from "@cocalc/util/consts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
+import { getDiskTypeOptions } from "../constants";
 import { isNebiusSpotSupported } from "../providers/registry";
 import type { HostFieldId } from "../providers/registry";
-import { HostOptionsSelect } from "./host-options-select";
+import {
+  HostOptionsSelect,
+  sortMachineTypeOptions,
+} from "./host-options-select";
 import { SshTargetLabel } from "./ssh-target-help";
+import { useMachineTypeSortMode } from "../hooks/use-machine-type-sort-mode";
 
 const MIN_DISK_SIZE = 50;
 const MAX_DISK_SIZE = 10_000;
@@ -46,7 +52,9 @@ export const HostCreateProviderFields: React.FC<
   const watchedSize = Form.useWatch("size", form);
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedPricingModel = Form.useWatch("pricing_model", form);
+  const watchedStorageMode = Form.useWatch("storage_mode", form);
   const watchedDisk = Form.useWatch("disk", form);
+  const watchedDiskGb = Form.useWatch("disk_gb", form);
   const watchedDiskType = Form.useWatch("disk_type", form);
   const watchedSelfHostKind = Form.useWatch("self_host_kind", form);
   const watchedSelfHostMode = Form.useWatch("self_host_mode", form);
@@ -60,25 +68,48 @@ export const HostCreateProviderFields: React.FC<
     "customize",
     "project_hosts_self_host_alpha_enabled",
   );
+  const [machineTypeSortMode, setMachineTypeSortMode] =
+    useMachineTypeSortMode();
+  const displayOptions = React.useMemo(
+    () => ({
+      ...options,
+      machine_type: sortMachineTypeOptions(
+        options.machine_type,
+        machineTypeSortMode,
+      ),
+    }),
+    [machineTypeSortMode, options],
+  );
   const nebiusSpotSupported = React.useMemo(
     () =>
       selectedProvider !== "nebius" ||
-      isNebiusSpotSupported(options.machine_type, watchedMachineType),
-    [options.machine_type, selectedProvider, watchedMachineType],
+      isNebiusSpotSupported(displayOptions.machine_type, watchedMachineType),
+    [displayOptions.machine_type, selectedProvider, watchedMachineType],
   );
   const showSpotHint =
     watchedRegionPreference === "cheapest" &&
     watchedPricingModel !== "spot" &&
     (selectedProvider === "gcp" ||
       (selectedProvider === "nebius" && nebiusSpotSupported));
-  const defaultDiskType =
-    selectedProvider === "nebius" ? "ssd_io_m3" : undefined;
+  const diskTypeOptions = getDiskTypeOptions(selectedProvider);
+  const defaultDiskType = diskTypeOptions[0]?.value;
   React.useEffect(() => {
-    if (selectedProvider !== "nebius") return;
+    if (!showDiskFields || !diskTypeOptions.length) return;
     if (!watchedDiskType) {
       form.setFieldsValue({ disk_type: defaultDiskType });
     }
-  }, [defaultDiskType, form, selectedProvider, watchedDiskType]);
+  }, [
+    defaultDiskType,
+    diskTypeOptions.length,
+    form,
+    showDiskFields,
+    watchedDiskType,
+  ]);
+  React.useEffect(() => {
+    if (selectedProvider !== "gcp") return;
+    if (watchedStorageMode === "persistent") return;
+    form.setFieldsValue({ storage_mode: "persistent" });
+  }, [form, selectedProvider, watchedStorageMode]);
   const effectiveDiskType = watchedDiskType ?? defaultDiskType;
   const isNebiusIoM3 =
     selectedProvider === "nebius" && effectiveDiskType === "ssd_io_m3";
@@ -87,9 +118,11 @@ export const HostCreateProviderFields: React.FC<
     : MIN_DISK_SIZE;
   const diskStep = isNebiusIoM3 ? NEBIUS_IO_M3_GB : 1;
   const diskValue =
-    typeof watchedDisk === "number" && Number.isFinite(watchedDisk)
-      ? watchedDisk
-      : INITIAL_DISK_SIZE;
+    typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb)
+      ? watchedDiskGb
+      : typeof watchedDisk === "number" && Number.isFinite(watchedDisk)
+        ? watchedDisk
+        : INITIAL_DISK_SIZE;
   const normalizeDiskValue = React.useCallback(
     (value: number) => {
       if (!isNebiusIoM3) return value;
@@ -102,9 +135,19 @@ export const HostCreateProviderFields: React.FC<
     if (!isNebiusIoM3) return;
     const normalized = normalizeDiskValue(diskValue);
     if (normalized !== diskValue) {
-      form.setFieldsValue({ disk: normalized });
+      form.setFieldsValue({ disk: normalized, disk_gb: normalized });
     }
   }, [diskValue, form, isNebiusIoM3, normalizeDiskValue]);
+  React.useEffect(() => {
+    if (!showDiskFields) return;
+    if (
+      (typeof watchedDisk === "number" && Number.isFinite(watchedDisk)) ||
+      (typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb))
+    ) {
+      return;
+    }
+    form.setFieldsValue({ disk: diskMin, disk_gb: diskMin });
+  }, [diskMin, form, showDiskFields, watchedDisk, watchedDiskGb]);
   const gcpCompatibilityWarning = React.useMemo(() => {
     if (selectedProvider !== "gcp") return null;
     const machineType =
@@ -155,13 +198,13 @@ export const HostCreateProviderFields: React.FC<
   ]);
   const ensureFieldValue = React.useCallback(
     (field: HostFieldId, current?: string) => {
-      const fieldOptions = options[field] ?? [];
+      const fieldOptions = displayOptions[field] ?? [];
       if (!fieldOptions.length) return;
       if (!current || !fieldOptions.some((opt) => opt.value === current)) {
         form.setFieldsValue({ [field]: fieldOptions[0]?.value });
       }
     },
-    [form, options],
+    [displayOptions, form],
   );
 
   React.useEffect(() => {
@@ -206,7 +249,7 @@ export const HostCreateProviderFields: React.FC<
     ) {
       return null;
     }
-    const fieldOptions = options[field] ?? [];
+    const fieldOptions = displayOptions[field] ?? [];
     const label =
       labels[field] ??
       field
@@ -214,11 +257,46 @@ export const HostCreateProviderFields: React.FC<
         .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
         .join(" ");
     const tooltip = tooltips[field];
+    const showMachineTypeSort =
+      field === "machine_type" &&
+      fieldOptions.length > 1 &&
+      fieldOptions.some(
+        (option) =>
+          !!option.priceLabel ||
+          (typeof option.hourlyRate === "number" &&
+            Number.isFinite(option.hourlyRate)),
+      );
+    const itemLabel = showMachineTypeSort ? (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          width: "100%",
+        }}
+      >
+        <span>{label}</span>
+        <Segmented
+          size="small"
+          value={machineTypeSortMode}
+          options={[
+            { label: "Type", value: "type" },
+            { label: "Price", value: "price" },
+          ]}
+          onChange={(value) =>
+            setMachineTypeSortMode(value as "type" | "price")
+          }
+        />
+      </div>
+    ) : (
+      label
+    );
     const item = (
       <Form.Item
         key={field}
         name={field}
-        label={label}
+        label={itemLabel}
         tooltip={tooltip}
         initialValue={fieldOptions[0]?.value}
       >
@@ -406,7 +484,11 @@ export const HostCreateProviderFields: React.FC<
                   if (typeof value !== "number" || Number.isNaN(value)) {
                     return;
                   }
-                  form.setFieldsValue({ disk: normalizeDiskValue(value) });
+                  const normalized = normalizeDiskValue(value);
+                  form.setFieldsValue({
+                    disk: normalized,
+                    disk_gb: normalized,
+                  });
                 }}
               />
             </Col>
@@ -422,7 +504,11 @@ export const HostCreateProviderFields: React.FC<
                     if (typeof value !== "number" || Number.isNaN(value)) {
                       return;
                     }
-                    form.setFieldsValue({ disk: normalizeDiskValue(value) });
+                    const normalized = normalizeDiskValue(value);
+                    form.setFieldsValue({
+                      disk: normalized,
+                      disk_gb: normalized,
+                    });
                   }}
                 />
               </Form.Item>
