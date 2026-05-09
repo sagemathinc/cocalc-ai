@@ -4,6 +4,7 @@ import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { getDiskTypeOptions } from "../constants";
 import type { HostFieldId } from "../providers/registry";
 import { HostOptionsSelect } from "./host-options-select";
+import { DiskTypeLabel } from "./disk-type-help";
 import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
 
 type HostCreateAdvancedFieldsProps = {
@@ -147,7 +148,7 @@ export const HostCreateAdvancedFields: React.FC<
           <Col span={24}>
             <Form.Item
               name="disk_type"
-              label="Disk type"
+              label={<DiskTypeLabel provider={selectedProvider} />}
               initialValue={defaultDiskType}
             >
               <Select

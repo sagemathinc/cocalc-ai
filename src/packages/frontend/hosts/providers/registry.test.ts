@@ -320,6 +320,47 @@ describe("catalog-backed pricing labels", () => {
     expect(estimate?.monthly_label).toContain("/mo");
   });
 
+  it("returns a provider price estimate for GCP standard persistent disks", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-standard": { "us-west1": 0.00006 },
+          },
+        },
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate("gcp", catalog, {
+      zone: "us-west1-a",
+      machine_type: "n2d-standard-4",
+      pricing_model: "on_demand",
+      storage_mode: "persistent",
+      disk_type: "standard",
+      disk_gb: 100,
+    });
+
+    expect(estimate?.usd_per_hour).toBeCloseTo(0.366, 9);
+  });
+
   it("returns a provider price estimate for Nebius spot GPU selections", () => {
     const catalog = testCatalog([
       {

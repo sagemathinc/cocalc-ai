@@ -21,6 +21,7 @@ import type {
 import type { HostProvider } from "../types";
 import { getDiskTypeOptions } from "../constants";
 import { HostCreateForm } from "./host-create-form";
+import { DiskTypeLabel } from "./disk-type-help";
 import { HostOptionsSelect } from "./host-options-select";
 import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
 import { useHostForm } from "../hooks/use-host-form";
@@ -1003,7 +1004,10 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                       ]}
                     />
                   </Form.Item>
-                  <Form.Item label="Disk type" name="disk_type">
+                  <Form.Item
+                    label={<DiskTypeLabel provider={providerId} />}
+                    name="disk_type"
+                  >
                     <Select
                       options={diskTypeOptions}
                       disabled={!diskTypeOptions.length}
