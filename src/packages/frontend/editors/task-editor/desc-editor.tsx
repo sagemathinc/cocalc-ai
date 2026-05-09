@@ -95,6 +95,7 @@ export default function DescriptionEditor({
         enableUpload={true}
         enableMentions={true}
         autoGrow
+        unboundedAutoGrow
         placeholder={
           "Enter a description.  Use markdown with LaTeX.  Evaluate code blocks."
         }

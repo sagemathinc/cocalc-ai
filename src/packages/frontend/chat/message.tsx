@@ -2453,6 +2453,8 @@ export default function Message({
           on_send={(value) => saveEditedMessage(value)}
           height={"auto"}
           autoGrowMinHeight={EDIT_MARKDOWN_MIN_HEIGHT}
+          unboundedAutoGrow
+          clampAutoGrowToHost={false}
           syncdb={actions.syncdb}
           date={date}
           onChange={(value) => {

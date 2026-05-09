@@ -55,6 +55,7 @@ export interface MultiMarkdownInputProps {
   autoGrow?: boolean;
   autoGrowMinHeight?: number;
   autoGrowMaxHeight?: number;
+  unboundedAutoGrow?: boolean;
   clampAutoGrowToHost?: boolean;
   style?: CSSProperties;
   modeSwitchStyle?: CSSProperties;

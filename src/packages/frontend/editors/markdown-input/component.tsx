@@ -124,6 +124,7 @@ interface Props {
   autoGrow?: boolean;
   autoGrowMinHeight?: number; // px floor for autoGrow (defaults to single-line composer size)
   autoGrowMaxHeight?: number; // px cap for autoGrow (defaults to 50vh behavior)
+  unboundedAutoGrow?: boolean;
   clampAutoGrowToHost?: boolean;
   chromeLayout?: "internal" | "external";
 }
@@ -133,6 +134,7 @@ export function MarkdownInput(props: Props) {
     autoFocus,
     autoGrowMinHeight,
     autoGrowMaxHeight,
+    unboundedAutoGrow,
     clampAutoGrowToHost = false,
     cmOptions,
     compact,
@@ -411,15 +413,23 @@ export function MarkdownInput(props: Props) {
 
       if (isAutoGrow) {
         refreshMaxHeight();
-        const maxHeight = maxHeightRef.current;
         const desired = measureRenderedContentHeight(editor);
         const availableHeight = clampAutoGrowToHost
           ? measureAvailableEditorHeight()
           : null;
-        let clamped = Math.min(
-          maxHeight,
-          Math.max(initialMinHeight, Math.round(desired)),
-        );
+        const isUnbounded =
+          unboundedAutoGrow &&
+          availableHeight == null &&
+          explicitEditorHeight == null;
+        const maxHeight = isUnbounded
+          ? Math.max(initialMinHeight, Math.round(desired))
+          : maxHeightRef.current;
+        let clamped = isUnbounded
+          ? maxHeight
+          : Math.min(
+              maxHeight,
+              Math.max(initialMinHeight, Math.round(desired)),
+            );
         if (availableHeight != null) {
           clamped = Math.min(clamped, Math.max(1, availableHeight));
         }
@@ -427,7 +437,7 @@ export function MarkdownInput(props: Props) {
         const appliedMinHeight = Math.min(initialMinHeight, clamped);
         const appliedMaxHeight =
           availableHeight != null ? Math.min(maxHeight, clamped) : maxHeight;
-        const allowInternalScroll = desired > clamped + 1;
+        const allowInternalScroll = !isUnbounded && desired > clamped + 1;
         const applyHeight = () => {
           editor.setSize(null, clamped);
           applyWrapperDimensions(editor, {
@@ -497,6 +507,7 @@ export function MarkdownInput(props: Props) {
       resetEditorHostScroll,
       resetScrollTopWhenContentFits,
       refreshMaxHeight,
+      unboundedAutoGrow,
     ],
   );
 

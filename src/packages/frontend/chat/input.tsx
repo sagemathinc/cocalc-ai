@@ -38,6 +38,8 @@ interface Props {
   height?: string;
   autoGrowMinHeight?: number;
   autoGrowMaxHeight?: number;
+  unboundedAutoGrow?: boolean;
+  clampAutoGrowToHost?: boolean;
   submitMentionsRef?: SubmitMentionsRef;
   fontSize?: number;
   hideHelp?: boolean;
@@ -92,6 +94,8 @@ export default function ChatInput({
   syncdb,
   isFocused,
   autoGrowMaxHeight,
+  unboundedAutoGrow,
+  clampAutoGrowToHost = true,
   sessionToken,
   fixedMode,
   externalMultilinePasteAsCodeBlock,
@@ -352,7 +356,8 @@ export default function ChatInput({
       height={height}
       autoGrowMinHeight={autoGrowMinHeight}
       autoGrowMaxHeight={autoGrowMaxHeight}
-      clampAutoGrowToHost
+      unboundedAutoGrow={unboundedAutoGrow}
+      clampAutoGrowToHost={clampAutoGrowToHost}
       placeholder={getPlaceholder()}
       fontSize={fontSize}
       hideHelp={true}

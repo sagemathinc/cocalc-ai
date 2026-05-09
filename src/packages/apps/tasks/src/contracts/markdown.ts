@@ -20,6 +20,7 @@ export interface TasksMarkdownEditorProps {
   height?: number | string;
   autoGrow?: boolean;
   autoGrowMaxHeight?: number;
+  unboundedAutoGrow?: boolean;
   placeholder?: string;
   autoFocus?: boolean;
   onSave?: () => void;
