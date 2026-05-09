@@ -682,7 +682,29 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     supportsCatalogPricing &&
     priceSelectionComplete &&
     !livePriceEstimate;
-  const disableSave = !!gcpCompatibilityWarning || pricingUnavailable;
+  const selectionHasUnavailablePrice = React.useMemo(() => {
+    const selectedOptions = [
+      (fieldOptions.region ?? []).find((opt) => opt.value === watchedRegion),
+      (fieldOptions.zone ?? []).find((opt) => opt.value === watchedZone),
+      (fieldOptions.machine_type ?? []).find(
+        (opt) => opt.value === watchedMachineType,
+      ),
+    ];
+    return selectedOptions.some(
+      (opt) => opt?.stateLabel === "price unavailable",
+    );
+  }, [
+    fieldOptions.machine_type,
+    fieldOptions.region,
+    fieldOptions.zone,
+    watchedMachineType,
+    watchedRegion,
+    watchedZone,
+  ]);
+  const disableSave =
+    !!gcpCompatibilityWarning ||
+    pricingUnavailable ||
+    selectionHasUnavailablePrice;
 
   return (
     <Modal

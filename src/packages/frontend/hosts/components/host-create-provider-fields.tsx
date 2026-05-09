@@ -16,6 +16,7 @@ import {
   R2_REGION_LABELS,
 } from "@cocalc/util/consts";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
+import { getDiskTypeOptions } from "../constants";
 import { isNebiusSpotSupported } from "../providers/registry";
 import type { HostFieldId } from "../providers/registry";
 import { HostOptionsSelect } from "./host-options-select";
@@ -47,6 +48,7 @@ export const HostCreateProviderFields: React.FC<
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedPricingModel = Form.useWatch("pricing_model", form);
   const watchedDisk = Form.useWatch("disk", form);
+  const watchedDiskGb = Form.useWatch("disk_gb", form);
   const watchedDiskType = Form.useWatch("disk_type", form);
   const watchedSelfHostKind = Form.useWatch("self_host_kind", form);
   const watchedSelfHostMode = Form.useWatch("self_host_mode", form);
@@ -71,14 +73,20 @@ export const HostCreateProviderFields: React.FC<
     watchedPricingModel !== "spot" &&
     (selectedProvider === "gcp" ||
       (selectedProvider === "nebius" && nebiusSpotSupported));
-  const defaultDiskType =
-    selectedProvider === "nebius" ? "ssd_io_m3" : undefined;
+  const diskTypeOptions = getDiskTypeOptions(selectedProvider);
+  const defaultDiskType = diskTypeOptions[0]?.value;
   React.useEffect(() => {
-    if (selectedProvider !== "nebius") return;
+    if (!showDiskFields || !diskTypeOptions.length) return;
     if (!watchedDiskType) {
       form.setFieldsValue({ disk_type: defaultDiskType });
     }
-  }, [defaultDiskType, form, selectedProvider, watchedDiskType]);
+  }, [
+    defaultDiskType,
+    diskTypeOptions.length,
+    form,
+    showDiskFields,
+    watchedDiskType,
+  ]);
   const effectiveDiskType = watchedDiskType ?? defaultDiskType;
   const isNebiusIoM3 =
     selectedProvider === "nebius" && effectiveDiskType === "ssd_io_m3";
@@ -87,9 +95,11 @@ export const HostCreateProviderFields: React.FC<
     : MIN_DISK_SIZE;
   const diskStep = isNebiusIoM3 ? NEBIUS_IO_M3_GB : 1;
   const diskValue =
-    typeof watchedDisk === "number" && Number.isFinite(watchedDisk)
-      ? watchedDisk
-      : INITIAL_DISK_SIZE;
+    typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb)
+      ? watchedDiskGb
+      : typeof watchedDisk === "number" && Number.isFinite(watchedDisk)
+        ? watchedDisk
+        : INITIAL_DISK_SIZE;
   const normalizeDiskValue = React.useCallback(
     (value: number) => {
       if (!isNebiusIoM3) return value;
@@ -102,9 +112,19 @@ export const HostCreateProviderFields: React.FC<
     if (!isNebiusIoM3) return;
     const normalized = normalizeDiskValue(diskValue);
     if (normalized !== diskValue) {
-      form.setFieldsValue({ disk: normalized });
+      form.setFieldsValue({ disk: normalized, disk_gb: normalized });
     }
   }, [diskValue, form, isNebiusIoM3, normalizeDiskValue]);
+  React.useEffect(() => {
+    if (!showDiskFields) return;
+    if (
+      (typeof watchedDisk === "number" && Number.isFinite(watchedDisk)) ||
+      (typeof watchedDiskGb === "number" && Number.isFinite(watchedDiskGb))
+    ) {
+      return;
+    }
+    form.setFieldsValue({ disk: diskMin, disk_gb: diskMin });
+  }, [diskMin, form, showDiskFields, watchedDisk, watchedDiskGb]);
   const gcpCompatibilityWarning = React.useMemo(() => {
     if (selectedProvider !== "gcp") return null;
     const machineType =
@@ -406,7 +426,11 @@ export const HostCreateProviderFields: React.FC<
                   if (typeof value !== "number" || Number.isNaN(value)) {
                     return;
                   }
-                  form.setFieldsValue({ disk: normalizeDiskValue(value) });
+                  const normalized = normalizeDiskValue(value);
+                  form.setFieldsValue({
+                    disk: normalized,
+                    disk_gb: normalized,
+                  });
                 }}
               />
             </Col>
@@ -422,7 +446,11 @@ export const HostCreateProviderFields: React.FC<
                     if (typeof value !== "number" || Number.isNaN(value)) {
                       return;
                     }
-                    form.setFieldsValue({ disk: normalizeDiskValue(value) });
+                    const normalized = normalizeDiskValue(value);
+                    form.setFieldsValue({
+                      disk: normalized,
+                      disk_gb: normalized,
+                    });
                   }}
                 />
               </Form.Item>

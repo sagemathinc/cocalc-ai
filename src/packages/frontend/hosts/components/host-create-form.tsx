@@ -67,7 +67,7 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
       form.setFieldsValue({ self_host_mode: "local" });
     }
     if (form.getFieldValue("disk") == null) {
-      form.setFieldsValue({ disk: 100 });
+      form.setFieldsValue({ disk: 100, disk_gb: 100 });
     }
   }, [form, simpleSelfHost]);
   React.useEffect(() => {
@@ -161,6 +161,9 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
                 <Input />
               </Form.Item>
               <Form.Item name="disk" hidden>
+                <Input />
+              </Form.Item>
+              <Form.Item name="disk_gb" hidden>
                 <Input />
               </Form.Item>
               <Form.Item
