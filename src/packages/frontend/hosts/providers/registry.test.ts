@@ -333,6 +333,45 @@ describe("catalog-backed pricing labels", () => {
     ).toBe("unavailable");
   });
 
+  it("filters out local-SSD GCP machine variants from selector options", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [
+          { name: "c3d-standard-8", guestCpus: 8, memoryMb: 32768 },
+          { name: "c3d-standard-8-lssd", guestCpus: 8, memoryMb: 32768 },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-08T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            c3d: {
+              cpu: { "us-west1": 0.055 },
+              ram: { "us-west1": 0.008 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {},
+        },
+      },
+    ]);
+
+    const options = getGcpMachineTypeOptions(catalog, {
+      region: "us-west1",
+      zone: "us-west1-a",
+      pricing_model: "on_demand",
+    });
+
+    expect(options.map((opt) => opt.value)).toEqual(["c3d-standard-8"]);
+  });
+
   it("freezes the GCP GPU lane to L4 on G2", () => {
     const catalog = testCatalog([
       {
