@@ -35,6 +35,7 @@ interface MarkdownTextAdapterProps {
   autoGrow?: boolean;
   autoGrowMinHeight?: number;
   autoGrowMaxHeight?: number;
+  unboundedAutoGrow?: boolean;
   clampAutoGrowToHost?: boolean;
   chromeLayout?: "internal" | "external";
   style?: React.CSSProperties;
@@ -84,6 +85,7 @@ export function MarkdownTextAdapter({
   autoGrow,
   autoGrowMinHeight,
   autoGrowMaxHeight,
+  unboundedAutoGrow,
   clampAutoGrowToHost,
   chromeLayout,
   style,
@@ -133,6 +135,7 @@ export function MarkdownTextAdapter({
       autoGrow={autoGrow ?? height === "auto"}
       autoGrowMinHeight={autoGrowMinHeight}
       autoGrowMaxHeight={autoGrowMaxHeight}
+      unboundedAutoGrow={unboundedAutoGrow}
       clampAutoGrowToHost={clampAutoGrowToHost}
       chromeLayout={chromeLayout}
       style={style}
@@ -203,6 +206,8 @@ interface SlateRichTextAdapterProps {
   style?: React.CSSProperties;
   editBarStyle?: React.CSSProperties;
   autoGrow?: boolean;
+  autoGrowMaxHeight?: number;
+  unboundedAutoGrow?: boolean;
 }
 
 export function SlateRichTextAdapter({
@@ -246,9 +251,17 @@ export function SlateRichTextAdapter({
   style,
   editBarStyle,
   autoGrow,
+  autoGrowMaxHeight,
+  unboundedAutoGrow,
 }: SlateRichTextAdapterProps) {
   const hasFixedHeight = height != null && height !== "auto";
-  const maxHeight = hasFixedHeight ? height : MAX_INPUT_HEIGHT;
+  const maxHeight = hasFixedHeight
+    ? height
+    : unboundedAutoGrow
+      ? undefined
+      : autoGrowMaxHeight != null && Number.isFinite(autoGrowMaxHeight)
+        ? `${Math.max(MIN_INPUT_HEIGHT, Math.round(autoGrowMaxHeight))}px`
+        : MAX_INPUT_HEIGHT;
   const useLocalRichTextHistory = undoMode === "local" || redoMode === "local";
 
   const externalUndo = resolveUndoHandler({ mode: undoMode, handler: onUndo });

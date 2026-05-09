@@ -35,6 +35,7 @@ export default function MultiMarkdownInput({
   fontSize,
   autoGrowMinHeight,
   autoGrowMaxHeight,
+  unboundedAutoGrow,
   clampAutoGrowToHost,
   getValueRef,
   height = "auto",
@@ -117,9 +118,11 @@ export default function MultiMarkdownInput({
       ? `calc(${height} - ${toolbarInset}px)`
       : height;
   const shellHeight =
-    showToolbarModeSwitch && height != null && height !== "auto"
-      ? height
-      : "100%";
+    unboundedAutoGrow && height === "auto"
+      ? "auto"
+      : showToolbarModeSwitch && height != null && height !== "auto"
+        ? height
+        : "100%";
   const {
     activeModeRef,
     mode,
@@ -208,7 +211,7 @@ export default function MultiMarkdownInput({
         ...(minimal
           ? undefined
           : {
-              overflow: "hidden",
+              overflow: unboundedAutoGrow ? "visible" : "hidden",
               background: "white",
               color: "black",
               ...(focused ? FOCUSED_STYLE : BLURED_STYLE),
@@ -335,6 +338,7 @@ export default function MultiMarkdownInput({
             autoGrow={autoGrow ?? height === "auto"}
             autoGrowMinHeight={autoGrowMinHeight}
             autoGrowMaxHeight={autoGrowMaxHeight}
+            unboundedAutoGrow={unboundedAutoGrow}
             clampAutoGrowToHost={clampAutoGrowToHost}
             chromeLayout={showToolbarModeSwitch ? "external" : "internal"}
             style={style}
@@ -423,6 +427,8 @@ export default function MultiMarkdownInput({
             style={style}
             editBarStyle={editBarStyle}
             autoGrow={isAutoGrow}
+            autoGrowMaxHeight={autoGrowMaxHeight}
+            unboundedAutoGrow={unboundedAutoGrow}
           />
         ) : undefined}
       </div>
