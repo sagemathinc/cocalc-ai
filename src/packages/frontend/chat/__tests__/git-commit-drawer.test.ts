@@ -53,6 +53,7 @@ import {
   shouldFinalizeGitFileOpenAction,
   shouldRefreshGitReviewStateOnReconnect,
   shouldCaptureGitDrawerFindShortcut,
+  shouldApplyIncomingGitCommitSelectionRequest,
 } from "../git-commit-drawer";
 import { act, fireEvent, render } from "@testing-library/react";
 
@@ -625,6 +626,30 @@ describe("git commit drawer merge commit formatting", () => {
         requestTokenChanged: true,
       }),
     ).toBe("deadbeef");
+  });
+
+  it("does not consume explicit commit-link requests while the drawer is closed", () => {
+    expect(
+      shouldApplyIncomingGitCommitSelectionRequest({
+        open: false,
+        incomingRequestToken: 2,
+        appliedRequestToken: 1,
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplyIncomingGitCommitSelectionRequest({
+        open: true,
+        incomingRequestToken: 2,
+        appliedRequestToken: 1,
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplyIncomingGitCommitSelectionRequest({
+        open: true,
+        incomingRequestToken: 2,
+        appliedRequestToken: 2,
+      }),
+    ).toBe(false);
   });
 
   it("preserves onModeChange forwarding for git review note/comment editors", () => {

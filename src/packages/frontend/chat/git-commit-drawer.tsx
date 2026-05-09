@@ -284,6 +284,18 @@ export function resolveEffectiveGitCommitSelection({
   return open && requestTokenChanged ? incomingCommit : selectedCommit;
 }
 
+export function shouldApplyIncomingGitCommitSelectionRequest({
+  open,
+  incomingRequestToken,
+  appliedRequestToken,
+}: {
+  open: boolean;
+  incomingRequestToken: number;
+  appliedRequestToken: number;
+}): boolean {
+  return open && incomingRequestToken !== appliedRequestToken;
+}
+
 export function applyGitReviewedByCommitEntries({
   previous,
   entries,
@@ -402,10 +414,16 @@ export function GitCommitDrawer({
   const [selectedCommit, setSelectedCommit] = useState<string | undefined>(
     incomingCommit,
   );
-  const commitSelectionRequestTokenRef = useRef(commitSelectionRequestToken);
+  const [
+    appliedCommitSelectionRequestToken,
+    setAppliedCommitSelectionRequestToken,
+  ] = useState(commitSelectionRequestToken);
   const hasPendingCommitSelectionRequest =
-    open &&
-    commitSelectionRequestToken !== commitSelectionRequestTokenRef.current;
+    shouldApplyIncomingGitCommitSelectionRequest({
+      open,
+      incomingRequestToken: commitSelectionRequestToken,
+      appliedRequestToken: appliedCommitSelectionRequestToken,
+    });
   const [commitSearch, setCommitSearch] = useState("");
   const [diffFindQuery, setDiffFindQuery] = useState("");
   const [activeDiffFindMatchIndex, setActiveDiffFindMatchIndex] =
@@ -522,9 +540,15 @@ export function GitCommitDrawer({
   }, [open, scrollStorageId]);
 
   useEffect(() => {
-    const requestTokenChanged =
-      commitSelectionRequestToken !== commitSelectionRequestTokenRef.current;
-    commitSelectionRequestTokenRef.current = commitSelectionRequestToken;
+    if (!open) return;
+    const requestTokenChanged = shouldApplyIncomingGitCommitSelectionRequest({
+      open,
+      incomingRequestToken: commitSelectionRequestToken,
+      appliedRequestToken: appliedCommitSelectionRequestToken,
+    });
+    if (requestTokenChanged) {
+      setAppliedCommitSelectionRequestToken(commitSelectionRequestToken);
+    }
     setSelectedCommit((currentSelectedCommit) =>
       resolveIncomingGitCommitSelection({
         open,
@@ -533,7 +557,12 @@ export function GitCommitDrawer({
         requestTokenChanged,
       }),
     );
-  }, [incomingCommit, open, commitSelectionRequestToken]);
+  }, [
+    incomingCommit,
+    open,
+    commitSelectionRequestToken,
+    appliedCommitSelectionRequestToken,
+  ]);
 
   useEffect(() => {
     setCommitSearch("");
