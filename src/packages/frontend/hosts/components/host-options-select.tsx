@@ -21,8 +21,70 @@ type HostOptionGroup = {
   options: HostFieldOption[];
 };
 
+export type MachineTypeSortMode = "type" | "price";
+
 function isUnavailableHostOption(option: HostFieldOption): boolean {
   return !!option.stateLabel || option.disabled === true;
+}
+
+function hostOptionTypeLabel(option: HostFieldOption): string {
+  return (
+    option.selectionLabel ??
+    option.mainLabel ??
+    option.label ??
+    option.value
+  ).toLowerCase();
+}
+
+function compareHostOptionsByType(
+  left: HostFieldOption,
+  right: HostFieldOption,
+): number {
+  return hostOptionTypeLabel(left).localeCompare(
+    hostOptionTypeLabel(right),
+    undefined,
+    {
+      numeric: true,
+      sensitivity: "base",
+    },
+  );
+}
+
+function compareHostOptionsByPrice(
+  left: HostFieldOption,
+  right: HostFieldOption,
+): number {
+  const leftRate = left.hourlyRate;
+  const rightRate = right.hourlyRate;
+  const leftHasRate =
+    typeof leftRate === "number" && Number.isFinite(leftRate) && leftRate >= 0;
+  const rightHasRate =
+    typeof rightRate === "number" &&
+    Number.isFinite(rightRate) &&
+    rightRate >= 0;
+  if (leftHasRate && rightHasRate && leftRate !== rightRate) {
+    return leftRate - rightRate;
+  }
+  if (leftHasRate !== rightHasRate) {
+    return leftHasRate ? -1 : 1;
+  }
+  return compareHostOptionsByType(left, right);
+}
+
+export function sortMachineTypeOptions(
+  options: HostFieldOption[] | undefined,
+  mode: MachineTypeSortMode,
+): HostFieldOption[] | undefined {
+  if (!options?.length) return options;
+  const available = options
+    .filter((option) => !isUnavailableHostOption(option))
+    .sort(
+      mode === "price" ? compareHostOptionsByPrice : compareHostOptionsByType,
+    );
+  const unavailable = options
+    .filter((option) => isUnavailableHostOption(option))
+    .sort(compareHostOptionsByType);
+  return [...available, ...unavailable];
 }
 
 export function groupHostOptions(

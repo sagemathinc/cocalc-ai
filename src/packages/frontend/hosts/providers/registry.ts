@@ -64,6 +64,7 @@ export type HostFieldOption<T = unknown> = {
   selectionLabel?: string;
   mainLabel?: string;
   priceLabel?: string;
+  hourlyRate?: number;
   stateLabel?: string;
   disabled?: boolean;
   meta?: T;
@@ -1216,17 +1217,18 @@ export const getGcpMachineTypeOptions = (
     const compatible = selection.zone
       ? localTypeNames.has(`${mt.name ?? ""}`.trim())
       : true;
+    const hourlyRate = compatible
+      ? estimateGcpSelectionUsdPerHour(catalog, selection, {
+          machine_type: mt.name ?? undefined,
+          cpu_count: mt.guestCpus ?? undefined,
+          memory_gib:
+            mt.memoryMb != null ? Number(mt.memoryMb) / 1024 : undefined,
+        })
+      : undefined;
     const machineLabel = gcpMachineTypeLabel(mt);
     const label = appendPriceStateLabel({
       label: machineLabel.label,
-      hourlyRate: compatible
-        ? estimateGcpSelectionUsdPerHour(catalog, selection, {
-            machine_type: mt.name ?? undefined,
-            cpu_count: mt.guestCpus ?? undefined,
-            memory_gib:
-              mt.memoryMb != null ? Number(mt.memoryMb) / 1024 : undefined,
-          })
-        : undefined,
+      hourlyRate,
       compatible,
       expectPrice: true,
       priceDisplay,
@@ -1234,6 +1236,7 @@ export const getGcpMachineTypeOptions = (
     return {
       value: mt.name ?? "",
       ...label,
+      hourlyRate,
       selectionLabel: mt.name ?? "unknown",
       mainLabel: label.mainLabel ?? machineLabel.mainLabel,
       meta: {
@@ -1819,6 +1822,7 @@ export const getNebiusInstanceTypeOptions = (
     return {
       value: entry.name,
       ...label,
+      hourlyRate,
       selectionLabel: entry.name,
       mainLabel: label.mainLabel ?? machineLabel.mainLabel,
       entry,

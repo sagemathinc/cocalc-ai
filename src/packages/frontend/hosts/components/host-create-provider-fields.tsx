@@ -6,6 +6,7 @@ import {
   InputNumber,
   Row,
   Select,
+  Segmented,
   Slider,
   Tag,
 } from "antd";
@@ -19,8 +20,12 @@ import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
 import { getDiskTypeOptions } from "../constants";
 import { isNebiusSpotSupported } from "../providers/registry";
 import type { HostFieldId } from "../providers/registry";
-import { HostOptionsSelect } from "./host-options-select";
+import {
+  HostOptionsSelect,
+  sortMachineTypeOptions,
+} from "./host-options-select";
 import { SshTargetLabel } from "./ssh-target-help";
+import { useMachineTypeSortMode } from "../hooks/use-machine-type-sort-mode";
 
 const MIN_DISK_SIZE = 50;
 const MAX_DISK_SIZE = 10_000;
@@ -63,11 +68,23 @@ export const HostCreateProviderFields: React.FC<
     "customize",
     "project_hosts_self_host_alpha_enabled",
   );
+  const [machineTypeSortMode, setMachineTypeSortMode] =
+    useMachineTypeSortMode();
+  const displayOptions = React.useMemo(
+    () => ({
+      ...options,
+      machine_type: sortMachineTypeOptions(
+        options.machine_type,
+        machineTypeSortMode,
+      ),
+    }),
+    [machineTypeSortMode, options],
+  );
   const nebiusSpotSupported = React.useMemo(
     () =>
       selectedProvider !== "nebius" ||
-      isNebiusSpotSupported(options.machine_type, watchedMachineType),
-    [options.machine_type, selectedProvider, watchedMachineType],
+      isNebiusSpotSupported(displayOptions.machine_type, watchedMachineType),
+    [displayOptions.machine_type, selectedProvider, watchedMachineType],
   );
   const showSpotHint =
     watchedRegionPreference === "cheapest" &&
@@ -181,13 +198,13 @@ export const HostCreateProviderFields: React.FC<
   ]);
   const ensureFieldValue = React.useCallback(
     (field: HostFieldId, current?: string) => {
-      const fieldOptions = options[field] ?? [];
+      const fieldOptions = displayOptions[field] ?? [];
       if (!fieldOptions.length) return;
       if (!current || !fieldOptions.some((opt) => opt.value === current)) {
         form.setFieldsValue({ [field]: fieldOptions[0]?.value });
       }
     },
-    [form, options],
+    [displayOptions, form],
   );
 
   React.useEffect(() => {
@@ -232,7 +249,7 @@ export const HostCreateProviderFields: React.FC<
     ) {
       return null;
     }
-    const fieldOptions = options[field] ?? [];
+    const fieldOptions = displayOptions[field] ?? [];
     const label =
       labels[field] ??
       field
@@ -240,11 +257,46 @@ export const HostCreateProviderFields: React.FC<
         .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
         .join(" ");
     const tooltip = tooltips[field];
+    const showMachineTypeSort =
+      field === "machine_type" &&
+      fieldOptions.length > 1 &&
+      fieldOptions.some(
+        (option) =>
+          !!option.priceLabel ||
+          (typeof option.hourlyRate === "number" &&
+            Number.isFinite(option.hourlyRate)),
+      );
+    const itemLabel = showMachineTypeSort ? (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          width: "100%",
+        }}
+      >
+        <span>{label}</span>
+        <Segmented
+          size="small"
+          value={machineTypeSortMode}
+          options={[
+            { label: "Type", value: "type" },
+            { label: "Price", value: "price" },
+          ]}
+          onChange={(value) =>
+            setMachineTypeSortMode(value as "type" | "price")
+          }
+        />
+      </div>
+    ) : (
+      label
+    );
     const item = (
       <Form.Item
         key={field}
         name={field}
-        label={label}
+        label={itemLabel}
         tooltip={tooltip}
         initialValue={fieldOptions[0]?.value}
       >
