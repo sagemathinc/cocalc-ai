@@ -213,12 +213,14 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       : undefined;
   const providerDescriptor =
     providerId !== "none" ? getProviderDescriptor(providerId) : undefined;
+  const watchedFundingMode = Form.useWatch("funding_mode", form);
   const livePricingSelection = React.useMemo<ProviderSelection>(
     () => ({
       region: selectedRegion,
       zone: selectedZone,
       machine_type: selectedMachineType,
       gpu_type: selectedGpuType,
+      funding_mode: watchedFundingMode,
       pricing_model: selectedPricingModel,
       storage_mode: selectedStorageMode,
       disk_type: selectedDiskType,
@@ -235,6 +237,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       selectedGpu,
       selectedGpuType,
       selectedMachineType,
+      watchedFundingMode,
       selectedPriceDisplay,
       selectedPricingModel,
       selectedRegion,
@@ -266,7 +269,6 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const watchedGpuType = Form.useWatch("gpu_type", form);
   const watchedSize = Form.useWatch("size", form);
   const watchedPricingModel = Form.useWatch("pricing_model", form);
-  const watchedFundingMode = Form.useWatch("funding_mode", form);
   const hideAdvanced = providerId === "self-host";
   const showRegionPreference =
     canEditMachine &&
@@ -444,6 +446,32 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     selectedRegionPreference === "cheapest" &&
     watchedPricingModel !== "spot" &&
     (providerId === "gcp" || (providerId === "nebius" && nebiusSpotSupported));
+  const supportsCatalogPricing =
+    providerId === "gcp" || providerId === "nebius";
+  const priceSelectionComplete = React.useMemo(() => {
+    if (!supportsCatalogPricing) return false;
+    const machineType =
+      `${selectedMachineType ?? watchedMachineType ?? ""}`.trim();
+    const region = `${selectedRegion ?? watchedRegion ?? ""}`.trim();
+    if (!machineType || !region) return false;
+    if ((selectedStorageMode ?? "persistent") === "ephemeral") return true;
+    const diskType = `${selectedDiskType ?? ""}`.trim();
+    return (
+      !!diskType &&
+      typeof selectedDiskGb === "number" &&
+      Number.isFinite(selectedDiskGb) &&
+      selectedDiskGb > 0
+    );
+  }, [
+    selectedDiskGb,
+    selectedDiskType,
+    selectedMachineType,
+    selectedRegion,
+    selectedStorageMode,
+    supportsCatalogPricing,
+    watchedMachineType,
+    watchedRegion,
+  ]);
 
   React.useEffect(() => {
     if (!open) {
@@ -649,7 +677,12 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     );
   };
 
-  const disableSave = !!gcpCompatibilityWarning;
+  const pricingUnavailable =
+    isDeprovisioned &&
+    supportsCatalogPricing &&
+    priceSelectionComplete &&
+    !livePriceEstimate;
+  const disableSave = !!gcpCompatibilityWarning || pricingUnavailable;
 
   return (
     <Modal
@@ -758,6 +791,15 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                   }
                 />
               </div>
+            )}
+            {pricingUnavailable && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+                title="This configuration is not available for purchase"
+                description="Pricing is unavailable for this region, machine type, or disk choice, so CoCalc cannot provision it."
+              />
             )}
             {showSpotHint && (
               <Alert

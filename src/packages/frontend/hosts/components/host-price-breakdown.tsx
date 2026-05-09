@@ -11,17 +11,18 @@ type HostPriceBreakdownProps = {
   title?: string;
 };
 
-const amountForDisplay = (
-  estimate: ProviderPriceEstimate,
-  displayMode: PriceDisplayMode,
-) =>
-  displayMode === "monthly" ? estimate.monthly_label : estimate.hourly_label;
-
 export const HostPriceBreakdown: React.FC<HostPriceBreakdownProps> = ({
   estimate,
   displayMode = "hourly",
   title = "Estimated cost breakdown",
 }) => {
+  const emphasizeHourly = displayMode !== "monthly";
+  const amountTextStyle = (emphasized: boolean) => ({
+    fontVariantNumeric: "tabular-nums" as const,
+    fontWeight: emphasized ? 600 : 400,
+    opacity: emphasized ? 1 : 0.85,
+  });
+
   return (
     <div
       style={{
@@ -31,23 +32,36 @@ export const HostPriceBreakdown: React.FC<HostPriceBreakdownProps> = ({
         width: "100%",
       }}
     >
-      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+      <Space orientation="vertical" size={8} style={{ width: "100%" }}>
         <Typography.Text strong>{title}</Typography.Text>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) auto auto",
+            columnGap: 12,
+            alignItems: "baseline",
+          }}
+        >
+          <div />
+          <Typography.Text type="secondary">Hourly</Typography.Text>
+          <Typography.Text type="secondary">Monthly</Typography.Text>
+        </div>
         {estimate.line_items.map((item) => (
           <div
             key={item.key}
             style={{
               alignItems: "baseline",
-              display: "flex",
-              gap: 12,
-              justifyContent: "space-between",
+              columnGap: 12,
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 1fr) auto auto",
             }}
           >
             <Typography.Text type="secondary">{item.label}</Typography.Text>
-            <Typography.Text style={{ fontVariantNumeric: "tabular-nums" }}>
-              {displayMode === "monthly"
-                ? item.monthly_label
-                : item.hourly_label}
+            <Typography.Text style={amountTextStyle(emphasizeHourly)}>
+              {item.hourly_label}
+            </Typography.Text>
+            <Typography.Text style={amountTextStyle(!emphasizeHourly)}>
+              {item.monthly_label}
             </Typography.Text>
           </div>
         ))}
@@ -55,17 +69,17 @@ export const HostPriceBreakdown: React.FC<HostPriceBreakdownProps> = ({
         <div
           style={{
             alignItems: "baseline",
-            display: "flex",
-            gap: 12,
-            justifyContent: "space-between",
+            columnGap: 12,
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) auto auto",
           }}
         >
           <Typography.Text strong>Total</Typography.Text>
-          <Typography.Text
-            strong
-            style={{ fontVariantNumeric: "tabular-nums" }}
-          >
-            {amountForDisplay(estimate, displayMode)}
+          <Typography.Text strong style={amountTextStyle(emphasizeHourly)}>
+            {estimate.hourly_label}
+          </Typography.Text>
+          <Typography.Text strong style={amountTextStyle(!emphasizeHourly)}>
+            {estimate.monthly_label}
           </Typography.Text>
         </div>
         {estimate.notes.map((note) => (

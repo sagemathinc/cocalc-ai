@@ -413,6 +413,94 @@ describe("catalog-backed pricing labels", () => {
     ).toBeCloseTo(0.4452, 9);
   });
 
+  it("uses a self-hosted provider charge note for site-funded hosts", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-standard": { "us-west1": 0.00006 },
+          },
+        },
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate("gcp", catalog, {
+      zone: "us-west1-a",
+      machine_type: "n2d-standard-4",
+      funding_mode: "site-funded",
+      pricing_model: "on_demand",
+      storage_mode: "persistent",
+      disk_type: "standard",
+      disk_gb: 100,
+    });
+
+    expect(estimate?.notes).toContain(
+      "Provider network egress and similar cloud charges are billed directly by your cloud provider and are not included in this estimate.",
+    );
+  });
+
+  it("uses a CoCalc-covered network note for account-funded hosts", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-standard": { "us-west1": 0.00006 },
+          },
+        },
+      },
+    ]);
+
+    const estimate = getProviderPriceEstimate("gcp", catalog, {
+      zone: "us-west1-a",
+      machine_type: "n2d-standard-4",
+      funding_mode: "account-postpaid",
+      pricing_model: "on_demand",
+      storage_mode: "persistent",
+      disk_type: "standard",
+      disk_gb: 100,
+    });
+
+    expect(estimate?.notes).toContain(
+      "There is no additional CoCalc charge to end users for network egress; any provider egress cost is covered by the site's subscription and cloud billing arrangement.",
+    );
+  });
+
   it("returns a provider price estimate for Nebius spot GPU selections", () => {
     const catalog = testCatalog([
       {

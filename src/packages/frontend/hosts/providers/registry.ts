@@ -195,6 +195,7 @@ export type ProviderSelection = {
   zone?: string;
   machine_type?: string;
   gpu_type?: string;
+  funding_mode?: string;
   cpu_count?: number;
   memory_gib?: number;
   pricing_model?: string;
@@ -627,6 +628,19 @@ export type ProviderPriceEstimate = {
   notes: string[];
 };
 
+function providerChargeNote(
+  provider: HostProvider,
+  fundingMode?: string,
+): string {
+  if (provider !== "gcp" && provider !== "nebius") {
+    return "Provider charges outside the items shown above are not included.";
+  }
+  if (fundingMode === "site-funded") {
+    return "Provider network egress and similar cloud charges are billed directly by your cloud provider and are not included in this estimate.";
+  }
+  return "There is no additional CoCalc charge to end users for network egress; any provider egress cost is covered by the site's subscription and cloud billing arrangement.";
+}
+
 export const getProviderPriceEstimate = (
   provider: HostProvider,
   catalog: HostCatalog | undefined,
@@ -671,7 +685,7 @@ export const getProviderPriceEstimate = (
           }% site surcharge.`,
         ]
       : []),
-    "Network egress and other provider charges are not included.",
+    providerChargeNote(provider, nextSelection.funding_mode),
   ];
   return {
     usd_per_hour,
@@ -688,6 +702,7 @@ const hostProviderSelectionForPricing = (host: Host): ProviderSelection => ({
   zone: host.machine?.zone ?? undefined,
   machine_type: host.machine?.machine_type ?? undefined,
   gpu_type: host.machine?.gpu_type ?? undefined,
+  funding_mode: host.funding_mode ?? undefined,
   cpu_count: Number.isFinite(Number(host.machine?.metadata?.cpu))
     ? Number(host.machine?.metadata?.cpu)
     : undefined,

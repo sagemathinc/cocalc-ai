@@ -89,12 +89,14 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const watchedGpuType = Form.useWatch("gpu_type", formInstance);
   const watchedPricingModel = Form.useWatch("pricing_model", formInstance);
   const watchedPriceDisplay = Form.useWatch("price_display", formInstance);
+  const watchedFundingMode = Form.useWatch("funding_mode", formInstance);
   const livePricingSelection = React.useMemo<ProviderSelection>(
     () => ({
       region: watchedRegion,
       zone: watchedZone,
       machine_type: watchedMachineType,
       gpu_type: watchedGpuType,
+      funding_mode: watchedFundingMode,
       pricing_model: watchedPricingModel,
       storage_mode: watchedStorageMode,
       disk_type: watchedDiskType,
@@ -109,6 +111,7 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
       watchedDiskType,
       watchedGpuType,
       watchedMachineType,
+      watchedFundingMode,
       watchedPriceDisplay,
       watchedPricingModel,
       watchedRegion,
@@ -165,7 +168,6 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     watchedZone,
   ]);
   const watchedSshTarget = Form.useWatch("self_host_ssh_target", formInstance);
-  const watchedFundingMode = Form.useWatch("funding_mode", formInstance);
   const missingSelfHostTarget =
     provider.selectedProvider === "self-host" &&
     !(watchedSshTarget ?? "").trim();
@@ -203,7 +205,8 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     gcpZoneIncompatible ||
     missingSelfHostTarget ||
     noFundingModes ||
-    missingFundingMode;
+    missingFundingMode ||
+    (priceSelectionComplete && supportsCatalogPricing && !livePriceEstimate);
   const requiredCatalogFields = React.useMemo<HostFieldId[]>(
     () =>
       (["region", "machine_type", "size"] as HostFieldId[]).filter((field) =>
@@ -326,15 +329,21 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
           <Space orientation="vertical" style={{ width: "100%" }} size="small">
             {provider.selectedProvider !== "none" &&
               provider.selectedProvider !== "self-host" &&
-              !livePriceEstimate && (
+              !livePriceEstimate &&
+              (supportsCatalogPricing && priceSelectionComplete ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  title="This configuration is not available for purchase"
+                  description="Pricing is unavailable for this region, machine type, or disk choice, so CoCalc cannot provision it."
+                />
+              ) : (
                 <Typography.Text type="secondary">
                   {supportsCatalogPricing
-                    ? priceSelectionComplete
-                      ? "Estimated cost unavailable for this region, machine type, or disk choice."
-                      : "Estimated cost updates when region, machine type, pricing model, and disk are fully selected."
+                    ? "Estimated cost updates when region, machine type, pricing model, and disk are fully selected."
                     : "Catalog pricing is not wired for this provider yet."}
                 </Typography.Text>
-              )}
+              ))}
             {livePriceEstimate && (
               <HostPriceBreakdown
                 displayMode={
