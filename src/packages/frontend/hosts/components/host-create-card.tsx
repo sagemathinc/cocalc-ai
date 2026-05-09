@@ -74,6 +74,9 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     }
   };
   const watchedRegion = Form.useWatch("region", formInstance);
+  const watchedStorageMode = Form.useWatch("storage_mode", formInstance);
+  const watchedDiskType = Form.useWatch("disk_type", formInstance);
+  const watchedDisk = Form.useWatch("disk", formInstance);
   const watchedMachineType = Form.useWatch("machine_type", formInstance);
   const watchedGpuType = Form.useWatch("gpu_type", formInstance);
   const needsGcpPlacementCompatibility =
@@ -119,6 +122,27 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const supportsCatalogPricing =
     provider.selectedProvider === "gcp" ||
     provider.selectedProvider === "nebius";
+  const priceSelectionComplete = React.useMemo(() => {
+    if (!supportsCatalogPricing) return false;
+    const machineType = `${watchedMachineType ?? ""}`.trim();
+    const region = `${watchedRegion ?? ""}`.trim();
+    if (!machineType || !region) return false;
+    if ((watchedStorageMode ?? "persistent") === "ephemeral") return true;
+    const diskType = `${watchedDiskType ?? ""}`.trim();
+    return (
+      !!diskType &&
+      typeof watchedDisk === "number" &&
+      Number.isFinite(watchedDisk) &&
+      watchedDisk > 0
+    );
+  }, [
+    supportsCatalogPricing,
+    watchedDisk,
+    watchedDiskType,
+    watchedMachineType,
+    watchedRegion,
+    watchedStorageMode,
+  ]);
   const createDisabled =
     !canCreateHosts ||
     gcpRegionIncompatible ||
@@ -252,7 +276,9 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
                   {provider.priceEstimate
                     ? `Estimated cost: ${provider.priceEstimate.hourly_label} · ${provider.priceEstimate.monthly_label}`
                     : supportsCatalogPricing
-                      ? "Estimated cost updates when region, machine type, pricing model, and disk are fully selected."
+                      ? priceSelectionComplete
+                        ? "Estimated cost unavailable for this region, machine type, or disk choice."
+                        : "Estimated cost updates when region, machine type, pricing model, and disk are fully selected."
                       : "Catalog pricing is not wired for this provider yet."}
                 </Typography.Text>
               )}
