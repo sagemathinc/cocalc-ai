@@ -628,6 +628,18 @@ export type ProviderPriceEstimate = {
   notes: string[];
 };
 
+export type HostPriceCatalogSource =
+  | HostCatalog
+  | Partial<Record<HostProvider, HostCatalog | undefined>>
+  | undefined;
+
+export type HostDisplayedPrice = {
+  current_state: "running" | "stopped" | "deprovisioned";
+  current_estimate?: ProviderPriceEstimate;
+  running_estimate?: ProviderPriceEstimate;
+  stopped_estimate?: ProviderPriceEstimate;
+};
+
 function providerChargeNote(
   provider: HostProvider,
   fundingMode?: string,
@@ -709,25 +721,142 @@ const hostProviderSelectionForPricing = (host: Host): ProviderSelection => ({
   memory_gib: Number.isFinite(Number(host.machine?.metadata?.ram_gb))
     ? Number(host.machine?.metadata?.ram_gb)
     : undefined,
-  pricing_model: host.pricing_model ?? undefined,
+  pricing_model:
+    host.desired_pricing_model ??
+    host.pricing_model ??
+    host.effective_pricing_model ??
+    undefined,
   storage_mode: host.machine?.storage_mode ?? undefined,
   disk_type: host.machine?.disk_type ?? undefined,
   disk_gb: host.machine?.disk_gb ?? undefined,
 });
 
+const hostProviderSelectionForCurrentPricing = (
+  host: Host,
+): ProviderSelection => ({
+  ...hostProviderSelectionForPricing(host),
+  pricing_model:
+    host.effective_pricing_model ??
+    host.pricing_model ??
+    host.desired_pricing_model ??
+    undefined,
+});
+
+function resolveProviderCatalog(
+  provider: HostProvider,
+  source: HostPriceCatalogSource,
+): HostCatalog | undefined {
+  if (!source) return undefined;
+  if (Array.isArray((source as HostCatalog).entries)) {
+    return source as HostCatalog;
+  }
+  return source[provider];
+}
+
+function buildProviderPriceEstimateFromLineItems(
+  line_items: ProviderPriceEstimateItem[],
+  notes: string[],
+): ProviderPriceEstimate {
+  const usd_per_hour = line_items.reduce(
+    (sum, item) => sum + item.usd_per_hour,
+    0,
+  );
+  return {
+    usd_per_hour,
+    usd_per_month: usd_per_hour * MONTHLY_HOURS,
+    hourly_label: formatUsdHourlyLabel(usd_per_hour),
+    monthly_label: formatUsdMonthlyLabel(usd_per_hour),
+    line_items,
+    notes,
+  };
+}
+
+function zeroProviderPriceEstimate(
+  notes: string[] = [],
+): ProviderPriceEstimate {
+  return {
+    usd_per_hour: 0,
+    usd_per_month: 0,
+    hourly_label: formatUsdHourlyLabel(0),
+    monthly_label: formatUsdMonthlyLabel(0),
+    line_items: [],
+    notes,
+  };
+}
+
+function stoppedHostPriceEstimate(
+  running: ProviderPriceEstimate | undefined,
+): ProviderPriceEstimate | undefined {
+  if (!running) return undefined;
+  return buildProviderPriceEstimateFromLineItems(
+    running.line_items.filter((item) => item.key === "disk"),
+    running.notes,
+  );
+}
+
 export const getHostPriceEstimate = (
   host: Host,
-  catalog: HostCatalog | undefined,
+  catalog: HostPriceCatalogSource,
   surchargeSettings?: DedicatedHostSurchargeSettings,
 ): ProviderPriceEstimate | undefined => {
   const provider = host.machine?.cloud;
   if (provider !== "gcp" && provider !== "nebius") return undefined;
+  const providerCatalog = resolveProviderCatalog(provider, catalog);
   return getProviderPriceEstimate(
     provider,
-    catalog,
+    providerCatalog,
     hostProviderSelectionForPricing(host),
     surchargeSettings,
   );
+};
+
+export const getHostDisplayedPrice = (
+  host: Host,
+  catalog: HostPriceCatalogSource,
+  surchargeSettings?: DedicatedHostSurchargeSettings,
+): HostDisplayedPrice | undefined => {
+  const provider = host.machine?.cloud;
+  if (provider !== "gcp" && provider !== "nebius") return undefined;
+  const providerCatalog = resolveProviderCatalog(provider, catalog);
+  const running_estimate = getProviderPriceEstimate(
+    provider,
+    providerCatalog,
+    hostProviderSelectionForPricing(host),
+    surchargeSettings,
+  );
+  const stopped_estimate = stoppedHostPriceEstimate(running_estimate);
+  if (host.status === "deprovisioned") {
+    return {
+      current_state: "deprovisioned",
+      current_estimate: zeroProviderPriceEstimate(
+        running_estimate?.notes ?? [],
+      ),
+      running_estimate,
+      stopped_estimate: zeroProviderPriceEstimate(
+        running_estimate?.notes ?? [],
+      ),
+    };
+  }
+  if (host.status === "off") {
+    return {
+      current_state: "stopped",
+      current_estimate: stopped_estimate,
+      running_estimate,
+      stopped_estimate,
+    };
+  }
+  const current_estimate = getProviderPriceEstimate(
+    provider,
+    providerCatalog,
+    hostProviderSelectionForCurrentPricing(host),
+    surchargeSettings,
+  );
+  return {
+    current_state: "running",
+    current_estimate,
+    running_estimate,
+    stopped_estimate: stoppedHostPriceEstimate(current_estimate),
+  };
 };
 
 type SelfHostConnector = {

@@ -39,7 +39,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import { COLORS } from "@cocalc/util/theme";
 import {
-  getHostPriceEstimate,
+  getHostDisplayedPrice,
   getProviderDescriptor,
   isKnownProvider,
 } from "../providers/registry";
@@ -72,6 +72,7 @@ import { HostRuntimeVersionsPanel } from "./host-runtime-versions-panel";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type {
   HostListViewMode,
+  HostProvider,
   HostSortDirection,
   HostSortField,
   HostStopOptions,
@@ -176,13 +177,16 @@ function compareNumber(a?: number, b?: number): number {
 
 function renderHostPrice(
   host: Host,
-  catalog: HostCatalog | undefined,
+  catalog:
+    | HostCatalog
+    | Partial<Record<HostProvider, HostCatalog | undefined>>
+    | undefined,
   pricingSettings: DedicatedHostSurchargeSettings,
 ) {
-  const estimate = catalog
-    ? getHostPriceEstimate(host, catalog, pricingSettings)
+  const display = catalog
+    ? getHostDisplayedPrice(host, catalog, pricingSettings)
     : undefined;
-  if (!estimate) {
+  if (!display?.current_estimate) {
     const pricedProvider =
       host.machine?.cloud === "gcp" || host.machine?.cloud === "nebius";
     return (
@@ -193,10 +197,25 @@ function renderHostPrice(
   }
   return (
     <Space orientation="vertical" size={0}>
-      <span>{estimate.hourly_label}</span>
+      <span>{display.current_estimate.hourly_label}</span>
       <Typography.Text type="secondary">
-        {estimate.monthly_label}
+        {display.current_estimate.monthly_label}
       </Typography.Text>
+      {display.current_state === "running" && display.stopped_estimate ? (
+        <Typography.Text type="secondary">
+          If stopped: {display.stopped_estimate.hourly_label} ·{" "}
+          {display.stopped_estimate.monthly_label}
+        </Typography.Text>
+      ) : null}
+      {display.current_state !== "running" && display.running_estimate ? (
+        <Typography.Text type="secondary">
+          {display.current_state === "deprovisioned"
+            ? "If reprovisioned"
+            : "If started"}
+          : {display.running_estimate.hourly_label} ·{" "}
+          {display.running_estimate.monthly_label}
+        </Typography.Text>
+      ) : null}
     </Space>
   );
 }
@@ -312,6 +331,7 @@ type HostListViewModel = {
   autoResort: boolean;
   setAutoResort: (value: boolean) => void;
   catalog?: HostCatalog;
+  pricingCatalogs?: Partial<Record<HostProvider, HostCatalog | undefined>>;
   providerCapabilities?: HostCatalog["provider_capabilities"];
   parallelOps?: {
     status: ParallelOpsWorkerStatus[];
@@ -396,6 +416,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     autoResort,
     setAutoResort,
     catalog,
+    pricingCatalogs,
     providerCapabilities,
     parallelOps,
     runtimeVersions,
@@ -832,7 +853,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       title: "Price",
       key: "price",
       render: (_: string, host: Host) =>
-        renderHostPrice(host, catalog, pricingSettings),
+        renderHostPrice(host, pricingCatalogs ?? catalog, pricingSettings),
     },
     {
       title: "Resources",
@@ -1649,6 +1670,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                 onToggleStar={onToggleStar}
                 selfHost={selfHost}
                 catalog={catalog}
+                pricingCatalogs={pricingCatalogs}
                 providerCapabilities={providerCapabilities}
               />
             </Col>

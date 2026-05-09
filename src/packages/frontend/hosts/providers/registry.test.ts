@@ -1,6 +1,8 @@
-import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
+import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import {
   buildCreateHostPayload,
+  getHostDisplayedPrice,
+  getHostPriceEstimate,
   getGcpMachineTypeOptions,
   getNebiusRegionOptions,
   getProviderPriceEstimate,
@@ -628,5 +630,196 @@ describe("catalog-backed pricing labels", () => {
     expect(options.find((opt) => opt.value === "us-central1")?.stateLabel).toBe(
       "price unavailable",
     );
+  });
+
+  it("prices Nebius hosts from the Nebius catalog even when the page also has a GCP catalog", () => {
+    const gcpCatalog = testCatalog([
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {},
+          gpus: {},
+          disks: {},
+        },
+      },
+    ]);
+    const nebiusCatalog = testCatalog([
+      {
+        kind: "instance_types",
+        scope: "global",
+        payload: [
+          {
+            name: "cpu-standard-v3",
+            platform: "amd-epyc-genoa",
+            platform_label: "AMD Epyc Genoa",
+            vcpus: 4,
+            memory_gib: 16,
+            gpus: 0,
+          },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: [
+          {
+            product: "Non-GPU AMD Epyc Genoa. CPU",
+            region: "eu-north1",
+            price_usd: "0.012",
+            unit: "vCPU hour",
+          },
+          {
+            product: "Non-GPU AMD Epyc Genoa. RAM",
+            region: "eu-north1",
+            price_usd: "0.0032",
+            unit: "GiB hour",
+          },
+          {
+            product: "Network SSD IO M3 disk",
+            region: "eu-north1",
+            price_usd: "0.000161111",
+            unit: "GiB hour",
+          },
+        ],
+      },
+    ]);
+
+    const host = {
+      id: "host-nebius",
+      name: "Nebius Host",
+      owner: "acct",
+      region: "eu-north1",
+      size: "cpu-standard-v3",
+      gpu: false,
+      status: "running",
+      machine: {
+        cloud: "nebius",
+        machine_type: "cpu-standard-v3",
+        storage_mode: "persistent",
+        disk_type: "ssd_io_m3",
+        disk_gb: 93,
+      },
+      pricing_model: "on_demand",
+    } as Host;
+
+    const estimate = getHostPriceEstimate(host, {
+      gcp: gcpCatalog,
+      nebius: nebiusCatalog,
+    });
+
+    expect(estimate?.usd_per_hour).toBeCloseTo(0.114183323, 9);
+  });
+
+  it("shows disk-only current pricing for stopped hosts and full pricing if started", () => {
+    const gcpCatalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-standard": { "us-west1": 0.00006 },
+          },
+        },
+      },
+    ]);
+
+    const host = {
+      id: "host-off",
+      name: "Stopped GCP Host",
+      owner: "acct",
+      region: "us-west1",
+      size: "n2d-standard-4",
+      gpu: false,
+      status: "off",
+      machine: {
+        cloud: "gcp",
+        zone: "us-west1-a",
+        machine_type: "n2d-standard-4",
+        storage_mode: "persistent",
+        disk_type: "standard",
+        disk_gb: 100,
+      },
+      pricing_model: "on_demand",
+    } as Host;
+
+    const display = getHostDisplayedPrice(host, { gcp: gcpCatalog });
+
+    expect(display?.current_state).toBe("stopped");
+    expect(display?.current_estimate?.usd_per_hour).toBeCloseTo(0.006, 9);
+    expect(display?.running_estimate?.usd_per_hour).toBeCloseTo(0.371, 9);
+  });
+
+  it("shows zero current pricing for deprovisioned hosts and preserves the reprovision estimate", () => {
+    const gcpCatalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [{ name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 }],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-09T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {
+            "pd-standard": { "us-west1": 0.00006 },
+          },
+        },
+      },
+    ]);
+
+    const host = {
+      id: "host-deprov",
+      name: "Deprovisioned GCP Host",
+      owner: "acct",
+      region: "us-west1",
+      size: "n2d-standard-4",
+      gpu: false,
+      status: "deprovisioned",
+      machine: {
+        cloud: "gcp",
+        zone: "us-west1-a",
+        machine_type: "n2d-standard-4",
+        storage_mode: "persistent",
+        disk_type: "standard",
+        disk_gb: 100,
+      },
+      pricing_model: "on_demand",
+    } as Host;
+
+    const display = getHostDisplayedPrice(host, { gcp: gcpCatalog });
+
+    expect(display?.current_state).toBe("deprovisioned");
+    expect(display?.current_estimate?.usd_per_hour).toBe(0);
+    expect(display?.running_estimate?.usd_per_hour).toBeCloseTo(0.371, 9);
   });
 });

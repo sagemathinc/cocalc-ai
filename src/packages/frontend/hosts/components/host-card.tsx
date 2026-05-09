@@ -15,6 +15,7 @@ import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import type {
   HostDeleteOptions,
   HostDrainOptions,
+  HostProvider,
   HostStopOptions,
 } from "../types";
 import {
@@ -25,7 +26,7 @@ import {
   isHostTransitioning,
 } from "../constants";
 import {
-  getHostPriceEstimate,
+  getHostDisplayedPrice,
   getProviderDescriptor,
   isKnownProvider,
 } from "../providers/registry";
@@ -76,6 +77,7 @@ type HostCardProps = {
   onEdit: (host: Host) => void;
   onToggleStar?: (host: Host) => void;
   catalog?: HostCatalog;
+  pricingCatalogs?: Partial<Record<HostProvider, HostCatalog | undefined>>;
   providerCapabilities?: HostCatalog["provider_capabilities"];
   selfHost?: {
     isConnectorOnline: (connectorId?: string) => boolean;
@@ -97,6 +99,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   onEdit,
   onToggleStar,
   catalog,
+  pricingCatalogs,
   providerCapabilities,
   selfHost,
 }) => {
@@ -153,9 +156,10 @@ export const HostCard: React.FC<HostCardProps> = ({
   const stopLabel = host.status === "stopping" ? "Stopping" : "Stop";
   const providerId = host.machine?.cloud;
   const caps = providerId ? providerCapabilities?.[providerId] : undefined;
-  const priceEstimate = catalog
-    ? getHostPriceEstimate(host, catalog, pricingSettings)
-    : undefined;
+  const displayedPrice =
+    (pricingCatalogs ?? catalog)
+      ? getHostDisplayedPrice(host, pricingCatalogs ?? catalog, pricingSettings)
+      : undefined;
   const supportsCatalogPricing =
     host.machine?.cloud === "gcp" || host.machine?.cloud === "nebius";
   const allowStop =
@@ -452,10 +456,30 @@ export const HostCard: React.FC<HostCardProps> = ({
           Size: {size.primary}
           {size.secondary ? ` · ${size.secondary}` : ""}
         </Typography.Text>
-        {priceEstimate ? (
-          <Typography.Text>
-            Price: {priceEstimate.hourly_label} · {priceEstimate.monthly_label}
-          </Typography.Text>
+        {displayedPrice?.current_estimate ? (
+          <>
+            <Typography.Text>
+              Price now: {displayedPrice.current_estimate.hourly_label} ·{" "}
+              {displayedPrice.current_estimate.monthly_label}
+            </Typography.Text>
+            {displayedPrice.current_state === "running" &&
+            displayedPrice.stopped_estimate ? (
+              <Typography.Text type="secondary">
+                If stopped: {displayedPrice.stopped_estimate.hourly_label} ·{" "}
+                {displayedPrice.stopped_estimate.monthly_label}
+              </Typography.Text>
+            ) : null}
+            {displayedPrice.current_state !== "running" &&
+            displayedPrice.running_estimate ? (
+              <Typography.Text type="secondary">
+                {displayedPrice.current_state === "deprovisioned"
+                  ? "If reprovisioned"
+                  : "If started"}
+                : {displayedPrice.running_estimate.hourly_label} ·{" "}
+                {displayedPrice.running_estimate.monthly_label}
+              </Typography.Text>
+            ) : null}
+          </>
         ) : supportsCatalogPricing ? (
           <Typography.Text type="secondary">Price: unavailable</Typography.Text>
         ) : null}

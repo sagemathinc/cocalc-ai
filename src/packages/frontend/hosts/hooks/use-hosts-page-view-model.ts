@@ -644,6 +644,12 @@ export const useHostsPageViewModel = () => {
     provider: catalogProvider,
     onError: (text) => console.warn(text),
   });
+  const { catalog: gcpPricingCatalog } = useHostCatalog(hub, {
+    provider: enabledProviders.includes("gcp") ? "gcp" : undefined,
+  });
+  const { catalog: nebiusPricingCatalog } = useHostCatalog(hub, {
+    provider: enabledProviders.includes("nebius") ? "nebius" : undefined,
+  });
   const hasSelfHostHosts = React.useMemo(
     () => hosts.some((host) => host.machine?.cloud === "self-host"),
     [hosts],
@@ -659,6 +665,13 @@ export const useHostsPageViewModel = () => {
     provider: shouldPollSelfHostCatalog ? "self-host" : undefined,
     pollMs: selfHostPollMs,
   });
+  const pricingCatalogs = React.useMemo(
+    () => ({
+      ...(gcpPricingCatalog ? { gcp: gcpPricingCatalog } : {}),
+      ...(nebiusPricingCatalog ? { nebius: nebiusPricingCatalog } : {}),
+    }),
+    [gcpPricingCatalog, nebiusPricingCatalog],
+  );
   const selfHostConnectors = React.useMemo(
     () => getSelfHostConnectors(selfHostCatalog),
     [selfHostCatalog],
@@ -1667,6 +1680,7 @@ export const useHostsPageViewModel = () => {
     autoResort,
     setAutoResort,
     catalog: catalog ?? selfHostCatalog,
+    pricingCatalogs,
     providerCapabilities:
       catalog?.provider_capabilities ?? selfHostCatalog?.provider_capabilities,
     parallelOps: showParallelLimits ? parallelOps : undefined,
