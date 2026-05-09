@@ -21,7 +21,23 @@ type HostOptionGroup = {
   options: HostFieldOption[];
 };
 
-export type MachineTypeSortMode = "type" | "price";
+export type MachineTypeSortMode = "type" | "price" | "cpu" | "value";
+
+export function getMachineTypeSortOptions(
+  showBenchmarks: boolean,
+): Array<{ label: string; value: MachineTypeSortMode }> {
+  return showBenchmarks
+    ? [
+        { label: "Type", value: "type" },
+        { label: "Price", value: "price" },
+        { label: "CPU", value: "cpu" },
+        { label: "Value", value: "value" },
+      ]
+    : [
+        { label: "Type", value: "type" },
+        { label: "Price", value: "price" },
+      ];
+}
 
 function isUnavailableHostOption(option: HostFieldOption): boolean {
   return !!option.stateLabel || option.disabled === true;
@@ -71,16 +87,68 @@ function compareHostOptionsByPrice(
   return compareHostOptionsByType(left, right);
 }
 
+function compareOptionalDescending(
+  left: number | undefined,
+  right: number | undefined,
+): number | undefined {
+  const leftHasValue =
+    typeof left === "number" && Number.isFinite(left) && left > 0;
+  const rightHasValue =
+    typeof right === "number" && Number.isFinite(right) && right > 0;
+  if (leftHasValue && rightHasValue) {
+    if (left === right) return 0;
+    return right - left;
+  }
+  if (leftHasValue !== rightHasValue) {
+    return leftHasValue ? -1 : 1;
+  }
+  return undefined;
+}
+
+function compareHostOptionsByCpu(
+  left: HostFieldOption,
+  right: HostFieldOption,
+): number {
+  const benchmarkOrder = compareOptionalDescending(
+    left.benchmarkCpuScore,
+    right.benchmarkCpuScore,
+  );
+  if (benchmarkOrder != null && benchmarkOrder !== 0) {
+    return benchmarkOrder;
+  }
+  return compareHostOptionsByType(left, right);
+}
+
+function compareHostOptionsByValue(
+  left: HostFieldOption,
+  right: HostFieldOption,
+): number {
+  const benchmarkOrder = compareOptionalDescending(
+    left.benchmarkValueScore,
+    right.benchmarkValueScore,
+  );
+  if (benchmarkOrder != null && benchmarkOrder !== 0) {
+    return benchmarkOrder;
+  }
+  return compareHostOptionsByPrice(left, right);
+}
+
 export function sortMachineTypeOptions(
   options: HostFieldOption[] | undefined,
   mode: MachineTypeSortMode,
 ): HostFieldOption[] | undefined {
   if (!options?.length) return options;
+  const compareAvailable =
+    mode === "price"
+      ? compareHostOptionsByPrice
+      : mode === "cpu"
+        ? compareHostOptionsByCpu
+        : mode === "value"
+          ? compareHostOptionsByValue
+          : compareHostOptionsByType;
   const available = options
     .filter((option) => !isUnavailableHostOption(option))
-    .sort(
-      mode === "price" ? compareHostOptionsByPrice : compareHostOptionsByType,
-    );
+    .sort(compareAvailable);
   const unavailable = options
     .filter((option) => isUnavailableHostOption(option))
     .sort(compareHostOptionsByType);
@@ -135,8 +203,9 @@ export function HostOptionsSelect({
         const data = option.data as HostFieldOption | undefined;
         const mainLabel =
           data?.mainLabel ?? data?.selectionLabel ?? data?.label;
+        const subLabel = data?.subLabel;
         const detail = data?.priceLabel ?? data?.stateLabel;
-        if (!detail) {
+        if (!detail && !subLabel) {
           return <span>{mainLabel}</span>;
         }
         return (
@@ -144,22 +213,44 @@ export function HostOptionsSelect({
             style={{
               display: "flex",
               justifyContent: "space-between",
-              alignItems: "baseline",
+              alignItems: "center",
               gap: 16,
               width: "100%",
             }}
           >
-            <span>{mainLabel}</span>
-            <span
+            <div
               style={{
-                color: data?.priceLabel ? COLORS.GRAY_D : COLORS.GRAY_M,
-                fontVariantNumeric: "tabular-nums",
-                textAlign: "right",
-                whiteSpace: "nowrap",
+                display: "flex",
+                flexDirection: "column",
+                gap: subLabel ? 2 : 0,
+                minWidth: 0,
               }}
             >
-              {detail}
-            </span>
+              <span>{mainLabel}</span>
+              {subLabel ? (
+                <span
+                  style={{
+                    color: COLORS.GRAY_M,
+                    fontSize: "12px",
+                    lineHeight: 1.3,
+                  }}
+                >
+                  {subLabel}
+                </span>
+              ) : null}
+            </div>
+            {detail ? (
+              <span
+                style={{
+                  color: data?.priceLabel ? COLORS.GRAY_D : COLORS.GRAY_M,
+                  fontVariantNumeric: "tabular-nums",
+                  textAlign: "right",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {detail}
+              </span>
+            ) : null}
           </div>
         );
       }}

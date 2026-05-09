@@ -24,7 +24,9 @@ import { getDiskTypeOptions } from "../constants";
 import { HostCreateForm } from "./host-create-form";
 import { DiskTypeLabel } from "./disk-type-help";
 import {
+  getMachineTypeSortOptions,
   HostOptionsSelect,
+  type MachineTypeSortMode,
   sortMachineTypeOptions,
 } from "./host-options-select";
 import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
@@ -319,15 +321,22 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const fieldOptions = providerDescriptor
     ? getProviderOptions(providerId, catalog, selection)
     : {};
+  const supportsMachineBenchmarks = providerId === "gcp";
+  const effectiveMachineTypeSortMode: MachineTypeSortMode =
+    supportsMachineBenchmarks
+      ? machineTypeSortMode
+      : machineTypeSortMode === "price"
+        ? "price"
+        : "type";
   const displayFieldOptions = React.useMemo(
     () => ({
       ...fieldOptions,
       machine_type: sortMachineTypeOptions(
         fieldOptions.machine_type,
-        machineTypeSortMode,
+        effectiveMachineTypeSortMode,
       ),
     }),
-    [fieldOptions, machineTypeSortMode],
+    [effectiveMachineTypeSortMode, fieldOptions],
   );
   const gcpCompatibilityWarning = React.useMemo(() => {
     if (providerId !== "gcp") return null;
@@ -708,13 +717,10 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
         <span>{label}</span>
         <Segmented
           size="small"
-          value={machineTypeSortMode}
-          options={[
-            { label: "Type", value: "type" },
-            { label: "Price", value: "price" },
-          ]}
+          value={effectiveMachineTypeSortMode}
+          options={getMachineTypeSortOptions(supportsMachineBenchmarks)}
           onChange={(value) =>
-            setMachineTypeSortMode(value as "type" | "price")
+            setMachineTypeSortMode(value as MachineTypeSortMode)
           }
         />
       </div>

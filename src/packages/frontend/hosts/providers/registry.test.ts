@@ -210,8 +210,74 @@ describe("catalog-backed pricing labels", () => {
     expect(options[0].label).toContain("/mo");
     expect(options[0].priceLabel).toContain("/mo");
     expect(options[0].mainLabel).toContain("4 vCPU / 16 GiB");
+    expect(options[0].subLabel).toContain("CPU bench 1.00x");
+    expect(options[0].subLabel).toContain("Value 1.00x");
+    expect(options[0].benchmarkCpuScore).toBeCloseTo(20024.5, 2);
+    expect(options[0].benchmarkValueScore).toBeGreaterThan(0);
     expect(options[0].label).toContain("cpu:4");
     expect(options[0].label).toContain("ram:16");
+  });
+
+  it("adds benchmark labels for frozen GCP machine families", () => {
+    const catalog = testCatalog([
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [
+          { name: "e2-standard-4", guestCpus: 4, memoryMb: 16384 },
+          { name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 },
+          { name: "c3d-standard-4", guestCpus: 4, memoryMb: 16384 },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-08T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            e2: {
+              cpu: { "us-west1": 0.03 },
+              ram: { "us-west1": 0.004 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+            c3d: {
+              cpu: { "us-west1": 0.055 },
+              ram: { "us-west1": 0.008 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {},
+          disks: {},
+        },
+      },
+    ]);
+
+    const options = getGcpMachineTypeOptions(catalog, {
+      region: "us-west1",
+      zone: "us-west1-a",
+      pricing_model: "on_demand",
+    });
+
+    expect(options.map((opt) => opt.value)).toEqual([
+      "c3d-standard-4",
+      "e2-standard-4",
+      "n2d-standard-4",
+    ]);
+    expect(options[0].subLabel).toContain("CPU bench 1.18x");
+    expect(options[1].subLabel).toContain("CPU bench 0.65x");
+    expect(options[2].subLabel).toContain("CPU bench 1.00x");
+    expect(options[2].benchmarkCpuScore).toBeGreaterThan(
+      options[1].benchmarkCpuScore ?? 0,
+    );
   });
 
   it("shows globally known GCP machine types even when the current zone cannot provision them", () => {
