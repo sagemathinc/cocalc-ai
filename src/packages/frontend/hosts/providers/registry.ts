@@ -22,6 +22,7 @@ import {
   estimateNebiusCatalogRateUsdPerHour,
   getDedicatedHostSurchargeFraction,
   gcpCatalogMachineTypeSortKey,
+  isSupportedCatalogGcpMachineType,
   getNebiusPlatformAliases,
   normalizeNebiusPricingProduct,
   normalizeNebiusPricingToken,
@@ -1027,6 +1028,7 @@ const getAllGcpMachineTypes = (
     for (const machineType of payload) {
       const name = `${machineType?.name ?? ""}`.trim();
       if (!name) continue;
+      if (!isSupportedCatalogGcpMachineType(name)) continue;
       const prev = byName.get(name);
       if (!prev) {
         byName.set(name, machineType);
@@ -1161,23 +1163,12 @@ export const getGcpZoneOptions = (
   });
 };
 
-const GCP_GPU_ONLY_MACHINE_PREFIXES = ["a2-", "a3-", "g2-"];
+const GCP_GPU_ONLY_MACHINE_PREFIXES = ["g2-"];
 
-// Mirror the supported accelerator set from compute/google-cloud-config.tsx.
-const GCP_ACCELERATOR_TYPES = new Set([
-  "nvidia-tesla-t4",
-  "nvidia-l4",
-  "nvidia-tesla-a100",
-  "nvidia-a100-80gb",
-  "nvidia-h100-80gb",
-]);
+// Release-frozen GCP GPU lane: G2 with L4 only.
+const GCP_ACCELERATOR_TYPES = new Set(["nvidia-l4"]);
 
-const GCP_GPU_COMPATIBILITY = [
-  { match: /l4/i, machinePrefixes: ["g2-"] },
-  { match: /h100/i, machinePrefixes: ["a3-"] },
-  { match: /a100/i, machinePrefixes: ["a2-"] },
-  { match: /t4/i, machinePrefixes: ["n1-"] },
-];
+const GCP_GPU_COMPATIBILITY = [{ match: /l4/i, machinePrefixes: ["g2-"] }];
 
 const gcpMachinePrefixesForGpuType = (
   gpuType?: string,

@@ -4,8 +4,10 @@
  */
 
 export const SUPPORTED_GCP_MACHINE_TYPE_PREFIXES = [
+  "e2-standard-",
   "t2a-standard-",
   "t2d-standard-",
+  "n2-highmem-",
   "n2d-standard-",
   "n2d-highmem-",
   "c3-highcpu-",
@@ -14,12 +16,21 @@ export const SUPPORTED_GCP_MACHINE_TYPE_PREFIXES = [
   "c3d-standard-",
   "c3d-highcpu-",
   "c3d-highmem-",
+  "g2-standard-",
 ] as const;
 
 export type SupportedGcpMachineTypePrefix =
   (typeof SUPPORTED_GCP_MACHINE_TYPE_PREFIXES)[number];
 
-export type GcpPricingFamily = "t2a" | "t2d" | "n2d" | "c3" | "c3d";
+export type GcpPricingFamily =
+  | "e2"
+  | "t2a"
+  | "t2d"
+  | "n2"
+  | "n2d"
+  | "c3"
+  | "c3d"
+  | "g2";
 
 export type GcpPriceRateMap = Record<string, number>;
 
@@ -177,14 +188,17 @@ const GCP_MACHINE_TYPE_FAMILY_RULES: Array<{
   family: GcpPricingFamily;
   prefixes: readonly SupportedGcpMachineTypePrefix[];
 }> = [
+  { family: "e2", prefixes: ["e2-standard-"] },
   { family: "t2a", prefixes: ["t2a-standard-"] },
   { family: "t2d", prefixes: ["t2d-standard-"] },
+  { family: "n2", prefixes: ["n2-highmem-"] },
   { family: "n2d", prefixes: ["n2d-standard-", "n2d-highmem-"] },
   { family: "c3", prefixes: ["c3-highcpu-", "c3-standard-", "c3-highmem-"] },
   {
     family: "c3d",
     prefixes: ["c3d-standard-", "c3d-highcpu-", "c3d-highmem-"],
   },
+  { family: "g2", prefixes: ["g2-standard-"] },
 ];
 
 export function isSupportedCatalogGcpMachineType(

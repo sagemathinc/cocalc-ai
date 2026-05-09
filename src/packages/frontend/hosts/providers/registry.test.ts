@@ -1,6 +1,7 @@
 import type { Host, HostCatalog } from "@cocalc/conat/hub/api/hosts";
 import {
   buildCreateHostPayload,
+  getGcpGpuTypeOptions,
   getHostDisplayedPrice,
   getHostPriceEstimate,
   getGcpMachineTypeOptions,
@@ -264,6 +265,84 @@ describe("catalog-backed pricing labels", () => {
     expect(
       options.find((opt) => opt.value === "t2a-standard-4")?.stateLabel,
     ).toBe("unavailable");
+  });
+
+  it("freezes the GCP GPU lane to L4 on G2", () => {
+    const catalog = testCatalog([
+      {
+        kind: "zones",
+        scope: "global",
+        payload: [{ name: "us-west1-a", region: "us-west1" }],
+      },
+      {
+        kind: "machine_types",
+        scope: "zone/us-west1-a",
+        payload: [
+          { name: "n2d-standard-4", guestCpus: 4, memoryMb: 16384 },
+          { name: "g2-standard-4", guestCpus: 4, memoryMb: 16384 },
+          { name: "a2-highgpu-1g", guestCpus: 12, memoryMb: 85196 },
+        ],
+      },
+      {
+        kind: "gpu_types",
+        scope: "zone/us-west1-a",
+        payload: [
+          { name: "nvidia-l4" },
+          { name: "nvidia-tesla-a100" },
+          { name: "nvidia-h100-80gb" },
+        ],
+      },
+      {
+        kind: "prices",
+        scope: "global",
+        payload: {
+          fetched_at: "2026-05-08T00:00:00.000Z",
+          service_id: "compute",
+          families: {
+            n2d: {
+              cpu: { "us-west1": 0.05 },
+              ram: { "us-west1": 0.01 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+            g2: {
+              cpu: { "us-west1": 0.04 },
+              ram: { "us-west1": 0.005 },
+              spot_cpu: {},
+              spot_ram: {},
+            },
+          },
+          gpus: {
+            "nvidia-l4": {
+              on_demand: { "us-west1": 0.2 },
+              spot: {},
+            },
+          },
+          disks: {},
+        },
+      },
+    ]);
+
+    expect(getGcpGpuTypeOptions(catalog).map((opt) => opt.value)).toEqual([
+      "nvidia-l4",
+    ]);
+
+    expect(
+      getGcpMachineTypeOptions(catalog, {
+        region: "us-west1",
+        zone: "us-west1-a",
+        pricing_model: "on_demand",
+      }).map((opt) => opt.value),
+    ).toEqual(["n2d-standard-4"]);
+
+    expect(
+      getGcpMachineTypeOptions(catalog, {
+        region: "us-west1",
+        zone: "us-west1-a",
+        pricing_model: "on_demand",
+        gpu_type: "nvidia-l4",
+      }).map((opt) => opt.value),
+    ).toEqual(["g2-standard-4"]);
   });
 
   it("returns a provider price estimate for Nebius selections", () => {
