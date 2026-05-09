@@ -2328,62 +2328,73 @@ export function GitCommitDrawer({
     }
   };
 
-  const projectActions = projectId
-    ? redux.getProjectActions(projectId)
-    : undefined;
+  const projectActions = useMemo(
+    () => (projectId ? redux.getProjectActions(projectId) : undefined),
+    [projectId],
+  );
 
-  const openFile = async (filePath: string) => {
-    if (!projectActions) return;
-    const startedScope = drawerViewScopeRef.current;
-    if (!startedScope) return;
-    const actionToken = openFileActionTokenRef.current + 1;
-    openFileActionTokenRef.current = actionToken;
-    openFileActionScopeRef.current = startedScope;
-    try {
-      await projectActions.open_file({
-        path: resolveOpenPath(repoRoot || currentData?.repoRoot, filePath),
-        foreground: true,
-        explicit: true,
-      });
-      if (
-        shouldApplyGitFileOpenScopedResult({
-          actionToken,
-          currentActionToken: openFileActionTokenRef.current,
-          startedScope,
-          currentActionScope: openFileActionScopeRef.current,
-          activeScope: drawerViewScopeRef.current,
-        })
-      ) {
-        onClose();
-      }
-    } catch (err) {
-      if (
-        shouldApplyGitFileOpenScopedResult({
-          actionToken,
-          currentActionToken: openFileActionTokenRef.current,
-          startedScope,
-          currentActionScope: openFileActionScopeRef.current,
-          activeScope: drawerViewScopeRef.current,
-        })
-      ) {
-        alert_message({
-          type: "error",
-          message: `Unable to open file '${filePath}' (${err})`,
+  const openFile = useCallback(
+    async (filePath: string) => {
+      if (!projectActions) return;
+      const startedScope = drawerViewScopeRef.current;
+      if (!startedScope) return;
+      const actionToken = openFileActionTokenRef.current + 1;
+      openFileActionTokenRef.current = actionToken;
+      openFileActionScopeRef.current = startedScope;
+      try {
+        await projectActions.open_file({
+          path: resolveOpenPath(repoRoot || currentData?.repoRoot, filePath),
+          foreground: true,
+          explicit: true,
         });
+        if (
+          shouldApplyGitFileOpenScopedResult({
+            actionToken,
+            currentActionToken: openFileActionTokenRef.current,
+            startedScope,
+            currentActionScope: openFileActionScopeRef.current,
+            activeScope: drawerViewScopeRef.current,
+          })
+        ) {
+          onClose();
+        }
+      } catch (err) {
+        if (
+          shouldApplyGitFileOpenScopedResult({
+            actionToken,
+            currentActionToken: openFileActionTokenRef.current,
+            startedScope,
+            currentActionScope: openFileActionScopeRef.current,
+            activeScope: drawerViewScopeRef.current,
+          })
+        ) {
+          alert_message({
+            type: "error",
+            message: `Unable to open file '${filePath}' (${err})`,
+          });
+        }
+      } finally {
+        if (
+          shouldFinalizeGitFileOpenAction({
+            actionToken,
+            currentActionToken: openFileActionTokenRef.current,
+            startedScope,
+            currentActionScope: openFileActionScopeRef.current,
+          })
+        ) {
+          openFileActionScopeRef.current = undefined;
+        }
       }
-    } finally {
-      if (
-        shouldFinalizeGitFileOpenAction({
-          actionToken,
-          currentActionToken: openFileActionTokenRef.current,
-          startedScope,
-          currentActionScope: openFileActionScopeRef.current,
-        })
-      ) {
-        openFileActionScopeRef.current = undefined;
-      }
-    }
-  };
+    },
+    [currentData?.repoRoot, onClose, projectActions, repoRoot],
+  );
+
+  const showMoreDiffLines = useCallback((nextSectionId: string) => {
+    setVisibleDiffLinesByFile((prev) => ({
+      ...prev,
+      [nextSectionId]: getNextRenderedDiffLineLimit(prev[nextSectionId]),
+    }));
+  }, []);
 
   const handleDrawerScroll = () => {
     const node = scrollRef.current;
@@ -2948,14 +2959,7 @@ export function GitCommitDrawer({
                   isHeadSelected={isHeadSelected}
                   visibleDiffLinesByFile={visibleDiffLinesByFile}
                   onOpenFile={openFile}
-                  onShowMoreLines={(nextSectionId) => {
-                    setVisibleDiffLinesByFile((prev) => ({
-                      ...prev,
-                      [nextSectionId]: getNextRenderedDiffLineLimit(
-                        prev[nextSectionId],
-                      ),
-                    }));
-                  }}
+                  onShowMoreLines={showMoreDiffLines}
                   activeDraftAnchorId={activeDraftAnchorId}
                   activeDraftBody={activeInlineDraftBody}
                   activeEditingId={activeInlineEditId}

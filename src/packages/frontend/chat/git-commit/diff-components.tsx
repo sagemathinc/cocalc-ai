@@ -40,13 +40,6 @@ const DIFF_FILE_HEADER_BORDER = COLORS.GRAY_LL;
 const DIFF_FILE_HEADER_TEXT = COLORS.GRAY_D;
 const DIFF_FILE_HEADER_SECONDARY = COLORS.GRAY_M;
 
-function isDiffTextSelectionTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    Boolean(target.closest(".cocalc-git-diff-line-text"))
-  );
-}
-
 export const DiffBlock = memo(function DiffBlock({
   filePath,
   fileIndex,
@@ -107,7 +100,6 @@ export const DiffBlock = memo(function DiffBlock({
   activeMatchedLineIndex?: number;
 }) {
   const diffRootRef = useRef<HTMLDivElement | null>(null);
-  const diffTextPointerActiveRef = useRef(false);
   const codeFontSize = Math.max(11, fontSize - 1);
   const commentFontSize = Math.max(13, fontSize);
   const commentFontFamily =
@@ -163,32 +155,6 @@ export const DiffBlock = memo(function DiffBlock({
       ref={diffRootRef}
       data-git-diff-root="true"
       className="cocalc-slate-code-block"
-      onMouseDownCapture={(evt) => {
-        if (evt.button !== 0 || !isDiffTextSelectionTarget(evt.target)) {
-          return;
-        }
-        diffTextPointerActiveRef.current = true;
-        evt.stopPropagation();
-      }}
-      onMouseMoveCapture={(evt) => {
-        if (!diffTextPointerActiveRef.current) {
-          return;
-        }
-        evt.stopPropagation();
-      }}
-      onMouseUpCapture={(evt) => {
-        if (!diffTextPointerActiveRef.current) {
-          return;
-        }
-        evt.stopPropagation();
-      }}
-      onClickCapture={(evt) => {
-        if (!diffTextPointerActiveRef.current) {
-          return;
-        }
-        diffTextPointerActiveRef.current = false;
-        evt.stopPropagation();
-      }}
       style={{
         border: `1px solid ${COLORS.GRAY_L}`,
         borderRadius: 6,
@@ -553,9 +519,18 @@ export const DiffFileSection = memo(function DiffFileSection({
   const fileSectionRef = useRef<HTMLDivElement | null>(null);
   const shouldSuppressActionForSelection = (): boolean =>
     hasExpandedTextSelectionWithin(fileSectionRef.current);
-  const languageHint = languageHintFromPath(file.path);
-  const sectionId = buildGitReviewFileSectionId(file.path, index);
-  const visibleLines = file.lines.slice(0, visibleLineLimit);
+  const languageHint = useMemo(
+    () => languageHintFromPath(file.path),
+    [file.path],
+  );
+  const sectionId = useMemo(
+    () => buildGitReviewFileSectionId(file.path, index),
+    [file.path, index],
+  );
+  const visibleLines = useMemo(
+    () => file.lines.slice(0, visibleLineLimit),
+    [file.lines, visibleLineLimit],
+  );
   const remainingLineCount = Math.max(
     0,
     file.lines.length - visibleLines.length,

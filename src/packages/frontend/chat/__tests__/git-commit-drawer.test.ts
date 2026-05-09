@@ -245,47 +245,6 @@ describe("git commit drawer merge commit formatting", () => {
     selection!.removeAllRanges();
   });
 
-  it("keeps native diff text selection events from bubbling to drawer actions", () => {
-    const onMouseDown = jest.fn();
-    const onOpenDraft = jest.fn();
-    const { container } = render(
-      React.createElement(
-        "div",
-        { onMouseDown },
-        React.createElement(DiffBlock, {
-          filePath: "src/example.ts",
-          fileIndex: 0,
-          lines: stableDiffLines,
-          languageHint: "typescript",
-          fontSize: 14,
-          comments: stableComments,
-          showResolvedComments: false,
-          commentEnabled: true,
-          activeDraftBody: "",
-          activeEditingBody: "",
-          pendingKey: "",
-          onOpenDraft,
-          onDraftBodyChange: () => {},
-          onCancelDraft: () => {},
-          onOpenEdit: () => {},
-          onEditingBodyChange: () => {},
-          onCancelEdit: () => {},
-          onCreateComment: noopAsync,
-          onUpdateComment: noopAsync,
-          onResolveComment: noopAsync,
-          onReopenComment: noopAsync,
-        }),
-      ),
-    );
-
-    const textRoot = container.querySelector(".cocalc-git-diff-line-text");
-    expect(textRoot).toBeTruthy();
-    fireEvent.mouseDown(textRoot!, { button: 0 });
-
-    expect(onMouseDown).not.toHaveBeenCalled();
-    expect(onOpenDraft).not.toHaveBeenCalled();
-  });
-
   it("scopes git review editor cache ids by both account and commit", () => {
     const accountAScope = buildGitReviewEditorScope({
       accountId: "acct-a",
@@ -1302,6 +1261,81 @@ describe("git commit drawer merge commit formatting", () => {
 
       act(() => {
         rendered.getByText("bump").click();
+      });
+
+      expect(renders).toHaveLength(1);
+    } finally {
+      (DiffBlock as any).type = originalType;
+    }
+  });
+
+  it("does not re-commit drawer diff blocks on unrelated parent state changes", () => {
+    const renders: number[] = [];
+    const originalType = (DiffBlock as any).type;
+    (DiffBlock as any).type = function WrappedDiffBlock(props: any) {
+      renders.push(Date.now());
+      return originalType(props);
+    };
+
+    const files = [{ path: "src/example.ts", lines: stableDiffLines }];
+    const inlineCommentsByFile = new Map<string, any[]>();
+    const visibleDiffLinesByFile: Record<string, number> = {};
+    const diffFindMatchCounts = new Map<number, number>();
+    const diffFindMatchedLineIndexes = new Map<number, Set<number>>();
+    const virtuosoRef = { current: null };
+    const openFile = async () => {};
+    const showMoreLines = () => {};
+    const noop = () => {};
+
+    try {
+      function Harness() {
+        const [value, setValue] = useState(0);
+        return React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(
+            "button",
+            { onClick: () => setValue((v) => v + 1) },
+            "bump panel",
+          ),
+          React.createElement("span", null, value),
+          React.createElement(GitDiffFilesPanel, {
+            files,
+            drawerScrollParent: null,
+            virtuosoRef,
+            fontSize: 14,
+            editorTheme: null,
+            reviewEditorScope: "scope:test",
+            inlineCommentsByFile,
+            showResolvedComments: false,
+            isHeadSelected: false,
+            visibleDiffLinesByFile,
+            onOpenFile: openFile,
+            onShowMoreLines: showMoreLines,
+            activeDraftBody: "",
+            activeEditingBody: "",
+            pendingKey: "",
+            onOpenDraft: noop,
+            onDraftBodyChange: noop,
+            onCancelDraft: noop,
+            onOpenEdit: noop,
+            onEditingBodyChange: noop,
+            onCancelEdit: noop,
+            onCreateComment: noopAsync,
+            onUpdateComment: noopAsync,
+            onResolveComment: noopAsync,
+            onReopenComment: noopAsync,
+            diffFindMatchCounts,
+            diffFindMatchedLineIndexes,
+          }),
+        );
+      }
+
+      const rendered = render(React.createElement(Harness));
+      expect(renders).toHaveLength(1);
+
+      act(() => {
+        rendered.getByText("bump panel").click();
       });
 
       expect(renders).toHaveLength(1);
