@@ -32,6 +32,13 @@ export function HostOptionsSelect({
       value={value}
       onChange={onChange}
       size={size}
+      showSearch
+      optionFilterProp="label"
+      filterOption={(input, option) =>
+        String(option?.label ?? "")
+          .toLowerCase()
+          .includes(input.trim().toLowerCase())
+      }
       popupMatchSelectWidth={false}
       optionRender={(option: any) => {
         const data = option.data as HostFieldOption | undefined;

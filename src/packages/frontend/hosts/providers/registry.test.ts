@@ -206,6 +206,9 @@ describe("catalog-backed pricing labels", () => {
 
     expect(options[0].label).toContain("/mo");
     expect(options[0].priceLabel).toContain("/mo");
+    expect(options[0].mainLabel).toContain("4 vCPU / 16 GiB");
+    expect(options[0].label).toContain("cpu:4");
+    expect(options[0].label).toContain("ram:16");
   });
 
   it("returns a provider price estimate for Nebius selections", () => {

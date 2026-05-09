@@ -8,14 +8,18 @@ export const SUPPORTED_GCP_MACHINE_TYPE_PREFIXES = [
   "t2d-standard-",
   "n2d-standard-",
   "n2d-highmem-",
+  "c3-highcpu-",
   "c3-standard-",
   "c3-highmem-",
+  "c3d-standard-",
+  "c3d-highcpu-",
+  "c3d-highmem-",
 ] as const;
 
 export type SupportedGcpMachineTypePrefix =
   (typeof SUPPORTED_GCP_MACHINE_TYPE_PREFIXES)[number];
 
-export type GcpPricingFamily = "t2a" | "t2d" | "n2d" | "c3";
+export type GcpPricingFamily = "t2a" | "t2d" | "n2d" | "c3" | "c3d";
 
 export type GcpPriceRateMap = Record<string, number>;
 
@@ -55,6 +59,8 @@ export type GcpCatalogRateEstimateInput = {
   region?: string | null;
   zone?: string | null;
   machine_type?: string | null;
+  cpu_count?: number | null;
+  memory_gib?: number | null;
   disk_gb?: number | null;
   disk_type?: string | null;
   storage_mode?: string | null;
@@ -95,7 +101,11 @@ const GCP_MACHINE_TYPE_FAMILY_RULES: Array<{
   { family: "t2a", prefixes: ["t2a-standard-"] },
   { family: "t2d", prefixes: ["t2d-standard-"] },
   { family: "n2d", prefixes: ["n2d-standard-", "n2d-highmem-"] },
-  { family: "c3", prefixes: ["c3-standard-", "c3-highmem-"] },
+  { family: "c3", prefixes: ["c3-highcpu-", "c3-standard-", "c3-highmem-"] },
+  {
+    family: "c3d",
+    prefixes: ["c3d-standard-", "c3d-highcpu-", "c3d-highmem-"],
+  },
 ];
 
 export function isSupportedCatalogGcpMachineType(
@@ -145,7 +155,11 @@ export function gcpMemoryGiBForMachineType(
   const cpu = gcpCpuCountForMachineType(name);
   if (!cpu) return undefined;
   const value = `${name ?? ""}`.trim().toLowerCase();
-  const gibPerCpu = value.includes("-highmem-") ? 8 : 4;
+  const gibPerCpu = value.includes("-highmem-")
+    ? 8
+    : value.includes("-highcpu-")
+      ? 2
+      : 4;
   return cpu * gibPerCpu;
 }
 
@@ -211,8 +225,14 @@ export function estimateGcpCatalogRateUsdPerHour(
     pricingModel === "spot" ? familyEntry.spot_ram : familyEntry.ram,
     region,
   );
-  const cpus = gcpCpuCountForMachineType(machineType);
-  const memoryGiB = gcpMemoryGiBForMachineType(machineType);
+  const cpus =
+    typeof input.cpu_count === "number" && Number.isFinite(input.cpu_count)
+      ? input.cpu_count
+      : gcpCpuCountForMachineType(machineType);
+  const memoryGiB =
+    typeof input.memory_gib === "number" && Number.isFinite(input.memory_gib)
+      ? input.memory_gib
+      : gcpMemoryGiBForMachineType(machineType);
   if (
     !isFinitePositiveNumber(cpuRate) ||
     !isFinitePositiveNumber(ramRate) ||

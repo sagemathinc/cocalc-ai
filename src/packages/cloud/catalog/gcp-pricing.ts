@@ -66,6 +66,11 @@ const GCP_FAMILY_PATTERNS: Array<{
     cpu: /^(?:Spot Preemptible )?C3 Instance Core running in /i,
     ram: /^(?:Spot Preemptible )?C3 Instance Ram running in /i,
   },
+  {
+    family: "c3d",
+    cpu: /^(?:Spot Preemptible )?C3D (?:AMD )?Instance Core running in /i,
+    ram: /^(?:Spot Preemptible )?C3D (?:AMD )?Instance Ram running in /i,
+  },
 ];
 
 const GCP_GPU_PATTERNS: Array<{

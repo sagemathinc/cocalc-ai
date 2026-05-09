@@ -60,6 +60,33 @@ describe("project host pricing", () => {
     ).toBeCloseTo(0.184, 9);
   });
 
+  it("supports C3D pricing with explicit machine metadata overrides", () => {
+    const catalog: GcpCatalogPrices = {
+      fetched_at: "2026-05-08T00:00:00.000Z",
+      service_id: "compute",
+      families: {
+        c3d: {
+          cpu: { "us-west1": 0.04 },
+          ram: { "us-west1": 0.005 },
+          spot_cpu: { "us-west1": 0.016 },
+          spot_ram: { "us-west1": 0.002 },
+        },
+      },
+      gpus: {},
+      disks: {},
+    };
+
+    expect(
+      estimateGcpCatalogRateUsdPerHour(catalog, {
+        zone: "us-west1-a",
+        machine_type: "c3d-highcpu-30",
+        cpu_count: 30,
+        memory_gib: 59,
+        pricing_model: "on_demand",
+      }),
+    ).toBeCloseTo(1.495, 9);
+  });
+
   it("estimates Nebius hourly rates from normalized catalog pricing", () => {
     expect(
       estimateNebiusCatalogRateUsdPerHour({

@@ -181,6 +181,8 @@ export type ProviderSelection = {
   zone?: string;
   machine_type?: string;
   gpu_type?: string;
+  cpu_count?: number;
+  memory_gib?: number;
   pricing_model?: string;
   storage_mode?: string;
   disk_type?: string;
@@ -388,6 +390,67 @@ const getNebiusPriceItems = (catalog?: HostCatalog) =>
     "global",
   ) ?? [];
 
+const getGcpMachineTypeByZone = (
+  catalog: HostCatalog | undefined,
+  zone: string | undefined,
+  machineType: string | undefined,
+): HostCatalogMachineType | undefined => {
+  if (!zone || !machineType) return undefined;
+  const types = getCatalogEntryPayload<HostCatalogMachineType[]>(
+    catalog,
+    "machine_types",
+    `zone/${zone}`,
+  );
+  return types?.find((entry) => entry.name === machineType);
+};
+
+const machineSearchSuffix = (
+  cpu?: number | null,
+  ramGiB?: number | null,
+  extraTerms: string[] = [],
+) =>
+  [
+    cpu != null ? `cpu:${cpu}` : "",
+    ramGiB != null ? `ram:${ramGiB}` : "",
+    ...extraTerms,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+const gcpMachineTypeLabel = (entry: HostCatalogMachineType) => {
+  const cpu = entry.guestCpus ?? undefined;
+  const ramGiB =
+    entry.memoryMb != null ? Number(entry.memoryMb) / 1024 : undefined;
+  const cpuRamLabel = formatCpuRamLabel(cpu, ramGiB);
+  const arm = getMachineTypeArchitecture(entry.name ?? "") === "arm64";
+  const mainLabel = `${entry.name ?? "unknown"} · ${cpuRamLabel}${
+    arm ? " · ARM64" : ""
+  }`;
+  const searchTerms = machineSearchSuffix(
+    cpu,
+    ramGiB,
+    arm ? ["arm64", "arm"] : [],
+  );
+  return {
+    mainLabel,
+    label: searchTerms ? `${mainLabel} ${searchTerms}` : mainLabel,
+  };
+};
+
+const nebiusMachineTypeLabel = (entry: NebiusInstance) => {
+  const platformLabel = entry.platform_label
+    ? ` · ${entry.platform_label}`
+    : "";
+  const cpuRamLabel = formatCpuRamLabel(entry.vcpus, entry.memory_gib);
+  const gpuLabel = formatGpuLabel(entry.gpus, entry.gpu_label);
+  const mainLabel = `${entry.name} (${cpuRamLabel}${gpuLabel}${platformLabel})`;
+  const searchTerms = machineSearchSuffix(entry.vcpus, entry.memory_gib);
+  return {
+    mainLabel,
+    label: searchTerms ? `${mainLabel} ${searchTerms}` : mainLabel,
+  };
+};
+
 const estimateGcpSelectionUsdPerHour = (
   catalog: HostCatalog | undefined,
   selection: ProviderSelection,
@@ -396,10 +459,23 @@ const estimateGcpSelectionUsdPerHour = (
   const next = { ...selection, ...overrides };
   const gpuType =
     next.gpu_type && next.gpu_type !== "none" ? next.gpu_type : undefined;
+  const machineTypeMeta = getGcpMachineTypeByZone(
+    catalog,
+    next.zone,
+    next.machine_type,
+  );
+  const cpuCount = next.cpu_count ?? machineTypeMeta?.guestCpus ?? undefined;
+  const memoryGiB =
+    next.memory_gib ??
+    (machineTypeMeta?.memoryMb != null
+      ? Number(machineTypeMeta.memoryMb) / 1024
+      : undefined);
   return estimateGcpCatalogRateUsdPerHour(getGcpPriceCatalog(catalog), {
     region: next.region,
     zone: next.zone,
     machine_type: next.machine_type,
+    cpu_count: cpuCount,
+    memory_gib: memoryGiB,
     pricing_model: next.pricing_model === "spot" ? "spot" : "on_demand",
     gpu_type: gpuType,
     gpu_count: gpuType ? 1 : undefined,
@@ -490,6 +566,12 @@ const hostProviderSelectionForPricing = (host: Host): ProviderSelection => ({
   zone: host.machine?.zone ?? undefined,
   machine_type: host.machine?.machine_type ?? undefined,
   gpu_type: host.machine?.gpu_type ?? undefined,
+  cpu_count: Number.isFinite(Number(host.machine?.metadata?.cpu))
+    ? Number(host.machine?.metadata?.cpu)
+    : undefined,
+  memory_gib: Number.isFinite(Number(host.machine?.metadata?.ram_gb))
+    ? Number(host.machine?.metadata?.ram_gb)
+    : undefined,
   pricing_model: host.pricing_model ?? undefined,
   storage_mode: host.machine?.storage_mode ?? undefined,
   disk_type: host.machine?.disk_type ?? undefined,
@@ -833,10 +915,14 @@ export const getGcpMachineTypeOptions = (
     return gpuPrefixes.some((prefix) => name.startsWith(prefix));
   });
   return filtered.map((mt) => {
+    const machineLabel = gcpMachineTypeLabel(mt);
     const label = appendPriceStateLabel({
-      label: mt.name ?? "unknown",
+      label: machineLabel.label,
       hourlyRate: estimateGcpSelectionUsdPerHour(catalog, selection, {
         machine_type: mt.name ?? undefined,
+        cpu_count: mt.guestCpus ?? undefined,
+        memory_gib:
+          mt.memoryMb != null ? Number(mt.memoryMb) / 1024 : undefined,
       }),
       expectPrice: true,
       priceDisplay,
@@ -845,6 +931,7 @@ export const getGcpMachineTypeOptions = (
       value: mt.name ?? "",
       ...label,
       selectionLabel: mt.name ?? "unknown",
+      mainLabel: label.mainLabel ?? machineLabel.mainLabel,
       meta: mt,
     };
   });
@@ -1412,16 +1499,12 @@ export const getNebiusInstanceTypeOptions = (
     });
   }
   return filtered.map((entry) => {
-    const platformLabel = entry.platform_label
-      ? ` · ${entry.platform_label}`
-      : "";
-    const cpuRamLabel = formatCpuRamLabel(entry.vcpus, entry.memory_gib);
-    const gpuLabel = formatGpuLabel(entry.gpus, entry.gpu_label);
+    const machineLabel = nebiusMachineTypeLabel(entry);
     const hourlyRate = estimateNebiusSelectionUsdPerHour(catalog, selection, {
       machine_type: entry.name,
     });
     const label = appendPriceStateLabel({
-      label: `${entry.name} (${cpuRamLabel}${gpuLabel}${platformLabel})`,
+      label: machineLabel.label,
       hourlyRate,
       expectPrice: true,
       priceDisplay,
@@ -1430,6 +1513,7 @@ export const getNebiusInstanceTypeOptions = (
       value: entry.name,
       ...label,
       selectionLabel: entry.name,
+      mainLabel: label.mainLabel ?? machineLabel.mainLabel,
       entry,
     };
   });
