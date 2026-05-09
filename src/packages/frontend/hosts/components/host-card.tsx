@@ -29,6 +29,7 @@ import {
   getProviderDescriptor,
   isKnownProvider,
 } from "../providers/registry";
+import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
 import {
   describeBlockedHostActions,
@@ -99,6 +100,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   providerCapabilities,
   selfHost,
 }) => {
+  const pricingSettings = useHostPricingSettings();
   const isDeleted = !!host.deleted;
   const isSelfHost = host.machine?.cloud === "self-host";
   const hasSshTarget = !!String(
@@ -152,7 +154,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   const providerId = host.machine?.cloud;
   const caps = providerId ? providerCapabilities?.[providerId] : undefined;
   const priceEstimate = catalog
-    ? getHostPriceEstimate(host, catalog)
+    ? getHostPriceEstimate(host, catalog, pricingSettings)
     : undefined;
   const supportsCatalogPricing =
     host.machine?.cloud === "gcp" || host.machine?.cloud === "nebius";

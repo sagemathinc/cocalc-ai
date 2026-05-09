@@ -106,6 +106,8 @@ export type SiteSettingsKeys =
   | "project_hosts_self_host_alpha_enabled"
   | "project_hosts_nebius_enabled"
   | "project_hosts_funding_mode"
+  | "project_hosts_gcp_surcharge_percent"
+  | "project_hosts_nebius_surcharge_percent"
   | "project_hosts_postpaid_unbilled_limit_usd"
   | "cloudflare_mode"
   | "project_hosts_dns"
@@ -962,6 +964,26 @@ export const site_settings_conf: SiteSettings = {
     valid: onlyNonnegFloat,
     to_val: toFloat,
     tags: ["Project Hosts", "Cloud", "Commercialization"],
+    group: "Compute / Project Hosts",
+    subgroup: "Billing",
+  },
+  project_hosts_gcp_surcharge_percent: {
+    name: "Project Hosts: Google Cloud - Site Surcharge (%)",
+    desc: "Percentage markup applied to Google Cloud dedicated-host prices shown in the UI and used for dedicated-host billing. This helps cover spot-price volatility, public IPv4, egress, and other operating overhead.",
+    default: "0",
+    valid: onlyNonnegFloat,
+    to_val: toFloat,
+    tags: ["Project Hosts", "Cloud", "Commercialization"],
+    group: "Compute / Project Hosts",
+    subgroup: "Billing",
+  },
+  project_hosts_nebius_surcharge_percent: {
+    name: "Project Hosts: Nebius - Site Surcharge (%)",
+    desc: "Percentage markup applied to Nebius dedicated-host prices shown in the UI and used for dedicated-host billing. Use this to publish customer-facing prices at or above Nebius list pricing.",
+    default: "0",
+    valid: onlyNonnegFloat,
+    to_val: toFloat,
+    tags: ["Project Hosts", "Cloud", "Nebius", "Commercialization"],
     group: "Compute / Project Hosts",
     subgroup: "Billing",
   },

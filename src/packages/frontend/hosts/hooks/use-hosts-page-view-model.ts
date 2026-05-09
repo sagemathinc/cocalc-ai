@@ -1558,6 +1558,7 @@ export const useHostsPageViewModel = () => {
     provider: {
       providerOptions,
       selectedProvider: selectedProvider ?? providerOptions[0]?.value ?? "none",
+      catalog,
       fields: {
         schema: fieldSchema,
         options: fieldOptions,

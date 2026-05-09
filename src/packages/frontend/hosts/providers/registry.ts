@@ -8,13 +8,20 @@ import type {
   HostCatalogZone,
 } from "@cocalc/conat/hub/api/hosts";
 import type {
+  DedicatedHostSurchargeSettings,
   GcpCatalogPrices,
+  HostPriceBreakdownItem,
   NebiusCatalogPriceItem,
 } from "@cocalc/util/project-host-pricing";
 import {
+  applyDedicatedHostSurchargeToBreakdown,
+  applyDedicatedHostSurchargeToHourlyRate,
+  estimateGcpCatalogRateBreakdown,
   estimateGcpCatalogRateUsdPerHour,
-  gcpCatalogMachineTypeSortKey,
+  estimateNebiusCatalogRateBreakdown,
   estimateNebiusCatalogRateUsdPerHour,
+  getDedicatedHostSurchargeFraction,
+  gcpCatalogMachineTypeSortKey,
   getNebiusPlatformAliases,
   normalizeNebiusPricingProduct,
   normalizeNebiusPricingToken,
@@ -62,6 +69,12 @@ export type HostFieldOption<T = unknown> = {
 };
 
 export type PriceDisplayMode = "hourly" | "monthly";
+
+export type ProviderPriceEstimateItem = HostPriceBreakdownItem & {
+  usd_per_month: number;
+  hourly_label: string;
+  monthly_label: string;
+};
 
 type PriceDecoratedLabel = Pick<
   HostFieldOption,
@@ -193,6 +206,7 @@ export type ProviderSelection = {
   size?: string;
   gpu?: string;
   price_display?: PriceDisplayMode;
+  pricing_settings?: DedicatedHostSurchargeSettings;
 };
 
 export type FieldOptionsMap = Partial<Record<HostFieldId, HostFieldOption[]>>;
@@ -471,19 +485,59 @@ const estimateGcpSelectionUsdPerHour = (
     (machineTypeMeta?.memoryMb != null
       ? Number(machineTypeMeta.memoryMb) / 1024
       : undefined);
-  return estimateGcpCatalogRateUsdPerHour(getGcpPriceCatalog(catalog), {
-    region: next.region,
-    zone: next.zone,
-    machine_type: next.machine_type,
-    cpu_count: cpuCount,
-    memory_gib: memoryGiB,
-    pricing_model: next.pricing_model === "spot" ? "spot" : "on_demand",
-    gpu_type: gpuType,
-    gpu_count: gpuType ? 1 : undefined,
-    disk_type: next.disk_type,
-    disk_gb: next.disk_gb,
-    storage_mode: next.storage_mode,
-  });
+  return applyDedicatedHostSurchargeToHourlyRate(
+    estimateGcpCatalogRateUsdPerHour(getGcpPriceCatalog(catalog), {
+      region: next.region,
+      zone: next.zone,
+      machine_type: next.machine_type,
+      cpu_count: cpuCount,
+      memory_gib: memoryGiB,
+      pricing_model: next.pricing_model === "spot" ? "spot" : "on_demand",
+      gpu_type: gpuType,
+      gpu_count: gpuType ? 1 : undefined,
+      disk_type: next.disk_type,
+      disk_gb: next.disk_gb,
+      storage_mode: next.storage_mode,
+    }),
+    getDedicatedHostSurchargeFraction("gcp", next.pricing_settings),
+  );
+};
+
+const estimateGcpSelectionBreakdown = (
+  catalog: HostCatalog | undefined,
+  selection: ProviderSelection,
+  overrides?: Partial<ProviderSelection>,
+) => {
+  const next = { ...selection, ...overrides };
+  const gpuType =
+    next.gpu_type && next.gpu_type !== "none" ? next.gpu_type : undefined;
+  const machineTypeMeta = getGcpMachineTypeByZone(
+    catalog,
+    next.zone,
+    next.machine_type,
+  );
+  const cpuCount = next.cpu_count ?? machineTypeMeta?.guestCpus ?? undefined;
+  const memoryGiB =
+    next.memory_gib ??
+    (machineTypeMeta?.memoryMb != null
+      ? Number(machineTypeMeta.memoryMb) / 1024
+      : undefined);
+  return applyDedicatedHostSurchargeToBreakdown(
+    estimateGcpCatalogRateBreakdown(getGcpPriceCatalog(catalog), {
+      region: next.region,
+      zone: next.zone,
+      machine_type: next.machine_type,
+      cpu_count: cpuCount,
+      memory_gib: memoryGiB,
+      pricing_model: next.pricing_model === "spot" ? "spot" : "on_demand",
+      gpu_type: gpuType,
+      gpu_count: gpuType ? 1 : undefined,
+      disk_type: next.disk_type,
+      disk_gb: next.disk_gb,
+      storage_mode: next.storage_mode,
+    }),
+    getDedicatedHostSurchargeFraction("gcp", next.pricing_settings),
+  );
 };
 
 const estimateNebiusSelectionUsdPerHour = (
@@ -502,15 +556,48 @@ const estimateNebiusSelectionUsdPerHour = (
     ) ?? []
   ).find((entry) => entry.name === machineType);
   if (!instance) return undefined;
-  return estimateNebiusCatalogRateUsdPerHour({
-    prices: getNebiusPriceItems(catalog),
-    region: next.region,
-    pricing_model: next.pricing_model === "spot" ? "spot" : "on_demand",
-    instance,
-    disk_type: next.disk_type,
-    disk_gb: next.disk_gb,
-    storage_mode: next.storage_mode,
-  });
+  return applyDedicatedHostSurchargeToHourlyRate(
+    estimateNebiusCatalogRateUsdPerHour({
+      prices: getNebiusPriceItems(catalog),
+      region: next.region,
+      pricing_model: next.pricing_model === "spot" ? "spot" : "on_demand",
+      instance,
+      disk_type: next.disk_type,
+      disk_gb: next.disk_gb,
+      storage_mode: next.storage_mode,
+    }),
+    getDedicatedHostSurchargeFraction("nebius", next.pricing_settings),
+  );
+};
+
+const estimateNebiusSelectionBreakdown = (
+  catalog: HostCatalog | undefined,
+  selection: ProviderSelection,
+  overrides?: Partial<ProviderSelection>,
+) => {
+  const next = { ...selection, ...overrides };
+  const machineType = `${next.machine_type ?? ""}`.trim();
+  if (!machineType) return undefined;
+  const instance = (
+    getCatalogEntryPayload<NebiusInstance[]>(
+      catalog,
+      "instance_types",
+      "global",
+    ) ?? []
+  ).find((entry) => entry.name === machineType);
+  if (!instance) return undefined;
+  return applyDedicatedHostSurchargeToBreakdown(
+    estimateNebiusCatalogRateBreakdown({
+      prices: getNebiusPriceItems(catalog),
+      region: next.region,
+      pricing_model: next.pricing_model === "spot" ? "spot" : "on_demand",
+      instance,
+      disk_type: next.disk_type,
+      disk_gb: next.disk_gb,
+      storage_mode: next.storage_mode,
+    }),
+    getDedicatedHostSurchargeFraction("nebius", next.pricing_settings),
+  );
 };
 
 const MONTHLY_HOURS = 730;
@@ -536,29 +623,63 @@ export type ProviderPriceEstimate = {
   usd_per_month: number;
   hourly_label: string;
   monthly_label: string;
+  line_items: ProviderPriceEstimateItem[];
+  notes: string[];
 };
 
 export const getProviderPriceEstimate = (
   provider: HostProvider,
   catalog: HostCatalog | undefined,
   selection: ProviderSelection,
+  surchargeSettings?: DedicatedHostSurchargeSettings,
 ): ProviderPriceEstimate | undefined => {
-  const hourlyRate =
+  const pricingSettings = surchargeSettings ?? selection.pricing_settings;
+  const nextSelection =
+    pricingSettings == null
+      ? selection
+      : { ...selection, pricing_settings: pricingSettings };
+  const breakdown =
     provider === "gcp"
-      ? estimateGcpSelectionUsdPerHour(catalog, selection)
+      ? estimateGcpSelectionBreakdown(catalog, nextSelection)
       : provider === "nebius"
-        ? estimateNebiusSelectionUsdPerHour(catalog, selection)
+        ? estimateNebiusSelectionBreakdown(catalog, nextSelection)
         : undefined;
+  const surchargeFraction =
+    provider === "gcp" || provider === "nebius"
+      ? getDedicatedHostSurchargeFraction(provider, pricingSettings)
+      : 0;
+  const hourlyRate = breakdown?.total_usd_per_hour;
   if (typeof hourlyRate !== "number" || !Number.isFinite(hourlyRate)) {
     return undefined;
   }
   const usd_per_hour = hourlyRate;
   const usd_per_month = hourlyRate * MONTHLY_HOURS;
+  const line_items = (breakdown?.items ?? []).map((item) => ({
+    ...item,
+    usd_per_month: item.usd_per_hour * MONTHLY_HOURS,
+    hourly_label: formatUsdHourlyLabel(item.usd_per_hour),
+    monthly_label: formatUsdMonthlyLabel(item.usd_per_hour),
+  }));
+  const notes = [
+    ...(provider === "gcp"
+      ? ["Includes the required public IPv4 address for managed GCP hosts."]
+      : []),
+    ...(surchargeFraction > 0
+      ? [
+          `Includes a ${
+            Math.round(surchargeFraction * 10000) / 100
+          }% site surcharge.`,
+        ]
+      : []),
+    "Network egress and other provider charges are not included.",
+  ];
   return {
     usd_per_hour,
     usd_per_month,
     hourly_label: formatUsdHourlyLabel(usd_per_hour),
     monthly_label: formatUsdMonthlyLabel(usd_per_hour),
+    line_items,
+    notes,
   };
 };
 
@@ -582,6 +703,7 @@ const hostProviderSelectionForPricing = (host: Host): ProviderSelection => ({
 export const getHostPriceEstimate = (
   host: Host,
   catalog: HostCatalog | undefined,
+  surchargeSettings?: DedicatedHostSurchargeSettings,
 ): ProviderPriceEstimate | undefined => {
   const provider = host.machine?.cloud;
   if (provider !== "gcp" && provider !== "nebius") return undefined;
@@ -589,6 +711,7 @@ export const getHostPriceEstimate = (
     provider,
     catalog,
     hostProviderSelectionForPricing(host),
+    surchargeSettings,
   );
 };
 

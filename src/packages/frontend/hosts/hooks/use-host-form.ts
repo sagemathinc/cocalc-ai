@@ -28,6 +28,7 @@ import {
   sortRegionOptionsByPreference,
   type RegionPreference,
 } from "../utils/region-ranking";
+import { useHostPricingSettings } from "./use-host-pricing-settings";
 
 type SelectOption = { value: string; disabled?: boolean };
 
@@ -114,6 +115,7 @@ export const useHostForm = ({
       ),
     [provider, providerCaps],
   );
+  const pricingSettings = useHostPricingSettings();
   const selection: ProviderSelection = useMemo(
     () => ({
       region: selectedRegion,
@@ -129,6 +131,7 @@ export const useHostForm = ({
       size: selectedSize,
       gpu: selectedGpu,
       price_display: selectedPriceDisplay === "monthly" ? "monthly" : "hourly",
+      pricing_settings: pricingSettings,
     }),
     [
       selectedRegion,
@@ -144,6 +147,7 @@ export const useHostForm = ({
       selectedSize,
       selectedGpu,
       selectedPriceDisplay,
+      pricingSettings,
     ],
   );
   const regionPreference: RegionPreference =
@@ -211,8 +215,9 @@ export const useHostForm = ({
   const showDiskFields =
     supportsPersistentStorage && selectedStorageMode !== "ephemeral";
   const priceEstimate: ProviderPriceEstimate | undefined = useMemo(
-    () => getProviderPriceEstimate(provider, catalog, selection),
-    [provider, catalog, selection],
+    () =>
+      getProviderPriceEstimate(provider, catalog, selection, pricingSettings),
+    [provider, catalog, pricingSettings, selection],
   );
 
   const catalogSummary = useMemo(

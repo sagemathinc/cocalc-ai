@@ -13,10 +13,16 @@ import {
 import { React } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type { HostCreateViewModel } from "../hooks/use-host-create-view-model";
-import type { HostFieldId } from "../providers/registry";
+import {
+  getProviderPriceEstimate,
+  type HostFieldId,
+  type ProviderSelection,
+} from "../providers/registry";
 import type { HostProvider } from "../types";
 import { isBillableHostProvider } from "../utils/funding-mode";
+import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import { HostCreateForm } from "./host-create-form";
+import { HostPriceBreakdown } from "./host-price-breakdown";
 
 type HostCreateCardProps = {
   vm: HostCreateViewModel;
@@ -24,6 +30,7 @@ type HostCreateCardProps = {
 
 export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
   const { permissions, form, provider, billing, catalogRefresh } = vm;
+  const pricingSettings = useHostPricingSettings();
   const { isAdmin, canCreateHosts } = permissions;
   const {
     form: formInstance,
@@ -74,11 +81,59 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     }
   };
   const watchedRegion = Form.useWatch("region", formInstance);
+  const watchedZone = Form.useWatch("zone", formInstance);
   const watchedStorageMode = Form.useWatch("storage_mode", formInstance);
   const watchedDiskType = Form.useWatch("disk_type", formInstance);
   const watchedDisk = Form.useWatch("disk", formInstance);
   const watchedMachineType = Form.useWatch("machine_type", formInstance);
   const watchedGpuType = Form.useWatch("gpu_type", formInstance);
+  const watchedPricingModel = Form.useWatch("pricing_model", formInstance);
+  const watchedPriceDisplay = Form.useWatch("price_display", formInstance);
+  const livePricingSelection = React.useMemo<ProviderSelection>(
+    () => ({
+      region: watchedRegion,
+      zone: watchedZone,
+      machine_type: watchedMachineType,
+      gpu_type: watchedGpuType,
+      pricing_model: watchedPricingModel,
+      storage_mode: watchedStorageMode,
+      disk_type: watchedDiskType,
+      disk_gb:
+        typeof watchedDisk === "number" && Number.isFinite(watchedDisk)
+          ? watchedDisk
+          : undefined,
+      price_display: watchedPriceDisplay === "monthly" ? "monthly" : "hourly",
+    }),
+    [
+      watchedDisk,
+      watchedDiskType,
+      watchedGpuType,
+      watchedMachineType,
+      watchedPriceDisplay,
+      watchedPricingModel,
+      watchedRegion,
+      watchedStorageMode,
+      watchedZone,
+    ],
+  );
+  const livePriceEstimate = React.useMemo(
+    () =>
+      provider.selectedProvider === "gcp" ||
+      provider.selectedProvider === "nebius"
+        ? getProviderPriceEstimate(
+            provider.selectedProvider,
+            provider.catalog,
+            livePricingSelection,
+            pricingSettings,
+          )
+        : undefined,
+    [
+      livePricingSelection,
+      pricingSettings,
+      provider.catalog,
+      provider.selectedProvider,
+    ],
+  );
   const needsGcpPlacementCompatibility =
     provider.selectedProvider === "gcp" &&
     !!(
@@ -97,7 +152,6 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
     provider.fields.options.region,
     watchedRegion,
   ]);
-  const watchedZone = Form.useWatch("zone", formInstance);
   const gcpZoneIncompatible = React.useMemo(() => {
     if (!needsGcpPlacementCompatibility) return false;
     const zoneOption = (provider.fields.options.zone ?? []).find(
@@ -271,17 +325,24 @@ export const HostCreateCard: React.FC<HostCreateCardProps> = ({ vm }) => {
           <Divider style={{ margin: "8px 0" }} />
           <Space orientation="vertical" style={{ width: "100%" }} size="small">
             {provider.selectedProvider !== "none" &&
-              provider.selectedProvider !== "self-host" && (
+              provider.selectedProvider !== "self-host" &&
+              !livePriceEstimate && (
                 <Typography.Text type="secondary">
-                  {provider.priceEstimate
-                    ? `Estimated cost: ${provider.priceEstimate.hourly_label} · ${provider.priceEstimate.monthly_label}`
-                    : supportsCatalogPricing
-                      ? priceSelectionComplete
-                        ? "Estimated cost unavailable for this region, machine type, or disk choice."
-                        : "Estimated cost updates when region, machine type, pricing model, and disk are fully selected."
-                      : "Catalog pricing is not wired for this provider yet."}
+                  {supportsCatalogPricing
+                    ? priceSelectionComplete
+                      ? "Estimated cost unavailable for this region, machine type, or disk choice."
+                      : "Estimated cost updates when region, machine type, pricing model, and disk are fully selected."
+                    : "Catalog pricing is not wired for this provider yet."}
                 </Typography.Text>
               )}
+            {livePriceEstimate && (
+              <HostPriceBreakdown
+                displayMode={
+                  watchedPriceDisplay === "monthly" ? "monthly" : "hourly"
+                }
+                estimate={livePriceEstimate}
+              />
+            )}
             <Popconfirm
               title={
                 <div>

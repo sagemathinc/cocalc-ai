@@ -164,8 +164,10 @@ export interface CustomizeState {
   project_rootfs_default_image_gpu?: string;
   project_rootfs_prepull_images?: string;
   "project_hosts_google-cloud_enabled"?: boolean;
+  project_hosts_gcp_surcharge_percent?: number;
   project_hosts_hyperstack_enabled?: boolean;
   project_hosts_lambda_enabled?: boolean;
+  project_hosts_nebius_surcharge_percent?: number;
 
   ollama?: TypedMap<{ [key: string]: TypedMap<CustomAIModelPublic> }>;
   custom_openai?: TypedMap<{ [key: string]: TypedMap<CustomAIModelPublic> }>;

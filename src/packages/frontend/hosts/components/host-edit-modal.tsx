@@ -26,10 +26,12 @@ import { HostOptionsSelect } from "./host-options-select";
 import { HostSpotRecoveryFields } from "./host-spot-recovery-fields";
 import { useHostForm } from "../hooks/use-host-form";
 import { useHostFormValues } from "../hooks/use-host-form-values";
+import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import {
   filterFieldSchemaForCaps,
   getProviderDescriptor,
   getProviderOptions,
+  getProviderPriceEstimate,
   getProviderStorageSupport,
   isNebiusSpotSupported,
 } from "../providers/registry";
@@ -43,6 +45,7 @@ import {
   isBillableHostProvider,
 } from "../utils/funding-mode";
 import { SshTargetLabel } from "./ssh-target-help";
+import { HostPriceBreakdown } from "./host-price-breakdown";
 
 const NEBIUS_IO_M3_GB = 93;
 
@@ -106,6 +109,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
   const watchedProvider = Form.useWatch("provider", form) as
     | HostProvider
     | undefined;
+  const pricingSettings = useHostPricingSettings();
   const hostProviderId = (host?.machine?.cloud ?? "none") as HostProvider;
   const providerId = isDeprovisioned
     ? (watchedProvider ?? hostProviderId)
@@ -171,6 +175,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
     () => ({
       providerOptions,
       selectedProvider: providerId ?? providerOptions[0]?.value ?? "none",
+      catalog,
       fields: {
         schema: createFieldSchema,
         options: createFieldOptions,
@@ -208,6 +213,50 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       : undefined;
   const providerDescriptor =
     providerId !== "none" ? getProviderDescriptor(providerId) : undefined;
+  const livePricingSelection = React.useMemo<ProviderSelection>(
+    () => ({
+      region: selectedRegion,
+      zone: selectedZone,
+      machine_type: selectedMachineType,
+      gpu_type: selectedGpuType,
+      pricing_model: selectedPricingModel,
+      storage_mode: selectedStorageMode,
+      disk_type: selectedDiskType,
+      disk_gb: selectedDiskGb,
+      self_host_kind: selectedSelfHostKind,
+      self_host_mode: selectedSelfHostMode,
+      size: selectedSize,
+      gpu: selectedGpu,
+      price_display: selectedPriceDisplay === "monthly" ? "monthly" : "hourly",
+    }),
+    [
+      selectedDiskGb,
+      selectedDiskType,
+      selectedGpu,
+      selectedGpuType,
+      selectedMachineType,
+      selectedPriceDisplay,
+      selectedPricingModel,
+      selectedRegion,
+      selectedSelfHostKind,
+      selectedSelfHostMode,
+      selectedSize,
+      selectedStorageMode,
+      selectedZone,
+    ],
+  );
+  const livePriceEstimate = React.useMemo(
+    () =>
+      providerId === "gcp" || providerId === "nebius"
+        ? getProviderPriceEstimate(
+            providerId,
+            catalog,
+            livePricingSelection,
+            pricingSettings,
+          )
+        : undefined,
+    [catalog, livePricingSelection, pricingSettings, providerId],
+  );
   const fieldSchema = providerDescriptor
     ? filterFieldSchemaForCaps(providerDescriptor.fields, providerCaps)
     : { primary: [], advanced: [] };
@@ -245,6 +294,7 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
       host?.size ??
       undefined,
     gpu: host?.gpu ? "true" : undefined,
+    pricing_settings: pricingSettings,
   };
   const fieldOptions = providerDescriptor
     ? getProviderOptions(providerId, catalog, selection)
@@ -698,6 +748,16 @@ export const HostEditModal: React.FC<HostEditModalProps> = ({
                   ]}
                 />
               </Form.Item>
+            )}
+            {livePriceEstimate && (
+              <div style={{ marginBottom: 12 }}>
+                <HostPriceBreakdown
+                  estimate={livePriceEstimate}
+                  displayMode={
+                    selectedPriceDisplay === "monthly" ? "monthly" : "hourly"
+                  }
+                />
+              </div>
             )}
             {showSpotHint && (
               <Alert

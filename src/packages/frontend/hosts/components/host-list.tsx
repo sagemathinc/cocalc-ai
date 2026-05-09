@@ -43,6 +43,8 @@ import {
   getProviderDescriptor,
   isKnownProvider,
 } from "../providers/registry";
+import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
+import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
 import type { HostLroState } from "../hooks/use-host-ops";
 import {
   describeBlockedHostActions,
@@ -172,8 +174,14 @@ function compareNumber(a?: number, b?: number): number {
   return (a ?? 0) - (b ?? 0);
 }
 
-function renderHostPrice(host: Host, catalog?: HostCatalog) {
-  const estimate = catalog ? getHostPriceEstimate(host, catalog) : undefined;
+function renderHostPrice(
+  host: Host,
+  catalog: HostCatalog | undefined,
+  pricingSettings: DedicatedHostSurchargeSettings,
+) {
+  const estimate = catalog
+    ? getHostPriceEstimate(host, catalog, pricingSettings)
+    : undefined;
   if (!estimate) {
     const pricedProvider =
       host.machine?.cloud === "gcp" || host.machine?.cloud === "nebius";
@@ -392,6 +400,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     parallelOps,
     runtimeVersions,
   } = vm;
+  const pricingSettings = useHostPricingSettings();
 
   const [selectedRowKeys, setSelectedRowKeys] = React.useState<string[]>([]);
   const [restartTarget, setRestartTarget] = React.useState<Host | null>(null);
@@ -822,7 +831,8 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Price",
       key: "price",
-      render: (_: string, host: Host) => renderHostPrice(host, catalog),
+      render: (_: string, host: Host) =>
+        renderHostPrice(host, catalog, pricingSettings),
     },
     {
       title: "Resources",
