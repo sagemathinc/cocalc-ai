@@ -35,6 +35,13 @@ export type GlobalAuthOptions = {
 };
 
 const DEFAULT_PROFILE = "default";
+export const ENV_AUTH_PROFILE = "_env";
+const ENV_AUTH_PROFILE_ALIASES = new Set([ENV_AUTH_PROFILE, "env"]);
+
+export function isEnvAuthProfileName(name: string | undefined): boolean {
+  const candidate = `${name ?? ""}`.trim();
+  return ENV_AUTH_PROFILE_ALIASES.has(candidate);
+}
 
 function normalizeApiScope(value: string | undefined): string | undefined {
   const raw = `${value ?? ""}`.trim();
@@ -63,6 +70,11 @@ export function authConfigPath(env = process.env): string {
 
 export function sanitizeProfileName(name: string | undefined): string {
   const candidate = `${name ?? ""}`.trim() || DEFAULT_PROFILE;
+  if (isEnvAuthProfileName(candidate)) {
+    throw new Error(
+      `profile name '${candidate}' is reserved for environment-based auth`,
+    );
+  }
   if (!/^[a-zA-Z0-9._-]+$/.test(candidate)) {
     throw new Error(
       `invalid profile name '${candidate}' (allowed: letters, numbers, dot, underscore, dash)`,
@@ -122,9 +134,12 @@ export function selectedProfileName(
   config: AuthConfig,
   env = process.env,
 ): string {
-  return sanitizeProfileName(
-    globals.profile ?? env.COCALC_PROFILE ?? config.current_profile,
-  );
+  const candidate =
+    globals.profile ?? env.COCALC_PROFILE ?? config.current_profile;
+  if (isEnvAuthProfileName(candidate)) {
+    return ENV_AUTH_PROFILE;
+  }
+  return sanitizeProfileName(candidate);
 }
 
 export function applyAuthProfile(
@@ -133,6 +148,9 @@ export function applyAuthProfile(
   env = process.env,
 ): { globals: GlobalAuthOptions; profile: string; fromProfile: boolean } {
   const profile = selectedProfileName(globals, config, env);
+  if (profile === ENV_AUTH_PROFILE) {
+    return { globals: { ...globals }, profile, fromProfile: false };
+  }
   const data = config.profiles[profile];
   if (!data) {
     return { globals: { ...globals }, profile, fromProfile: false };

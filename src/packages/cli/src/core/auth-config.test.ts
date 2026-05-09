@@ -7,6 +7,8 @@ import test from "node:test";
 import {
   applyAuthProfile,
   authConfigPath,
+  ENV_AUTH_PROFILE,
+  isEnvAuthProfileName,
   loadAuthConfig,
   sanitizeProfileName,
   saveAuthConfig,
@@ -18,6 +20,16 @@ test("sanitizeProfileName validates and defaults", () => {
   assert.equal(sanitizeProfileName(undefined), "default");
   assert.equal(sanitizeProfileName("  alpha-1  "), "alpha-1");
   assert.throws(() => sanitizeProfileName("bad name"), /invalid profile name/);
+  assert.throws(
+    () => sanitizeProfileName("_env"),
+    /reserved for environment-based auth/,
+  );
+  assert.throws(
+    () => sanitizeProfileName("env"),
+    /reserved for environment-based auth/,
+  );
+  assert.equal(isEnvAuthProfileName("_env"), true);
+  assert.equal(isEnvAuthProfileName("env"), true);
 });
 
 test("authConfigPath uses env override", () => {
@@ -54,9 +66,21 @@ test("selectedProfileName uses globals then env then current", () => {
   );
   assert.equal(
     selectedProfileName({}, config, { COCALC_PROFILE: "env" } as any),
-    "env",
+    ENV_AUTH_PROFILE,
   );
   assert.equal(selectedProfileName({}, config, {} as any), "saved");
+  assert.equal(
+    selectedProfileName({ profile: "_env" }, config, {} as any),
+    ENV_AUTH_PROFILE,
+  );
+  assert.equal(
+    selectedProfileName(
+      {},
+      { current_profile: "_env", profiles: {} },
+      {} as any,
+    ),
+    ENV_AUTH_PROFILE,
+  );
 });
 
 test("applyAuthProfile merges selected profile values", () => {
@@ -123,4 +147,28 @@ test("applyAuthProfile overrides ambient env defaults with selected profile valu
   );
   assert.equal(result.globals.cookie, "remember_me=bella-cookie");
   assert.equal(result.globals.disableEnvAuthDefaults, true);
+});
+
+test("applyAuthProfile keeps ambient env auth when env auth profile is selected", () => {
+  const config: AuthConfig = {
+    current_profile: "default",
+    profiles: {
+      default: {
+        api: "https://lite4b.cocalc.ai",
+        cookie: "remember_me=stored",
+      },
+      _env: {
+        api: "https://should-not-apply.example",
+        cookie: "remember_me=reserved",
+      },
+    },
+  };
+  const result = applyAuthProfile({}, config, {
+    COCALC_PROFILE: "_env",
+  } as any);
+  assert.equal(result.profile, ENV_AUTH_PROFILE);
+  assert.equal(result.fromProfile, false);
+  assert.equal(result.globals.api, undefined);
+  assert.equal(result.globals.cookie, undefined);
+  assert.equal(result.globals.disableEnvAuthDefaults, undefined);
 });
