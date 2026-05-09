@@ -206,15 +206,24 @@ export const HostCreateForm: React.FC<HostCreateFormProps> = ({
             </>
           )}
           {!hideAdvanced && (
-            <Collapse ghost style={{ marginBottom: 8 }}>
-              <Collapse.Panel header="Advanced options" key="adv">
-                <HostCreateAdvancedFields
-                  provider={provider}
-                  showSpotFields={showSpotFields}
-                  nebiusSpotSupported={nebiusSpotSupported}
-                />
-              </Collapse.Panel>
-            </Collapse>
+            <Collapse
+              ghost
+              style={{ marginBottom: 8 }}
+              items={[
+                {
+                  key: "adv",
+                  label: "Advanced options",
+                  forceRender: true,
+                  children: (
+                    <HostCreateAdvancedFields
+                      provider={provider}
+                      showSpotFields={showSpotFields}
+                      nebiusSpotSupported={nebiusSpotSupported}
+                    />
+                  ),
+                },
+              ]}
+            />
           )}
         </>
       )}
