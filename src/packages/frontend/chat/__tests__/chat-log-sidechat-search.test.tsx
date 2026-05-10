@@ -228,6 +228,60 @@ describe("ChatLog sidechat search jumps", () => {
     await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(false));
   });
 
+  it("treats wheel scrolling over selectable read-only message text as user scroll intent", async () => {
+    activeTopTab = "project-1";
+    activeProjectTab = "editor-thread.chat";
+    render(
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        messages={
+          new Map([
+            [
+              "1000",
+              {
+                date: 1000,
+                sender_id: "acct-1",
+                history: [{ content: "first message" }],
+              },
+            ],
+            [
+              "2000",
+              {
+                date: 2000,
+                sender_id: "acct-2",
+                generating: true,
+                history: [{ content: "streaming output" }],
+              },
+            ],
+          ]) as any
+        }
+        mode="standalone"
+        actions={{ clearScrollRequest: jest.fn() } as any}
+        selectedThread="thread-1"
+      />,
+    );
+
+    await waitFor(() =>
+      expect(latestVirtuosoProps?.followOutput).toBe("smooth"),
+    );
+
+    const container = screen.getByTestId("virtuoso").parentElement!;
+    const selectableMessage = document.createElement("div");
+    selectableMessage.setAttribute("data-chat-selectable-message", "true");
+    const readOnlySlate = document.createElement("div");
+    readOnlySlate.setAttribute("contenteditable", "true");
+    selectableMessage.appendChild(readOnlySlate);
+    container.appendChild(selectableMessage);
+
+    act(() => {
+      fireEvent.wheel(readOnlySlate, { deltaY: -100 });
+      latestVirtuosoProps?.atBottomStateChange?.(false);
+    });
+
+    await waitFor(() => expect(latestVirtuosoProps?.followOutput).toBe(false));
+  });
+
   it("shows a newest messages button when the thread is not at the bottom", async () => {
     activeTopTab = "project-1";
     activeProjectTab = "editor-thread.chat";

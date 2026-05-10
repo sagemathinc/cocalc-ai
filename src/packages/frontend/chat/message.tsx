@@ -124,6 +124,7 @@ import {
   shouldShowCodexShowActivityButton,
   shouldShowQueuedMessageEditedVersionSent,
   shouldSuppressAcpPlaceholderBody,
+  shouldUseSelectableMessageBody,
   shouldUseCodexSelectToolbar,
   trimCompletedCachedCodexActivityBlocks,
   type InlineCodexActivityBlock,
@@ -134,6 +135,9 @@ const EDIT_MARKDOWN_MIN_HEIGHT = 120;
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
 const MARKDOWN_STYLE = undefined;
+export const SELECTABLE_MARKDOWN_STYLE: CSSProperties = {
+  ["--cocalc-slate-link" as string]: COLORS.ANTD_LINK_BLUE,
+};
 
 const BORDER = "2px solid #ccc";
 
@@ -453,7 +457,6 @@ export default function Message({
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
-  const [selectMode, setSelectMode] = useState<boolean>(false);
   const [interruptRequested, setInterruptRequested] = useState<boolean>(false);
   const [openActivityDrawerToken, setOpenActivityDrawerToken] = useState<
     number | undefined
@@ -878,13 +881,6 @@ export default function Message({
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
     [codexPreviewLog.events],
   );
-  const messageId = useMemo(
-    () => field<string>(message, "message_id"),
-    [message],
-  );
-  useEffect(() => {
-    setSelectMode(false);
-  }, [messageId]);
   const renderedMessageValue = useMemo(
     () =>
       resolveRenderedMessageValue({
@@ -947,20 +943,20 @@ export default function Message({
   const feedbackMap = useMemo(() => field<any>(message, "feedback"), [message]);
 
   const isActive =
-    selected ||
-    isHovered ||
-    replying ||
-    show_history ||
-    isEditing ||
-    selectMode;
+    selected || isHovered || replying || show_history || isEditing;
+  const useSelectableMessageBody = shouldUseSelectableMessageBody({
+    useCodexSelectToolbar,
+    isEditing,
+    showHistory: show_history,
+    isViewersMessage: is_viewers_message,
+  });
   const messageBodyMode = useMemo(
     () =>
       resolveMessageBodyMode({
         isEditing,
-        selectMode,
-        useCodexSelectToolbar,
+        useSelectableMessageBody,
       }),
-    [isEditing, selectMode, useCodexSelectToolbar],
+    [isEditing, useSelectableMessageBody],
   );
 
   useLayoutEffect(() => {
@@ -1552,28 +1548,6 @@ export default function Message({
       isLastMessageInThread,
     });
     const buttons: ReactNode[] = [
-      <span key="select" style={{ marginTop: "-5px" }}>
-        <Tip
-          placement="bottom"
-          title={
-            selectMode
-              ? "Exit selection mode"
-              : "Select and copy part of this message with Slate formatting"
-          }
-        >
-          <Button
-            size="small"
-            type={selectMode ? "primary" : "text"}
-            style={{
-              color: selectMode ? undefined : COLORS.GRAY_M,
-              fontSize: "12px",
-            }}
-            onClick={() => setSelectMode((prev) => !prev)}
-          >
-            Select
-          </Button>
-        </Tip>
-      </span>,
       <Tooltip key="git-browser" placement="bottom" title="Open git browser">
         <Button
           size="small"
@@ -1597,7 +1571,7 @@ export default function Message({
 
     if (showShowActivityButton && onExpandedCodexActivityChange) {
       buttons.splice(
-        1,
+        0,
         0,
         <span key="show-activity" style={{ marginTop: "-5px" }}>
           <Tip
@@ -1724,7 +1698,7 @@ export default function Message({
     style?: CSSProperties;
   }) {
     return (
-      <div className={message_class}>
+      <div className={message_class} data-chat-selectable-message="true">
         <EditableMarkdown
           value={value}
           read_only
@@ -1737,6 +1711,7 @@ export default function Message({
           height="auto"
           autoMinHeight={0}
           style={{
+            ...SELECTABLE_MARKDOWN_STYLE,
             backgroundColor: "transparent",
             minHeight: 0,
             ...style,

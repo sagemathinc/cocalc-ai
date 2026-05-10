@@ -1976,6 +1976,23 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
       !e.altKey &&
       !e.ctrlKey &&
       !e.metaKey &&
+      !e.shiftKey &&
+      (e.key === "ArrowLeft" || e.key === "ArrowRight")
+    ) {
+      const handler = getKeyboardHandler(e);
+      const extra = { actions, id, search };
+      if (handler?.({ editor, extra })) {
+        e.preventDefault();
+        e.stopPropagation();
+        (e as any).nativeEvent?.stopImmediatePropagation?.();
+        return;
+      }
+    }
+
+    if (
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
       e.shiftKey &&
       e.key === "ArrowLeft" &&
       moveAcrossJupyterCellBoundary("left", true)

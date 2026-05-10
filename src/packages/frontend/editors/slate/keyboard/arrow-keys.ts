@@ -11,6 +11,7 @@ selections are not in the DOM.
 */
 
 import { register } from "./register";
+import { Editor, Path, Range, Text, Transforms } from "slate";
 import {
   blocksCursor,
   moveCursorUp,
@@ -21,6 +22,275 @@ import {
 } from "../control";
 import type { SlateEditor } from "../types";
 import { ReactEditor } from "../slate-react";
+
+const ESCAPABLE_MARKS = new Set([
+  "bold",
+  "italic",
+  "strikethrough",
+  "underline",
+  "sup",
+  "sub",
+  "tt",
+  "code",
+  "small",
+]);
+
+function isEscapableMark(mark: string): boolean {
+  return (
+    ESCAPABLE_MARKS.has(mark) ||
+    mark.startsWith("color:") ||
+    mark.startsWith("font-family:") ||
+    mark.startsWith("font-size:")
+  );
+}
+
+function textHasEscapableMarks(text: Text): boolean {
+  const value = text as unknown as Record<string, unknown>;
+  return Object.keys(value).some(
+    (key) => key != "text" && value[key] === true && isEscapableMark(key),
+  );
+}
+
+function clearEscapableEditorMarks(editor: SlateEditor): void {
+  const marks = Editor.marks(editor);
+  if (marks == null) return;
+  for (const mark of Object.keys(marks)) {
+    if (isEscapableMark(mark)) {
+      Editor.removeMark(editor, mark);
+    }
+  }
+}
+
+function rememberSelection(editor: SlateEditor): void {
+  if (editor.selection == null) return;
+  editor.lastSelection = editor.selection;
+  editor.curSelection = editor.selection;
+}
+
+function syncDomSelection(editor: SlateEditor): void {
+  if (typeof window === "undefined" || editor.selection == null) return;
+  try {
+    ReactEditor.focus(editor);
+  } catch {
+    return;
+  }
+  const sync = () => {
+    if (editor.selection == null) return;
+    const selection = window.getSelection?.();
+    if (selection == null) return;
+    try {
+      const range = ReactEditor.toDOMRange(editor, editor.selection);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch {
+      // The newly inserted text may not be in the DOM until React commits.
+    }
+  };
+  sync();
+  window.requestAnimationFrame?.(sync);
+}
+
+function selectAndSync(
+  editor: SlateEditor,
+  point: {
+    path: Path;
+    offset: number;
+  },
+): void {
+  Transforms.select(editor, { anchor: point, focus: point });
+  rememberSelection(editor);
+  syncDomSelection(editor);
+}
+
+function insertPlainSpaceNode(editor: SlateEditor, path: Path): void {
+  clearEscapableEditorMarks(editor);
+  Editor.withoutNormalizing(editor, () => {
+    Transforms.insertNodes(editor, { text: " " }, { at: path });
+    Transforms.select(editor, { path, offset: 1 });
+  });
+  editor.onChange();
+  rememberSelection(editor);
+  syncDomSelection(editor);
+}
+
+function replaceEmptyTextWithPlainSpace(editor: SlateEditor, path: Path): void {
+  clearEscapableEditorMarks(editor);
+  Editor.withoutNormalizing(editor, () => {
+    Transforms.insertText(editor, " ", { at: { path, offset: 0 } });
+    Transforms.select(editor, { path, offset: 1 });
+  });
+  editor.onChange();
+  rememberSelection(editor);
+  syncDomSelection(editor);
+}
+
+function parentChildren(
+  editor: SlateEditor,
+  path: Path,
+): unknown[] | undefined {
+  const parent = Editor.parent(editor, path)[0] as {
+    children?: unknown[];
+  };
+  return parent.children;
+}
+
+function escapeEmptyPlainTextAfterMarkedText(
+  editor: SlateEditor,
+  text: Text,
+): boolean {
+  const { selection } = editor;
+  const focus = selection?.focus;
+  if (
+    focus == null ||
+    text.text.length != 0 ||
+    focus.offset != 0 ||
+    textHasEscapableMarks(text)
+  ) {
+    return false;
+  }
+
+  const siblings = parentChildren(editor, focus.path);
+  const siblingIndex = focus.path[focus.path.length - 1];
+  const previousSibling = siblings?.[siblingIndex - 1];
+  if (
+    !Text.isText(previousSibling) ||
+    !textHasEscapableMarks(previousSibling)
+  ) {
+    return false;
+  }
+
+  replaceEmptyTextWithPlainSpace(editor, focus.path);
+  return true;
+}
+
+export function escapeMarkedTextBoundaryOnArrowRight(
+  editor: SlateEditor,
+): boolean {
+  const { selection } = editor;
+  if (selection == null || !Range.isCollapsed(selection)) return false;
+
+  const { focus } = selection;
+  let text: unknown;
+  try {
+    [text] = Editor.node(editor, focus.path);
+  } catch {
+    return false;
+  }
+
+  if (Text.isText(text) && escapeEmptyPlainTextAfterMarkedText(editor, text)) {
+    return true;
+  }
+
+  if (
+    !Text.isText(text) ||
+    text.text.length == 0 ||
+    focus.offset != text.text.length ||
+    !textHasEscapableMarks(text)
+  ) {
+    return false;
+  }
+
+  const siblings = parentChildren(editor, focus.path);
+  const siblingIndex = focus.path[focus.path.length - 1];
+  const nextSibling = siblings?.[siblingIndex + 1];
+  const nextPath = Path.next(focus.path);
+
+  if (Text.isText(nextSibling) && !textHasEscapableMarks(nextSibling)) {
+    if (nextSibling.text.length == 0) {
+      replaceEmptyTextWithPlainSpace(editor, nextPath);
+      return true;
+    }
+    clearEscapableEditorMarks(editor);
+    selectAndSync(editor, {
+      path: nextPath,
+      offset: /^\s/.test(nextSibling.text) ? 1 : 0,
+    });
+    return true;
+  }
+
+  insertPlainSpaceNode(editor, nextPath);
+  return true;
+}
+
+register({ key: "ArrowRight" }, ({ editor }) =>
+  escapeMarkedTextBoundaryOnArrowRight(editor),
+);
+
+function escapeEmptyPlainTextBeforeMarkedText(
+  editor: SlateEditor,
+  text: Text,
+): boolean {
+  const { selection } = editor;
+  const focus = selection?.focus;
+  if (
+    focus == null ||
+    text.text.length != 0 ||
+    focus.offset != 0 ||
+    textHasEscapableMarks(text)
+  ) {
+    return false;
+  }
+
+  const siblings = parentChildren(editor, focus.path);
+  const siblingIndex = focus.path[focus.path.length - 1];
+  const nextSibling = siblings?.[siblingIndex + 1];
+  if (!Text.isText(nextSibling) || !textHasEscapableMarks(nextSibling)) {
+    return false;
+  }
+
+  clearEscapableEditorMarks(editor);
+  selectAndSync(editor, focus);
+  return true;
+}
+
+export function escapeMarkedTextBoundaryOnArrowLeft(
+  editor: SlateEditor,
+): boolean {
+  const { selection } = editor;
+  if (selection == null || !Range.isCollapsed(selection)) return false;
+
+  const { focus } = selection;
+  let text: unknown;
+  try {
+    [text] = Editor.node(editor, focus.path);
+  } catch {
+    return false;
+  }
+
+  if (Text.isText(text) && escapeEmptyPlainTextBeforeMarkedText(editor, text)) {
+    return true;
+  }
+
+  if (
+    !Text.isText(text) ||
+    text.text.length == 0 ||
+    focus.offset != 0 ||
+    !textHasEscapableMarks(text)
+  ) {
+    return false;
+  }
+
+  const siblings = parentChildren(editor, focus.path);
+  const siblingIndex = focus.path[focus.path.length - 1];
+  const previousSibling = siblings?.[siblingIndex - 1];
+
+  if (Text.isText(previousSibling) && !textHasEscapableMarks(previousSibling)) {
+    clearEscapableEditorMarks(editor);
+    selectAndSync(editor, {
+      path: Path.previous(focus.path),
+      offset: previousSibling.text.length,
+    });
+    return true;
+  }
+
+  clearEscapableEditorMarks(editor);
+  selectAndSync(editor, focus);
+  return true;
+}
+
+register({ key: "ArrowLeft" }, ({ editor }) =>
+  escapeMarkedTextBoundaryOnArrowLeft(editor),
+);
 
 const down = ({ editor }: { editor: SlateEditor }) => {
   const cur = editor.selection?.focus;

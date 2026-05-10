@@ -42,11 +42,11 @@ import {
 } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import "./elements-types-shim";
 import { HAS_BEFORE_INPUT_SUPPORT } from "../slate-utils/environment";
-import { withInsertText } from "../format/insert-text";
+import { withAutoFormat } from "../format";
 import { handleBlankLineEnter } from "../keyboard/blank-line-enter";
 import { getHandler } from "../keyboard/register";
 import { withIsInline, withIsVoid } from "../plugins";
-import "../keyboard/arrow-keys";
+import "../keyboard";
 import { getCodeBlockText } from "../elements/code-block/utils";
 
 declare global {
@@ -561,7 +561,7 @@ function DefaultHarness({
   const editor = useMemo(() => {
     const base = withIsInline(withIsVoid(withReact(createEditor())));
     if (autoformatMode) {
-      const withAutoformat = withInsertText(base);
+      const withAutoformat = withAutoFormat(base);
       (withAutoformat as any).__autoformatMode = true;
       return withAutoformat;
     }
@@ -608,7 +608,16 @@ function DefaultHarness({
       getValue: () => valueRef.current,
       isFocused: () => ReactEditor.isFocused(editor),
       setSelection: (range) => {
+        ReactEditor.focus(editor);
         Transforms.select(editor, range);
+        try {
+          const domRange = ReactEditor.toDOMRange(editor, range);
+          const domSelection = window.getSelection();
+          domSelection?.removeAllRanges();
+          domSelection?.addRange(domRange);
+        } catch {
+          // Some tests set selection before React has committed the DOM.
+        }
       },
       setValue: (nextValue) => {
         editor.children = nextValue;

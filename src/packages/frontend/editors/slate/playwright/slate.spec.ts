@@ -661,6 +661,80 @@ test("autoformat code span keeps focus in empty editor (production autoformat)",
   expect(focused).toBe(true);
 });
 
+test("ArrowRight escapes inline code after deleting autoformat trailing space", async ({
+  page,
+}) => {
+  await page.goto("/?autoformat=1");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.type("`2+2` ");
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "2+2 ";
+  });
+
+  await page.keyboard.press("Backspace");
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "2+2";
+  });
+  await page.evaluate(() => {
+    window.__slateTest?.setSelection({
+      anchor: { path: [0, 0], offset: 3 },
+      focus: { path: [0, 0], offset: 3 },
+    });
+  });
+
+  await page.keyboard.press("ArrowRight");
+
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "2+2 ";
+  });
+
+  const selection = (await page.evaluate(() =>
+    window.__slateTest?.getSelection(),
+  )) as SlateSelection;
+  expect(selection).not.toBeNull();
+  if (selection) {
+    expect(selection.focus.path).toEqual([0, 1]);
+    expect(selection.focus.offset).toBe(1);
+  }
+});
+
+test("ArrowLeft escapes inline code at the beginning of a paragraph", async ({
+  page,
+}) => {
+  await page.goto("/?autoformat=1");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.type("`2+3` ");
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "2+3 ";
+  });
+
+  for (let i = 0; i < 6; i += 1) {
+    await page.keyboard.press("ArrowLeft");
+  }
+  await page.keyboard.type("x");
+
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "x2+3 ";
+  });
+
+  const state = (await page.evaluate(() => ({
+    value: window.__slateTest?.getValue(),
+    selection: window.__slateTest?.getSelection(),
+  }))) as { value?: SlateNode[]; selection: SlateSelection };
+  expect(state.value?.[0]?.children).toEqual([
+    { text: "x" },
+    { text: "2+3", code: true },
+    { text: " " },
+  ]);
+  expect(state.selection?.focus).toEqual({ path: [0, 0], offset: 1 });
+});
+
 test("autoformat list focuses first item in empty editor", async ({ page }) => {
   await page.goto("/?autoformat=1");
   await waitForHarness(page);
@@ -918,6 +992,55 @@ test("block editor: ArrowRight at block end moves to next block start", async ({
       });
     })
     .toContain("abc\n\nY123");
+});
+
+test("block editor: ArrowRight escapes inline code instead of leaving the block", async ({
+  page,
+}) => {
+  await page.goto("http://127.0.0.1:4172/?block=1&md=");
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.setSelection === "function";
+  });
+
+  await page.evaluate(() => {
+    return window.__slateBlockTest?.setSelection?.(0, "start");
+  });
+  await page.keyboard.type("`2+2` ");
+  await page.keyboard.press("Backspace");
+  await setBlockSelectionFromMarkdownPosition(page, { line: 0, ch: 3 });
+  await page.keyboard.press("ArrowRight");
+
+  await expect
+    .poll(async () => {
+      return await page.evaluate(() =>
+        window.__slateBlockTest?.getMarkdown?.(),
+      );
+    })
+    .toBe("2+2 ");
+});
+
+test("block editor: ArrowLeft escapes inline code instead of leaving the block", async ({
+  page,
+}) => {
+  await page.goto("http://127.0.0.1:4172/?block=1&md=");
+  await page.waitForFunction(() => {
+    return typeof window.__slateBlockTest?.setSelection === "function";
+  });
+
+  await page.evaluate(() => {
+    return window.__slateBlockTest?.setSelection?.(0, "start");
+  });
+  await page.keyboard.type("`2+3` ");
+  for (let i = 0; i < 6; i += 1) {
+    await page.keyboard.press("ArrowLeft");
+  }
+  await page.keyboard.type("x");
+
+  await expect
+    .poll(async () => {
+      return await page.locator("code").first().textContent();
+    })
+    .toBe("2+3");
 });
 
 test("block editor: arrow inserts before/after code block", async ({
