@@ -306,17 +306,31 @@ export function shouldUseCodexSelectToolbar({
   return isCodexThread;
 }
 
+export function shouldUseSelectableMessageBody({
+  useCodexSelectToolbar,
+  isEditing,
+  showHistory,
+  isViewersMessage,
+}: {
+  useCodexSelectToolbar: boolean;
+  isEditing: boolean;
+  showHistory: boolean;
+  isViewersMessage: boolean;
+}): boolean {
+  return (
+    useCodexSelectToolbar && !isEditing && !showHistory && !isViewersMessage
+  );
+}
+
 export function resolveMessageBodyMode({
   isEditing,
-  selectMode,
-  useCodexSelectToolbar,
+  useSelectableMessageBody,
 }: {
   isEditing: boolean;
-  selectMode: boolean;
-  useCodexSelectToolbar: boolean;
+  useSelectableMessageBody: boolean;
 }): "edit" | "select" | "static" {
   if (isEditing) return "edit";
-  if (selectMode && useCodexSelectToolbar) return "select";
+  if (useSelectableMessageBody) return "select";
   return "static";
 }
 

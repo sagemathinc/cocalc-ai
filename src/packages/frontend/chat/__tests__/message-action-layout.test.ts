@@ -1,6 +1,11 @@
-import { getFocusMessageButtonStyle } from "../message";
+import { COLORS } from "@cocalc/util/theme";
+import {
+  getFocusMessageButtonStyle,
+  SELECTABLE_MARKDOWN_STYLE,
+} from "../message";
 import {
   resolveMessageBodyMode,
+  shouldUseSelectableMessageBody,
   shouldUseCodexSelectToolbar,
 } from "../message-state";
 
@@ -30,23 +35,69 @@ describe("message action layout", () => {
     expect(
       resolveMessageBodyMode({
         isEditing: false,
-        selectMode: true,
-        useCodexSelectToolbar: true,
+        useSelectableMessageBody: true,
       }),
     ).toBe("select");
     expect(
       resolveMessageBodyMode({
         isEditing: true,
-        selectMode: true,
-        useCodexSelectToolbar: true,
+        useSelectableMessageBody: true,
       }),
     ).toBe("edit");
     expect(
       resolveMessageBodyMode({
         isEditing: false,
-        selectMode: true,
-        useCodexSelectToolbar: false,
+        useSelectableMessageBody: false,
       }),
     ).toBe("static");
+  });
+
+  it("uses selectable mode for non-viewer Codex message bodies", () => {
+    expect(
+      shouldUseSelectableMessageBody({
+        useCodexSelectToolbar: true,
+        isEditing: false,
+        showHistory: false,
+        isViewersMessage: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldUseSelectableMessageBody({
+        useCodexSelectToolbar: false,
+        isEditing: false,
+        showHistory: false,
+        isViewersMessage: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseSelectableMessageBody({
+        useCodexSelectToolbar: true,
+        isEditing: true,
+        showHistory: false,
+        isViewersMessage: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseSelectableMessageBody({
+        useCodexSelectToolbar: true,
+        isEditing: false,
+        showHistory: true,
+        isViewersMessage: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseSelectableMessageBody({
+        useCodexSelectToolbar: true,
+        isEditing: false,
+        showHistory: false,
+        isViewersMessage: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps selectable markdown links visually link-colored", () => {
+    expect(SELECTABLE_MARKDOWN_STYLE["--cocalc-slate-link"]).toBe(
+      COLORS.ANTD_LINK_BLUE,
+    );
   });
 });
