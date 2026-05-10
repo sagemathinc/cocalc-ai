@@ -282,6 +282,7 @@ function isEditableOrOverlayInteractionTarget(
   target: EventTarget | null,
 ): boolean {
   if (!(target instanceof HTMLElement)) return false;
+  if (target.closest('[data-chat-selectable-message="true"]')) return false;
   if (target.isContentEditable) return true;
   const tag = target.tagName?.toLowerCase();
   if (tag === "input" || tag === "textarea" || tag === "select") return true;

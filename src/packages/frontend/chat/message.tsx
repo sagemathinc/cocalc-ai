@@ -1724,7 +1724,7 @@ export default function Message({
     style?: CSSProperties;
   }) {
     return (
-      <div className={message_class}>
+      <div className={message_class} data-chat-selectable-message="true">
         <EditableMarkdown
           value={value}
           read_only
