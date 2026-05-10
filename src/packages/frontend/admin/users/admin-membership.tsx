@@ -11,6 +11,7 @@ import {
   DatePicker,
   Descriptions,
   Input,
+  Popover,
   Select,
   Space,
   Spin,
@@ -422,6 +423,32 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                 style={{ width: "100%" }}
                 size="middle"
               >
+                <div>
+                  <Space align="center">
+                    <Text type="secondary">
+                      Assign or revoke a membership directly, without a payment
+                      or subscription.
+                    </Text>
+                    <Popover
+                      title="Admin assignment"
+                      content={
+                        <div style={{ maxWidth: 420 }}>
+                          Admin assignments let support grant a complete
+                          temporary or permanent membership tier to a user.
+                          Support overrides are complementary: use them to
+                          adjust specific limits on top of whichever membership
+                          tier wins. Membership resolution still compares admin
+                          assignments with active paid subscriptions and grants
+                          by tier priority.
+                        </div>
+                      }
+                    >
+                      <Button type="link" size="small">
+                        ?
+                      </Button>
+                    </Popover>
+                  </Space>
+                </div>
                 <div>
                   <Text>Membership tier</Text>
                   <Select
