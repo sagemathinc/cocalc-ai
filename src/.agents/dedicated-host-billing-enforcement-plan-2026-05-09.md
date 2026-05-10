@@ -538,13 +538,13 @@ Smoke tests:
 
 Before implementation, decide:
 
-- exact warning runway
-- exact drain runway
-- exact persistent disk grace
-- whether deprovision after backup failure is ever automatic
-- who receives notifications for shared/collaborative hosts
+- exact warning runway: your 2 hours seems fine
+- exact drain runway: your 1 hour seems fine.
+- exact persistent disk grace: choose something (3 days?) and make it a constant; we can change the code later if it is bad.
+- whether deprovision after backup failure is ever automatic: NO
+- who receives notifications for shared/collaborative hosts: owner, who has to pay for it.
 - whether admin limit increases clear enforcement automatically or require an
-  explicit retry/recover action
+  explicit retry/recover action: good question, especially because there could easily be multiple hosts, and maybe only one should get cleared (?). It seems simplest though to make it automatic.
 
 Recommended defaults for first hosted release:
 
@@ -567,4 +567,3 @@ This plan does not redesign:
 
 It builds on existing metered purchase sessions and changes the enforcement
 behavior around them.
-

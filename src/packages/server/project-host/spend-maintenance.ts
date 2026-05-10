@@ -8,6 +8,7 @@ import getPool from "@cocalc/database/pool";
 import { normalizeProviderId } from "@cocalc/cloud";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { enqueueCloudVmWork } from "@cocalc/server/cloud";
+import { createLro } from "@cocalc/server/lro/lro-db";
 import type { AccountLocalDedicatedHostPolicySnapshot } from "@cocalc/conat/inter-bay/api";
 import {
   applyDedicatedHostFundingModeOverride,
@@ -22,6 +23,12 @@ import {
   reconcileDedicatedHostPurchaseSessionForAccount,
   type DedicatedHostFundingLane,
 } from "./spend";
+import {
+  DEDICATED_HOST_BILLING_DISK_GRACE_HOURS,
+  buildDedicatedHostBillingEnforcementMetadata,
+  evaluateDedicatedHostBillingEnforcement,
+  type DedicatedHostBillingEnforcementMetadata,
+} from "./spend-enforcement";
 
 const logger = getLogger("server:project-host:spend-maintenance");
 const CHECK_INTERVAL_MS = Math.max(
@@ -35,10 +42,13 @@ const ACTIVE_BILLING_STATUSES = new Set([
   "starting",
   "running",
   "restarting",
+  "draining",
   "stopping",
   "error",
   "deprovisioning",
 ]);
+const HOST_DRAIN_LRO_KIND = "host-drain";
+const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 
 let started = false;
 
@@ -119,6 +129,7 @@ function retainedBillingPolicy(metadata: any): any {
   if (!funding_mode) {
     return null;
   }
+  const enforcement = currentEnforcement(metadata);
   const started_at =
     typeof metadata?.billing?.started_at === "string"
       ? metadata.billing.started_at.trim()
@@ -126,6 +137,46 @@ function retainedBillingPolicy(metadata: any): any {
   return {
     funding_mode,
     ...(started_at ? { started_at } : {}),
+    ...(enforcement ? { enforcement } : {}),
+  };
+}
+
+function currentEnforcement(
+  metadata: any,
+): DedicatedHostBillingEnforcementMetadata | undefined {
+  const enforcement = metadata?.billing?.enforcement;
+  return enforcement && typeof enforcement === "object"
+    ? enforcement
+    : undefined;
+}
+
+function nextDrainingEnforcement({
+  metadata,
+  reason_code,
+  reason,
+  recovery_actions,
+}: {
+  metadata: any;
+  reason_code: string;
+  reason: string;
+  recovery_actions: DedicatedHostBillingEnforcementMetadata["recovery_actions"];
+}): DedicatedHostBillingEnforcementMetadata {
+  const previous = currentEnforcement(metadata);
+  const nowIso = new Date().toISOString();
+  const previousFinalBackupStatus = previous?.final_backup_status;
+  return {
+    ...(previous ?? {}),
+    state: "draining",
+    reason_code,
+    reason,
+    first_detected_at: previous?.first_detected_at ?? nowIso,
+    drain_requested_at: previous?.drain_requested_at ?? nowIso,
+    final_backup_status:
+      previousFinalBackupStatus === "succeeded" ||
+      previousFinalBackupStatus === "failed"
+        ? previousFinalBackupStatus
+        : "running",
+    recovery_actions,
   };
 }
 
@@ -146,10 +197,12 @@ async function requestHostStopForExceededLane({
   row,
   provider,
   reason,
+  finalBackupStatus,
 }: {
   row: CandidateHostRow;
   provider: string;
   reason: string;
+  finalBackupStatus?: "unknown" | "running" | "succeeded" | "failed";
 }): Promise<void> {
   const metadata = { ...(row.metadata ?? {}) };
   if (
@@ -159,15 +212,36 @@ async function requestHostStopForExceededLane({
     return;
   }
   metadata.desired_state = "stopped";
+  const now = new Date();
+  const graceUntil = new Date(
+    now.valueOf() + DEDICATED_HOST_BILLING_DISK_GRACE_HOURS * 3600_000,
+  ).toISOString();
   metadata.billing = {
     ...(metadata.billing ?? {}),
+    enforcement: {
+      ...(metadata.billing?.enforcement ?? {}),
+      state: "stopped_billing_blocked",
+      reason,
+      stopped_at: now.toISOString(),
+      grace_until: graceUntil,
+      deprovision_after: graceUntil,
+      final_backup_status:
+        finalBackupStatus ??
+        metadata.billing?.enforcement?.final_backup_status ??
+        "unknown",
+      recovery_actions: metadata.billing?.enforcement?.recovery_actions ?? [
+        "add_funds",
+        "fix_payment",
+        "support_limit_increase",
+      ],
+    },
     stop_reason: reason,
-    stop_requested_at: new Date().toISOString(),
+    stop_requested_at: now.toISOString(),
   };
   metadata.last_action = "stop";
   metadata.last_action_status = "pending";
   metadata.last_action_error = null;
-  metadata.last_action_at = new Date().toISOString();
+  metadata.last_action_at = now.toISOString();
   await getPool().query(
     `
       UPDATE project_hosts
@@ -186,6 +260,267 @@ async function requestHostStopForExceededLane({
     provider,
     reason,
   });
+}
+
+async function countProjectsAssignedToHost(host_id: string): Promise<number> {
+  const { rows } = await getPool("medium").query<{ count: string }>(
+    `
+      SELECT COUNT(*)::text AS count
+      FROM projects
+      WHERE host_id=$1
+        AND deleted IS NOT true
+    `,
+    [host_id],
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
+async function updateHostStatusAndBillingMetadata({
+  row,
+  status,
+  metadata,
+}: {
+  row: CandidateHostRow;
+  status: string;
+  metadata: any;
+}): Promise<void> {
+  await getPool().query(
+    `
+      UPDATE project_hosts
+      SET status=$2, metadata=$3, updated=NOW()
+      WHERE id=$1 AND deleted IS NULL
+    `,
+    [row.id, status, metadata],
+  );
+}
+
+async function requestHostDrainForBilling({
+  row,
+  enforcement,
+}: {
+  row: CandidateHostRow;
+  enforcement: DedicatedHostBillingEnforcementMetadata;
+}): Promise<void> {
+  const metadata = { ...(row.metadata ?? {}) };
+  const owner = `${metadata?.owner ?? ""}`.trim();
+  if (!owner) {
+    return;
+  }
+  const nextMetadata = {
+    ...metadata,
+    billing: {
+      ...(metadata.billing ?? {}),
+      enforcement,
+    },
+    last_action: "drain",
+    last_action_status: "pending",
+    last_action_error: null,
+    last_action_at: new Date().toISOString(),
+  };
+  await updateHostStatusAndBillingMetadata({
+    row,
+    status: "draining",
+    metadata: nextMetadata,
+  });
+  await createLro({
+    kind: HOST_DRAIN_LRO_KIND,
+    scope_type: "host",
+    scope_id: row.id,
+    created_by: owner,
+    routing: "hub",
+    input: {
+      id: row.id,
+      account_id: owner,
+      allow_offline: true,
+      force: false,
+      managed_egress_override: "admin-host-drain",
+      billing_enforcement: true,
+    },
+    dedupe_key: `${HOST_DRAIN_LRO_KIND}:billing:${row.id}`,
+    status: "queued",
+  });
+  logger.warn("requested dedicated host drain for billing enforcement", {
+    host_id: row.id,
+    reason_code: enforcement.reason_code,
+    reason: enforcement.reason,
+  });
+}
+
+async function requestHostDeprovisionForBilling({
+  row,
+}: {
+  row: CandidateHostRow;
+}): Promise<void> {
+  const metadata = { ...(row.metadata ?? {}) };
+  const owner = `${metadata?.owner ?? ""}`.trim();
+  if (!owner) return;
+  const enforcement = currentEnforcement(metadata);
+  const nowIso = new Date().toISOString();
+  const nextMetadata = {
+    ...metadata,
+    desired_state: "stopped",
+    billing: {
+      ...(metadata.billing ?? {}),
+      enforcement: {
+        ...(enforcement ?? {}),
+        state: "deprovision_pending",
+        deprovision_requested_at:
+          enforcement?.deprovision_requested_at ?? nowIso,
+      },
+    },
+    last_action: "deprovision",
+    last_action_status: "pending",
+    last_action_error: null,
+    last_action_at: nowIso,
+  };
+  await updateHostBillingMetadata({
+    host_id: row.id,
+    metadata: nextMetadata,
+  });
+  await createLro({
+    kind: HOST_DEPROVISION_LRO_KIND,
+    scope_type: "host",
+    scope_id: row.id,
+    created_by: owner,
+    routing: "hub",
+    input: {
+      id: row.id,
+      account_id: owner,
+      skip_backups: true,
+      billing_enforcement: true,
+    },
+    dedupe_key: `${HOST_DEPROVISION_LRO_KIND}:billing:${row.id}`,
+    status: "queued",
+  });
+  logger.warn("requested dedicated host deprovision for billing enforcement", {
+    host_id: row.id,
+  });
+}
+
+async function maybeProgressInactiveEnforcement({
+  row,
+}: {
+  row: CandidateHostRow;
+}): Promise<boolean> {
+  const metadata = row.metadata ?? {};
+  const enforcement = currentEnforcement(metadata);
+  if (
+    enforcement?.state === "deprovision_pending" &&
+    `${row.status ?? ""}`.trim().toLowerCase() === "deprovisioned"
+  ) {
+    await updateHostBillingMetadata({
+      host_id: row.id,
+      metadata: {
+        ...metadata,
+        billing: {
+          ...(metadata.billing ?? {}),
+          enforcement: {
+            ...enforcement,
+            state: "deprovisioned_recoverable",
+            deprovisioned_at:
+              enforcement.deprovisioned_at ?? new Date().toISOString(),
+          },
+        },
+      },
+    });
+    return true;
+  }
+  if (
+    enforcement?.state !== "stopped_billing_blocked" ||
+    enforcement.final_backup_status !== "succeeded" ||
+    !enforcement.deprovision_after
+  ) {
+    return false;
+  }
+  const deprovisionAfter = new Date(enforcement.deprovision_after).getTime();
+  if (!Number.isFinite(deprovisionAfter) || deprovisionAfter > Date.now()) {
+    return false;
+  }
+  await requestHostDeprovisionForBilling({ row });
+  return true;
+}
+
+async function maybeClearRecoveredInactiveEnforcement({
+  row,
+  provider,
+  snapshot,
+}: {
+  row: CandidateHostRow;
+  provider: string;
+  snapshot: AccountLocalDedicatedHostPolicySnapshot;
+}): Promise<boolean> {
+  const metadata = row.metadata ?? {};
+  const enforcement = currentEnforcement(metadata);
+  if (
+    !enforcement ||
+    !["at_risk", "stopped_billing_blocked"].includes(enforcement.state)
+  ) {
+    return false;
+  }
+  const effectiveSnapshot = applyDedicatedHostFundingModeOverride(
+    snapshot,
+    currentFundingMode(metadata),
+  );
+  if (effectiveSnapshot.funding_mode === "site-funded") {
+    await updateHostBillingMetadata({
+      host_id: row.id,
+      metadata: {
+        ...metadata,
+        billing: {
+          ...(metadata.billing ?? {}),
+          funding_mode: "site-funded",
+          enforcement: { state: "ok" },
+        },
+      },
+    });
+    return true;
+  }
+
+  const funding_lane =
+    selectDedicatedHostFundingLane(effectiveSnapshot) ??
+    currentFundingLane(metadata);
+  if (!funding_lane) return false;
+  if (
+    !isDedicatedHostLaneCurrentlyAllowed({
+      snapshot: effectiveSnapshot,
+      funding_lane,
+    })
+  ) {
+    return false;
+  }
+  const machine = metadata?.machine ?? {};
+  const hourly_cost_usd = await estimateDedicatedHostRateUsdPerHour({
+    provider,
+    region: row.region,
+    zone: machine.zone,
+    machine_type: machine.machine_type ?? metadata?.size,
+    disk_gb: machine.disk_gb,
+    disk_type: machine.disk_type,
+    storage_mode: machine.storage_mode,
+    gpu_type: machine.gpu_type,
+    gpu_count: machine.gpu_count,
+    pricing_model: currentPricingModel(metadata),
+  });
+  if (!hourly_cost_usd) return false;
+
+  await updateHostBillingMetadata({
+    host_id: row.id,
+    metadata: {
+      ...metadata,
+      billing: {
+        ...(metadata.billing ?? {}),
+        funding_mode: effectiveSnapshot.funding_mode,
+        funding_lane,
+        hourly_cost_usd,
+        enforcement: { state: "ok" },
+      },
+    },
+  });
+  logger.info("cleared recovered dedicated host billing enforcement", {
+    host_id: row.id,
+    funding_lane,
+  });
+  return true;
 }
 
 async function runPass(): Promise<void> {
@@ -220,6 +555,20 @@ async function runPass(): Promise<void> {
         account_id: owner,
         host_id: row.id,
       });
+      if (
+        await maybeClearRecoveredInactiveEnforcement({
+          row,
+          provider,
+          snapshot: await getSnapshot(owner),
+        })
+      ) {
+        snapshotCache.delete(owner);
+        continue;
+      }
+      if (await maybeProgressInactiveEnforcement({ row })) {
+        snapshotCache.delete(owner);
+        continue;
+      }
       if (metadata?.billing) {
         const nextMetadata = {
           ...metadata,
@@ -228,6 +577,21 @@ async function runPass(): Promise<void> {
         await updateHostBillingMetadata({
           host_id: row.id,
           metadata: nextMetadata,
+        });
+      }
+      snapshotCache.delete(owner);
+      continue;
+    }
+
+    const enforcement = currentEnforcement(metadata);
+    if (enforcement?.state === "draining") {
+      const assignedProjects = await countProjectsAssignedToHost(row.id);
+      if (assignedProjects === 0) {
+        await requestHostStopForExceededLane({
+          row,
+          provider,
+          reason: enforcement.reason ?? "billing enforcement drain complete",
+          finalBackupStatus: "succeeded",
         });
       }
       snapshotCache.delete(owner);
@@ -273,10 +637,14 @@ async function runPass(): Promise<void> {
       pricing_model,
     });
     if (!hourly_cost_usd) {
-      await requestHostStopForExceededLane({
+      await requestHostDrainForBilling({
         row,
-        provider,
-        reason: `pricing unavailable for provider ${provider}`,
+        enforcement: nextDrainingEnforcement({
+          metadata,
+          reason_code: "host_pricing_unavailable",
+          reason: `pricing unavailable for provider ${provider}`,
+          recovery_actions: ["support_limit_increase"],
+        }),
       });
       continue;
     }
@@ -284,10 +652,18 @@ async function runPass(): Promise<void> {
     const selectedFundingLane = selectDedicatedHostFundingLane(snapshot);
     let funding_lane = selectedFundingLane ?? currentFundingLane(metadata);
     if (!funding_lane) {
-      await requestHostStopForExceededLane({
+      await requestHostDrainForBilling({
         row,
-        provider,
-        reason: "dedicated-host funding is not currently available",
+        enforcement: nextDrainingEnforcement({
+          metadata,
+          reason_code: "dedicated_host_funding_unavailable",
+          reason: "dedicated-host funding is not currently available",
+          recovery_actions: [
+            "add_funds",
+            "fix_payment",
+            "support_limit_increase",
+          ],
+        }),
       });
       continue;
     }
@@ -312,6 +688,34 @@ async function runPass(): Promise<void> {
       started_at: preserveStartedAt,
     });
 
+    snapshotCache.delete(owner);
+    const refreshedSnapshot = applyDedicatedHostFundingModeOverride(
+      await getSnapshot(owner),
+      currentFundingMode({
+        ...metadata,
+        billing: {
+          ...(metadata.billing ?? {}),
+          funding_mode: snapshot.funding_mode,
+          funding_lane,
+        },
+      }),
+    );
+    const laneAllowed = isDedicatedHostLaneCurrentlyAllowed({
+      snapshot: refreshedSnapshot,
+      funding_lane,
+    });
+    const enforcementDecision = evaluateDedicatedHostBillingEnforcement({
+      snapshot: refreshedSnapshot,
+      funding_lane,
+      hourly_cost_usd,
+      lane_allowed: laneAllowed,
+    });
+    const nextEnforcement = buildDedicatedHostBillingEnforcementMetadata({
+      previous: currentEnforcement(metadata),
+      decision: enforcementDecision,
+      hourly_cost_usd,
+    });
+
     const nextMetadata = {
       ...metadata,
       billing: {
@@ -319,6 +723,7 @@ async function runPass(): Promise<void> {
         funding_lane,
         hourly_cost_usd,
         started_at: preserveStartedAt ?? new Date().toISOString(),
+        enforcement: nextEnforcement,
       },
     };
     if (
@@ -331,20 +736,10 @@ async function runPass(): Promise<void> {
       });
     }
     snapshotCache.delete(owner);
-    const refreshedSnapshot = applyDedicatedHostFundingModeOverride(
-      await getSnapshot(owner),
-      currentFundingMode(nextMetadata),
-    );
-    if (
-      !isDedicatedHostLaneCurrentlyAllowed({
-        snapshot: refreshedSnapshot,
-        funding_lane,
-      })
-    ) {
-      await requestHostStopForExceededLane({
-        row,
-        provider,
-        reason: `${funding_lane} dedicated-host window exhausted`,
+    if (enforcementDecision.action === "request_drain") {
+      await requestHostDrainForBilling({
+        row: { ...row, metadata: nextMetadata },
+        enforcement: nextEnforcement,
       });
     }
   }
