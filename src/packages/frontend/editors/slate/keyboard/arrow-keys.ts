@@ -52,13 +52,13 @@ function textHasEscapableMarks(text: Text): boolean {
 }
 
 function clearEscapableEditorMarks(editor: SlateEditor): void {
-  const marks = Editor.marks(editor);
+  const marks = (editor as any).marks ?? Editor.marks(editor);
   if (marks == null) return;
-  for (const mark of Object.keys(marks)) {
-    if (isEscapableMark(mark)) {
-      Editor.removeMark(editor, mark);
-    }
+  const nextMarks = { ...marks };
+  for (const mark of Object.keys(nextMarks)) {
+    if (isEscapableMark(mark)) delete nextMarks[mark];
   }
+  (editor as any).marks = Object.keys(nextMarks).length > 0 ? nextMarks : null;
 }
 
 function rememberSelection(editor: SlateEditor): void {
@@ -105,6 +105,16 @@ function selectAndSync(
 function insertPlainSpaceAtSelection(editor: SlateEditor): void {
   clearEscapableEditorMarks(editor);
   editor.insertText(" ");
+  rememberSelection(editor);
+  syncDomSelection(editor);
+}
+
+function insertPlainSpaceNode(editor: SlateEditor, path: Path): void {
+  clearEscapableEditorMarks(editor);
+  Editor.withoutNormalizing(editor, () => {
+    Transforms.insertNodes(editor, { text: " " }, { at: path });
+    Transforms.select(editor, { path, offset: 1 });
+  });
   rememberSelection(editor);
   syncDomSelection(editor);
 }
@@ -189,7 +199,7 @@ export function escapeMarkedTextBoundaryOnArrowRight(
     return true;
   }
 
-  insertPlainSpaceAtSelection(editor);
+  insertPlainSpaceNode(editor, nextPath);
   return true;
 }
 
