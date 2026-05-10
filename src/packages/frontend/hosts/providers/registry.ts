@@ -27,6 +27,7 @@ import {
   normalizeNebiusPricingProduct,
   normalizeNebiusPricingToken,
 } from "@cocalc/util/project-host-pricing";
+import { getGcpMachineBenchmark } from "@cocalc/util/project-host-benchmarks";
 import {
   formatCpuRamLabel,
   formatGpuLabel,
@@ -63,8 +64,11 @@ export type HostFieldOption<T = unknown> = {
   label: string;
   selectionLabel?: string;
   mainLabel?: string;
+  subLabel?: string;
   priceLabel?: string;
   hourlyRate?: number;
+  benchmarkCpuScore?: number;
+  benchmarkValueScore?: number;
   stateLabel?: string;
   disabled?: boolean;
   meta?: T;
@@ -453,6 +457,53 @@ const gcpMachineTypeLabel = (entry: HostCatalogMachineType) => {
     mainLabel,
     label: searchTerms ? `${mainLabel} ${searchTerms}` : mainLabel,
   };
+};
+
+const formatBenchmarkRelativeScore = (value: number) => `${value.toFixed(2)}x`;
+
+const estimateGcpSelectionVmUsdPerHour = (
+  catalog: HostCatalog | undefined,
+  selection: ProviderSelection,
+  overrides?: Partial<ProviderSelection>,
+): number | undefined => {
+  const breakdown = estimateGcpSelectionBreakdown(catalog, selection, {
+    ...overrides,
+    gpu_type: undefined,
+  });
+  const vmRate = breakdown?.items.find(
+    (item) => item.key === "vm",
+  )?.usd_per_hour;
+  return typeof vmRate === "number" && Number.isFinite(vmRate) && vmRate > 0
+    ? vmRate
+    : undefined;
+};
+
+const GCP_BENCHMARK_VALUE_BASELINE_SELECTION: Partial<ProviderSelection> = {
+  machine_type: "n2d-standard-4",
+  cpu_count: 4,
+  memory_gib: 16,
+};
+
+const getGcpBenchmarkSubLabel = (opts: {
+  cpuScore?: number;
+  valueScore?: number;
+}): string | undefined => {
+  if (
+    typeof opts.cpuScore !== "number" ||
+    !Number.isFinite(opts.cpuScore) ||
+    opts.cpuScore <= 0
+  ) {
+    return undefined;
+  }
+  const parts = [`CPU bench ${formatBenchmarkRelativeScore(opts.cpuScore)}`];
+  if (
+    typeof opts.valueScore === "number" &&
+    Number.isFinite(opts.valueScore) &&
+    opts.valueScore > 0
+  ) {
+    parts.push(`Value ${formatBenchmarkRelativeScore(opts.valueScore)}`);
+  }
+  return parts.join(" · ");
 };
 
 const nebiusMachineTypeLabel = (entry: NebiusInstance) => {
@@ -1188,6 +1239,19 @@ export const getGcpMachineTypeOptions = (
 ): HostFieldOption[] => {
   const priceDisplay =
     selection.price_display === "monthly" ? "monthly" : "hourly";
+  const benchmarkValueBaselineRate = estimateGcpSelectionVmUsdPerHour(
+    catalog,
+    selection,
+    GCP_BENCHMARK_VALUE_BASELINE_SELECTION,
+  );
+  const benchmarkValueBaseline = getGcpMachineBenchmark("n2d-standard-4");
+  const benchmarkValueBaselineScore =
+    typeof benchmarkValueBaselineRate === "number" &&
+    benchmarkValueBaselineRate > 0 &&
+    typeof benchmarkValueBaseline?.estimated_coremark_score === "number"
+      ? benchmarkValueBaseline.estimated_coremark_score /
+        benchmarkValueBaselineRate
+      : undefined;
   const localTypes = selection.zone
     ? (getCatalogEntryPayload<HostCatalogMachineType[]>(
         catalog,
@@ -1214,17 +1278,45 @@ export const getGcpMachineTypeOptions = (
     return gpuPrefixes.some((prefix) => name.startsWith(prefix));
   });
   return filtered.map((mt) => {
+    const cpuCount = mt.guestCpus ?? undefined;
+    const memoryGiB =
+      mt.memoryMb != null ? Number(mt.memoryMb) / 1024 : undefined;
     const compatible = selection.zone
       ? localTypeNames.has(`${mt.name ?? ""}`.trim())
       : true;
     const hourlyRate = compatible
       ? estimateGcpSelectionUsdPerHour(catalog, selection, {
           machine_type: mt.name ?? undefined,
-          cpu_count: mt.guestCpus ?? undefined,
-          memory_gib:
-            mt.memoryMb != null ? Number(mt.memoryMb) / 1024 : undefined,
+          cpu_count: cpuCount,
+          memory_gib: memoryGiB,
         })
       : undefined;
+    const benchmark = getGcpMachineBenchmark(mt.name, cpuCount);
+    const benchmarkValueRate = estimateGcpSelectionVmUsdPerHour(
+      catalog,
+      selection,
+      {
+        machine_type: mt.name ?? undefined,
+        cpu_count: cpuCount,
+        memory_gib: memoryGiB,
+      },
+    );
+    const benchmarkValueRaw =
+      typeof benchmark?.estimated_coremark_score === "number" &&
+      typeof benchmarkValueRate === "number" &&
+      Number.isFinite(benchmarkValueRate) &&
+      benchmarkValueRate > 0
+        ? benchmark.estimated_coremark_score / benchmarkValueRate
+        : undefined;
+    const benchmarkValueNormalized =
+      typeof benchmarkValueRaw === "number" &&
+      Number.isFinite(benchmarkValueRaw) &&
+      benchmarkValueRaw > 0 &&
+      typeof benchmarkValueBaselineScore === "number" &&
+      Number.isFinite(benchmarkValueBaselineScore) &&
+      benchmarkValueBaselineScore > 0
+        ? benchmarkValueRaw / benchmarkValueBaselineScore
+        : undefined;
     const machineLabel = gcpMachineTypeLabel(mt);
     const label = appendPriceStateLabel({
       label: machineLabel.label,
@@ -1233,12 +1325,21 @@ export const getGcpMachineTypeOptions = (
       expectPrice: true,
       priceDisplay,
     });
+    const subLabel = getGcpBenchmarkSubLabel({
+      cpuScore: benchmark?.normalized_coremark_per_vcpu,
+      valueScore: benchmarkValueNormalized,
+    });
+    const searchLabel = subLabel ? `${label.label} ${subLabel}` : label.label;
     return {
       value: mt.name ?? "",
       ...label,
+      label: searchLabel,
       hourlyRate,
       selectionLabel: mt.name ?? "unknown",
       mainLabel: label.mainLabel ?? machineLabel.mainLabel,
+      subLabel,
+      benchmarkCpuScore: benchmark?.coremark_per_vcpu,
+      benchmarkValueScore: benchmarkValueRaw,
       meta: {
         ...mt,
         compatible,

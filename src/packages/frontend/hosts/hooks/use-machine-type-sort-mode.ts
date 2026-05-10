@@ -14,7 +14,9 @@ function readMachineTypeSortMode(): MachineTypeSortMode {
   }
   try {
     const raw = window.localStorage.getItem(MACHINE_TYPE_SORT_STORAGE_KEY);
-    return raw === "type" ? "type" : "price";
+    return raw === "type" || raw === "price" || raw === "cpu" || raw === "value"
+      ? raw
+      : "price";
   } catch {
     return "price";
   }

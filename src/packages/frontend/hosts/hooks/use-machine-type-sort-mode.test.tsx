@@ -9,6 +9,8 @@ function TestMachineTypeSortMode() {
       <div data-testid="mode">{mode}</div>
       <button onClick={() => setMode("type")}>set-type</button>
       <button onClick={() => setMode("price")}>set-price</button>
+      <button onClick={() => setMode("cpu")}>set-cpu</button>
+      <button onClick={() => setMode("value")}>set-value</button>
     </>
   );
 }
@@ -28,10 +30,16 @@ describe("useMachineTypeSortMode", () => {
     render(<TestMachineTypeSortMode />);
     expect(screen.getByTestId("mode").textContent).toBe("type");
 
-    fireEvent.click(screen.getByText("set-price"));
-    expect(screen.getByTestId("mode").textContent).toBe("price");
+    fireEvent.click(screen.getByText("set-cpu"));
+    expect(screen.getByTestId("mode").textContent).toBe("cpu");
     expect(window.localStorage.getItem("cocalc:hosts:machineTypeSort")).toBe(
-      "price",
+      "cpu",
     );
+  });
+
+  it("accepts the value sort mode from persisted storage", () => {
+    window.localStorage.setItem("cocalc:hosts:machineTypeSort", "value");
+    render(<TestMachineTypeSortMode />);
+    expect(screen.getByTestId("mode").textContent).toBe("value");
   });
 });

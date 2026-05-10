@@ -206,6 +206,7 @@ export function isSupportedCatalogGcpMachineType(
 ): boolean {
   const value = `${name ?? ""}`.trim().toLowerCase();
   if (!value) return false;
+  if (value.endsWith("-lssd")) return false;
   return SUPPORTED_GCP_MACHINE_TYPE_PREFIXES.some((prefix) =>
     value.startsWith(prefix),
   );

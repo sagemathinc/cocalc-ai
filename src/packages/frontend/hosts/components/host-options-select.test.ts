@@ -60,12 +60,24 @@ describe("sortMachineTypeOptions", () => {
       label: "n2d-standard-4 · $0.22/hr",
       selectionLabel: "n2d-standard-4",
       hourlyRate: 0.22,
+      benchmarkCpuScore: 20024.5,
+      benchmarkValueScore: 363993.18,
     },
     {
       value: "e2-standard-4",
       label: "e2-standard-4 · $0.30/hr",
       selectionLabel: "e2-standard-4",
       hourlyRate: 0.3,
+      benchmarkCpuScore: 13010.75,
+      benchmarkValueScore: 173475.83,
+    },
+    {
+      value: "c3d-standard-4",
+      label: "c3d-standard-4 · $0.31/hr",
+      selectionLabel: "c3d-standard-4",
+      hourlyRate: 0.31,
+      benchmarkCpuScore: 23643,
+      benchmarkValueScore: 423642.86,
     },
     {
       value: "t2a-standard-4",
@@ -87,6 +99,7 @@ describe("sortMachineTypeOptions", () => {
     ).toEqual([
       "n2d-standard-4",
       "e2-standard-4",
+      "c3d-standard-4",
       "c3-highcpu-8",
       "t2a-standard-4",
     ]);
@@ -96,8 +109,33 @@ describe("sortMachineTypeOptions", () => {
     expect(
       sortMachineTypeOptions(options, "type")?.map((opt) => opt.value),
     ).toEqual([
+      "c3d-standard-4",
       "e2-standard-4",
       "n2d-standard-4",
+      "c3-highcpu-8",
+      "t2a-standard-4",
+    ]);
+  });
+
+  it("sorts available machine types by CPU benchmark score when requested", () => {
+    expect(
+      sortMachineTypeOptions(options, "cpu")?.map((opt) => opt.value),
+    ).toEqual([
+      "c3d-standard-4",
+      "n2d-standard-4",
+      "e2-standard-4",
+      "c3-highcpu-8",
+      "t2a-standard-4",
+    ]);
+  });
+
+  it("sorts available machine types by benchmark value when requested", () => {
+    expect(
+      sortMachineTypeOptions(options, "value")?.map((opt) => opt.value),
+    ).toEqual([
+      "c3d-standard-4",
+      "n2d-standard-4",
+      "e2-standard-4",
       "c3-highcpu-8",
       "t2a-standard-4",
     ]);

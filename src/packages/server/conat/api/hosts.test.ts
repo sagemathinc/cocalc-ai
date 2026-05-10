@@ -1253,6 +1253,28 @@ describe("hosts.createHost", () => {
           ],
         };
       }
+      if (sql.includes("FROM cloud_catalog_cache")) {
+        return {
+          rows: [
+            {
+              payload: {
+                fetched_at: "2026-05-09T00:00:00.000Z",
+                service_id: "6F81-5844-456A",
+                families: {
+                  e2: {
+                    cpu: { "us-central1": 0.021 },
+                    ram: { "us-central1": 0.0028 },
+                    spot_cpu: { "us-central1": 0.0063 },
+                    spot_ram: { "us-central1": 0.00084 },
+                  },
+                },
+                gpus: {},
+                disks: {},
+              },
+            },
+          ],
+        };
+      }
       if (sql.includes("FROM account_impersonation_sessions")) {
         return { rows: [] };
       }
@@ -1562,6 +1584,50 @@ describe("hosts browser fresh auth gating", () => {
     });
 
     expect(result.kind).toBe("host-start");
+  });
+
+  it("blocks host start while billing enforcement is unresolved", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+                billing: {
+                  funding_mode: "account-prepaid",
+                  enforcement: {
+                    state: "stopped_billing_blocked",
+                    reason: "prepaid balance is exhausted",
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { startHost } = await import("./hosts");
+    await expect(
+      startHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({
+      code: "host_billing_enforcement_blocked",
+    });
+    expect(createLroMock).not.toHaveBeenCalled();
   });
 
   it("blocks host start when a destructive host op is already pending", async () => {

@@ -851,6 +851,7 @@ function waitConfig(kind: HostOpKind) {
           "running",
           "starting",
           "restarting",
+          "draining",
           "stopping",
           "off",
           "deprovisioning",
@@ -960,6 +961,10 @@ async function runHostAction(
         force: !!input?.force,
         allow_offline: !!input?.allow_offline,
         parallel: input?.parallel,
+        managed_egress_override:
+          input?.managed_egress_override === "admin-host-drain"
+            ? "admin-host-drain"
+            : undefined,
         shouldCancel: helpers?.shouldCancel,
         onProgress: async (update) => {
           await helpers?.progressStep?.(

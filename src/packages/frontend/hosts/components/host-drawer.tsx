@@ -77,6 +77,7 @@ import { HostRootfsCachePanel } from "./host-rootfs-cache-panel";
 import { HostCurrentMetrics } from "./host-current-metrics";
 import { HostPlacementSummary, HostPressureTag } from "../pressure-ui";
 import { confirmHostDeprovision } from "./host-confirm";
+import { HostBillingEnforcementStatus } from "./host-billing-enforcement";
 import {
   formatBinaryBytes,
   getHostCpuCount,
@@ -1536,6 +1537,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             displayPhaseOwner={projectHostRolloutPhase?.owner}
             displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
           />
+          <HostBillingEnforcementStatus host={host} />
           <HostBootstrapProgress host={host} />
           {canCancelBackups && (
             <Popconfirm
