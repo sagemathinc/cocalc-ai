@@ -3,18 +3,27 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { sendQueuedNotificationEmailBatch } from "./email-outbox-maintenance";
+import {
+  sendDailyNotificationDigestBatch,
+  sendQueuedNotificationEmailBatch,
+} from "./email-outbox-maintenance";
 
 const claimQueuedNotificationEmails = jest.fn();
+const claimDigestNotificationEmails = jest.fn();
 const markNotificationEmailSent = jest.fn();
+const markNotificationEmailsSent = jest.fn();
 const markNotificationEmailFailed = jest.fn();
 const markNotificationEmailStatus = jest.fn();
 
 jest.mock("@cocalc/database/postgres/notification-email-outbox", () => ({
   claimQueuedNotificationEmails: (...args: unknown[]) =>
     claimQueuedNotificationEmails(...args),
+  claimDigestNotificationEmails: (...args: unknown[]) =>
+    claimDigestNotificationEmails(...args),
   markNotificationEmailSent: (...args: unknown[]) =>
     markNotificationEmailSent(...args),
+  markNotificationEmailsSent: (...args: unknown[]) =>
+    markNotificationEmailsSent(...args),
   markNotificationEmailFailed: (...args: unknown[]) =>
     markNotificationEmailFailed(...args),
   markNotificationEmailStatus: (...args: unknown[]) =>
@@ -63,8 +72,11 @@ describe("notification email outbox maintenance", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     markNotificationEmailSent.mockResolvedValue(undefined);
+    markNotificationEmailsSent.mockResolvedValue(undefined);
     markNotificationEmailFailed.mockResolvedValue(undefined);
     markNotificationEmailStatus.mockResolvedValue(undefined);
+    claimQueuedNotificationEmails.mockResolvedValue([]);
+    claimDigestNotificationEmails.mockResolvedValue([]);
   });
 
   it("sends claimed immediate notification email and marks it sent", async () => {
@@ -152,5 +164,54 @@ describe("notification email outbox maintenance", () => {
         status: "skipped_rate_limited",
       }),
     );
+  });
+
+  it("sends one digest email for claimed digest rows", async () => {
+    const digestRows = [
+      { ...ROW, email_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1" },
+      {
+        ...ROW,
+        email_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+        subject: "Second digest item",
+        summary_json: {
+          summary: {
+            description: "Another item.",
+            path: "other.chat",
+          },
+        },
+      },
+    ];
+    claimDigestNotificationEmails.mockResolvedValue(digestRows);
+    const sender = jest.fn(async () => undefined);
+
+    await expect(
+      sendDailyNotificationDigestBatch({
+        force: true,
+        sender,
+        emailConfigured: jest.fn(async () => true),
+        sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+      }),
+    ).resolves.toMatchObject({
+      claimed: 2,
+      digests_sent: 1,
+      rows_sent: 2,
+      failed: 0,
+    });
+
+    expect(sender).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "user@example.com",
+        subject: "Daily CoCalc notification digest (2)",
+        categories: ["notification-digest", "notification"],
+      }),
+      undefined,
+      "notification",
+    );
+    expect(markNotificationEmailsSent).toHaveBeenCalledWith({
+      email_ids: [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+      ],
+    });
   });
 });

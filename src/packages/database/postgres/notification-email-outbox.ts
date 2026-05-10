@@ -230,6 +230,53 @@ export async function claimQueuedNotificationEmails(opts?: {
   return result.rows as NotificationEmailOutboxRow[];
 }
 
+export async function claimDigestNotificationEmails(opts?: {
+  limit_accounts?: number;
+  force?: boolean;
+  db?: Queryable;
+}): Promise<NotificationEmailOutboxRow[]> {
+  const db = queryable(opts?.db);
+  const limit_accounts = Math.max(
+    1,
+    Math.min(100, Math.floor(opts?.limit_accounts ?? 25)),
+  );
+  const force = opts?.force ?? false;
+  const result = await db.query(
+    `WITH due_accounts AS (
+       SELECT target_account_id
+       FROM notification_email_outbox
+       WHERE status = 'queued'
+         AND delivery_mode = 'digest'
+         AND scheduled_at <= NOW()
+         AND ($2::BOOLEAN
+              OR NOW() >= date_trunc('day', NOW()) + interval '8 hours')
+         AND NOT EXISTS (
+           SELECT 1
+           FROM notification_email_outbox sent
+           WHERE sent.target_account_id = notification_email_outbox.target_account_id
+             AND sent.delivery_mode = 'digest'
+             AND sent.status = 'sent'
+             AND sent.sent_at >= date_trunc('day', NOW())
+         )
+       GROUP BY target_account_id
+       ORDER BY MIN(scheduled_at) ASC, target_account_id ASC
+       LIMIT $1
+     )
+     UPDATE notification_email_outbox outbox
+        SET status = 'sending',
+            attempt_count = attempt_count + 1,
+            updated_at = NOW()
+      FROM due_accounts
+      WHERE outbox.target_account_id = due_accounts.target_account_id
+        AND outbox.status = 'queued'
+        AND outbox.delivery_mode = 'digest'
+        AND outbox.scheduled_at <= NOW()
+      RETURNING outbox.*`,
+    [limit_accounts, force],
+  );
+  return result.rows as NotificationEmailOutboxRow[];
+}
+
 export async function markNotificationEmailSent(opts: {
   email_id: string;
   db?: Queryable;
@@ -243,6 +290,26 @@ export async function markNotificationEmailSent(opts: {
             updated_at = NOW()
       WHERE email_id = $1`,
     [normalizeUuid(opts.email_id, "email id")],
+  );
+}
+
+export async function markNotificationEmailsSent(opts: {
+  email_ids: string[];
+  db?: Queryable;
+}): Promise<void> {
+  const email_ids = Array.from(
+    new Set(opts.email_ids.map((id) => normalizeUuid(id, "email id"))),
+  );
+  if (email_ids.length === 0) return;
+  const db = queryable(opts.db);
+  await db.query(
+    `UPDATE notification_email_outbox
+        SET status = 'sent',
+            sent_at = NOW(),
+            last_error = NULL,
+            updated_at = NOW()
+      WHERE email_id = ANY($1::UUID[])`,
+    [email_ids],
   );
 }
 

@@ -5,10 +5,12 @@
 
 import getLogger from "@cocalc/backend/logger";
 import {
+  claimDigestNotificationEmails,
   claimQueuedNotificationEmails,
   markNotificationEmailFailed,
   markNotificationEmailSent,
   markNotificationEmailStatus,
+  markNotificationEmailsSent,
   type NotificationEmailOutboxRow,
 } from "@cocalc/database/postgres/notification-email-outbox";
 import { getServerSettings } from "@cocalc/database/settings";
@@ -42,6 +44,15 @@ export interface SendQueuedNotificationEmailBatchResult {
   claimed: number;
   sent: number;
   skipped_no_backend: number;
+  failed: number;
+}
+
+export interface SendDailyNotificationDigestBatchResult {
+  claimed: number;
+  digests_sent: number;
+  rows_sent: number;
+  skipped_no_backend: number;
+  skipped_rate_limited: number;
   failed: number;
 }
 
@@ -108,6 +119,59 @@ async function buildMessage(row: NotificationEmailOutboxRow): Promise<Message> {
     text,
     html,
     categories: [`notification-${row.category}`, row.lane],
+  };
+}
+
+async function buildDigestMessage(
+  rows: NotificationEmailOutboxRow[],
+): Promise<Message> {
+  const { help_email, site_name } = await getServerSettings();
+  const notificationsUrl = await siteUrl("notifications");
+  const recipient_email = rows[0]?.recipient_email;
+  if (!recipient_email) {
+    throw Error("digest recipient email is missing");
+  }
+  const items = rows.map((row) => ({
+    subject: row.subject,
+    body: notificationBodyText(row),
+  }));
+  const count = items.length;
+  const subject = `Daily ${site_name} notification digest (${count})`;
+  const text = [
+    `You have ${count} ${count === 1 ? "notification" : "notifications"} in ${site_name}.`,
+    "",
+    ...items.map(({ subject, body }) =>
+      [`- ${subject}`, body ? `  ${body.replaceAll("\n", "\n  ")}` : ""]
+        .filter(Boolean)
+        .join("\n"),
+    ),
+    "",
+    `Open notifications: ${notificationsUrl}`,
+  ].join("\n");
+  const htmlItems = items
+    .map(
+      ({ subject, body }) =>
+        `<li><strong>${escapeHtml(subject)}</strong>${
+          body ? `<p>${escapeHtml(body)}</p>` : ""
+        }</li>`,
+    )
+    .join("");
+  const html = `
+<p>You have ${count} ${count === 1 ? "notification" : "notifications"} in ${escapeHtml(
+    site_name,
+  )}.</p>
+<ul>${htmlItems}</ul>
+<p><a href="${escapeHtml(notificationsUrl)}">Open notifications in ${escapeHtml(
+    site_name,
+  )}</a>.</p>
+`;
+  return {
+    from: help_email,
+    to: recipient_email,
+    subject,
+    text,
+    html,
+    categories: ["notification-digest", "notification"],
   };
 }
 
@@ -186,13 +250,121 @@ export async function sendQueuedNotificationEmailBatch(opts?: {
   return result;
 }
 
+export async function sendDailyNotificationDigestBatch(opts?: {
+  limit_accounts?: number;
+  force?: boolean;
+  sender?: typeof sendEmail;
+  emailConfigured?: typeof isEmailConfigured;
+  sendLimitChecker?: typeof checkNotificationEmailSendLimitForAccount;
+}): Promise<SendDailyNotificationDigestBatchResult> {
+  const rows = await claimDigestNotificationEmails({
+    limit_accounts: opts?.limit_accounts ?? BATCH_LIMIT,
+    force: opts?.force,
+  });
+  const result: SendDailyNotificationDigestBatchResult = {
+    claimed: rows.length,
+    digests_sent: 0,
+    rows_sent: 0,
+    skipped_no_backend: 0,
+    skipped_rate_limited: 0,
+    failed: 0,
+  };
+  if (rows.length === 0) return result;
+
+  const sender = opts?.sender ?? sendEmail;
+  const emailConfigured = opts?.emailConfigured ?? isEmailConfigured;
+  const sendLimitChecker =
+    opts?.sendLimitChecker ?? checkNotificationEmailSendLimitForAccount;
+  if (!(await emailConfigured("notification"))) {
+    await Promise.all(
+      rows.map((row) =>
+        markNotificationEmailStatus({
+          email_id: row.email_id,
+          status: "skipped_no_backend",
+          error: "no backend configured for notification email lane",
+        }),
+      ),
+    );
+    result.skipped_no_backend = rows.length;
+    return result;
+  }
+
+  const rowsByTarget = new Map<string, NotificationEmailOutboxRow[]>();
+  for (const row of rows) {
+    const targetRows = rowsByTarget.get(row.target_account_id) ?? [];
+    targetRows.push(row);
+    rowsByTarget.set(row.target_account_id, targetRows);
+  }
+
+  for (const targetRows of rowsByTarget.values()) {
+    const sendableRows: NotificationEmailOutboxRow[] = [];
+    for (const row of targetRows) {
+      if (!row.recipient_email) {
+        await markNotificationEmailStatus({
+          email_id: row.email_id,
+          status: "skipped_no_recipient",
+          error: "recipient email is missing",
+        });
+        result.failed += 1;
+        continue;
+      }
+      if (row.responsible_account_id) {
+        const sendLimit = await sendLimitChecker(row.responsible_account_id);
+        if (!sendLimit.allowed) {
+          await markNotificationEmailStatus({
+            email_id: row.email_id,
+            status: "skipped_rate_limited",
+            error: `responsible account exceeded notification email ${sendLimit.blocked_by} send limit`,
+          });
+          result.skipped_rate_limited += 1;
+          continue;
+        }
+      }
+      sendableRows.push(row);
+    }
+    if (sendableRows.length === 0) continue;
+    try {
+      await sender(
+        await buildDigestMessage(sendableRows),
+        undefined,
+        "notification",
+      );
+      await markNotificationEmailsSent({
+        email_ids: sendableRows.map((row) => row.email_id),
+      });
+      result.digests_sent += 1;
+      result.rows_sent += sendableRows.length;
+    } catch (err) {
+      await Promise.all(
+        sendableRows.map((row) =>
+          markNotificationEmailFailed({
+            email_id: row.email_id,
+            error: err instanceof Error ? err : `${err}`,
+          }),
+        ),
+      );
+      result.failed += sendableRows.length;
+      logger.warn("failed to send notification digest", {
+        target_account_id: targetRows[0]?.target_account_id,
+        rows: sendableRows.length,
+        err: `${err}`,
+      });
+    }
+  }
+  return result;
+}
+
 export async function runNotificationEmailOutboxMaintenanceTick(): Promise<SendQueuedNotificationEmailBatchResult | null> {
   if (running) return null;
   running = true;
   try {
     const result = await sendQueuedNotificationEmailBatch();
+    const digestResult = await sendDailyNotificationDigestBatch();
     if (result.claimed > 0 || result.failed > 0) {
       logger.info("notification email outbox tick", result);
+    }
+    if (digestResult.claimed > 0 || digestResult.failed > 0) {
+      logger.info("notification email digest tick", digestResult);
     }
     return result;
   } finally {
