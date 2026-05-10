@@ -222,8 +222,12 @@ function setNestedRule(
 
 function parseRule(values: Record<string, any>, field: NumericOverrideField) {
   const mode = values[`${field.id}_mode`] as NumericLimitRuleMode | "";
-  if (!mode) return undefined;
   const raw = values[`${field.id}_value`];
+  const hasValue = raw != null && raw !== "";
+  if (!mode) return undefined;
+  if (!hasValue) {
+    throw Error(`${field.label} needs a value.`);
+  }
   const displayValue = typeof raw === "number" ? raw : Number(raw);
   if (!Number.isFinite(displayValue) || displayValue < 0) {
     throw Error(`${field.label} needs a nonnegative number.`);
@@ -232,6 +236,18 @@ function parseRule(values: Record<string, any>, field: NumericOverrideField) {
     mode,
     value: (field.toStored ?? ((value) => value))(displayValue),
   };
+}
+
+function validateNumericRule(
+  values: Record<string, any>,
+  field: NumericOverrideField,
+) {
+  const mode = values[`${field.id}_mode`] as NumericLimitRuleMode | "";
+  const raw = values[`${field.id}_value`];
+  const hasValue = raw != null && raw !== "";
+  if (!mode && hasValue) {
+    throw Error(`${field.label} has a value but no override mode.`);
+  }
 }
 
 function getCurrentEntitlementValue(
@@ -373,6 +389,7 @@ function buildOverride(values: Record<string, any>) {
     expires_at: values.expires_at ? values.expires_at.toDate() : null,
   };
   for (const field of NUMERIC_FIELDS) {
+    validateNumericRule(values, field);
     setNestedRule(override, field, parseRule(values, field));
   }
   if (values.create_hosts !== "inherit") {
@@ -401,6 +418,12 @@ function buildOverride(values: Record<string, any>) {
     };
   }
   return override;
+}
+
+function hasConfiguredEntitlementChange(
+  override: AccountEntitlementOverride | Record<string, any>,
+): boolean {
+  return describeOverride(override as AccountEntitlementOverride).length > 0;
 }
 
 function OverrideHelp() {
@@ -559,9 +582,15 @@ export function AccountEntitlementOverridePanel({
       if (!reason) {
         throw Error("Reason is required.");
       }
+      const builtOverride = buildOverride(values);
+      if (!hasConfiguredEntitlementChange(builtOverride)) {
+        throw Error(
+          "Configure at least one entitlement override before saving. Use Clear active override to remove an existing override.",
+        );
+      }
       const nextOverride = await actions.set_account_entitlement_override({
         account_id,
-        override: buildOverride(values),
+        override: builtOverride,
         reason,
       });
       setOverride(nextOverride);
