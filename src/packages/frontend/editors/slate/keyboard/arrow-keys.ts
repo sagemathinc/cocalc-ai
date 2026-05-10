@@ -11,6 +11,7 @@ selections are not in the DOM.
 */
 
 import { register } from "./register";
+import { Editor, Path, Range, Text, Transforms } from "slate";
 import {
   blocksCursor,
   moveCursorUp,
@@ -21,6 +22,93 @@ import {
 } from "../control";
 import type { SlateEditor } from "../types";
 import { ReactEditor } from "../slate-react";
+
+const ESCAPABLE_MARKS = new Set([
+  "bold",
+  "italic",
+  "strikethrough",
+  "underline",
+  "sup",
+  "sub",
+  "tt",
+  "code",
+  "small",
+]);
+
+function isEscapableMark(mark: string): boolean {
+  return (
+    ESCAPABLE_MARKS.has(mark) ||
+    mark.startsWith("color:") ||
+    mark.startsWith("font-family:") ||
+    mark.startsWith("font-size:")
+  );
+}
+
+function textHasEscapableMarks(text: Text): boolean {
+  const value = text as unknown as Record<string, unknown>;
+  return Object.keys(value).some(
+    (key) => key != "text" && value[key] === true && isEscapableMark(key),
+  );
+}
+
+function clearEscapableEditorMarks(editor: SlateEditor): void {
+  const marks = Editor.marks(editor);
+  if (marks == null) return;
+  for (const mark of Object.keys(marks)) {
+    if (isEscapableMark(mark)) {
+      Editor.removeMark(editor, mark);
+    }
+  }
+}
+
+export function escapeMarkedTextBoundaryOnArrowRight(
+  editor: SlateEditor,
+): boolean {
+  const { selection } = editor;
+  if (selection == null || !Range.isCollapsed(selection)) return false;
+
+  const { focus } = selection;
+  let text: unknown;
+  try {
+    [text] = Editor.node(editor, focus.path);
+  } catch {
+    return false;
+  }
+
+  if (
+    !Text.isText(text) ||
+    text.text.length == 0 ||
+    focus.offset != text.text.length ||
+    !textHasEscapableMarks(text)
+  ) {
+    return false;
+  }
+
+  const parent = Editor.parent(editor, focus.path)[0] as {
+    children?: unknown[];
+  };
+  const siblingIndex = focus.path[focus.path.length - 1];
+  const nextSibling = parent.children?.[siblingIndex + 1];
+  const nextPath = Path.next(focus.path);
+
+  if (Text.isText(nextSibling) && !textHasEscapableMarks(nextSibling)) {
+    clearEscapableEditorMarks(editor);
+    Transforms.select(editor, {
+      path: nextPath,
+      offset: /^\s/.test(nextSibling.text) ? 1 : 0,
+    });
+    return true;
+  }
+
+  clearEscapableEditorMarks(editor);
+  Transforms.insertNodes(editor, { text: " " }, { at: nextPath });
+  Transforms.select(editor, { path: nextPath, offset: 1 });
+  return true;
+}
+
+register({ key: "ArrowRight" }, ({ editor }) =>
+  escapeMarkedTextBoundaryOnArrowRight(editor),
+);
 
 const down = ({ editor }: { editor: SlateEditor }) => {
   const cur = editor.selection?.focus;
