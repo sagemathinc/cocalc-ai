@@ -366,13 +366,6 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                     )}
                   </Descriptions.Item>
                 </Descriptions>
-                {usageAlerts.map((alert) => (
-                  <Alert
-                    key={alert.key}
-                    type={alert.type}
-                    title={alert.title}
-                  />
-                ))}
                 <div>
                   <Text strong>Active membership sources</Text>
                   {candidateRows.length === 0 ? (
@@ -505,7 +498,7 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                 onChanged={refresh}
               />
             </Collapse.Panel>
-            <Collapse.Panel header="Usage and diagnostics" key="usage">
+            <Collapse.Panel header="Usage summary and diagnostics" key="usage">
               <Space
                 direction="vertical"
                 size="middle"

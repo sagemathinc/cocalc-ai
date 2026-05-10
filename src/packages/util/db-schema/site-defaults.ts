@@ -108,7 +108,6 @@ export type SiteSettingsKeys =
   | "project_hosts_funding_mode"
   | "project_hosts_gcp_surcharge_percent"
   | "project_hosts_nebius_surcharge_percent"
-  | "project_hosts_postpaid_unbilled_limit_usd"
   | "cloudflare_mode"
   | "project_hosts_dns"
   | "project_hosts_app_public_subdomain_suffix"
@@ -954,16 +953,6 @@ export const site_settings_conf: SiteSettings = {
     },
     to_val: project_hosts_funding_mode_to_val,
     tags: ["Project Hosts", "Cloud", "Commercialization", "On-Prem"],
-    group: "Compute / Project Hosts",
-    subgroup: "Billing",
-  },
-  project_hosts_postpaid_unbilled_limit_usd: {
-    name: "Project Hosts: Postpaid Unbilled Limit (USD)",
-    desc: "Maximum account-postpaid dedicated-host charges that may accumulate before they are billed/closed into a statement. If this site-wide safety cap is reached, running postpaid hosts are stopped or new ones are denied. This applies alongside the membership rolling 5-hour and 7-day credit windows.",
-    default: "1000",
-    valid: onlyNonnegFloat,
-    to_val: toFloat,
-    tags: ["Project Hosts", "Cloud", "Commercialization"],
     group: "Compute / Project Hosts",
     subgroup: "Billing",
   },

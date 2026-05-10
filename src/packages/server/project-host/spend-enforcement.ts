@@ -162,11 +162,6 @@ function creditReason(
         code: "postpaid_usage_window_7d_exhausted",
         reason: "postpaid 7-day dedicated-host usage window is exhausted",
       };
-    case "postpaid_unbilled":
-      return {
-        code: "postpaid_unbilled_limit_exhausted",
-        reason: "postpaid unbilled dedicated-host exposure limit is exhausted",
-      };
     default:
       return {
         code: "postpaid_runway_low",
@@ -261,15 +256,6 @@ export function evaluateDedicatedHostBillingEnforcement({
       runwayHours({
         limit: limits.credit_spend_limit_7d_usd,
         used: usage.credit_7d_usd,
-        hourly,
-      }),
-    );
-    pushRunway(
-      runways,
-      "postpaid_unbilled",
-      runwayHours({
-        limit: Number(toDecimal(snapshot.postpaid_unbilled_limit_usd ?? 0)),
-        used: snapshot.postpaid_unbilled_exposure_usd,
         hourly,
       }),
     );

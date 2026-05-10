@@ -37,11 +37,7 @@ import { MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS } from "@cocalc/util/membe
 const { Text } = Typography;
 const BYTES_PER_GB = 1000 * 1000 * 1000;
 
-type NumericSection =
-  | "project_defaults"
-  | "ai_limits"
-  | "usage_limits"
-  | "dedicated_hosts";
+type NumericSection = "project_defaults" | "ai_limits" | "usage_limits";
 
 interface NumericOverrideField {
   id: string;
@@ -267,19 +263,6 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
       MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
         .prepaid_host_usage_limit_7d_usd.adminDescription,
   },
-  {
-    id: "postpaid_unbilled",
-    section: "dedicated_hosts",
-    key: "postpaid_unbilled_limit_usd",
-    label:
-      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.dedicated_hosts
-        .postpaid_unbilled_limit_usd.label,
-    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.dedicated_hosts
-      .postpaid_unbilled_limit_usd.unit,
-    description:
-      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.dedicated_hosts
-        .postpaid_unbilled_limit_usd.adminDescription,
-  },
 ];
 
 const PROJECT_FIELD_IDS = new Set([
@@ -305,7 +288,6 @@ const SPEND_FIELD_IDS = new Set([
   "credit_spend_7d",
   "prepaid_host_5h",
   "prepaid_host_7d",
-  "postpaid_unbilled",
 ]);
 
 const MODE_OPTIONS = [

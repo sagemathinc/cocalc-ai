@@ -165,7 +165,6 @@ export interface DedicatedHostPolicyOverrides {
   funding_mode?: EnumOverride<
     "account-prepaid" | "account-postpaid" | "site-funded"
   >;
-  postpaid_unbilled_limit_usd?: NumericLimitRule;
 }
 
 export interface AccountEntitlementOverride {
@@ -199,7 +198,6 @@ Initial UI-exposed fields:
 - `project_defaults.memory`
 - `project_defaults.memory_request`
 - `ai_limits.*` for known numeric AI limit keys
-- `dedicated_hosts.postpaid_unbilled_limit_usd`
 - `dedicated_hosts.funding_mode` with only `account-prepaid` and `account-postpaid` exposed in the normal support UI
 - `expires_at`
 - `reason`
@@ -292,11 +290,6 @@ const effectiveAiLimits = applyNumericRulesByKey(
 const fundingMode =
   override?.dedicated_hosts?.funding_mode?.value ??
   getDedicatedHostFundingModeFromSettings(settings);
-
-const postpaidUnbilledLimit = applyNumericRule(
-  settings.project_hosts_postpaid_unbilled_limit_usd ?? 0,
-  override?.dedicated_hosts?.postpaid_unbilled_limit_usd,
-);
 ```
 
 `undefined` means inherit. `null` should not be accepted for numeric/boolean override fields in API input; clearing a field should remove it from the JSON object.

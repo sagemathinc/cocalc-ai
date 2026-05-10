@@ -178,12 +178,6 @@ const OVERRIDE_EFFECT_FIELDS = [
     ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
       .prepaid_host_usage_limit_7d_usd,
   },
-  {
-    section: "dedicated_hosts",
-    key: "postpaid_unbilled_limit_usd",
-    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.dedicated_hosts
-      .postpaid_unbilled_limit_usd,
-  },
 ] as const satisfies readonly OverrideEffectField[];
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -334,21 +328,13 @@ function normalizeDedicatedHosts(
 ): DedicatedHostPolicyOverrides | undefined {
   if (value == null) return undefined;
   if (!isObject(value)) throw Error("dedicated_hosts must be an object");
-  assertNoUnknownKeys(
-    value,
-    new Set(["funding_mode", "postpaid_unbilled_limit_usd"]),
-    "dedicated_hosts",
-  );
+  assertNoUnknownKeys(value, new Set(["funding_mode"]), "dedicated_hosts");
   return {
     funding_mode: normalizeEnumOverride({
       value: value.funding_mode,
       allowed: DEDICATED_HOST_FUNDING_MODES,
       path: "dedicated_hosts.funding_mode",
     }),
-    postpaid_unbilled_limit_usd: normalizeNumericRule(
-      value.postpaid_unbilled_limit_usd,
-      "dedicated_hosts.postpaid_unbilled_limit_usd",
-    ),
   };
 }
 

@@ -13,10 +13,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import {
-  applyNumericLimitRule,
-  getActiveAccountEntitlementOverride,
-} from "@cocalc/server/membership/entitlement-overrides";
+import { getActiveAccountEntitlementOverride } from "@cocalc/server/membership/entitlement-overrides";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -46,8 +43,7 @@ export interface DedicatedHostAdmissionDecision {
     | "membership_host_spend_not_configured"
     | "prepaid_balance_required"
     | "prepaid_usage_window_exceeded"
-    | "postpaid_usage_window_exceeded"
-    | "postpaid_unbilled_limit_exceeded";
+    | "postpaid_usage_window_exceeded";
   reason?: string;
   funding_lane?: "prepaid" | "credit";
 }
@@ -67,14 +63,6 @@ function actionLabel(action: DedicatedHostAction): string {
 
 function hasPositiveLimit(value: unknown): boolean {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
-}
-
-function hasPositiveMoneyValue(value: unknown): boolean {
-  try {
-    return toDecimal(value as any).gt(0);
-  } catch {
-    return false;
-  }
 }
 
 export function isBillableDedicatedHostCloud(cloud?: string | null): boolean {
@@ -245,18 +233,6 @@ export function evaluateDedicatedHostAdmission({
       reason: `set up automatic billing before trying to ${actionLabel(action)}`,
     };
   }
-  if (
-    hasPositiveMoneyValue(effectiveSnapshot.postpaid_unbilled_limit_usd) &&
-    !toDecimal(effectiveSnapshot.postpaid_unbilled_exposure_usd).lt(
-      toDecimal(effectiveSnapshot.postpaid_unbilled_limit_usd),
-    )
-  ) {
-    return {
-      allowed: false,
-      code: "postpaid_unbilled_limit_exceeded",
-      reason: `your dedicated-host postpaid exposure limit is exhausted; wait for billing to catch up before trying to ${actionLabel(action)}`,
-    };
-  }
   return {
     allowed: false,
     code: "postpaid_usage_window_exceeded",
@@ -289,10 +265,6 @@ export async function getDedicatedHostPolicySnapshotLocal(
   const funding_mode =
     admin_override?.dedicated_hosts?.funding_mode?.value ??
     getDedicatedHostFundingModeFromSettings(settings);
-  const postpaid_unbilled_limit_usd = applyNumericLimitRule(
-    settings.project_hosts_postpaid_unbilled_limit_usd ?? 0,
-    admin_override?.dedicated_hosts?.postpaid_unbilled_limit_usd,
-  );
   const has_active_second_factor = await hasActiveSecondFactor(account_id);
 
   if (funding_mode === "site-funded") {
@@ -308,7 +280,6 @@ export async function getDedicatedHostPolicySnapshotLocal(
       has_usage_subscription: false,
       balance: moneyToDbString(0),
       postpaid_unbilled_exposure_usd: moneyToDbString(0),
-      postpaid_unbilled_limit_usd: moneyToDbString(0),
       dedicated_host_window_usage: {
         prepaid_5h_usd: moneyToDbString(0),
         prepaid_7d_usd: moneyToDbString(0),
@@ -344,9 +315,6 @@ export async function getDedicatedHostPolicySnapshotLocal(
     has_usage_subscription,
     balance,
     postpaid_unbilled_exposure_usd,
-    postpaid_unbilled_limit_usd: moneyToDbString(
-      postpaid_unbilled_limit_usd ?? 0,
-    ),
     dedicated_host_window_usage,
     admin_override,
   };

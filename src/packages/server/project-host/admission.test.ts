@@ -22,7 +22,6 @@ function snapshot(overrides: Record<string, unknown> = {}) {
     has_usage_subscription: false,
     balance: "25",
     postpaid_unbilled_exposure_usd: "0",
-    postpaid_unbilled_limit_usd: "1000",
     dedicated_host_window_usage: {
       prepaid_5h_usd: "0",
       prepaid_7d_usd: "0",
@@ -218,29 +217,6 @@ describe("evaluateDedicatedHostAdmission", () => {
     ).toMatchObject({
       allowed: false,
       code: "prepaid_usage_window_exceeded",
-    });
-  });
-
-  it("denies postpaid-funded actions when the unbilled exposure limit is exhausted", () => {
-    expect(
-      evaluateDedicatedHostAdmission({
-        action: "start",
-        machine_cloud: "gcp",
-        snapshot: snapshot({
-          funding_mode: "account-postpaid",
-          effective_limits: {
-            credit_spend_limit_5h_usd: 300,
-            credit_spend_limit_7d_usd: 1000,
-          },
-          balance: "0",
-          has_usage_subscription: true,
-          postpaid_unbilled_exposure_usd: "1000",
-          postpaid_unbilled_limit_usd: "1000",
-        }) as any,
-      }),
-    ).toMatchObject({
-      allowed: false,
-      code: "postpaid_unbilled_limit_exceeded",
     });
   });
 

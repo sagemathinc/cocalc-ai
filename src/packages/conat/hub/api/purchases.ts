@@ -87,7 +87,6 @@ export interface DedicatedHostPolicyOverrides {
   funding_mode?: EnumOverride<
     "account-prepaid" | "account-postpaid" | "site-funded"
   >;
-  postpaid_unbilled_limit_usd?: NumericLimitRule;
 }
 
 export interface AccountEntitlementOverride {

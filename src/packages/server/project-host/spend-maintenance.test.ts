@@ -155,7 +155,6 @@ describe("dedicated host spend maintenance", () => {
       has_usage_subscription: false,
       balance: "0",
       postpaid_unbilled_exposure_usd: "0",
-      postpaid_unbilled_limit_usd: "1000",
       dedicated_host_window_usage: {
         prepaid_5h_usd: "300",
         prepaid_7d_usd: "400",
@@ -231,7 +230,6 @@ describe("dedicated host spend maintenance", () => {
       has_usage_subscription: false,
       balance: "0",
       postpaid_unbilled_exposure_usd: "0",
-      postpaid_unbilled_limit_usd: "0",
       dedicated_host_window_usage: {
         prepaid_5h_usd: "0",
         prepaid_7d_usd: "0",
@@ -321,7 +319,6 @@ describe("dedicated host spend maintenance", () => {
       has_usage_subscription: false,
       balance: "0",
       postpaid_unbilled_exposure_usd: "0",
-      postpaid_unbilled_limit_usd: "1000",
       dedicated_host_window_usage: {
         prepaid_5h_usd: "300",
         prepaid_7d_usd: "400",
@@ -363,7 +360,6 @@ describe("dedicated host spend maintenance", () => {
       has_usage_subscription: true,
       balance: "0",
       postpaid_unbilled_exposure_usd: "25",
-      postpaid_unbilled_limit_usd: "1000",
       dedicated_host_window_usage: {
         prepaid_5h_usd: "0",
         prepaid_7d_usd: "0",
@@ -636,7 +632,6 @@ describe("dedicated host spend maintenance", () => {
       has_usage_subscription: false,
       balance: "250",
       postpaid_unbilled_exposure_usd: "0",
-      postpaid_unbilled_limit_usd: "1000",
       dedicated_host_window_usage: {
         prepaid_5h_usd: "10",
         prepaid_7d_usd: "20",

@@ -131,14 +131,4 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
         "Prepaid dedicated-host spend limit over a rolling 7-day window.",
     },
   },
-  dedicated_hosts: {
-    postpaid_unbilled_limit_usd: {
-      label: "Postpaid host charges before billing",
-      unit: "USD",
-      adminDescription:
-        "Only applies to account-postpaid dedicated hosts. This caps host charges that have accumulated but have not yet been billed/closed into a statement. The default is the site setting project_hosts_postpaid_unbilled_limit_usd, which is $1000 unless changed. If this cap is reached, new or restarted postpaid host usage is denied even if the 5-hour and 7-day spend windows still have room.",
-      userDescription:
-        "Maximum postpaid dedicated-host charges that can accumulate before billing.",
-    },
-  },
 } as const;

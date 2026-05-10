@@ -586,7 +586,6 @@ export interface AccountLocalDedicatedHostPolicySnapshot {
   has_usage_subscription: boolean;
   balance: MoneyValue;
   postpaid_unbilled_exposure_usd: MoneyValue;
-  postpaid_unbilled_limit_usd: MoneyValue;
   dedicated_host_window_usage: {
     prepaid_5h_usd: MoneyValue;
     prepaid_7d_usd: MoneyValue;
