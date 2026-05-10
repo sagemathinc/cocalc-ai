@@ -54,6 +54,7 @@ import {
   shouldRefreshGitReviewStateOnReconnect,
   shouldCaptureGitDrawerFindShortcut,
   shouldApplyIncomingGitCommitSelectionRequest,
+  shouldFallbackToFirstVisibleGitCommit,
 } from "../git-commit-drawer";
 import { act, fireEvent, render } from "@testing-library/react";
 
@@ -607,6 +608,42 @@ describe("git commit drawer merge commit formatting", () => {
         open: true,
         incomingRequestToken: 2,
         appliedRequestToken: 2,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not let stale unreviewed filtering override an explicit commit-link request", () => {
+    expect(
+      shouldFallbackToFirstVisibleGitCommit({
+        open: true,
+        showOnlyUnreviewedCommits: true,
+        isHeadSelected: false,
+        commit: "abc1234",
+        incomingCommit: "abc1234",
+        commitIndex: -1,
+        visibleCommitCount: 5,
+      }),
+    ).toBe(false);
+    expect(
+      shouldFallbackToFirstVisibleGitCommit({
+        open: true,
+        showOnlyUnreviewedCommits: true,
+        isHeadSelected: false,
+        commit: "deadbeef",
+        incomingCommit: "abc1234",
+        commitIndex: -1,
+        visibleCommitCount: 5,
+      }),
+    ).toBe(true);
+    expect(
+      shouldFallbackToFirstVisibleGitCommit({
+        open: true,
+        showOnlyUnreviewedCommits: false,
+        isHeadSelected: false,
+        commit: "deadbeef",
+        incomingCommit: undefined,
+        commitIndex: -1,
+        visibleCommitCount: 5,
       }),
     ).toBe(false);
   });

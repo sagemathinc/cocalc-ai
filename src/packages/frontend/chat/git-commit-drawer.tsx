@@ -296,6 +296,42 @@ export function shouldApplyIncomingGitCommitSelectionRequest({
   return open && incomingRequestToken !== appliedRequestToken;
 }
 
+export function shouldFallbackToFirstVisibleGitCommit({
+  open,
+  showOnlyUnreviewedCommits,
+  isHeadSelected,
+  commit,
+  incomingCommit,
+  commitIndex,
+  visibleCommitCount,
+}: {
+  open: boolean;
+  showOnlyUnreviewedCommits: boolean;
+  isHeadSelected: boolean;
+  commit?: string;
+  incomingCommit?: string;
+  commitIndex: number;
+  visibleCommitCount: number;
+}): boolean {
+  if (
+    !open ||
+    !showOnlyUnreviewedCommits ||
+    isHeadSelected ||
+    commitIndex >= 0 ||
+    visibleCommitCount === 0
+  ) {
+    return false;
+  }
+  if (
+    commit &&
+    incomingCommit &&
+    commit.trim().toLowerCase() === incomingCommit.trim().toLowerCase()
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function applyGitReviewedByCommitEntries({
   previous,
   entries,
@@ -869,15 +905,26 @@ export function GitCommitDrawer({
   }, [open, commit, isHeadSelected, navigableGitLog, commitIndex]);
 
   useEffect(() => {
-    if (!open || !showOnlyUnreviewedCommits) return;
-    if (isHeadSelected) return;
-    if (commitIndex >= 0) return;
-    if (navigableGitLog.length === 0) return;
+    if (
+      !shouldFallbackToFirstVisibleGitCommit({
+        open,
+        showOnlyUnreviewedCommits,
+        isHeadSelected,
+        commit,
+        incomingCommit,
+        commitIndex,
+        visibleCommitCount: navigableGitLog.length,
+      })
+    ) {
+      return;
+    }
     setSelectedCommit(navigableGitLog[0].hash);
   }, [
     open,
     showOnlyUnreviewedCommits,
     isHeadSelected,
+    commit,
+    incomingCommit,
     commitIndex,
     navigableGitLog,
   ]);
