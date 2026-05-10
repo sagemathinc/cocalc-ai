@@ -271,25 +271,6 @@ function getUsageLimitsItems(
       value: humanSize(egress7d),
     });
   }
-  const egressPolicy = usageLimits.egress_policy;
-  if (typeof egressPolicy === "string" && egressPolicy.length > 0) {
-    items.push({
-      key: "egress_policy",
-      label: "Egress policy",
-      value: egressPolicy,
-    });
-  }
-  const dedicatedHostEgressPolicy = usageLimits.dedicated_host_egress_policy;
-  if (
-    typeof dedicatedHostEgressPolicy === "string" &&
-    dedicatedHostEgressPolicy.length > 0
-  ) {
-    items.push({
-      key: "dedicated_host_egress_policy",
-      label: "Dedicated host egress policy",
-      value: dedicatedHostEgressPolicy,
-    });
-  }
   return items;
 }
 

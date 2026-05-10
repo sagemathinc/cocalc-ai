@@ -32,6 +32,7 @@ import type {
 import { ErrorDisplay } from "@cocalc/frontend/components";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { actions } from "./actions";
+import { MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS } from "@cocalc/util/membership-entitlement-overrides";
 
 const { Text } = Typography;
 const BYTES_PER_GB = 1000 * 1000 * 1000;
@@ -48,6 +49,7 @@ interface NumericOverrideField {
   key: string;
   label: string;
   unit: string;
+  description: string;
   fromStored?: (value: number) => number;
   toStored?: (value: number) => number;
 }
@@ -57,43 +59,75 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
     id: "project_disk_quota",
     section: "project_defaults",
     key: "disk_quota",
-    label: "Per-project disk quota",
-    unit: "MB",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults.disk_quota
+        .label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults
+      .disk_quota.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults.disk_quota
+        .adminDescription,
   },
   {
     id: "project_memory",
     section: "project_defaults",
     key: "memory",
-    label: "Project RAM",
-    unit: "MB",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults.memory
+        .label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults.memory
+      .unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults.memory
+        .adminDescription,
   },
   {
     id: "project_memory_request",
     section: "project_defaults",
     key: "memory_request",
-    label: "Project requested RAM",
-    unit: "MB",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults
+        .memory_request.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults
+      .memory_request.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults
+        .memory_request.adminDescription,
   },
   {
     id: "ai_units_5h",
     section: "ai_limits",
     key: "units_5h",
-    label: "AI units, 5-hour window",
-    unit: "units",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.ai_limits.units_5h.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.ai_limits.units_5h.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.ai_limits.units_5h
+        .adminDescription,
   },
   {
     id: "ai_units_7d",
     section: "ai_limits",
     key: "units_7d",
-    label: "AI units, 7-day window",
-    unit: "units",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.ai_limits.units_7d.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.ai_limits.units_7d.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.ai_limits.units_7d
+        .adminDescription,
   },
   {
     id: "total_storage_soft",
     section: "usage_limits",
     key: "total_storage_soft_bytes",
-    label: "Total storage soft cap",
-    unit: "GB",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .total_storage_soft_bytes.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .total_storage_soft_bytes.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .total_storage_soft_bytes.adminDescription,
     fromStored: (value) => value / BYTES_PER_GB,
     toStored: (value) => Math.round(value * BYTES_PER_GB),
   },
@@ -101,8 +135,14 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
     id: "total_storage_hard",
     section: "usage_limits",
     key: "total_storage_hard_bytes",
-    label: "Total storage hard cap",
-    unit: "GB",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .total_storage_hard_bytes.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .total_storage_hard_bytes.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .total_storage_hard_bytes.adminDescription,
     fromStored: (value) => value / BYTES_PER_GB,
     toStored: (value) => Math.round(value * BYTES_PER_GB),
   },
@@ -110,29 +150,53 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
     id: "max_projects",
     section: "usage_limits",
     key: "max_projects",
-    label: "Owned projects",
-    unit: "projects",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.max_projects
+        .label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.max_projects
+      .unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.max_projects
+        .adminDescription,
   },
   {
     id: "max_snapshots_per_project",
     section: "usage_limits",
     key: "max_snapshots_per_project",
-    label: "Snapshots per project",
-    unit: "snapshots",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .max_snapshots_per_project.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .max_snapshots_per_project.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .max_snapshots_per_project.adminDescription,
   },
   {
     id: "max_backups_per_project",
     section: "usage_limits",
     key: "max_backups_per_project",
-    label: "Backups per project",
-    unit: "backups",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .max_backups_per_project.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .max_backups_per_project.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .max_backups_per_project.adminDescription,
   },
   {
     id: "egress_5h",
     section: "usage_limits",
     key: "egress_5h_bytes",
-    label: "Managed egress, 5-hour window",
-    unit: "GB",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.egress_5h_bytes
+        .label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .egress_5h_bytes.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.egress_5h_bytes
+        .adminDescription,
     fromStored: (value) => value / BYTES_PER_GB,
     toStored: (value) => Math.round(value * BYTES_PER_GB),
   },
@@ -140,8 +204,14 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
     id: "egress_7d",
     section: "usage_limits",
     key: "egress_7d_bytes",
-    label: "Managed egress, 7-day window",
-    unit: "GB",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.egress_7d_bytes
+        .label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .egress_7d_bytes.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.egress_7d_bytes
+        .adminDescription,
     fromStored: (value) => value / BYTES_PER_GB,
     toStored: (value) => Math.round(value * BYTES_PER_GB),
   },
@@ -149,36 +219,66 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
     id: "credit_spend_5h",
     section: "usage_limits",
     key: "credit_spend_limit_5h_usd",
-    label: "Postpay spend, 5-hour window",
-    unit: "USD",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .credit_spend_limit_5h_usd.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .credit_spend_limit_5h_usd.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .credit_spend_limit_5h_usd.adminDescription,
   },
   {
     id: "credit_spend_7d",
     section: "usage_limits",
     key: "credit_spend_limit_7d_usd",
-    label: "Postpay spend, 7-day window",
-    unit: "USD",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .credit_spend_limit_7d_usd.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .credit_spend_limit_7d_usd.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .credit_spend_limit_7d_usd.adminDescription,
   },
   {
     id: "prepaid_host_5h",
     section: "usage_limits",
     key: "prepaid_host_usage_limit_5h_usd",
-    label: "Prepay host spend, 5-hour window",
-    unit: "USD",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .prepaid_host_usage_limit_5h_usd.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .prepaid_host_usage_limit_5h_usd.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .prepaid_host_usage_limit_5h_usd.adminDescription,
   },
   {
     id: "prepaid_host_7d",
     section: "usage_limits",
     key: "prepaid_host_usage_limit_7d_usd",
-    label: "Prepay host spend, 7-day window",
-    unit: "USD",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .prepaid_host_usage_limit_7d_usd.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .prepaid_host_usage_limit_7d_usd.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .prepaid_host_usage_limit_7d_usd.adminDescription,
   },
   {
     id: "postpaid_unbilled",
     section: "dedicated_hosts",
     key: "postpaid_unbilled_limit_usd",
-    label: "Dedicated host postpay exposure",
-    unit: "USD",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.dedicated_hosts
+        .postpaid_unbilled_limit_usd.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.dedicated_hosts
+      .postpaid_unbilled_limit_usd.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.dedicated_hosts
+        .postpaid_unbilled_limit_usd.adminDescription,
   },
 ];
 
@@ -353,17 +453,7 @@ function describeOverride(override?: AccountEntitlementOverride): string[] {
   }
   if (override.dedicated_hosts?.funding_mode) {
     effects.push(
-      `Dedicated host funding mode: ${override.dedicated_hosts.funding_mode.value}`,
-    );
-  }
-  if (override.usage_limits?.egress_policy) {
-    effects.push(
-      `Shared-host egress policy: ${override.usage_limits.egress_policy.value}`,
-    );
-  }
-  if (override.usage_limits?.dedicated_host_egress_policy) {
-    effects.push(
-      `Dedicated-host egress policy: ${override.usage_limits.dedicated_host_egress_policy.value}`,
+      `Account host billing mode: ${override.dedicated_hosts.funding_mode.value}`,
     );
   }
   return effects;
@@ -399,10 +489,6 @@ function resetFormFields(
         : override.features.create_hosts
           ? "true"
           : "false",
-    funding_mode: override?.dedicated_hosts?.funding_mode?.value ?? "inherit",
-    egress_policy: override?.usage_limits?.egress_policy?.value ?? "inherit",
-    dedicated_host_egress_policy:
-      override?.usage_limits?.dedicated_host_egress_policy?.value ?? "inherit",
   };
   for (const field of NUMERIC_FIELDS) {
     applyRuleToFields(values, field, getNumericRule(override, field));
@@ -422,27 +508,6 @@ function buildOverride(values: Record<string, any>) {
   if (values.create_hosts !== "inherit") {
     override.features ??= {};
     override.features.create_hosts = values.create_hosts === "true";
-  }
-  if (values.funding_mode !== "inherit") {
-    override.dedicated_hosts ??= {};
-    override.dedicated_hosts.funding_mode = {
-      mode: "set",
-      value: values.funding_mode,
-    };
-  }
-  if (values.egress_policy !== "inherit") {
-    override.usage_limits ??= {};
-    override.usage_limits.egress_policy = {
-      mode: "set",
-      value: values.egress_policy,
-    };
-  }
-  if (values.dedicated_host_egress_policy !== "inherit") {
-    override.usage_limits ??= {};
-    override.usage_limits.dedicated_host_egress_policy = {
-      mode: "set",
-      value: values.dedicated_host_egress_policy,
-    };
   }
   return override;
 }
@@ -522,7 +587,16 @@ function NumericRuleEditor({
         alignItems: "center",
       }}
     >
-      <Text>{`${field.label} (${field.unit})`}</Text>
+      <Space size={4}>
+        <Text>{`${field.label} (${field.unit})`}</Text>
+        <Popover
+          content={<div style={{ maxWidth: 420 }}>{field.description}</div>}
+        >
+          <Button type="link" size="small">
+            ?
+          </Button>
+        </Popover>
+      </Space>
       <Text type="secondary">
         {formatCurrentValue(getCurrentEntitlementValue(details, field), field)}
       </Text>
@@ -561,11 +635,13 @@ function NumericRuleEditor({
 
 function SelectOverrideEditor({
   current,
+  description,
   label,
   name,
   options,
 }: {
   current: unknown;
+  description: string;
   label: string;
   name: string;
   options: { value: string; label: string }[];
@@ -579,7 +655,14 @@ function SelectOverrideEditor({
         alignItems: "center",
       }}
     >
-      <Text>{label}</Text>
+      <Space size={4}>
+        <Text>{label}</Text>
+        <Popover content={<div style={{ maxWidth: 420 }}>{description}</div>}>
+          <Button type="link" size="small">
+            ?
+          </Button>
+        </Popover>
+      </Space>
       <Text type="secondary">{formatCurrentValue(current)}</Text>
       <Form.Item name={name} noStyle>
         <Select options={options} />
@@ -771,9 +854,6 @@ export function AccountEntitlementOverridePanel({
               initialValues={{
                 enabled: true,
                 create_hosts: "inherit",
-                funding_mode: "inherit",
-                egress_policy: "inherit",
-                dedicated_host_egress_policy: "inherit",
               }}
             >
               <Form.Item label="Override status" name="enabled">
@@ -816,27 +896,6 @@ export function AccountEntitlementOverridePanel({
                     style={{ width: "100%" }}
                   >
                     <OverrideGridHeader />
-                    <SelectOverrideEditor
-                      label="Shared-host egress policy"
-                      current={
-                        details?.selected.effective_limits?.egress_policy ??
-                        details?.selected.entitlements.usage_limits
-                          ?.egress_policy
-                      }
-                      name="egress_policy"
-                      options={[
-                        { value: "inherit", label: "No override" },
-                        {
-                          value: "metered-shared-hosts",
-                          label: "Metered shared hosts",
-                        },
-                        {
-                          value: "all-shared-hosts",
-                          label: "All shared hosts",
-                        },
-                        { value: "disabled", label: "Disabled" },
-                      ]}
-                    />
                     {NUMERIC_FIELDS.filter((field) =>
                       STORAGE_EGRESS_FIELD_IDS.has(field.id),
                     ).map((field) => (
@@ -867,6 +926,7 @@ export function AccountEntitlementOverridePanel({
                     <OverrideGridHeader />
                     <SelectOverrideEditor
                       label="Dedicated host creation"
+                      description="Allows or blocks creating billable dedicated hosts for this account. Starting or creating hosts still also requires billing admission checks."
                       current={
                         details?.selected.entitlements.features?.create_hosts
                       }
@@ -875,36 +935,6 @@ export function AccountEntitlementOverridePanel({
                         { value: "inherit", label: "No override" },
                         { value: "true", label: "Allow" },
                         { value: "false", label: "Block" },
-                      ]}
-                    />
-                    <SelectOverrideEditor
-                      label="Dedicated host funding mode"
-                      current="Policy default"
-                      name="funding_mode"
-                      options={[
-                        { value: "inherit", label: "No override" },
-                        { value: "account-prepaid", label: "Account prepaid" },
-                        {
-                          value: "account-postpaid",
-                          label: "Account postpaid",
-                        },
-                        { value: "site-funded", label: "Site funded" },
-                      ]}
-                    />
-                    <SelectOverrideEditor
-                      label="Dedicated-host egress policy"
-                      current={
-                        details?.selected.effective_limits
-                          ?.dedicated_host_egress_policy ??
-                        details?.selected.entitlements.usage_limits
-                          ?.dedicated_host_egress_policy
-                      }
-                      name="dedicated_host_egress_policy"
-                      options={[
-                        { value: "inherit", label: "No override" },
-                        { value: "tier-capped", label: "Tier capped" },
-                        { value: "meter-and-bill", label: "Meter and bill" },
-                        { value: "disabled", label: "Disabled" },
                       ]}
                     />
                     {NUMERIC_FIELDS.filter((field) =>

@@ -18,6 +18,7 @@ import type {
   ProjectDefaultOverrides,
 } from "@cocalc/conat/hub/api/purchases";
 import { normalizeMembershipEffectiveLimits } from "./effective-limits";
+import { MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS } from "@cocalc/util/membership-entitlement-overrides";
 
 export type AccountEntitlementOverrideInput = Omit<
   Partial<AccountEntitlementOverride>,
@@ -85,96 +86,103 @@ const OVERRIDE_EFFECT_FIELDS = [
   {
     section: "project_defaults",
     key: "disk_quota",
-    label: "Per-project disk quota",
-    unit: "MB",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults.disk_quota,
   },
   {
     section: "project_defaults",
     key: "memory",
-    label: "Project RAM",
-    unit: "MB",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults.memory,
   },
   {
     section: "project_defaults",
     key: "memory_request",
-    label: "Project requested RAM",
-    unit: "MB",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.project_defaults
+      .memory_request,
   },
   {
     section: "ai_limits",
     key: "units_5h",
-    label: "AI units, 5-hour window",
-    unit: "units",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.ai_limits.units_5h,
   },
   {
     section: "ai_limits",
     key: "units_7d",
-    label: "AI units, 7-day window",
-    unit: "units",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.ai_limits.units_7d,
   },
   {
     section: "usage_limits",
     key: "total_storage_soft_bytes",
-    label: "Total storage soft cap",
-    unit: "GB",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .total_storage_soft_bytes,
     fromStored: (value: number) => value / 1_000_000_000,
   },
   {
     section: "usage_limits",
     key: "total_storage_hard_bytes",
-    label: "Total storage hard cap",
-    unit: "GB",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .total_storage_hard_bytes,
     fromStored: (value: number) => value / 1_000_000_000,
   },
   {
     section: "usage_limits",
     key: "max_projects",
-    label: "Owned projects",
-    unit: "projects",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.max_projects,
+  },
+  {
+    section: "usage_limits",
+    key: "max_snapshots_per_project",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .max_snapshots_per_project,
+  },
+  {
+    section: "usage_limits",
+    key: "max_backups_per_project",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .max_backups_per_project,
   },
   {
     section: "usage_limits",
     key: "egress_5h_bytes",
-    label: "Managed egress, 5-hour window",
-    unit: "GB",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .egress_5h_bytes,
     fromStored: (value: number) => value / 1_000_000_000,
   },
   {
     section: "usage_limits",
     key: "egress_7d_bytes",
-    label: "Managed egress, 7-day window",
-    unit: "GB",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .egress_7d_bytes,
     fromStored: (value: number) => value / 1_000_000_000,
   },
   {
     section: "usage_limits",
     key: "credit_spend_limit_5h_usd",
-    label: "Postpay spend, 5-hour window",
-    unit: "USD",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .credit_spend_limit_5h_usd,
   },
   {
     section: "usage_limits",
     key: "credit_spend_limit_7d_usd",
-    label: "Postpay spend, 7-day window",
-    unit: "USD",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .credit_spend_limit_7d_usd,
   },
   {
     section: "usage_limits",
     key: "prepaid_host_usage_limit_5h_usd",
-    label: "Prepay host spend, 5-hour window",
-    unit: "USD",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .prepaid_host_usage_limit_5h_usd,
   },
   {
     section: "usage_limits",
     key: "prepaid_host_usage_limit_7d_usd",
-    label: "Prepay host spend, 7-day window",
-    unit: "USD",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .prepaid_host_usage_limit_7d_usd,
   },
   {
     section: "dedicated_hosts",
     key: "postpaid_unbilled_limit_usd",
-    label: "Dedicated host postpay exposure",
-    unit: "USD",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.dedicated_hosts
+      .postpaid_unbilled_limit_usd,
   },
 ] as const satisfies readonly OverrideEffectField[];
 
@@ -618,17 +626,7 @@ export function describeAccountEntitlementOverride(
   }
   if (override.dedicated_hosts?.funding_mode) {
     effects.push(
-      `Dedicated host funding mode: ${override.dedicated_hosts.funding_mode.value}`,
-    );
-  }
-  if (override.usage_limits?.egress_policy) {
-    effects.push(
-      `Shared-host egress policy: ${override.usage_limits.egress_policy.value}`,
-    );
-  }
-  if (override.usage_limits?.dedicated_host_egress_policy) {
-    effects.push(
-      `Dedicated-host egress policy: ${override.usage_limits.dedicated_host_egress_policy.value}`,
+      `Account host billing mode: ${override.dedicated_hosts.funding_mode.value}`,
     );
   }
   return effects;
