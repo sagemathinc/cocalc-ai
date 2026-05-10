@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { ADMIN_SEARCH_LIMIT } from "@cocalc/util/db-schema/accounts";
+import { MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS } from "@cocalc/util/membership-entitlement-overrides";
 import { readFile } from "node:fs/promises";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
 
@@ -13,6 +14,238 @@ type AccountEntitlementOverrideInput = Omit<
   Partial<AccountEntitlementOverride>,
   "account_id" | "updated_by" | "updated_at"
 >;
+
+const NUMERIC_RULE_MODES = {
+  minimum:
+    "Use the override value only when it is higher than the membership value.",
+  maximum:
+    "Use the override value only when it is lower than the membership value.",
+  set: "Use the override value exactly, replacing the membership value.",
+} as const;
+
+const ENTITLEMENT_OVERRIDE_HELP = `
+Schema:
+  Run "cocalc admin entitlement-override schema" for the accepted JSON payload.
+
+Example:
+  cat > /tmp/override.json <<'JSON'
+  {
+    "enabled": true,
+    "project_defaults": {
+      "disk_quota": { "mode": "minimum", "value": 45000 }
+    },
+    "usage_limits": {
+      "credit_spend_limit_7d_usd": { "mode": "minimum", "value": 1000 }
+    }
+  }
+  JSON
+  cocalc admin entitlement-override set user@example.com --file /tmp/override.json --reason "temporary support increase" --expires-at 2026-05-17T00:00:00Z
+`;
+
+function fieldDoc({
+  path,
+  label,
+  unit,
+  description,
+}: {
+  path: string;
+  label: string;
+  unit?: string;
+  description?: string;
+}) {
+  return {
+    path,
+    kind: "numeric_rule",
+    label,
+    unit: unit ?? null,
+    description: description ?? null,
+  };
+}
+
+export function buildEntitlementOverrideSchemaDoc() {
+  const descriptions = MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS;
+  return {
+    purpose:
+      "One account can have at most one active admin entitlement override. Setting a new override replaces the previous one.",
+    set_command:
+      "cocalc admin entitlement-override set <user> --file override.json --reason <reason> [--expires-at <iso|none|never>]",
+    clear_command:
+      "cocalc admin entitlement-override clear <user> --reason <reason>",
+    root_fields: {
+      enabled:
+        "Optional boolean. Defaults to true. Set false only to store a disabled override record.",
+      expires_at:
+        "Optional ISO-8601 timestamp or null. The CLI --expires-at option can also set this.",
+      reason:
+        "Do not put this in the JSON file. Pass the audit reason via --reason.",
+    },
+    numeric_rule: {
+      shape: { mode: "minimum | maximum | set", value: "nonnegative number" },
+      modes: NUMERIC_RULE_MODES,
+    },
+    enum_rule: {
+      shape: { mode: "set", value: "one of the documented enum values" },
+    },
+    fields: [
+      {
+        path: "features.create_hosts",
+        kind: "boolean",
+        label: "Create dedicated hosts",
+        description:
+          "Whether this account is allowed to create dedicated project hosts.",
+      },
+      fieldDoc({
+        path: "project_defaults.disk_quota",
+        ...descriptions.project_defaults.disk_quota,
+        description: descriptions.project_defaults.disk_quota.adminDescription,
+      }),
+      fieldDoc({
+        path: "project_defaults.memory",
+        ...descriptions.project_defaults.memory,
+        description: descriptions.project_defaults.memory.adminDescription,
+      }),
+      fieldDoc({
+        path: "project_defaults.memory_request",
+        ...descriptions.project_defaults.memory_request,
+        description:
+          descriptions.project_defaults.memory_request.adminDescription,
+      }),
+      fieldDoc({
+        path: "ai_limits.units_5h",
+        ...descriptions.ai_limits.units_5h,
+        description: descriptions.ai_limits.units_5h.adminDescription,
+      }),
+      fieldDoc({
+        path: "ai_limits.units_7d",
+        ...descriptions.ai_limits.units_7d,
+        description: descriptions.ai_limits.units_7d.adminDescription,
+      }),
+      {
+        path: "usage_limits.shared_compute_priority",
+        kind: "numeric_rule",
+        label: "Shared compute priority",
+        unit: null,
+        description:
+          "Scheduler priority for non-dedicated shared compute projects.",
+      },
+      fieldDoc({
+        path: "usage_limits.total_storage_soft_bytes",
+        ...descriptions.usage_limits.total_storage_soft_bytes,
+        unit: "bytes",
+        description:
+          descriptions.usage_limits.total_storage_soft_bytes.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.total_storage_hard_bytes",
+        ...descriptions.usage_limits.total_storage_hard_bytes,
+        unit: "bytes",
+        description:
+          descriptions.usage_limits.total_storage_hard_bytes.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.max_projects",
+        ...descriptions.usage_limits.max_projects,
+        description: descriptions.usage_limits.max_projects.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.max_snapshots_per_project",
+        ...descriptions.usage_limits.max_snapshots_per_project,
+        description:
+          descriptions.usage_limits.max_snapshots_per_project.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.max_backups_per_project",
+        ...descriptions.usage_limits.max_backups_per_project,
+        description:
+          descriptions.usage_limits.max_backups_per_project.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.egress_5h_bytes",
+        ...descriptions.usage_limits.egress_5h_bytes,
+        unit: "bytes",
+        description: descriptions.usage_limits.egress_5h_bytes.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.egress_7d_bytes",
+        ...descriptions.usage_limits.egress_7d_bytes,
+        unit: "bytes",
+        description: descriptions.usage_limits.egress_7d_bytes.adminDescription,
+      }),
+      {
+        path: "usage_limits.egress_policy",
+        kind: "enum_rule",
+        label: "Shared-host egress policy",
+        values: ["metered-shared-hosts", "all-shared-hosts", "disabled"],
+        description:
+          "Advanced/internal policy switch for shared-host egress accounting.",
+      },
+      {
+        path: "usage_limits.dedicated_host_egress_policy",
+        kind: "enum_rule",
+        label: "Dedicated-host egress policy",
+        values: ["tier-capped", "meter-and-bill", "disabled"],
+        description:
+          "Advanced/internal policy switch for dedicated-host egress accounting.",
+      },
+      fieldDoc({
+        path: "usage_limits.credit_spend_limit_5h_usd",
+        ...descriptions.usage_limits.credit_spend_limit_5h_usd,
+        description:
+          descriptions.usage_limits.credit_spend_limit_5h_usd.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.credit_spend_limit_7d_usd",
+        ...descriptions.usage_limits.credit_spend_limit_7d_usd,
+        description:
+          descriptions.usage_limits.credit_spend_limit_7d_usd.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.prepaid_host_usage_limit_5h_usd",
+        ...descriptions.usage_limits.prepaid_host_usage_limit_5h_usd,
+        description:
+          descriptions.usage_limits.prepaid_host_usage_limit_5h_usd
+            .adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.prepaid_host_usage_limit_7d_usd",
+        ...descriptions.usage_limits.prepaid_host_usage_limit_7d_usd,
+        description:
+          descriptions.usage_limits.prepaid_host_usage_limit_7d_usd
+            .adminDescription,
+      }),
+      {
+        path: "dedicated_hosts.funding_mode",
+        kind: "enum_rule",
+        label: "Dedicated-host funding mode",
+        values: ["account-prepaid", "account-postpaid", "site-funded"],
+        description:
+          "Advanced/internal account-specific default/policy for dedicated-host funding mode.",
+      },
+    ],
+    examples: {
+      temporary_project_disk_increase: {
+        enabled: true,
+        project_defaults: {
+          disk_quota: { mode: "minimum", value: 45000 },
+        },
+      },
+      temporary_postpay_increase: {
+        enabled: true,
+        usage_limits: {
+          credit_spend_limit_5h_usd: { mode: "minimum", value: 500 },
+          credit_spend_limit_7d_usd: { mode: "minimum", value: 1250 },
+        },
+      },
+      abuse_throttle: {
+        enabled: true,
+        ai_limits: {
+          units_5h: { mode: "maximum", value: 100 },
+          units_7d: { mode: "maximum", value: 500 },
+        },
+      },
+    },
+  };
+}
 
 function pushString(value: string, values: string[]): string[] {
   values.push(value);
@@ -94,7 +327,8 @@ export function registerAdminCommand(
     .description("admin system message operations");
   const adminEntitlementOverride = admin
     .command("entitlement-override")
-    .description("admin account entitlement override operations");
+    .description("admin account entitlement override operations")
+    .addHelpText("after", ENTITLEMENT_OVERRIDE_HELP);
 
   async function resolveTargetAccountId(
     ctx: any,
@@ -292,6 +526,13 @@ export function registerAdminCommand(
     });
 
   adminEntitlementOverride
+    .command("schema")
+    .description("print the accepted entitlement override JSON schema")
+    .action(() => {
+      console.log(JSON.stringify(buildEntitlementOverrideSchemaDoc(), null, 2));
+    });
+
+  adminEntitlementOverride
     .command("get <user>")
     .description("get the active admin entitlement override for a user")
     .action(async (user: string, command: Command) => {
@@ -319,6 +560,12 @@ export function registerAdminCommand(
     .option(
       "--expires-at <iso>",
       "override expiration as ISO-8601, or none/null/never",
+    )
+    .addHelpText(
+      "after",
+      `
+Run "cocalc admin entitlement-override schema" for the accepted JSON payload.
+`,
     )
     .action(
       async (

@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 
 import { Command } from "commander";
 
-import { registerAdminCommand } from "./admin";
+import {
+  buildEntitlementOverrideSchemaDoc,
+  registerAdminCommand,
+} from "./admin";
 
 function adminDeps(overrides: Record<string, any> = {}) {
   return {
@@ -159,6 +162,46 @@ test("admin entitlement-override clear uses UUID targets without search", async 
     user_account_id: "11111111-1111-4111-8111-111111111111",
     reason: "cleanup",
   });
+});
+
+test("admin entitlement-override schema documents usable override payloads", async () => {
+  const schema = buildEntitlementOverrideSchemaDoc();
+
+  assert.match(JSON.stringify(schema), /project_defaults\.disk_quota/);
+  assert.match(
+    JSON.stringify(schema),
+    /usage_limits\.credit_spend_limit_7d_usd/,
+  );
+  assert.equal(
+    (schema as any).numeric_rule.modes.minimum,
+    "Use the override value only when it is higher than the membership value.",
+  );
+
+  let output = "";
+  const originalWrite = process.stdout.write;
+  (process.stdout.write as any) = (chunk: unknown) => {
+    output += String(chunk);
+    return true;
+  };
+  try {
+    const program = new Command();
+    registerAdminCommand(program, adminDeps() as any);
+    await program.parseAsync([
+      "node",
+      "test",
+      "admin",
+      "entitlement-override",
+      "schema",
+    ]);
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+
+  const parsed = JSON.parse(output);
+  assert.equal(
+    parsed.set_command,
+    "cocalc admin entitlement-override set <user> --file override.json --reason <reason> [--expires-at <iso|none|never>]",
+  );
 });
 
 test("admin message send-system-notice forwards the system notice payload", async () => {
