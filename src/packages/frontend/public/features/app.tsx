@@ -11,6 +11,7 @@ import {
   PublicCard,
   PublicGrid,
   PublicPage,
+  PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import { SITE_NAME } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
@@ -100,7 +101,7 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
     .map(({ page }) => page);
   return (
     <>
-      <PublicCard>
+      <PublicSection>
         <Paragraph style={{ margin: 0, maxWidth: "70ch" }}>
           Explore the core capabilities of {siteName}, from collaborative
           notebooks and terminals to AI-assisted workflows, teaching tools, and
@@ -128,9 +129,9 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
           </Button>
           <Button href={featurePath("compare")}>Compare CoCalc</Button>
         </Flex>
-      </PublicCard>
+      </PublicSection>
       <PublicGrid columns={2}>
-        <PublicCard>
+        <PublicSection>
           <Title level={4} style={{ margin: 0 }}>
             Integrated technical projects
           </Title>
@@ -138,8 +139,8 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
             Keep notebooks, Linux tools, documents, slides, and support in one
             place instead of spreading work across separate services.
           </Paragraph>
-        </PublicCard>
-        <PublicCard>
+        </PublicSection>
+        <PublicSection>
           <Title level={4} style={{ margin: 0 }}>
             Agent-native workflows
           </Title>
@@ -147,8 +148,8 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
             Use AI where the technical work is already happening, not only in a
             detached prompt interface.
           </Paragraph>
-        </PublicCard>
-        <PublicCard>
+        </PublicSection>
+        <PublicSection>
           <Title level={4} style={{ margin: 0 }}>
             Teaching and deployment flexibility
           </Title>
@@ -156,7 +157,7 @@ function FeaturesIndex({ siteName }: { siteName: string }) {
             Support classes, research groups, and engineering teams, whether you
             stay hosted or move to CoCalc Plus, Launchpad, or custom deployment.
           </Paragraph>
-        </PublicCard>
+        </PublicSection>
       </PublicGrid>
       <PublicGrid columns={2}>
         {pages.map((page) => (
@@ -184,14 +185,14 @@ function FeatureDetail({
   const page = getFeaturePage(slug);
   if (!page) {
     return (
-      <PublicCard>
+      <PublicSection>
         <Empty description="Feature page not found" />
         <div>
           <Button type="link" href={featurePath()} style={{ paddingInline: 0 }}>
             Back to features
           </Button>
         </div>
-      </PublicCard>
+      </PublicSection>
     );
   }
 
@@ -208,7 +209,7 @@ function FeatureDetail({
           Back to features
         </Button>
       </div>
-      <PublicCard>
+      <PublicSection>
         <FeatureImage alt={page.title} src={page.image} />
         <Title level={2} style={{ margin: 0 }}>
           {page.title}
@@ -234,9 +235,9 @@ function FeatureDetail({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
       {(page.sections ?? []).map((section) => (
-        <PublicCard key={section.title}>
+        <PublicSection key={section.title}>
           <Title level={3} style={{ margin: 0 }}>
             {section.title}
           </Title>
@@ -268,7 +269,7 @@ function FeatureDetail({
               ))}
             </Flex>
           ) : null}
-        </PublicCard>
+        </PublicSection>
       ))}
     </Flex>
   );

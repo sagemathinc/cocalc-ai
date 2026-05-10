@@ -11,16 +11,16 @@ import type { NewsItem } from "@cocalc/util/types/news";
 import { COLORS } from "@cocalc/util/theme";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
-  EmptyCard,
+  EmptySection,
   fetchJson,
   getSiteName,
   LinkButton,
-  LoadingCard,
+  LoadingSection,
   MUTED_STYLE,
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
-import { PublicCard, PublicGrid } from "../layout/shell";
+import { PublicCard, PublicGrid, PublicSection } from "../layout/shell";
 import { publicPath } from "../routes";
 import {
   getTeamMember,
@@ -169,12 +169,12 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
   const member = getTeamMember(slug);
 
   if (!member) {
-    return <EmptyCard label="This team profile was not found." />;
+    return <EmptySection label="This team profile was not found." />;
   }
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
-      <PublicCard>
+      <PublicSection>
         <div
           style={{
             display: "grid",
@@ -223,8 +223,8 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
             </Flex>
           </div>
         </div>
-      </PublicCard>
-      <PublicCard>
+      </PublicSection>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Background
         </Title>
@@ -233,25 +233,25 @@ function AboutTeamMemberPage({ slug }: { slug?: string }) {
             {paragraph}
           </Paragraph>
         ))}
-      </PublicCard>
-      <PublicCard>
+      </PublicSection>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Previous Experience
         </Title>
         <ExperienceList member={member} />
-      </PublicCard>
+      </PublicSection>
     </div>
   );
 }
 
 function EventList({ items }: { items: NewsItem[] }) {
   if (items.length === 0) {
-    return <EmptyCard label="No events found." />;
+    return <EmptySection label="No events found." />;
   }
   return (
     <PublicGrid columns={2}>
       {items.map((item) => (
-        <PublicCard key={`${item.id ?? item.title}-${item.date}`}>
+        <PublicSection key={`${item.id ?? item.title}-${item.date}`}>
           <div style={{ ...MUTED_STYLE, fontSize: "13px", fontWeight: 700 }}>
             {formatNewsDate(item.date)}
           </div>
@@ -273,7 +273,7 @@ function EventList({ items }: { items: NewsItem[] }) {
               <LinkButton href={item.url}>Event website</LinkButton>
             </div>
           ) : null}
-        </PublicCard>
+        </PublicSection>
       ))}
     </PublicGrid>
   );
@@ -298,7 +298,7 @@ function AboutEventsPage() {
   }, []);
 
   if (loading) {
-    return <LoadingCard label="Loading events…" />;
+    return <LoadingSection label="Loading events…" />;
   }
 
   return (

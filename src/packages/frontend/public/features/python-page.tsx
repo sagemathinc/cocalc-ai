@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -22,7 +22,7 @@ export default function PythonFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
@@ -57,11 +57,11 @@ export default function PythonFeaturePage({
             />
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Zero-setup Python for technical work
             </Title>
@@ -78,10 +78,10 @@ export default function PythonFeaturePage({
               the cost of everyone managing their own inconsistent local Python
               stack adds up quickly.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Broad scientific and data workflow support
             </Title>
@@ -97,11 +97,11 @@ export default function PythonFeaturePage({
               CoCalc is strongest when Python is part of a larger technical
               environment, not just an isolated interpreter.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -137,11 +137,11 @@ export default function PythonFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="Realtime collaborative Python notebook editing"
               src="/public/features/cocalc-real-time-jupyter.png"
@@ -159,10 +159,10 @@ export default function PythonFeaturePage({
               That is useful for data science teams, students and TAs, and
               anyone doing technical support or pair work.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="PythonTeX workflow inside CoCalc"
               src="/public/features/cocalc-latex-pythontex.png"
@@ -179,11 +179,11 @@ export default function PythonFeaturePage({
               This is one of the reasons a unified project environment matters:
               code, notebooks, and documents can evolve together.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Why people choose CoCalc for Python
         </Title>
@@ -202,7 +202,7 @@ export default function PythonFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </Flex>
   );
 }

@@ -8,14 +8,14 @@ import { useEffect } from "react";
 import { Button, Flex, Menu, Typography } from "antd";
 import { theme } from "antd";
 import {
-  EmptyCard,
+  EmptySection,
   getSiteName,
-  MarkdownCard,
+  MarkdownSection,
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
 import { publicPath } from "../routes";
-import { PublicCard, PublicGrid } from "../layout/shell";
+import { PublicCard, PublicGrid, PublicSection } from "../layout/shell";
 import {
   BuiltinPolicyPage,
   BUILTIN_POLICIES,
@@ -54,14 +54,14 @@ function PolicyGateCard({ config }: { config?: PublicConfig }) {
 
   if (!arePoliciesVisible(config)) {
     return (
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Public policy pages are disabled
         </Title>
         <Paragraph style={{ margin: 0 }}>
           This deployment is not exposing a public policy section.
         </Paragraph>
-      </PublicCard>
+      </PublicSection>
     );
   }
 
@@ -70,7 +70,7 @@ function PolicyGateCard({ config }: { config?: PublicConfig }) {
   }
 
   return (
-    <PublicCard>
+    <PublicSection>
       <Title level={3} style={{ margin: 0 }}>
         Public policy information
       </Title>
@@ -88,7 +88,7 @@ function PolicyGateCard({ config }: { config?: PublicConfig }) {
           Open policy page
         </Button>
       </div>
-    </PublicCard>
+    </PublicSection>
   );
 }
 
@@ -150,10 +150,10 @@ function PoliciesDetailPage({
   }
   if (!markdown) {
     return (
-      <EmptyCard label={`No ${title.toLowerCase()} content configured.`} />
+      <EmptySection label={`No ${title.toLowerCase()} content configured.`} />
     );
   }
-  return <MarkdownCard value={markdown} />;
+  return <MarkdownSection value={markdown} />;
 }
 
 function PolicySubNav({ slug }: { slug?: string }) {
@@ -186,15 +186,15 @@ function PolicySubNav({ slug }: { slug?: string }) {
 
 function BuiltinPolicyPageShell({ slug }: { slug?: string }) {
   if (getBuiltinPolicy(slug) == null) {
-    return <EmptyCard label="This policy page was not found." />;
+    return <EmptySection label="This policy page was not found." />;
   }
 
   return (
     <div style={{ display: "grid" }}>
       <PolicySubNav slug={slug} />
-      <PublicCard>
+      <PublicSection>
         <BuiltinPolicyPage slug={slug} />
-      </PublicCard>
+      </PublicSection>
     </div>
   );
 }

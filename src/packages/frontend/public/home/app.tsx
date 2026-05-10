@@ -18,6 +18,7 @@ import {
   PublicCard,
   PublicPage,
   PublicGrid,
+  PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import { slugURL } from "@cocalc/util/news";
@@ -231,7 +232,7 @@ function HeroDetails({
   return (
     <Row gutter={[24, 24]}>
       <Col xs={24} xl={15}>
-        <PublicCard>
+        <PublicSection>
           <FeatureImage
             alt={`${siteName} workspace screenshot`}
             src={
@@ -239,11 +240,11 @@ function HeroDetails({
               "/public/cocalc-screenshot-20200128-nq8.png"
             }
           />
-        </PublicCard>
+        </PublicSection>
       </Col>
       <Col xs={24} xl={9}>
         <Flex vertical gap={16}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Why teams choose {siteName}
             </Title>
@@ -252,8 +253,8 @@ function HeroDetails({
               workflow together: files, shell, documents, teaching, support, and
               increasingly agent-first coding workflows in the same environment.
             </Paragraph>
-          </PublicCard>
-          <PublicCard>
+          </PublicSection>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               {config?.is_authenticated ? "Go straight to work" : "Start fast"}
             </Title>
@@ -279,8 +280,8 @@ function HeroDetails({
                 </>
               )}
             </Flex>
-          </PublicCard>
-          <PublicCard>
+          </PublicSection>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Learn more
             </Title>
@@ -295,7 +296,7 @@ function HeroDetails({
                 Compare
               </LinkButton>
             </Flex>
-          </PublicCard>
+          </PublicSection>
         </Flex>
       </Col>
     </Row>
@@ -305,7 +306,7 @@ function HeroDetails({
 function AgentSection() {
   return (
     <section>
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} xl={13}>
             <Flex vertical gap={12}>
@@ -345,7 +346,7 @@ function AgentSection() {
             />
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
     </section>
   );
 }
@@ -359,12 +360,12 @@ function HighlightSection({ siteName }: { siteName: string }) {
       </Title>
       <PublicGrid columns={2}>
         {highlights.map((item) => (
-          <PublicCard key={item.title}>
+          <PublicSection key={item.title}>
             <Title level={3} style={{ margin: 0 }}>
               {item.title}
             </Title>
             <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
-          </PublicCard>
+          </PublicSection>
         ))}
       </PublicGrid>
     </section>
@@ -499,7 +500,7 @@ function NewsSection({ initialNews }: { initialNews?: NewsItem[] }) {
       </Flex>
       <PublicGrid columns={3}>
         {news.map((item) => (
-          <PublicCard key={`${item.id}`}>
+          <PublicSection key={`${item.id}`}>
             <Flex wrap gap={8}>
               <Tag color="blue">{item.channel}</Tag>
               <Text type="secondary">{formatNewsDate(item.date)}</Text>
@@ -519,7 +520,7 @@ function NewsSection({ initialNews }: { initialNews?: NewsItem[] }) {
                 Read more
               </Button>
             </div>
-          </PublicCard>
+          </PublicSection>
         ))}
       </PublicGrid>
     </section>
@@ -535,7 +536,7 @@ function BottomCallout({
 }) {
   return (
     <section>
-      <PublicCard>
+      <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
           {config?.organization_name
             ? `Hosted by ${config.organization_name}`
@@ -578,7 +579,7 @@ function BottomCallout({
             </>
           )}
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </section>
   );
 }

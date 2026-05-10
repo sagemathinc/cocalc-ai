@@ -129,17 +129,7 @@ export function PublicHero({
   title,
 }: PublicHeroProps) {
   return (
-    <Card
-      variant="outlined"
-      styles={{
-        body: {
-          display: "grid",
-          gap: 14,
-          boxShadow: "0 20px 40px rgba(0, 0, 0, 0.08)",
-          padding: 28,
-        },
-      }}
-    >
+    <PublicSection>
       {eyebrow ? <Text strong>{eyebrow}</Text> : null}
       <Title level={1} style={{ margin: 0 }}>
         {title}
@@ -150,13 +140,37 @@ export function PublicHero({
         </Paragraph>
       ) : null}
       {actions}
-    </Card>
+    </PublicSection>
+  );
+}
+
+interface PublicSectionProps {
+  children: ReactNode;
+  intro?: ReactNode;
+  title?: ReactNode;
+}
+
+export function PublicSection({ children, intro, title }: PublicSectionProps) {
+  return (
+    <section style={{ minWidth: 0 }}>
+      <Flex vertical gap="small">
+        {title != null ? (
+          <Title level={2} style={{ margin: 0 }}>
+            {title}
+          </Title>
+        ) : null}
+        {intro != null ? (
+          <Paragraph style={{ margin: 0, maxWidth: "70ch" }}>{intro}</Paragraph>
+        ) : null}
+        {children}
+      </Flex>
+    </section>
   );
 }
 
 interface PublicCardProps {
   children: ReactNode;
-  href?: string;
+  href: string;
   rel?: string;
   target?: HTMLAnchorElement["target"];
   title?: ReactNode;
@@ -169,21 +183,6 @@ export function PublicCard({
   target,
   title,
 }: PublicCardProps) {
-  const card = (
-    <Card
-      hoverable={href != null}
-      style={href != null ? { height: "100%" } : undefined}
-      title={title}
-      variant="outlined"
-    >
-      {children}
-    </Card>
-  );
-
-  if (href == null) {
-    return card;
-  }
-
   return (
     <a
       href={href}
@@ -196,7 +195,14 @@ export function PublicCard({
       }}
       target={target}
     >
-      {card}
+      <Card
+        hoverable
+        style={{ height: "100%" }}
+        title={title}
+        variant="outlined"
+      >
+        {children}
+      </Card>
     </a>
   );
 }

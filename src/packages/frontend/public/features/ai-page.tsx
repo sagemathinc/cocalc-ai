@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -19,7 +19,7 @@ const { Paragraph, Title } = Typography;
 export default function AIFeaturePage({ helpEmail }: { helpEmail?: string }) {
   return (
     <Flex vertical gap={18}>
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
@@ -55,11 +55,11 @@ export default function AIFeaturePage({ helpEmail }: { helpEmail?: string }) {
             />
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Code, explain, and fix in context
             </Title>
@@ -76,10 +76,10 @@ export default function AIFeaturePage({ helpEmail }: { helpEmail?: string }) {
               the file, notebook, terminal, and chat history, it can help with
               the actual task instead of only offering disconnected suggestions.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Use AI across the workspace
             </Title>
@@ -96,11 +96,11 @@ export default function AIFeaturePage({ helpEmail }: { helpEmail?: string }) {
               workflow instead of a separate app that loses the surrounding
               context every time.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -137,11 +137,11 @@ export default function AIFeaturePage({ helpEmail }: { helpEmail?: string }) {
             </Flex>
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="AI generating and running code"
               src="/public/features/chatgpt-generate-code-run.png"
@@ -160,10 +160,10 @@ export default function AIFeaturePage({ helpEmail }: { helpEmail?: string }) {
               project, or simply turning a vague technical request into
               something concrete.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="AI helping generate LaTeX formulas"
               src="/public/features/ai-latex-generate.png"
@@ -181,11 +181,11 @@ export default function AIFeaturePage({ helpEmail }: { helpEmail?: string }) {
               code, documents, and conversation rather than staying inside one
               narrow interface.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Deployment flexibility matters
         </Title>
@@ -211,7 +211,7 @@ export default function AIFeaturePage({ helpEmail }: { helpEmail?: string }) {
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </Flex>
   );
 }

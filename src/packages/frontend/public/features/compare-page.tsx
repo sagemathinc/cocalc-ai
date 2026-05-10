@@ -5,7 +5,7 @@
 
 import { Alert, Button, Col, Flex, Row, Table, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { BulletList, LinkButton, featureAppPath } from "./page-components";
 
 const { Paragraph, Text, Title } = Typography;
@@ -103,7 +103,7 @@ export default function CompareFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicCard>
+      <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
           Compare CoCalc by workflow, not by one checkbox
         </Title>
@@ -133,14 +133,14 @@ export default function CompareFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
       <Alert
         type="warning"
         showIcon
         title="These comparisons are intentionally high level."
         description="Products evolve quickly, and many competitors are excellent at the workflow they target. The point here is to clarify where CoCalc's integrated model is a better fit."
       />
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           AI agents now change the comparison
         </Title>
@@ -172,10 +172,10 @@ export default function CompareFeaturePage({
             Patchflow
           </LinkButton>
         </Flex>
-      </PublicCard>
+      </PublicSection>
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Pick CoCalc if you want
             </Title>
@@ -188,10 +188,10 @@ export default function CompareFeaturePage({
                 "Hosted and self-hosted deployment options that still feel like the same product.",
               ]}
             />
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Another tool may fit better if you mainly want
             </Title>
@@ -203,17 +203,17 @@ export default function CompareFeaturePage({
                 "An IDE-first app-building workflow where notebooks and teaching are secondary.",
               ]}
             />
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           How CoCalc compares by category
         </Title>
         <Row gutter={[16, 16]}>
           {COMPARISON_GROUPS.map((group) => (
             <Col key={group.key} xs={24} md={12}>
-              <PublicCard>
+              <PublicSection>
                 <Title level={4} style={{ margin: 0 }}>
                   {group.title}
                 </Title>
@@ -225,12 +225,12 @@ export default function CompareFeaturePage({
                   <Text strong>Why people still choose CoCalc: </Text>
                   {group.cocalc}
                 </Paragraph>
-              </PublicCard>
+              </PublicSection>
             </Col>
           ))}
         </Row>
-      </PublicCard>
-      <PublicCard>
+      </PublicSection>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Questions technical teams usually care about
         </Title>
@@ -261,8 +261,8 @@ export default function CompareFeaturePage({
           rowKey="key"
           size="middle"
         />
-      </PublicCard>
-      <PublicCard>
+      </PublicSection>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Best fit
         </Title>
@@ -273,8 +273,8 @@ export default function CompareFeaturePage({
             "Organizations that may start hosted and later want CoCalc Plus, Launchpad, or a custom deployment without changing the user model.",
           ]}
         />
-      </PublicCard>
-      <PublicCard>
+      </PublicSection>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Related feature pages
         </Title>
@@ -298,7 +298,7 @@ export default function CompareFeaturePage({
             Patchflow
           </LinkButton>
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </Flex>
   );
 }

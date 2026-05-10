@@ -2,7 +2,7 @@
 
 import { render, screen } from "@testing-library/react";
 
-import { PublicCard, PublicGrid, PublicPage } from "./shell";
+import { PublicCard, PublicGrid, PublicPage, PublicSection } from "./shell";
 
 describe("PublicPage", () => {
   it("renders the shared page title when provided", () => {
@@ -25,14 +25,16 @@ describe("PublicPage", () => {
   });
 });
 
-describe("PublicCard", () => {
+describe("PublicSection", () => {
   it("renders a standard title when provided", () => {
-    render(<PublicCard title="Overview Card">Body</PublicCard>);
+    render(<PublicSection title="Overview Card">Body</PublicSection>);
 
     expect(screen.getByText("Overview Card")).not.toBeNull();
     expect(screen.getByText("Body")).not.toBeNull();
   });
+});
 
+describe("PublicCard", () => {
   it("renders as a link when href is provided", () => {
     render(
       <PublicCard href="/products/cocalc-plus" title="CoCalc Plus">

@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -23,7 +23,7 @@ export default function JupyterNotebookFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
@@ -62,11 +62,11 @@ export default function JupyterNotebookFeaturePage({
             />
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Jupyter notebooks made for teaching
             </Title>
@@ -98,10 +98,10 @@ export default function JupyterNotebookFeaturePage({
               that the same environment can be used to distribute assignments,
               collect submissions, collaborate with TAs, and grade at scale.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Start instantly in the browser, or run CoCalc Plus locally
             </Title>
@@ -125,11 +125,11 @@ export default function JupyterNotebookFeaturePage({
                 Learn about CoCalc Plus
               </LinkButton>
             </div>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -170,9 +170,9 @@ export default function JupyterNotebookFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -215,11 +215,11 @@ export default function JupyterNotebookFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="TimeTravel slider in a Jupyter notebook"
               src="/public/features/cocalc-jupyter2-20170508.png"
@@ -240,10 +240,10 @@ export default function JupyterNotebookFeaturePage({
             <LinkButton href="https://doc.cocalc.com/time-travel.html">
               Learn about TimeTravel
             </LinkButton>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="Creating an nbgrader-enhanced Jupyter notebook"
               src="/public/features/cocalc-jupyter-nbgrader-overview.png"
@@ -264,13 +264,13 @@ export default function JupyterNotebookFeaturePage({
             <LinkButton href="https://doc.cocalc.com/teaching-nbgrader.html">
               nbgrader in CoCalc
             </LinkButton>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="Preinstalled Jupyter kernels"
               src="/public/features/cocalc-jupyter-kernels.png"
@@ -294,10 +294,10 @@ export default function JupyterNotebookFeaturePage({
             <LinkButton href={appPath("features/linux")}>
               Linux workflow
             </LinkButton>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="Chatting about a Jupyter notebook"
               src="/public/features/cocalc-chat-jupyter-20171120-2.png"
@@ -319,11 +319,11 @@ export default function JupyterNotebookFeaturePage({
             <LinkButton href="https://doc.cocalc.com/chat.html">
               Chat documentation
             </LinkButton>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -362,11 +362,11 @@ export default function JupyterNotebookFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="Notebook CPU and memory indicators"
               src="/public/features/cocalc-jupyter2-memory-cpu.png"
@@ -383,10 +383,10 @@ export default function JupyterNotebookFeaturePage({
               back later without losing notebook output, which is essential when
               the computation matters more than the browser tab.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="Shared Jupyter notebook hosted publicly"
               src="/public/features/cocalc-jupyter-share-nasa.png"
@@ -404,11 +404,11 @@ export default function JupyterNotebookFeaturePage({
               readers to run a whole notebook server just to view results.
             </Paragraph>
             <LinkButton href={appPath("share")}>Sharing overview</LinkButton>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Why teams choose CoCalc for Jupyter
         </Title>
@@ -429,7 +429,7 @@ export default function JupyterNotebookFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </Flex>
   );
 }

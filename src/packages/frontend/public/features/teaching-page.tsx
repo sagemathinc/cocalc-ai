@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -23,7 +23,7 @@ export default function TeachingFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
@@ -58,11 +58,11 @@ export default function TeachingFeaturePage({
             />
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               An entire computer lab in the cloud
             </Title>
@@ -78,10 +78,10 @@ export default function TeachingFeaturePage({
               This changes office hours and lab support dramatically because the
               student and instructor are looking at the same live environment.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               No software setup on student machines
             </Title>
@@ -97,11 +97,11 @@ export default function TeachingFeaturePage({
               courses: it eliminates the slowest and most frustrating part of
               getting started.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -136,11 +136,11 @@ export default function TeachingFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="nbgrader workflow in CoCalc"
               src="/public/features/cocalc-jupyter-nbgrader-overview.png"
@@ -160,10 +160,10 @@ export default function TeachingFeaturePage({
             <LinkButton href="https://doc.cocalc.com/teaching-nbgrader.html">
               nbgrader documentation
             </LinkButton>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Help students in context
             </Title>
@@ -177,11 +177,11 @@ export default function TeachingFeaturePage({
               labs, and understanding whether a student is stuck because of the
               math, the code, or the environment.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Built for technical courses, not just generic LMS uploads
         </Title>
@@ -201,7 +201,7 @@ export default function TeachingFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </Flex>
   );
 }

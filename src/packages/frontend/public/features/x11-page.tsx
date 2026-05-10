@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -19,7 +19,7 @@ const { Paragraph, Title } = Typography;
 export default function X11FeaturePage({ helpEmail }: { helpEmail?: string }) {
   return (
     <Flex vertical gap={18}>
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
@@ -52,11 +52,11 @@ export default function X11FeaturePage({ helpEmail }: { helpEmail?: string }) {
             />
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Why X11 matters
             </Title>
@@ -72,10 +72,10 @@ export default function X11FeaturePage({ helpEmail }: { helpEmail?: string }) {
               This is not the primary interface for most tasks, but it is
               extremely useful when a graphical app is the right tool.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="Grid of X11 applications available on CoCalc"
               src="/public/features/x11-applications.png"
@@ -88,11 +88,11 @@ export default function X11FeaturePage({ helpEmail }: { helpEmail?: string }) {
               the rest of CoCalc, including IDEs, office tools, mathematical
               software, and testing workflows.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -128,11 +128,11 @@ export default function X11FeaturePage({ helpEmail }: { helpEmail?: string }) {
             </Flex>
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="Swirl running inside an X11 desktop"
               src="/public/features/swirl-course.png"
@@ -149,10 +149,10 @@ export default function X11FeaturePage({ helpEmail }: { helpEmail?: string }) {
               That makes X11 a valuable complement to notebook and terminal
               teaching workflows.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               How X11 fits into CoCalc
             </Title>
@@ -165,11 +165,11 @@ export default function X11FeaturePage({ helpEmail }: { helpEmail?: string }) {
               That is why it is more useful here than as a standalone remote
               desktop product.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Why use X11 on CoCalc
         </Title>
@@ -188,7 +188,7 @@ export default function X11FeaturePage({ helpEmail }: { helpEmail?: string }) {
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </Flex>
   );
 }
