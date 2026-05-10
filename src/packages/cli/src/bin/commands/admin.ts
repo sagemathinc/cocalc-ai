@@ -1,12 +1,18 @@
 import { Command } from "commander";
 import { ADMIN_SEARCH_LIMIT } from "@cocalc/util/db-schema/accounts";
 import { readFile } from "node:fs/promises";
+import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
 
 export type AdminCommandDeps = {
   withContext: any;
   resolveAccountByIdentifier: any;
   isValidUUID: any;
 };
+
+type AccountEntitlementOverrideInput = Omit<
+  Partial<AccountEntitlementOverride>,
+  "account_id" | "updated_by" | "updated_at"
+>;
 
 function pushString(value: string, values: string[]): string[] {
   values.push(value);
@@ -31,6 +37,50 @@ async function resolveBodyMarkdown(opts: {
   throw new Error("one of --body-markdown or --body-file is required");
 }
 
+function parseOverrideJson(raw: string): AccountEntitlementOverrideInput {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`invalid override JSON: ${err}`);
+  }
+  if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("override JSON must be an object");
+  }
+  return parsed as AccountEntitlementOverrideInput;
+}
+
+async function readOverrideFile(
+  path: string,
+): Promise<AccountEntitlementOverrideInput> {
+  const filename = `${path ?? ""}`.trim();
+  if (!filename) {
+    throw new Error("--file is required");
+  }
+  return parseOverrideJson(await readFile(filename, "utf8"));
+}
+
+function parseExpiresAtOption(value: string | undefined): string | null | void {
+  const trimmed = `${value ?? ""}`.trim();
+  if (!trimmed) return;
+  if (/^(none|null|never)$/i.test(trimmed)) {
+    return null;
+  }
+  const date = new Date(trimmed);
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error("--expires-at must be ISO-8601, none, null, or never");
+  }
+  return date.toISOString();
+}
+
+function requireReason(value: string | undefined): string {
+  const reason = `${value ?? ""}`.trim();
+  if (!reason) {
+    throw new Error("--reason is required");
+  }
+  return reason;
+}
+
 export function registerAdminCommand(
   program: Command,
   deps: AdminCommandDeps,
@@ -42,6 +92,27 @@ export function registerAdminCommand(
   const adminMessage = admin
     .command("message")
     .description("admin system message operations");
+  const adminEntitlementOverride = admin
+    .command("entitlement-override")
+    .description("admin account entitlement override operations");
+
+  async function resolveTargetAccountId(
+    ctx: any,
+    user: string,
+  ): Promise<string> {
+    const identifier = `${user ?? ""}`.trim();
+    if (!identifier) {
+      throw new Error("user identifier must be non-empty");
+    }
+    const resolved = isValidUUID(identifier)
+      ? { account_id: identifier }
+      : await resolveAccountByIdentifier(ctx, identifier);
+    const userAccountId = `${resolved?.account_id ?? ""}`.trim();
+    if (!userAccountId) {
+      throw new Error(`unable to resolve account for '${identifier}'`);
+    }
+    return userAccountId;
+  }
 
   admin
     .command("search <query>")
@@ -219,6 +290,89 @@ export function registerAdminCommand(
         };
       });
     });
+
+  adminEntitlementOverride
+    .command("get <user>")
+    .description("get the active admin entitlement override for a user")
+    .action(async (user: string, command: Command) => {
+      await withContext(
+        command,
+        "admin entitlement-override get",
+        async (ctx) => {
+          const userAccountId = await resolveTargetAccountId(ctx, user);
+          const override = await ctx.hub.system.getAccountEntitlementOverride({
+            user_account_id: userAccountId,
+          });
+          return {
+            account_id: userAccountId,
+            override: override ?? null,
+          };
+        },
+      );
+    });
+
+  adminEntitlementOverride
+    .command("set <user>")
+    .description("set or replace the admin entitlement override for a user")
+    .requiredOption("--file <path>", "JSON file containing the override object")
+    .requiredOption("--reason <reason>", "required audit reason")
+    .option(
+      "--expires-at <iso>",
+      "override expiration as ISO-8601, or none/null/never",
+    )
+    .action(
+      async (
+        user: string,
+        opts: { file: string; reason: string; expiresAt?: string },
+        command: Command,
+      ) => {
+        await withContext(
+          command,
+          "admin entitlement-override set",
+          async (ctx) => {
+            const userAccountId = await resolveTargetAccountId(ctx, user);
+            const override = await readOverrideFile(opts.file);
+            const expiresAt = parseExpiresAtOption(opts.expiresAt);
+            if (expiresAt !== undefined) {
+              override.expires_at = expiresAt;
+            }
+            const saved = await ctx.hub.system.setAccountEntitlementOverride({
+              user_account_id: userAccountId,
+              override,
+              reason: requireReason(opts.reason),
+            });
+            return {
+              account_id: userAccountId,
+              override: saved,
+            };
+          },
+        );
+      },
+    );
+
+  adminEntitlementOverride
+    .command("clear <user>")
+    .description("clear the admin entitlement override for a user")
+    .requiredOption("--reason <reason>", "required audit reason")
+    .action(
+      async (user: string, opts: { reason: string }, command: Command) => {
+        await withContext(
+          command,
+          "admin entitlement-override clear",
+          async (ctx) => {
+            const userAccountId = await resolveTargetAccountId(ctx, user);
+            await ctx.hub.system.clearAccountEntitlementOverride({
+              user_account_id: userAccountId,
+              reason: requireReason(opts.reason),
+            });
+            return {
+              account_id: userAccountId,
+              cleared: true,
+            };
+          },
+        );
+      },
+    );
 
   adminMessage
     .command("send-system-notice")
