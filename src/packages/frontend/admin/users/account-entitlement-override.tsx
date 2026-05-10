@@ -24,6 +24,7 @@ import {
 import dayjs from "dayjs";
 import type {
   AccountEntitlementOverride,
+  MembershipDetails,
   NumericLimitRule,
   NumericLimitRuleMode,
 } from "@cocalc/conat/hub/api/purchases";
@@ -233,6 +234,53 @@ function parseRule(values: Record<string, any>, field: NumericOverrideField) {
   };
 }
 
+function getCurrentEntitlementValue(
+  details: MembershipDetails | null | undefined,
+  field: NumericOverrideField,
+): unknown {
+  const selected = details?.selected;
+  if (!selected) return undefined;
+  if (field.section === "usage_limits") {
+    return (
+      selected.effective_limits?.[
+        field.key as keyof NonNullable<typeof selected.effective_limits>
+      ] ??
+      selected.entitlements.usage_limits?.[
+        field.key as keyof NonNullable<
+          typeof selected.entitlements.usage_limits
+        >
+      ]
+    );
+  }
+  if (field.section === "project_defaults") {
+    return selected.entitlements.project_defaults?.[field.key];
+  }
+  if (field.section === "ai_limits") {
+    return selected.entitlements.ai_limits?.[field.key];
+  }
+  return undefined;
+}
+
+function formatCurrentValue(
+  value: unknown,
+  field?: Pick<NumericOverrideField, "fromStored" | "unit">,
+): string {
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const display = field?.fromStored ? field.fromStored(value) : value;
+    const formatted = Number.isInteger(display)
+      ? `${display}`
+      : display.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    return field?.unit ? `${formatted} ${field.unit}` : formatted;
+  }
+  return "Not configured";
+}
+
 function resetFormFields(
   form: FormInstance,
   override?: AccountEntitlementOverride,
@@ -323,9 +371,46 @@ function OverrideHelp() {
   );
 }
 
-function NumericRuleEditor({ field }: { field: NumericOverrideField }) {
+const GRID_COLUMNS =
+  "minmax(180px, 0.8fr) minmax(170px, 0.7fr) minmax(340px, 1.5fr)";
+
+function OverrideGridHeader() {
   return (
-    <Form.Item label={`${field.label} (${field.unit})`}>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: GRID_COLUMNS,
+        gap: 12,
+        alignItems: "center",
+      }}
+    >
+      <Text strong>Setting</Text>
+      <Text strong>Current effective entitlement</Text>
+      <Text strong>Override</Text>
+    </div>
+  );
+}
+
+function NumericRuleEditor({
+  details,
+  field,
+}: {
+  details: MembershipDetails | null | undefined;
+  field: NumericOverrideField;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: GRID_COLUMNS,
+        gap: 12,
+        alignItems: "center",
+      }}
+    >
+      <Text>{`${field.label} (${field.unit})`}</Text>
+      <Text type="secondary">
+        {formatCurrentValue(getCurrentEntitlementValue(details, field), field)}
+      </Text>
       <Space.Compact style={{ width: "100%" }}>
         <Form.Item name={`${field.id}_mode`} noStyle>
           <Select style={{ width: 150 }} options={MODE_OPTIONS} />
@@ -338,14 +423,47 @@ function NumericRuleEditor({ field }: { field: NumericOverrideField }) {
           />
         </Form.Item>
       </Space.Compact>
-    </Form.Item>
+    </div>
+  );
+}
+
+function SelectOverrideEditor({
+  current,
+  label,
+  name,
+  options,
+}: {
+  current: unknown;
+  label: string;
+  name: string;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: GRID_COLUMNS,
+        gap: 12,
+        alignItems: "center",
+      }}
+    >
+      <Text>{label}</Text>
+      <Text type="secondary">{formatCurrentValue(current)}</Text>
+      <Form.Item name={name} noStyle>
+        <Select options={options} />
+      </Form.Item>
+    </div>
   );
 }
 
 export function AccountEntitlementOverridePanel({
   account_id,
+  details,
+  onChanged,
 }: {
   account_id: string;
+  details?: MembershipDetails | null;
+  onChanged?: () => Promise<void> | void;
 }) {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(true);
@@ -391,6 +509,7 @@ export function AccountEntitlementOverridePanel({
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("cocalc:membership-changed"));
       }
+      await onChanged?.();
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -416,6 +535,7 @@ export function AccountEntitlementOverridePanel({
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("cocalc:membership-changed"));
       }
+      await onChanged?.();
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -500,20 +620,28 @@ export function AccountEntitlementOverridePanel({
               </Form.Item>
 
               <Divider style={{ margin: "12px 0" }} />
-              <Form.Item label="Dedicated host creation" name="create_hosts">
-                <Select
+              <Space
+                direction="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
+                <OverrideGridHeader />
+                <SelectOverrideEditor
+                  label="Dedicated host creation"
+                  current={
+                    details?.selected.entitlements.features?.create_hosts
+                  }
+                  name="create_hosts"
                   options={[
                     { value: "inherit", label: "No override" },
                     { value: "true", label: "Allow" },
                     { value: "false", label: "Block" },
                   ]}
                 />
-              </Form.Item>
-              <Form.Item
-                label="Dedicated host funding mode"
-                name="funding_mode"
-              >
-                <Select
+                <SelectOverrideEditor
+                  label="Dedicated host funding mode"
+                  current="Policy default"
+                  name="funding_mode"
                   options={[
                     { value: "inherit", label: "No override" },
                     { value: "account-prepaid", label: "Account prepaid" },
@@ -521,9 +649,13 @@ export function AccountEntitlementOverridePanel({
                     { value: "site-funded", label: "Site funded" },
                   ]}
                 />
-              </Form.Item>
-              <Form.Item label="Shared-host egress policy" name="egress_policy">
-                <Select
+                <SelectOverrideEditor
+                  label="Shared-host egress policy"
+                  current={
+                    details?.selected.effective_limits?.egress_policy ??
+                    details?.selected.entitlements.usage_limits?.egress_policy
+                  }
+                  name="egress_policy"
                   options={[
                     { value: "inherit", label: "No override" },
                     {
@@ -534,12 +666,15 @@ export function AccountEntitlementOverridePanel({
                     { value: "disabled", label: "Disabled" },
                   ]}
                 />
-              </Form.Item>
-              <Form.Item
-                label="Dedicated-host egress policy"
-                name="dedicated_host_egress_policy"
-              >
-                <Select
+                <SelectOverrideEditor
+                  label="Dedicated-host egress policy"
+                  current={
+                    details?.selected.effective_limits
+                      ?.dedicated_host_egress_policy ??
+                    details?.selected.entitlements.usage_limits
+                      ?.dedicated_host_egress_policy
+                  }
+                  name="dedicated_host_egress_policy"
                   options={[
                     { value: "inherit", label: "No override" },
                     { value: "tier-capped", label: "Tier capped" },
@@ -547,12 +682,14 @@ export function AccountEntitlementOverridePanel({
                     { value: "disabled", label: "Disabled" },
                   ]}
                 />
-              </Form.Item>
-
-              <Divider style={{ margin: "12px 0" }} />
-              {NUMERIC_FIELDS.map((field) => (
-                <NumericRuleEditor key={field.id} field={field} />
-              ))}
+                {NUMERIC_FIELDS.map((field) => (
+                  <NumericRuleEditor
+                    key={field.id}
+                    details={details}
+                    field={field}
+                  />
+                ))}
+              </Space>
             </Form>
             <Space>
               <Button type="primary" onClick={save} loading={saving}>

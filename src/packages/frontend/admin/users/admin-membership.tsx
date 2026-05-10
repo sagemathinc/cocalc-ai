@@ -422,7 +422,11 @@ export function AdminMembership({ account_id }: { account_id: string }) {
             </Space>
           </div>
           <Divider style={{ margin: "16px 0" }} />
-          <AccountEntitlementOverridePanel account_id={account_id} />
+          <AccountEntitlementOverridePanel
+            account_id={account_id}
+            details={details}
+            onChanged={refresh}
+          />
           <Divider style={{ margin: "16px 0" }} />
           <div>
             <Text strong>Usage summary</Text>

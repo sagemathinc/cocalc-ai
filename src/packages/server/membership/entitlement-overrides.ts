@@ -354,7 +354,7 @@ export async function setAccountEntitlementOverrideLocal({
     updated_by: actor_account_id,
     updated_at,
   })!;
-  const pool = getPool("medium");
+  const pool = getPool();
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -435,7 +435,7 @@ export async function clearAccountEntitlementOverrideLocal({
   reason: string;
 }): Promise<void> {
   const finalReason = requireOverrideReason(reason);
-  const pool = getPool("medium");
+  const pool = getPool();
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
