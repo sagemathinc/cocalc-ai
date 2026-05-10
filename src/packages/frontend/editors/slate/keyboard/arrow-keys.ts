@@ -61,6 +61,47 @@ function clearEscapableEditorMarks(editor: SlateEditor): void {
   }
 }
 
+function parentChildren(
+  editor: SlateEditor,
+  path: Path,
+): unknown[] | undefined {
+  const parent = Editor.parent(editor, path)[0] as {
+    children?: unknown[];
+  };
+  return parent.children;
+}
+
+function escapeEmptyPlainTextAfterMarkedText(
+  editor: SlateEditor,
+  text: Text,
+): boolean {
+  const { selection } = editor;
+  const focus = selection?.focus;
+  if (
+    focus == null ||
+    text.text.length != 0 ||
+    focus.offset != 0 ||
+    textHasEscapableMarks(text)
+  ) {
+    return false;
+  }
+
+  const siblings = parentChildren(editor, focus.path);
+  const siblingIndex = focus.path[focus.path.length - 1];
+  const previousSibling = siblings?.[siblingIndex - 1];
+  if (
+    !Text.isText(previousSibling) ||
+    !textHasEscapableMarks(previousSibling)
+  ) {
+    return false;
+  }
+
+  clearEscapableEditorMarks(editor);
+  Transforms.insertText(editor, " ", { at: focus });
+  Transforms.select(editor, { path: focus.path, offset: 1 });
+  return true;
+}
+
 export function escapeMarkedTextBoundaryOnArrowRight(
   editor: SlateEditor,
 ): boolean {
@@ -75,6 +116,10 @@ export function escapeMarkedTextBoundaryOnArrowRight(
     return false;
   }
 
+  if (Text.isText(text) && escapeEmptyPlainTextAfterMarkedText(editor, text)) {
+    return true;
+  }
+
   if (
     !Text.isText(text) ||
     text.text.length == 0 ||
@@ -84,11 +129,9 @@ export function escapeMarkedTextBoundaryOnArrowRight(
     return false;
   }
 
-  const parent = Editor.parent(editor, focus.path)[0] as {
-    children?: unknown[];
-  };
+  const siblings = parentChildren(editor, focus.path);
   const siblingIndex = focus.path[focus.path.length - 1];
-  const nextSibling = parent.children?.[siblingIndex + 1];
+  const nextSibling = siblings?.[siblingIndex + 1];
   const nextPath = Path.next(focus.path);
 
   if (Text.isText(nextSibling) && !textHasEscapableMarks(nextSibling)) {

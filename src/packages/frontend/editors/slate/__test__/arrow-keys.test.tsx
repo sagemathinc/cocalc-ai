@@ -9,6 +9,8 @@ import { createEditor, Descendant, Editor, Transforms } from "slate";
 
 import type { SlateEditor } from "../types";
 import { escapeMarkedTextBoundaryOnArrowRight } from "../keyboard/arrow-keys";
+import { withAutoFormat } from "../format";
+import { withReact } from "../slate-react";
 
 function createSlateEditor(value: Descendant[]): SlateEditor {
   const editor = createEditor() as unknown as SlateEditor;
@@ -109,6 +111,41 @@ describe("ArrowRight mark boundary escape", () => {
     expect(editor.selection?.focus).toEqual({ path: [0, 1], offset: 1 });
   });
 
+  it("escapes from an empty plain leaf immediately after marked text", () => {
+    const editor = createSlateEditor([
+      {
+        type: "paragraph",
+        children: [{ text: "2+2", code: true }, { text: "" }],
+      },
+    ]);
+
+    Transforms.select(editor, { path: [0, 1], offset: 0 });
+
+    expect(escapeMarkedTextBoundaryOnArrowRight(editor)).toBe(true);
+    expect(editor.children[0]?.["children"]).toEqual([
+      { text: "2+2", code: true },
+      { text: " " },
+    ]);
+    expect(editor.selection?.focus).toEqual({ path: [0, 1], offset: 1 });
+  });
+
+  it("does not rewrite empty plain leaves after unmarked text", () => {
+    const editor = createSlateEditor([
+      {
+        type: "paragraph",
+        children: [{ text: "plain" }, { text: "" }],
+      },
+    ]);
+
+    Transforms.select(editor, { path: [0, 1], offset: 0 });
+
+    expect(escapeMarkedTextBoundaryOnArrowRight(editor)).toBe(false);
+    expect(editor.children[0]?.["children"]).toEqual([
+      { text: "plain" },
+      { text: "" },
+    ]);
+  });
+
   it("does not handle unmarked text or non-boundary selections", () => {
     const editor = createSlateEditor([
       {
@@ -122,5 +159,28 @@ describe("ArrowRight mark boundary escape", () => {
 
     Transforms.select(editor, { path: [0, 1], offset: 2 });
     expect(escapeMarkedTextBoundaryOnArrowRight(editor)).toBe(false);
+  });
+
+  it("escapes after autoformatting inline code then deleting the trailing space", () => {
+    const editor = withAutoFormat(withReact(createEditor()));
+    editor.children = [
+      {
+        type: "paragraph",
+        children: [{ text: "`2+2`" }],
+      },
+    ];
+    editor.selection = null;
+
+    Transforms.select(editor, { path: [0, 0], offset: "`2+2`".length });
+    editor.insertText(" ", true);
+    editor.deleteBackward();
+
+    expect(Editor.string(editor, [0])).toBe("2+2");
+    expect(escapeMarkedTextBoundaryOnArrowRight(editor as any)).toBe(true);
+    expect(editor.children[0]?.["children"]).toEqual([
+      { text: "2+2", code: true },
+      { text: " " },
+    ]);
+    expect(editor.selection?.focus).toEqual({ path: [0, 1], offset: 1 });
   });
 });
