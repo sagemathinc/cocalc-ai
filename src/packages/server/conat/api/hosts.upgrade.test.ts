@@ -395,6 +395,142 @@ describe("hosts.reconcileHostSoftwareInternal", () => {
     );
   });
 
+  it("does not fail bootstrap reconcile on stale drift before the new reconcile reports", async () => {
+    const ssh = makeSshChild();
+    spawnMock = jest.fn(() => ssh.child);
+
+    let pollCount = 0;
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              status: "running",
+              metadata: {
+                owner: ACCOUNT_ID,
+                runtime: {
+                  instance_id: "host-instance",
+                  public_ip: "34.11.143.149",
+                  ssh_user: "ubuntu",
+                },
+                machine: { cloud: "gcp" },
+                bootstrap: {
+                  status: "done",
+                  updated_at: "2026-05-10T15:00:00Z",
+                  message: "Host software reconciled",
+                },
+                bootstrap_lifecycle: {
+                  summary_status: "in_sync",
+                  last_reconcile_finished_at: "2026-05-10T15:00:00Z",
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT status, deleted, metadata FROM project_hosts")) {
+        pollCount += 1;
+        if (pollCount === 1) {
+          return {
+            rows: [
+              {
+                status: "running",
+                deleted: null,
+                metadata: {
+                  bootstrap: {
+                    status: "done",
+                    updated_at: "2026-05-10T15:00:00Z",
+                    message: "Host software reconciled",
+                  },
+                  bootstrap_lifecycle: {
+                    summary_status: "in_sync",
+                    last_reconcile_finished_at: "2026-05-10T15:00:00Z",
+                  },
+                },
+              },
+            ],
+          };
+        }
+        if (pollCount === 2) {
+          return {
+            rows: [
+              {
+                status: "running",
+                deleted: null,
+                metadata: {
+                  bootstrap: {
+                    status: "done",
+                    updated_at: "2026-05-10T15:00:00Z",
+                    message: "Host software reconciled",
+                  },
+                  bootstrap_lifecycle: {
+                    summary_status: "drifted",
+                    summary_message: "1 drift item detected",
+                    last_reconcile_finished_at: "2026-05-10T15:00:00Z",
+                  },
+                },
+              },
+            ],
+          };
+        }
+        if (pollCount === 3) {
+          return {
+            rows: [
+              {
+                status: "running",
+                deleted: null,
+                metadata: {
+                  bootstrap: {
+                    status: "done",
+                    updated_at: "2026-05-10T15:00:00Z",
+                    message: "Host software reconciled",
+                  },
+                  bootstrap_lifecycle: {
+                    summary_status: "reconciling",
+                    current_operation: "reconcile",
+                    last_reconcile_started_at: "2026-05-10T15:01:00Z",
+                  },
+                },
+              },
+            ],
+          };
+        }
+        return {
+          rows: [
+            {
+              status: "running",
+              deleted: null,
+              metadata: {
+                bootstrap: {
+                  status: "done",
+                  updated_at: "2026-05-10T15:02:00Z",
+                  message: "Host software reconciled",
+                },
+                bootstrap_lifecycle: {
+                  summary_status: "in_sync",
+                  last_reconcile_started_at: "2026-05-10T15:01:00Z",
+                  last_reconcile_finished_at: "2026-05-10T15:02:00Z",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { reconcileHostSoftwareInternal } = await import("./hosts");
+    await expect(
+      reconcileHostSoftwareInternal({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(delayMock).toHaveBeenCalled();
+  });
+
   it("ignores a stale bootstrap error once lifecycle evidence is newer", async () => {
     const ssh = makeSshChild();
     spawnMock = jest.fn(() => ssh.child);

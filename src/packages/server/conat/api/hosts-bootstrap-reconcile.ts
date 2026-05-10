@@ -205,17 +205,71 @@ function hostBootstrapActivityChanged(
   );
 }
 
-function hostBootstrapReconcileSucceeded(
-  state: HostBootstrapReconcileState,
+function timestampIsAfter(value?: string, baseline?: string): boolean {
+  const ms = parseBootstrapTimestampMs(value);
+  if (ms == null) return false;
+  const baselineMs = parseBootstrapTimestampMs(baseline);
+  return baselineMs == null || ms > baselineMs;
+}
+
+function hostBootstrapReconcileObservedAfterBaseline(
+  baseline: HostBootstrapReconcileState,
+  current: HostBootstrapReconcileState,
 ): boolean {
-  if (state.lifecycle_summary_status === "in_sync") {
+  if (
+    current.lifecycle_current_operation === "reconcile" &&
+    baseline.lifecycle_current_operation !== "reconcile"
+  ) {
     return true;
   }
-  return state.bootstrap_status === "done";
+  if (
+    timestampIsAfter(
+      current.lifecycle_last_reconcile_started_at,
+      baseline.lifecycle_last_reconcile_started_at,
+    ) ||
+    timestampIsAfter(
+      current.lifecycle_last_reconcile_finished_at,
+      baseline.lifecycle_last_reconcile_finished_at,
+    )
+  ) {
+    return true;
+  }
+  if (
+    current.bootstrap_status !== baseline.bootstrap_status ||
+    current.bootstrap_message !== baseline.bootstrap_message ||
+    timestampIsAfter(
+      current.bootstrap_updated_at,
+      baseline.bootstrap_updated_at,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function hostBootstrapReconcileSucceeded(
+  state: HostBootstrapReconcileState,
+  baseline?: HostBootstrapReconcileState,
+): boolean {
+  if (state.lifecycle_summary_status === "in_sync") {
+    return baseline
+      ? hostBootstrapReconcileObservedAfterBaseline(baseline, state)
+      : true;
+  }
+  if (state.lifecycle_summary_status) {
+    return false;
+  }
+  if (state.bootstrap_status !== "done") {
+    return false;
+  }
+  return baseline
+    ? hostBootstrapReconcileObservedAfterBaseline(baseline, state)
+    : true;
 }
 
 function hostBootstrapReconcileFailure(
   state: HostBootstrapReconcileState,
+  baseline?: HostBootstrapReconcileState,
 ): string | undefined {
   if (state.bootstrap_status === "error" && !bootstrapErrorIsStale(state)) {
     return (
@@ -225,6 +279,12 @@ function hostBootstrapReconcileFailure(
     );
   }
   if (state.lifecycle_summary_status === "error") {
+    if (
+      baseline &&
+      !hostBootstrapReconcileObservedAfterBaseline(baseline, state)
+    ) {
+      return undefined;
+    }
     return (
       state.lifecycle_last_error ??
       state.lifecycle_summary_message ??
@@ -236,6 +296,15 @@ function hostBootstrapReconcileFailure(
     state.bootstrap_status === "done" &&
     state.lifecycle_current_operation !== "reconcile"
   ) {
+    if (
+      baseline &&
+      !timestampIsAfter(
+        state.lifecycle_last_reconcile_finished_at,
+        baseline.lifecycle_last_reconcile_finished_at,
+      )
+    ) {
+      return undefined;
+    }
     return (
       state.lifecycle_summary_message ??
       state.lifecycle_last_error ??
@@ -262,13 +331,15 @@ async function waitForHostBootstrapReconcile({
     if (state.deleted) {
       throw new Error("host deleted during bootstrap reconcile");
     }
-    sawActivity ||= hostBootstrapActivityChanged(baseline, state);
+    sawActivity ||=
+      hostBootstrapActivityChanged(baseline, state) &&
+      hostBootstrapReconcileObservedAfterBaseline(baseline, state);
     if (sawActivity) {
-      const failure = hostBootstrapReconcileFailure(state);
+      const failure = hostBootstrapReconcileFailure(state, baseline);
       if (failure) {
         throw new Error(failure);
       }
-      if (hostBootstrapReconcileSucceeded(state)) {
+      if (hostBootstrapReconcileSucceeded(state, baseline)) {
         return;
       }
     }
