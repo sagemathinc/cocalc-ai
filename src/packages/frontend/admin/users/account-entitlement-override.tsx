@@ -523,18 +523,7 @@ function NumericRuleEditor({
                     placeholder={field.unit}
                   />
                 </Form.Item>
-              ) : (
-                <Text
-                  type="secondary"
-                  style={{
-                    alignItems: "center",
-                    display: "inline-flex",
-                    paddingLeft: 12,
-                  }}
-                >
-                  Select a mode to enter a value
-                </Text>
-              )}
+              ) : null}
             </Space.Compact>
           );
         }}
