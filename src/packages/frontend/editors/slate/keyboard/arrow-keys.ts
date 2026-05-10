@@ -61,6 +61,54 @@ function clearEscapableEditorMarks(editor: SlateEditor): void {
   }
 }
 
+function rememberSelection(editor: SlateEditor): void {
+  if (editor.selection == null) return;
+  editor.lastSelection = editor.selection;
+  editor.curSelection = editor.selection;
+}
+
+function syncDomSelection(editor: SlateEditor): void {
+  if (typeof window === "undefined" || editor.selection == null) return;
+  try {
+    ReactEditor.focus(editor);
+  } catch {
+    return;
+  }
+  const sync = () => {
+    if (editor.selection == null) return;
+    const selection = window.getSelection?.();
+    if (selection == null) return;
+    try {
+      const range = ReactEditor.toDOMRange(editor, editor.selection);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } catch {
+      // The newly inserted text may not be in the DOM until React commits.
+    }
+  };
+  sync();
+  window.requestAnimationFrame?.(sync);
+}
+
+function selectAndSync(
+  editor: SlateEditor,
+  point: {
+    path: Path;
+    offset: number;
+  },
+): void {
+  Transforms.select(editor, { anchor: point, focus: point });
+  rememberSelection(editor);
+  syncDomSelection(editor);
+}
+
+function insertPlainSpaceAtSelection(editor: SlateEditor): void {
+  clearEscapableEditorMarks(editor);
+  editor.insertText(" ");
+  rememberSelection(editor);
+  syncDomSelection(editor);
+}
+
 function parentChildren(
   editor: SlateEditor,
   path: Path,
@@ -96,9 +144,7 @@ function escapeEmptyPlainTextAfterMarkedText(
     return false;
   }
 
-  clearEscapableEditorMarks(editor);
-  Transforms.insertText(editor, " ", { at: focus });
-  Transforms.select(editor, { path: focus.path, offset: 1 });
+  insertPlainSpaceAtSelection(editor);
   return true;
 }
 
@@ -136,16 +182,14 @@ export function escapeMarkedTextBoundaryOnArrowRight(
 
   if (Text.isText(nextSibling) && !textHasEscapableMarks(nextSibling)) {
     clearEscapableEditorMarks(editor);
-    Transforms.select(editor, {
+    selectAndSync(editor, {
       path: nextPath,
       offset: /^\s/.test(nextSibling.text) ? 1 : 0,
     });
     return true;
   }
 
-  clearEscapableEditorMarks(editor);
-  Transforms.insertNodes(editor, { text: " " }, { at: nextPath });
-  Transforms.select(editor, { path: nextPath, offset: 1 });
+  insertPlainSpaceAtSelection(editor);
   return true;
 }
 

@@ -661,6 +661,40 @@ test("autoformat code span keeps focus in empty editor (production autoformat)",
   expect(focused).toBe(true);
 });
 
+test("ArrowRight escapes inline code after deleting autoformat trailing space", async ({
+  page,
+}) => {
+  await page.goto("/?autoformat=1");
+  await waitForHarness(page);
+
+  const editor = page.locator("[data-slate-editor]");
+  await editor.click();
+  await page.keyboard.type("`2+2` ");
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "2+2 ";
+  });
+
+  await page.keyboard.press("Backspace");
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "2+2";
+  });
+
+  await page.keyboard.press("ArrowRight");
+
+  await page.waitForFunction(() => {
+    return window.__slateTest?.getText?.() === "2+2 ";
+  });
+
+  const selection = (await page.evaluate(() =>
+    window.__slateTest?.getSelection(),
+  )) as SlateSelection;
+  expect(selection).not.toBeNull();
+  if (selection) {
+    expect(selection.focus.path).toEqual([0, 1]);
+    expect(selection.focus.offset).toBe(1);
+  }
+});
+
 test("autoformat list focuses first item in empty editor", async ({ page }) => {
   await page.goto("/?autoformat=1");
   await waitForHarness(page);
