@@ -1,6 +1,11 @@
-import { getFocusMessageButtonStyle } from "../message";
+import { COLORS } from "@cocalc/util/theme";
+import {
+  getFocusMessageButtonStyle,
+  SELECTABLE_MARKDOWN_STYLE,
+} from "../message";
 import {
   resolveMessageBodyMode,
+  shouldAutoSelectMessageBody,
   shouldUseCodexSelectToolbar,
 } from "../message-state";
 
@@ -31,6 +36,7 @@ describe("message action layout", () => {
       resolveMessageBodyMode({
         isEditing: false,
         selectMode: true,
+        autoSelectMode: false,
         useCodexSelectToolbar: true,
       }),
     ).toBe("select");
@@ -38,6 +44,7 @@ describe("message action layout", () => {
       resolveMessageBodyMode({
         isEditing: true,
         selectMode: true,
+        autoSelectMode: true,
         useCodexSelectToolbar: true,
       }),
     ).toBe("edit");
@@ -45,8 +52,96 @@ describe("message action layout", () => {
       resolveMessageBodyMode({
         isEditing: false,
         selectMode: true,
+        autoSelectMode: false,
         useCodexSelectToolbar: false,
       }),
     ).toBe("static");
+    expect(
+      resolveMessageBodyMode({
+        isEditing: false,
+        selectMode: false,
+        autoSelectMode: true,
+        useCodexSelectToolbar: true,
+      }),
+    ).toBe("select");
+  });
+
+  it("auto-selects only the latest non-editing Codex message body", () => {
+    expect(
+      shouldAutoSelectMessageBody({
+        useCodexSelectToolbar: true,
+        isLastMessageInThread: true,
+        isEditing: false,
+        showHistory: false,
+        isViewersMessage: false,
+        effectiveGenerating: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldAutoSelectMessageBody({
+        useCodexSelectToolbar: false,
+        isLastMessageInThread: true,
+        isEditing: false,
+        showHistory: false,
+        isViewersMessage: false,
+        effectiveGenerating: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoSelectMessageBody({
+        useCodexSelectToolbar: true,
+        isLastMessageInThread: false,
+        isEditing: false,
+        showHistory: false,
+        isViewersMessage: false,
+        effectiveGenerating: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoSelectMessageBody({
+        useCodexSelectToolbar: true,
+        isLastMessageInThread: true,
+        isEditing: true,
+        showHistory: false,
+        isViewersMessage: false,
+        effectiveGenerating: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoSelectMessageBody({
+        useCodexSelectToolbar: true,
+        isLastMessageInThread: true,
+        isEditing: false,
+        showHistory: true,
+        isViewersMessage: false,
+        effectiveGenerating: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoSelectMessageBody({
+        useCodexSelectToolbar: true,
+        isLastMessageInThread: true,
+        isEditing: false,
+        showHistory: false,
+        isViewersMessage: true,
+        effectiveGenerating: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoSelectMessageBody({
+        useCodexSelectToolbar: true,
+        isLastMessageInThread: true,
+        isEditing: false,
+        showHistory: false,
+        isViewersMessage: false,
+        effectiveGenerating: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps selectable markdown links visually link-colored", () => {
+    expect(SELECTABLE_MARKDOWN_STYLE["--cocalc-slate-link"]).toBe(
+      COLORS.ANTD_LINK_BLUE,
+    );
   });
 });

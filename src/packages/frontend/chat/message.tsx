@@ -123,6 +123,7 @@ import {
   shouldLoadCodexPreviewBody,
   shouldShowCodexShowActivityButton,
   shouldShowQueuedMessageEditedVersionSent,
+  shouldAutoSelectMessageBody,
   shouldSuppressAcpPlaceholderBody,
   shouldUseCodexSelectToolbar,
   trimCompletedCachedCodexActivityBlocks,
@@ -134,6 +135,9 @@ const EDIT_MARKDOWN_MIN_HEIGHT = 120;
 const BLANK_COLUMN = (xs) => <Col key={"blankcolumn"} xs={xs}></Col>;
 
 const MARKDOWN_STYLE = undefined;
+export const SELECTABLE_MARKDOWN_STYLE: CSSProperties = {
+  ["--cocalc-slate-link" as string]: COLORS.ANTD_LINK_BLUE,
+};
 
 const BORDER = "2px solid #ccc";
 
@@ -953,14 +957,23 @@ export default function Message({
     show_history ||
     isEditing ||
     selectMode;
+  const autoSelectMode = shouldAutoSelectMessageBody({
+    useCodexSelectToolbar,
+    isLastMessageInThread,
+    isEditing,
+    showHistory: show_history,
+    isViewersMessage: is_viewers_message,
+    effectiveGenerating,
+  });
   const messageBodyMode = useMemo(
     () =>
       resolveMessageBodyMode({
         isEditing,
         selectMode,
+        autoSelectMode,
         useCodexSelectToolbar,
       }),
-    [isEditing, selectMode, useCodexSelectToolbar],
+    [autoSelectMode, isEditing, selectMode, useCodexSelectToolbar],
   );
 
   useLayoutEffect(() => {
@@ -1737,6 +1750,7 @@ export default function Message({
           height="auto"
           autoMinHeight={0}
           style={{
+            ...SELECTABLE_MARKDOWN_STYLE,
             backgroundColor: "transparent",
             minHeight: 0,
             ...style,
