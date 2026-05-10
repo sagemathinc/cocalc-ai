@@ -13,6 +13,7 @@ let reconcileDedicatedHostPurchaseSessionForAccountMock: jest.Mock;
 let closeDedicatedHostPurchaseSessionForAccountMock: jest.Mock;
 let isDedicatedHostLaneCurrentlyAllowedMock: jest.Mock;
 let createLroMock: jest.Mock;
+let notifyDedicatedHostBillingEnforcementBestEffortMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -39,6 +40,12 @@ jest.mock("@cocalc/server/cloud", () => ({
 jest.mock("@cocalc/server/lro/lro-db", () => ({
   __esModule: true,
   createLro: (...args: any[]) => createLroMock(...args),
+}));
+
+jest.mock("./billing-notifications", () => ({
+  __esModule: true,
+  notifyDedicatedHostBillingEnforcementBestEffort: (...args: any[]) =>
+    notifyDedicatedHostBillingEnforcementBestEffortMock(...args),
 }));
 
 jest.mock("./admission", () => ({
@@ -131,6 +138,9 @@ describe("dedicated host spend maintenance", () => {
     });
     enqueueCloudVmWorkMock = jest.fn(async () => undefined);
     createLroMock = jest.fn(async () => ({ op_id: "op-1" }));
+    notifyDedicatedHostBillingEnforcementBestEffortMock = jest.fn(
+      async () => undefined,
+    );
     getDedicatedHostPolicySnapshotForAccountMock = jest.fn(async () => ({
       account_id: "acc-1",
       membership_class: "member",
@@ -195,6 +205,17 @@ describe("dedicated host spend maintenance", () => {
       dedupe_key: "host-drain:billing:host-1",
       status: "queued",
     });
+    expect(
+      notifyDedicatedHostBillingEnforcementBestEffortMock,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner_account_id: "acc-1",
+        host_id: "host-1",
+        host_name: "GPU Host",
+        state: "draining",
+        reason: "prepaid balance is exhausted",
+      }),
+    );
     expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
   });
 
@@ -505,6 +526,17 @@ describe("dedicated host spend maintenance", () => {
       action: "stop",
       payload: { provider: "gcp" },
     });
+    expect(
+      notifyDedicatedHostBillingEnforcementBestEffortMock,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner_account_id: "acc-1",
+        host_id: "host-1",
+        state: "stopped_billing_blocked",
+        previous_state: "draining",
+        final_backup_status: "succeeded",
+      }),
+    );
     expect(createLroMock).not.toHaveBeenCalled();
   });
 
@@ -574,6 +606,16 @@ describe("dedicated host spend maintenance", () => {
           skip_backups: true,
           billing_enforcement: true,
         }),
+      }),
+    );
+    expect(
+      notifyDedicatedHostBillingEnforcementBestEffortMock,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner_account_id: "acc-1",
+        host_id: "host-1",
+        state: "deprovision_pending",
+        previous_state: "stopped_billing_blocked",
       }),
     );
   });
@@ -655,6 +697,16 @@ describe("dedicated host spend maintenance", () => {
     await runDedicatedHostSpendMaintenancePass();
 
     expect(closeDedicatedHostPurchaseSessionForAccountMock).toHaveBeenCalled();
+    expect(
+      notifyDedicatedHostBillingEnforcementBestEffortMock,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner_account_id: "acc-1",
+        host_id: "host-1",
+        state: "ok",
+        previous_state: "stopped_billing_blocked",
+      }),
+    );
     expect(createLroMock).not.toHaveBeenCalled();
   });
 
@@ -713,6 +765,16 @@ describe("dedicated host spend maintenance", () => {
     await runDedicatedHostSpendMaintenancePass();
 
     expect(closeDedicatedHostPurchaseSessionForAccountMock).toHaveBeenCalled();
+    expect(
+      notifyDedicatedHostBillingEnforcementBestEffortMock,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner_account_id: "acc-1",
+        host_id: "host-1",
+        state: "deprovisioned_recoverable",
+        previous_state: "deprovision_pending",
+      }),
+    );
     expect(createLroMock).not.toHaveBeenCalled();
   });
 });

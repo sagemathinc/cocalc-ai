@@ -29,6 +29,7 @@ import {
   evaluateDedicatedHostBillingEnforcement,
   type DedicatedHostBillingEnforcementMetadata,
 } from "./spend-enforcement";
+import { notifyDedicatedHostBillingEnforcementBestEffort } from "./billing-notifications";
 
 const logger = getLogger("server:project-host:spend-maintenance");
 const CHECK_INTERVAL_MS = Math.max(
@@ -150,6 +151,31 @@ function currentEnforcement(
     : undefined;
 }
 
+async function notifyBillingEnforcementTransition({
+  row,
+  owner,
+  previous,
+  next,
+}: {
+  row: CandidateHostRow;
+  owner: string;
+  previous?: DedicatedHostBillingEnforcementMetadata;
+  next: DedicatedHostBillingEnforcementMetadata;
+}): Promise<void> {
+  if (!owner || previous?.state === next.state) return;
+  await notifyDedicatedHostBillingEnforcementBestEffort({
+    owner_account_id: owner,
+    host_id: row.id,
+    host_name: row.name,
+    state: next.state,
+    previous_state: previous?.state,
+    reason: next.reason,
+    final_backup_status: next.final_backup_status,
+    deprovision_after: next.deprovision_after,
+    recovery_actions: next.recovery_actions,
+  });
+}
+
 function nextDrainingEnforcement({
   metadata,
   reason_code,
@@ -205,6 +231,8 @@ async function requestHostStopForExceededLane({
   finalBackupStatus?: "unknown" | "running" | "succeeded" | "failed";
 }): Promise<void> {
   const metadata = { ...(row.metadata ?? {}) };
+  const owner = `${metadata?.owner ?? ""}`.trim();
+  const previousEnforcement = currentEnforcement(metadata);
   if (
     `${metadata?.desired_state ?? ""}`.trim().toLowerCase() === "stopped" &&
     `${row.status ?? ""}`.trim().toLowerCase() === "stopping"
@@ -254,6 +282,12 @@ async function requestHostStopForExceededLane({
     vm_id: row.id,
     action: "stop",
     payload: { provider },
+  });
+  await notifyBillingEnforcementTransition({
+    row,
+    owner,
+    previous: previousEnforcement,
+    next: metadata.billing.enforcement,
   });
   logger.warn("stopped dedicated host after billing lane exhaustion", {
     host_id: row.id,
@@ -306,6 +340,7 @@ async function requestHostDrainForBilling({
   if (!owner) {
     return;
   }
+  const previousEnforcement = currentEnforcement(metadata);
   const nextMetadata = {
     ...metadata,
     billing: {
@@ -339,6 +374,12 @@ async function requestHostDrainForBilling({
     dedupe_key: `${HOST_DRAIN_LRO_KIND}:billing:${row.id}`,
     status: "queued",
   });
+  await notifyBillingEnforcementTransition({
+    row,
+    owner,
+    previous: previousEnforcement,
+    next: enforcement,
+  });
   logger.warn("requested dedicated host drain for billing enforcement", {
     host_id: row.id,
     reason_code: enforcement.reason_code,
@@ -355,6 +396,7 @@ async function requestHostDeprovisionForBilling({
   const owner = `${metadata?.owner ?? ""}`.trim();
   if (!owner) return;
   const enforcement = currentEnforcement(metadata);
+  const previousEnforcement = enforcement;
   const nowIso = new Date().toISOString();
   const nextMetadata = {
     ...metadata,
@@ -392,6 +434,12 @@ async function requestHostDeprovisionForBilling({
     dedupe_key: `${HOST_DEPROVISION_LRO_KIND}:billing:${row.id}`,
     status: "queued",
   });
+  await notifyBillingEnforcementTransition({
+    row,
+    owner,
+    previous: previousEnforcement,
+    next: nextMetadata.billing.enforcement,
+  });
   logger.warn("requested dedicated host deprovision for billing enforcement", {
     host_id: row.id,
   });
@@ -408,20 +456,28 @@ async function maybeProgressInactiveEnforcement({
     enforcement?.state === "deprovision_pending" &&
     `${row.status ?? ""}`.trim().toLowerCase() === "deprovisioned"
   ) {
+    const owner = `${metadata?.owner ?? ""}`.trim();
+    const nextEnforcement = {
+      ...enforcement,
+      state: "deprovisioned_recoverable" as const,
+      deprovisioned_at:
+        enforcement.deprovisioned_at ?? new Date().toISOString(),
+    };
     await updateHostBillingMetadata({
       host_id: row.id,
       metadata: {
         ...metadata,
         billing: {
           ...(metadata.billing ?? {}),
-          enforcement: {
-            ...enforcement,
-            state: "deprovisioned_recoverable",
-            deprovisioned_at:
-              enforcement.deprovisioned_at ?? new Date().toISOString(),
-          },
+          enforcement: nextEnforcement,
         },
       },
+    });
+    await notifyBillingEnforcementTransition({
+      row,
+      owner,
+      previous: enforcement,
+      next: nextEnforcement,
     });
     return true;
   }
@@ -462,6 +518,7 @@ async function maybeClearRecoveredInactiveEnforcement({
     currentFundingMode(metadata),
   );
   if (effectiveSnapshot.funding_mode === "site-funded") {
+    const nextEnforcement = { state: "ok" as const };
     await updateHostBillingMetadata({
       host_id: row.id,
       metadata: {
@@ -469,9 +526,15 @@ async function maybeClearRecoveredInactiveEnforcement({
         billing: {
           ...(metadata.billing ?? {}),
           funding_mode: "site-funded",
-          enforcement: { state: "ok" },
+          enforcement: nextEnforcement,
         },
       },
+    });
+    await notifyBillingEnforcementTransition({
+      row,
+      owner: `${metadata?.owner ?? ""}`.trim(),
+      previous: enforcement,
+      next: nextEnforcement,
     });
     return true;
   }
@@ -503,6 +566,7 @@ async function maybeClearRecoveredInactiveEnforcement({
   });
   if (!hourly_cost_usd) return false;
 
+  const nextEnforcement = { state: "ok" as const };
   await updateHostBillingMetadata({
     host_id: row.id,
     metadata: {
@@ -512,9 +576,15 @@ async function maybeClearRecoveredInactiveEnforcement({
         funding_mode: effectiveSnapshot.funding_mode,
         funding_lane,
         hourly_cost_usd,
-        enforcement: { state: "ok" },
+        enforcement: nextEnforcement,
       },
     },
+  });
+  await notifyBillingEnforcementTransition({
+    row,
+    owner: `${metadata?.owner ?? ""}`.trim(),
+    previous: enforcement,
+    next: nextEnforcement,
   });
   logger.info("cleared recovered dedicated host billing enforcement", {
     host_id: row.id,
@@ -734,11 +804,19 @@ async function runPass(): Promise<void> {
         host_id: row.id,
         metadata: nextMetadata,
       });
+      if (enforcementDecision.action !== "request_drain") {
+        await notifyBillingEnforcementTransition({
+          row,
+          owner,
+          previous: currentEnforcement(metadata),
+          next: nextEnforcement,
+        });
+      }
     }
     snapshotCache.delete(owner);
     if (enforcementDecision.action === "request_drain") {
       await requestHostDrainForBilling({
-        row: { ...row, metadata: nextMetadata },
+        row,
         enforcement: nextEnforcement,
       });
     }
