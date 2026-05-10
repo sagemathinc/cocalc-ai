@@ -7,9 +7,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
+  Collapse,
   DatePicker,
   Descriptions,
-  Divider,
   Input,
   Select,
   Space,
@@ -213,6 +213,16 @@ export function AdminMembership({ account_id }: { account_id: string }) {
 
   const usageStatus = details?.usage_status;
   const usageAlerts = useMemo(() => getUsageAlerts(usageStatus), [usageStatus]);
+  const defaultOpenSections = useMemo(() => {
+    const keys = ["current"];
+    if (details?.admin_override) {
+      keys.push("overrides");
+    }
+    if (usageAlerts.length > 0) {
+      keys.push("usage");
+    }
+    return keys;
+  }, [details?.admin_override, usageAlerts.length]);
 
   async function refresh() {
     setLoading(true);
@@ -306,255 +316,304 @@ export function AdminMembership({ account_id }: { account_id: string }) {
               onClose={() => setError("")}
             />
           )}
-          {assignment ? (
-            <div style={{ marginBottom: "10px" }}>
-              <Text>
-                Current assignment: <b>{assignment.membership_class}</b>
-              </Text>
-              {assignment.expires_at && (
-                <>
-                  {" "}
-                  <Text type="secondary">
-                    (expires <TimeAgo date={assignment.expires_at} />)
-                  </Text>
-                </>
-              )}
-            </div>
-          ) : (
-            <Text type="secondary">No admin-assigned membership.</Text>
-          )}
-          <Divider style={{ margin: "16px 0" }} />
-          <div>
-            <Text strong>Active membership sources</Text>
-            {candidateRows.length === 0 ? (
-              <div style={{ marginTop: "8px" }}>
-                <Text type="secondary">
-                  No active subscriptions or admin assignments.
-                </Text>
-              </div>
-            ) : (
-              <Table
-                style={{ marginTop: "8px" }}
-                size="small"
-                pagination={false}
-                dataSource={candidateRows}
-                columns={[
-                  {
-                    title: "Tier",
-                    dataIndex: "tier",
-                    render: (value, row) => (
-                      <Space>
-                        {value}
-                        {row.selected && <Tag color="blue">Selected</Tag>}
-                      </Space>
-                    ),
-                  },
-                  { title: "Source", dataIndex: "source" },
-                  { title: "Priority", dataIndex: "priority" },
-                  {
-                    title: "Expires",
-                    dataIndex: "expires",
-                    render: (value) =>
-                      value ? <TimeAgo date={value} /> : "Never",
-                  },
-                  {
-                    title: "Subscription id",
-                    dataIndex: "subscription_id",
-                    render: (value) => value ?? "—",
-                  },
-                ]}
-              />
-            )}
-          </div>
-          <div style={{ marginTop: "10px" }}>
-            <Space
-              orientation="vertical"
-              style={{ width: "100%" }}
-              size="middle"
-            >
-              <div>
-                <Text>Membership tier</Text>
-                <Select
-                  style={{ width: "100%", marginTop: "6px" }}
-                  placeholder="Select a tier"
-                  options={tierOptions}
-                  value={selectedTier}
-                  onChange={(value) => setSelectedTier(value)}
-                  showSearch
-                  optionFilterProp="label"
-                />
-              </div>
-              <div>
-                <Text>Expires</Text>
-                <DatePicker
-                  style={{ width: "100%", marginTop: "6px" }}
-                  value={expiresAt}
-                  onChange={(value) => setExpiresAt(value)}
-                  allowClear
-                  placeholder="Never"
-                />
-              </div>
-              <div>
-                <Text>Notes (optional)</Text>
-                <Input.TextArea
-                  rows={2}
-                  value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
-                  placeholder="Reason or internal notes"
-                />
-              </div>
-              <Space>
-                <Button
-                  type="primary"
-                  onClick={applyAssignment}
-                  loading={saving}
-                >
-                  {assignment ? "Update" : "Assign"}
-                </Button>
-                <Button onClick={clearAssignment} loading={clearing} danger>
-                  Clear
-                </Button>
-              </Space>
-              <Text type="secondary">
-                Membership resolution uses tier priority across subscriptions
-                and admin assignments.
-              </Text>
-            </Space>
-          </div>
-          <Divider style={{ margin: "16px 0" }} />
-          <AccountEntitlementOverridePanel
-            account_id={account_id}
-            details={details}
-            onChanged={refresh}
-          />
-          <Divider style={{ margin: "16px 0" }} />
-          <div>
-            <Text strong>Usage summary</Text>
-            <Space
-              direction="vertical"
-              size="middle"
-              style={{ marginTop: "8px", width: "100%" }}
-            >
-              {usageAlerts.map((alert) => (
-                <Alert key={alert.key} type={alert.type} title={alert.title} />
-              ))}
-              {usageStatus ? (
+          <Collapse defaultActiveKey={defaultOpenSections}>
+            <Collapse.Panel header="Current membership" key="current">
+              <Space direction="vertical" style={{ width: "100%" }}>
                 <Descriptions size="small" column={1}>
-                  <Descriptions.Item label="Owned projects">
-                    {usageStatus.owned_project_count}
+                  <Descriptions.Item label="Resolved tier">
+                    <Space>
+                      <Tag color="blue">{details?.selected.class}</Tag>
+                      <Text type="secondary">{details?.selected.source}</Text>
+                    </Space>
                   </Descriptions.Item>
-                  <Descriptions.Item label="Current total storage">
-                    {humanSize(usageStatus.total_storage_bytes)}
-                  </Descriptions.Item>
-                  {typeof usageStatus.total_storage_soft_bytes === "number" && (
-                    <Descriptions.Item label="Soft storage cap">
-                      {humanSize(usageStatus.total_storage_soft_bytes)}
-                    </Descriptions.Item>
-                  )}
-                  {typeof usageStatus.total_storage_soft_remaining_bytes ===
-                    "number" && (
-                    <Descriptions.Item label="Soft cap remaining">
-                      {formatRemaining(
-                        usageStatus.total_storage_soft_remaining_bytes,
-                      )}
-                    </Descriptions.Item>
-                  )}
-                  {typeof usageStatus.total_storage_hard_bytes === "number" && (
-                    <Descriptions.Item label="Hard storage cap">
-                      {humanSize(usageStatus.total_storage_hard_bytes)}
-                    </Descriptions.Item>
-                  )}
-                  {typeof usageStatus.total_storage_hard_remaining_bytes ===
-                    "number" && (
-                    <Descriptions.Item label="Hard cap remaining">
-                      {formatRemaining(
-                        usageStatus.total_storage_hard_remaining_bytes,
-                      )}
-                    </Descriptions.Item>
-                  )}
-                  {typeof usageStatus.max_projects === "number" && (
-                    <Descriptions.Item label="Owned project limit">
-                      {usageStatus.max_projects}
-                    </Descriptions.Item>
-                  )}
-                  {typeof usageStatus.remaining_project_slots === "number" && (
-                    <Descriptions.Item label="Remaining project slots">
-                      {usageStatus.remaining_project_slots < 0
-                        ? `Over by ${Math.abs(usageStatus.remaining_project_slots)}`
-                        : usageStatus.remaining_project_slots}
-                    </Descriptions.Item>
-                  )}
-                  {typeof usageStatus.managed_egress_5h_bytes === "number" && (
-                    <Descriptions.Item label="Managed egress used in 5 hours">
-                      {humanSize(usageStatus.managed_egress_5h_bytes)}
-                    </Descriptions.Item>
-                  )}
-                  {typeof usageStatus.managed_egress_5h_remaining_bytes ===
-                    "number" && (
-                    <Descriptions.Item label="Managed egress remaining in 5 hours">
-                      {formatRemaining(
-                        usageStatus.managed_egress_5h_remaining_bytes,
-                      )}
-                    </Descriptions.Item>
-                  )}
-                  {typeof usageStatus.managed_egress_7d_bytes === "number" && (
-                    <Descriptions.Item label="Managed egress used in 7 days">
-                      {humanSize(usageStatus.managed_egress_7d_bytes)}
-                    </Descriptions.Item>
-                  )}
-                  {typeof usageStatus.managed_egress_7d_remaining_bytes ===
-                    "number" && (
-                    <Descriptions.Item label="Managed egress remaining in 7 days">
-                      {formatRemaining(
-                        usageStatus.managed_egress_7d_remaining_bytes,
-                      )}
-                    </Descriptions.Item>
-                  )}
-                  <Descriptions.Item label="Sampled projects">
-                    {usageStatus.unsampled_project_count > 0
-                      ? `${usageStatus.sampled_project_count} of ${usageStatus.owned_project_count}`
-                      : usageStatus.sampled_project_count}
-                  </Descriptions.Item>
-                  {(usageStatus.measurement_error_count ?? 0) > 0 && (
-                    <Descriptions.Item label="Sampling errors">
-                      {usageStatus.measurement_error_count}
-                    </Descriptions.Item>
-                  )}
-                  {renderManagedEgressBreakdown(
-                    "Managed egress by category (5 hours)",
-                    usageStatus.managed_egress_categories_5h_bytes,
-                  )}
-                  {renderManagedEgressBreakdown(
-                    "Managed egress by category (7 days)",
-                    usageStatus.managed_egress_categories_7d_bytes,
-                  )}
-                  {usageStatus.managed_egress_recent_events?.length ? (
-                    <Descriptions.Item label="Recent managed egress events">
-                      <ManagedEgressRecentEventsButton
-                        events={usageStatus.managed_egress_recent_events}
-                      />
+                  {details?.selected.expires ? (
+                    <Descriptions.Item label="Resolved expiration">
+                      <TimeAgo date={details.selected.expires} />
                     </Descriptions.Item>
                   ) : null}
-                  <Descriptions.Item label="Recent managed egress">
-                    <ManagedEgressRateSummary user_account_id={account_id} />
+                  <Descriptions.Item label="Admin assignment">
+                    {assignment ? (
+                      <Space>
+                        <Text>{assignment.membership_class}</Text>
+                        {assignment.expires_at ? (
+                          <Text type="secondary">
+                            expires <TimeAgo date={assignment.expires_at} />
+                          </Text>
+                        ) : (
+                          <Text type="secondary">never expires</Text>
+                        )}
+                      </Space>
+                    ) : (
+                      <Text type="secondary">None</Text>
+                    )}
                   </Descriptions.Item>
-                  <Descriptions.Item label="Top recent egress projects (24h)">
-                    <ManagedEgressTopProjectsSummary
-                      user_account_id={account_id}
-                    />
-                  </Descriptions.Item>
-                  <Descriptions.Item label="Historical managed egress">
-                    <ManagedEgressHistoryButton
-                      user_account_id={account_id}
-                      buttonText="View egress history"
-                    />
+                  <Descriptions.Item label="Support override">
+                    {details?.admin_override ? (
+                      <Space>
+                        <Tag color="blue">Active</Tag>
+                        {details.admin_override.expires_at ? (
+                          <Text type="secondary">
+                            expires{" "}
+                            <TimeAgo date={details.admin_override.expires_at} />
+                          </Text>
+                        ) : (
+                          <Text type="secondary">never expires</Text>
+                        )}
+                      </Space>
+                    ) : (
+                      <Text type="secondary">None</Text>
+                    )}
                   </Descriptions.Item>
                 </Descriptions>
-              ) : (
-                <Text type="secondary">No usage summary available.</Text>
-              )}
-            </Space>
-          </div>
+                {usageAlerts.map((alert) => (
+                  <Alert
+                    key={alert.key}
+                    type={alert.type}
+                    title={alert.title}
+                  />
+                ))}
+                <div>
+                  <Text strong>Active membership sources</Text>
+                  {candidateRows.length === 0 ? (
+                    <div style={{ marginTop: "8px" }}>
+                      <Text type="secondary">
+                        No active subscriptions or admin assignments.
+                      </Text>
+                    </div>
+                  ) : (
+                    <Table
+                      style={{ marginTop: "8px" }}
+                      size="small"
+                      pagination={false}
+                      dataSource={candidateRows}
+                      columns={[
+                        {
+                          title: "Tier",
+                          dataIndex: "tier",
+                          render: (value, row) => (
+                            <Space>
+                              {value}
+                              {row.selected && <Tag color="blue">Selected</Tag>}
+                            </Space>
+                          ),
+                        },
+                        { title: "Source", dataIndex: "source" },
+                        { title: "Priority", dataIndex: "priority" },
+                        {
+                          title: "Expires",
+                          dataIndex: "expires",
+                          render: (value) =>
+                            value ? <TimeAgo date={value} /> : "Never",
+                        },
+                        {
+                          title: "Subscription id",
+                          dataIndex: "subscription_id",
+                          render: (value) => value ?? "—",
+                        },
+                      ]}
+                    />
+                  )}
+                </div>
+              </Space>
+            </Collapse.Panel>
+            <Collapse.Panel header="Admin assignment" key="assignment">
+              <Space
+                direction="vertical"
+                style={{ width: "100%" }}
+                size="middle"
+              >
+                <div>
+                  <Text>Membership tier</Text>
+                  <Select
+                    style={{ width: "100%", marginTop: "6px" }}
+                    placeholder="Select a tier"
+                    options={tierOptions}
+                    value={selectedTier}
+                    onChange={(value) => setSelectedTier(value)}
+                    showSearch
+                    optionFilterProp="label"
+                  />
+                </div>
+                <div>
+                  <Text>Expires</Text>
+                  <DatePicker
+                    style={{ width: "100%", marginTop: "6px" }}
+                    value={expiresAt}
+                    onChange={(value) => setExpiresAt(value)}
+                    allowClear
+                    placeholder="Never"
+                  />
+                </div>
+                <div>
+                  <Text>Notes (optional)</Text>
+                  <Input.TextArea
+                    rows={2}
+                    value={notes}
+                    onChange={(event) => setNotes(event.target.value)}
+                    placeholder="Reason or internal notes"
+                  />
+                </div>
+                <Space>
+                  <Button
+                    type="primary"
+                    onClick={applyAssignment}
+                    loading={saving}
+                  >
+                    {assignment ? "Update" : "Assign"}
+                  </Button>
+                  <Button onClick={clearAssignment} loading={clearing} danger>
+                    Clear
+                  </Button>
+                </Space>
+                <Text type="secondary">
+                  Membership resolution uses tier priority across subscriptions
+                  and admin assignments.
+                </Text>
+              </Space>
+            </Collapse.Panel>
+            <Collapse.Panel header="Support overrides" key="overrides">
+              <AccountEntitlementOverridePanel
+                account_id={account_id}
+                details={details}
+                onChanged={refresh}
+              />
+            </Collapse.Panel>
+            <Collapse.Panel header="Usage and diagnostics" key="usage">
+              <Space
+                direction="vertical"
+                size="middle"
+                style={{ width: "100%" }}
+              >
+                {usageAlerts.map((alert) => (
+                  <Alert
+                    key={alert.key}
+                    type={alert.type}
+                    title={alert.title}
+                  />
+                ))}
+                {usageStatus ? (
+                  <Descriptions size="small" column={1}>
+                    <Descriptions.Item label="Owned projects">
+                      {usageStatus.owned_project_count}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Current total storage">
+                      {humanSize(usageStatus.total_storage_bytes)}
+                    </Descriptions.Item>
+                    {typeof usageStatus.total_storage_soft_bytes ===
+                      "number" && (
+                      <Descriptions.Item label="Soft storage cap">
+                        {humanSize(usageStatus.total_storage_soft_bytes)}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.total_storage_soft_remaining_bytes ===
+                      "number" && (
+                      <Descriptions.Item label="Soft cap remaining">
+                        {formatRemaining(
+                          usageStatus.total_storage_soft_remaining_bytes,
+                        )}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.total_storage_hard_bytes ===
+                      "number" && (
+                      <Descriptions.Item label="Hard storage cap">
+                        {humanSize(usageStatus.total_storage_hard_bytes)}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.total_storage_hard_remaining_bytes ===
+                      "number" && (
+                      <Descriptions.Item label="Hard cap remaining">
+                        {formatRemaining(
+                          usageStatus.total_storage_hard_remaining_bytes,
+                        )}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.max_projects === "number" && (
+                      <Descriptions.Item label="Owned project limit">
+                        {usageStatus.max_projects}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.remaining_project_slots ===
+                      "number" && (
+                      <Descriptions.Item label="Remaining project slots">
+                        {usageStatus.remaining_project_slots < 0
+                          ? `Over by ${Math.abs(usageStatus.remaining_project_slots)}`
+                          : usageStatus.remaining_project_slots}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.managed_egress_5h_bytes ===
+                      "number" && (
+                      <Descriptions.Item label="Managed egress used in 5 hours">
+                        {humanSize(usageStatus.managed_egress_5h_bytes)}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.managed_egress_5h_remaining_bytes ===
+                      "number" && (
+                      <Descriptions.Item label="Managed egress remaining in 5 hours">
+                        {formatRemaining(
+                          usageStatus.managed_egress_5h_remaining_bytes,
+                        )}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.managed_egress_7d_bytes ===
+                      "number" && (
+                      <Descriptions.Item label="Managed egress used in 7 days">
+                        {humanSize(usageStatus.managed_egress_7d_bytes)}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.managed_egress_7d_remaining_bytes ===
+                      "number" && (
+                      <Descriptions.Item label="Managed egress remaining in 7 days">
+                        {formatRemaining(
+                          usageStatus.managed_egress_7d_remaining_bytes,
+                        )}
+                      </Descriptions.Item>
+                    )}
+                    <Descriptions.Item label="Sampled projects">
+                      {usageStatus.unsampled_project_count > 0
+                        ? `${usageStatus.sampled_project_count} of ${usageStatus.owned_project_count}`
+                        : usageStatus.sampled_project_count}
+                    </Descriptions.Item>
+                    {(usageStatus.measurement_error_count ?? 0) > 0 && (
+                      <Descriptions.Item label="Sampling errors">
+                        {usageStatus.measurement_error_count}
+                      </Descriptions.Item>
+                    )}
+                    {renderManagedEgressBreakdown(
+                      "Managed egress by category (5 hours)",
+                      usageStatus.managed_egress_categories_5h_bytes,
+                    )}
+                    {renderManagedEgressBreakdown(
+                      "Managed egress by category (7 days)",
+                      usageStatus.managed_egress_categories_7d_bytes,
+                    )}
+                    {usageStatus.managed_egress_recent_events?.length ? (
+                      <Descriptions.Item label="Recent managed egress events">
+                        <ManagedEgressRecentEventsButton
+                          events={usageStatus.managed_egress_recent_events}
+                        />
+                      </Descriptions.Item>
+                    ) : null}
+                    <Descriptions.Item label="Recent managed egress">
+                      <ManagedEgressRateSummary user_account_id={account_id} />
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Top recent egress projects (24h)">
+                      <ManagedEgressTopProjectsSummary
+                        user_account_id={account_id}
+                      />
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Historical managed egress">
+                      <ManagedEgressHistoryButton
+                        user_account_id={account_id}
+                        buttonText="View egress history"
+                      />
+                    </Descriptions.Item>
+                  </Descriptions>
+                ) : (
+                  <Text type="secondary">No usage summary available.</Text>
+                )}
+              </Space>
+            </Collapse.Panel>
+          </Collapse>
         </>
       )}
     </div>
