@@ -664,6 +664,12 @@ export function AccountEntitlementOverridePanel({
         <Text strong>Account entitlement overrides</Text>
         <OverrideHelp />
       </Space>
+      <div>
+        <Text type="secondary">
+          Each account can have one override set. All configured changes share
+          the same status, reason, and expiration.
+        </Text>
+      </div>
       <div style={{ marginTop: "8px" }}>
         {loading ? (
           <Spin />
