@@ -478,10 +478,14 @@ function OverrideGridHeader() {
 function NumericRuleEditor({
   details,
   field,
+  form,
 }: {
   details: MembershipDetails | null | undefined;
   field: NumericOverrideField;
+  form: FormInstance;
 }) {
+  const modeName = `${field.id}_mode`;
+  const valueName = `${field.id}_value`;
   return (
     <div
       style={{
@@ -495,18 +499,46 @@ function NumericRuleEditor({
       <Text type="secondary">
         {formatCurrentValue(getCurrentEntitlementValue(details, field), field)}
       </Text>
-      <Space.Compact style={{ width: "100%" }}>
-        <Form.Item name={`${field.id}_mode`} noStyle>
-          <Select style={{ width: 150 }} options={MODE_OPTIONS} />
-        </Form.Item>
-        <Form.Item name={`${field.id}_value`} noStyle>
-          <InputNumber
-            style={{ width: "100%" }}
-            min={0}
-            placeholder={field.unit}
-          />
-        </Form.Item>
-      </Space.Compact>
+      <Form.Item shouldUpdate noStyle>
+        {({ getFieldValue }) => {
+          const mode = getFieldValue(modeName);
+          return (
+            <Space.Compact style={{ width: "100%" }}>
+              <Form.Item name={modeName} noStyle>
+                <Select
+                  style={{ width: 150 }}
+                  options={MODE_OPTIONS}
+                  onChange={(value) => {
+                    if (!value) {
+                      form.setFieldValue(valueName, undefined);
+                    }
+                  }}
+                />
+              </Form.Item>
+              {mode ? (
+                <Form.Item name={valueName} noStyle>
+                  <InputNumber
+                    style={{ width: "100%" }}
+                    min={0}
+                    placeholder={field.unit}
+                  />
+                </Form.Item>
+              ) : (
+                <Text
+                  type="secondary"
+                  style={{
+                    alignItems: "center",
+                    display: "inline-flex",
+                    paddingLeft: 12,
+                  }}
+                >
+                  Select a mode to enter a value
+                </Text>
+              )}
+            </Space.Compact>
+          );
+        }}
+      </Form.Item>
     </div>
   );
 }
@@ -788,6 +820,7 @@ export function AccountEntitlementOverridePanel({
                     key={field.id}
                     details={details}
                     field={field}
+                    form={form}
                   />
                 ))}
               </Space>
