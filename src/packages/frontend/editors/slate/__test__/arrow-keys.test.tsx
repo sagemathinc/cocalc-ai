@@ -8,7 +8,10 @@ import "../elements/types";
 import { createEditor, Descendant, Editor, Transforms } from "slate";
 
 import type { SlateEditor } from "../types";
-import { escapeMarkedTextBoundaryOnArrowRight } from "../keyboard/arrow-keys";
+import {
+  escapeMarkedTextBoundaryOnArrowLeft,
+  escapeMarkedTextBoundaryOnArrowRight,
+} from "../keyboard/arrow-keys";
 import { withAutoFormat } from "../format";
 import { withReact } from "../slate-react";
 
@@ -85,6 +88,24 @@ describe("ArrowRight mark boundary escape", () => {
     expect(editor.children[0]?.["children"]).toEqual([
       { text: "code", code: true },
       { text: " after", search: true },
+    ]);
+    expect(editor.selection?.focus).toEqual({ path: [0, 1], offset: 1 });
+  });
+
+  it("replaces an empty plain next text node after marked text", () => {
+    const editor = createSlateEditor([
+      {
+        type: "paragraph",
+        children: [{ text: "code", code: true }, { text: "" }],
+      },
+    ]);
+
+    Transforms.select(editor, { path: [0, 0], offset: "code".length });
+
+    expect(escapeMarkedTextBoundaryOnArrowRight(editor)).toBe(true);
+    expect(editor.children[0]?.["children"]).toEqual([
+      { text: "code", code: true },
+      { text: " " },
     ]);
     expect(editor.selection?.focus).toEqual({ path: [0, 1], offset: 1 });
   });
@@ -182,5 +203,85 @@ describe("ArrowRight mark boundary escape", () => {
       { text: " " },
     ]);
     expect(editor.selection?.focus).toEqual({ path: [0, 1], offset: 1 });
+  });
+});
+
+describe("ArrowLeft mark boundary escape", () => {
+  it("clears active marks before an initial inline code leaf", () => {
+    const editor = createSlateEditor([
+      {
+        type: "paragraph",
+        children: [{ text: "2+3", code: true }],
+      },
+    ]);
+
+    Transforms.select(editor, { path: [0, 0], offset: 0 });
+
+    expect(escapeMarkedTextBoundaryOnArrowLeft(editor)).toBe(true);
+    expect(editor.children[0]?.["children"]).toEqual([
+      { text: "2+3", code: true },
+    ]);
+    expect(editor.selection?.focus).toEqual({ path: [0, 0], offset: 0 });
+    editor.insertText("x");
+    expect(editor.children[0]?.["children"]).toEqual([
+      { text: "x" },
+      { text: "2+3", code: true },
+    ]);
+  });
+
+  it("moves into an existing plain previous text node without inserting", () => {
+    const editor = createSlateEditor([
+      {
+        type: "paragraph",
+        children: [{ text: "before " }, { text: "code", code: true }],
+      },
+    ]);
+
+    Transforms.select(editor, { path: [0, 1], offset: 0 });
+
+    expect(escapeMarkedTextBoundaryOnArrowLeft(editor)).toBe(true);
+    expect(editor.children[0]?.["children"]).toEqual([
+      { text: "before " },
+      { text: "code", code: true },
+    ]);
+    expect(editor.selection?.focus).toEqual({ path: [0, 0], offset: 7 });
+  });
+
+  it("escapes from an empty plain leaf immediately before marked text", () => {
+    const editor = createSlateEditor([
+      {
+        type: "paragraph",
+        children: [{ text: "" }, { text: "2+3", code: true }],
+      },
+    ]);
+
+    Transforms.select(editor, { path: [0, 0], offset: 0 });
+
+    expect(escapeMarkedTextBoundaryOnArrowLeft(editor)).toBe(true);
+    expect(editor.children[0]?.["children"]).toEqual([
+      { text: "" },
+      { text: "2+3", code: true },
+    ]);
+    expect(editor.selection?.focus).toEqual({ path: [0, 0], offset: 0 });
+    editor.insertText("x");
+    expect(editor.children[0]?.["children"]).toEqual([
+      { text: "x" },
+      { text: "2+3", code: true },
+    ]);
+  });
+
+  it("does not handle unmarked text or non-boundary selections", () => {
+    const editor = createSlateEditor([
+      {
+        type: "paragraph",
+        children: [{ text: "plain" }, { text: "code", code: true }],
+      },
+    ]);
+
+    Transforms.select(editor, { path: [0, 0], offset: 0 });
+    expect(escapeMarkedTextBoundaryOnArrowLeft(editor)).toBe(false);
+
+    Transforms.select(editor, { path: [0, 1], offset: 2 });
+    expect(escapeMarkedTextBoundaryOnArrowLeft(editor)).toBe(false);
   });
 });

@@ -608,7 +608,16 @@ function DefaultHarness({
       getValue: () => valueRef.current,
       isFocused: () => ReactEditor.isFocused(editor),
       setSelection: (range) => {
+        ReactEditor.focus(editor);
         Transforms.select(editor, range);
+        try {
+          const domRange = ReactEditor.toDOMRange(editor, range);
+          const domSelection = window.getSelection();
+          domSelection?.removeAllRanges();
+          domSelection?.addRange(domRange);
+        } catch {
+          // Some tests set selection before React has committed the DOM.
+        }
       },
       setValue: (nextValue) => {
         editor.children = nextValue;

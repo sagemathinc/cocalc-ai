@@ -925,6 +925,29 @@ export const BlockRowEditor: React.FC<BlockRowEditorProps> = React.memo(
         }
 
         if (
+          (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+          !event.shiftKey &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey
+        ) {
+          const handler = getKeyboardHandler(event);
+          if (
+            handler?.({
+              editor,
+              extra: {
+                actions: actions ?? {},
+                id: id ?? "",
+                search: searchHook ?? EMPTY_SEARCH,
+              },
+            })
+          ) {
+            event.preventDefault();
+            return;
+          }
+        }
+
+        if (
           event.key === "ArrowLeft" &&
           editor.selection != null &&
           Range.isCollapsed(editor.selection)

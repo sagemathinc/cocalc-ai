@@ -52,13 +52,13 @@ function textHasEscapableMarks(text: Text): boolean {
 }
 
 function clearEscapableEditorMarks(editor: SlateEditor): void {
-  const marks = (editor as any).marks ?? Editor.marks(editor);
+  const marks = Editor.marks(editor);
   if (marks == null) return;
-  const nextMarks = { ...marks };
-  for (const mark of Object.keys(nextMarks)) {
-    if (isEscapableMark(mark)) delete nextMarks[mark];
+  for (const mark of Object.keys(marks)) {
+    if (isEscapableMark(mark)) {
+      Editor.removeMark(editor, mark);
+    }
   }
-  (editor as any).marks = Object.keys(nextMarks).length > 0 ? nextMarks : null;
 }
 
 function rememberSelection(editor: SlateEditor): void {
@@ -102,19 +102,24 @@ function selectAndSync(
   syncDomSelection(editor);
 }
 
-function insertPlainSpaceAtSelection(editor: SlateEditor): void {
-  clearEscapableEditorMarks(editor);
-  editor.insertText(" ");
-  rememberSelection(editor);
-  syncDomSelection(editor);
-}
-
 function insertPlainSpaceNode(editor: SlateEditor, path: Path): void {
   clearEscapableEditorMarks(editor);
   Editor.withoutNormalizing(editor, () => {
     Transforms.insertNodes(editor, { text: " " }, { at: path });
     Transforms.select(editor, { path, offset: 1 });
   });
+  editor.onChange();
+  rememberSelection(editor);
+  syncDomSelection(editor);
+}
+
+function replaceEmptyTextWithPlainSpace(editor: SlateEditor, path: Path): void {
+  clearEscapableEditorMarks(editor);
+  Editor.withoutNormalizing(editor, () => {
+    Transforms.insertText(editor, " ", { at: { path, offset: 0 } });
+    Transforms.select(editor, { path, offset: 1 });
+  });
+  editor.onChange();
   rememberSelection(editor);
   syncDomSelection(editor);
 }
@@ -154,7 +159,7 @@ function escapeEmptyPlainTextAfterMarkedText(
     return false;
   }
 
-  insertPlainSpaceAtSelection(editor);
+  replaceEmptyTextWithPlainSpace(editor, focus.path);
   return true;
 }
 
@@ -191,6 +196,10 @@ export function escapeMarkedTextBoundaryOnArrowRight(
   const nextPath = Path.next(focus.path);
 
   if (Text.isText(nextSibling) && !textHasEscapableMarks(nextSibling)) {
+    if (nextSibling.text.length == 0) {
+      replaceEmptyTextWithPlainSpace(editor, nextPath);
+      return true;
+    }
     clearEscapableEditorMarks(editor);
     selectAndSync(editor, {
       path: nextPath,
@@ -205,6 +214,82 @@ export function escapeMarkedTextBoundaryOnArrowRight(
 
 register({ key: "ArrowRight" }, ({ editor }) =>
   escapeMarkedTextBoundaryOnArrowRight(editor),
+);
+
+function escapeEmptyPlainTextBeforeMarkedText(
+  editor: SlateEditor,
+  text: Text,
+): boolean {
+  const { selection } = editor;
+  const focus = selection?.focus;
+  if (
+    focus == null ||
+    text.text.length != 0 ||
+    focus.offset != 0 ||
+    textHasEscapableMarks(text)
+  ) {
+    return false;
+  }
+
+  const siblings = parentChildren(editor, focus.path);
+  const siblingIndex = focus.path[focus.path.length - 1];
+  const nextSibling = siblings?.[siblingIndex + 1];
+  if (!Text.isText(nextSibling) || !textHasEscapableMarks(nextSibling)) {
+    return false;
+  }
+
+  clearEscapableEditorMarks(editor);
+  selectAndSync(editor, focus);
+  return true;
+}
+
+export function escapeMarkedTextBoundaryOnArrowLeft(
+  editor: SlateEditor,
+): boolean {
+  const { selection } = editor;
+  if (selection == null || !Range.isCollapsed(selection)) return false;
+
+  const { focus } = selection;
+  let text: unknown;
+  try {
+    [text] = Editor.node(editor, focus.path);
+  } catch {
+    return false;
+  }
+
+  if (Text.isText(text) && escapeEmptyPlainTextBeforeMarkedText(editor, text)) {
+    return true;
+  }
+
+  if (
+    !Text.isText(text) ||
+    text.text.length == 0 ||
+    focus.offset != 0 ||
+    !textHasEscapableMarks(text)
+  ) {
+    return false;
+  }
+
+  const siblings = parentChildren(editor, focus.path);
+  const siblingIndex = focus.path[focus.path.length - 1];
+  const previousSibling = siblings?.[siblingIndex - 1];
+
+  if (Text.isText(previousSibling) && !textHasEscapableMarks(previousSibling)) {
+    clearEscapableEditorMarks(editor);
+    selectAndSync(editor, {
+      path: Path.previous(focus.path),
+      offset: previousSibling.text.length,
+    });
+    return true;
+  }
+
+  clearEscapableEditorMarks(editor);
+  selectAndSync(editor, focus);
+  return true;
+}
+
+register({ key: "ArrowLeft" }, ({ editor }) =>
+  escapeMarkedTextBoundaryOnArrowLeft(editor),
 );
 
 const down = ({ editor }: { editor: SlateEditor }) => {
