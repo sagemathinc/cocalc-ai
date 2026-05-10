@@ -69,6 +69,11 @@ import { UpgradeConfirmContent } from "./upgrade-confirmation";
 import { HostParallelOpsSummary } from "./host-parallel-ops-summary";
 import { HostCurrentMetrics } from "./host-current-metrics";
 import { HostRuntimeVersionsPanel } from "./host-runtime-versions-panel";
+import {
+  HostBillingEnforcementStatus,
+  hostBillingEnforcementBlocksStart,
+  hostBillingEnforcementSearchText,
+} from "./host-billing-enforcement";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type {
   HostListViewMode,
@@ -96,6 +101,7 @@ const STATUS_ORDER = [
   "running",
   "starting",
   "restarting",
+  "draining",
   "off",
   "stopping",
   "deprovisioning",
@@ -502,6 +508,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         size.primary,
         size.secondary,
         statusLabel,
+        hostBillingEnforcementSearchText(host),
       ]
         .filter(Boolean)
         .join(" ");
@@ -603,6 +610,8 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           !host.deleted &&
           host.status !== "running" &&
           host.status !== "starting" &&
+          host.status !== "restarting" &&
+          !hostBillingEnforcementBlocksStart(host) &&
           (!selfHost?.isConnectorOnline ||
             host.machine?.cloud !== "self-host" ||
             selfHost.isConnectorOnline(host.region)),
@@ -961,6 +970,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               displayPhaseOwner={projectHostRolloutPhase?.owner}
               displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
             />
+            <HostBillingEnforcementStatus host={host} compact />
             {projectHostRollback && (
               <Tooltip
                 title={`Project-host rollout to ${
@@ -1011,6 +1021,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           host.status === "running" ||
           host.status === "starting" ||
           host.status === "restarting" ||
+          hostBillingEnforcementBlocksStart(host) ||
           (!connectorOnline && !autoSetup) ||
           hostOpActive;
         const startLabel =

@@ -52,6 +52,10 @@ import { getHostSizeDisplay } from "../utils/format";
 import { HostCurrentMetrics } from "./host-current-metrics";
 import { HostPlacementSummary, HostPressureTag } from "../pressure-ui";
 import {
+  HostBillingEnforcementStatus,
+  hostBillingEnforcementBlocksStart,
+} from "./host-billing-enforcement";
+import {
   currentProjectHostAutomaticRollback,
   currentProjectHostRolloutPhase,
   projectHostRollbackReasonLabel,
@@ -145,6 +149,7 @@ export const HostCard: React.FC<HostCardProps> = ({
     host.status === "running" ||
     host.status === "starting" ||
     host.status === "restarting" ||
+    hostBillingEnforcementBlocksStart(host) ||
     (!connectorOnline && !autoSetup) ||
     hostOpActive;
   const startLabel =
@@ -413,6 +418,7 @@ export const HostCard: React.FC<HostCardProps> = ({
             <Tag color="orange">Reprovision on next start</Tag>
           </Tooltip>
         )}
+        <HostBillingEnforcementStatus host={host} />
         <HostOpProgress
           op={displayHostOp}
           compact

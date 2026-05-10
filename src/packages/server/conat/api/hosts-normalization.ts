@@ -26,6 +26,9 @@ read-only shaping and availability rules used across that surface.
 import type {
   Host,
   HostBackupStatus,
+  HostBillingEnforcement,
+  HostBillingEnforcementState,
+  HostBillingRecoveryAction,
   HostBootstrapLifecycle,
   HostBootstrapLifecycleItem,
   HostBootstrapStatus,
@@ -61,6 +64,19 @@ import { observedHostAgentFromMetadata } from "./hosts-runtime-observation";
 
 const HOST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const HOST_RUNNING_STATUSES = new Set(["running", "active"]);
+const HOST_BILLING_ENFORCEMENT_STATES = new Set<HostBillingEnforcementState>([
+  "ok",
+  "at_risk",
+  "draining",
+  "stopped_billing_blocked",
+  "deprovision_pending",
+  "deprovisioned_recoverable",
+]);
+const HOST_BILLING_RECOVERY_ACTIONS = new Set<HostBillingRecoveryAction>([
+  "add_funds",
+  "fix_payment",
+  "support_limit_increase",
+]);
 const MANAGED_COMPONENT_KINDS = new Set<ManagedComponentKind>([
   "project-host",
   "conat-router",
@@ -92,6 +108,88 @@ function hostFundingModeFromMetadata(
     return value;
   }
   return undefined;
+}
+
+function normalizeString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function normalizeIsoDateString(value: unknown): string | undefined {
+  const text = normalizeString(value);
+  if (!text) return undefined;
+  const timestamp = Date.parse(text);
+  if (Number.isNaN(timestamp)) return undefined;
+  return new Date(timestamp).toISOString();
+}
+
+function normalizeFiniteNumber(value: unknown): number | undefined {
+  const numeric =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : NaN;
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function hostBillingEnforcementFromMetadata(
+  metadata: any,
+): HostBillingEnforcement | undefined {
+  const enforcement = metadata?.billing?.enforcement;
+  if (!enforcement || typeof enforcement !== "object") return undefined;
+  const state = normalizeString(enforcement.state);
+  if (
+    !state ||
+    !HOST_BILLING_ENFORCEMENT_STATES.has(state as HostBillingEnforcementState)
+  ) {
+    return undefined;
+  }
+  const recovery_actions = Array.isArray(enforcement.recovery_actions)
+    ? enforcement.recovery_actions.filter(
+        (action: unknown): action is HostBillingRecoveryAction =>
+          HOST_BILLING_RECOVERY_ACTIONS.has(
+            normalizeString(action) as HostBillingRecoveryAction,
+          ),
+      )
+    : undefined;
+  return {
+    state: state as HostBillingEnforcementState,
+    reason_code: normalizeString(enforcement.reason_code),
+    reason: normalizeString(enforcement.reason),
+    first_detected_at: normalizeIsoDateString(enforcement.first_detected_at),
+    at_risk_at: normalizeIsoDateString(enforcement.at_risk_at),
+    drain_requested_at: normalizeIsoDateString(enforcement.drain_requested_at),
+    drain_completed_at: normalizeIsoDateString(enforcement.drain_completed_at),
+    final_backup_status:
+      enforcement.final_backup_status === "unknown" ||
+      enforcement.final_backup_status === "running" ||
+      enforcement.final_backup_status === "succeeded" ||
+      enforcement.final_backup_status === "failed"
+        ? enforcement.final_backup_status
+        : undefined,
+    final_backup_completed_at: normalizeIsoDateString(
+      enforcement.final_backup_completed_at,
+    ),
+    stopped_at: normalizeIsoDateString(enforcement.stopped_at),
+    grace_until: normalizeIsoDateString(enforcement.grace_until),
+    deprovision_after: normalizeIsoDateString(enforcement.deprovision_after),
+    deprovision_requested_at: normalizeIsoDateString(
+      enforcement.deprovision_requested_at,
+    ),
+    deprovisioned_at: normalizeIsoDateString(enforcement.deprovisioned_at),
+    recovery_actions,
+    hourly_cost_usd:
+      typeof enforcement.hourly_cost_usd === "string" ||
+      typeof enforcement.hourly_cost_usd === "number"
+        ? enforcement.hourly_cost_usd
+        : undefined,
+    limiting_runway_hours: normalizeFiniteNumber(
+      enforcement.limiting_runway_hours,
+    ),
+    limiting_window: normalizeString(enforcement.limiting_window),
+  };
 }
 
 function normalizeManagedComponentRuntimeState(
@@ -1064,6 +1162,7 @@ export function parseRow(
     reason_unavailable: opts.reason_unavailable,
     starred: opts.starred,
     funding_mode: hostFundingModeFromMetadata(metadata),
+    billing_enforcement: hostBillingEnforcementFromMetadata(metadata),
     pricing_model: pricingModel,
     desired_pricing_model: desiredPricingModel,
     effective_pricing_model: effectivePricingModel,
