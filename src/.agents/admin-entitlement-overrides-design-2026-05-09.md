@@ -11,8 +11,9 @@ The same mechanism should also cover the support cases that actually happen duri
 - per-project disk quota,
 - total account disk quota,
 - number of projects,
-- project RAM limit/default,
+- project memory limit/default,
 - managed egress windows.
+- AI limits.
 
 This must support the recovery path for billing enforcement:
 
@@ -74,8 +75,9 @@ Current override state for one account.
   account_id: uuid,              // primary key
   enabled: boolean,              // default true
   features: jsonb,               // default {}
+  project_defaults: jsonb,       // default {}
+  ai_limits: jsonb,              // default {}
   usage_limits: jsonb,           // default {}
-  project_resources: jsonb,      // default {}
   dedicated_hosts: jsonb,        // default {}
   reason: text | null,
   expires_at: timestamptz | null,
@@ -89,8 +91,9 @@ Suggested DB constraints:
 - `account_id` references `accounts(account_id)` if available in this schema layer.
 - `updated_by` references `accounts(account_id)` if available.
 - `jsonb_typeof(features) = 'object'`.
+- `jsonb_typeof(project_defaults) = 'object'`.
+- `jsonb_typeof(ai_limits) = 'object'`.
 - `jsonb_typeof(usage_limits) = 'object'`.
-- `jsonb_typeof(project_resources) = 'object'`.
 - `jsonb_typeof(dedicated_hosts) = 'object'`.
 
 This table is optimized for fast policy reads. It can be deleted on clear; audit lives in the event table.
@@ -133,6 +136,14 @@ export interface AccountFeatureOverrides {
   create_hosts?: boolean;
 }
 
+export interface ProjectDefaultOverrides {
+  disk_quota?: NumericLimitRule;
+  memory?: NumericLimitRule;
+  memory_request?: NumericLimitRule;
+}
+
+export type AiLimitOverrides = Record<string, NumericLimitRule>;
+
 export interface AccountUsageLimitOverrides {
   shared_compute_priority?: NumericLimitRule;
   total_storage_soft_bytes?: NumericLimitRule;
@@ -150,11 +161,6 @@ export interface AccountUsageLimitOverrides {
   prepaid_host_usage_limit_7d_usd?: NumericLimitRule;
 }
 
-export interface ProjectResourceOverrides {
-  per_project_disk_quota_bytes?: NumericLimitRule;
-  project_ram_mb?: NumericLimitRule;
-}
-
 export interface DedicatedHostPolicyOverrides {
   funding_mode?: EnumOverride<
     "account-prepaid" | "account-postpaid" | "site-funded"
@@ -166,8 +172,9 @@ export interface AccountEntitlementOverride {
   account_id: string;
   enabled: boolean;
   features?: AccountFeatureOverrides;
+  project_defaults?: ProjectDefaultOverrides;
+  ai_limits?: AiLimitOverrides;
   usage_limits?: AccountUsageLimitOverrides;
-  project_resources?: ProjectResourceOverrides;
   dedicated_hosts?: DedicatedHostPolicyOverrides;
   reason?: string | null;
   expires_at?: Date | string | null;
@@ -188,21 +195,31 @@ Initial UI-exposed fields:
 - `usage_limits.prepaid_host_usage_limit_7d_usd`
 - `usage_limits.credit_spend_limit_5h_usd`
 - `usage_limits.credit_spend_limit_7d_usd`
-- `project_resources.per_project_disk_quota_bytes`
-- `project_resources.project_ram_mb`
+- `project_defaults.disk_quota`
+- `project_defaults.memory`
+- `project_defaults.memory_request`
+- `ai_limits.*` for known numeric AI limit keys
 - `dedicated_hosts.postpaid_unbilled_limit_usd`
 - `dedicated_hosts.funding_mode` with only `account-prepaid` and `account-postpaid` exposed in the normal support UI
 - `expires_at`
 - `reason`
 
-Do not expose AI limits in this mechanism. AI limits are better addressed through ChatGPT subscriptions and product-specific billing.
+Naming note:
 
-Project resource override note:
+- The current membership tier schema already has `project_defaults` and `ai_limits`.
+- The current project defaults use `disk_quota`, `memory`, and `memory_request`.
+- The override schema should use those same keys unless we first rename the underlying membership/project-default schema everywhere.
+- The admin UI can label `disk_quota` as "per-project disk quota" and `memory` as "project memory", but the stored keys should stay consistent.
+- Keep the existing project-default units consistent with the project model. Today `disk_quota` is the project disk quota value consumed by project quota checks, and `memory`/`memory_request` are the project memory values.
 
-- `total_storage_*`, `max_projects`, and egress are already modeled in `MembershipUsageLimits`.
-- per-project disk quota and project RAM are not currently membership usage fields; keep them in `project_resources` unless/until they become first-class membership limits.
-- per-project disk quota should apply to new projects and to explicit admin-triggered quota reconciliation for existing owned projects. Do not silently resize every existing project without an operator-visible action.
-- RAM should affect project resource defaults/ceilings, not dedicated-host VM RAM.
+Membership field note:
+
+- `total_storage_*`, `max_projects`, and egress are modeled in `MembershipUsageLimits`.
+- `disk_quota`, `memory`, and `memory_request` are modeled in `MembershipEntitlements.project_defaults`.
+- AI limits are modeled in `MembershipEntitlements.ai_limits`.
+- All three groups are first-class membership-derived policy and should be overrideable with the same directional semantics.
+- A per-project disk quota increase does not increase total account storage. It only lets the user's storage be distributed less evenly across projects.
+- Project default changes should apply to all projects owned by the account through an explicit membership/default reconciliation path. This is not a silent arbitrary resize; it is the expected consequence of changing the account's membership-derived project policy.
 
 ## Merge Semantics
 
@@ -247,6 +264,16 @@ function applyNumericRule(
 const effectiveLimits = applyUsageLimitRules(
   baseLimits,
   override?.usage_limits,
+);
+
+const effectiveProjectDefaults = applyNumericRulesByKey(
+  membership.entitlements?.project_defaults ?? {},
+  override?.project_defaults,
+);
+
+const effectiveAiLimits = applyNumericRulesByKey(
+  membership.entitlements?.ai_limits ?? {},
+  override?.ai_limits,
 );
 
 const fundingMode =
@@ -299,7 +326,8 @@ admin_override?: {
   active: boolean;
   features?: AccountFeatureOverrides;
   usage_limits?: AccountUsageLimitOverrides;
-  project_resources?: ProjectResourceOverrides;
+  project_defaults?: ProjectDefaultOverrides;
+  ai_limits?: AiLimitOverrides;
   dedicated_hosts?: DedicatedHostPolicyOverrides;
   reason?: string | null;
   expires_at?: Date | string | null;
@@ -322,7 +350,7 @@ Authority rules:
 - The current override row and audit events live in the account's `home_bay`.
 - The browser/admin UI may be connected to any bay, but admin API calls must route to the target account's home bay before reading or writing overrides.
 - `getDedicatedHostPolicySnapshotForAccount` already routes account-local policy resolution through inter-bay RPC; overrides should be applied inside the account-local snapshot on the home bay.
-- Project-owning bays and project hosts should not independently interpret override rows. They should consume already-resolved policy snapshots or explicit reconciled project resource updates.
+- Project-owning bays and project hosts should not independently interpret override rows. They should consume already-resolved policy snapshots or explicit reconciled project default updates.
 
 This avoids split-brain behavior where a project-owning bay sees different limits than the account home bay.
 
@@ -416,10 +444,12 @@ Suggested first-pass sections:
    - total storage soft cap
    - total storage hard cap
    - per-project disk quota
-   - project RAM
+   - project memory
    - managed egress 5-hour bytes
    - managed egress 7-day bytes
-4. `Audit`
+4. `AI limits`
+   - known numeric AI limit keys from membership tiers
+5. `Audit`
    - reason
    - expires at
    - save / clear
@@ -499,19 +529,20 @@ Phase 2: Host policy integration
    - lowering a limit can deny admission.
 4. Add spend-enforcement/maintenance regression tests for recovery after an override increase, if current recovery behavior is incomplete.
 
-Phase 3: Project/account limit integration
+Phase 3: Project/account/AI limit integration
 
 1. Apply override-aware `MembershipUsageLimits` in project limit checks:
    - max projects,
    - total storage soft cap,
    - total storage hard cap,
    - managed egress 5-hour and 7-day windows.
-2. Add a project-resource policy helper for:
-   - per-project disk quota,
-   - project RAM.
-3. Apply project-resource overrides to new project defaults.
-4. Add an explicit admin reconciliation action for existing projects when support wants to raise project disk/RAM limits after an override.
-5. Add tests for project creation, storage admission, restore admission, and egress checks using effective override-aware limits.
+2. Apply override-aware `project_defaults`:
+   - `disk_quota`,
+   - `memory`,
+   - `memory_request`.
+3. Apply project default changes to new projects and existing owned projects through the membership/default reconciliation path.
+4. Apply override-aware `ai_limits` wherever membership AI limits are checked.
+5. Add tests for project creation, storage admission, restore admission, egress checks, project default reconciliation, and AI limit checks using effective override-aware limits.
 
 Phase 4: Admin API
 
@@ -530,7 +561,7 @@ Phase 5: Admin UI
 1. Add `AdminEntitlementOverrides` under the existing admin membership page.
 2. Show base/override/effective values.
 3. Add save/clear/history.
-4. Keep first UI scoped to dedicated-host, project/storage/RAM, and egress support-critical fields.
+4. Keep first UI scoped to dedicated-host, project/storage/memory, egress, and AI support-critical fields.
 5. Add lightweight frontend validation before API call, but rely on backend validation for correctness.
 
 Phase 6: Operational polish
@@ -549,6 +580,7 @@ Focused tests:
 
 - `src/packages/server/membership` override merge tests.
 - `src/packages/server/membership/project-limits` effective limit tests.
+- AI limit enforcement tests for override-aware `ai_limits`.
 - `src/packages/server/project-host/admission.test.ts`.
 - `src/packages/server/project-host/spend-enforcement.test.ts`.
 - `src/packages/server/conat/api` admin API tests.
@@ -571,7 +603,7 @@ Use focused package checks during development, then run broader checks before me
 2. Should site admins be able to set `funding_mode = "site-funded"`?
    - Recommendation: not in the first support UI. Keep backend compatibility with site-funded deployments, but require a separate break-glass path if this becomes necessary.
 3. Should overrides support all `MembershipUsageLimits` immediately?
-   - Recommendation: backend validator can support them; UI initially exposes dedicated-host, storage, max-projects, RAM, and egress fields.
+   - Recommendation: backend validator can support them; UI initially exposes dedicated-host, storage, max-projects, memory, egress, and known AI limit fields.
 4. Should users be notified when support changes an override?
    - Recommendation: not by default; add an explicit checkbox later.
 5. Should there be a maximum expiration?
@@ -584,7 +616,7 @@ The release-critical version is complete when:
 - support can enable/disable host creation for an account,
 - support can raise/lower prepaid and postpaid host windows,
 - support can raise/lower postpaid unbilled exposure limit,
-- support can raise/lower max projects, total storage, per-project disk quota, project RAM, and managed egress windows,
+- support can raise/lower max projects, total storage, per-project disk quota, project memory, managed egress windows, and AI limits,
 - all changes are audited with actor/reason/time,
 - expired overrides are ignored,
 - host admission and spend enforcement consume the effective policy,
