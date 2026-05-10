@@ -56,6 +56,9 @@ export async function createTestMembershipTier(opts: {
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;
+  project_defaults?: Record<string, unknown>;
+  ai_limits?: Record<string, unknown>;
+  features?: Record<string, unknown>;
   usage_limits?: Record<string, unknown>;
 }) {
   const pool = getPool("medium");
@@ -85,13 +88,64 @@ export async function createTestMembershipTier(opts: {
       opts.priority ?? 0,
       opts.price_monthly ?? 0,
       opts.price_yearly ?? 0,
-      {},
-      {},
-      {},
+      opts.project_defaults ?? {},
+      opts.ai_limits ?? {},
+      opts.features ?? {},
       opts.usage_limits ?? {},
       false,
       null,
       [],
+    ],
+  );
+}
+
+export async function createTestAccountEntitlementOverride(
+  account_id: string,
+  opts?: {
+    enabled?: boolean;
+    features?: Record<string, unknown>;
+    project_defaults?: Record<string, unknown>;
+    ai_limits?: Record<string, unknown>;
+    usage_limits?: Record<string, unknown>;
+    dedicated_hosts?: Record<string, unknown>;
+    reason?: string | null;
+    expires_at?: Date | null;
+    updated_by?: string;
+    updated_at?: Date;
+  },
+) {
+  const pool = getPool("medium");
+  await pool.query(
+    `INSERT INTO account_entitlement_overrides (
+       account_id, enabled, features, project_defaults, ai_limits,
+       usage_limits, dedicated_hosts, reason, expires_at, updated_by,
+       updated_at
+     )
+     VALUES ($1,$2,$3::JSONB,$4::JSONB,$5::JSONB,$6::JSONB,$7::JSONB,$8,$9,$10,$11)
+     ON CONFLICT (account_id)
+     DO UPDATE SET
+       enabled=EXCLUDED.enabled,
+       features=EXCLUDED.features,
+       project_defaults=EXCLUDED.project_defaults,
+       ai_limits=EXCLUDED.ai_limits,
+       usage_limits=EXCLUDED.usage_limits,
+       dedicated_hosts=EXCLUDED.dedicated_hosts,
+       reason=EXCLUDED.reason,
+       expires_at=EXCLUDED.expires_at,
+       updated_by=EXCLUDED.updated_by,
+       updated_at=EXCLUDED.updated_at`,
+    [
+      account_id,
+      opts?.enabled ?? true,
+      opts?.features ?? {},
+      opts?.project_defaults ?? {},
+      opts?.ai_limits ?? {},
+      opts?.usage_limits ?? {},
+      opts?.dedicated_hosts ?? {},
+      opts?.reason ?? "test override",
+      opts?.expires_at ?? null,
+      opts?.updated_by ?? uuid(),
+      opts?.updated_at ?? new Date(),
     ],
   );
 }

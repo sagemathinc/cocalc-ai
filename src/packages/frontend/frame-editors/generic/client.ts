@@ -283,6 +283,27 @@ export async function clear_admin_assigned_membership(opts: {
   await webapp_client.users_client.clearAdminAssignedMembership(opts);
 }
 
+export async function get_account_entitlement_override(opts: {
+  user_account_id: string;
+}) {
+  return await webapp_client.users_client.getAccountEntitlementOverride(opts);
+}
+
+export async function set_account_entitlement_override(opts: {
+  user_account_id: string;
+  override: any;
+  reason: string;
+}) {
+  return await webapp_client.users_client.setAccountEntitlementOverride(opts);
+}
+
+export async function clear_account_entitlement_override(opts: {
+  user_account_id: string;
+  reason: string;
+}): Promise<void> {
+  await webapp_client.users_client.clearAccountEntitlementOverride(opts);
+}
+
 export async function project_websocket(project_id: string): Promise<any> {
   return await webapp_client.project_client.websocket(project_id);
 }

@@ -5,9 +5,13 @@
 
 import { before, after } from "@cocalc/server/test";
 import { uuid } from "@cocalc/util/misc";
-import { resolveMembershipForAccount } from "./resolve";
+import {
+  resolveMembershipDetailsForAccount,
+  resolveMembershipForAccount,
+} from "./resolve";
 import {
   createTestAccount,
+  createTestAccountEntitlementOverride,
   createTestAdminAssignedMembership,
   createTestMembershipGrant,
   createTestMembershipTier,
@@ -148,5 +152,70 @@ describe("resolveMembershipForAccount", () => {
       prepaid_host_usage_limit_5h_usd: undefined,
       prepaid_host_usage_limit_7d_usd: undefined,
     });
+  });
+
+  it("applies active admin entitlement overrides to the selected membership", async () => {
+    const account_id = uuid();
+    const overrideTier = `test-override-${uuid()}`;
+    await createTestAccount(account_id);
+    await createTestMembershipTier({
+      id: overrideTier,
+      priority: 30,
+      features: { create_hosts: false },
+      project_defaults: {
+        disk_quota: 10000,
+        memory: 8000,
+      },
+      ai_limits: {
+        units_5h: 50,
+        units_7d: 200,
+      },
+      usage_limits: {
+        max_projects: 10,
+        credit_spend_limit_7d_usd: 100,
+      },
+    });
+    await createTestMembershipSubscription(account_id, { class: overrideTier });
+    await createTestAccountEntitlementOverride(account_id, {
+      features: { create_hosts: true },
+      project_defaults: {
+        disk_quota: { mode: "minimum", value: 20000 },
+        memory: { mode: "set", value: 12000 },
+      },
+      ai_limits: {
+        units_5h: { mode: "maximum", value: 25 },
+        units_7d: { mode: "minimum", value: 500 },
+      },
+      usage_limits: {
+        max_projects: { mode: "maximum", value: 5 },
+        credit_spend_limit_7d_usd: { mode: "minimum", value: 300 },
+      },
+    });
+
+    const result = await resolveMembershipForAccount(account_id);
+
+    expect(result.entitlements.features?.create_hosts).toBe(true);
+    expect(result.entitlements.project_defaults).toMatchObject({
+      disk_quota: 20000,
+      memory: 12000,
+    });
+    expect(result.entitlements.ai_limits).toMatchObject({
+      units_5h: 25,
+      units_7d: 500,
+    });
+    expect(result.effective_limits).toMatchObject({
+      max_projects: 5,
+      credit_spend_limit_7d_usd: 300,
+    });
+
+    const details = await resolveMembershipDetailsForAccount(account_id);
+    expect(details.admin_override?.effects).toEqual(
+      expect.arrayContaining([
+        "Per-project disk quota: minimum 20000 MB",
+        "AI units, 5-hour window: maximum 25 units",
+        "Owned projects: maximum 5 projects",
+        "Dedicated host creation: allow",
+      ]),
+    );
   });
 });

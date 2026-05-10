@@ -211,6 +211,16 @@ Naming note:
 - The override schema should use those same keys unless we first rename the underlying membership/project-default schema everywhere.
 - The admin UI can label `disk_quota` as "per-project disk quota" and `memory` as "project memory", but the stored keys should stay consistent.
 - Keep the existing project-default units consistent with the project model. Today `disk_quota` is the project disk quota value consumed by project quota checks, and `memory`/`memory_request` are the project memory values.
+- `disk_quota`, `memory`, and `memory_request` are currently in MB in the project quota system. Do not introduce `*_bytes` names in the override layer unless the underlying project quota model is migrated at the same time.
+- AI limits are currently `units_5h` and `units_7d`. They are internal cost-weighted units, not user-facing dollars, even if they roughly track spend. The UI can explain them as AI usage units without promising a dollar conversion.
+
+Schema style decision:
+
+- Keep the membership table grouped as `project_defaults`, `ai_limits`, `features`, and `usage_limits` JSON objects.
+- Do not flatten these into top-level columns such as `ai_5h_units` or `per_project_disk_quota_bytes` right now.
+- The table is small, policy-shaped, and edited by admins; the value of JSON extensibility is higher than SQL column-level constraints here.
+- The red flag with JSON is typo/validation risk, so the implementation must add typed normalizers, known-key validation, and structured UI controls instead of relying on free-form JSON.
+- If a future field becomes heavily queried, indexed, or audited independently, promote that specific field to a top-level column then.
 
 Membership field note:
 
@@ -220,6 +230,9 @@ Membership field note:
 - All three groups are first-class membership-derived policy and should be overrideable with the same directional semantics.
 - A per-project disk quota increase does not increase total account storage. It only lets the user's storage be distributed less evenly across projects.
 - Project default changes should apply to all projects owned by the account through an explicit membership/default reconciliation path. This is not a silent arbitrary resize; it is the expected consequence of changing the account's membership-derived project policy.
+- Running projects should not have quota/memory changed in place. The current shared-project path recomputes `run_quota` when project control starts a project, by resolving the selected account's membership and merging membership project defaults into project settings.
+- There should be no long membership-resolution cache in that start path; if a fully stopped project is started after a tier/default change and still gets the old quota, treat that as a bug to investigate. Usage-status caches are separate and should not control project start quotas.
+- The admin UI/runbook should state the expected propagation clearly: running projects keep current limits until restart; stopped projects should pick up the effective policy on next start; bulk reconciliation/status should make pending existing-project changes visible.
 
 ## Merge Semantics
 
@@ -294,6 +307,15 @@ Examples:
 - user later buys a membership with `$500`; effective is `$500`.
 - support sets `maximum: $50`; effective is `$50` even if the user buys a `$500` membership.
 - support sets `set: $125`; effective is exactly `$125` until the override expires or is cleared.
+
+Admin UI help popover:
+
+- Put a small `?` next to the numeric override mode selector.
+- Use the examples above in the popover because they explain the key distinction:
+  - `minimum` is a support floor and does not block a later higher membership,
+  - `maximum` is an admin cap and continues to cap later memberships,
+  - `set` forces an exact value until the override expires or is cleared.
+- The UI should avoid saying only "override" for numeric fields, since that hides whether the admin is setting a floor, cap, or exact value.
 
 Numeric override validation:
 
@@ -541,8 +563,12 @@ Phase 3: Project/account/AI limit integration
    - `memory`,
    - `memory_request`.
 3. Apply project default changes to new projects and existing owned projects through the membership/default reconciliation path.
-4. Apply override-aware `ai_limits` wherever membership AI limits are checked.
-5. Add tests for project creation, storage admission, restore admission, egress checks, project default reconciliation, and AI limit checks using effective override-aware limits.
+4. Confirm and document the project-start propagation timing:
+   - running projects keep their current `run_quota`,
+   - stopped projects pick up effective project defaults on next start,
+   - a stopped project still receiving old values after a membership/default change is a bug.
+5. Apply override-aware `ai_limits` wherever membership AI limits are checked.
+6. Add tests for project creation, storage admission, restore admission, egress checks, project default reconciliation, and AI limit checks using effective override-aware limits.
 
 Phase 4: Admin API
 
@@ -562,7 +588,8 @@ Phase 5: Admin UI
 2. Show base/override/effective values.
 3. Add save/clear/history.
 4. Keep first UI scoped to dedicated-host, project/storage/memory, egress, and AI support-critical fields.
-5. Add lightweight frontend validation before API call, but rely on backend validation for correctness.
+5. Add the numeric mode `?` popover with floor/cap/exact examples.
+6. Add lightweight frontend validation before API call, but rely on backend validation for correctness.
 
 Phase 6: Operational polish
 

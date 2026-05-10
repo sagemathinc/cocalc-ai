@@ -37,6 +37,13 @@ import manageApiKeys from "@cocalc/server/api/manage";
 export { manageApiKeys };
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
+import {
+  clearAccountEntitlementOverrideLocal,
+  getAccountEntitlementOverrideLocal,
+  setAccountEntitlementOverrideLocal,
+  type AccountEntitlementOverrideInput,
+} from "@cocalc/server/membership/entitlement-overrides";
 import {
   createClusterAccount,
   deleteClusterAccount,
@@ -1956,6 +1963,110 @@ export async function clearAdminAssignedMembership({
   await pool.async_query({
     query: "DELETE FROM admin_assigned_memberships WHERE account_id=$1",
     params: [user_account_id],
+  });
+}
+
+async function getAccountEntitlementOverrideHomeClient({
+  account_id,
+  user_account_id,
+}: {
+  account_id: string;
+  user_account_id: string;
+}) {
+  const location = await resolveAccountHomeBay({ account_id, user_account_id });
+  const homeBayId =
+    `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  if (homeBayId === getConfiguredBayId()) {
+    return undefined;
+  }
+  return createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: homeBayId,
+  });
+}
+
+export async function getAccountEntitlementOverride({
+  account_id,
+  user_account_id,
+}: {
+  account_id?: string;
+  user_account_id: string;
+}): Promise<AccountEntitlementOverride | undefined> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const client = await getAccountEntitlementOverrideHomeClient({
+    account_id,
+    user_account_id,
+  });
+  return client
+    ? await client.getAccountEntitlementOverride({
+        account_id: user_account_id,
+      })
+    : await getAccountEntitlementOverrideLocal(user_account_id);
+}
+
+export async function setAccountEntitlementOverride({
+  account_id,
+  user_account_id,
+  override,
+  reason,
+}: {
+  account_id?: string;
+  user_account_id: string;
+  override: AccountEntitlementOverrideInput;
+  reason: string;
+}): Promise<AccountEntitlementOverride> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const client = await getAccountEntitlementOverrideHomeClient({
+    account_id,
+    user_account_id,
+  });
+  return client
+    ? await client.setAccountEntitlementOverride({
+        account_id: user_account_id,
+        actor_account_id: account_id,
+        override,
+        reason,
+      })
+    : await setAccountEntitlementOverrideLocal({
+        account_id: user_account_id,
+        actor_account_id: account_id,
+        override,
+        reason,
+      });
+}
+
+export async function clearAccountEntitlementOverride({
+  account_id,
+  user_account_id,
+  reason,
+}: {
+  account_id?: string;
+  user_account_id: string;
+  reason: string;
+}): Promise<void> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const client = await getAccountEntitlementOverrideHomeClient({
+    account_id,
+    user_account_id,
+  });
+  if (client) {
+    await client.clearAccountEntitlementOverride({
+      account_id: user_account_id,
+      actor_account_id: account_id,
+      reason,
+    });
+    return;
+  }
+  await clearAccountEntitlementOverrideLocal({
+    account_id: user_account_id,
+    actor_account_id: account_id,
+    reason,
   });
 }
 

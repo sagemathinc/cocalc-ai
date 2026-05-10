@@ -104,6 +104,10 @@ jest.mock("./actions", () => ({
   },
 }));
 
+jest.mock("./account-entitlement-override", () => ({
+  AccountEntitlementOverridePanel: () => null,
+}));
+
 describe("AdminMembership", () => {
   beforeEach(() => {
     jest.clearAllMocks();

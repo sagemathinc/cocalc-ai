@@ -112,6 +112,11 @@ import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
+import {
+  clearAccountEntitlementOverrideLocal,
+  getAccountEntitlementOverrideLocal,
+  setAccountEntitlementOverrideLocal,
+} from "@cocalc/server/membership/entitlement-overrides";
 import { getDedicatedHostPolicySnapshotLocal } from "@cocalc/server/project-host/admission";
 import {
   closeDedicatedHostPurchaseSessionLocal,
@@ -492,6 +497,30 @@ async function startAccountLocalService(): Promise<void> {
     getMembershipDetails: async ({ account_id, refresh_usage_status }) =>
       await resolveMembershipDetailsForAccount(account_id, {
         refresh_usage_status,
+      }),
+    getAccountEntitlementOverride: async ({ account_id }) =>
+      await getAccountEntitlementOverrideLocal(account_id),
+    setAccountEntitlementOverride: async ({
+      account_id,
+      actor_account_id,
+      override,
+      reason,
+    }) =>
+      await setAccountEntitlementOverrideLocal({
+        account_id,
+        actor_account_id,
+        override,
+        reason,
+      }),
+    clearAccountEntitlementOverride: async ({
+      account_id,
+      actor_account_id,
+      reason,
+    }) =>
+      await clearAccountEntitlementOverrideLocal({
+        account_id,
+        actor_account_id,
+        reason,
       }),
     getDedicatedHostPolicySnapshot: async ({ account_id }) =>
       await getDedicatedHostPolicySnapshotLocal(account_id),
