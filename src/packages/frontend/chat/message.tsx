@@ -123,8 +123,8 @@ import {
   shouldLoadCodexPreviewBody,
   shouldShowCodexShowActivityButton,
   shouldShowQueuedMessageEditedVersionSent,
-  shouldAutoSelectMessageBody,
   shouldSuppressAcpPlaceholderBody,
+  shouldUseSelectableMessageBody,
   shouldUseCodexSelectToolbar,
   trimCompletedCachedCodexActivityBlocks,
   type InlineCodexActivityBlock,
@@ -457,7 +457,6 @@ export default function Message({
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [showTouchActions, setShowTouchActions] = useState<boolean>(false);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
-  const [selectMode, setSelectMode] = useState<boolean>(false);
   const [interruptRequested, setInterruptRequested] = useState<boolean>(false);
   const [openActivityDrawerToken, setOpenActivityDrawerToken] = useState<
     number | undefined
@@ -882,13 +881,6 @@ export default function Message({
     () => getLatestCodexActivityAtMs(codexPreviewLog.events),
     [codexPreviewLog.events],
   );
-  const messageId = useMemo(
-    () => field<string>(message, "message_id"),
-    [message],
-  );
-  useEffect(() => {
-    setSelectMode(false);
-  }, [messageId]);
   const renderedMessageValue = useMemo(
     () =>
       resolveRenderedMessageValue({
@@ -951,29 +943,20 @@ export default function Message({
   const feedbackMap = useMemo(() => field<any>(message, "feedback"), [message]);
 
   const isActive =
-    selected ||
-    isHovered ||
-    replying ||
-    show_history ||
-    isEditing ||
-    selectMode;
-  const autoSelectMode = shouldAutoSelectMessageBody({
+    selected || isHovered || replying || show_history || isEditing;
+  const useSelectableMessageBody = shouldUseSelectableMessageBody({
     useCodexSelectToolbar,
-    isLastMessageInThread,
     isEditing,
     showHistory: show_history,
     isViewersMessage: is_viewers_message,
-    effectiveGenerating,
   });
   const messageBodyMode = useMemo(
     () =>
       resolveMessageBodyMode({
         isEditing,
-        selectMode,
-        autoSelectMode,
-        useCodexSelectToolbar,
+        useSelectableMessageBody,
       }),
-    [autoSelectMode, isEditing, selectMode, useCodexSelectToolbar],
+    [isEditing, useSelectableMessageBody],
   );
 
   useLayoutEffect(() => {
@@ -1565,28 +1548,6 @@ export default function Message({
       isLastMessageInThread,
     });
     const buttons: ReactNode[] = [
-      <span key="select" style={{ marginTop: "-5px" }}>
-        <Tip
-          placement="bottom"
-          title={
-            selectMode
-              ? "Exit selection mode"
-              : "Select and copy part of this message with Slate formatting"
-          }
-        >
-          <Button
-            size="small"
-            type={selectMode ? "primary" : "text"}
-            style={{
-              color: selectMode ? undefined : COLORS.GRAY_M,
-              fontSize: "12px",
-            }}
-            onClick={() => setSelectMode((prev) => !prev)}
-          >
-            Select
-          </Button>
-        </Tip>
-      </span>,
       <Tooltip key="git-browser" placement="bottom" title="Open git browser">
         <Button
           size="small"
@@ -1610,7 +1571,7 @@ export default function Message({
 
     if (showShowActivityButton && onExpandedCodexActivityChange) {
       buttons.splice(
-        1,
+        0,
         0,
         <span key="show-activity" style={{ marginTop: "-5px" }}>
           <Tip

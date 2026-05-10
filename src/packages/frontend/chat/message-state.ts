@@ -306,44 +306,31 @@ export function shouldUseCodexSelectToolbar({
   return isCodexThread;
 }
 
-export function shouldAutoSelectMessageBody({
+export function shouldUseSelectableMessageBody({
   useCodexSelectToolbar,
-  isLastMessageInThread,
   isEditing,
   showHistory,
   isViewersMessage,
-  effectiveGenerating,
 }: {
   useCodexSelectToolbar: boolean;
-  isLastMessageInThread: boolean;
   isEditing: boolean;
   showHistory: boolean;
   isViewersMessage: boolean;
-  effectiveGenerating: boolean;
 }): boolean {
   return (
-    useCodexSelectToolbar &&
-    isLastMessageInThread &&
-    !isEditing &&
-    !showHistory &&
-    !isViewersMessage &&
-    !effectiveGenerating
+    useCodexSelectToolbar && !isEditing && !showHistory && !isViewersMessage
   );
 }
 
 export function resolveMessageBodyMode({
   isEditing,
-  selectMode,
-  autoSelectMode,
-  useCodexSelectToolbar,
+  useSelectableMessageBody,
 }: {
   isEditing: boolean;
-  selectMode: boolean;
-  autoSelectMode?: boolean;
-  useCodexSelectToolbar: boolean;
+  useSelectableMessageBody: boolean;
 }): "edit" | "select" | "static" {
   if (isEditing) return "edit";
-  if ((selectMode || autoSelectMode) && useCodexSelectToolbar) return "select";
+  if (useSelectableMessageBody) return "select";
   return "static";
 }
 

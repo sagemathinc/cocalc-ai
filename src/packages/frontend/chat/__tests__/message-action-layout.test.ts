@@ -5,7 +5,7 @@ import {
 } from "../message";
 import {
   resolveMessageBodyMode,
-  shouldAutoSelectMessageBody,
+  shouldUseSelectableMessageBody,
   shouldUseCodexSelectToolbar,
 } from "../message-state";
 
@@ -35,106 +35,62 @@ describe("message action layout", () => {
     expect(
       resolveMessageBodyMode({
         isEditing: false,
-        selectMode: true,
-        autoSelectMode: false,
-        useCodexSelectToolbar: true,
+        useSelectableMessageBody: true,
       }),
     ).toBe("select");
     expect(
       resolveMessageBodyMode({
         isEditing: true,
-        selectMode: true,
-        autoSelectMode: true,
-        useCodexSelectToolbar: true,
+        useSelectableMessageBody: true,
       }),
     ).toBe("edit");
     expect(
       resolveMessageBodyMode({
         isEditing: false,
-        selectMode: true,
-        autoSelectMode: false,
-        useCodexSelectToolbar: false,
+        useSelectableMessageBody: false,
       }),
     ).toBe("static");
-    expect(
-      resolveMessageBodyMode({
-        isEditing: false,
-        selectMode: false,
-        autoSelectMode: true,
-        useCodexSelectToolbar: true,
-      }),
-    ).toBe("select");
   });
 
-  it("auto-selects only the latest non-editing Codex message body", () => {
+  it("uses selectable mode for non-viewer Codex message bodies", () => {
     expect(
-      shouldAutoSelectMessageBody({
+      shouldUseSelectableMessageBody({
         useCodexSelectToolbar: true,
-        isLastMessageInThread: true,
         isEditing: false,
         showHistory: false,
         isViewersMessage: false,
-        effectiveGenerating: false,
       }),
     ).toBe(true);
     expect(
-      shouldAutoSelectMessageBody({
+      shouldUseSelectableMessageBody({
         useCodexSelectToolbar: false,
-        isLastMessageInThread: true,
         isEditing: false,
         showHistory: false,
         isViewersMessage: false,
-        effectiveGenerating: false,
       }),
     ).toBe(false);
     expect(
-      shouldAutoSelectMessageBody({
+      shouldUseSelectableMessageBody({
         useCodexSelectToolbar: true,
-        isLastMessageInThread: false,
-        isEditing: false,
-        showHistory: false,
-        isViewersMessage: false,
-        effectiveGenerating: false,
-      }),
-    ).toBe(false);
-    expect(
-      shouldAutoSelectMessageBody({
-        useCodexSelectToolbar: true,
-        isLastMessageInThread: true,
         isEditing: true,
         showHistory: false,
         isViewersMessage: false,
-        effectiveGenerating: false,
       }),
     ).toBe(false);
     expect(
-      shouldAutoSelectMessageBody({
+      shouldUseSelectableMessageBody({
         useCodexSelectToolbar: true,
-        isLastMessageInThread: true,
         isEditing: false,
         showHistory: true,
         isViewersMessage: false,
-        effectiveGenerating: false,
       }),
     ).toBe(false);
     expect(
-      shouldAutoSelectMessageBody({
+      shouldUseSelectableMessageBody({
         useCodexSelectToolbar: true,
-        isLastMessageInThread: true,
         isEditing: false,
         showHistory: false,
         isViewersMessage: true,
-        effectiveGenerating: false,
-      }),
-    ).toBe(false);
-    expect(
-      shouldAutoSelectMessageBody({
-        useCodexSelectToolbar: true,
-        isLastMessageInThread: true,
-        isEditing: false,
-        showHistory: false,
-        isViewersMessage: false,
-        effectiveGenerating: true,
       }),
     ).toBe(false);
   });
