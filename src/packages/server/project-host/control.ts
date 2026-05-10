@@ -371,6 +371,7 @@ export async function selectActiveHost({
     "status='running'",
     "deleted IS NULL",
     "last_seen > NOW() - interval '2 minutes'",
+    "COALESCE(metadata #>> '{billing,enforcement,state}', 'ok') NOT IN ('at_risk', 'draining', 'stopped_billing_blocked', 'deprovision_pending', 'deprovisioned_recoverable')",
   ];
   if (exclude_host_id) {
     params.push(exclude_host_id);

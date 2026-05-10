@@ -960,6 +960,32 @@ function currentHostFundingMode(
   return undefined;
 }
 
+function assertHostBillingEnforcementAllowsStart(metadata: any): void {
+  const state = `${metadata?.billing?.enforcement?.state ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (
+    ![
+      "at_risk",
+      "draining",
+      "stopped_billing_blocked",
+      "deprovision_pending",
+      "deprovisioned_recoverable",
+    ].includes(state)
+  ) {
+    return;
+  }
+  throw Object.assign(
+    new Error(
+      "host billing must be resolved before this dedicated host can be started",
+    ),
+    {
+      code: "host_billing_enforcement_blocked",
+      details: metadata?.billing?.enforcement,
+    },
+  );
+}
+
 function normalizeRequestedHostFundingMode(
   value: unknown,
 ): DedicatedHostFundingMode | undefined {
@@ -3647,6 +3673,7 @@ export async function startHost({
     });
   }
   const row = await loadHostForStartStop(id, account_id);
+  assertHostBillingEnforcementAllowsStart(row.metadata);
   const auth = await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
     browser_id,
@@ -3845,6 +3872,7 @@ export async function drainHostInternal({
   force,
   allow_offline,
   parallel,
+  managed_egress_override,
   shouldCancel,
   onProgress,
 }: {
@@ -3854,6 +3882,7 @@ export async function drainHostInternal({
   force?: boolean;
   allow_offline?: boolean;
   parallel?: number;
+  managed_egress_override?: "admin-host-drain";
   shouldCancel?: () => Promise<boolean>;
   onProgress?: (update: {
     message: string;
@@ -3869,6 +3898,7 @@ export async function drainHostInternal({
     force,
     allow_offline,
     parallel,
+    managed_egress_override,
     defaultParallel: HOST_DRAIN_DEFAULT_PARALLEL,
     ownerMaxParallel: HOST_DRAIN_OWNER_MAX_PARALLEL,
     loadHostForListing,

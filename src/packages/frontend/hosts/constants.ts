@@ -12,6 +12,7 @@ export const WRAP_STYLE: CSS = {
 export const STATUS_COLOR = {
   stopped: "red",
   running: "green",
+  draining: "orange",
   provisioning: "blue",
   starting: "blue",
   restarting: "blue",
@@ -19,6 +20,7 @@ export const STATUS_COLOR = {
   deprovisioning: "orange",
   deprovisioned: "default",
   off: "red",
+  error: "red",
 } as const;
 
 export function isHostTransitioning(status?: string): boolean {
@@ -26,6 +28,7 @@ export function isHostTransitioning(status?: string): boolean {
     status === "starting" ||
     status === "stopping" ||
     status === "restarting" ||
+    status === "draining" ||
     status === "deprovisioning"
   );
 }
@@ -39,6 +42,8 @@ const STATUS_TOOLTIP: Record<string, string> = {
   provisioning:
     "Provider reports provisioning in progress; host may not be reachable yet.",
   restarting: "Restart requested; waiting for provider to report running.",
+  draining:
+    "Final backup and project drain requested; host is being stopped for billing.",
   stopping: "Stop requested; waiting for provider to report stopped.",
   deprovisioning:
     "Deprovision requested; waiting for provider to delete disks.",

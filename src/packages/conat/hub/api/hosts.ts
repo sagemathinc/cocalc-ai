@@ -24,6 +24,7 @@ import type {
 export type HostStatus =
   | "deprovisioned"
   | "deprovisioning"
+  | "draining"
   | "off"
   | "error"
   | "starting"
@@ -37,6 +38,17 @@ export type HostFundingMode =
   | "account-prepaid"
   | "account-postpaid"
   | "site-funded";
+export type HostBillingEnforcementState =
+  | "ok"
+  | "at_risk"
+  | "draining"
+  | "stopped_billing_blocked"
+  | "deprovision_pending"
+  | "deprovisioned_recoverable";
+export type HostBillingRecoveryAction =
+  | "add_funds"
+  | "fix_payment"
+  | "support_limit_increase";
 export type HostSpotRecoveryPhase =
   | "idle"
   | "retrying_spot"
@@ -66,6 +78,27 @@ export interface HostSpotRecoveryState {
   last_probe_error?: string;
   verification_started_at?: string;
   verification_deadline_at?: string;
+}
+
+export interface HostBillingEnforcement {
+  state: HostBillingEnforcementState;
+  reason_code?: string;
+  reason?: string;
+  first_detected_at?: string;
+  at_risk_at?: string;
+  drain_requested_at?: string;
+  drain_completed_at?: string;
+  final_backup_status?: "unknown" | "running" | "succeeded" | "failed";
+  final_backup_completed_at?: string;
+  stopped_at?: string;
+  grace_until?: string;
+  deprovision_after?: string;
+  deprovision_requested_at?: string;
+  deprovisioned_at?: string;
+  recovery_actions?: HostBillingRecoveryAction[];
+  hourly_cost_usd?: string | number;
+  limiting_runway_hours?: number;
+  limiting_window?: string;
 }
 
 export const HOST_LRO_KINDS = [
@@ -585,6 +618,7 @@ export interface Host {
   reason_unavailable?: string;
   starred?: boolean;
   funding_mode?: HostFundingMode;
+  billing_enforcement?: HostBillingEnforcement;
   pricing_model?: HostPricingModel;
   desired_pricing_model?: HostPricingModel;
   effective_pricing_model?: HostPricingModel;

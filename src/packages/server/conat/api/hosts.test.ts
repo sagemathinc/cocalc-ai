@@ -1586,6 +1586,50 @@ describe("hosts browser fresh auth gating", () => {
     expect(result.kind).toBe("host-start");
   });
 
+  it("blocks host start while billing enforcement is unresolved", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+                billing: {
+                  funding_mode: "account-prepaid",
+                  enforcement: {
+                    state: "stopped_billing_blocked",
+                    reason: "prepaid balance is exhausted",
+                  },
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { startHost } = await import("./hosts");
+    await expect(
+      startHost({
+        account_id: ACCOUNT_ID,
+        session_hash: "session-hash",
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({
+      code: "host_billing_enforcement_blocked",
+    });
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
   it("blocks host start when a destructive host op is already pending", async () => {
     getServerSettingsMock = jest.fn(async () => ({
       project_hosts_funding_mode: "site-funded",
