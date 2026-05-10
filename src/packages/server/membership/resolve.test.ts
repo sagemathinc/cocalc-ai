@@ -5,7 +5,10 @@
 
 import { before, after } from "@cocalc/server/test";
 import { uuid } from "@cocalc/util/misc";
-import { resolveMembershipForAccount } from "./resolve";
+import {
+  resolveMembershipDetailsForAccount,
+  resolveMembershipForAccount,
+} from "./resolve";
 import {
   createTestAccount,
   createTestAccountEntitlementOverride,
@@ -204,5 +207,15 @@ describe("resolveMembershipForAccount", () => {
       max_projects: 5,
       credit_spend_limit_7d_usd: 300,
     });
+
+    const details = await resolveMembershipDetailsForAccount(account_id);
+    expect(details.admin_override?.effects).toEqual(
+      expect.arrayContaining([
+        "Per-project disk quota: minimum 20000 MB",
+        "AI units, 5-hour window: maximum 25 units",
+        "Owned projects: maximum 5 projects",
+        "Dedicated host creation: allow",
+      ]),
+    );
   });
 });

@@ -281,6 +281,67 @@ function formatCurrentValue(
   return "Not configured";
 }
 
+function formatOverrideRule(
+  rule: NumericLimitRule,
+  field: Pick<NumericOverrideField, "fromStored" | "unit">,
+): string {
+  const display = field.fromStored ? field.fromStored(rule.value) : rule.value;
+  const formatted = Number.isInteger(display)
+    ? `${display}`
+    : display.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return `${rule.mode} ${formatted} ${field.unit}`;
+}
+
+function describeOverride(override?: AccountEntitlementOverride): string[] {
+  if (!override) return [];
+  const effects: string[] = [];
+  for (const field of NUMERIC_FIELDS) {
+    const rule = getNumericRule(override, field);
+    if (rule) {
+      effects.push(`${field.label}: ${formatOverrideRule(rule, field)}`);
+    }
+  }
+  if (override.features?.create_hosts != null) {
+    effects.push(
+      `Dedicated host creation: ${
+        override.features.create_hosts ? "allow" : "block"
+      }`,
+    );
+  }
+  if (override.dedicated_hosts?.funding_mode) {
+    effects.push(
+      `Dedicated host funding mode: ${override.dedicated_hosts.funding_mode.value}`,
+    );
+  }
+  if (override.usage_limits?.egress_policy) {
+    effects.push(
+      `Shared-host egress policy: ${override.usage_limits.egress_policy.value}`,
+    );
+  }
+  if (override.usage_limits?.dedicated_host_egress_policy) {
+    effects.push(
+      `Dedicated-host egress policy: ${override.usage_limits.dedicated_host_egress_policy.value}`,
+    );
+  }
+  return effects;
+}
+
+function errorMessage(err: unknown): string {
+  if (
+    err &&
+    typeof err === "object" &&
+    Array.isArray((err as { errorFields?: unknown[] }).errorFields)
+  ) {
+    const messages = (
+      err as { errorFields: Array<{ errors?: string[] }> }
+    ).errorFields
+      .flatMap((field) => field.errors ?? [])
+      .filter(Boolean);
+    if (messages.length > 0) return messages.join(" ");
+  }
+  return err instanceof Error ? err.message : `${err}`;
+}
+
 function resetFormFields(
   form: FormInstance,
   override?: AccountEntitlementOverride,
@@ -483,7 +544,7 @@ export function AccountEntitlementOverridePanel({
       setOverride(nextOverride);
       resetFormFields(form, nextOverride);
     } catch (err) {
-      setError(`${err}`);
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -493,7 +554,7 @@ export function AccountEntitlementOverridePanel({
     setSaving(true);
     setError("");
     try {
-      const values = await form.validateFields();
+      const values = form.getFieldsValue();
       const reason = `${values.reason ?? ""}`.trim();
       if (!reason) {
         throw Error("Reason is required.");
@@ -504,14 +565,14 @@ export function AccountEntitlementOverridePanel({
         reason,
       });
       setOverride(nextOverride);
-      resetFormFields(form, nextOverride);
+      resetFormFields(form, undefined);
       message.success("Account entitlement override updated.");
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("cocalc:membership-changed"));
       }
       await onChanged?.();
     } catch (err) {
-      setError(`${err}`);
+      setError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -537,7 +598,7 @@ export function AccountEntitlementOverridePanel({
       }
       await onChanged?.();
     } catch (err) {
-      setError(`${err}`);
+      setError(errorMessage(err));
     } finally {
       setClearing(false);
     }
@@ -572,6 +633,17 @@ export function AccountEntitlementOverridePanel({
                 }
                 description={
                   <Descriptions size="small" column={1}>
+                    <Descriptions.Item label="Effects">
+                      {describeOverride(override).length > 0 ? (
+                        <ul style={{ margin: 0, paddingLeft: 18 }}>
+                          {describeOverride(override).map((effect) => (
+                            <li key={effect}>{effect}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        "No entitlement changes configured."
+                      )}
+                    </Descriptions.Item>
                     <Descriptions.Item label="Updated">
                       <TimeAgo date={override.updated_at} />
                     </Descriptions.Item>
@@ -695,8 +767,16 @@ export function AccountEntitlementOverridePanel({
               <Button type="primary" onClick={save} loading={saving}>
                 Save override
               </Button>
+              <Button
+                onClick={() => {
+                  resetFormFields(form, undefined);
+                  setError("");
+                }}
+              >
+                Reset form
+              </Button>
               <Button onClick={clear} loading={clearing} danger>
-                Clear override
+                Clear active override
               </Button>
             </Space>
           </Space>

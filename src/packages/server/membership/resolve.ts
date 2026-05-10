@@ -18,6 +18,7 @@ import { normalizeMembershipEffectiveLimits } from "./effective-limits";
 import { getMembershipUsageStatusForAccount } from "./usage-status";
 import {
   applyAccountEntitlementOverride,
+  describeAccountEntitlementOverride,
   getActiveAccountEntitlementOverride,
 } from "./entitlement-overrides";
 
@@ -287,6 +288,7 @@ export async function resolveMembershipDetailsForAccount(
     admin_override: override
       ? {
           expires_at: override.expires_at ?? null,
+          effects: describeAccountEntitlementOverride(override),
           updated_at: override.updated_at,
         }
       : undefined,

@@ -69,6 +69,115 @@ const DEDICATED_HOST_FUNDING_MODES = new Set([
   "site-funded",
 ]);
 
+interface OverrideEffectField {
+  section:
+    | "project_defaults"
+    | "ai_limits"
+    | "usage_limits"
+    | "dedicated_hosts";
+  key: string;
+  label: string;
+  unit: string;
+  fromStored?: (value: number) => number;
+}
+
+const OVERRIDE_EFFECT_FIELDS = [
+  {
+    section: "project_defaults",
+    key: "disk_quota",
+    label: "Per-project disk quota",
+    unit: "MB",
+  },
+  {
+    section: "project_defaults",
+    key: "memory",
+    label: "Project RAM",
+    unit: "MB",
+  },
+  {
+    section: "project_defaults",
+    key: "memory_request",
+    label: "Project requested RAM",
+    unit: "MB",
+  },
+  {
+    section: "ai_limits",
+    key: "units_5h",
+    label: "AI units, 5-hour window",
+    unit: "units",
+  },
+  {
+    section: "ai_limits",
+    key: "units_7d",
+    label: "AI units, 7-day window",
+    unit: "units",
+  },
+  {
+    section: "usage_limits",
+    key: "total_storage_soft_bytes",
+    label: "Total storage soft cap",
+    unit: "GB",
+    fromStored: (value: number) => value / 1_000_000_000,
+  },
+  {
+    section: "usage_limits",
+    key: "total_storage_hard_bytes",
+    label: "Total storage hard cap",
+    unit: "GB",
+    fromStored: (value: number) => value / 1_000_000_000,
+  },
+  {
+    section: "usage_limits",
+    key: "max_projects",
+    label: "Owned projects",
+    unit: "projects",
+  },
+  {
+    section: "usage_limits",
+    key: "egress_5h_bytes",
+    label: "Managed egress, 5-hour window",
+    unit: "GB",
+    fromStored: (value: number) => value / 1_000_000_000,
+  },
+  {
+    section: "usage_limits",
+    key: "egress_7d_bytes",
+    label: "Managed egress, 7-day window",
+    unit: "GB",
+    fromStored: (value: number) => value / 1_000_000_000,
+  },
+  {
+    section: "usage_limits",
+    key: "credit_spend_limit_5h_usd",
+    label: "Postpay spend, 5-hour window",
+    unit: "USD",
+  },
+  {
+    section: "usage_limits",
+    key: "credit_spend_limit_7d_usd",
+    label: "Postpay spend, 7-day window",
+    unit: "USD",
+  },
+  {
+    section: "usage_limits",
+    key: "prepaid_host_usage_limit_5h_usd",
+    label: "Prepay host spend, 5-hour window",
+    unit: "USD",
+  },
+  {
+    section: "usage_limits",
+    key: "prepaid_host_usage_limit_7d_usd",
+    label: "Prepay host spend, 7-day window",
+    unit: "USD",
+  },
+  {
+    section: "dedicated_hosts",
+    key: "postpaid_unbilled_limit_usd",
+    label: "Dedicated host postpay exposure",
+    unit: "USD",
+  },
+] as const satisfies readonly OverrideEffectField[];
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -282,7 +391,7 @@ export async function getActiveAccountEntitlementOverride(
   account_id: string,
   client?: PoolClient,
 ): Promise<AccountEntitlementOverride | undefined> {
-  const pool = client ?? getPool("medium");
+  const pool = client ?? getPool();
   try {
     const { rows } = await pool.query(
       `SELECT account_id, enabled, features, project_defaults, ai_limits,
@@ -308,7 +417,7 @@ export async function getAccountEntitlementOverrideLocal(
   account_id: string,
   client?: PoolClient,
 ): Promise<AccountEntitlementOverride | undefined> {
-  const pool = client ?? getPool("medium");
+  const pool = client ?? getPool();
   const { rows } = await pool.query(
     `SELECT account_id, enabled, features, project_defaults, ai_limits,
             usage_limits, dedicated_hosts, reason, expires_at, updated_by,
@@ -470,6 +579,59 @@ export async function clearAccountEntitlementOverrideLocal({
   } finally {
     client.release();
   }
+}
+
+function formatOverrideNumber(value: number): string {
+  return Number.isInteger(value)
+    ? `${value}`
+    : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatOverrideRule(
+  rule: NumericLimitRule,
+  field: OverrideEffectField,
+): string {
+  const display = field.fromStored ? field.fromStored(rule.value) : rule.value;
+  return `${rule.mode} ${formatOverrideNumber(display)} ${field.unit}`;
+}
+
+export function describeAccountEntitlementOverride(
+  override?: AccountEntitlementOverride,
+): string[] {
+  if (!override) return [];
+  const effects: string[] = [];
+  for (const field of OVERRIDE_EFFECT_FIELDS) {
+    const section = override[field.section] as
+      | Record<string, NumericLimitRule | undefined>
+      | undefined;
+    const rule = section?.[field.key];
+    if (rule) {
+      effects.push(`${field.label}: ${formatOverrideRule(rule, field)}`);
+    }
+  }
+  if (override.features?.create_hosts != null) {
+    effects.push(
+      `Dedicated host creation: ${
+        override.features.create_hosts ? "allow" : "block"
+      }`,
+    );
+  }
+  if (override.dedicated_hosts?.funding_mode) {
+    effects.push(
+      `Dedicated host funding mode: ${override.dedicated_hosts.funding_mode.value}`,
+    );
+  }
+  if (override.usage_limits?.egress_policy) {
+    effects.push(
+      `Shared-host egress policy: ${override.usage_limits.egress_policy.value}`,
+    );
+  }
+  if (override.usage_limits?.dedicated_host_egress_policy) {
+    effects.push(
+      `Dedicated-host egress policy: ${override.usage_limits.dedicated_host_egress_policy.value}`,
+    );
+  }
+  return effects;
 }
 
 export function applyNumericLimitRule(

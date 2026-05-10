@@ -773,8 +773,15 @@ export function MembershipStatusPanel({
               title="Support override active"
               description={
                 <>
-                  Account-specific support limits are reflected in the values
-                  below.
+                  {details.admin_override.effects?.length ? (
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {details.admin_override.effects.map((effect) => (
+                        <li key={effect}>{effect}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    "Account-specific support limits are reflected in the values below."
+                  )}
                   {details.admin_override.expires_at ? (
                     <>
                       {" "}

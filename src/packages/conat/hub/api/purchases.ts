@@ -144,6 +144,7 @@ export interface MembershipCandidate {
 
 export interface MembershipAdminOverrideSummary {
   expires_at?: Date | string | null;
+  effects?: string[];
   updated_at: Date | string;
 }
 
