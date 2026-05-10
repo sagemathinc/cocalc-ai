@@ -438,14 +438,15 @@ export const site_settings_conf: SiteSettings = {
   },
   help_email: {
     name: help_email_name,
-    desc: "Email address that user is directed to use for support requests",
+    desc: "Email address that users are directed to use for support requests. When outbound email is enabled, notification email also uses this address as its sender.",
     default: "",
     valid: is_valid_email_address,
     clearable: true,
     show: show_theming_vars,
+    required_when: [{ key: "email_enabled", equals: "yes" }],
     tags: ["Theme", "Email", "Support"],
-    group: "Branding & UI",
-    subgroup: "Contact",
+    group: "Messaging & Email",
+    subgroup: "Sender & Contact",
   },
   show_policies: {
     name: "Legacy show policy pages",

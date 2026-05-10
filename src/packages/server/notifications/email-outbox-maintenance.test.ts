@@ -7,6 +7,7 @@ import {
   sendDailyNotificationDigestBatch,
   sendQueuedNotificationEmailBatch,
 } from "./email-outbox-maintenance";
+import { getServerSettings } from "@cocalc/database/settings";
 
 const claimQueuedNotificationEmails = jest.fn();
 const claimDigestNotificationEmails = jest.fn();
@@ -41,6 +42,10 @@ jest.mock("@cocalc/server/hub/site-url", () =>
   jest.fn(async (path: string) => `https://cocalc.test/${path}`),
 );
 
+const getServerSettingsMock = getServerSettings as jest.MockedFunction<
+  typeof getServerSettings
+>;
+
 const ROW = {
   email_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   notification_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
@@ -71,6 +76,10 @@ const ROW = {
 describe("notification email outbox maintenance", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    getServerSettingsMock.mockResolvedValue({
+      help_email: "help@example.com",
+      site_name: "CoCalc",
+    } as any);
     markNotificationEmailSent.mockResolvedValue(undefined);
     markNotificationEmailsSent.mockResolvedValue(undefined);
     markNotificationEmailFailed.mockResolvedValue(undefined);
@@ -130,6 +139,38 @@ describe("notification email outbox maintenance", () => {
       expect.objectContaining({
         email_id: ROW.email_id,
         status: "skipped_no_backend",
+      }),
+    );
+  });
+
+  it("marks immediate rows failed when help_email is not configured", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([ROW]);
+    getServerSettingsMock.mockResolvedValue({
+      help_email: "",
+      site_name: "CoCalc",
+    } as any);
+    const sender = jest.fn(async () => undefined);
+
+    await expect(
+      sendQueuedNotificationEmailBatch({
+        sender,
+        emailConfigured: jest.fn(async () => true),
+        sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+      }),
+    ).resolves.toMatchObject({
+      claimed: 1,
+      sent: 0,
+      failed: 1,
+    });
+
+    expect(sender).not.toHaveBeenCalled();
+    expect(markNotificationEmailFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email_id: ROW.email_id,
+        error: expect.objectContaining({
+          message:
+            "notification email requires the site setting help_email to be configured",
+        }),
       }),
     );
   });
@@ -213,5 +254,56 @@ describe("notification email outbox maintenance", () => {
         "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
       ],
     });
+  });
+
+  it("marks digest rows failed when help_email is not configured", async () => {
+    const digestRows = [
+      { ...ROW, email_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1" },
+      {
+        ...ROW,
+        email_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+        subject: "Second digest item",
+      },
+    ];
+    claimDigestNotificationEmails.mockResolvedValue(digestRows);
+    getServerSettingsMock.mockResolvedValue({
+      help_email: "",
+      site_name: "CoCalc",
+    } as any);
+    const sender = jest.fn(async () => undefined);
+
+    await expect(
+      sendDailyNotificationDigestBatch({
+        force: true,
+        sender,
+        emailConfigured: jest.fn(async () => true),
+        sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+      }),
+    ).resolves.toMatchObject({
+      claimed: 2,
+      digests_sent: 0,
+      rows_sent: 0,
+      failed: 2,
+    });
+
+    expect(sender).not.toHaveBeenCalled();
+    expect(markNotificationEmailFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+        error: expect.objectContaining({
+          message:
+            "notification email requires the site setting help_email to be configured",
+        }),
+      }),
+    );
+    expect(markNotificationEmailFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+        error: expect.objectContaining({
+          message:
+            "notification email requires the site setting help_email to be configured",
+        }),
+      }),
+    );
   });
 });

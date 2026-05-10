@@ -97,8 +97,19 @@ function notificationBodyText(row: NotificationEmailOutboxRow): string {
   return [body, path ? `Path: ${path}` : ""].filter(Boolean).join("\n\n");
 }
 
+function requireHelpEmail(help_email: string | undefined | null): string {
+  const from = `${help_email ?? ""}`.trim();
+  if (!from) {
+    throw Error(
+      "notification email requires the site setting help_email to be configured",
+    );
+  }
+  return from;
+}
+
 async function buildMessage(row: NotificationEmailOutboxRow): Promise<Message> {
   const { help_email, site_name } = await getServerSettings();
+  const from = requireHelpEmail(help_email);
   const notificationsUrl = await siteUrl("notifications");
   const body = notificationBodyText(row);
   const text = [
@@ -113,7 +124,7 @@ async function buildMessage(row: NotificationEmailOutboxRow): Promise<Message> {
   )}</a>.</p>
 `;
   return {
-    from: help_email,
+    from,
     to: row.recipient_email!,
     subject: row.subject,
     text,
@@ -126,6 +137,7 @@ async function buildDigestMessage(
   rows: NotificationEmailOutboxRow[],
 ): Promise<Message> {
   const { help_email, site_name } = await getServerSettings();
+  const from = requireHelpEmail(help_email);
   const notificationsUrl = await siteUrl("notifications");
   const recipient_email = rows[0]?.recipient_email;
   if (!recipient_email) {
@@ -166,7 +178,7 @@ async function buildDigestMessage(
   )}</a>.</p>
 `;
   return {
-    from: help_email,
+    from,
     to: recipient_email,
     subject,
     text,
