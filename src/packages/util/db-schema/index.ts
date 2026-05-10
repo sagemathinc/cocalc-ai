@@ -46,6 +46,7 @@ import "./listings";
 import "./ai-log";
 import "./lti";
 import "./mentions";
+import "./account-entitlement-overrides";
 import "./admin-assigned-memberships";
 import "./membership-grants";
 import "./membership-claim-identities";

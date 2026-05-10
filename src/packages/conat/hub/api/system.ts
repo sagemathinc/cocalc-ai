@@ -10,6 +10,7 @@ import type {
   Action as ApiKeyAction,
 } from "@cocalc/util/db-schema/api-keys";
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
+import type { AccountEntitlementOverride } from "./purchases";
 import type {
   ProjectRootfsStateEntry,
   ProjectRootfsPublishLroRef,
@@ -82,6 +83,9 @@ export const system = {
   getAdminAssignedMembership: authFirst,
   setAdminAssignedMembership: authFirst,
   clearAdminAssignedMembership: authFirst,
+  getAccountEntitlementOverride: authFirst,
+  setAccountEntitlementOverride: authFirst,
+  clearAccountEntitlementOverride: authFirst,
   listExternalCredentials: authFirst,
   revokeExternalCredential: authFirst,
   setOpenAiApiKey: authFirst,
@@ -1340,6 +1344,27 @@ export interface System {
   clearAdminAssignedMembership: (opts: {
     account_id?: string;
     user_account_id: string;
+  }) => Promise<void>;
+
+  getAccountEntitlementOverride: (opts: {
+    account_id?: string;
+    user_account_id: string;
+  }) => Promise<AccountEntitlementOverride | undefined>;
+
+  setAccountEntitlementOverride: (opts: {
+    account_id?: string;
+    user_account_id: string;
+    override: Omit<
+      Partial<AccountEntitlementOverride>,
+      "account_id" | "updated_by" | "updated_at"
+    >;
+    reason: string;
+  }) => Promise<AccountEntitlementOverride>;
+
+  clearAccountEntitlementOverride: (opts: {
+    account_id?: string;
+    user_account_id: string;
+    reason: string;
   }) => Promise<void>;
 
   listExternalCredentials: (opts: {

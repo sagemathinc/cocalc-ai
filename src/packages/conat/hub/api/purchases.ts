@@ -39,6 +39,82 @@ export interface MembershipEntitlements {
   usage_limits?: MembershipUsageLimits;
 }
 
+export type NumericLimitRuleMode = "minimum" | "maximum" | "set";
+
+export interface NumericLimitRule {
+  mode: NumericLimitRuleMode;
+  value: number;
+}
+
+export interface EnumOverride<T extends string> {
+  mode: "set";
+  value: T;
+}
+
+export interface AccountFeatureOverrides {
+  create_hosts?: boolean;
+}
+
+export interface ProjectDefaultOverrides {
+  disk_quota?: NumericLimitRule;
+  memory?: NumericLimitRule;
+  memory_request?: NumericLimitRule;
+}
+
+export interface AiLimitOverrides {
+  units_5h?: NumericLimitRule;
+  units_7d?: NumericLimitRule;
+}
+
+export interface AccountUsageLimitOverrides {
+  shared_compute_priority?: NumericLimitRule;
+  total_storage_soft_bytes?: NumericLimitRule;
+  total_storage_hard_bytes?: NumericLimitRule;
+  max_projects?: NumericLimitRule;
+  max_snapshots_per_project?: NumericLimitRule;
+  max_backups_per_project?: NumericLimitRule;
+  egress_5h_bytes?: NumericLimitRule;
+  egress_7d_bytes?: NumericLimitRule;
+  egress_policy?: EnumOverride<MembershipEgressPolicy>;
+  dedicated_host_egress_policy?: EnumOverride<DedicatedHostEgressPolicy>;
+  credit_spend_limit_5h_usd?: NumericLimitRule;
+  credit_spend_limit_7d_usd?: NumericLimitRule;
+  prepaid_host_usage_limit_5h_usd?: NumericLimitRule;
+  prepaid_host_usage_limit_7d_usd?: NumericLimitRule;
+}
+
+export interface DedicatedHostPolicyOverrides {
+  funding_mode?: EnumOverride<
+    "account-prepaid" | "account-postpaid" | "site-funded"
+  >;
+  postpaid_unbilled_limit_usd?: NumericLimitRule;
+}
+
+export interface AccountEntitlementOverride {
+  account_id: string;
+  enabled: boolean;
+  features?: AccountFeatureOverrides;
+  project_defaults?: ProjectDefaultOverrides;
+  ai_limits?: AiLimitOverrides;
+  usage_limits?: AccountUsageLimitOverrides;
+  dedicated_hosts?: DedicatedHostPolicyOverrides;
+  reason?: string | null;
+  expires_at?: Date | string | null;
+  updated_by: string;
+  updated_at: Date | string;
+}
+
+export interface AccountEntitlementOverrideEvent {
+  id: string;
+  account_id: string;
+  action: "set" | "clear" | "expire" | "disable";
+  old_value?: AccountEntitlementOverride | null;
+  new_value?: AccountEntitlementOverride | null;
+  reason: string;
+  actor_account_id: string;
+  created_at: Date | string;
+}
+
 export interface MembershipResolution {
   class: MembershipClass;
   source: "subscription" | "admin" | "grant" | "free";

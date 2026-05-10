@@ -8,8 +8,11 @@ import { fromJS, List } from "immutable";
 import { Actions, redux } from "../../app-framework";
 import {
   user_search,
+  get_account_entitlement_override,
   get_admin_assigned_membership,
+  set_account_entitlement_override,
   set_admin_assigned_membership,
+  clear_account_entitlement_override,
   clear_admin_assigned_membership,
   User,
 } from "../../frame-editors/generic/client";
@@ -92,6 +95,34 @@ export class AdminUsersActions extends Actions<StoreState> {
 
   public async clear_admin_membership(account_id: string): Promise<void> {
     await clear_admin_assigned_membership({ user_account_id: account_id });
+  }
+
+  public async get_account_entitlement_override(account_id: string) {
+    return await get_account_entitlement_override({
+      user_account_id: account_id,
+    });
+  }
+
+  public async set_account_entitlement_override(opts: {
+    account_id: string;
+    override: any;
+    reason: string;
+  }) {
+    return await set_account_entitlement_override({
+      user_account_id: opts.account_id,
+      override: opts.override,
+      reason: opts.reason,
+    });
+  }
+
+  public async clear_account_entitlement_override(opts: {
+    account_id: string;
+    reason: string;
+  }): Promise<void> {
+    await clear_account_entitlement_override({
+      user_account_id: opts.account_id,
+      reason: opts.reason,
+    });
   }
 }
 

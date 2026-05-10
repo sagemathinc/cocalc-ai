@@ -13,6 +13,10 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import {
+  applyNumericLimitRule,
+  getActiveAccountEntitlementOverride,
+} from "@cocalc/server/membership/entitlement-overrides";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -276,12 +280,19 @@ export function getDedicatedHostFundingModeFromSettings(
 export async function getDedicatedHostPolicySnapshotLocal(
   account_id: string,
 ): Promise<AccountLocalDedicatedHostPolicySnapshot> {
-  const [membership, settings] = await Promise.all([
+  const [membership, settings, admin_override] = await Promise.all([
     resolveMembershipForAccount(account_id),
     getServerSettings(),
+    getActiveAccountEntitlementOverride(account_id),
   ]);
   const effective_limits = getEffectiveMembershipUsageLimits(membership);
-  const funding_mode = getDedicatedHostFundingModeFromSettings(settings);
+  const funding_mode =
+    admin_override?.dedicated_hosts?.funding_mode?.value ??
+    getDedicatedHostFundingModeFromSettings(settings);
+  const postpaid_unbilled_limit_usd = applyNumericLimitRule(
+    settings.project_hosts_postpaid_unbilled_limit_usd ?? 0,
+    admin_override?.dedicated_hosts?.postpaid_unbilled_limit_usd,
+  );
   const has_active_second_factor = await hasActiveSecondFactor(account_id);
 
   if (funding_mode === "site-funded") {
@@ -304,6 +315,7 @@ export async function getDedicatedHostPolicySnapshotLocal(
         credit_5h_usd: moneyToDbString(0),
         credit_7d_usd: moneyToDbString(0),
       },
+      admin_override,
     };
   }
 
@@ -333,9 +345,10 @@ export async function getDedicatedHostPolicySnapshotLocal(
     balance,
     postpaid_unbilled_exposure_usd,
     postpaid_unbilled_limit_usd: moneyToDbString(
-      settings.project_hosts_postpaid_unbilled_limit_usd ?? 0,
+      postpaid_unbilled_limit_usd ?? 0,
     ),
     dedicated_host_window_usage,
+    admin_override,
   };
 }
 

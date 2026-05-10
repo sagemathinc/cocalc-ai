@@ -16,6 +16,10 @@ import { listActiveMembershipGrantsForAccount } from "./grants";
 import getLogger from "@cocalc/backend/logger";
 import { normalizeMembershipEffectiveLimits } from "./effective-limits";
 import { getMembershipUsageStatusForAccount } from "./usage-status";
+import {
+  applyAccountEntitlementOverride,
+  getActiveAccountEntitlementOverride,
+} from "./entitlement-overrides";
 
 const log = getLogger("server:membership:resolve");
 const MEMBERSHIP_USAGE_STATUS_CACHE_TTL_MS = 60_000;
@@ -266,13 +270,18 @@ export async function resolveMembershipDetailsForAccount(
 ): Promise<MembershipDetails> {
   const { candidates, selected } =
     await buildMembershipResolutionForAccount(account_id);
+  const override = await getActiveAccountEntitlementOverride(account_id);
+  const effectiveSelected = applyAccountEntitlementOverride({
+    membership: selected,
+    override,
+  });
   const usage_status = await getMembershipDetailsUsageStatus({
     account_id,
-    resolution: selected,
+    resolution: effectiveSelected,
     refresh: !!opts?.refresh_usage_status,
   });
   return {
-    selected,
+    selected: effectiveSelected,
     candidates,
     usage_status,
   };
@@ -282,5 +291,6 @@ export async function resolveMembershipForAccount(
   account_id: string,
 ): Promise<MembershipResolution> {
   const { selected } = await buildMembershipResolutionForAccount(account_id);
-  return selected;
+  const override = await getActiveAccountEntitlementOverride(account_id);
+  return applyAccountEntitlementOverride({ membership: selected, override });
 }

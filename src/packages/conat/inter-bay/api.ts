@@ -22,6 +22,7 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   ClaimableMembershipPackage,
+  AccountEntitlementOverride,
   MembershipDetails,
   MembershipEffectiveLimits,
   MembershipPackageAssignment,
@@ -570,6 +571,7 @@ export interface AccountLocalDedicatedHostPolicySnapshot {
     credit_5h_usd: MoneyValue;
     credit_7d_usd: MoneyValue;
   };
+  admin_override?: AccountEntitlementOverride;
 }
 
 export interface AccountLocalGetDedicatedHostPolicySnapshotRequest {
