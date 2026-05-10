@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
+  Collapse,
   DatePicker,
   Descriptions,
   Divider,
@@ -180,6 +181,32 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
     unit: "USD",
   },
 ];
+
+const PROJECT_FIELD_IDS = new Set([
+  "project_disk_quota",
+  "project_memory",
+  "project_memory_request",
+  "max_projects",
+  "max_snapshots_per_project",
+  "max_backups_per_project",
+]);
+
+const STORAGE_EGRESS_FIELD_IDS = new Set([
+  "total_storage_soft",
+  "total_storage_hard",
+  "egress_5h",
+  "egress_7d",
+]);
+
+const AI_FIELD_IDS = new Set(["ai_units_5h", "ai_units_7d"]);
+
+const SPEND_FIELD_IDS = new Set([
+  "credit_spend_5h",
+  "credit_spend_7d",
+  "prepaid_host_5h",
+  "prepaid_host_7d",
+  "postpaid_unbilled",
+]);
 
 const MODE_OPTIONS = [
   { value: "", label: "No override" },
@@ -478,10 +505,14 @@ function OverrideGridHeader() {
 function NumericRuleEditor({
   details,
   field,
+  form,
 }: {
   details: MembershipDetails | null | undefined;
   field: NumericOverrideField;
+  form: FormInstance;
 }) {
+  const modeName = `${field.id}_mode`;
+  const valueName = `${field.id}_value`;
   return (
     <div
       style={{
@@ -495,18 +526,35 @@ function NumericRuleEditor({
       <Text type="secondary">
         {formatCurrentValue(getCurrentEntitlementValue(details, field), field)}
       </Text>
-      <Space.Compact style={{ width: "100%" }}>
-        <Form.Item name={`${field.id}_mode`} noStyle>
-          <Select style={{ width: 150 }} options={MODE_OPTIONS} />
-        </Form.Item>
-        <Form.Item name={`${field.id}_value`} noStyle>
-          <InputNumber
-            style={{ width: "100%" }}
-            min={0}
-            placeholder={field.unit}
-          />
-        </Form.Item>
-      </Space.Compact>
+      <Form.Item shouldUpdate noStyle>
+        {({ getFieldValue }) => {
+          const mode = getFieldValue(modeName);
+          return (
+            <Space.Compact style={{ width: "100%" }}>
+              <Form.Item name={modeName} noStyle>
+                <Select
+                  style={{ width: 150 }}
+                  options={MODE_OPTIONS}
+                  onChange={(value) => {
+                    if (!value) {
+                      form.setFieldValue(valueName, undefined);
+                    }
+                  }}
+                />
+              </Form.Item>
+              {mode ? (
+                <Form.Item name={valueName} noStyle>
+                  <InputNumber
+                    style={{ width: "100%" }}
+                    min={0}
+                    placeholder={field.unit}
+                  />
+                </Form.Item>
+              ) : null}
+            </Space.Compact>
+          );
+        }}
+      </Form.Item>
     </div>
   );
 }
@@ -537,6 +585,30 @@ function SelectOverrideEditor({
         <Select options={options} />
       </Form.Item>
     </div>
+  );
+}
+
+function NumericFieldGroup({
+  details,
+  fields,
+  form,
+}: {
+  details: MembershipDetails | null | undefined;
+  fields: NumericOverrideField[];
+  form: FormInstance;
+}) {
+  return (
+    <Space direction="vertical" size="small" style={{ width: "100%" }}>
+      <OverrideGridHeader />
+      {fields.map((field) => (
+        <NumericRuleEditor
+          key={field.id}
+          details={details}
+          field={field}
+          form={form}
+        />
+      ))}
+    </Space>
   );
 }
 
@@ -643,6 +715,12 @@ export function AccountEntitlementOverridePanel({
         <Text strong>Account entitlement overrides</Text>
         <OverrideHelp />
       </Space>
+      <div>
+        <Text type="secondary">
+          Each account can have one override set. All configured changes share
+          the same status, reason, and expiration.
+        </Text>
+      </div>
       <div style={{ marginTop: "8px" }}>
         {loading ? (
           <Spin />
@@ -721,76 +799,127 @@ export function AccountEntitlementOverridePanel({
               </Form.Item>
 
               <Divider style={{ margin: "12px 0" }} />
-              <Space
-                direction="vertical"
-                size="small"
-                style={{ width: "100%" }}
-              >
-                <OverrideGridHeader />
-                <SelectOverrideEditor
-                  label="Dedicated host creation"
-                  current={
-                    details?.selected.entitlements.features?.create_hosts
-                  }
-                  name="create_hosts"
-                  options={[
-                    { value: "inherit", label: "No override" },
-                    { value: "true", label: "Allow" },
-                    { value: "false", label: "Block" },
-                  ]}
-                />
-                <SelectOverrideEditor
-                  label="Dedicated host funding mode"
-                  current="Policy default"
-                  name="funding_mode"
-                  options={[
-                    { value: "inherit", label: "No override" },
-                    { value: "account-prepaid", label: "Account prepaid" },
-                    { value: "account-postpaid", label: "Account postpaid" },
-                    { value: "site-funded", label: "Site funded" },
-                  ]}
-                />
-                <SelectOverrideEditor
-                  label="Shared-host egress policy"
-                  current={
-                    details?.selected.effective_limits?.egress_policy ??
-                    details?.selected.entitlements.usage_limits?.egress_policy
-                  }
-                  name="egress_policy"
-                  options={[
-                    { value: "inherit", label: "No override" },
-                    {
-                      value: "metered-shared-hosts",
-                      label: "Metered shared hosts",
-                    },
-                    { value: "all-shared-hosts", label: "All shared hosts" },
-                    { value: "disabled", label: "Disabled" },
-                  ]}
-                />
-                <SelectOverrideEditor
-                  label="Dedicated-host egress policy"
-                  current={
-                    details?.selected.effective_limits
-                      ?.dedicated_host_egress_policy ??
-                    details?.selected.entitlements.usage_limits
-                      ?.dedicated_host_egress_policy
-                  }
-                  name="dedicated_host_egress_policy"
-                  options={[
-                    { value: "inherit", label: "No override" },
-                    { value: "tier-capped", label: "Tier capped" },
-                    { value: "meter-and-bill", label: "Meter and bill" },
-                    { value: "disabled", label: "Disabled" },
-                  ]}
-                />
-                {NUMERIC_FIELDS.map((field) => (
-                  <NumericRuleEditor
-                    key={field.id}
+              <Collapse size="small" defaultActiveKey={["projects"]}>
+                <Collapse.Panel header="Projects" key="projects">
+                  <NumericFieldGroup
                     details={details}
-                    field={field}
+                    form={form}
+                    fields={NUMERIC_FIELDS.filter((field) =>
+                      PROJECT_FIELD_IDS.has(field.id),
+                    )}
                   />
-                ))}
-              </Space>
+                </Collapse.Panel>
+                <Collapse.Panel header="Storage and egress" key="egress">
+                  <Space
+                    direction="vertical"
+                    size="small"
+                    style={{ width: "100%" }}
+                  >
+                    <OverrideGridHeader />
+                    <SelectOverrideEditor
+                      label="Shared-host egress policy"
+                      current={
+                        details?.selected.effective_limits?.egress_policy ??
+                        details?.selected.entitlements.usage_limits
+                          ?.egress_policy
+                      }
+                      name="egress_policy"
+                      options={[
+                        { value: "inherit", label: "No override" },
+                        {
+                          value: "metered-shared-hosts",
+                          label: "Metered shared hosts",
+                        },
+                        {
+                          value: "all-shared-hosts",
+                          label: "All shared hosts",
+                        },
+                        { value: "disabled", label: "Disabled" },
+                      ]}
+                    />
+                    {NUMERIC_FIELDS.filter((field) =>
+                      STORAGE_EGRESS_FIELD_IDS.has(field.id),
+                    ).map((field) => (
+                      <NumericRuleEditor
+                        key={field.id}
+                        details={details}
+                        field={field}
+                        form={form}
+                      />
+                    ))}
+                  </Space>
+                </Collapse.Panel>
+                <Collapse.Panel header="AI" key="ai">
+                  <NumericFieldGroup
+                    details={details}
+                    form={form}
+                    fields={NUMERIC_FIELDS.filter((field) =>
+                      AI_FIELD_IDS.has(field.id),
+                    )}
+                  />
+                </Collapse.Panel>
+                <Collapse.Panel header="Dedicated hosts" key="hosts">
+                  <Space
+                    direction="vertical"
+                    size="small"
+                    style={{ width: "100%" }}
+                  >
+                    <OverrideGridHeader />
+                    <SelectOverrideEditor
+                      label="Dedicated host creation"
+                      current={
+                        details?.selected.entitlements.features?.create_hosts
+                      }
+                      name="create_hosts"
+                      options={[
+                        { value: "inherit", label: "No override" },
+                        { value: "true", label: "Allow" },
+                        { value: "false", label: "Block" },
+                      ]}
+                    />
+                    <SelectOverrideEditor
+                      label="Dedicated host funding mode"
+                      current="Policy default"
+                      name="funding_mode"
+                      options={[
+                        { value: "inherit", label: "No override" },
+                        { value: "account-prepaid", label: "Account prepaid" },
+                        {
+                          value: "account-postpaid",
+                          label: "Account postpaid",
+                        },
+                        { value: "site-funded", label: "Site funded" },
+                      ]}
+                    />
+                    <SelectOverrideEditor
+                      label="Dedicated-host egress policy"
+                      current={
+                        details?.selected.effective_limits
+                          ?.dedicated_host_egress_policy ??
+                        details?.selected.entitlements.usage_limits
+                          ?.dedicated_host_egress_policy
+                      }
+                      name="dedicated_host_egress_policy"
+                      options={[
+                        { value: "inherit", label: "No override" },
+                        { value: "tier-capped", label: "Tier capped" },
+                        { value: "meter-and-bill", label: "Meter and bill" },
+                        { value: "disabled", label: "Disabled" },
+                      ]}
+                    />
+                    {NUMERIC_FIELDS.filter((field) =>
+                      SPEND_FIELD_IDS.has(field.id),
+                    ).map((field) => (
+                      <NumericRuleEditor
+                        key={field.id}
+                        details={details}
+                        field={field}
+                        form={form}
+                      />
+                    ))}
+                  </Space>
+                </Collapse.Panel>
+              </Collapse>
             </Form>
             <Space>
               <Button type="primary" onClick={save} loading={saving}>
