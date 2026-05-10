@@ -13,6 +13,7 @@ import {
   InputNumber,
   Modal,
   Radio,
+  Select,
   Space,
   Spin,
   Statistic,
@@ -31,6 +32,7 @@ import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
 import Payments from "@cocalc/frontend/purchases/payments";
 import {
+  adminProvisionMembershipPackage,
   assignMembershipPackageSeat,
   claimMembershipPackageSeat,
   getClaimableMembershipPackages,
@@ -72,6 +74,7 @@ interface MembershipTierLike {
 interface Props {
   tiers: MembershipTierLike[];
   onChanged?: () => void;
+  user_account_id?: string;
 }
 
 interface PackageUserSearchResult {
@@ -146,6 +149,17 @@ function getPackageDomains(
     }
   }
   return [];
+}
+
+function parseDomainList(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(/[\s,;]+/)
+        .map((domain) => domain.trim().toLowerCase().replace(/^@+/, ""))
+        .filter((domain) => domain.length > 0),
+    ),
+  ).sort();
 }
 
 function getAccountDisplayName(
@@ -303,8 +317,14 @@ export function ClaimableMembershipPackagesPanel({
   );
 }
 
-export function MembershipPackageManager({ tiers, onChanged }: Props) {
+export function MembershipPackageManager({
+  tiers,
+  onChanged,
+  user_account_id,
+}: Props) {
   const account_id = useTypedRedux("account", "account_id");
+  const is_admin = !!useTypedRedux("account", "is_admin");
+  const ownerAccountId = user_account_id ?? account_id;
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [membershipPackages, setMembershipPackages] = useState<
@@ -316,6 +336,8 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
   >(undefined);
   const [assignmentTarget, setAssignmentTarget] =
     useState<MembershipPackageDetails | null>(null);
+  const [provisionSiteLicenseOpen, setProvisionSiteLicenseOpen] =
+    useState<boolean>(false);
   const [accountNames, setAccountNames] = useState<
     Record<string, { first_name?: string; last_name?: string } | undefined>
   >({});
@@ -324,7 +346,9 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
     setLoading(true);
     setError("");
     try {
-      const next = await getMembershipPackages();
+      const next = await getMembershipPackages(
+        user_account_id ? { user_account_id } : {},
+      );
       setMembershipPackages(sortPackagesByRecent(next));
     } catch (err) {
       setError(`${err}`);
@@ -334,7 +358,7 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
   };
 
   useEffect(() => {
-    if (!account_id) {
+    if (!ownerAccountId) {
       setMembershipPackages([]);
       setAccountNames({});
       setError("");
@@ -342,7 +366,7 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
       return;
     }
     void refreshPackages();
-  }, [account_id, refreshToken]);
+  }, [ownerAccountId, refreshToken, user_account_id]);
 
   const assignedAccountIds = useMemo(() => {
     return Array.from(
@@ -404,7 +428,7 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
     onChanged?.();
   };
 
-  if (!account_id) {
+  if (!ownerAccountId) {
     return null;
   }
 
@@ -414,7 +438,8 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
       <Paragraph type="secondary" style={{ marginTop: "6px" }}>
         Team packages let you buy seats and grant memberships to specific
         accounts. Site licenses are provisioned by support or admins, then
-        managed here. There is no self-serve site-license creation flow yet.
+        managed here. Users can claim site-license seats when one of their
+        verified email domains matches the license.
       </Paragraph>
       {error && (
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />
@@ -426,6 +451,11 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
         <Button onClick={() => setRefreshToken((value) => value + 1)}>
           <Icon name="refresh" /> Refresh packages
         </Button>
+        {is_admin ? (
+          <Button onClick={() => setProvisionSiteLicenseOpen(true)}>
+            <Icon name="plus-circle" /> Provision site license
+          </Button>
+        ) : null}
       </Space>
       {loading ? (
         <Loading />
@@ -480,6 +510,16 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
         tiers={tiers}
         onClose={() => setPurchaseTarget(undefined)}
         onPurchased={handleChanged}
+      />
+      <ProvisionSiteLicenseModal
+        open={provisionSiteLicenseOpen}
+        owner_account_id={user_account_id}
+        tiers={tiers}
+        onClose={() => setProvisionSiteLicenseOpen(false)}
+        onProvisioned={async () => {
+          setProvisionSiteLicenseOpen(false);
+          await handleChanged();
+        }}
       />
       <AssignMembershipSeatModal
         open={assignmentTarget != null}
@@ -708,6 +748,156 @@ function MembershipPackageCard({
         </div>
       )}
     </Card>
+  );
+}
+
+function ProvisionSiteLicenseModal({
+  open,
+  owner_account_id,
+  tiers,
+  onClose,
+  onProvisioned,
+}: {
+  open: boolean;
+  owner_account_id?: string;
+  tiers: MembershipTierLike[];
+  onClose: () => void;
+  onProvisioned: () => Promise<void>;
+}) {
+  const provisionableTiers = useMemo(() => getTeamSeatTiers(tiers), [tiers]);
+  const [kind, setKind] = useState<"site" | "domain">("site");
+  const [membershipClass, setMembershipClass] = useState<string>("");
+  const [seatCount, setSeatCount] = useState<number>(25);
+  const [domainsText, setDomainsText] = useState<string>("");
+  const [expiresAt, setExpiresAt] = useState<string>("");
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
+
+  useEffect(() => {
+    if (!open) return;
+    setKind("site");
+    setMembershipClass(provisionableTiers[0]?.id ?? "");
+    setSeatCount(25);
+    setDomainsText("");
+    setExpiresAt("");
+    setSubmitting(false);
+    setError("");
+  }, [open, provisionableTiers]);
+
+  async function provision() {
+    setSubmitting(true);
+    setError("");
+    try {
+      const allowed_domains = parseDomainList(domainsText);
+      if (allowed_domains.length === 0) {
+        throw Error("Enter at least one allowed email domain.");
+      }
+      if (!membershipClass) {
+        throw Error("Select a membership tier.");
+      }
+      await adminProvisionMembershipPackage({
+        owner_account_id,
+        kind,
+        membership_class: membershipClass,
+        seat_count: seatCount,
+        allowed_domains,
+        expires_at: expiresAt.trim() || undefined,
+      });
+      await onProvisioned();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      onOk={provision}
+      okButtonProps={{ loading: submitting }}
+      okText="Provision license"
+      destroyOnHidden
+      title={
+        <>
+          <Icon name="plus-circle" style={{ marginRight: 10 }} />
+          Provision site license
+        </>
+      }
+    >
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        {error ? (
+          <Alert
+            type="error"
+            title={error}
+            closable
+            onClose={() => setError("")}
+          />
+        ) : null}
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          This creates a support-managed license without a payment flow. Users
+          can claim seats after verifying an email address at one of the allowed
+          domains, or an admin can assign seats directly.
+        </Paragraph>
+        <div>
+          <Text strong>License type</Text>
+          <Radio.Group
+            value={kind}
+            onChange={(event) => setKind(event.target.value)}
+            style={{ display: "block", marginTop: 6 }}
+          >
+            <Radio.Button value="site">Site license</Radio.Button>
+            <Radio.Button value="domain">Domain license</Radio.Button>
+          </Radio.Group>
+        </div>
+        <div>
+          <Text strong>Membership tier</Text>
+          <Select
+            value={membershipClass || undefined}
+            onChange={setMembershipClass}
+            style={{ width: "100%", marginTop: 6 }}
+            options={provisionableTiers.map((tier) => ({
+              label: tier.label ?? capitalize(tier.id),
+              value: tier.id,
+            }))}
+          />
+        </div>
+        <div>
+          <Text strong>Seats</Text>
+          <InputNumber
+            min={1}
+            precision={0}
+            value={seatCount}
+            onChange={(value) => setSeatCount(Number(value ?? 1))}
+            style={{ width: "100%", marginTop: 6 }}
+          />
+        </div>
+        <div>
+          <Text strong>Allowed email domains</Text>
+          <Input.TextArea
+            rows={3}
+            value={domainsText}
+            onChange={(event) => setDomainsText(event.target.value)}
+            placeholder="example.edu, department.example.edu"
+            style={{ marginTop: 6 }}
+          />
+          <Text type="secondary">
+            Separate domains with commas, spaces, or new lines. Do not include
+            full email addresses.
+          </Text>
+        </div>
+        <div>
+          <Text strong>Expires at</Text>
+          <Input
+            value={expiresAt}
+            onChange={(event) => setExpiresAt(event.target.value)}
+            placeholder="Optional ISO date, e.g. 2026-12-31T23:59:59Z"
+            style={{ marginTop: 6 }}
+          />
+        </div>
+      </Space>
+    </Modal>
   );
 }
 

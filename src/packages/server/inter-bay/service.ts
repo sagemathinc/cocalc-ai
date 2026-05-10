@@ -105,6 +105,7 @@ import {
 } from "@cocalc/server/membership/claim-directory";
 import {
   claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
+  createMembershipPackage,
   listLocalClaimableMembershipPackagesForVerifiedEmails,
   listMembershipPackageDetailsForOwner,
 } from "@cocalc/server/membership/packages";
@@ -528,6 +529,41 @@ async function startAccountLocalService(): Promise<void> {
       await listMembershipPackageDetailsForOwner({
         owner_account_id,
       }),
+    adminProvisionMembershipPackage: async ({
+      owner_account_id,
+      actor_account_id,
+      kind,
+      membership_class,
+      seat_count,
+      allowed_domains,
+      starts_at,
+      expires_at,
+      metadata,
+    }) => {
+      const package_id = await createMembershipPackage({
+        owner_account_id,
+        kind,
+        membership_class,
+        seat_count,
+        starts_at,
+        expires_at,
+        metadata: {
+          ...(metadata ?? {}),
+          allowed_domains,
+          provisioned_by_account_id: actor_account_id,
+          provisioned_at: new Date().toISOString(),
+          provisioned_via: "admin",
+        },
+      });
+      const packages = await listMembershipPackageDetailsForOwner({
+        owner_account_id,
+      });
+      const membershipPackage = packages.find(({ id }) => id === package_id);
+      if (!membershipPackage) {
+        throw Error("created membership package not found");
+      }
+      return membershipPackage;
+    },
     getClaimableMembershipPackages: async ({
       account_id,
       verified_email_addresses,
