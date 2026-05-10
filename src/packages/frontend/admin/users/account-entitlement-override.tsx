@@ -478,7 +478,7 @@ function resetFormFields(
   form.setFieldsValue(values);
 }
 
-function buildOverride(values: Record<string, any>) {
+export function buildOverride(values: Record<string, any>) {
   const override: Record<string, any> = {
     enabled: values.enabled !== false,
     expires_at: values.expires_at ? values.expires_at.toDate() : null,
@@ -487,7 +487,7 @@ function buildOverride(values: Record<string, any>) {
     validateNumericRule(values, field);
     setNestedRule(override, field, parseRule(values, field));
   }
-  if (values.create_hosts !== "inherit") {
+  if (values.create_hosts === "true" || values.create_hosts === "false") {
     override.features ??= {};
     override.features.create_hosts = values.create_hosts === "true";
   }
