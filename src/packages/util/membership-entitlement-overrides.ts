@@ -79,7 +79,7 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       label: "Backups per project",
       unit: "backups",
       adminDescription:
-        "Maximum retained R2/restic backups for each project owned by this account.",
+        "Maximum retained backups for each project owned by this account.",
       userDescription: "Maximum retained backups for each project.",
     },
     egress_5h_bytes: {
@@ -97,14 +97,6 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
         "Rolling 7-day managed data-transfer allowance for project file downloads, project network egress, and similar metered egress.",
       userDescription:
         "Managed data-transfer allowance over a rolling 7-day window.",
-    },
-    egress_policy: {
-      label: "Shared-host egress policy",
-      unit: "",
-      adminDescription:
-        "Controls which shared-host project egress is counted against this account's managed egress windows.",
-      userDescription:
-        "Controls which shared-host project egress counts against managed egress windows.",
     },
     credit_spend_limit_5h_usd: {
       label: "Postpay host spend, 5-hour window",
@@ -141,12 +133,12 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
   },
   dedicated_hosts: {
     postpaid_unbilled_limit_usd: {
-      label: "Unbilled postpaid host cap",
+      label: "Postpaid host charges before billing",
       unit: "USD",
       adminDescription:
-        "Maximum outstanding unbilled postpaid dedicated-host charges for this account. This is a site-wide safety cap by default, not a membership-tier setting, and applies in addition to the rolling postpay spend windows.",
+        "Only applies to account-postpaid dedicated hosts. This caps host charges that have accumulated but have not yet been billed/closed into a statement. The default is the site setting project_hosts_postpaid_unbilled_limit_usd, which is $1000 unless changed. If this cap is reached, new or restarted postpaid host usage is denied even if the 5-hour and 7-day spend windows still have room.",
       userDescription:
-        "Maximum outstanding unbilled postpaid dedicated-host charges.",
+        "Maximum postpaid dedicated-host charges that can accumulate before billing.",
     },
   },
 } as const;

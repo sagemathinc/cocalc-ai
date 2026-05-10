@@ -629,11 +629,6 @@ export function describeAccountEntitlementOverride(
       `Account host billing mode: ${override.dedicated_hosts.funding_mode.value}`,
     );
   }
-  if (override.usage_limits?.egress_policy) {
-    effects.push(
-      `Shared-host egress policy: ${override.usage_limits.egress_policy.value}`,
-    );
-  }
   return effects;
 }
 

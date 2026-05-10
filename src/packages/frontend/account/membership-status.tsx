@@ -271,14 +271,6 @@ function getUsageLimitsItems(
       value: humanSize(egress7d),
     });
   }
-  const egressPolicy = usageLimits.egress_policy;
-  if (typeof egressPolicy === "string" && egressPolicy.length > 0) {
-    items.push({
-      key: "egress_policy",
-      label: "Egress policy",
-      value: egressPolicy,
-    });
-  }
   return items;
 }
 

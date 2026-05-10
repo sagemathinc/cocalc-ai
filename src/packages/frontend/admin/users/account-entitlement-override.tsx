@@ -456,11 +456,6 @@ function describeOverride(override?: AccountEntitlementOverride): string[] {
       `Account host billing mode: ${override.dedicated_hosts.funding_mode.value}`,
     );
   }
-  if (override.usage_limits?.egress_policy) {
-    effects.push(
-      `Shared-host egress policy: ${override.usage_limits.egress_policy.value}`,
-    );
-  }
   return effects;
 }
 
@@ -494,7 +489,6 @@ function resetFormFields(
         : override.features.create_hosts
           ? "true"
           : "false",
-    egress_policy: override?.usage_limits?.egress_policy?.value ?? "inherit",
   };
   for (const field of NUMERIC_FIELDS) {
     applyRuleToFields(values, field, getNumericRule(override, field));
@@ -514,13 +508,6 @@ function buildOverride(values: Record<string, any>) {
   if (values.create_hosts !== "inherit") {
     override.features ??= {};
     override.features.create_hosts = values.create_hosts === "true";
-  }
-  if (values.egress_policy !== "inherit") {
-    override.usage_limits ??= {};
-    override.usage_limits.egress_policy = {
-      mode: "set",
-      value: values.egress_policy,
-    };
   }
   return override;
 }
@@ -867,7 +854,6 @@ export function AccountEntitlementOverridePanel({
               initialValues={{
                 enabled: true,
                 create_hosts: "inherit",
-                egress_policy: "inherit",
               }}
             >
               <Form.Item label="Override status" name="enabled">
@@ -910,31 +896,6 @@ export function AccountEntitlementOverridePanel({
                     style={{ width: "100%" }}
                   >
                     <OverrideGridHeader />
-                    <SelectOverrideEditor
-                      label="Shared-host egress policy"
-                      description={
-                        MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS
-                          .usage_limits.egress_policy.adminDescription
-                      }
-                      current={
-                        details?.selected.effective_limits?.egress_policy ??
-                        details?.selected.entitlements.usage_limits
-                          ?.egress_policy
-                      }
-                      name="egress_policy"
-                      options={[
-                        { value: "inherit", label: "No override" },
-                        {
-                          value: "metered-shared-hosts",
-                          label: "Metered shared hosts",
-                        },
-                        {
-                          value: "all-shared-hosts",
-                          label: "All shared hosts",
-                        },
-                        { value: "disabled", label: "Disabled" },
-                      ]}
-                    />
                     {NUMERIC_FIELDS.filter((field) =>
                       STORAGE_EGRESS_FIELD_IDS.has(field.id),
                     ).map((field) => (
