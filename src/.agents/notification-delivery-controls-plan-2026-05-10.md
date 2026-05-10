@@ -521,12 +521,16 @@ Security/billing critical:
 
 - Do we want a first-release explicit timezone setting, or only Cloudflare
   region inference?
+  - NO for now:  timezone config would ultimately be useful for a lot of things (e.g., default config of linux containers); however, this is a good spot at which to draw a line to avoid feature scope for the first release.    We can easily think of infinitely many very good ideas of more to do...
 - What exact free/paid membership values should we assign for
   `notification_email_send_limit_5h` and `notification_email_send_limit_7d`?
+  - the membership tiers are all fully configurable by admins at any time so at least the answers aren't hardcoded forever.   we do have templates though for free/standard/pro/admin memberships, I think, so we need some defaults that are hardcoded in those templates.   Please just make something up based on your knowledge of existing SaaS expectations and conventions.  It's easy to change later based on experience.
 - Should recipient-side auto-digest fallback be implemented in the first pass,
   or deferred until we have delivery metrics?
+  - I don't know what this means.
 - Should course broadcast be implemented immediately after this workstream, or
   after student pay/site license?
+  - **YES** - this is a really killer feature that is (a) likely quite easy to implement, and (b) painfully missing, causing instructors to have to found other awkwards ways of communicating.
 
 ## Recommended Next Step
 

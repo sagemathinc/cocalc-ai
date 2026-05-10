@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button } from "antd";
+import { Alert, Radio, Space, Tag, Typography } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { Panel, Switch } from "@cocalc/frontend/antd-bootstrap";
@@ -11,6 +11,16 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, IconName } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  NOTIFICATION_CATEGORIES,
+  NOTIFICATION_EMAIL_MODES,
+  OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+  normalizeNotificationPreferences,
+  type NotificationCategory,
+  type NotificationEmailMode,
+} from "@cocalc/util/notification-preferences";
+
+const { Text, Paragraph } = Typography;
 
 export const COMMUNICATION_ICON_NAME: IconName = "mail";
 
@@ -31,6 +41,26 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
 
   function on_change(name: string, value: any): void {
     redux.getActions("account").set_other_settings(name, value);
+  }
+
+  function rawNotificationPreferences() {
+    const raw = other_settings?.get?.(
+      OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+    );
+    return raw?.toJS?.() ?? raw;
+  }
+
+  const notificationPreferences = normalizeNotificationPreferences(
+    rawNotificationPreferences(),
+  );
+
+  function setNotificationEmailMode(
+    category: NotificationCategory,
+    mode: NotificationEmailMode,
+  ) {
+    const next = normalizeNotificationPreferences(notificationPreferences);
+    next.email[category] = mode;
+    on_change(OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY, next);
   }
 
   function toggle_global_banner(val: boolean): void {
@@ -79,35 +109,48 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
     );
   }
 
-  function render_no_email_new_messages() {
+  function render_notification_email_preferences() {
+    const hasEmailDelivery = NOTIFICATION_CATEGORIES.some(
+      (category) => notificationPreferences.email[category.key] !== "off",
+    );
     return (
-      <>
-        <Switch
-          checked={other_settings.get("no_email_new_messages")}
-          onChange={(e) => {
-            on_change("no_email_new_messages", e.target.checked);
+      <Space direction="vertical" style={{ width: "100%" }}>
+        <div>
+          <Text strong>Notification email</Text>
+          <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+            Choose which notifications are emailed immediately, included in a
+            daily digest, or kept in CoCalc only.
+          </Paragraph>
+        </div>
+        {!isVerified && hasEmailDelivery && (
+          <Alert
+            type="warning"
+            showIcon
+            message="Verify your email address to receive notification email."
+          />
+        )}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns:
+              "minmax(180px, 0.7fr) minmax(260px, 1fr) minmax(300px, 1fr)",
+            gap: 12,
+            alignItems: "center",
           }}
         >
-          Do NOT send email when you get new{" "}
-          <Button
-            onClick={(e) => {
-              e.stopPropagation();
-              redux.getActions("page").set_active_tab("notifications");
-              redux.getActions("mentions").set_filter("unread");
-            }}
-            type="link"
-            size="small"
-          >
-            Notifications
-          </Button>
-        </Switch>
-        {!isVerified && !other_settings.get("no_email_new_messages") && (
-          <>
-            (NOTE: You must also verify your email address above to get emails
-            about new notifications.)
-          </>
-        )}
-      </>
+          <Text strong>Category</Text>
+          <Text strong>What it includes</Text>
+          <Text strong>Email delivery</Text>
+          {NOTIFICATION_CATEGORIES.map((category) => (
+            <NotificationPreferenceRow
+              key={category.key}
+              category={category}
+              mode={notificationPreferences.email[category.key]}
+              onChange={(mode) => setNotificationEmailMode(category.key, mode)}
+            />
+          ))}
+        </div>
+      </Space>
     );
   }
 
@@ -121,9 +164,46 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
         </>
       }
     >
+      {render_notification_email_preferences()}
+      <div style={{ marginTop: 16 }} />
       {render_global_banner()}
       {render_no_free_warnings()}
-      {render_no_email_new_messages()}
     </Panel>
+  );
+}
+
+function NotificationPreferenceRow({
+  category,
+  mode,
+  onChange,
+}: {
+  category: (typeof NOTIFICATION_CATEGORIES)[number];
+  mode: NotificationEmailMode;
+  onChange: (mode: NotificationEmailMode) => void;
+}) {
+  return (
+    <>
+      <Space direction="vertical" size={0}>
+        <Text>{category.label}</Text>
+        {category.requiredEmailMode && (
+          <Tag color="blue">Required immediate email</Tag>
+        )}
+      </Space>
+      <Text type="secondary">{category.description}</Text>
+      {category.requiredEmailMode ? (
+        <Text>Immediate</Text>
+      ) : (
+        <Radio.Group
+          optionType="button"
+          buttonStyle="solid"
+          value={mode}
+          onChange={(e) => onChange(e.target.value)}
+          options={NOTIFICATION_EMAIL_MODES.map(({ key, label }) => ({
+            value: key,
+            label,
+          }))}
+        />
+      )}
+    </>
   );
 }

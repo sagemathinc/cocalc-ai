@@ -56,6 +56,7 @@ import "./messages";
 import "./news";
 import "./notification-events-outbox";
 import "./notification-events";
+import "./notification-email-outbox";
 import "./notification-target-outbox";
 import "./notification-targets";
 import "./organizations";

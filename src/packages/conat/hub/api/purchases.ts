@@ -28,6 +28,8 @@ export interface MembershipUsageLimits {
   credit_spend_limit_7d_usd?: number;
   prepaid_host_usage_limit_5h_usd?: number;
   prepaid_host_usage_limit_7d_usd?: number;
+  notification_email_send_limit_5h?: number;
+  notification_email_send_limit_7d?: number;
 }
 
 export interface MembershipEffectiveLimits extends MembershipUsageLimits {}
@@ -81,6 +83,8 @@ export interface AccountUsageLimitOverrides {
   credit_spend_limit_7d_usd?: NumericLimitRule;
   prepaid_host_usage_limit_5h_usd?: NumericLimitRule;
   prepaid_host_usage_limit_7d_usd?: NumericLimitRule;
+  notification_email_send_limit_5h?: NumericLimitRule;
+  notification_email_send_limit_7d?: NumericLimitRule;
 }
 
 export interface DedicatedHostPolicyOverrides {

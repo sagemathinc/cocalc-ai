@@ -11,6 +11,7 @@
 
 import { isEmpty } from "lodash";
 
+import { EMAIL_LANE_BACKENDS } from "@cocalc/util/notification-email";
 import {
   expire_time,
   isValidUUID,
@@ -205,6 +206,10 @@ export type SiteSettingsExtrasKeys =
   | "re_captcha_v3_secret_key"
   | "email_section"
   | "email_backend"
+  | "notification_email_critical_backend"
+  | "notification_email_transactional_backend"
+  | "notification_email_notification_backend"
+  | "notification_email_marketing_backend"
   | "sendgrid_key"
   | "email_smtp_server"
   | "email_smtp_from"
@@ -705,6 +710,46 @@ export const EXTRAS: SettingsExtras = {
     group: "Messaging & Email",
     subgroup: "Backend",
     required_when: [{ key: "email_enabled", equals: "yes" }],
+  },
+  notification_email_critical_backend: {
+    name: "Critical email lane backend",
+    desc: "Backend for critical mail such as account recovery, security alerts, failed payment, and host enforcement. Use 'default' to inherit the main Email backend type.",
+    default: "default",
+    valid: EMAIL_LANE_BACKENDS,
+    show: is_email_enabled,
+    tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Lanes",
+  },
+  notification_email_transactional_backend: {
+    name: "Transactional email lane backend",
+    desc: "Backend for receipts, support replies, and account/admin notices. Use 'default' to inherit the main Email backend type.",
+    default: "default",
+    valid: EMAIL_LANE_BACKENDS,
+    show: is_email_enabled,
+    tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Lanes",
+  },
+  notification_email_notification_backend: {
+    name: "Notification email lane backend",
+    desc: "Backend for user-triggered notification email such as mentions, invites, AI completion notices, and digests. Use 'default' to inherit the main Email backend type.",
+    default: "default",
+    valid: EMAIL_LANE_BACKENDS,
+    show: is_email_enabled,
+    tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Lanes",
+  },
+  notification_email_marketing_backend: {
+    name: "Marketing email lane backend",
+    desc: "Backend for optional product announcements and similar marketing mail. Use 'default' to inherit the main Email backend type.",
+    default: "default",
+    valid: EMAIL_LANE_BACKENDS,
+    show: is_email_enabled,
+    tags: ["Email"],
+    group: "Messaging & Email",
+    subgroup: "Lanes",
   },
   sendgrid_key: {
     name: "Sendgrid API key (for email)",

@@ -263,6 +263,32 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
       MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
         .prepaid_host_usage_limit_7d_usd.adminDescription,
   },
+  {
+    id: "notification_email_5h",
+    section: "usage_limits",
+    key: "notification_email_send_limit_5h",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .notification_email_send_limit_5h.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .notification_email_send_limit_5h.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .notification_email_send_limit_5h.adminDescription,
+  },
+  {
+    id: "notification_email_7d",
+    section: "usage_limits",
+    key: "notification_email_send_limit_7d",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .notification_email_send_limit_7d.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .notification_email_send_limit_7d.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .notification_email_send_limit_7d.adminDescription,
+  },
 ];
 
 const PROJECT_FIELD_IDS = new Set([
@@ -282,6 +308,10 @@ const STORAGE_EGRESS_FIELD_IDS = new Set([
 ]);
 
 const AI_FIELD_IDS = new Set(["ai_units_5h", "ai_units_7d"]);
+const NOTIFICATION_EMAIL_FIELD_IDS = new Set([
+  "notification_email_5h",
+  "notification_email_7d",
+]);
 
 const SPEND_FIELD_IDS = new Set([
   "credit_spend_5h",
@@ -896,6 +926,15 @@ export function AccountEntitlementOverridePanel({
                     form={form}
                     fields={NUMERIC_FIELDS.filter((field) =>
                       AI_FIELD_IDS.has(field.id),
+                    )}
+                  />
+                </Collapse.Panel>
+                <Collapse.Panel header="Notification email" key="email">
+                  <NumericFieldGroup
+                    details={details}
+                    form={form}
+                    fields={NUMERIC_FIELDS.filter((field) =>
+                      NOTIFICATION_EMAIL_FIELD_IDS.has(field.id),
                     )}
                   />
                 </Collapse.Panel>

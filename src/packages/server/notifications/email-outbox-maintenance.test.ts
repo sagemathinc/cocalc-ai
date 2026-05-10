@@ -1,0 +1,156 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import { sendQueuedNotificationEmailBatch } from "./email-outbox-maintenance";
+
+const claimQueuedNotificationEmails = jest.fn();
+const markNotificationEmailSent = jest.fn();
+const markNotificationEmailFailed = jest.fn();
+const markNotificationEmailStatus = jest.fn();
+
+jest.mock("@cocalc/database/postgres/notification-email-outbox", () => ({
+  claimQueuedNotificationEmails: (...args: unknown[]) =>
+    claimQueuedNotificationEmails(...args),
+  markNotificationEmailSent: (...args: unknown[]) =>
+    markNotificationEmailSent(...args),
+  markNotificationEmailFailed: (...args: unknown[]) =>
+    markNotificationEmailFailed(...args),
+  markNotificationEmailStatus: (...args: unknown[]) =>
+    markNotificationEmailStatus(...args),
+}));
+
+jest.mock("@cocalc/database/settings", () => ({
+  getServerSettings: jest.fn(async () => ({
+    help_email: "help@example.com",
+    site_name: "CoCalc",
+  })),
+}));
+
+jest.mock("@cocalc/server/hub/site-url", () =>
+  jest.fn(async (path: string) => `https://cocalc.test/${path}`),
+);
+
+const ROW = {
+  email_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  notification_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  event_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  target_account_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  actor_account_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  responsible_account_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  category: "collaboration",
+  lane: "notification",
+  delivery_mode: "immediate",
+  recipient_email: "user@example.com",
+  subject: "CoCalc mention in chat",
+  summary_json: {
+    summary: {
+      description: "You were mentioned.",
+      path: "chat.chat",
+    },
+  },
+  status: "sending",
+  scheduled_at: new Date("2026-05-10T00:00:00.000Z"),
+  sent_at: null,
+  attempt_count: 1,
+  last_error: null,
+  created_at: new Date("2026-05-10T00:00:00.000Z"),
+  updated_at: new Date("2026-05-10T00:00:00.000Z"),
+} as const;
+
+describe("notification email outbox maintenance", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    markNotificationEmailSent.mockResolvedValue(undefined);
+    markNotificationEmailFailed.mockResolvedValue(undefined);
+    markNotificationEmailStatus.mockResolvedValue(undefined);
+  });
+
+  it("sends claimed immediate notification email and marks it sent", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([ROW]);
+    const sender = jest.fn(async () => undefined);
+
+    await expect(
+      sendQueuedNotificationEmailBatch({
+        sender,
+        emailConfigured: jest.fn(async () => true),
+        sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+      }),
+    ).resolves.toEqual({
+      claimed: 1,
+      sent: 1,
+      skipped_no_backend: 0,
+      failed: 0,
+    });
+
+    expect(sender).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "user@example.com",
+        subject: "CoCalc mention in chat",
+        categories: ["notification-collaboration", "notification"],
+      }),
+      ROW.responsible_account_id,
+      "notification",
+    );
+    expect(markNotificationEmailSent).toHaveBeenCalledWith({
+      email_id: ROW.email_id,
+    });
+  });
+
+  it("marks rows skipped when the lane has no backend", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([ROW]);
+
+    await expect(
+      sendQueuedNotificationEmailBatch({
+        sender: jest.fn(async () => undefined),
+        emailConfigured: jest.fn(async () => false),
+        sendLimitChecker: jest.fn(async () => ({ allowed: true })),
+      }),
+    ).resolves.toMatchObject({
+      claimed: 1,
+      sent: 0,
+      skipped_no_backend: 1,
+      failed: 0,
+    });
+
+    expect(markNotificationEmailStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email_id: ROW.email_id,
+        status: "skipped_no_backend",
+      }),
+    );
+  });
+
+  it("marks rows skipped when the responsible account is over its send limit", async () => {
+    claimQueuedNotificationEmails.mockResolvedValue([ROW]);
+    const sender = jest.fn(async () => undefined);
+
+    await expect(
+      sendQueuedNotificationEmailBatch({
+        sender,
+        emailConfigured: jest.fn(async () => true),
+        sendLimitChecker: jest.fn(async () => ({
+          allowed: false,
+          blocked_by: "5h",
+          notification_email_sent_5h: 11,
+          notification_email_sent_7d: 11,
+          notification_email_send_limit_5h: 10,
+          notification_email_send_limit_7d: 40,
+        })),
+      }),
+    ).resolves.toMatchObject({
+      claimed: 1,
+      sent: 0,
+      failed: 1,
+    });
+
+    expect(sender).not.toHaveBeenCalled();
+    expect(markNotificationEmailStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email_id: ROW.email_id,
+        status: "skipped_rate_limited",
+      }),
+    );
+  });
+});

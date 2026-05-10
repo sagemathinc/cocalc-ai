@@ -151,6 +151,8 @@ describe("resolveMembershipForAccount", () => {
       credit_spend_limit_7d_usd: undefined,
       prepaid_host_usage_limit_5h_usd: undefined,
       prepaid_host_usage_limit_7d_usd: undefined,
+      notification_email_send_limit_5h: undefined,
+      notification_email_send_limit_7d: undefined,
     });
   });
 

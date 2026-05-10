@@ -31,6 +31,7 @@ describe("account_notification_index projector", () => {
   afterEach(async () => {
     await getPool().query(
       `TRUNCATE account_notification_index,
+                notification_email_outbox,
                 notification_target_outbox,
                 notification_targets,
                 notification_events,
@@ -192,6 +193,32 @@ describe("account_notification_index projector", () => {
       }),
     );
 
+    await expect(
+      getPool().query(
+        `SELECT notification_id, target_account_id, actor_account_id,
+                responsible_account_id, category, lane, delivery_mode,
+                recipient_email, subject, status
+           FROM notification_email_outbox
+          WHERE notification_id = $1`,
+        [NOTIFICATION_ID],
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          notification_id: NOTIFICATION_ID,
+          target_account_id: LOCAL_ACCOUNT_ID,
+          actor_account_id: SOURCE_ACCOUNT_ID,
+          responsible_account_id: SOURCE_ACCOUNT_ID,
+          category: "collaboration",
+          lane: "notification",
+          delivery_mode: "immediate",
+          recipient_email: "local@example.com",
+          subject: "CoCalc mention in work/chat.chat",
+          status: "queued",
+        },
+      ],
+    });
+
     await setProjectedNotificationReadState({
       account_id: LOCAL_ACCOUNT_ID,
       notification_ids: [NOTIFICATION_ID],
@@ -233,6 +260,14 @@ describe("account_notification_index projector", () => {
         },
       }),
     ]);
+
+    const emailRows = await getPool().query(
+      `SELECT email_id
+         FROM notification_email_outbox
+        WHERE notification_id = $1`,
+      [NOTIFICATION_ID],
+    );
+    expect(emailRows.rows).toHaveLength(1);
   });
 
   it("ignores events for accounts homed in another bay", async () => {

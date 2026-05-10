@@ -19,6 +19,8 @@ function usageLimitsTemplate(
 ) {
   return {
     shared_compute_priority,
+    notification_email_send_limit_5h: 10,
+    notification_email_send_limit_7d: 40,
     ...overrides,
   };
 }
@@ -75,7 +77,10 @@ export const TIER_TEMPLATES = {
       create_hosts: false,
       project_host_tier: 0,
     },
-    usage_limits: usageLimitsTemplate(2),
+    usage_limits: usageLimitsTemplate(2, {
+      notification_email_send_limit_5h: 50,
+      notification_email_send_limit_7d: 200,
+    }),
   },
   member: {
     id: "member",
@@ -98,6 +103,8 @@ export const TIER_TEMPLATES = {
       project_host_tier: 1,
     },
     usage_limits: usageLimitsTemplate(3, {
+      notification_email_send_limit_5h: 200,
+      notification_email_send_limit_7d: 1000,
       prepaid_host_usage_limit_5h_usd: 300,
       prepaid_host_usage_limit_7d_usd: 1000,
     }),
@@ -123,6 +130,8 @@ export const TIER_TEMPLATES = {
       project_host_tier: 2,
     },
     usage_limits: usageLimitsTemplate(4, {
+      notification_email_send_limit_5h: 1000,
+      notification_email_send_limit_7d: 5000,
       credit_spend_limit_5h_usd: 300,
       credit_spend_limit_7d_usd: 1000,
       prepaid_host_usage_limit_5h_usd: 1000,

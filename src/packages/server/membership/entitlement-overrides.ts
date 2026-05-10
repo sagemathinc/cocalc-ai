@@ -51,6 +51,8 @@ const NUMERIC_USAGE_LIMIT_KEYS = new Set<keyof MembershipUsageLimits>([
   "credit_spend_limit_7d_usd",
   "prepaid_host_usage_limit_5h_usd",
   "prepaid_host_usage_limit_7d_usd",
+  "notification_email_send_limit_5h",
+  "notification_email_send_limit_7d",
 ]);
 const USAGE_ENUM_VALUES = {
   egress_policy: new Set([
@@ -177,6 +179,18 @@ const OVERRIDE_EFFECT_FIELDS = [
     key: "prepaid_host_usage_limit_7d_usd",
     ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
       .prepaid_host_usage_limit_7d_usd,
+  },
+  {
+    section: "usage_limits",
+    key: "notification_email_send_limit_5h",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .notification_email_send_limit_5h,
+  },
+  {
+    section: "usage_limits",
+    key: "notification_email_send_limit_7d",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .notification_email_send_limit_7d,
   },
 ] as const satisfies readonly OverrideEffectField[];
 

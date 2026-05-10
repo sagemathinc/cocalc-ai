@@ -130,5 +130,21 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       userDescription:
         "Prepaid dedicated-host spend limit over a rolling 7-day window.",
     },
+    notification_email_send_limit_5h: {
+      label: "Notification email sends, 5-hour window",
+      unit: "emails",
+      adminDescription:
+        "Rolling 5-hour limit on user-triggered notification emails caused by this account. System, security, and billing-critical email is not charged to this limit.",
+      userDescription:
+        "Notification emails this account can cause over a rolling 5-hour window.",
+    },
+    notification_email_send_limit_7d: {
+      label: "Notification email sends, 7-day window",
+      unit: "emails",
+      adminDescription:
+        "Rolling 7-day limit on user-triggered notification emails caused by this account. System, security, and billing-critical email is not charged to this limit.",
+      userDescription:
+        "Notification emails this account can cause over a rolling 7-day window.",
+    },
   },
 } as const;
