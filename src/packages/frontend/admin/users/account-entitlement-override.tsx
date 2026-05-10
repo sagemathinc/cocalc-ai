@@ -1,0 +1,570 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import { useEffect, useState } from "react";
+import {
+  Alert,
+  Button,
+  DatePicker,
+  Descriptions,
+  Divider,
+  Form,
+  Input,
+  InputNumber,
+  Popover,
+  Select,
+  Space,
+  Spin,
+  Typography,
+  message,
+  type FormInstance,
+} from "antd";
+import dayjs from "dayjs";
+import type {
+  AccountEntitlementOverride,
+  NumericLimitRule,
+  NumericLimitRuleMode,
+} from "@cocalc/conat/hub/api/purchases";
+import { ErrorDisplay } from "@cocalc/frontend/components";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
+import { actions } from "./actions";
+
+const { Text } = Typography;
+const BYTES_PER_GB = 1000 * 1000 * 1000;
+
+type NumericSection =
+  | "project_defaults"
+  | "ai_limits"
+  | "usage_limits"
+  | "dedicated_hosts";
+
+interface NumericOverrideField {
+  id: string;
+  section: NumericSection;
+  key: string;
+  label: string;
+  unit: string;
+  fromStored?: (value: number) => number;
+  toStored?: (value: number) => number;
+}
+
+const NUMERIC_FIELDS: NumericOverrideField[] = [
+  {
+    id: "project_disk_quota",
+    section: "project_defaults",
+    key: "disk_quota",
+    label: "Per-project disk quota",
+    unit: "MB",
+  },
+  {
+    id: "project_memory",
+    section: "project_defaults",
+    key: "memory",
+    label: "Project RAM",
+    unit: "MB",
+  },
+  {
+    id: "project_memory_request",
+    section: "project_defaults",
+    key: "memory_request",
+    label: "Project requested RAM",
+    unit: "MB",
+  },
+  {
+    id: "ai_units_5h",
+    section: "ai_limits",
+    key: "units_5h",
+    label: "AI units, 5-hour window",
+    unit: "units",
+  },
+  {
+    id: "ai_units_7d",
+    section: "ai_limits",
+    key: "units_7d",
+    label: "AI units, 7-day window",
+    unit: "units",
+  },
+  {
+    id: "total_storage_soft",
+    section: "usage_limits",
+    key: "total_storage_soft_bytes",
+    label: "Total storage soft cap",
+    unit: "GB",
+    fromStored: (value) => value / BYTES_PER_GB,
+    toStored: (value) => Math.round(value * BYTES_PER_GB),
+  },
+  {
+    id: "total_storage_hard",
+    section: "usage_limits",
+    key: "total_storage_hard_bytes",
+    label: "Total storage hard cap",
+    unit: "GB",
+    fromStored: (value) => value / BYTES_PER_GB,
+    toStored: (value) => Math.round(value * BYTES_PER_GB),
+  },
+  {
+    id: "max_projects",
+    section: "usage_limits",
+    key: "max_projects",
+    label: "Owned projects",
+    unit: "projects",
+  },
+  {
+    id: "max_snapshots_per_project",
+    section: "usage_limits",
+    key: "max_snapshots_per_project",
+    label: "Snapshots per project",
+    unit: "snapshots",
+  },
+  {
+    id: "max_backups_per_project",
+    section: "usage_limits",
+    key: "max_backups_per_project",
+    label: "Backups per project",
+    unit: "backups",
+  },
+  {
+    id: "egress_5h",
+    section: "usage_limits",
+    key: "egress_5h_bytes",
+    label: "Managed egress, 5-hour window",
+    unit: "GB",
+    fromStored: (value) => value / BYTES_PER_GB,
+    toStored: (value) => Math.round(value * BYTES_PER_GB),
+  },
+  {
+    id: "egress_7d",
+    section: "usage_limits",
+    key: "egress_7d_bytes",
+    label: "Managed egress, 7-day window",
+    unit: "GB",
+    fromStored: (value) => value / BYTES_PER_GB,
+    toStored: (value) => Math.round(value * BYTES_PER_GB),
+  },
+  {
+    id: "credit_spend_5h",
+    section: "usage_limits",
+    key: "credit_spend_limit_5h_usd",
+    label: "Postpay spend, 5-hour window",
+    unit: "USD",
+  },
+  {
+    id: "credit_spend_7d",
+    section: "usage_limits",
+    key: "credit_spend_limit_7d_usd",
+    label: "Postpay spend, 7-day window",
+    unit: "USD",
+  },
+  {
+    id: "prepaid_host_5h",
+    section: "usage_limits",
+    key: "prepaid_host_usage_limit_5h_usd",
+    label: "Prepay host spend, 5-hour window",
+    unit: "USD",
+  },
+  {
+    id: "prepaid_host_7d",
+    section: "usage_limits",
+    key: "prepaid_host_usage_limit_7d_usd",
+    label: "Prepay host spend, 7-day window",
+    unit: "USD",
+  },
+  {
+    id: "postpaid_unbilled",
+    section: "dedicated_hosts",
+    key: "postpaid_unbilled_limit_usd",
+    label: "Dedicated host postpay exposure",
+    unit: "USD",
+  },
+];
+
+const MODE_OPTIONS = [
+  { value: "", label: "No override" },
+  { value: "minimum", label: "Minimum" },
+  { value: "maximum", label: "Maximum" },
+  { value: "set", label: "Set" },
+];
+
+function getNumericRule(
+  override: AccountEntitlementOverride | undefined,
+  field: NumericOverrideField,
+): NumericLimitRule | undefined {
+  const section = override?.[field.section] as
+    | Record<string, NumericLimitRule | undefined>
+    | undefined;
+  return section?.[field.key];
+}
+
+function applyRuleToFields(
+  fields: Record<string, unknown>,
+  field: NumericOverrideField,
+  rule?: NumericLimitRule,
+) {
+  fields[`${field.id}_mode`] = rule?.mode ?? "";
+  fields[`${field.id}_value`] =
+    rule?.value == null
+      ? undefined
+      : (field.fromStored ?? ((v) => v))(rule.value);
+}
+
+function setNestedRule(
+  target: Record<string, any>,
+  field: NumericOverrideField,
+  rule?: NumericLimitRule,
+) {
+  if (!rule) return;
+  target[field.section] ??= {};
+  target[field.section][field.key] = rule;
+}
+
+function parseRule(values: Record<string, any>, field: NumericOverrideField) {
+  const mode = values[`${field.id}_mode`] as NumericLimitRuleMode | "";
+  if (!mode) return undefined;
+  const raw = values[`${field.id}_value`];
+  const displayValue = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(displayValue) || displayValue < 0) {
+    throw Error(`${field.label} needs a nonnegative number.`);
+  }
+  return {
+    mode,
+    value: (field.toStored ?? ((value) => value))(displayValue),
+  };
+}
+
+function resetFormFields(
+  form: FormInstance,
+  override?: AccountEntitlementOverride,
+) {
+  const values: Record<string, unknown> = {
+    enabled: override?.enabled ?? true,
+    expires_at: override?.expires_at ? dayjs(override.expires_at) : null,
+    reason: override?.reason ?? "",
+    create_hosts:
+      override?.features?.create_hosts == null
+        ? "inherit"
+        : override.features.create_hosts
+          ? "true"
+          : "false",
+    funding_mode: override?.dedicated_hosts?.funding_mode?.value ?? "inherit",
+    egress_policy: override?.usage_limits?.egress_policy?.value ?? "inherit",
+    dedicated_host_egress_policy:
+      override?.usage_limits?.dedicated_host_egress_policy?.value ?? "inherit",
+  };
+  for (const field of NUMERIC_FIELDS) {
+    applyRuleToFields(values, field, getNumericRule(override, field));
+  }
+  form.setFieldsValue(values);
+}
+
+function buildOverride(values: Record<string, any>) {
+  const override: Record<string, any> = {
+    enabled: values.enabled !== false,
+    expires_at: values.expires_at ? values.expires_at.toDate() : null,
+  };
+  for (const field of NUMERIC_FIELDS) {
+    setNestedRule(override, field, parseRule(values, field));
+  }
+  if (values.create_hosts !== "inherit") {
+    override.features ??= {};
+    override.features.create_hosts = values.create_hosts === "true";
+  }
+  if (values.funding_mode !== "inherit") {
+    override.dedicated_hosts ??= {};
+    override.dedicated_hosts.funding_mode = {
+      mode: "set",
+      value: values.funding_mode,
+    };
+  }
+  if (values.egress_policy !== "inherit") {
+    override.usage_limits ??= {};
+    override.usage_limits.egress_policy = {
+      mode: "set",
+      value: values.egress_policy,
+    };
+  }
+  if (values.dedicated_host_egress_policy !== "inherit") {
+    override.usage_limits ??= {};
+    override.usage_limits.dedicated_host_egress_policy = {
+      mode: "set",
+      value: values.dedicated_host_egress_policy,
+    };
+  }
+  return override;
+}
+
+function OverrideHelp() {
+  return (
+    <Popover
+      title="How override modes combine with memberships"
+      content={
+        <div style={{ maxWidth: 420 }}>
+          <p>
+            Use <b>maximum</b> to cap a limit. Example: if support sets max
+            projects to maximum 50, a later purchased membership with 100
+            projects still resolves to 50.
+          </p>
+          <p>
+            Use <b>minimum</b> to grant a floor. Example: if support sets max
+            projects to minimum 50, a 20-project tier resolves to 50, but a
+            later 100-project tier still resolves to 100.
+          </p>
+          <p>
+            Use <b>set</b> only when support wants an exact forced value.
+          </p>
+        </div>
+      }
+    >
+      <Button type="link" size="small">
+        ?
+      </Button>
+    </Popover>
+  );
+}
+
+function NumericRuleEditor({ field }: { field: NumericOverrideField }) {
+  return (
+    <Form.Item label={`${field.label} (${field.unit})`}>
+      <Space.Compact style={{ width: "100%" }}>
+        <Form.Item name={`${field.id}_mode`} noStyle>
+          <Select style={{ width: 150 }} options={MODE_OPTIONS} />
+        </Form.Item>
+        <Form.Item name={`${field.id}_value`} noStyle>
+          <InputNumber
+            style={{ width: "100%" }}
+            min={0}
+            placeholder={field.unit}
+          />
+        </Form.Item>
+      </Space.Compact>
+    </Form.Item>
+  );
+}
+
+export function AccountEntitlementOverridePanel({
+  account_id,
+}: {
+  account_id: string;
+}) {
+  const [form] = Form.useForm();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [override, setOverride] = useState<
+    AccountEntitlementOverride | undefined
+  >();
+  const [error, setError] = useState<string>("");
+
+  async function refresh() {
+    setLoading(true);
+    setError("");
+    try {
+      const nextOverride =
+        await actions.get_account_entitlement_override(account_id);
+      setOverride(nextOverride);
+      resetFormFields(form, nextOverride);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      const values = await form.validateFields();
+      const reason = `${values.reason ?? ""}`.trim();
+      if (!reason) {
+        throw Error("Reason is required.");
+      }
+      const nextOverride = await actions.set_account_entitlement_override({
+        account_id,
+        override: buildOverride(values),
+        reason,
+      });
+      setOverride(nextOverride);
+      resetFormFields(form, nextOverride);
+      message.success("Account entitlement override updated.");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("cocalc:membership-changed"));
+      }
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function clear() {
+    setClearing(true);
+    setError("");
+    try {
+      const reason = `${form.getFieldValue("reason") ?? ""}`.trim();
+      if (!reason) {
+        throw Error("Reason is required to clear an override.");
+      }
+      await actions.clear_account_entitlement_override({
+        account_id,
+        reason,
+      });
+      setOverride(undefined);
+      resetFormFields(form, undefined);
+      message.success("Account entitlement override cleared.");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("cocalc:membership-changed"));
+      }
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+  }, [account_id]);
+
+  return (
+    <div>
+      <Space align="center">
+        <Text strong>Account entitlement overrides</Text>
+        <OverrideHelp />
+      </Space>
+      <div style={{ marginTop: "8px" }}>
+        {loading ? (
+          <Spin />
+        ) : (
+          <Space direction="vertical" style={{ width: "100%" }} size="middle">
+            {error && (
+              <ErrorDisplay error={error} onClose={() => setError("")} />
+            )}
+            {override ? (
+              <Alert
+                type={override.enabled ? "info" : "warning"}
+                showIcon
+                title={
+                  override.enabled
+                    ? "An admin override is active for this account."
+                    : "An admin override exists but is disabled."
+                }
+                description={
+                  <Descriptions size="small" column={1}>
+                    <Descriptions.Item label="Updated">
+                      <TimeAgo date={override.updated_at} />
+                    </Descriptions.Item>
+                    {override.expires_at ? (
+                      <Descriptions.Item label="Expires">
+                        <TimeAgo date={override.expires_at} />
+                      </Descriptions.Item>
+                    ) : null}
+                  </Descriptions>
+                }
+              />
+            ) : (
+              <Text type="secondary">No account-specific override.</Text>
+            )}
+            <Form
+              form={form}
+              layout="vertical"
+              initialValues={{
+                enabled: true,
+                create_hosts: "inherit",
+                funding_mode: "inherit",
+                egress_policy: "inherit",
+                dedicated_host_egress_policy: "inherit",
+              }}
+            >
+              <Form.Item label="Override status" name="enabled">
+                <Select
+                  options={[
+                    { value: true, label: "Enabled" },
+                    { value: false, label: "Disabled" },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item label="Expires" name="expires_at">
+                <DatePicker style={{ width: "100%" }} placeholder="Never" />
+              </Form.Item>
+              <Form.Item
+                label="Reason"
+                name="reason"
+                rules={[{ required: true, message: "Reason is required." }]}
+              >
+                <Input.TextArea
+                  rows={2}
+                  placeholder="Support ticket, customer request, abuse mitigation, or operational reason"
+                />
+              </Form.Item>
+
+              <Divider style={{ margin: "12px 0" }} />
+              <Form.Item label="Dedicated host creation" name="create_hosts">
+                <Select
+                  options={[
+                    { value: "inherit", label: "No override" },
+                    { value: "true", label: "Allow" },
+                    { value: "false", label: "Block" },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item
+                label="Dedicated host funding mode"
+                name="funding_mode"
+              >
+                <Select
+                  options={[
+                    { value: "inherit", label: "No override" },
+                    { value: "account-prepaid", label: "Account prepaid" },
+                    { value: "account-postpaid", label: "Account postpaid" },
+                    { value: "site-funded", label: "Site funded" },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item label="Shared-host egress policy" name="egress_policy">
+                <Select
+                  options={[
+                    { value: "inherit", label: "No override" },
+                    {
+                      value: "metered-shared-hosts",
+                      label: "Metered shared hosts",
+                    },
+                    { value: "all-shared-hosts", label: "All shared hosts" },
+                    { value: "disabled", label: "Disabled" },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item
+                label="Dedicated-host egress policy"
+                name="dedicated_host_egress_policy"
+              >
+                <Select
+                  options={[
+                    { value: "inherit", label: "No override" },
+                    { value: "tier-capped", label: "Tier capped" },
+                    { value: "meter-and-bill", label: "Meter and bill" },
+                    { value: "disabled", label: "Disabled" },
+                  ]}
+                />
+              </Form.Item>
+
+              <Divider style={{ margin: "12px 0" }} />
+              {NUMERIC_FIELDS.map((field) => (
+                <NumericRuleEditor key={field.id} field={field} />
+              ))}
+            </Form>
+            <Space>
+              <Button type="primary" onClick={save} loading={saving}>
+                Save override
+              </Button>
+              <Button onClick={clear} loading={clearing} danger>
+                Clear override
+              </Button>
+            </Space>
+          </Space>
+        )}
+      </div>
+    </div>
+  );
+}

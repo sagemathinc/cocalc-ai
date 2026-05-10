@@ -38,7 +38,12 @@ export { manageApiKeys };
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
-import { normalizeAccountEntitlementOverride } from "@cocalc/server/membership/entitlement-overrides";
+import {
+  clearAccountEntitlementOverrideLocal,
+  getAccountEntitlementOverrideLocal,
+  setAccountEntitlementOverrideLocal,
+  type AccountEntitlementOverrideInput,
+} from "@cocalc/server/membership/entitlement-overrides";
 import {
   createClusterAccount,
   deleteClusterAccount,
@@ -1961,12 +1966,23 @@ export async function clearAdminAssignedMembership({
   });
 }
 
-function requireOverrideReason(reason?: string | null): string {
-  const trimmed = `${reason ?? ""}`.trim();
-  if (!trimmed) {
-    throw Error("reason is required");
+async function getAccountEntitlementOverrideHomeClient({
+  account_id,
+  user_account_id,
+}: {
+  account_id: string;
+  user_account_id: string;
+}) {
+  const location = await resolveAccountHomeBay({ account_id, user_account_id });
+  const homeBayId =
+    `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  if (homeBayId === getConfiguredBayId()) {
+    return undefined;
   }
-  return trimmed;
+  return createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: homeBayId,
+  });
 }
 
 export async function getAccountEntitlementOverride({
@@ -1979,15 +1995,15 @@ export async function getAccountEntitlementOverride({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
-  const { rows } = await getPool("medium").query(
-    `SELECT account_id, enabled, features, project_defaults, ai_limits,
-            usage_limits, dedicated_hosts, reason, expires_at, updated_by,
-            updated_at
-       FROM account_entitlement_overrides
-      WHERE account_id=$1`,
-    [user_account_id],
-  );
-  return normalizeAccountEntitlementOverride(rows[0]);
+  const client = await getAccountEntitlementOverrideHomeClient({
+    account_id,
+    user_account_id,
+  });
+  return client
+    ? await client.getAccountEntitlementOverride({
+        account_id: user_account_id,
+      })
+    : await getAccountEntitlementOverrideLocal(user_account_id);
 }
 
 export async function setAccountEntitlementOverride({
@@ -1998,104 +2014,29 @@ export async function setAccountEntitlementOverride({
 }: {
   account_id?: string;
   user_account_id: string;
-  override: Omit<
-    Partial<AccountEntitlementOverride>,
-    "account_id" | "updated_by" | "updated_at"
-  >;
+  override: AccountEntitlementOverrideInput;
   reason: string;
 }): Promise<AccountEntitlementOverride> {
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
-  const finalReason = requireOverrideReason(reason);
-  const updated_at = new Date();
-  const normalized = normalizeAccountEntitlementOverride({
-    account_id: user_account_id,
-    enabled: override.enabled ?? true,
-    features: override.features ?? {},
-    project_defaults: override.project_defaults ?? {},
-    ai_limits: override.ai_limits ?? {},
-    usage_limits: override.usage_limits ?? {},
-    dedicated_hosts: override.dedicated_hosts ?? {},
-    reason: finalReason,
-    expires_at: override.expires_at ?? null,
-    updated_by: account_id,
-    updated_at,
-  })!;
-  const pool = getPool("medium");
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const oldResult = await client.query(
-      `SELECT account_id, enabled, features, project_defaults, ai_limits,
-              usage_limits, dedicated_hosts, reason, expires_at, updated_by,
-              updated_at
-         FROM account_entitlement_overrides
-        WHERE account_id=$1`,
-      [user_account_id],
-    );
-    const oldValue = normalizeAccountEntitlementOverride(oldResult.rows[0]);
-    const { rows } = await client.query(
-      `INSERT INTO account_entitlement_overrides (
-         account_id, enabled, features, project_defaults, ai_limits,
-         usage_limits, dedicated_hosts, reason, expires_at, updated_by,
-         updated_at
-       )
-       VALUES ($1,$2,$3::JSONB,$4::JSONB,$5::JSONB,$6::JSONB,$7::JSONB,$8,$9,$10,$11)
-       ON CONFLICT (account_id)
-       DO UPDATE SET
-         enabled=EXCLUDED.enabled,
-         features=EXCLUDED.features,
-         project_defaults=EXCLUDED.project_defaults,
-         ai_limits=EXCLUDED.ai_limits,
-         usage_limits=EXCLUDED.usage_limits,
-         dedicated_hosts=EXCLUDED.dedicated_hosts,
-         reason=EXCLUDED.reason,
-         expires_at=EXCLUDED.expires_at,
-         updated_by=EXCLUDED.updated_by,
-         updated_at=EXCLUDED.updated_at
-       RETURNING account_id, enabled, features, project_defaults, ai_limits,
-                 usage_limits, dedicated_hosts, reason, expires_at, updated_by,
-                 updated_at`,
-      [
-        normalized.account_id,
-        normalized.enabled,
-        JSON.stringify(normalized.features ?? {}),
-        JSON.stringify(normalized.project_defaults ?? {}),
-        JSON.stringify(normalized.ai_limits ?? {}),
-        JSON.stringify(normalized.usage_limits ?? {}),
-        JSON.stringify(normalized.dedicated_hosts ?? {}),
-        normalized.reason,
-        normalized.expires_at ?? null,
-        normalized.updated_by,
-        normalized.updated_at,
-      ],
-    );
-    const newValue = normalizeAccountEntitlementOverride(rows[0])!;
-    await client.query(
-      `INSERT INTO account_entitlement_override_events (
-         id, account_id, action, old_value, new_value, reason,
-         actor_account_id, created_at
-       )
-       VALUES ($1,$2,$3,$4::JSONB,$5::JSONB,$6,$7,NOW())`,
-      [
-        uuid(),
-        user_account_id,
-        "set",
-        oldValue ? JSON.stringify(oldValue) : null,
-        JSON.stringify(newValue),
-        finalReason,
-        account_id,
-      ],
-    );
-    await client.query("COMMIT");
-    return newValue;
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
+  const client = await getAccountEntitlementOverrideHomeClient({
+    account_id,
+    user_account_id,
+  });
+  return client
+    ? await client.setAccountEntitlementOverride({
+        account_id: user_account_id,
+        actor_account_id: account_id,
+        override,
+        reason,
+      })
+    : await setAccountEntitlementOverrideLocal({
+        account_id: user_account_id,
+        actor_account_id: account_id,
+        override,
+        reason,
+      });
 }
 
 export async function clearAccountEntitlementOverride({
@@ -2110,47 +2051,23 @@ export async function clearAccountEntitlementOverride({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
-  const finalReason = requireOverrideReason(reason);
-  const pool = getPool("medium");
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const oldResult = await client.query(
-      `SELECT account_id, enabled, features, project_defaults, ai_limits,
-              usage_limits, dedicated_hosts, reason, expires_at, updated_by,
-              updated_at
-         FROM account_entitlement_overrides
-        WHERE account_id=$1`,
-      [user_account_id],
-    );
-    const oldValue = normalizeAccountEntitlementOverride(oldResult.rows[0]);
-    await client.query(
-      `DELETE FROM account_entitlement_overrides WHERE account_id=$1`,
-      [user_account_id],
-    );
-    await client.query(
-      `INSERT INTO account_entitlement_override_events (
-         id, account_id, action, old_value, new_value, reason,
-         actor_account_id, created_at
-       )
-       VALUES ($1,$2,$3,$4::JSONB,$5::JSONB,$6,$7,NOW())`,
-      [
-        uuid(),
-        user_account_id,
-        "clear",
-        oldValue ? JSON.stringify(oldValue) : null,
-        null,
-        finalReason,
-        account_id,
-      ],
-    );
-    await client.query("COMMIT");
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
+  const client = await getAccountEntitlementOverrideHomeClient({
+    account_id,
+    user_account_id,
+  });
+  if (client) {
+    await client.clearAccountEntitlementOverride({
+      account_id: user_account_id,
+      actor_account_id: account_id,
+      reason,
+    });
+    return;
   }
+  await clearAccountEntitlementOverrideLocal({
+    account_id: user_account_id,
+    actor_account_id: account_id,
+    reason,
+  });
 }
 
 import { sync as salesloftSync } from "@cocalc/server/salesloft/sync";

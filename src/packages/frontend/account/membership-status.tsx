@@ -766,6 +766,27 @@ export function MembershipStatusPanel({
             )}
           </Descriptions>
 
+          {details?.admin_override ? (
+            <Alert
+              type="info"
+              showIcon
+              title="Support override active"
+              description={
+                <>
+                  Account-specific support limits are reflected in the values
+                  below.
+                  {details.admin_override.expires_at ? (
+                    <>
+                      {" "}
+                      This override expires{" "}
+                      <TimeAgo date={details.admin_override.expires_at} />.
+                    </>
+                  ) : null}
+                </>
+              }
+            />
+          ) : null}
+
           <Space wrap>
             <Button
               type={membership.class === "free" ? "primary" : "default"}

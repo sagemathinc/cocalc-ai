@@ -39,6 +39,7 @@ import type {
 } from "@cocalc/conat/hub/api/purchases";
 import { humanSize } from "@cocalc/util/misc";
 import { actions } from "./actions";
+import { AccountEntitlementOverridePanel } from "./account-entitlement-override";
 
 const { Text } = Typography;
 
@@ -420,6 +421,8 @@ export function AdminMembership({ account_id }: { account_id: string }) {
               </Text>
             </Space>
           </div>
+          <Divider style={{ margin: "16px 0" }} />
+          <AccountEntitlementOverridePanel account_id={account_id} />
           <Divider style={{ margin: "16px 0" }} />
           <div>
             <Text strong>Usage summary</Text>

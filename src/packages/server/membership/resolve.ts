@@ -284,6 +284,12 @@ export async function resolveMembershipDetailsForAccount(
     selected: effectiveSelected,
     candidates,
     usage_status,
+    admin_override: override
+      ? {
+          expires_at: override.expires_at ?? null,
+          updated_at: override.updated_at,
+        }
+      : undefined,
   };
 }
 

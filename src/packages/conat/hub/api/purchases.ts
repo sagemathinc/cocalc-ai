@@ -142,10 +142,16 @@ export interface MembershipCandidate {
   expires?: Date;
 }
 
+export interface MembershipAdminOverrideSummary {
+  expires_at?: Date | string | null;
+  updated_at: Date | string;
+}
+
 export interface MembershipDetails {
   selected: MembershipResolution;
   candidates: MembershipCandidate[];
   usage_status?: MembershipUsageStatus;
+  admin_override?: MembershipAdminOverrideSummary;
 }
 
 export interface MembershipPackageQuote {

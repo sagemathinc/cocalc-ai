@@ -59,6 +59,8 @@ const PORTABLE_STATE_TABLES = [
   "account_impersonation_sessions",
   "auth_tokens",
   "api_keys",
+  "account_entitlement_overrides",
+  "account_entitlement_override_events",
   "membership_grants",
 ] as const;
 
@@ -308,7 +310,9 @@ async function replacePortableRows({
                 ? ["auth_token"]
                 : table === "api_keys"
                   ? ["key_id"]
-                  : ["id"];
+                  : table === "account_entitlement_overrides"
+                    ? ["account_id"]
+                    : ["id"];
   if (table === "api_keys") {
     await getPool().query(
       `
@@ -646,6 +650,8 @@ async function loadPortableState(
     account_impersonation_sessions,
     auth_tokens,
     api_keys,
+    account_entitlement_overrides,
+    account_entitlement_override_events,
     membershipPortableState,
   ] = await Promise.all([
     loadPortableRows("account_project_index", account_id),
@@ -660,6 +666,8 @@ async function loadPortableState(
     loadPortableRows("account_impersonation_sessions", account_id),
     loadPortableRows("auth_tokens", account_id),
     loadAccountWidePortableApiKeyRows(account_id),
+    loadPortableRows("account_entitlement_overrides", account_id),
+    loadPortableRows("account_entitlement_override_events", account_id),
     getMembershipPortableState(account_id),
   ]);
   return {
@@ -678,6 +686,8 @@ async function loadPortableState(
     account_impersonation_sessions,
     auth_tokens,
     api_keys,
+    account_entitlement_overrides,
+    account_entitlement_override_events,
     membership_grants: membershipPortableState.membership_grants,
     membership_packages: membershipPortableState.membership_packages,
     membership_package_assignments:
@@ -1103,6 +1113,8 @@ export async function copyAccountRehomeState({
   account_impersonation_sessions,
   auth_tokens,
   api_keys,
+  account_entitlement_overrides,
+  account_entitlement_override_events,
   membership_grants,
   membership_packages,
   membership_package_assignments,
@@ -1179,6 +1191,16 @@ export async function copyAccountRehomeState({
     rows: api_keys ?? [],
   });
   await replacePortableRows({
+    table: "account_entitlement_overrides",
+    account_id: accountId,
+    rows: account_entitlement_overrides ?? [],
+  });
+  await replacePortableRows({
+    table: "account_entitlement_override_events",
+    account_id: accountId,
+    rows: account_entitlement_override_events ?? [],
+  });
+  await replacePortableRows({
     table: "membership_grants",
     account_id: accountId,
     rows: membership_grants ?? [],
@@ -1215,6 +1237,10 @@ export async function copyAccountRehomeState({
       account_impersonation_sessions?.length ?? 0,
     auth_tokens_rows: auth_tokens?.length ?? 0,
     api_keys_rows: api_keys?.length ?? 0,
+    account_entitlement_overrides_rows:
+      account_entitlement_overrides?.length ?? 0,
+    account_entitlement_override_events_rows:
+      account_entitlement_override_events?.length ?? 0,
     membership_grants_rows: membership_grants?.length ?? 0,
     membership_packages_rows: membership_packages?.length ?? 0,
     membership_package_assignments_rows:

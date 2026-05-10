@@ -229,6 +229,20 @@ describe("account rehome", () => {
       ) {
         return { rows: [], rowCount: 0 };
       }
+      if (
+        sql.includes(
+          'DELETE FROM "account_entitlement_overrides" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_entitlement_override_events" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('DELETE FROM "membership_grants" WHERE account_id=$1')) {
         return { rows: [], rowCount: 0 };
       }
@@ -418,6 +432,42 @@ describe("account rehome", () => {
       ) {
         return { rows: [{ rows: [] }] };
       }
+      if (sql.includes('FROM "account_entitlement_overrides"')) {
+        return {
+          rows: [
+            {
+              rows: [
+                {
+                  account_id: TARGET_ACCOUNT_ID,
+                  enabled: true,
+                  features: { create_hosts: true },
+                  reason: "support ticket",
+                  updated_by: REQUESTED_BY,
+                  updated_at: "2026-05-06T01:00:00.000Z",
+                },
+              ],
+            },
+          ],
+        };
+      }
+      if (sql.includes('FROM "account_entitlement_override_events"')) {
+        return {
+          rows: [
+            {
+              rows: [
+                {
+                  id: "override-event-1",
+                  account_id: TARGET_ACCOUNT_ID,
+                  action: "set",
+                  reason: "support ticket",
+                  actor_account_id: REQUESTED_BY,
+                  created_at: "2026-05-06T01:00:00.000Z",
+                },
+              ],
+            },
+          ],
+        };
+      }
       if (sql.includes('FROM "membership_grants"')) {
         return {
           rows: [
@@ -558,6 +608,20 @@ describe("account rehome", () => {
       ) {
         return { rows: [], rowCount: 0 };
       }
+      if (
+        sql.includes(
+          'DELETE FROM "account_entitlement_overrides" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'DELETE FROM "account_entitlement_override_events" WHERE account_id=$1',
+        )
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('DELETE FROM "membership_grants" WHERE account_id=$1')) {
         return { rows: [], rowCount: 0 };
       }
@@ -647,7 +711,31 @@ describe("account rehome", () => {
             owner_account_id: TARGET_ACCOUNT_ID,
           }),
         ],
+        account_entitlement_overrides: [
+          expect.objectContaining({
+            account_id: TARGET_ACCOUNT_ID,
+            features: { create_hosts: true },
+          }),
+        ],
+        account_entitlement_override_events: [
+          expect.objectContaining({
+            id: "override-event-1",
+            account_id: TARGET_ACCOUNT_ID,
+          }),
+        ],
       }),
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'DELETE FROM "account_entitlement_overrides" WHERE account_id=$1',
+      ),
+      [TARGET_ACCOUNT_ID],
+    );
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'DELETE FROM "account_entitlement_override_events" WHERE account_id=$1',
+      ),
+      [TARGET_ACCOUNT_ID],
     );
     expect(queryMock).toHaveBeenCalledWith(
       expect.stringContaining(
