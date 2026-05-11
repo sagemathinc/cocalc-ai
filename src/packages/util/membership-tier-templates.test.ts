@@ -43,6 +43,8 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(tier.features).toEqual({ create_hosts: false });
     expect(tier.usage_limits).toEqual({
       shared_compute_priority: 99,
+      notification_email_send_limit_5h: 200,
+      notification_email_send_limit_7d: 1000,
       prepaid_host_usage_limit_5h_usd: 300,
       prepaid_host_usage_limit_7d_usd: 1000,
     });
