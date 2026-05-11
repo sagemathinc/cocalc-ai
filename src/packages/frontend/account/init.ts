@@ -17,12 +17,12 @@ import { init_dark_mode } from "./dark-mode";
 import { reset_password_key } from "../client/password-reset";
 import { hasRememberMe } from "@cocalc/frontend/misc/remember-me";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { once } from "@cocalc/util/async-utils";
 import { initAccountTable } from "./table-bootstrap";
 import Cookies from "js-cookie";
 import { ACCOUNT_ID_COOKIE } from "@cocalc/frontend/client/client";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
 import { getAuthBootstrap } from "@cocalc/frontend/auth/api";
+import { waitForAccountTableConnectedForSignIn } from "./wait-for-account-table-connected";
 
 export function init(redux) {
   // Register account store
@@ -107,7 +107,7 @@ export function init(redux) {
       // not fully signed in until the account table is connected, so that we know
       // email address, etc. If we don't set this, the UI briefly shows the
       // pre-sign-in state.
-      await once(table, "connected");
+      await waitForAccountTableConnectedForSignIn(table);
     }
     await loadAuthBootstrap({ account_id: mesg?.account_id, force: true });
     actions.set_user_type("signed_in");
