@@ -426,6 +426,9 @@ export const useHostActions = ({
       await hub.hosts.setHostAccess({ id, ...opts });
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       alert_message({
         type: "error",
         message: err instanceof Error ? err.message : String(err),
@@ -461,6 +464,9 @@ export const useHostActions = ({
       await hub.hosts.setHostProjectRamLimit({ id, project_ram_limit_mb });
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       alert_message({
         type: "error",
         message: err instanceof Error ? err.message : String(err),
@@ -483,6 +489,9 @@ export const useHostActions = ({
       await hub.hosts.setHostOwnerSpendLimits({ id, ...opts });
       await refresh();
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       alert_message({
         type: "error",
         message: err instanceof Error ? err.message : String(err),

@@ -183,7 +183,7 @@ describe("projects/delete", () => {
     });
   });
 
-  it("restores the shard assignment if delete rollback happens after release", async () => {
+  it("does not touch the shard assignment if delete rollback happens before commit", async () => {
     failCommit = true;
 
     await expect(
@@ -194,16 +194,37 @@ describe("projects/delete", () => {
       }),
     ).rejects.toThrow("commit failed");
 
-    expect(releaseProjectBackupRepoAssignmentMock).toHaveBeenCalledWith({
-      project_id: PROJECT_ID,
-    });
-    expect(resolveProjectBackupRepoAssignmentMock).toHaveBeenCalledWith({
-      project_id: PROJECT_ID,
-      project_region: "wnam",
-      backup_repo_id: BACKUP_REPO_ID,
-    });
+    expect(releaseProjectBackupRepoAssignmentMock).not.toHaveBeenCalled();
+    expect(resolveProjectBackupRepoAssignmentMock).not.toHaveBeenCalled();
     expect(
       publishProjectAccountFeedEventsBestEffortMock,
     ).not.toHaveBeenCalled();
+  });
+
+  it("does not fail soft delete if post-commit shard assignment release fails", async () => {
+    releaseProjectBackupRepoAssignmentMock.mockRejectedValueOnce(
+      new Error("release timeout"),
+    );
+
+    await setProjectDeleted({
+      project_id: PROJECT_ID,
+      deleted: true,
+      skipPermissionCheck: true,
+    });
+
+    expect(releaseProjectBackupRepoAssignmentMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+    });
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      "failed to release backup shard assignment after project delete",
+      {
+        project_id: PROJECT_ID,
+        err: "Error: release timeout",
+      },
+    );
+    expect(publishProjectAccountFeedEventsBestEffortMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      default_bay_id: "bay-1",
+    });
   });
 });

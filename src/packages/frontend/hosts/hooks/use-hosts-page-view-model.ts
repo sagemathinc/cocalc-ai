@@ -1758,10 +1758,22 @@ export const useHostsPageViewModel = () => {
     rootfsInventory,
     canManageRootfs,
     onListHostAccess: listHostAccess,
-    onSetHostAccess: setHostAccess,
+    onSetHostAccess: async (id, opts) => {
+      await runFreshAuthAction(async () => {
+        await setHostAccess(id, opts);
+      });
+    },
     onRemoveHostAccess: removeHostAccess,
-    onSetHostProjectRamLimit: setHostProjectRamLimit,
-    onSetHostOwnerSpendLimits: setHostOwnerSpendLimits,
+    onSetHostProjectRamLimit: async (id, project_ram_limit_mb) => {
+      await runFreshAuthAction(async () => {
+        await setHostProjectRamLimit(id, project_ram_limit_mb);
+      });
+    },
+    onSetHostOwnerSpendLimits: async (id, opts) => {
+      await runFreshAuthAction(async () => {
+        await setHostOwnerSpendLimits(id, opts);
+      });
+    },
     onStopRunningProjects: stopRunningProjectsOnHost,
     onRestartRunningProjects: restartRunningProjectsOnHost,
     selfHost: {
