@@ -48,14 +48,16 @@ function normalizePackageKind(
   if (value === "team" || value === "course") {
     return value;
   }
-  if (value === "domain" || value === "domain-license") {
-    return "domain";
-  }
-  if (value === "site" || value === "site-license") {
+  if (
+    value === "site" ||
+    value === "site-license" ||
+    value === "domain" ||
+    value === "domain-license"
+  ) {
     return "site";
   }
   throw new Error(
-    `invalid package kind '${raw}'; expected course, team, domain, or site`,
+    `invalid package kind '${raw}'; expected course, team, or site`,
   );
 }
 
@@ -348,7 +350,7 @@ export function registerMembershipCommand(
     .command("quote")
     .description("quote a membership package purchase or seat expansion")
     .option("--package <packageId>", "existing package id to expand")
-    .option("--kind <kind>", "package kind: course, team, domain, or site")
+    .option("--kind <kind>", "package kind: course, team, or site")
     .option("--membership-class <class>", "membership class for the package")
     .option("--seat-count <n>", "seat count to buy or add")
     .option("--interval <interval>", "billing interval: month or year")
@@ -409,7 +411,7 @@ export function registerMembershipCommand(
     .description("buy a membership package or add seats to an existing package")
     .option("--yes", "confirm that this should create a purchase")
     .option("--package <packageId>", "existing package id to expand")
-    .option("--kind <kind>", "package kind: course, team, domain, or site")
+    .option("--kind <kind>", "package kind: course, team, or site")
     .option("--membership-class <class>", "membership class for the package")
     .option("--seat-count <n>", "seat count to buy or add")
     .option("--interval <interval>", "billing interval: month or year")
@@ -595,7 +597,9 @@ export function registerMembershipCommand(
 
   membership
     .command("claim <packageId>")
-    .description("claim a reserved or domain-matched membership package seat")
+    .description(
+      "claim a reserved or site-license matched membership package seat",
+    )
     .action(async (packageId: string, command: Command) => {
       await withContext(command, "membership claim", async (ctx) => {
         const package_id = `${packageId ?? ""}`.trim();
