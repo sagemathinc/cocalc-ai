@@ -608,6 +608,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       selectedHosts.filter(
         (host) =>
           !host.deleted &&
+          host.can_start &&
           host.status !== "running" &&
           host.status !== "starting" &&
           host.status !== "restarting" &&
@@ -622,6 +623,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     () =>
       selectedHosts.filter((host) => {
         if (host.deleted) return false;
+        if (!host.can_start) return false;
         if (!(host.status === "running" || host.status === "error"))
           return false;
         const providerId = host.machine?.cloud;
@@ -1018,6 +1020,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const showConnectorSetup = isSelfHost && selfHost && !isDeleted;
         const startDisabled =
           isDeleted ||
+          !host.can_start ||
           host.status === "running" ||
           host.status === "starting" ||
           host.status === "restarting" ||
@@ -1038,6 +1041,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           : undefined;
         const allowStop =
           !isDeleted &&
+          host.can_start &&
           (statusValue === "running" || statusValue === "error") &&
           caps?.supportsStop !== false &&
           host.machine?.storage_mode !== "ephemeral" &&
@@ -1046,6 +1050,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
         const supportsHardRestart = caps?.supportsHardRestart ?? false;
         const allowRestart =
           !isDeleted &&
+          host.can_start &&
           connectorOnline &&
           (statusValue === "running" || statusValue === "error") &&
           (supportsRestart || supportsHardRestart) &&

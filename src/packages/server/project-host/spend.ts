@@ -45,6 +45,11 @@ export interface DedicatedHostWindowUsageSnapshot {
   credit_7d_usd: MoneyValue;
 }
 
+export interface DedicatedHostOwnerWindowUsageSnapshot {
+  spend_5h_usd: MoneyValue;
+  spend_7d_usd: MoneyValue;
+}
+
 export interface DedicatedHostRateEstimateInput {
   provider?: string | null;
   region?: string | null;
@@ -87,6 +92,13 @@ function moneyMap(row: any): DedicatedHostWindowUsageSnapshot {
     prepaid_7d_usd: moneyToDbString(row?.prepaid_7d_usd ?? 0),
     credit_5h_usd: moneyToDbString(row?.credit_5h_usd ?? 0),
     credit_7d_usd: moneyToDbString(row?.credit_7d_usd ?? 0),
+  };
+}
+
+function hostMoneyMap(row: any): DedicatedHostOwnerWindowUsageSnapshot {
+  return {
+    spend_5h_usd: moneyToDbString(row?.spend_5h_usd ?? 0),
+    spend_7d_usd: moneyToDbString(row?.spend_7d_usd ?? 0),
   };
 }
 
@@ -233,6 +245,72 @@ export async function getDedicatedHostWindowUsageLocal(
     [account_id, WINDOW_5H_HOURS, "dedicated-host", WINDOW_7D_HOURS],
   );
   return moneyMap(rows[0]);
+}
+
+export async function getDedicatedHostWindowUsageForHostLocal({
+  account_id,
+  host_id,
+}: {
+  account_id: string;
+  host_id: string;
+}): Promise<DedicatedHostOwnerWindowUsageSnapshot> {
+  const { rows } = await getPool("medium").query(
+    `
+      WITH usage_5h AS (
+        SELECT COALESCE(
+          SUM(
+            cost_per_hour * GREATEST(
+              0::numeric,
+              EXTRACT(
+                EPOCH FROM LEAST(COALESCE(period_end, NOW()), NOW())
+                - GREATEST(period_start, NOW() - ($3::int * INTERVAL '1 hour'))
+              )::numeric / 3600
+            )
+          ),
+          0::numeric
+        ) AS spend_5h_usd
+        FROM purchases
+        WHERE account_id = $1
+          AND service = $2
+          AND tag = $5
+          AND cost_per_hour IS NOT NULL
+          AND period_start IS NOT NULL
+          AND COALESCE(period_end, NOW()) > NOW() - ($3::int * INTERVAL '1 hour')
+      ),
+      usage_7d AS (
+        SELECT COALESCE(
+          SUM(
+            cost_per_hour * GREATEST(
+              0::numeric,
+              EXTRACT(
+                EPOCH FROM LEAST(COALESCE(period_end, NOW()), NOW())
+                - GREATEST(period_start, NOW() - ($4::int * INTERVAL '1 hour'))
+              )::numeric / 3600
+            )
+          ),
+          0::numeric
+        ) AS spend_7d_usd
+        FROM purchases
+        WHERE account_id = $1
+          AND service = $2
+          AND tag = $5
+          AND cost_per_hour IS NOT NULL
+          AND period_start IS NOT NULL
+          AND COALESCE(period_end, NOW()) > NOW() - ($4::int * INTERVAL '1 hour')
+      )
+      SELECT *
+      FROM usage_5h
+      CROSS JOIN usage_7d
+    `,
+    [
+      account_id,
+      "dedicated-host",
+      WINDOW_5H_HOURS,
+      WINDOW_7D_HOURS,
+      purchaseTag(host_id),
+    ],
+  );
+  return hostMoneyMap(rows[0]);
 }
 
 type OpenHostPurchaseRow = {

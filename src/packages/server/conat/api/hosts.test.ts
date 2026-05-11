@@ -1446,6 +1446,154 @@ describe("hosts browser fresh auth gating", () => {
     });
   });
 
+  it("requires fresh auth before granting host manager access", async () => {
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "running",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: { cloud: "gcp" },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { setHostAccess } = await import("./hosts");
+    await expect(
+      setHostAccess({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        id: HOST_ID,
+        target_account_id: "target-account",
+        role: "manager",
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+    });
+  });
+
+  it("checks fresh auth before changing host project RAM caps", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "running",
+              metadata: {
+                owner: ACCOUNT_ID,
+                host_ram_mb: 16384,
+                machine: { cloud: "gcp" },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
+      if (sql.includes("UPDATE project_hosts")) {
+        expect(params[1].resources.project_ram_limit_mb).toBe(4096);
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "running",
+              metadata: params[1],
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { setHostProjectRamLimit } = await import("./hosts");
+    await setHostProjectRamLimit({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      project_ram_limit_mb: 4096,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
+      session_hash: "session-hash",
+    });
+  });
+
+  it("checks fresh auth before changing owner spend caps", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "running",
+              metadata: {
+                owner: ACCOUNT_ID,
+                billing: {
+                  owner_spend_limit_status: {
+                    state: "stopped_limit_exceeded",
+                  },
+                },
+                machine: { cloud: "gcp" },
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("FROM account_impersonation_sessions")) {
+        return { rows: [] };
+      }
+      if (sql.includes("UPDATE project_hosts")) {
+        expect(params[1].billing.owner_spend_limit_5h_usd).toBe(100);
+        expect(params[1].billing.owner_spend_limit_status).toBeUndefined();
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              region: "us-central1",
+              status: "running",
+              metadata: params[1],
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { setHostOwnerSpendLimits } = await import("./hosts");
+    await setHostOwnerSpendLimits({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      owner_spend_limit_5h_usd: 100,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
+      session_hash: "session-hash",
+    });
+  });
+
   it("does not force a false second-factor override for non-browser host starts", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
@@ -4399,7 +4547,7 @@ describe("hosts.listHosts bootstrap normalization", () => {
     );
   });
 
-  it("includes collaborator hosts in the local prefilter", async () => {
+  it("includes delegated hosts in the local prefilter", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (
         sql.includes(
@@ -4422,9 +4570,8 @@ describe("hosts.listHosts bootstrap normalization", () => {
               id: HOST_ID,
               status: "running",
               deleted: null,
-              metadata: {
-                collaborators: [ACCOUNT_ID],
-              },
+              metadata: {},
+              delegated_access_role: "manager",
             },
           ],
         };

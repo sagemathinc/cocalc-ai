@@ -379,6 +379,17 @@ export function parseRow(
   row: any,
   opts: {
     scope?: Host["scope"];
+    access_role?: Host["access_role"];
+    can_manage_access?: boolean;
+    can_view_host_projects?: boolean;
+    billing_owner_account_id?: string;
+    project_ram_limit_mb?: number;
+    host_ram_mb?: number;
+    owner_spend_limit_5h_usd?: number;
+    owner_spend_limit_7d_usd?: number;
+    owner_spend_5h_usd?: string;
+    owner_spend_7d_usd?: string;
+    owner_spend_limit_state?: Host["owner_spend_limit_state"];
     can_start?: boolean;
     can_place?: boolean;
     reason_unavailable?: string;
@@ -404,6 +415,11 @@ export function parseRow(
   const parseNonNegativeNumber = (value: unknown): number | undefined => {
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+    return parsed;
+  };
+  const parsePositiveNumber = (value: unknown): number | undefined => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
     return parsed;
   };
   const normalizePressureZone = (
@@ -1157,6 +1173,32 @@ export function parseRow(
       : undefined,
     tier: normalizeHostTier(row.tier),
     scope: opts.scope,
+    access_role: opts.access_role,
+    can_manage_access: opts.can_manage_access,
+    can_view_host_projects: opts.can_view_host_projects,
+    billing_owner_account_id:
+      opts.billing_owner_account_id ??
+      (typeof metadata.owner === "string" ? metadata.owner : undefined),
+    project_ram_limit_mb:
+      opts.project_ram_limit_mb ??
+      parsePositiveInt(metadata.resources?.project_ram_limit_mb),
+    host_ram_mb:
+      opts.host_ram_mb ??
+      parsePositiveInt(metadata.host_ram_mb) ??
+      (parsePositiveInt(metadata.host_ram_gb) != null
+        ? parsePositiveInt(metadata.host_ram_gb)! * 1024
+        : undefined),
+    owner_spend_limit_5h_usd:
+      opts.owner_spend_limit_5h_usd ??
+      parsePositiveNumber(metadata.billing?.owner_spend_limit_5h_usd),
+    owner_spend_limit_7d_usd:
+      opts.owner_spend_limit_7d_usd ??
+      parsePositiveNumber(metadata.billing?.owner_spend_limit_7d_usd),
+    owner_spend_5h_usd: opts.owner_spend_5h_usd,
+    owner_spend_7d_usd: opts.owner_spend_7d_usd,
+    owner_spend_limit_state:
+      opts.owner_spend_limit_state ??
+      metadata.billing?.owner_spend_limit_status?.state,
     can_start: opts.can_start,
     can_place: opts.can_place,
     reason_unavailable: opts.reason_unavailable,

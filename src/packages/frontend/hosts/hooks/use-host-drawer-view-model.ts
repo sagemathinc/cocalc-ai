@@ -1,5 +1,7 @@
 import type {
   Host,
+  HostAccessEntry,
+  HostAccessRole,
   HostRuntimeArtifact,
   HostRuntimeDeploymentStatus,
   HostRuntimeLog,
@@ -119,6 +121,30 @@ type UseHostDrawerViewModelArgs = {
     gcDeleted: () => Promise<HostRootfsGcResult | undefined>;
   };
   canManageRootfs?: boolean;
+  onListHostAccess?: (id: string) => Promise<HostAccessEntry[]>;
+  onSetHostAccess?: (
+    id: string,
+    opts: {
+      target_account_id?: string;
+      target_email_address?: string;
+      role: HostAccessRole;
+    },
+  ) => void | Promise<void>;
+  onRemoveHostAccess?: (
+    id: string,
+    target_account_id: string,
+  ) => void | Promise<void>;
+  onSetHostProjectRamLimit?: (
+    id: string,
+    project_ram_limit_mb?: number | null,
+  ) => void | Promise<void>;
+  onSetHostOwnerSpendLimits?: (
+    id: string,
+    opts: {
+      owner_spend_limit_5h_usd?: number | null;
+      owner_spend_limit_7d_usd?: number | null;
+    },
+  ) => void | Promise<void>;
   onStopRunningProjects?: (host: Host) => void | Promise<void>;
   onRestartRunningProjects?: (host: Host) => void | Promise<void>;
   selfHost?: {
@@ -179,6 +205,11 @@ export const useHostDrawerViewModel = ({
   onResumeRuntimeComponentClusterDefault,
   rootfsInventory,
   canManageRootfs,
+  onListHostAccess,
+  onSetHostAccess,
+  onRemoveHostAccess,
+  onSetHostProjectRamLimit,
+  onSetHostOwnerSpendLimits,
   onStopRunningProjects,
   onRestartRunningProjects,
   selfHost,
@@ -214,6 +245,11 @@ export const useHostDrawerViewModel = ({
     onResumeRuntimeComponentClusterDefault,
     rootfsInventory,
     canManageRootfs,
+    onListHostAccess,
+    onSetHostAccess,
+    onRemoveHostAccess,
+    onSetHostProjectRamLimit,
+    onSetHostOwnerSpendLimits,
     onStopRunningProjects,
     onRestartRunningProjects,
     selfHost,

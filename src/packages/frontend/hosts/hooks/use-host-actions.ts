@@ -1,5 +1,7 @@
 import type {
   Host,
+  HostAccessEntry,
+  HostAccessRole,
   HostFundingMode,
   HostLroResponse,
   HostSpotRecoveryPolicy,
@@ -51,6 +53,29 @@ type HubClient = {
     removeSelfHostConnector?: (opts: {
       id: string;
     }) => Promise<HostLroResponse>;
+    listHostAccess?: (opts: {
+      id: string;
+      include_revoked?: boolean;
+    }) => Promise<HostAccessEntry[]>;
+    setHostAccess?: (opts: {
+      id: string;
+      target_account_id?: string;
+      target_email_address?: string;
+      role: HostAccessRole;
+    }) => Promise<HostAccessEntry>;
+    removeHostAccess?: (opts: {
+      id: string;
+      target_account_id: string;
+    }) => Promise<HostAccessEntry | undefined>;
+    setHostProjectRamLimit?: (opts: {
+      id: string;
+      project_ram_limit_mb?: number | null;
+    }) => Promise<Host>;
+    setHostOwnerSpendLimits?: (opts: {
+      id: string;
+      owner_spend_limit_5h_usd?: number | null;
+      owner_spend_limit_7d_usd?: number | null;
+    }) => Promise<Host>;
     renameHost?: (opts: { id: string; name: string }) => Promise<unknown>;
     updateHostMachine?: (opts: {
       id: string;
@@ -379,6 +404,102 @@ export const useHostActions = ({
     }
   };
 
+  const listHostAccess = async (id: string) => {
+    if (!hub.hosts.listHostAccess) {
+      return [];
+    }
+    return await hub.hosts.listHostAccess({ id });
+  };
+
+  const setHostAccess = async (
+    id: string,
+    opts: {
+      target_account_id?: string;
+      target_email_address?: string;
+      role: HostAccessRole;
+    },
+  ) => {
+    if (!hub.hosts.setHostAccess) {
+      return;
+    }
+    try {
+      await hub.hosts.setHostAccess({ id, ...opts });
+      await refresh();
+    } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  };
+
+  const removeHostAccess = async (id: string, target_account_id: string) => {
+    if (!hub.hosts.removeHostAccess) {
+      return;
+    }
+    try {
+      await hub.hosts.removeHostAccess({ id, target_account_id });
+      await refresh();
+    } catch (err) {
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  };
+
+  const setHostProjectRamLimit = async (
+    id: string,
+    project_ram_limit_mb?: number | null,
+  ) => {
+    if (!hub.hosts.setHostProjectRamLimit) {
+      return;
+    }
+    try {
+      await hub.hosts.setHostProjectRamLimit({ id, project_ram_limit_mb });
+      await refresh();
+    } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  };
+
+  const setHostOwnerSpendLimits = async (
+    id: string,
+    opts: {
+      owner_spend_limit_5h_usd?: number | null;
+      owner_spend_limit_7d_usd?: number | null;
+    },
+  ) => {
+    if (!hub.hosts.setHostOwnerSpendLimits) {
+      return;
+    }
+    try {
+      await hub.hosts.setHostOwnerSpendLimits({ id, ...opts });
+      await refresh();
+    } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
+      alert_message({
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  };
+
   return {
     setStatus,
     restartHost,
@@ -388,6 +509,11 @@ export const useHostActions = ({
     updateHostMachine,
     forceDeprovision,
     removeSelfHostConnector,
+    listHostAccess,
+    setHostAccess,
+    removeHostAccess,
+    setHostProjectRamLimit,
+    setHostOwnerSpendLimits,
     stopHostProjects,
     restartHostProjects,
   };

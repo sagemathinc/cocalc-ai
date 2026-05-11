@@ -1,5 +1,8 @@
 import type { MembershipEntitlements } from "@cocalc/conat/hub/api/purchases";
-import type { Host } from "@cocalc/conat/hub/api/hosts";
+import type {
+  Host,
+  HostEffectiveAccessRole,
+} from "@cocalc/conat/hub/api/hosts";
 
 export type UserHostTier = number;
 
@@ -24,15 +27,23 @@ export function computePlacementPermission({
   tier,
   userTier,
   isOwner,
-  isCollab,
+  accessRole,
+  hasDedicatedAccess,
 }: {
   tier?: Host["tier"];
   userTier: UserHostTier;
   isOwner: boolean;
-  isCollab: boolean;
+  accessRole?: HostEffectiveAccessRole;
+  hasDedicatedAccess?: boolean;
 }): { can_place: boolean; reason_unavailable?: string } {
-  // owners/collabs always allowed
-  let can_place = isOwner || isCollab;
+  // Dedicated-host owners/delegated users are explicitly allowed.
+  let can_place =
+    isOwner ||
+    !!hasDedicatedAccess ||
+    accessRole === "owner" ||
+    accessRole === "manager" ||
+    accessRole === "user" ||
+    accessRole === "admin";
   let reason_unavailable: string | undefined;
 
   if (tier != null && !can_place) {

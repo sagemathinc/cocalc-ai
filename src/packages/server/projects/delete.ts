@@ -76,14 +76,6 @@ export async function setProjectDeleted({
   const client = await pool.connect();
   let backup_repo_id: string | null = null;
   let project_region: string | null = null;
-  let assignmentAction:
-    | { type: "release" }
-    | {
-        type: "restore";
-        backup_repo_id: string;
-        project_region?: string | null;
-      }
-    | null = null;
   try {
     await client.query("BEGIN");
     await assertProjectNotRehoming({
@@ -103,21 +95,6 @@ export async function setProjectDeleted({
     }
     backup_repo_id = result.rows[0]?.backup_repo_id ?? null;
     project_region = result.rows[0]?.region ?? null;
-    if (deleted) {
-      assignmentAction = { type: "release" };
-      await releaseProjectBackupRepoAssignment({ project_id });
-    } else if (backup_repo_id) {
-      assignmentAction = {
-        type: "restore",
-        backup_repo_id,
-        project_region,
-      };
-      await resolveProjectBackupRepoAssignment({
-        project_id,
-        project_region,
-        backup_repo_id,
-      });
-    }
     await appendProjectOutboxEventForProject({
       db: client,
       event_type: deleted ? "project.deleted" : "project.summary_changed",
@@ -127,33 +104,41 @@ export async function setProjectDeleted({
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
-    if (assignmentAction?.type === "release" && backup_repo_id) {
-      try {
-        await resolveProjectBackupRepoAssignment({
-          project_id,
-          project_region,
-          backup_repo_id,
-        });
-      } catch (restoreErr) {
-        log.warn("failed to restore backup shard assignment after rollback", {
-          project_id,
-          err: `${restoreErr}`,
-        });
-      }
-    } else if (assignmentAction?.type === "restore") {
-      try {
-        await releaseProjectBackupRepoAssignment({ project_id });
-      } catch (releaseErr) {
-        log.warn("failed to release backup shard assignment after rollback", {
-          project_id,
-          err: `${releaseErr}`,
-        });
-      }
-    }
     throw err;
   } finally {
     client.release();
   }
+
+  if (deleted) {
+    try {
+      await releaseProjectBackupRepoAssignment({ project_id });
+    } catch (err) {
+      log.warn(
+        "failed to release backup shard assignment after project delete",
+        {
+          project_id,
+          err: `${err}`,
+        },
+      );
+    }
+  } else if (backup_repo_id) {
+    try {
+      await resolveProjectBackupRepoAssignment({
+        project_id,
+        project_region,
+        backup_repo_id,
+      });
+    } catch (err) {
+      log.warn(
+        "failed to restore backup shard assignment after project undelete",
+        {
+          project_id,
+          err: `${err}`,
+        },
+      );
+    }
+  }
+
   await publishProjectAccountFeedEventsBestEffort({
     project_id,
     default_bay_id: getConfiguredBayId(),

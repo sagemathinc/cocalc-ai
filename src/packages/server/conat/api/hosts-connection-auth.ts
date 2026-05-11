@@ -40,6 +40,10 @@ import {
   computePlacementPermission,
   getUserHostTier,
 } from "@cocalc/server/project-host/placement";
+import {
+  getHostAccessForAccount,
+  hostAccessRoleCan,
+} from "@cocalc/server/project-host/access";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import isBanned from "@cocalc/server/accounts/is-banned";
 import {
@@ -278,19 +282,26 @@ export async function resolveHostConnectionLocalHelper({
   }
   const metadata = row.metadata ?? {};
   const rowOwner = metadata.owner ?? "";
-  const collaborators = (metadata.collaborators ?? []) as string[];
   const isOwner = rowOwner === account_id;
-  const isCollab = collaborators.includes(account_id);
   const isShared = row.tier != null;
+  const accessRole = isOwner
+    ? "owner"
+    : (
+        await getHostAccessForAccount({
+          host_id: row.id,
+          account_id,
+          admin_view: true,
+        })
+      ).role;
   const membership = await loadMembership(account_id);
   const userTier = getUserHostTier(membership.entitlements);
   const placement = computePlacementPermission({
     tier: row.tier,
     userTier,
     isOwner,
-    isCollab,
+    accessRole,
   });
-  if (!isOwner && !isCollab && !isShared) {
+  if (!hostAccessRoleCan(accessRole, "view") && !isShared) {
     const { rows: projectRows } = await pool().query(
       `SELECT 1
        FROM projects

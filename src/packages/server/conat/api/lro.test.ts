@@ -65,6 +65,7 @@ describe("lro host authorization", () => {
         return {
           rows: [
             {
+              id: "host-1",
               metadata: {
                 owner: "owner-1",
                 collaborators: [],
@@ -72,6 +73,12 @@ describe("lro host authorization", () => {
             },
           ],
         };
+      }
+      if (sql.includes("FROM accounts")) {
+        return { rows: [{ groups: [] }] };
+      }
+      if (sql.includes("FROM project_host_access")) {
+        return { rows: [] };
       }
       if (sql.includes("FROM projects")) {
         const accountId = params[1];

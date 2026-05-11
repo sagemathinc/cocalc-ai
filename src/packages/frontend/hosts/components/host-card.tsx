@@ -146,6 +146,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   });
   const startDisabled =
     isDeleted ||
+    !host.can_start ||
     host.status === "running" ||
     host.status === "starting" ||
     host.status === "restarting" ||
@@ -169,6 +170,7 @@ export const HostCard: React.FC<HostCardProps> = ({
     host.machine?.cloud === "gcp" || host.machine?.cloud === "nebius";
   const allowStop =
     !isDeleted &&
+    host.can_start &&
     (host.status === "running" || host.status === "error") &&
     caps?.supportsStop !== false &&
     host.machine?.storage_mode !== "ephemeral" &&
@@ -177,6 +179,7 @@ export const HostCard: React.FC<HostCardProps> = ({
   const supportsHardRestart = caps?.supportsHardRestart ?? false;
   const allowRestart =
     !isDeleted &&
+    host.can_start &&
     connectorOnline &&
     (host.status === "running" || host.status === "error") &&
     (supportsRestart || supportsHardRestart) &&
