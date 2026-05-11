@@ -23,6 +23,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(projectDefaults.member_host).toBe(1);
     expect(features.create_hosts).toBe(true);
     expect(features.project_host_tier).toBe(2);
+    expect(tier.course_store_visible).toBe(false);
     expect(aiLimits.units_5h).toBeGreaterThan(0);
     expect(
       (tier.usage_limits as Record<string, unknown>)?.shared_compute_priority,
@@ -32,6 +33,9 @@ describe("applyMembershipTierTemplateFallbacks", () => {
   it("preserves explicit entitlements instead of overwriting them", () => {
     const tier = applyMembershipTierTemplateFallbacks({
       id: "member",
+      course_store_visible: true,
+      course_price: 10,
+      course_duration_days: 30,
       project_defaults: { memory: 1234 },
       ai_limits: { units_5h: 7 },
       features: { create_hosts: false },
@@ -39,6 +43,9 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     });
 
     expect(tier.project_defaults).toEqual({ memory: 1234 });
+    expect(tier.course_store_visible).toBe(true);
+    expect(tier.course_price).toBe(10);
+    expect(tier.course_duration_days).toBe(30);
     expect(tier.ai_limits).toEqual({ units_5h: 7 });
     expect(tier.features).toEqual({ create_hosts: false });
     expect(tier.usage_limits).toEqual({
@@ -48,5 +55,18 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       prepaid_host_usage_limit_5h_usd: 300,
       prepaid_host_usage_limit_7d_usd: 1000,
     });
+  });
+
+  it("marks the student template as course-visible with a one-time course price", () => {
+    const tier = applyMembershipTierTemplateFallbacks({
+      id: "student",
+      course_store_visible: undefined,
+      course_price: undefined,
+      course_duration_days: undefined,
+    });
+
+    expect(tier.course_store_visible).toBe(true);
+    expect(tier.course_price).toBe(25);
+    expect(tier.course_duration_days).toBe(122);
   });
 });

@@ -49,9 +49,12 @@ interface Tier {
   id: string;
   label?: string;
   store_visible?: boolean;
+  course_store_visible?: boolean;
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;
+  course_price?: number;
+  course_duration_days?: number;
   project_defaults?: any;
   ai_limits?: any;
   features?: any;
@@ -135,9 +138,12 @@ function useMembershipTiers() {
             id: "*",
             label: null,
             store_visible: null,
+            course_store_visible: null,
             priority: null,
             price_monthly: null,
             price_yearly: null,
+            course_price: null,
+            course_duration_days: null,
             project_defaults: null,
             ai_limits: null,
             features: null,
@@ -315,9 +321,12 @@ function useMembershipTiers() {
           "id",
           "label",
           "store_visible",
+          "course_store_visible",
           "priority",
           "price_monthly",
           "price_yearly",
+          "course_price",
+          "course_duration_days",
           "project_defaults",
           "ai_limits",
           "features",
@@ -393,6 +402,7 @@ function useMembershipTiers() {
       id: "",
       label: "",
       store_visible: false,
+      course_store_visible: false,
       priority: 0,
       disabled: false,
       notes: "",
@@ -527,6 +537,13 @@ export function MembershipTiers() {
           >
             <Checkbox>Show in store</Checkbox>
           </Form.Item>
+          <Form.Item
+            name="course_store_visible"
+            label="Course visible"
+            valuePropName="checked"
+          >
+            <Checkbox>Available for course student memberships</Checkbox>
+          </Form.Item>
           <Form.Item name="priority" label="Priority">
             <InputNumber step={1} />
           </Form.Item>
@@ -535,6 +552,12 @@ export function MembershipTiers() {
           </Form.Item>
           <Form.Item name="price_yearly" label="Yearly price">
             <InputNumber min={0} step={1} />
+          </Form.Item>
+          <Form.Item name="course_price" label="Course price">
+            <InputNumber min={0} step={1} />
+          </Form.Item>
+          <Form.Item name="course_duration_days" label="Course duration days">
+            <InputNumber min={1} step={1} />
           </Form.Item>
           <Form.Item name="notes" label="Notes">
             <Input.TextArea rows={2} />
@@ -745,6 +768,11 @@ export function MembershipTiers() {
             dataIndex="store_visible"
             render={(val) => (val ? "Yes" : "")}
           />
+          <Table.Column<Tier>
+            title="Course"
+            dataIndex="course_store_visible"
+            render={(val) => (val ? "Yes" : "")}
+          />
           <Table.Column<Tier> title="Priority" dataIndex="priority" />
           <Table.Column<Tier>
             title="Monthly"
@@ -754,6 +782,16 @@ export function MembershipTiers() {
           <Table.Column<Tier>
             title="Yearly"
             dataIndex="price_yearly"
+            render={(val) => (val != null ? val : "")}
+          />
+          <Table.Column<Tier>
+            title="Course price"
+            dataIndex="course_price"
+            render={(val) => (val != null ? val : "")}
+          />
+          <Table.Column<Tier>
+            title="Course days"
+            dataIndex="course_duration_days"
             render={(val) => (val != null ? val : "")}
           />
           <Table.Column<Tier>
@@ -845,7 +883,8 @@ export function MembershipTiers() {
         )}
         <Paragraph style={{ marginBottom: 0 }}>
           Tip: Tier IDs should be stable slugs (e.g., <Text code>member</Text>).
-          Set <Text code>Visible</Text> to show tiers in the store.
+          Set <Text code>Visible</Text> for the normal store and{" "}
+          <Text code>Course visible</Text> for course student memberships.
         </Paragraph>
       </div>
     );

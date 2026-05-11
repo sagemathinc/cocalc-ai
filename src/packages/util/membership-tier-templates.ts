@@ -41,8 +41,11 @@ export const TIER_TEMPLATES = {
     id: "free",
     label: "Free",
     store_visible: false,
+    course_store_visible: false,
     price_monthly: 0,
     price_yearly: 0,
+    course_price: undefined,
+    course_duration_days: undefined,
     priority: TEMPLATE_PRIORITY.free,
     project_defaults: quotaTemplate({
       network: 0,
@@ -62,8 +65,11 @@ export const TIER_TEMPLATES = {
     id: "student",
     label: "Student",
     store_visible: false,
+    course_store_visible: true,
     price_monthly: 8,
     price_yearly: 9 * 8,
+    course_price: 25,
+    course_duration_days: 122,
     priority: TEMPLATE_PRIORITY.student,
     project_defaults: quotaTemplate({
       network: 1,
@@ -86,9 +92,12 @@ export const TIER_TEMPLATES = {
     id: "member",
     label: "Member",
     store_visible: true,
+    course_store_visible: false,
     priority: TEMPLATE_PRIORITY.member,
     price_monthly: 25,
     price_yearly: 25 * 9,
+    course_price: undefined,
+    course_duration_days: undefined,
     project_defaults: quotaTemplate({
       network: 1,
       member_host: 1,
@@ -113,9 +122,12 @@ export const TIER_TEMPLATES = {
     id: "pro",
     label: "Pro",
     store_visible: true,
+    course_store_visible: false,
     priority: TEMPLATE_PRIORITY.pro,
     price_monthly: 150,
     price_yearly: 150 * 9,
+    course_price: undefined,
+    course_duration_days: undefined,
     project_defaults: quotaTemplate({
       network: 1,
       member_host: 1,
@@ -146,6 +158,9 @@ export function getTierTemplate(id: keyof typeof TIER_TEMPLATES) {
 
 type TierTemplateFields = {
   id?: string;
+  course_store_visible?: boolean;
+  course_price?: number;
+  course_duration_days?: number;
   project_defaults?: Record<string, unknown>;
   ai_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
@@ -159,6 +174,11 @@ export function applyMembershipTierTemplateFallbacks<
   if (template == null) return tier;
   return {
     ...tier,
+    course_store_visible:
+      tier.course_store_visible ?? template.course_store_visible,
+    course_price: tier.course_price ?? template.course_price,
+    course_duration_days:
+      tier.course_duration_days ?? template.course_duration_days,
     project_defaults: tier.project_defaults ?? template.project_defaults,
     ai_limits: tier.ai_limits ?? template.ai_limits,
     features: tier.features ?? template.features,

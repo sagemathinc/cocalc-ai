@@ -807,9 +807,12 @@ export interface PostgreSQLMethods extends EventEmitter {
       id: string;
       label?: string;
       store_visible?: boolean;
+      course_store_visible?: boolean;
       priority?: number;
       price_monthly?: number;
       price_yearly?: number;
+      course_price?: number;
+      course_duration_days?: number;
       project_defaults?: unknown;
       ai_limits?: unknown;
       features?: unknown;

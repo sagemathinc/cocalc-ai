@@ -56,6 +56,9 @@ export async function createTestMembershipTier(opts: {
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;
+  course_store_visible?: boolean;
+  course_price?: number;
+  course_duration_days?: number;
   project_defaults?: Record<string, unknown>;
   ai_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
@@ -64,16 +67,20 @@ export async function createTestMembershipTier(opts: {
   const pool = getPool("medium");
   await pool.query(
     `INSERT INTO membership_tiers
-      (id, label, store_visible, priority, price_monthly, price_yearly,
+      (id, label, store_visible, course_store_visible, priority,
+       price_monthly, price_yearly, course_price, course_duration_days,
        project_defaults, ai_limits, features, usage_limits,
        disabled, notes, history, created, updated)
-     VALUES ($1,$2,$3,$4,$5,$6,$7::JSONB,$8::JSONB,$9::JSONB,$10::JSONB,$11,$12,$13::JSONB,NOW(),NOW())
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::JSONB,$11::JSONB,$12::JSONB,$13::JSONB,$14,$15,$16::JSONB,NOW(),NOW())
      ON CONFLICT (id) DO UPDATE SET
        label=EXCLUDED.label,
        store_visible=EXCLUDED.store_visible,
+       course_store_visible=EXCLUDED.course_store_visible,
        priority=EXCLUDED.priority,
        price_monthly=EXCLUDED.price_monthly,
        price_yearly=EXCLUDED.price_yearly,
+       course_price=EXCLUDED.course_price,
+       course_duration_days=EXCLUDED.course_duration_days,
        project_defaults=EXCLUDED.project_defaults,
        ai_limits=EXCLUDED.ai_limits,
        features=EXCLUDED.features,
@@ -85,9 +92,12 @@ export async function createTestMembershipTier(opts: {
       opts.id,
       opts.id,
       false,
+      opts.course_store_visible ?? false,
       opts.priority ?? 0,
       opts.price_monthly ?? 0,
       opts.price_yearly ?? 0,
+      opts.course_price ?? null,
+      opts.course_duration_days ?? null,
       opts.project_defaults ?? {},
       opts.ai_limits ?? {},
       opts.features ?? {},

@@ -9,6 +9,8 @@ import { applyMembershipTierTemplateFallbacks } from "@cocalc/util/membership-ti
 export interface MembershipTierPricing {
   price_monthly?: number;
   price_yearly?: number;
+  course_price?: number;
+  course_duration_days?: number;
   features?: Record<string, unknown>;
   project_defaults?: Record<string, unknown>;
   ai_limits?: Record<string, unknown>;
@@ -19,6 +21,7 @@ export interface MembershipTierRecord extends MembershipTierPricing {
   id: MembershipClass;
   label?: string;
   store_visible?: boolean;
+  course_store_visible?: boolean;
   priority?: number;
   disabled?: boolean;
 }
@@ -42,15 +45,18 @@ export interface MembershipChangeResult extends MembershipPricingResult {
 export async function getMembershipTiers({
   includeDisabled = true,
   storeVisibleOnly = false,
+  courseStoreVisibleOnly = false,
   client,
 }: {
   includeDisabled?: boolean;
   storeVisibleOnly?: boolean;
+  courseStoreVisibleOnly?: boolean;
   client?: PoolClient;
 } = {}): Promise<MembershipTierRecord[]> {
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
-    `SELECT id, label, store_visible, priority, price_monthly, price_yearly,
+    `SELECT id, label, store_visible, course_store_visible, priority,
+            price_monthly, price_yearly, course_price, course_duration_days,
             project_defaults, ai_limits, features, usage_limits, disabled
      FROM membership_tiers`,
   );
@@ -63,6 +69,9 @@ export async function getMembershipTiers({
   }
   if (storeVisibleOnly) {
     tiers = tiers.filter((tier) => tier.store_visible);
+  }
+  if (courseStoreVisibleOnly) {
+    tiers = tiers.filter((tier) => tier.course_store_visible);
   }
   return tiers;
 }
@@ -93,7 +102,8 @@ export async function getMembershipTierById({
 }): Promise<MembershipTierRecord | undefined> {
   const pool = client ?? getPool("medium");
   const { rows } = await pool.query(
-    `SELECT id, label, store_visible, priority, price_monthly, price_yearly,
+    `SELECT id, label, store_visible, course_store_visible, priority,
+            price_monthly, price_yearly, course_price, course_duration_days,
             project_defaults, ai_limits, features, usage_limits, disabled
      FROM membership_tiers
      WHERE id=$1`,
