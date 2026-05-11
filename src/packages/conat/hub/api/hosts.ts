@@ -1006,6 +1006,8 @@ export const hosts = {
   listHostAccess: authFirstRequireAccount,
   setHostAccess: authFirstRequireAccount,
   removeHostAccess: authFirstRequireAccount,
+  setHostProjectRamLimit: authFirstRequireAccount,
+  setHostOwnerSpendLimits: authFirstRequireAccount,
   listHostProjects: authFirstRequireAccount,
   stopHostProjects: authFirstRequireAccount,
   restartHostProjects: authFirstRequireAccount,
@@ -1103,6 +1105,17 @@ export interface Hosts {
     id: string;
     target_account_id: string;
   }) => Promise<HostAccessEntry | undefined>;
+  setHostProjectRamLimit: (opts: {
+    account_id?: string;
+    id: string;
+    project_ram_limit_mb?: number | null;
+  }) => Promise<Host>;
+  setHostOwnerSpendLimits: (opts: {
+    account_id?: string;
+    id: string;
+    owner_spend_limit_5h_usd?: number | null;
+    owner_spend_limit_7d_usd?: number | null;
+  }) => Promise<Host>;
   listHostProjects: (opts: {
     account_id?: string;
     id: string;

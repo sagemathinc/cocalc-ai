@@ -878,6 +878,8 @@ export type HostConnectionMethod =
   | "list-host-access"
   | "set-host-access"
   | "remove-host-access"
+  | "set-host-project-ram-limit"
+  | "set-host-owner-spend-limits"
   | "get-host-log"
   | "get-host-runtime-log"
   | "get-host-metrics-history"
@@ -1068,6 +1070,12 @@ export interface InterBayHostConnectionApi {
   removeHostAccess: (
     opts: Parameters<Hosts["removeHostAccess"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["removeHostAccess"]>>>;
+  setHostProjectRamLimit: (
+    opts: Parameters<Hosts["setHostProjectRamLimit"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["setHostProjectRamLimit"]>>>;
+  setHostOwnerSpendLimits: (
+    opts: Parameters<Hosts["setHostOwnerSpendLimits"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["setHostOwnerSpendLimits"]>>>;
   getHostLog: (
     opts: Parameters<Hosts["getHostLog"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostLog"]>>>;
@@ -1256,6 +1264,14 @@ const HOST_CONNECTION_METHOD_SPECS = [
   { name: "listHostAccess", method: "list-host-access" },
   { name: "setHostAccess", method: "set-host-access" },
   { name: "removeHostAccess", method: "remove-host-access" },
+  {
+    name: "setHostProjectRamLimit",
+    method: "set-host-project-ram-limit",
+  },
+  {
+    name: "setHostOwnerSpendLimits",
+    method: "set-host-owner-spend-limits",
+  },
   { name: "getHostLog", method: "get-host-log" },
   { name: "getHostRuntimeLog", method: "get-host-runtime-log" },
   { name: "getHostMetricsHistory", method: "get-host-metrics-history" },

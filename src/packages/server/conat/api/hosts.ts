@@ -2703,6 +2703,180 @@ export async function removeHostAccess({
   );
 }
 
+function normalizeHostRamMb(row: any): number | undefined {
+  const metadata = row?.metadata ?? {};
+  const candidates = [
+    metadata.host_ram_mb,
+    typeof metadata.host_ram_gb === "number"
+      ? metadata.host_ram_gb * 1024
+      : undefined,
+    typeof metadata.machine?.metadata?.ram_gb === "number"
+      ? metadata.machine.metadata.ram_gb * 1024
+      : undefined,
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value > 0) {
+      return Math.floor(value);
+    }
+  }
+  return undefined;
+}
+
+function normalizeProjectRamLimitMb({
+  value,
+  row,
+}: {
+  value?: number | null;
+  row: any;
+}): number | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error("project_ram_limit_mb must be a number");
+  }
+  const normalized = Math.floor(parsed);
+  const hostRamMb = normalizeHostRamMb(row);
+  if (hostRamMb == null) {
+    throw new Error("host RAM is not known");
+  }
+  const max = hostRamMb - 3072;
+  if (max < 500) {
+    throw new Error("host does not have enough RAM for a project RAM override");
+  }
+  if (normalized < 500 || normalized > max) {
+    throw new Error(`project_ram_limit_mb must be between 500 and ${max}`);
+  }
+  return normalized;
+}
+
+function normalizeOptionalPositiveUsd(
+  value?: number | null,
+): number | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error("spend limits must be positive numbers");
+  }
+  return parsed;
+}
+
+export async function setHostProjectRamLimit({
+  account_id,
+  id,
+  project_ram_limit_mb,
+}: {
+  account_id?: string;
+  id: string;
+  project_ram_limit_mb?: number | null;
+}): Promise<Host> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .setHostProjectRamLimit({ account_id, id, project_ram_limit_mb });
+  }
+  const row = await loadHostForView(id, account_id);
+  await requireLoadedHostPermission({
+    row,
+    account_id: requireAccount(account_id),
+    permission: "configure-project-ram",
+  });
+  const normalizedLimit = normalizeProjectRamLimitMb({
+    value: project_ram_limit_mb,
+    row,
+  });
+  const metadata = { ...(row.metadata ?? {}) };
+  const resources = { ...(metadata.resources ?? {}) };
+  if (normalizedLimit == null) {
+    delete resources.project_ram_limit_mb;
+  } else {
+    resources.project_ram_limit_mb = normalizedLimit;
+  }
+  if (Object.keys(resources).length) {
+    metadata.resources = resources;
+  } else {
+    delete metadata.resources;
+  }
+  const { rows } = await pool().query(
+    `UPDATE project_hosts
+     SET metadata=$2, updated=NOW()
+     WHERE id=$1 AND deleted IS NULL
+     RETURNING *`,
+    [id, metadata],
+  );
+  if (!rows[0]) {
+    throw new Error("host not found");
+  }
+  return parseRow(rows[0]);
+}
+
+export async function setHostOwnerSpendLimits(opts: {
+  account_id?: string;
+  id: string;
+  owner_spend_limit_5h_usd?: number | null;
+  owner_spend_limit_7d_usd?: number | null;
+}): Promise<Host> {
+  const { account_id, id } = opts;
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .setHostOwnerSpendLimits({
+        account_id,
+        id,
+        owner_spend_limit_5h_usd: opts.owner_spend_limit_5h_usd,
+        owner_spend_limit_7d_usd: opts.owner_spend_limit_7d_usd,
+      });
+  }
+  const row = await loadHostForView(id, account_id);
+  await requireLoadedHostPermission({
+    row,
+    account_id: requireAccount(account_id),
+    permission: "configure-spend-caps",
+  });
+  const metadata = { ...(row.metadata ?? {}) };
+  const billing = { ...(metadata.billing ?? {}) };
+  if (Object.prototype.hasOwnProperty.call(opts, "owner_spend_limit_5h_usd")) {
+    if (opts.owner_spend_limit_5h_usd == null) {
+      delete billing.owner_spend_limit_5h_usd;
+    } else {
+      billing.owner_spend_limit_5h_usd = normalizeOptionalPositiveUsd(
+        opts.owner_spend_limit_5h_usd,
+      );
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(opts, "owner_spend_limit_7d_usd")) {
+    if (opts.owner_spend_limit_7d_usd == null) {
+      delete billing.owner_spend_limit_7d_usd;
+    } else {
+      billing.owner_spend_limit_7d_usd = normalizeOptionalPositiveUsd(
+        opts.owner_spend_limit_7d_usd,
+      );
+    }
+  }
+  if (Object.keys(billing).length) {
+    metadata.billing = billing;
+  } else {
+    delete metadata.billing;
+  }
+  const { rows } = await pool().query(
+    `UPDATE project_hosts
+     SET metadata=$2, updated=NOW()
+     WHERE id=$1 AND deleted IS NULL
+     RETURNING *`,
+    [id, metadata],
+  );
+  if (!rows[0]) {
+    throw new Error("host not found");
+  }
+  return parseRow(rows[0]);
+}
+
 function timestampMs(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const ms = Date.parse(value);
