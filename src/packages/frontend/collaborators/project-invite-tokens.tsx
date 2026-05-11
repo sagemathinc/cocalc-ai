@@ -28,6 +28,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import {
   CopyToClipBoard,
+  ErrorDisplay,
   Gap,
   Icon,
   Loading,
@@ -65,12 +66,14 @@ export const ProjectInviteTokens: React.FC<Props> = React.memo(
     );
     const is_mounted_ref = useIsMountedRef();
     const [fetching, set_fetching] = useState<boolean>(false);
+    const [fetch_error, set_fetch_error] = useState<string>("");
     const [addModalVisible, setAddModalVisible] = useState<boolean>(false);
     const [form] = useForm();
 
     async function fetch_tokens() {
       try {
         set_fetching(true);
+        set_fetch_error("");
         const { query } = await webapp_client.async_query({
           query: {
             project_invite_tokens: [
@@ -88,9 +91,13 @@ export const ProjectInviteTokens: React.FC<Props> = React.memo(
         if (!is_mounted_ref.current) return;
         set_tokens(query.project_invite_tokens);
       } catch (err) {
+        const message = `Error getting project invite tokens: ${err}`;
+        if (is_mounted_ref.current) {
+          set_fetch_error(message);
+        }
         alert_message({
           type: "error",
-          message: `Error getting project invite tokens: ${err}`,
+          message,
         });
       } finally {
         if (is_mounted_ref.current) {
@@ -259,6 +266,15 @@ export const ProjectInviteTokens: React.FC<Props> = React.memo(
     }
 
     function render_tokens() {
+      if (fetch_error && tokens == null) {
+        return (
+          <ErrorDisplay
+            banner
+            error={fetch_error}
+            onClose={() => set_fetch_error("")}
+          />
+        );
+      }
       if (tokens == null) return <Loading />;
       const dataSource: any[] = [];
       for (const data of tokens) {
@@ -290,12 +306,21 @@ export const ProjectInviteTokens: React.FC<Props> = React.memo(
         });
       }
       return (
-        <Table
-          dataSource={dataSource}
-          columns={COLUMNS}
-          pagination={{ pageSize: 4 }}
-          scroll={{ y: 240 }}
-        />
+        <>
+          {fetch_error ? (
+            <ErrorDisplay
+              banner
+              error={fetch_error}
+              onClose={() => set_fetch_error("")}
+            />
+          ) : undefined}
+          <Table
+            dataSource={dataSource}
+            columns={COLUMNS}
+            pagination={{ pageSize: 4 }}
+            scroll={{ y: 240 }}
+          />
+        </>
       );
     }
 
