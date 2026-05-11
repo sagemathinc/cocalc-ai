@@ -233,6 +233,19 @@ function grantSourceForKind(kind: MembershipPackageKind): string {
   }
 }
 
+function grantSourceForAssignment(
+  pkg: MembershipPackageRecord,
+  metadata?: Record<string, unknown> | null,
+): string {
+  if (
+    pkg.kind === "course" &&
+    metadata?.grant_source === "student-course-purchase"
+  ) {
+    return "student-course-purchase";
+  }
+  return grantSourceForKind(pkg.kind);
+}
+
 function getPackageDomains(
   metadata?: Record<string, unknown> | null,
 ): string[] {
@@ -387,7 +400,7 @@ async function prepareGrantForAssignment({
     throw Error("membership package not found");
   }
   const grant_id = uuid();
-  const grant_source = grantSourceForKind(pkg.kind);
+  const grant_source = grantSourceForAssignment(pkg, metadata);
   return {
     grant: {
       id: grant_id,
@@ -903,7 +916,7 @@ async function syncUpdatedGrantForAssignment({
     id: assignment.grant_id,
     account_id: assignment.account_id,
     membership_class: pkg.membership_class,
-    source: grantSourceForKind(pkg.kind),
+    source: grantSourceForAssignment(pkg, assignment.metadata),
     package_id: pkg.id,
     purchase_id: pkg.purchase_id ?? null,
     granted_by_account_id: assignment.assigned_by_account_id ?? null,
