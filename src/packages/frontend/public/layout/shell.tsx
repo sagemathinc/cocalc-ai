@@ -353,7 +353,8 @@ export function PublicPage({
             <Content
               style={{
                 ...PAGE_BAND_STYLE,
-                paddingBlockEnd: 56,
+                background: PUBLIC_COLORS.pageBackground,
+                paddingBlock: token.paddingXL,
               }}
             >
               {beforeTitle}
@@ -367,7 +368,7 @@ export function PublicPage({
                   {title}
                 </Title>
               ) : null}
-              <Flex vertical gap="middle">
+              <Flex vertical gap="large">
                 {children}
               </Flex>
             </Content>
@@ -419,7 +420,7 @@ interface PublicSectionProps {
 export function PublicSection({ children, intro, title }: PublicSectionProps) {
   return (
     <section style={{ minWidth: 0 }}>
-      <Flex vertical gap="small">
+      <Flex vertical gap="middle">
         {title != null ? (
           <Title level={2} style={{ margin: 0 }}>
             {title}
