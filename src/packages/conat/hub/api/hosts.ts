@@ -32,6 +32,27 @@ export type HostStatus =
   | "running"
   | "stopping";
 
+export type HostAccessRole = "user" | "manager";
+export type HostEffectiveAccessRole =
+  | "owner"
+  | "manager"
+  | "user"
+  | "pool"
+  | "shared"
+  | "admin";
+
+export interface HostAccessEntry {
+  host_id: string;
+  account_id: string;
+  role: HostAccessRole;
+  created_by?: string | null;
+  created_at?: string | Date | null;
+  updated_by?: string | null;
+  updated_at?: string | Date | null;
+  revoked_at?: string | Date | null;
+  revoked_by?: string | null;
+}
+
 export type HostPricingModel = "on_demand" | "spot";
 export type HostInterruptionRestorePolicy = "none" | "immediate";
 export type HostFundingMode =
@@ -613,6 +634,17 @@ export interface Host {
   last_seen?: string;
   tier?: number;
   scope?: "owned" | "collab" | "shared" | "pool";
+  access_role?: HostEffectiveAccessRole;
+  can_manage_access?: boolean;
+  can_view_host_projects?: boolean;
+  billing_owner_account_id?: string;
+  project_ram_limit_mb?: number;
+  host_ram_mb?: number;
+  owner_spend_limit_5h_usd?: number;
+  owner_spend_limit_7d_usd?: number;
+  owner_spend_5h_usd?: string;
+  owner_spend_7d_usd?: string;
+  owner_spend_limit_state?: "ok" | "at_risk" | "stopped_limit_exceeded";
   can_start?: boolean;
   can_place?: boolean;
   reason_unavailable?: string;
