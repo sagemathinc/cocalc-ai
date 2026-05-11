@@ -14,6 +14,10 @@ import {
 import { publishLroSummary } from "@cocalc/server/lro/stream";
 import { cancelCopiesByOpId } from "@cocalc/server/projects/copy-db";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import {
+  getHostAccessForAccount,
+  hostAccessRoleCan,
+} from "@cocalc/server/project-host/access";
 
 const DISMISSABLE_STATUSES: LroStatus[] = [
   "succeeded",
@@ -50,17 +54,13 @@ async function assertScopeAccess({
     return;
   }
   if (scope_type === "host") {
-    const { rows } = await getPool().query(
-      "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
-      [scope_id],
-    );
-    if (!rows[0]) {
-      throw new Error("not authorized");
-    }
-    const metadata = rows[0].metadata ?? {};
-    const isOwner = metadata.owner === account_id;
-    const collabs: string[] = metadata.collaborators ?? [];
-    if (isOwner || collabs.includes(account_id)) {
+    const access = await getHostAccessForAccount({
+      host_id: scope_id,
+      account_id,
+      admin_view: true,
+    });
+    const permission = mode === "read" ? "view" : "start-stop";
+    if (access.exists && hostAccessRoleCan(access.role, permission)) {
       return;
     }
     if (mode === "read") {

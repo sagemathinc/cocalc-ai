@@ -147,9 +147,11 @@ import {
   syncProjectBackupIndexes as syncProjectBackupIndexesLocalInternal,
 } from "@cocalc/server/project-backup";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
+import { is_valid_email_address } from "@cocalc/util/misc";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import { computeAIUsageUnits } from "@cocalc/server/ai/usage-units";
 import { saveAIResponse } from "@cocalc/server/ai/save-response";
+import { moneyToDbString } from "@cocalc/util/money";
 import {
   isCoreLanguageModel,
   type LanguageModelCore,
@@ -161,6 +163,7 @@ import {
   resolveHostBay,
   resolveProjectBay,
 } from "@cocalc/server/inter-bay/directory";
+import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -170,6 +173,7 @@ import {
   isBillableDedicatedHostCloud,
   type DedicatedHostFundingMode,
 } from "@cocalc/server/project-host/admission";
+import { getDedicatedHostWindowUsageForHostLocal } from "@cocalc/server/project-host/spend";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
 import {
@@ -1008,6 +1012,22 @@ function currentHostFundingMode(
 }
 
 function assertHostBillingEnforcementAllowsStart(metadata: any): void {
+  const ownerSpendState = `${
+    metadata?.billing?.owner_spend_limit_status?.state ?? ""
+  }`
+    .trim()
+    .toLowerCase();
+  if (ownerSpendState === "stopped_limit_exceeded") {
+    throw Object.assign(
+      new Error(
+        "owner spend cap must be raised or removed before this dedicated host can be started",
+      ),
+      {
+        code: "owner_host_spend_limit_exceeded",
+        details: metadata?.billing?.owner_spend_limit_status,
+      },
+    );
+  }
   const state = `${metadata?.billing?.enforcement?.state ?? ""}`
     .trim()
     .toLowerCase();
@@ -2527,6 +2547,31 @@ export async function listHostsLocal({
     await loadHostRuntimeDesiredArtifactSummaries(
       visibleRows.map(({ row }) => row.id),
     );
+  const ownerSpendUsage = new Map<
+    string,
+    Awaited<ReturnType<typeof getDedicatedHostWindowUsageForHostLocal>>
+  >();
+  await Promise.all(
+    visibleRows.map(async ({ row }) => {
+      const ownerAccountId =
+        typeof row.metadata?.owner === "string" ? row.metadata.owner : "";
+      const billing = row.metadata?.billing ?? {};
+      if (
+        !ownerAccountId ||
+        (billing.owner_spend_limit_5h_usd == null &&
+          billing.owner_spend_limit_7d_usd == null)
+      ) {
+        return;
+      }
+      ownerSpendUsage.set(
+        row.id,
+        await getDedicatedHostWindowUsageForHostLocal({
+          account_id: ownerAccountId,
+          host_id: row.id,
+        }),
+      );
+    }),
+  );
 
   return visibleRows.map(
     ({
@@ -2552,6 +2597,16 @@ export async function listHostsLocal({
             : undefined,
         backup_status: backupStatus.get(row.id),
         starred,
+        owner_spend_5h_usd:
+          ownerSpendUsage.get(row.id)?.spend_5h_usd == null
+            ? undefined
+            : moneyToDbString(ownerSpendUsage.get(row.id)!.spend_5h_usd),
+        owner_spend_7d_usd:
+          ownerSpendUsage.get(row.id)?.spend_7d_usd == null
+            ? undefined
+            : moneyToDbString(ownerSpendUsage.get(row.id)!.spend_7d_usd),
+        owner_spend_limit_state:
+          row.metadata?.billing?.owner_spend_limit_status?.state,
         metrics_history: metricsHistory.get(row.id),
         runtime_exception_summary: runtimeExceptionSummaries.get(row.id),
         runtime_desired_artifacts: runtimeDesiredArtifactSummaries.get(row.id),
@@ -2617,6 +2672,33 @@ function serializeHostAccessEntry(
   };
 }
 
+async function resolveHostAccessTargetAccount({
+  target_account_id,
+  target_email_address,
+}: {
+  target_account_id?: string;
+  target_email_address?: string;
+}): Promise<string> {
+  const accountId = `${target_account_id ?? ""}`.trim();
+  const emailAddress = `${target_email_address ?? ""}`.trim().toLowerCase();
+  if (!!accountId === !!emailAddress) {
+    throw new Error(
+      "specify exactly one of target_account_id or target_email_address",
+    );
+  }
+  if (accountId) {
+    return accountId;
+  }
+  if (!is_valid_email_address(emailAddress)) {
+    throw new Error("target_email_address is not a valid email address");
+  }
+  const account = await getClusterAccountByEmail(emailAddress);
+  if (!account?.account_id) {
+    throw new Error(`no account found with email address ${emailAddress}`);
+  }
+  return account.account_id;
+}
+
 export async function listHostAccess({
   account_id,
   id,
@@ -2648,28 +2730,48 @@ export async function listHostAccess({
 
 export async function setHostAccess({
   account_id,
+  browser_id,
+  session_hash,
   id,
   target_account_id,
+  target_email_address,
   role,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
-  target_account_id: string;
+  target_account_id?: string;
+  target_email_address?: string;
   role: HostAccessRole;
 }): Promise<HostAccessEntry> {
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge().hostConnection(remoteBay).setHostAccess({
       account_id,
+      browser_id,
+      session_hash,
       id,
       target_account_id,
+      target_email_address,
       role,
+    });
+  }
+  if (role === "manager") {
+    await maybeRequireFreshAuthForInteractiveHostAction({
+      account_id,
+      browser_id,
+      session_hash,
+      required: true,
     });
   }
   const entry = await setHostAccessEntry({
     host_id: id,
     actor_account_id: requireAccount(account_id),
-    target_account_id,
+    target_account_id: await resolveHostAccessTargetAccount({
+      target_account_id,
+      target_email_address,
+    }),
     role,
   });
   return serializeHostAccessEntry(entry)!;
@@ -2763,10 +2865,14 @@ function normalizeOptionalPositiveUsd(
 
 export async function setHostProjectRamLimit({
   account_id,
+  browser_id,
+  session_hash,
   id,
   project_ram_limit_mb,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   project_ram_limit_mb?: number | null;
 }): Promise<Host> {
@@ -2774,13 +2880,25 @@ export async function setHostProjectRamLimit({
   if (remoteBay) {
     return await getInterBayBridge()
       .hostConnection(remoteBay)
-      .setHostProjectRamLimit({ account_id, id, project_ram_limit_mb });
+      .setHostProjectRamLimit({
+        account_id,
+        browser_id,
+        session_hash,
+        id,
+        project_ram_limit_mb,
+      });
   }
   const row = await loadHostForView(id, account_id);
   await requireLoadedHostPermission({
     row,
     account_id: requireAccount(account_id),
     permission: "configure-project-ram",
+  });
+  await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id,
+    session_hash,
+    required: true,
   });
   const normalizedLimit = normalizeProjectRamLimitMb({
     value: project_ram_limit_mb,
@@ -2813,6 +2931,8 @@ export async function setHostProjectRamLimit({
 
 export async function setHostOwnerSpendLimits(opts: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   owner_spend_limit_5h_usd?: number | null;
   owner_spend_limit_7d_usd?: number | null;
@@ -2824,6 +2944,8 @@ export async function setHostOwnerSpendLimits(opts: {
       .hostConnection(remoteBay)
       .setHostOwnerSpendLimits({
         account_id,
+        browser_id: opts.browser_id,
+        session_hash: opts.session_hash,
         id,
         owner_spend_limit_5h_usd: opts.owner_spend_limit_5h_usd,
         owner_spend_limit_7d_usd: opts.owner_spend_limit_7d_usd,
@@ -2834,6 +2956,12 @@ export async function setHostOwnerSpendLimits(opts: {
     row,
     account_id: requireAccount(account_id),
     permission: "configure-spend-caps",
+  });
+  await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id: opts.browser_id,
+    session_hash: opts.session_hash,
+    required: true,
   });
   const metadata = { ...(row.metadata ?? {}) };
   const billing = { ...(metadata.billing ?? {}) };
@@ -2855,6 +2983,7 @@ export async function setHostOwnerSpendLimits(opts: {
       );
     }
   }
+  delete billing.owner_spend_limit_status;
   if (Object.keys(billing).length) {
     metadata.billing = billing;
   } else {
@@ -5187,7 +5316,7 @@ export async function upgradeHostSoftware({
         align_runtime_stack,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
     kind: HOST_UPGRADE_LRO_KIND,
@@ -5219,7 +5348,7 @@ export async function reconcileHostSoftware({
         id,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
     kind: HOST_RECONCILE_LRO_KIND,
@@ -5408,7 +5537,7 @@ export async function reconcileHostRuntimeDeployments({
         reason,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
     kind: HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
@@ -5615,7 +5744,7 @@ export async function rollbackHostRuntimeDeployments({
         reason,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   const normalizedTarget =
     target_type === "component"
@@ -5668,7 +5797,7 @@ export async function getHostManagedComponentStatus({
         id,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   const client = await hostControlClient(id, 30_000);
   return await client.getManagedComponentStatus();
@@ -5696,7 +5825,7 @@ export async function rolloutHostManagedComponents({
         reason,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
     kind: HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND,
@@ -5724,7 +5853,7 @@ export async function upgradeHostConnector({
     account_id,
     id,
     version,
-    loadHostForStartStop,
+    loadHostForStartStop: loadHostForRootfsManagement,
     ensureSelfHostReverseTunnel,
     createPairingTokenForHost,
     getServerSettings,
@@ -5797,7 +5926,7 @@ export async function reconcileHostSoftwareInternal({
       let refreshedRow = row;
       if (touchedHostControl) {
         await waitForHostHeartbeatAfter({ host_id: id, since: startedAt });
-        refreshedRow = await loadHostForStartStop(id, account_id);
+        refreshedRow = await loadHostForRootfsManagement(id, account_id);
       }
       if (bootstrapLifecycleSummaryStatus(refreshedRow) === "in_sync") {
         return;
@@ -5859,7 +5988,7 @@ async function recordProjectHostLocalRollbackInternal({
   rollback_version: string;
   source: "host-agent";
 }> {
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   return await recordProjectHostLocalRollbackInternalHelper({
     row,
     requested_by: requestedByForRuntimeDeployments({ account_id, row }),
@@ -5882,7 +6011,7 @@ export async function rollbackProjectHostOverSshInternal({
   host_id: string;
   rollback_version: string;
 }> {
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   return await rollbackProjectHostOverSshInternalHelper({
     row,
     requested_by: requestedByForRuntimeDeployments({ account_id, row }),
@@ -5912,7 +6041,7 @@ export async function reconcileHostRuntimeDeploymentsInternal({
     id,
     components,
     reason,
-    loadHostForStartStop,
+    loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     getHostRuntimeDeploymentStatus,
     computeHostRuntimeDeploymentReconcilePlan,
@@ -5946,7 +6075,7 @@ export async function rollbackHostRuntimeDeploymentsInternal({
     version,
     last_known_good,
     reason,
-    loadHostForStartStop,
+    loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     getHostRuntimeDeploymentStatus,
     targetKeyForRuntimeDeployment,
@@ -6038,7 +6167,7 @@ export async function upgradeHostSoftwareInternal({
     targets,
     base_url,
     align_runtime_stack,
-    loadHostForStartStop,
+    loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     computeHostOperationalAvailability,
     resolveHostSoftwareBaseUrl,
@@ -6092,7 +6221,7 @@ export async function rolloutHostManagedComponentsInternal({
     id,
     components,
     reason,
-    loadHostForStartStop,
+    loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     hostControlClient,
     waitForHostHeartbeatAfter,

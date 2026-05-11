@@ -959,7 +959,7 @@ async function addHostCollaborator({
     account_id: actor_account_id,
     id: host_id,
     target_account_id: collaborator_account_id,
-    role: "manager",
+    role: "user",
   });
 }
 

@@ -59,7 +59,8 @@ type HubClient = {
     }) => Promise<HostAccessEntry[]>;
     setHostAccess?: (opts: {
       id: string;
-      target_account_id: string;
+      target_account_id?: string;
+      target_email_address?: string;
       role: HostAccessRole;
     }) => Promise<HostAccessEntry>;
     removeHostAccess?: (opts: {
@@ -412,7 +413,11 @@ export const useHostActions = ({
 
   const setHostAccess = async (
     id: string,
-    opts: { target_account_id: string; role: HostAccessRole },
+    opts: {
+      target_account_id?: string;
+      target_email_address?: string;
+      role: HostAccessRole;
+    },
   ) => {
     if (!hub.hosts.setHostAccess) {
       return;

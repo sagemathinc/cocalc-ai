@@ -1700,6 +1700,8 @@ export const useHostsPageViewModel = () => {
         }
       : undefined,
   });
+  const canMaintainSelectedHost =
+    selected?.access_role === "owner" || selected?.access_role === "admin";
   const hostDrawerVm = useHostDrawerViewModel({
     open: drawerOpen,
     host: selected,
@@ -1707,14 +1709,20 @@ export const useHostsPageViewModel = () => {
     onClose: closeDetails,
     onEdit: openEdit,
     onDelete: (id: string, opts) => removeHost(id, opts),
-    onUpgrade: isAdmin ? upgradeHostSoftware : undefined,
-    onUpgradeAll: isAdmin ? upgradeAllHostSoftware : undefined,
-    onReconcile: isAdmin ? reconcileHostSoftware : undefined,
+    onUpgrade: canMaintainSelectedHost ? upgradeHostSoftware : undefined,
+    onUpgradeAll: canMaintainSelectedHost ? upgradeAllHostSoftware : undefined,
+    onReconcile: canMaintainSelectedHost ? reconcileHostSoftware : undefined,
     onRefreshCloudStatus: isAdmin ? refreshHostCloudState : undefined,
-    onUpgradeFromHub: isAdmin ? upgradeHostSoftwareFromHub : undefined,
-    onUpgradeAllFromHub: isAdmin ? upgradeAllHostSoftwareFromHub : undefined,
-    onUpgradeArtifact: isAdmin ? upgradeHostArtifact : undefined,
-    canUpgrade: isAdmin,
+    onUpgradeFromHub: canMaintainSelectedHost
+      ? upgradeHostSoftwareFromHub
+      : undefined,
+    onUpgradeAllFromHub: canMaintainSelectedHost
+      ? upgradeAllHostSoftwareFromHub
+      : undefined,
+    onUpgradeArtifact: canMaintainSelectedHost
+      ? upgradeHostArtifact
+      : undefined,
+    canUpgrade: canMaintainSelectedHost,
     onCancelOp: cancelHostOp,
     hostLog,
     loadingLog,
@@ -1726,19 +1734,25 @@ export const useHostsPageViewModel = () => {
     },
     runtimeDeployments,
     runtimeLogViewer,
-    onSetRuntimeArtifactDeployment: isAdmin
+    onSetRuntimeArtifactDeployment: canMaintainSelectedHost
       ? setRuntimeArtifactDeployment
       : undefined,
-    onRollbackRuntimeArtifact: isAdmin ? rollbackRuntimeArtifact : undefined,
-    onResumeRuntimeArtifactClusterDefault: isAdmin
+    onRollbackRuntimeArtifact: canMaintainSelectedHost
+      ? rollbackRuntimeArtifact
+      : undefined,
+    onResumeRuntimeArtifactClusterDefault: canMaintainSelectedHost
       ? resumeRuntimeArtifactClusterDefault
       : undefined,
-    onSetRuntimeComponentDeployment: isAdmin
+    onSetRuntimeComponentDeployment: canMaintainSelectedHost
       ? setRuntimeComponentDeployment
       : undefined,
-    onRollbackRuntimeComponent: isAdmin ? rollbackRuntimeComponent : undefined,
-    onRestartRuntimeComponent: isAdmin ? restartRuntimeComponent : undefined,
-    onResumeRuntimeComponentClusterDefault: isAdmin
+    onRollbackRuntimeComponent: canMaintainSelectedHost
+      ? rollbackRuntimeComponent
+      : undefined,
+    onRestartRuntimeComponent: canMaintainSelectedHost
+      ? restartRuntimeComponent
+      : undefined,
+    onResumeRuntimeComponentClusterDefault: canMaintainSelectedHost
       ? resumeRuntimeComponentClusterDefault
       : undefined,
     rootfsInventory,
@@ -1748,10 +1762,8 @@ export const useHostsPageViewModel = () => {
     onRemoveHostAccess: removeHostAccess,
     onSetHostProjectRamLimit: setHostProjectRamLimit,
     onSetHostOwnerSpendLimits: setHostOwnerSpendLimits,
-    onStopRunningProjects: isAdmin ? stopRunningProjectsOnHost : undefined,
-    onRestartRunningProjects: isAdmin
-      ? restartRunningProjectsOnHost
-      : undefined,
+    onStopRunningProjects: stopRunningProjectsOnHost,
+    onRestartRunningProjects: restartRunningProjectsOnHost,
     selfHost: {
       connectorMap: selfHostConnectorMap,
       isConnectorOnline: isSelfHostConnectorOnline,

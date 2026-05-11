@@ -1196,7 +1196,9 @@ export function parseRow(
       parsePositiveNumber(metadata.billing?.owner_spend_limit_7d_usd),
     owner_spend_5h_usd: opts.owner_spend_5h_usd,
     owner_spend_7d_usd: opts.owner_spend_7d_usd,
-    owner_spend_limit_state: opts.owner_spend_limit_state,
+    owner_spend_limit_state:
+      opts.owner_spend_limit_state ??
+      metadata.billing?.owner_spend_limit_status?.state,
     can_start: opts.can_start,
     can_place: opts.can_place,
     reason_unavailable: opts.reason_unavailable,

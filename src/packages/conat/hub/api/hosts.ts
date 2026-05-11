@@ -1096,8 +1096,11 @@ export interface Hosts {
   }) => Promise<HostAccessEntry[]>;
   setHostAccess: (opts: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
     id: string;
-    target_account_id: string;
+    target_account_id?: string;
+    target_email_address?: string;
     role: HostAccessRole;
   }) => Promise<HostAccessEntry>;
   removeHostAccess: (opts: {
@@ -1107,11 +1110,15 @@ export interface Hosts {
   }) => Promise<HostAccessEntry | undefined>;
   setHostProjectRamLimit: (opts: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
     id: string;
     project_ram_limit_mb?: number | null;
   }) => Promise<Host>;
   setHostOwnerSpendLimits: (opts: {
     account_id?: string;
+    browser_id?: string;
+    session_hash?: string;
     id: string;
     owner_spend_limit_5h_usd?: number | null;
     owner_spend_limit_7d_usd?: number | null;

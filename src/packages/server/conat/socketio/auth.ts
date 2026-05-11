@@ -17,9 +17,12 @@ import {
 import { getAccountWithApiKey } from "@cocalc/server/api/manage";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { getAdmins } from "@cocalc/server/accounts/is-admin";
-import getPool from "@cocalc/database/pool";
 import { verifyProjectHostToken } from "@cocalc/server/project-host/bootstrap-token";
 import { hasProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
+import {
+  getHostAccessForAccount,
+  hostAccessRoleCan,
+} from "@cocalc/server/project-host/access";
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -428,7 +431,7 @@ async function isAccountAllowed({
     // account accessing a host subject: *.host.{host_id}.>  and also *.host-{host_id}.>
     const host_id = extractHostSubject(subject);
     if (host_id) {
-      return await isHostOwnerOrCollaborator({ account_id, host_id });
+      return await isAccountAllowedForHost({ account_id, host_id });
     }
     return false;
   }
@@ -438,22 +441,19 @@ async function isAccountAllowed({
   });
 }
 
-async function isHostOwnerOrCollaborator({
+async function isAccountAllowedForHost({
   account_id,
   host_id,
 }: {
   account_id: string;
   host_id: string;
 }): Promise<boolean> {
-  const { rows } = await getPool().query(
-    "SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL",
-    [host_id],
-  );
-  if (!rows[0]) return false;
-  const metadata = rows[0].metadata ?? {};
-  if (metadata.owner === account_id) return true;
-  const collabs: string[] = metadata.collaborators ?? [];
-  return collabs.includes(account_id);
+  const access = await getHostAccessForAccount({
+    host_id,
+    account_id,
+    admin_view: true,
+  });
+  return access.exists && hostAccessRoleCan(access.role, "view");
 }
 
 export type { CoCalcUser, CoCalcUserType };
