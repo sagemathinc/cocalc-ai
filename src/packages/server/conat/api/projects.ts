@@ -787,7 +787,14 @@ export async function getCourseStudentAccess({
   const requiredTier = await getMembershipTierById({
     id: requiredMembershipClass,
   });
-  const requiredPriority = requiredTier?.priority ?? 0;
+  if (requiredTier == null) {
+    return {
+      status: "blocked",
+      required_membership_class: requiredMembershipClass,
+      course,
+    };
+  }
+  const requiredPriority = requiredTier.priority ?? 0;
   const membership = await resolveMembershipForAccount(account_id);
   const currentTier = await getMembershipTierById({ id: membership.class });
   if ((currentTier?.priority ?? 0) >= requiredPriority) {
