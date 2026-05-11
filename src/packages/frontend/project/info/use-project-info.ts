@@ -9,6 +9,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { withTimeout } from "@cocalc/util/async-utils";
+
+const PROJECT_INFO_REQUEST_TIMEOUT_MS = 15_000;
 
 function isVisible(): boolean {
   if (typeof document === "undefined") return true;
@@ -45,14 +48,19 @@ export default function useProjectInfo({
     const requestScope = project_id;
     // console.log("update", { project_id });
     try {
-      const client = await webapp_client.conat_client.projectConat({
-        project_id,
-        caller: "useProjectInfo",
-      });
-      const info = await get({
-        client,
-        project_id,
-      });
+      const info = await withTimeout(
+        (async () => {
+          const client = await webapp_client.conat_client.projectConat({
+            project_id,
+            caller: "useProjectInfo",
+          });
+          return await get({
+            client,
+            project_id,
+          });
+        })(),
+        PROJECT_INFO_REQUEST_TIMEOUT_MS,
+      );
       if (scopeRef.current !== requestScope) return;
       setInfo(info);
       setDisconnected(false);
