@@ -25,6 +25,7 @@ import { redux } from "@cocalc/frontend/app-framework";
 
 const CONAT_BOOKMARKS_KEY = "bookmarks";
 const PROJECTS_KEY = "projects";
+const ACCOUNT_ID_WAIT_TIMEOUT_S = 5;
 
 export type BookmarkedProjects = string[]; // array of project UUIDs
 
@@ -88,7 +89,9 @@ export function useBookmarkedProjects() {
         const store = redux.getStore("account");
         await store.async_wait({
           until: () => store.get_account_id() != null,
-          timeout: 0, // indefinite timeout
+          // Bookmarks are optional UI state; do not leave project lists stuck
+          // initializing forever if account readiness is stale after reconnect.
+          timeout: ACCOUNT_ID_WAIT_TIMEOUT_S,
         });
 
         const account_id = store.get_account_id();
