@@ -2413,7 +2413,6 @@ export async function listHostsLocal({
   if (!admin_view) {
     filters.push(
       `(metadata->>'owner' = $1
-        OR COALESCE(metadata->'collaborators', '[]'::jsonb) ? $1
         OR EXISTS (
           SELECT 1
           FROM project_host_access access
@@ -2460,8 +2459,6 @@ export async function listHostsLocal({
     const metadata = row.metadata ?? {};
     const rowOwner = metadata.owner ?? "";
     const isOwner = rowOwner === owner;
-    const collaborators = (metadata.collaborators ?? []) as string[];
-    const isCollab = collaborators.includes(owner);
     const delegatedRole = normalizeDelegatedHostAccessRole(
       row.delegated_access_role,
     );
@@ -2481,7 +2478,7 @@ export async function listHostsLocal({
 
     const scope: Host["scope"] = isOwner
       ? "owned"
-      : isCollab || delegatedRole != null
+      : delegatedRole != null
         ? "collab"
         : shared
           ? "pool"
@@ -2491,7 +2488,6 @@ export async function listHostsLocal({
       tier,
       userTier,
       isOwner,
-      isCollab,
       accessRole,
       hasDedicatedAccess: delegatedRole != null,
     });

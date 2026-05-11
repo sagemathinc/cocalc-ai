@@ -4,6 +4,7 @@ import {
   Card,
   Divider,
   Drawer,
+  Input,
   InputNumber,
   Popover,
   Popconfirm,
@@ -23,6 +24,8 @@ import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type {
   Host,
+  HostAccessEntry,
+  HostAccessRole,
   HostRuntimeArtifact,
   HostRuntimeArtifactObservation,
   HostRuntimeDeploymentObservedTarget,
@@ -192,6 +195,26 @@ type HostDrawerViewModel = {
     gcDeleted: () => Promise<HostRootfsGcResult | undefined>;
   };
   canManageRootfs?: boolean;
+  onListHostAccess?: (id: string) => Promise<HostAccessEntry[]>;
+  onSetHostAccess?: (
+    id: string,
+    opts: { target_account_id: string; role: HostAccessRole },
+  ) => void | Promise<void>;
+  onRemoveHostAccess?: (
+    id: string,
+    target_account_id: string,
+  ) => void | Promise<void>;
+  onSetHostProjectRamLimit?: (
+    id: string,
+    project_ram_limit_mb?: number | null,
+  ) => void | Promise<void>;
+  onSetHostOwnerSpendLimits?: (
+    id: string,
+    opts: {
+      owner_spend_limit_5h_usd?: number | null;
+      owner_spend_limit_7d_usd?: number | null;
+    },
+  ) => void | Promise<void>;
   onStopRunningProjects?: (host: Host) => void | Promise<void>;
   onRestartRunningProjects?: (host: Host) => void | Promise<void>;
   selfHost?: {
@@ -1230,6 +1253,22 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     source: HostRuntimeLogSource;
     lines: number;
   }>();
+  const [accessEntries, setAccessEntries] = React.useState<HostAccessEntry[]>(
+    [],
+  );
+  const [accessLoading, setAccessLoading] = React.useState(false);
+  const [accessSavingKey, setAccessSavingKey] = React.useState<string>();
+  const [accessAccountId, setAccessAccountId] = React.useState("");
+  const [accessRole, setAccessRole] = React.useState<HostAccessRole>("user");
+  const [projectRamLimitMb, setProjectRamLimitMb] = React.useState<
+    number | null
+  >(null);
+  const [ownerSpendLimit5h, setOwnerSpendLimit5h] = React.useState<
+    number | null
+  >(null);
+  const [ownerSpendLimit7d, setOwnerSpendLimit7d] = React.useState<
+    number | null
+  >(null);
   React.useEffect(() => {
     setShowAdvancedRuntime(false);
     setArtifactRollbackSelection({});
@@ -1237,6 +1276,9 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     setRuntimeLogSource("project-host");
     setRuntimeLogLines(200);
     setRuntimeLogRequest(undefined);
+    setAccessEntries([]);
+    setAccessAccountId("");
+    setAccessRole("user");
   }, [vm.host?.id]);
   const handleResize = React.useCallback((next: number) => {
     const clamped = clampDrawerWidth(next);
@@ -1273,6 +1315,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     onResumeRuntimeComponentClusterDefault,
     rootfsInventory,
     canManageRootfs,
+    onListHostAccess,
+    onSetHostAccess,
+    onRemoveHostAccess,
+    onSetHostProjectRamLimit,
+    onSetHostOwnerSpendLimits,
     onStopRunningProjects,
     onRestartRunningProjects,
     selfHost,
@@ -1281,6 +1328,38 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const isSelfHost = host?.machine?.cloud === "self-host";
   const hostCpu = host ? getHostCpuCount(host) : undefined;
   const hostRam = host ? getHostRamGiB(host) : undefined;
+  const hostRamMb = host?.host_ram_mb ?? (hostRam ? hostRam * 1024 : undefined);
+  const maxProjectRamMb =
+    hostRamMb != null ? Math.max(0, Math.floor(hostRamMb - 3072)) : undefined;
+  const canEditOwnerSpend =
+    host?.access_role === "owner" || host?.access_role === "admin";
+  React.useEffect(() => {
+    setProjectRamLimitMb(host?.project_ram_limit_mb ?? null);
+    setOwnerSpendLimit5h(host?.owner_spend_limit_5h_usd ?? null);
+    setOwnerSpendLimit7d(host?.owner_spend_limit_7d_usd ?? null);
+  }, [
+    host?.id,
+    host?.project_ram_limit_mb,
+    host?.owner_spend_limit_5h_usd,
+    host?.owner_spend_limit_7d_usd,
+  ]);
+  const refreshHostAccess = React.useCallback(async () => {
+    if (!host || !onListHostAccess || !host.can_manage_access) {
+      setAccessEntries([]);
+      return;
+    }
+    setAccessLoading(true);
+    try {
+      setAccessEntries(await onListHostAccess(host.id));
+    } finally {
+      setAccessLoading(false);
+    }
+  }, [host, onListHostAccess]);
+  React.useEffect(() => {
+    if (activeTab === "access") {
+      refreshHostAccess().catch(() => {});
+    }
+  }, [activeTab, refreshHostAccess]);
   const hostDisk = formatBinaryBytes(
     host?.metrics?.current?.disk_device_total_bytes,
     {
@@ -1812,6 +1891,239 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             ))}
           </Space>
         )}
+      </Card>
+    </Space>
+  ) : null;
+  const accessContent = host ? (
+    <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+      <Card size="small" title="Access">
+        <Space orientation="vertical" style={{ width: "100%" }} size="small">
+          <Typography.Text type="secondary">
+            The host owner pays for this dedicated host. Managers can start/stop
+            the host, manage access, configure the per-project RAM cap, and
+            place projects here. Users can only create or move projects onto the
+            host.
+          </Typography.Text>
+          <Space wrap>
+            <Tag color={host.access_role === "owner" ? "blue" : undefined}>
+              Your role: {host.access_role ?? "unknown"}
+            </Tag>
+            {host.billing_owner_account_id && (
+              <Tag>Paid by {host.billing_owner_account_id}</Tag>
+            )}
+          </Space>
+          {host.can_manage_access && onSetHostAccess ? (
+            <>
+              <Divider style={{ margin: "8px 0" }} />
+              <Space.Compact style={{ width: "100%" }}>
+                <Input
+                  placeholder="Account ID to allow"
+                  value={accessAccountId}
+                  onChange={(event) => setAccessAccountId(event.target.value)}
+                />
+                <Select
+                  value={accessRole}
+                  style={{ width: 120 }}
+                  options={[
+                    { label: "User", value: "user" },
+                    { label: "Manager", value: "manager" },
+                  ]}
+                  onChange={(value) => setAccessRole(value)}
+                />
+                <Button
+                  type="primary"
+                  loading={accessSavingKey === "add"}
+                  disabled={!accessAccountId.trim()}
+                  onClick={async () => {
+                    setAccessSavingKey("add");
+                    try {
+                      await onSetHostAccess(host.id, {
+                        target_account_id: accessAccountId.trim(),
+                        role: accessRole,
+                      });
+                      setAccessAccountId("");
+                      await refreshHostAccess();
+                    } finally {
+                      setAccessSavingKey(undefined);
+                    }
+                  }}
+                >
+                  Add
+                </Button>
+              </Space.Compact>
+              {accessLoading ? (
+                <Typography.Text type="secondary">
+                  Loading access list...
+                </Typography.Text>
+              ) : accessEntries.length ? (
+                <Space
+                  orientation="vertical"
+                  style={{ width: "100%" }}
+                  size="small"
+                >
+                  {accessEntries.map((entry) => (
+                    <Space
+                      key={entry.account_id}
+                      style={{ justifyContent: "space-between", width: "100%" }}
+                    >
+                      <Space>
+                        <Typography.Text copyable={{ text: entry.account_id }}>
+                          {entry.account_id}
+                        </Typography.Text>
+                        <Tag
+                          color={entry.role === "manager" ? "blue" : "default"}
+                        >
+                          {entry.role}
+                        </Tag>
+                      </Space>
+                      {onRemoveHostAccess && (
+                        <Popconfirm
+                          title="Remove this host access?"
+                          okText="Remove"
+                          cancelText="Cancel"
+                          onConfirm={async () => {
+                            setAccessSavingKey(entry.account_id);
+                            try {
+                              await onRemoveHostAccess(
+                                host.id,
+                                entry.account_id,
+                              );
+                              await refreshHostAccess();
+                            } finally {
+                              setAccessSavingKey(undefined);
+                            }
+                          }}
+                        >
+                          <Button
+                            danger
+                            size="small"
+                            loading={accessSavingKey === entry.account_id}
+                          >
+                            Remove
+                          </Button>
+                        </Popconfirm>
+                      )}
+                    </Space>
+                  ))}
+                </Space>
+              ) : (
+                <Typography.Text type="secondary">
+                  No delegated access configured.
+                </Typography.Text>
+              )}
+            </>
+          ) : (
+            <Typography.Text type="secondary">
+              Only the owner or a manager can edit host access.
+            </Typography.Text>
+          )}
+        </Space>
+      </Card>
+      <Card size="small" title="Project resource policy">
+        <Space orientation="vertical" style={{ width: "100%" }} size="small">
+          <Typography.Text type="secondary">
+            Optional RAM cap for projects running on this host. CPU and storage
+            still come from normal project policy.
+          </Typography.Text>
+          <Space wrap>
+            <InputNumber
+              min={500}
+              max={maxProjectRamMb}
+              step={500}
+              addonAfter="MB"
+              placeholder="No override"
+              value={projectRamLimitMb}
+              disabled={!host.can_manage_access || !onSetHostProjectRamLimit}
+              onChange={(value) =>
+                setProjectRamLimitMb(typeof value === "number" ? value : null)
+              }
+            />
+            <Button
+              disabled={!host.can_manage_access || !onSetHostProjectRamLimit}
+              loading={accessSavingKey === "ram"}
+              onClick={async () => {
+                if (!onSetHostProjectRamLimit) return;
+                setAccessSavingKey("ram");
+                try {
+                  await onSetHostProjectRamLimit(host.id, projectRamLimitMb);
+                } finally {
+                  setAccessSavingKey(undefined);
+                }
+              }}
+            >
+              Save RAM cap
+            </Button>
+            <Button
+              disabled={!host.can_manage_access || !onSetHostProjectRamLimit}
+              onClick={async () => {
+                if (!onSetHostProjectRamLimit) return;
+                setProjectRamLimitMb(null);
+                await onSetHostProjectRamLimit(host.id, null);
+              }}
+            >
+              Clear
+            </Button>
+          </Space>
+          {maxProjectRamMb != null && (
+            <Typography.Text type="secondary">
+              Allowed range: 500 MB to {maxProjectRamMb} MB.
+            </Typography.Text>
+          )}
+        </Space>
+      </Card>
+      <Card size="small" title="Owner spend caps">
+        <Space orientation="vertical" style={{ width: "100%" }} size="small">
+          <Typography.Text type="secondary">
+            Optional owner safety caps for this host. These are separate from
+            membership billing limits.
+          </Typography.Text>
+          <Space wrap>
+            <InputNumber
+              min={0}
+              addonBefore="5h"
+              addonAfter="USD"
+              placeholder="No cap"
+              value={ownerSpendLimit5h}
+              disabled={!canEditOwnerSpend || !onSetHostOwnerSpendLimits}
+              onChange={(value) =>
+                setOwnerSpendLimit5h(
+                  typeof value === "number" && value > 0 ? value : null,
+                )
+              }
+            />
+            <InputNumber
+              min={0}
+              addonBefore="7d"
+              addonAfter="USD"
+              placeholder="No cap"
+              value={ownerSpendLimit7d}
+              disabled={!canEditOwnerSpend || !onSetHostOwnerSpendLimits}
+              onChange={(value) =>
+                setOwnerSpendLimit7d(
+                  typeof value === "number" && value > 0 ? value : null,
+                )
+              }
+            />
+            <Button
+              disabled={!canEditOwnerSpend || !onSetHostOwnerSpendLimits}
+              loading={accessSavingKey === "spend"}
+              onClick={async () => {
+                if (!onSetHostOwnerSpendLimits) return;
+                setAccessSavingKey("spend");
+                try {
+                  await onSetHostOwnerSpendLimits(host.id, {
+                    owner_spend_limit_5h_usd: ownerSpendLimit5h,
+                    owner_spend_limit_7d_usd: ownerSpendLimit7d,
+                  });
+                } finally {
+                  setAccessSavingKey(undefined);
+                }
+              }}
+            >
+              Save spend caps
+            </Button>
+          </Space>
+        </Space>
       </Card>
     </Space>
   ) : null;
@@ -3841,6 +4153,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             No runtime deployment details reported yet.
           </Typography.Text>
         ),
+    },
+    {
+      key: "access",
+      label: "Access",
+      children: accessContent,
     },
     {
       key: "projects",

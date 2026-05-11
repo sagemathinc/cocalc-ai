@@ -608,6 +608,12 @@ async function buildMoveProjectContext(
         : "no running project-host available",
     );
   }
+  if (
+    input.dest_host_id &&
+    (destHost as { can_place?: boolean }).can_place !== true
+  ) {
+    throw new Error("not allowed to place a project on that host");
+  }
   if (!dest_host_id) {
     dest_host_id = (destHost as { id?: string }).id;
   }

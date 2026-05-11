@@ -27,21 +27,18 @@ export function computePlacementPermission({
   tier,
   userTier,
   isOwner,
-  isCollab,
   accessRole,
   hasDedicatedAccess,
 }: {
   tier?: Host["tier"];
   userTier: UserHostTier;
   isOwner: boolean;
-  isCollab: boolean;
   accessRole?: HostEffectiveAccessRole;
   hasDedicatedAccess?: boolean;
 }): { can_place: boolean; reason_unavailable?: string } {
-  // owners/collabs/delegated host users are explicitly allowed.
+  // Dedicated-host owners/delegated users are explicitly allowed.
   let can_place =
     isOwner ||
-    isCollab ||
     !!hasDedicatedAccess ||
     accessRole === "owner" ||
     accessRole === "manager" ||

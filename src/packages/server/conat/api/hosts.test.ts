@@ -4399,7 +4399,7 @@ describe("hosts.listHosts bootstrap normalization", () => {
     );
   });
 
-  it("includes collaborator hosts in the local prefilter", async () => {
+  it("includes delegated hosts in the local prefilter", async () => {
     queryMock = jest.fn(async (sql: string) => {
       if (
         sql.includes(
@@ -4422,9 +4422,8 @@ describe("hosts.listHosts bootstrap normalization", () => {
               id: HOST_ID,
               status: "running",
               deleted: null,
-              metadata: {
-                collaborators: [ACCOUNT_ID],
-              },
+              metadata: {},
+              delegated_access_role: "manager",
             },
           ],
         };
