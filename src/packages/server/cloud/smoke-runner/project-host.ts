@@ -99,6 +99,7 @@ import {
   createHost,
   deleteHostInternal,
   issueProjectHostAuthToken,
+  setHostAccess,
   startHost,
   stopHostInternal,
   updateHostMachine,
@@ -946,33 +947,20 @@ async function ensureSecondarySmokeAccountViaCli({
 }
 
 async function addHostCollaborator({
+  actor_account_id,
   host_id,
   collaborator_account_id,
 }: {
+  actor_account_id: string;
   host_id: string;
   collaborator_account_id: string;
 }): Promise<void> {
-  const { rows } = await getPool().query<{
-    metadata: Record<string, any> | null;
-  }>("SELECT metadata FROM project_hosts WHERE id=$1 AND deleted IS NULL", [
-    host_id,
-  ]);
-  const row = rows[0];
-  if (!row) {
-    throw new Error(`host ${host_id} not found`);
-  }
-  const metadata = { ...(row.metadata ?? {}) };
-  const current = Array.isArray(metadata.collaborators)
-    ? metadata.collaborators
-    : [];
-  const next = [
-    ...new Set([...current.map((x: any) => `${x}`), collaborator_account_id]),
-  ];
-  metadata.collaborators = next;
-  await getPool().query(
-    "UPDATE project_hosts SET metadata=$2, updated=NOW() WHERE id=$1 AND deleted IS NULL",
-    [host_id, metadata],
-  );
+  await setHostAccess({
+    account_id: actor_account_id,
+    id: host_id,
+    target_account_id: collaborator_account_id,
+    role: "manager",
+  });
 }
 
 type HostStatusSnapshot = {
@@ -4674,10 +4662,12 @@ async function runDrainSmokeScenarioViaCli({
       if (!secondaryAccountId) throw new Error("missing secondary account id");
       if (!sourceHostId || !destHostId) throw new Error("missing host ids");
       await addHostCollaborator({
+        actor_account_id: account_id,
         host_id: sourceHostId,
         collaborator_account_id: secondaryAccountId,
       });
       await addHostCollaborator({
+        actor_account_id: account_id,
         host_id: destHostId,
         collaborator_account_id: secondaryAccountId,
       });

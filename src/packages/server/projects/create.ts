@@ -16,6 +16,7 @@ import {
   computePlacementPermission,
   getUserHostTier,
 } from "@cocalc/server/project-host/placement";
+import { getHostAccessForAccount } from "@cocalc/server/project-host/access";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import {
   assertCanIncreaseAccountStorage,
@@ -273,15 +274,20 @@ export default async function createProject(opts: CreateProjectOptions) {
     }
     const metadata = row.metadata ?? {};
     const owner = metadata.owner;
-    const collaborators: string[] = metadata.collaborators ?? [];
     const tier = row.tier as number | undefined;
     const membership = await resolveMembershipForAccount(account_id);
     const userTier = getUserHostTier(membership.entitlements);
+    const access = await getHostAccessForAccount({
+      host_id,
+      account_id,
+      admin_view: true,
+    });
     const { can_place } = computePlacementPermission({
       tier,
       userTier,
       isOwner: owner === account_id,
-      isCollab: collaborators.includes(account_id ?? ""),
+      accessRole: access.role,
+      hasDedicatedAccess: access.delegated_role != null,
     });
     if (!can_place) {
       throw Error("not allowed to place a project on that host");

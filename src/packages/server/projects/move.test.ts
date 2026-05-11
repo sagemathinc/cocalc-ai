@@ -249,6 +249,7 @@ describe("moveProjectToHost", () => {
       bay_id: "bay-0",
       name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
       region: "us-west1",
+      can_place: true,
     }));
     getExplicitProjectRoutedClientMock = jest.fn(async () => ({
       sync: {
@@ -457,6 +458,7 @@ describe("moveProjectToHost", () => {
       host_id,
       bay_id: host_id === DEST_HOST_ID ? "bay-9" : "bay-0",
       region: "us-west1",
+      can_place: true,
     }));
     const { moveProjectToHost } = await import("./move");
     await expect(
@@ -477,6 +479,25 @@ describe("moveProjectToHost", () => {
     });
   });
 
+  it("rejects a move when destination host placement is denied", async () => {
+    resolveHostConnectionMock = jest.fn(async ({ host_id }: any) => ({
+      host_id,
+      bay_id: "bay-0",
+      region: "us-west1",
+      can_place: false,
+    }));
+    const { moveProjectToHost } = await import("./move");
+    await expect(
+      moveProjectToHost({
+        project_id: PROJECT_ID,
+        dest_host_id: DEST_HOST_ID,
+        account_id: "account-id",
+        allow_offline: true,
+      }),
+    ).rejects.toThrow(/not allowed to place a project on that host/);
+    expect(savePlacementMock).not.toHaveBeenCalled();
+  });
+
   it("rejects a cross-region move unless backup-region cutover is requested", async () => {
     const consts = await import("@cocalc/util/consts");
     (consts.parseR2Region as jest.Mock).mockImplementation((value: string) => {
@@ -494,6 +515,7 @@ describe("moveProjectToHost", () => {
       bay_id: "bay-0",
       name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
       region: host_id === DEST_HOST_ID ? "europe-west1" : "us-west1",
+      can_place: true,
     }));
 
     const { moveProjectToHost } = await import("./move");
@@ -566,6 +588,7 @@ describe("moveProjectToHost", () => {
       bay_id: "bay-0",
       name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
       region: host_id === DEST_HOST_ID ? "europe-west1" : "us-west1",
+      can_place: true,
     }));
     createBackupLroMock = jest
       .fn()
@@ -729,6 +752,7 @@ describe("moveProjectToHost", () => {
       bay_id: "bay-0",
       name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
       region: host_id === DEST_HOST_ID ? "europe-west1" : "us-west1",
+      can_place: true,
     }));
     createBackupLroMock = jest
       .fn()
@@ -878,6 +902,7 @@ describe("moveProjectToHost", () => {
       bay_id: "bay-0",
       name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
       region: host_id === DEST_HOST_ID ? "europe-west1" : "us-west1",
+      can_place: true,
     }));
     createBackupLroMock = jest
       .fn()
@@ -1032,6 +1057,7 @@ describe("moveProjectToHost", () => {
       bay_id: "bay-0",
       name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
       region: host_id === DEST_HOST_ID ? "europe-west1" : "us-west1",
+      can_place: true,
     }));
     createBackupLroMock = jest.fn().mockResolvedValueOnce({
       op_id: "backup-op-final",
@@ -1163,6 +1189,7 @@ describe("moveProjectToHost", () => {
       bay_id: "bay-0",
       name: host_id === SOURCE_HOST_ID ? SOURCE_HOST_NAME : DEST_HOST_NAME,
       region: host_id === DEST_HOST_ID ? "europe-west1" : "us-west1",
+      can_place: true,
     }));
     createBackupLroMock = jest.fn().mockResolvedValueOnce({
       op_id: "backup-op-final-hang",

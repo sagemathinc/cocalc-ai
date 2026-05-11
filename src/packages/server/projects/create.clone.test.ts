@@ -91,6 +91,15 @@ jest.mock("@cocalc/server/project-host/placement", () => ({
   getUserHostTier: (...args: any[]) => getUserHostTierMock(...args),
 }));
 
+jest.mock("@cocalc/server/project-host/access", () => ({
+  __esModule: true,
+  getHostAccessForAccount: jest.fn(async () => ({
+    role: "owner",
+    delegated_role: undefined,
+    exists: true,
+  })),
+}));
+
 jest.mock("@cocalc/server/membership/resolve", () => ({
   __esModule: true,
   resolveMembershipForAccount: (...args: any[]) =>
