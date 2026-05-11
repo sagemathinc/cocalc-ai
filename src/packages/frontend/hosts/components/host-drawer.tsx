@@ -1802,9 +1802,15 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     <Space orientation="vertical" style={{ width: "100%" }} size="middle">
       <HostProjectStatus host={host} fontSize={14} />
       <Space wrap>
-        <Button size="small" onClick={() => setShowProjects(true)}>
-          Browse projects
-        </Button>
+        {host.can_view_host_projects ? (
+          <Button size="small" onClick={() => setShowProjects(true)}>
+            Browse projects
+          </Button>
+        ) : (
+          <Typography.Text type="secondary">
+            Only the owner or a manager can browse all projects on this host.
+          </Typography.Text>
+        )}
       </Space>
     </Space>
   ) : null;
@@ -4283,8 +4289,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
           open={showProjects}
           onClose={() => setShowProjects(false)}
           hostOpActive={hostOpActive}
-          onStopRunningProjects={onStopRunningProjects}
-          onRestartRunningProjects={onRestartRunningProjects}
+          onStopRunningProjects={
+            host.can_view_host_projects ? onStopRunningProjects : undefined
+          }
+          onRestartRunningProjects={
+            host.can_view_host_projects ? onRestartRunningProjects : undefined
+          }
         />
       </Space>
     </Drawer>

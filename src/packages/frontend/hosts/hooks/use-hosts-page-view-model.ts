@@ -1748,10 +1748,8 @@ export const useHostsPageViewModel = () => {
     onRemoveHostAccess: removeHostAccess,
     onSetHostProjectRamLimit: setHostProjectRamLimit,
     onSetHostOwnerSpendLimits: setHostOwnerSpendLimits,
-    onStopRunningProjects: isAdmin ? stopRunningProjectsOnHost : undefined,
-    onRestartRunningProjects: isAdmin
-      ? restartRunningProjectsOnHost
-      : undefined,
+    onStopRunningProjects: stopRunningProjectsOnHost,
+    onRestartRunningProjects: restartRunningProjectsOnHost,
     selfHost: {
       connectorMap: selfHostConnectorMap,
       isConnectorOnline: isSelfHostConnectorOnline,
