@@ -50,15 +50,17 @@ can:
 Undergraduates can create or move their own projects onto the host, but they
 cannot start or stop the host and cannot add other people.
 
-### Small lab with a budget guardrail
+### Small lab with budget guardrails
 
 A lab owner creates a host that costs roughly `$12/hour`. They set an optional
-per-host 7-day spend limit of `$500`.
+per-host 5-hour spend limit of `$100` and 7-day spend limit of `$500`.
 
 The host can be shared normally, but once the host itself has spent about `$500`
-in the rolling 7-day window, the system stops it and clearly shows:
+in the rolling 7-day window, or about `$100` in the rolling 5-hour window, the
+system stops it and clearly shows:
 
 - the configured host cap
+- current 5-hour host spend
 - current 7-day host spend
 - when the cap was hit
 - that the host was stopped by the owner-configured per-host limit
@@ -140,7 +142,13 @@ future cleanup, but it is not necessary for this feature.
 
 ### Migration From Metadata Collaborators
 
-One migration should convert existing metadata collaborators into table rows:
+There is no public-production dedicated-host compatibility requirement. The
+only existing hosts are alpha/dogfooding hosts, and they are one-owner,
+site-funded hosts. They must keep working, but we should not preserve a long
+legacy collaborator model.
+
+One migration should convert any existing metadata collaborators into table
+rows so alpha hosts do not silently lose delegated access if any exists:
 
 - if `metadata.host_collab_control === true`, convert collaborators to
   `manager`
@@ -149,42 +157,48 @@ One migration should convert existing metadata collaborators into table rows:
 - after migration, new writes should not use `metadata.collaborators` or
   `metadata.host_collab_control`
 
-Because `cocalc-ai` is still greenfield, the implementation should avoid a long
-legacy compatibility path. A short read fallback during the rollout is fine, but
-the post-migration code should use `project_host_access` as the source of truth.
+Post-migration code should use `project_host_access` as the source of truth for
+delegated access. Do not add a long-term read fallback to metadata
+collaborators.
 
 ## Permission Matrix
 
-| Action                                   | Owner | Manager       | User | Admin    |
-| ---------------------------------------- | ----- | ------------- | ---- | -------- |
-| See host in host picker                  | Yes   | Yes           | Yes  | Yes      |
-| Move own project to host                 | Yes   | Yes           | Yes  | Yes      |
-| Create new project on host               | Yes   | Yes           | Yes  | Yes      |
-| See owner-paid warning                   | Yes   | Yes           | Yes  | Optional |
-| Start host                               | Yes   | Yes           | No   | Yes      |
-| Stop/restart host                        | Yes   | Yes           | No   | Yes      |
-| See all projects on host                 | Yes   | Yes           | No   | Yes      |
-| Stop/restart projects on host            | Yes   | Yes           | No   | Yes      |
-| Add/remove users                         | Yes   | Yes           | No   | Yes      |
-| Add/remove managers                      | Yes   | Yes           | No   | Yes      |
-| Remove/demote owner                      | No    | No            | No   | No       |
-| Rename host                              | Yes   | Open decision | No   | Yes      |
-| Set per-host spend cap                   | Yes   | Open decision | No   | Yes      |
-| Change machine/provider/funding mode     | Yes   | No            | No   | Yes      |
-| Drain host                               | Yes   | No            | No   | Yes      |
-| Delete/deprovision host                  | Yes   | No            | No   | Yes      |
-| Rootfs/SSH/software maintenance controls | Yes   | No            | No   | Yes      |
+| Action                                      | Owner | Manager | User | Admin                  |
+| :------------------------------------------ | :---- | :------ | :--- | :--------------------- |
+| See host in host picker                     | Yes   | Yes     | Yes  | Yes                    |
+| Move own project to host                    | Yes   | Yes     | Yes  | Yes                    |
+| Create new project on host                  | Yes   | Yes     | Yes  | Yes                    |
+| See owner-paid warning                      | Yes   | Yes     | Yes  | Optional               |
+| Start host                                  | Yes   | Yes     | No   | Yes                    |
+| Stop/restart host                           | Yes   | Yes     | No   | Yes                    |
+| See all projects on host                    | Yes   | Yes     | No   | Yes                    |
+| Stop/restart projects on host               | Yes   | Yes     | No   | Yes                    |
+| Add/remove users                            | Yes   | Yes     | No   | Yes                    |
+| Add/remove managers                         | Yes   | Yes     | No   | Yes                    |
+| Remove/demote owner                         | No    | No      | No   | No                     |
+| Rename host                                 | Yes   | No      | No   | Yes                    |
+| Set per-host spend caps                     | Yes   | No      | No   | Yes                    |
+| Configure per-project RAM cap               | No    | No      | No   | Yes                    |
+| Change machine/provider/funding mode        | Yes   | No      | No   | Yes                    |
+| Drain host                                  | Yes   | No      | No   | Yes                    |
+| Delete/deprovision host                     | Yes   | No      | No   | Yes                    |
+| Run UI software upgrade/maintenance actions | Yes   | No      | No   | Yes                    |
+| Direct SSH or secret access to host         | No    | No      | No   | Admin-only break-glass |
 
 Recommended first-release decisions:
 
 - keep rename owner/admin only unless there is a concrete user need
 - keep per-host spend cap owner/admin only because it directly changes the
   owner's financial risk
+- keep per-project RAM cap admin-only because it overrides normal membership
+  RAM limits for all projects placed on the host
 - keep drain/delete/deprovision strictly owner/admin
+- never expose direct SSH to dedicated-host owners, managers, or users
 
 Managers can intentionally cause spend by starting a host and by letting users
 place projects on it. This is the whole point of manager delegation. The UI
-must therefore describe manager as a high-trust role.
+must therefore describe manager as a high-trust role. Managers still should not
+rename hosts because that is confusing ownership/identity state.
 
 ## Billing Invariants
 
@@ -213,25 +227,75 @@ For user grants:
 > Users can create or move projects onto this host, using capacity paid by the
 > owner. They cannot start or stop the host.
 
-## Owner-Configured Per-Host 7-Day Spend Limit
+## Host Security Boundary
 
-Add an optional setting:
+Dedicated-host owners, managers, and users have the same security boundary as
+normal CoCalc users. They must not get direct SSH access to the host operating
+system and must not be able to read host-local secrets such as Cloudflare tunnel
+credentials, R2/object-storage credentials, provider tokens, or service keys.
+
+Allowed owner/admin maintenance is limited to explicit UI/API actions that
+perform controlled upgrades or maintenance on behalf of the user. These actions
+must not expose shell access, secret files, environment variables, or raw host
+filesystem browsing.
+
+Managers can see operational metrics/logs needed to run the host, but logs must
+be scoped to user-safe operational output and must not expose host secrets.
+
+## Host Resource Policy
+
+Dedicated hosts need one host-level project resource option:
 
 ```ts
+metadata.resources.project_ram_limit_mb?: number;
+```
+
+This lets an admin configure how much RAM projects on that host may use, even if
+the project owner's membership would normally provide less RAM. The limit is a
+host policy because dedicated hosts are finite physical/VM capacity that the
+host owner is paying for.
+
+Semantics:
+
+- admin-only setting
+- applies to projects while they run on this host
+- allowed range is `500MB <= project_ram_limit_mb <= host_ram_mb - 3072MB`
+- reserve 3GB for host management and system services
+- 500MB is the lower bound because it is enough to run a minimal project
+- unset means project RAM comes from the normal project owner membership limit
+
+Do not add host-level CPU or storage overrides:
+
+- CPU is priority-based and should remain controlled by the existing scheduler
+  priority model.
+- Storage must continue to come from the project owner's membership because
+  project storage persists beyond any particular project-host lifecycle.
+
+## Owner-Configured Per-Host Spend Limits
+
+Add optional settings:
+
+```ts
+metadata.billing.owner_spend_limit_5h_usd?: number;
 metadata.billing.owner_spend_limit_7d_usd?: number;
 metadata.billing.owner_spend_limit_status?: {
   state: "ok" | "at_risk" | "stopped_limit_exceeded";
-  limit_usd: number;
+  limit_5h_usd?: number;
+  limit_7d_usd?: number;
+  used_5h_usd: string;
   used_7d_usd: string;
+  exceeded_window?: "5h" | "7d";
   first_exceeded_at?: string;
   stopped_at?: string;
   reason?: string;
 }
 ```
 
-This is a per-host, owner-controlled rolling 7-day cap.
+These are per-host, owner-controlled rolling spend caps. The 5-hour and 7-day
+windows are intentionally symmetrical with the membership spend-limit model, but
+they are owner opt-in guardrails for a specific dedicated host.
 
-It is intentionally different from:
+They are intentionally different from:
 
 - membership 5-hour and 7-day prepaid/postpaid limits
 - admin entitlement overrides
@@ -242,12 +306,14 @@ Semantics:
 
 - unset means no owner-configured per-host cap
 - `0`, negative, non-finite, or invalid values are rejected
-- only owner/admin can set, change, or remove it
-- the cap applies to spend attributable to this host in the rolling 7-day window
-- when exceeded, the host is stopped
-- recovery is simple: owner raises/removes the cap, then starts the host again
+- only owner/admin can set, change, or remove them
+- each configured cap applies to spend attributable to this host in its rolling
+  window
+- when either configured window is exceeded, the host is stopped
+- recovery is simple: owner raises/removes the exceeded cap, then starts the host
+  again
 
-This limit should not deprovision disks or trigger the failed-payment recovery
+These limits should not deprovision disks or trigger the failed-payment recovery
 state machine. It is a voluntary guardrail, not a payment failure.
 
 ### Spend Measurement
@@ -256,12 +322,14 @@ Preferred implementation:
 
 - reuse purchase-session or metered usage records for dedicated-host spend
 - filter by `host_id`
+- sum host spend over `NOW() - interval '5 hours'`
 - sum host spend over `NOW() - interval '7 days'`
+- compare against `metadata.billing.owner_spend_limit_5h_usd`
 - compare against `metadata.billing.owner_spend_limit_7d_usd`
 
-If the existing spend tables do not yet make host-level 7-day aggregation cheap,
-add a helper in `src/packages/server/project-host/spend.ts` rather than
-duplicating SQL inside maintenance.
+If the existing spend tables do not yet make host-level rolling-window
+aggregation cheap, add a helper in `src/packages/server/project-host/spend.ts`
+rather than duplicating SQL inside maintenance.
 
 ### Enforcement Path
 
@@ -270,7 +338,7 @@ Integrate this into `src/packages/server/project-host/spend-maintenance.ts`.
 Recommended ordering:
 
 1. reconcile active purchase session for owner and host
-2. compute host-level 7-day spend
+2. compute host-level 5-hour and 7-day spend
 3. if owner cap is exceeded, mark `owner_spend_limit_status`
 4. request provider stop with a distinct reason
 5. notify the owner using billing/spend notification category
@@ -279,21 +347,27 @@ Recommended ordering:
 Recommended reason code:
 
 ```ts
-"owner_host_7d_spend_limit_exceeded";
+"owner_host_spend_limit_exceeded";
 ```
 
 This should produce wording like:
+
+> This host was stopped because its owner-configured 5-hour spend limit was
+> reached.
+
+or:
 
 > This host was stopped because its owner-configured 7-day spend limit was
 > reached.
 
 The host list and drawer should show:
 
+- current 5-hour host spend
 - current 7-day host spend
-- configured cap
+- configured caps
 - cap status
 - whether the cap caused the host to stop
-- a direct owner/admin control to raise or remove the cap
+- a direct owner/admin control to raise or remove each cap
 
 ## Backend API Plan
 
@@ -328,7 +402,11 @@ access_role?: HostEffectiveAccessRole;
 can_manage_access?: boolean;
 can_view_host_projects?: boolean;
 billing_owner_account_id?: string;
+project_ram_limit_mb?: number;
+host_ram_mb?: number;
+owner_spend_limit_5h_usd?: number;
 owner_spend_limit_7d_usd?: number;
+owner_spend_5h_usd?: string;
 owner_spend_7d_usd?: string;
 owner_spend_limit_state?: "ok" | "at_risk" | "stopped_limit_exceeded";
 ```
@@ -339,8 +417,10 @@ Add RPC methods:
 listHostAccess({ account_id, id });
 setHostAccess({ account_id, id, target_account_id, role });
 removeHostAccess({ account_id, id, target_account_id });
-setHostOwnerSpendLimit({ account_id, id, limit_7d_usd });
-clearHostOwnerSpendLimit({ account_id, id });
+setHostProjectRamLimit({ account_id, id, project_ram_limit_mb });
+clearHostProjectRamLimit({ account_id, id });
+setHostOwnerSpendLimits({ account_id, id, limit_5h_usd, limit_7d_usd });
+clearHostOwnerSpendLimits({ account_id, id, window? });
 getHostOwnerSpendStatus({ account_id, id });
 ```
 
@@ -349,15 +429,18 @@ Permission requirements:
 - `listHostAccess`: owner, manager, admin
 - `setHostAccess`: owner, manager, admin
 - `removeHostAccess`: owner, manager, admin
-- `setHostOwnerSpendLimit`: owner, admin
-- `clearHostOwnerSpendLimit`: owner, admin
+- `setHostProjectRamLimit`: admin
+- `clearHostProjectRamLimit`: admin
+- `setHostOwnerSpendLimits`: owner, admin
+- `clearHostOwnerSpendLimits`: owner, admin
 - `getHostOwnerSpendStatus`: owner, manager, admin; user can see a reduced
   status if useful in the host picker
 
 Fresh auth:
 
 - require fresh auth when granting `manager`
-- require fresh auth when changing the owner spend cap
+- require fresh auth when changing owner spend caps
+- require fresh auth when changing the admin project RAM cap
 - do not require fresh auth for adding a `user`
 
 ## Backend Implementation Plan
@@ -374,7 +457,7 @@ Responsibilities:
 - resolve effective role
 - expose boolean permission helpers
 - enforce owner/manager/user/admin gates
-- normalize legacy metadata collaborators during rollout if needed
+- keep `project_host_access` as the delegated-access source of truth
 
 Suggested helpers:
 
@@ -409,14 +492,24 @@ Critical server-side enforcement:
   server
 - the UI host picker is not sufficient as an authorization boundary
 
-### 3. Add per-host spend cap helper
+### 3. Add host resource and spend-cap helpers
 
 Add helpers near existing spend code:
 
+- `getDedicatedHostProjectRamLimitStatus({ host_id, metadata })`
+- `setDedicatedHostProjectRamLimit({ host_id, limit_mb })`
+- `clearDedicatedHostProjectRamLimit({ host_id })`
+- `getDedicatedHostSpend5h({ host_id })`
 - `getDedicatedHostSpend7d({ host_id })`
 - `getDedicatedHostOwnerSpendLimitStatus({ host_id, metadata })`
-- `setDedicatedHostOwnerSpendLimit({ host_id, owner, limit })`
-- `clearDedicatedHostOwnerSpendLimit({ host_id, owner })`
+- `setDedicatedHostOwnerSpendLimits({ host_id, owner, limit_5h, limit_7d })`
+- `clearDedicatedHostOwnerSpendLimits({ host_id, owner, window? })`
+
+The RAM helper must validate host capacity before writing:
+
+- reject values below 500MB
+- reject values above `host_ram_mb - 3072MB`
+- reject values when host RAM cannot be determined
 
 Integrate into `spend-maintenance.ts` before general membership-lane enforcement
 requests a drain. The voluntary cap should request a stop, not a deprovision
@@ -434,6 +527,11 @@ Rules:
   permissions
 - never write ACL rows into the admin actor's home bay merely because that is
   where the actor is homed
+- when a host home bay changes, migrate `project_host_access` rows and
+  host-local configuration such as owner spend caps and project RAM policy with
+  the `project_hosts` row
+- make bay move idempotent: after a failed/retried move, exactly one bay should
+  own the active ACL rows for the host
 
 This mirrors the admin entitlement override bug class: writes must follow the
 target resource, not the actor.
@@ -457,10 +555,17 @@ Owner/manager view:
 
 Owner/admin-only controls:
 
-- per-host 7-day spend cap
+- per-host 5-hour and 7-day spend caps
 - current rolling 7-day spend
+- current rolling 5-hour spend
 - cap status
 - raise/remove cap
+
+Admin-only controls:
+
+- per-project RAM cap for projects running on this host
+- show allowed range: 500MB through host RAM minus 3GB
+- explicitly state that CPU and storage are not overridden by the host
 
 ### Host picker and create/move flows
 
@@ -487,8 +592,9 @@ Add lightweight indicators:
 
 - role badge: Owner, Manager, User, Pool
 - paid-by owner when not owned by current user
-- 7-day cap badge when configured
+- 5-hour/7-day cap badge when configured
 - stopped-by-owner-cap badge when applicable
+- admin-visible project RAM cap badge when configured
 
 ## Audit And Notifications
 
@@ -511,7 +617,7 @@ Notifications:
 - notify target account when granted access
 - notify target account when removed
 - notify owner when manager grants or removes another manager
-- notify owner when the per-host 7-day cap stops a host
+- notify owner when either per-host spend cap stops a host
 
 Use the billing/spend notification category for spend-cap enforcement.
 
@@ -526,11 +632,16 @@ Add tests for:
 - manager can start/stop and manage ACL
 - manager cannot delete/deprovision/change funding/machine/rootfs controls
 - manager cannot remove/demote owner
+- owner/manager/user cannot get direct SSH or host secret access
 - admin bypass works
 - metadata collaborator migration maps correctly
+- project RAM cap validates 500MB through host RAM minus 3GB
+- project RAM cap overrides membership RAM only while project is on that host
+- CPU and storage are not overridden by dedicated-host policy
 - per-host spend cap status computes correctly
 - per-host spend cap stop does not trigger deprovision
 - billing owner remains unchanged for manager/user actions
+- host bay moves preserve `project_host_access` rows and host-local config
 
 ### Integration tests
 
@@ -539,10 +650,13 @@ Add hub/API tests for:
 - `listHostAccess`
 - `setHostAccess`
 - `removeHostAccess`
-- `setHostOwnerSpendLimit`
-- `clearHostOwnerSpendLimit`
+- `setHostProjectRamLimit`
+- `clearHostProjectRamLimit`
+- `setHostOwnerSpendLimits`
+- `clearHostOwnerSpendLimits`
 - `listHosts` role/cap fields
 - project move/create authorization against a delegated host
+- host home-bay move with ACL/config migration
 
 ### Live smoke
 
@@ -555,10 +669,15 @@ On `lite4b` or equivalent multibay setup:
 5. user cannot start/stop host
 6. manager starts/stops host
 7. manager cannot delete/deprovision/change machine/funding
-8. owner sets a very low 7-day host cap
+8. owner sets very low 5-hour and 7-day host caps
 9. maintenance stops the host with owner-cap reason
 10. owner raises/removes cap and starts host again
 11. inspect billing/purchase-session records and verify charges stay on owner
+12. admin sets project RAM cap and verifies placed projects can use that RAM
+13. verify CPU priority and storage still come from normal membership/project
+    settings
+14. move host between bays and verify ACL/config still works from the new home
+    bay
 
 ## Implementation Phases
 
@@ -566,20 +685,22 @@ On `lite4b` or equivalent multibay setup:
 
 - add `project_host_access` schema
 - add access helper
-- migrate metadata collaborators
+- migrate any alpha metadata collaborators once
 - replace server-side permission checks
 - expose role/cap fields in `listHosts`
+- add host-home-bay migration handling for access/config rows
 
 ### Phase 2: API and UI management
 
 - add host access RPC methods
 - add owner spend cap RPC methods
+- add admin project RAM cap RPC methods
 - add host drawer access UI
 - add host picker/list role and paid-by labels
 
 ### Phase 3: Spend cap enforcement
 
-- add host-level 7-day spend aggregation
+- add host-level 5-hour and 7-day spend aggregation
 - integrate cap check into spend maintenance
 - add stop reason and status display
 - add owner notification
@@ -592,24 +713,16 @@ On `lite4b` or equivalent multibay setup:
 - update release scoreboard
 - fix only correctness, security, and clarity bugs found during smoke
 
-## Open Decisions
+## Resolved First-Release Decisions
 
-These should be decided before implementation or kept intentionally owner-only
-for the first release:
-
-- should managers be allowed to rename hosts?
-- should managers see all host metrics/logs or only operational status?
-- should managers be allowed to stop/restart all projects on the host?
-- should host access grants support pending email invites later?
-
-Recommended first-release defaults:
-
-- managers cannot rename hosts
-- managers see operational host/project status, not rootfs/SSH/admin
-  maintenance surfaces
-- managers can stop/restart host projects if that is already part of the host
-  operations panel
-- grants require existing accounts only
+- Managers cannot rename hosts.
+- Managers can see host metrics and operational logs, but never direct SSH,
+  host secrets, raw host filesystem access, or admin maintenance surfaces.
+- Managers can stop/restart host projects if that is already part of the host
+  operations panel.
+- Host access grants require existing accounts only.
+- Pending email invites can be added later, but are not part of this first
+  release.
 
 ## Non-Goals For First Release
 
