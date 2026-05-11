@@ -115,7 +115,11 @@ export type CourseStudentAccessStatus =
   | { status: "not-required"; course?: ProjectCourseInfo }
   | {
       status: "active";
-      source: "membership" | "course-seat" | "student-course-purchase";
+      source:
+        | "membership"
+        | "course-seat"
+        | "student-course-purchase"
+        | "site-license";
       required_membership_class: string;
       required_label?: string;
       current_membership_class: string;

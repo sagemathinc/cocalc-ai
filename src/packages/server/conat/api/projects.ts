@@ -805,7 +805,9 @@ export async function getCourseStudentAccess({
           ? "course-seat"
           : membership.grant_source === "student-course-purchase"
             ? "student-course-purchase"
-            : "membership",
+            : membership.grant_source === "site-license"
+              ? "site-license"
+              : "membership",
       required_membership_class: requiredMembershipClass,
       required_label: requiredTier?.label,
       current_membership_class: membership.class,
