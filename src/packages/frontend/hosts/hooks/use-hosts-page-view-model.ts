@@ -368,6 +368,11 @@ export const useHostsPageViewModel = () => {
     updateHostMachine,
     forceDeprovision,
     removeSelfHostConnector,
+    listHostAccess,
+    setHostAccess,
+    removeHostAccess,
+    setHostProjectRamLimit,
+    setHostOwnerSpendLimits,
     stopHostProjects,
     restartHostProjects,
   } = useHostActions({
@@ -1738,6 +1743,11 @@ export const useHostsPageViewModel = () => {
       : undefined,
     rootfsInventory,
     canManageRootfs,
+    onListHostAccess: listHostAccess,
+    onSetHostAccess: setHostAccess,
+    onRemoveHostAccess: removeHostAccess,
+    onSetHostProjectRamLimit: setHostProjectRamLimit,
+    onSetHostOwnerSpendLimits: setHostOwnerSpendLimits,
     onStopRunningProjects: isAdmin ? stopRunningProjectsOnHost : undefined,
     onRestartRunningProjects: isAdmin
       ? restartRunningProjectsOnHost
