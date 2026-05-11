@@ -176,10 +176,15 @@ import {
   listHostRuntimeDeployments,
   pullHostRootfsImage,
   issueProjectHostAuthTokenLocal,
+  listHostAccess,
   listHostsLocal,
   recordProjectBackupIndexLocal,
   recordProjectBackupLocal,
   resolveHostConnectionLocal,
+  removeHostAccess,
+  setHostOwnerSpendLimits,
+  setHostAccess,
+  setHostProjectRamLimit,
   setHostRuntimeDeployments,
   getProjectBackupIndexesLocal,
   syncProjectBackupIndexesLocal,
@@ -840,6 +845,12 @@ async function startHostConnectionService(): Promise<void> {
         // before issuing this cluster-internal request.
         trusted_admin_view: true,
       }),
+    listHostAccess: async (opts) => await listHostAccess(opts),
+    setHostAccess: async (opts) => await setHostAccess(opts),
+    removeHostAccess: async (opts) => await removeHostAccess(opts),
+    setHostProjectRamLimit: async (opts) => await setHostProjectRamLimit(opts),
+    setHostOwnerSpendLimits: async (opts) =>
+      await setHostOwnerSpendLimits(opts),
     getHostLog: async ({ account_id, id, limit }) =>
       await getHostLog({
         account_id,

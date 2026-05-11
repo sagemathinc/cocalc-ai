@@ -38,6 +38,9 @@ import type {
   HostCloudRefreshResult,
   ProjectBackupConfig,
   ProjectBackupIndexRecord,
+  HostAccessRole,
+  HostAccessEntry,
+  HostEffectiveAccessRole,
 } from "@cocalc/conat/hub/api/hosts";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
@@ -60,6 +63,13 @@ import {
   computePlacementPermission,
   getUserHostTier,
 } from "@cocalc/server/project-host/placement";
+import {
+  getHostAccessForAccount,
+  hostAccessRoleCan,
+  listHostAccessEntries,
+  removeHostAccessEntry,
+  setHostAccessEntry,
+} from "@cocalc/server/project-host/access";
 import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/project-host/auto-grow";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
@@ -264,6 +274,52 @@ import {
 } from "./hosts-rootfs-releases";
 function pool() {
   return getPool();
+}
+
+function normalizeDelegatedHostAccessRole(
+  role: unknown,
+): HostAccessRole | undefined {
+  const normalized = `${role ?? ""}`.trim();
+  return normalized === "user" || normalized === "manager"
+    ? normalized
+    : undefined;
+}
+
+async function resolveLoadedHostAccessRole({
+  row,
+  account_id,
+}: {
+  row: any;
+  account_id: string;
+}): Promise<HostEffectiveAccessRole | undefined> {
+  const metadata = row?.metadata ?? {};
+  if (`${metadata.owner ?? ""}`.trim() === account_id) {
+    return "owner";
+  }
+  if (await isAdmin(account_id)) {
+    return "admin";
+  }
+  const access = await getHostAccessForAccount({
+    host_id: row.id,
+    account_id,
+  });
+  return access.role;
+}
+
+async function requireLoadedHostPermission({
+  row,
+  account_id,
+  permission,
+}: {
+  row: any;
+  account_id: string;
+  permission: Parameters<typeof hostAccessRoleCan>[1];
+}) {
+  const role = await resolveLoadedHostAccessRole({ row, account_id });
+  if (!hostAccessRoleCan(role, permission)) {
+    throw new Error("not authorized");
+  }
+  return role;
 }
 
 async function loadHostRuntimeExceptionSummaries(
@@ -647,7 +703,7 @@ async function loadHostForStartStop(
   id: string,
   account_id?: string,
 ): Promise<any> {
-  const owner = requireAccount(account_id);
+  const actor = requireAccount(account_id);
   const { rows } = await pool().query(
     `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
     [id],
@@ -656,22 +712,19 @@ async function loadHostForStartStop(
   if (!row) {
     throw new Error("host not found");
   }
-  const metadata = row.metadata ?? {};
-  const isOwner = metadata.owner === owner;
-  if (isOwner) return row;
-  const collaborators = (metadata.collaborators ?? []) as string[];
-  const isCollab = collaborators.includes(owner);
-  if (isCollab && !!metadata.host_collab_control) {
-    return row;
-  }
-  throw new Error("not authorized");
+  await requireLoadedHostPermission({
+    row,
+    account_id: actor,
+    permission: "start-stop",
+  });
+  return row;
 }
 
 async function loadHostForListing(
   id: string,
   account_id?: string,
 ): Promise<any> {
-  const owner = requireAccount(account_id);
+  const actor = requireAccount(account_id);
   const { rows } = await pool().query(
     `SELECT * FROM project_hosts WHERE id=$1 AND deleted IS NULL`,
     [id],
@@ -680,18 +733,12 @@ async function loadHostForListing(
   if (!row) {
     throw new Error("host not found");
   }
-  if (await isAdmin(owner)) {
-    return row;
-  }
-  const metadata = row.metadata ?? {};
-  const isOwner = metadata.owner === owner;
-  if (isOwner) return row;
-  const collaborators = (metadata.collaborators ?? []) as string[];
-  const isCollab = collaborators.includes(owner);
-  if (isCollab && !!metadata.host_collab_control) {
-    return row;
-  }
-  throw new Error("not authorized");
+  await requireLoadedHostPermission({
+    row,
+    account_id: actor,
+    permission: "view-projects",
+  });
+  return row;
 }
 
 function isHostNotFoundError(err: unknown): boolean {
@@ -871,7 +918,7 @@ async function markHostDeprovisioned(row: any, action: string) {
 }
 
 async function loadHostForView(id: string, account_id?: string): Promise<any> {
-  const owner = requireAccount(account_id);
+  const actor = requireAccount(account_id);
   const { rows } = await pool().query(
     `SELECT * FROM project_hosts WHERE id=$1`,
     [id],
@@ -880,12 +927,12 @@ async function loadHostForView(id: string, account_id?: string): Promise<any> {
   if (!row) {
     throw new Error("host not found");
   }
-  const metadata = row.metadata ?? {};
-  const isOwner = metadata.owner === owner;
-  const collaborators = (metadata.collaborators ?? []) as string[];
-  const isCollab = collaborators.includes(owner);
-  if (isOwner || isCollab) return row;
-  throw new Error("not authorized");
+  await requireLoadedHostPermission({
+    row,
+    account_id: actor,
+    permission: "view",
+  });
+  return row;
 }
 
 async function loadMembership(account_id: string) {
@@ -2356,25 +2403,43 @@ export async function listHostsLocal({
   trusted_admin_view,
 }: ListHostsOptions): Promise<Host[]> {
   const owner = requireAccount(account_id);
+  const isTrustedAdminView =
+    !!admin_view && (trusted_admin_view || (await isAdmin(owner)));
   if (admin_view && !trusted_admin_view && !(await isAdmin(owner))) {
     throw new Error("not authorized");
   }
   const filters: string[] = [];
-  const params: any[] = [];
+  const params: any[] = [owner];
   if (!admin_view) {
     filters.push(
-      `(metadata->>'owner' = $${params.length + 1}
-        OR COALESCE(metadata->'collaborators', '[]'::jsonb) ? $${params.length + 1}
+      `(metadata->>'owner' = $1
+        OR COALESCE(metadata->'collaborators', '[]'::jsonb) ? $1
+        OR EXISTS (
+          SELECT 1
+          FROM project_host_access access
+          WHERE access.host_id = project_hosts.id
+            AND access.account_id = $1
+            AND access.revoked_at IS NULL
+        )
         OR tier IS NOT NULL)`,
     );
-    params.push(owner);
   }
   if (!include_deleted) {
     filters.push("deleted IS NULL");
   }
   const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
   const { rows } = await pool().query(
-    `SELECT * FROM project_hosts ${whereClause} ORDER BY updated DESC NULLS LAST, created DESC NULLS LAST`,
+    `SELECT * FROM project_hosts
+       LEFT JOIN LATERAL (
+              SELECT access.role AS delegated_access_role
+              FROM project_host_access access
+              WHERE access.host_id = project_hosts.id
+                AND access.account_id = $1
+                AND access.revoked_at IS NULL
+              LIMIT 1
+            ) delegated_access ON TRUE
+      ${whereClause}
+      ORDER BY updated DESC NULLS LAST, created DESC NULLS LAST`,
     params,
   );
   const backupStatus = await loadHostBackupStatus(rows.map((row) => row.id));
@@ -2385,6 +2450,7 @@ export async function listHostsLocal({
   const visibleRows: Array<{
     row: any;
     scope: Host["scope"];
+    access_role: HostEffectiveAccessRole;
     can_place: boolean;
     can_start: boolean;
     reason_unavailable?: string;
@@ -2396,14 +2462,26 @@ export async function listHostsLocal({
     const isOwner = rowOwner === owner;
     const collaborators = (metadata.collaborators ?? []) as string[];
     const isCollab = collaborators.includes(owner);
+    const delegatedRole = normalizeDelegatedHostAccessRole(
+      row.delegated_access_role,
+    );
     const tier = normalizeHostTier(row.tier);
     const shared = tier != null;
     const starredBy = (row.starred_by ?? []) as string[];
     const starred = starredBy.includes(owner);
+    const accessRole: HostEffectiveAccessRole = isOwner
+      ? "owner"
+      : delegatedRole != null
+        ? delegatedRole
+        : isTrustedAdminView
+          ? "admin"
+          : shared
+            ? "pool"
+            : "shared";
 
     const scope: Host["scope"] = isOwner
       ? "owned"
-      : isCollab
+      : isCollab || delegatedRole != null
         ? "collab"
         : shared
           ? "pool"
@@ -2414,6 +2492,8 @@ export async function listHostsLocal({
       userTier,
       isOwner,
       isCollab,
+      accessRole,
+      hasDedicatedAccess: delegatedRole != null,
     });
     const availability = computeHostOperationalAvailability(row);
     const can_place = placement.can_place && availability.operational;
@@ -2421,7 +2501,7 @@ export async function listHostsLocal({
       placement.reason_unavailable ??
       (availability.operational ? undefined : availability.reason_unavailable);
 
-    const can_start = isOwner || (isCollab && !!metadata.host_collab_control);
+    const can_start = hostAccessRoleCan(accessRole, "start-stop");
 
     const showAll = admin_view || catalog || show_all;
     // If catalog=false, filter out what user cannot place
@@ -2432,6 +2512,7 @@ export async function listHostsLocal({
     visibleRows.push({
       row,
       scope,
+      access_role: accessRole,
       can_place,
       can_start,
       reason_unavailable,
@@ -2452,12 +2533,27 @@ export async function listHostsLocal({
     );
 
   return visibleRows.map(
-    ({ row, scope, can_place, can_start, reason_unavailable, starred }) =>
+    ({
+      row,
+      scope,
+      access_role,
+      can_place,
+      can_start,
+      reason_unavailable,
+      starred,
+    }) =>
       parseRow(row, {
         scope,
+        access_role,
         can_place,
         can_start,
+        can_manage_access: hostAccessRoleCan(access_role, "manage-access"),
+        can_view_host_projects: hostAccessRoleCan(access_role, "view-projects"),
         reason_unavailable,
+        billing_owner_account_id:
+          typeof row.metadata?.owner === "string"
+            ? row.metadata.owner
+            : undefined,
         backup_status: backupStatus.get(row.id),
         starred,
         metrics_history: metricsHistory.get(row.id),
@@ -2509,6 +2605,276 @@ export async function listHosts(opts: ListHostsOptions): Promise<Host[]> {
     );
   }
   return Array.from(deduped.values(), ({ host }) => host);
+}
+
+function serializeHostAccessEntry(
+  entry?: HostAccessEntry,
+): HostAccessEntry | undefined {
+  if (!entry) return undefined;
+  const normalizeDate = (value: HostAccessEntry["created_at"]) =>
+    value instanceof Date ? value.toISOString() : value;
+  return {
+    ...entry,
+    created_at: normalizeDate(entry.created_at),
+    updated_at: normalizeDate(entry.updated_at),
+    revoked_at: normalizeDate(entry.revoked_at),
+  };
+}
+
+export async function listHostAccess({
+  account_id,
+  id,
+  include_revoked,
+}: {
+  account_id?: string;
+  id: string;
+  include_revoked?: boolean;
+}): Promise<HostAccessEntry[]> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .listHostAccess({ account_id, id, include_revoked });
+  }
+  const row = await loadHostForView(id, account_id);
+  await requireLoadedHostPermission({
+    row,
+    account_id: requireAccount(account_id),
+    permission: "manage-access",
+  });
+  return (
+    await listHostAccessEntries({
+      host_id: row.id,
+      include_revoked,
+    })
+  ).map((entry) => serializeHostAccessEntry(entry)!);
+}
+
+export async function setHostAccess({
+  account_id,
+  id,
+  target_account_id,
+  role,
+}: {
+  account_id?: string;
+  id: string;
+  target_account_id: string;
+  role: HostAccessRole;
+}): Promise<HostAccessEntry> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge().hostConnection(remoteBay).setHostAccess({
+      account_id,
+      id,
+      target_account_id,
+      role,
+    });
+  }
+  const entry = await setHostAccessEntry({
+    host_id: id,
+    actor_account_id: requireAccount(account_id),
+    target_account_id,
+    role,
+  });
+  return serializeHostAccessEntry(entry)!;
+}
+
+export async function removeHostAccess({
+  account_id,
+  id,
+  target_account_id,
+}: {
+  account_id?: string;
+  id: string;
+  target_account_id: string;
+}): Promise<HostAccessEntry | undefined> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .removeHostAccess({ account_id, id, target_account_id });
+  }
+  return serializeHostAccessEntry(
+    await removeHostAccessEntry({
+      host_id: id,
+      actor_account_id: requireAccount(account_id),
+      target_account_id,
+    }),
+  );
+}
+
+function normalizeHostRamMb(row: any): number | undefined {
+  const metadata = row?.metadata ?? {};
+  const candidates = [
+    metadata.host_ram_mb,
+    typeof metadata.host_ram_gb === "number"
+      ? metadata.host_ram_gb * 1024
+      : undefined,
+    typeof metadata.machine?.metadata?.ram_gb === "number"
+      ? metadata.machine.metadata.ram_gb * 1024
+      : undefined,
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value > 0) {
+      return Math.floor(value);
+    }
+  }
+  return undefined;
+}
+
+function normalizeProjectRamLimitMb({
+  value,
+  row,
+}: {
+  value?: number | null;
+  row: any;
+}): number | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error("project_ram_limit_mb must be a number");
+  }
+  const normalized = Math.floor(parsed);
+  const hostRamMb = normalizeHostRamMb(row);
+  if (hostRamMb == null) {
+    throw new Error("host RAM is not known");
+  }
+  const max = hostRamMb - 3072;
+  if (max < 500) {
+    throw new Error("host does not have enough RAM for a project RAM override");
+  }
+  if (normalized < 500 || normalized > max) {
+    throw new Error(`project_ram_limit_mb must be between 500 and ${max}`);
+  }
+  return normalized;
+}
+
+function normalizeOptionalPositiveUsd(
+  value?: number | null,
+): number | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error("spend limits must be positive numbers");
+  }
+  return parsed;
+}
+
+export async function setHostProjectRamLimit({
+  account_id,
+  id,
+  project_ram_limit_mb,
+}: {
+  account_id?: string;
+  id: string;
+  project_ram_limit_mb?: number | null;
+}): Promise<Host> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .setHostProjectRamLimit({ account_id, id, project_ram_limit_mb });
+  }
+  const row = await loadHostForView(id, account_id);
+  await requireLoadedHostPermission({
+    row,
+    account_id: requireAccount(account_id),
+    permission: "configure-project-ram",
+  });
+  const normalizedLimit = normalizeProjectRamLimitMb({
+    value: project_ram_limit_mb,
+    row,
+  });
+  const metadata = { ...(row.metadata ?? {}) };
+  const resources = { ...(metadata.resources ?? {}) };
+  if (normalizedLimit == null) {
+    delete resources.project_ram_limit_mb;
+  } else {
+    resources.project_ram_limit_mb = normalizedLimit;
+  }
+  if (Object.keys(resources).length) {
+    metadata.resources = resources;
+  } else {
+    delete metadata.resources;
+  }
+  const { rows } = await pool().query(
+    `UPDATE project_hosts
+     SET metadata=$2, updated=NOW()
+     WHERE id=$1 AND deleted IS NULL
+     RETURNING *`,
+    [id, metadata],
+  );
+  if (!rows[0]) {
+    throw new Error("host not found");
+  }
+  return parseRow(rows[0]);
+}
+
+export async function setHostOwnerSpendLimits(opts: {
+  account_id?: string;
+  id: string;
+  owner_spend_limit_5h_usd?: number | null;
+  owner_spend_limit_7d_usd?: number | null;
+}): Promise<Host> {
+  const { account_id, id } = opts;
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .setHostOwnerSpendLimits({
+        account_id,
+        id,
+        owner_spend_limit_5h_usd: opts.owner_spend_limit_5h_usd,
+        owner_spend_limit_7d_usd: opts.owner_spend_limit_7d_usd,
+      });
+  }
+  const row = await loadHostForView(id, account_id);
+  await requireLoadedHostPermission({
+    row,
+    account_id: requireAccount(account_id),
+    permission: "configure-spend-caps",
+  });
+  const metadata = { ...(row.metadata ?? {}) };
+  const billing = { ...(metadata.billing ?? {}) };
+  if (Object.prototype.hasOwnProperty.call(opts, "owner_spend_limit_5h_usd")) {
+    if (opts.owner_spend_limit_5h_usd == null) {
+      delete billing.owner_spend_limit_5h_usd;
+    } else {
+      billing.owner_spend_limit_5h_usd = normalizeOptionalPositiveUsd(
+        opts.owner_spend_limit_5h_usd,
+      );
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(opts, "owner_spend_limit_7d_usd")) {
+    if (opts.owner_spend_limit_7d_usd == null) {
+      delete billing.owner_spend_limit_7d_usd;
+    } else {
+      billing.owner_spend_limit_7d_usd = normalizeOptionalPositiveUsd(
+        opts.owner_spend_limit_7d_usd,
+      );
+    }
+  }
+  if (Object.keys(billing).length) {
+    metadata.billing = billing;
+  } else {
+    delete metadata.billing;
+  }
+  const { rows } = await pool().query(
+    `UPDATE project_hosts
+     SET metadata=$2, updated=NOW()
+     WHERE id=$1 AND deleted IS NULL
+     RETURNING *`,
+    [id, metadata],
+  );
+  if (!rows[0]) {
+    throw new Error("host not found");
+  }
+  return parseRow(rows[0]);
 }
 
 function timestampMs(value: string | undefined): number | undefined {
@@ -4170,14 +4536,13 @@ export async function setHostStar({
   if (!row || row.deleted) {
     throw new Error("host not found");
   }
-  const metadata = row.metadata ?? {};
-  const rowOwner = metadata.owner ?? "";
-  const collaborators = (metadata.collaborators ?? []) as string[];
-  const isOwner = rowOwner === owner;
-  const isCollab = collaborators.includes(owner);
   const shared = row.tier != null;
-  const isAdminUser = await isAdmin(owner);
-  if (!isOwner && !isCollab && !shared && !isAdminUser) {
+  const access = await getHostAccessForAccount({
+    host_id: row.id,
+    account_id: owner,
+    admin_view: true,
+  });
+  if (!hostAccessRoleCan(access.role, "view") && !shared) {
     throw new Error("not authorized");
   }
   const current = (row.starred_by ?? []) as string[];
