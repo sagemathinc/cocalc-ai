@@ -1337,6 +1337,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     hostRamMb != null ? Math.max(0, Math.floor(hostRamMb - 3072)) : undefined;
   const canEditOwnerSpend =
     host?.access_role === "owner" || host?.access_role === "admin";
+  const ownerSpendLimitStateColor =
+    host?.owner_spend_limit_state === "stopped_limit_exceeded"
+      ? "red"
+      : host?.owner_spend_limit_state === "at_risk"
+        ? "orange"
+        : "green";
   React.useEffect(() => {
     setProjectRamLimitMb(host?.project_ram_limit_mb ?? null);
     setOwnerSpendLimit5h(host?.owner_spend_limit_5h_usd ?? null);
@@ -2081,9 +2087,19 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       <Card size="small" title="Owner spend caps">
         <Space orientation="vertical" style={{ width: "100%" }} size="small">
           <Typography.Text type="secondary">
-            Optional owner safety caps for this host. These are separate from
-            membership billing limits.
+            Optional owner safety caps for this host. If a rolling cap is hit,
+            CoCalc stops this host. These caps are separate from membership
+            billing limits.
           </Typography.Text>
+          <Space wrap>
+            <Tag>Current 5h spend: ${host.owner_spend_5h_usd ?? "0"}</Tag>
+            <Tag>Current 7d spend: ${host.owner_spend_7d_usd ?? "0"}</Tag>
+            {host.owner_spend_limit_state && (
+              <Tag color={ownerSpendLimitStateColor}>
+                {host.owner_spend_limit_state}
+              </Tag>
+            )}
+          </Space>
           <Space wrap>
             <InputNumber
               min={0}
@@ -2128,6 +2144,20 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               }}
             >
               Save spend caps
+            </Button>
+            <Button
+              disabled={!canEditOwnerSpend || !onSetHostOwnerSpendLimits}
+              onClick={async () => {
+                if (!onSetHostOwnerSpendLimits) return;
+                setOwnerSpendLimit5h(null);
+                setOwnerSpendLimit7d(null);
+                await onSetHostOwnerSpendLimits(host.id, {
+                  owner_spend_limit_5h_usd: null,
+                  owner_spend_limit_7d_usd: null,
+                });
+              }}
+            >
+              Clear
             </Button>
           </Space>
         </Space>
