@@ -24,6 +24,14 @@ export interface PublicConfig {
 }
 
 const PublicConfigContext = createContext<PublicConfig | undefined>(undefined);
+export const COCALC_WORDMARK_BLACK_URL = joinUrlPath(
+  appBasePath,
+  "webapp/cocalc-font-black.svg",
+);
+export const COCALC_WORDMARK_WHITE_URL = joinUrlPath(
+  appBasePath,
+  "webapp/cocalc-font-white.svg",
+);
 
 export function PublicConfigProvider({
   children,
@@ -48,5 +56,12 @@ export function getSiteName(config?: PublicConfig): string {
 }
 
 export function getLogoSquare(config?: PublicConfig): string {
-  return config?.logo_square || joinUrlPath(appBasePath, "webapp/favicon.ico");
+  return (
+    config?.logo_square?.trim() ||
+    joinUrlPath(appBasePath, "webapp/favicon.ico")
+  );
+}
+
+export function usesDefaultCoCalcBranding(config?: PublicConfig): boolean {
+  return !config?.logo_square?.trim() && getSiteName(config) === SITE_NAME;
 }

@@ -18,15 +18,19 @@ import {
 } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
+  COCALC_WORDMARK_WHITE_URL,
+  getLogoSquare,
+  getSiteName,
   PublicConfigProvider,
   type PublicConfig,
+  usesDefaultCoCalcBranding,
 } from "@cocalc/frontend/public/config";
-import { COLORS } from "@cocalc/util/theme";
+import { COLORS, COMPANY_NAME, DOC_URL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import PublicTopNav, { type PublicTopNavActiveKey } from "./top-nav";
 
 const { Content, Footer, Header } = Layout;
-const { Paragraph, Title } = Typography;
+const { Paragraph, Text, Title } = Typography;
 
 const PUBLIC_DISPLAY_FONT_FAMILY =
   '"Space Grotesk", "Helvetica Neue", Arial, sans-serif';
@@ -34,7 +38,7 @@ const PUBLIC_DISPLAY_FONT_URL = joinUrlPath(
   appBasePath,
   "public/fonts/space-grotesk/SpaceGrotesk-wght.woff2",
 );
-const PUBLIC_DISPLAY_FONT_CSS = `
+const PUBLIC_PAGE_CSS = `
   @font-face {
     font-family: "Space Grotesk";
     src: url("${PUBLIC_DISPLAY_FONT_URL}") format("woff2");
@@ -51,12 +55,218 @@ const PUBLIC_DISPLAY_FONT_CSS = `
     font-family: ${PUBLIC_DISPLAY_FONT_FAMILY};
     letter-spacing: -0.02em;
   }
+
+  .cocalc-public-footer a:hover {
+    color: ${COLORS.YELL_L} !important;
+  }
 `;
 
 const PAGE_BAND_STYLE = {
   paddingInline: "max(16px, calc((100vw - 1200px) / 2))",
   width: "100%",
 } as const;
+
+interface FooterLinkSpec {
+  href: string;
+  label: string;
+  rel?: string;
+  target?: HTMLAnchorElement["target"];
+}
+
+function appPath(path: string): string {
+  return joinUrlPath(appBasePath, path);
+}
+
+function getPoliciesFooterLink(
+  config?: PublicConfig,
+): FooterLinkSpec | undefined {
+  const externalPoliciesUrl = config?.terms_of_service_url?.trim();
+  if (externalPoliciesUrl) {
+    return {
+      href: externalPoliciesUrl,
+      label: "Policies",
+      rel: "noreferrer",
+      target: "_blank",
+    };
+  }
+  if (config?.show_policies) {
+    return { href: appPath("policies"), label: "Policies" };
+  }
+}
+
+function getFooterColumns(config?: PublicConfig) {
+  const contactHref = config?.help_email?.trim()
+    ? `mailto:${config.help_email.trim()}`
+    : appPath("support");
+  const companyLinks: FooterLinkSpec[] = [
+    { href: appPath("about"), label: "About" },
+    { href: contactHref, label: "Contact" },
+  ];
+  const policiesLink = getPoliciesFooterLink(config);
+  if (policiesLink) {
+    companyLinks.push(policiesLink);
+  }
+
+  return [
+    {
+      links: [
+        { href: appPath("features"), label: "Features" },
+        { href: appPath("products"), label: "Products" },
+        { href: appPath("pricing"), label: "Pricing" },
+      ],
+      title: "Platform",
+    },
+    {
+      links: [
+        {
+          href: DOC_URL,
+          label: "Documentation",
+          rel: "noreferrer",
+          target: "_blank" as const,
+        },
+        { href: appPath("support"), label: "Support" },
+        { href: appPath("support/status"), label: "Status" },
+      ],
+      title: "Resources",
+    },
+    {
+      links: companyLinks,
+      title: "Company",
+    },
+  ];
+}
+
+function FooterBrand({ config }: { config?: PublicConfig }) {
+  const { token } = theme.useToken();
+  const defaultBrand = usesDefaultCoCalcBranding(config);
+  const siteName = getSiteName(config);
+
+  return (
+    <Flex vertical gap="middle">
+      <a
+        aria-label={`${siteName} home`}
+        href={appPath("")}
+        style={{
+          alignItems: "center",
+          color: token.colorWhite,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: token.marginXS,
+          textDecoration: "none",
+        }}
+      >
+        <img
+          alt=""
+          aria-hidden="true"
+          src={getLogoSquare(config)}
+          style={{
+            display: "block",
+            height: token.sizeXL,
+            objectFit: "contain",
+            width: token.sizeXL,
+          }}
+        />
+        {defaultBrand ? (
+          <img
+            alt=""
+            aria-hidden="true"
+            src={COCALC_WORDMARK_WHITE_URL}
+            style={{
+              display: "block",
+              height: token.fontSizeHeading4,
+              objectFit: "contain",
+              width: "auto",
+            }}
+          />
+        ) : (
+          <Text
+            strong
+            style={{
+              color: token.colorWhite,
+              fontFamily: PUBLIC_DISPLAY_FONT_FAMILY,
+              fontSize: token.fontSizeHeading4,
+              letterSpacing: "-0.02em",
+            }}
+          >
+            {siteName}
+          </Text>
+        )}
+      </a>
+      <Paragraph
+        style={{
+          color: COLORS.BLUE_LLL,
+          margin: 0,
+          maxWidth: "34ch",
+        }}
+      >
+        Collaborative computation, teaching, and technical work in one
+        browser-based workspace.
+      </Paragraph>
+      {defaultBrand ? (
+        <Text style={{ color: COLORS.BLUE_LLL }}>
+          © {new Date().getFullYear()} {COMPANY_NAME}
+        </Text>
+      ) : null}
+    </Flex>
+  );
+}
+
+function FooterLink({ link }: { link: FooterLinkSpec }) {
+  const { token } = theme.useToken();
+
+  return (
+    <a
+      href={link.href}
+      rel={link.rel}
+      style={{
+        color: token.colorWhite,
+        display: "inline-block",
+        textDecoration: "none",
+      }}
+      target={link.target}
+    >
+      {link.label}
+    </a>
+  );
+}
+
+function PublicFooter({ config }: { config?: PublicConfig }) {
+  const { token } = theme.useToken();
+
+  return (
+    <Row
+      className="cocalc-public-footer"
+      gutter={[token.marginXL, token.marginXL]}
+    >
+      <Col lg={9} xs={24}>
+        <FooterBrand config={config} />
+      </Col>
+      {getFooterColumns(config).map((column) => (
+        <Col key={column.title} lg={5} sm={8} xs={24}>
+          <Flex vertical gap="small">
+            <Text
+              strong
+              style={{
+                color: COLORS.YELL_L,
+                fontFamily: PUBLIC_DISPLAY_FONT_FAMILY,
+                fontSize: token.fontSizeLG,
+              }}
+            >
+              {column.title}
+            </Text>
+            <nav aria-label={`${column.title} footer links`}>
+              <Flex vertical gap="small">
+                {column.links.map((link) => (
+                  <FooterLink key={`${link.label}-${link.href}`} link={link} />
+                ))}
+              </Flex>
+            </nav>
+          </Flex>
+        </Col>
+      ))}
+    </Row>
+  );
+}
 
 interface PublicPageProps {
   active?: PublicTopNavActiveKey;
@@ -90,7 +300,7 @@ export function PublicPage({
     >
       <PublicConfigProvider config={config}>
         <AntdApp>
-          <style>{PUBLIC_DISPLAY_FONT_CSS}</style>
+          <style>{PUBLIC_PAGE_CSS}</style>
           <Layout
             className="cocalc-public-page"
             style={{
@@ -135,8 +345,13 @@ export function PublicPage({
             <Footer
               style={{
                 ...PAGE_BAND_STYLE,
+                background: COLORS.BLUE_DDD,
+                color: token.colorWhite,
+                paddingBlock: token.paddingXL,
               }}
-            />
+            >
+              <PublicFooter config={config} />
+            </Footer>
           </Layout>
         </AntdApp>
       </PublicConfigProvider>

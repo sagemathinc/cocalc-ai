@@ -11,12 +11,13 @@ import type { MenuProps } from "antd";
 import { Button, Flex, Grid, Menu, theme } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
+  COCALC_WORDMARK_BLACK_URL,
   getLogoSquare,
   getSiteName,
   type PublicConfig,
   usePublicConfig,
+  usesDefaultCoCalcBranding,
 } from "@cocalc/frontend/public/config";
-import { SITE_NAME } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 type PublicInfoPageKey =
@@ -35,18 +36,6 @@ function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
 
-const COCALC_WORDMARK_URL = joinUrlPath(
-  appBasePath,
-  "webapp/cocalc-font-black.svg",
-);
-
-function usesDefaultCoCalcBranding(
-  config: PublicConfig | undefined,
-  siteName: string,
-): boolean {
-  return !config?.logo_square?.trim() && siteName === SITE_NAME;
-}
-
 function HomeLogoLink({
   active,
   config,
@@ -61,8 +50,7 @@ function HomeLogoLink({
   siteName: string;
 }) {
   const { token } = theme.useToken();
-  const showWordmark =
-    !isCompact && usesDefaultCoCalcBranding(config, siteName);
+  const showWordmark = !isCompact && usesDefaultCoCalcBranding(config);
 
   return (
     <a
@@ -93,7 +81,7 @@ function HomeLogoLink({
         <img
           alt=""
           aria-hidden="true"
-          src={COCALC_WORDMARK_URL}
+          src={COCALC_WORDMARK_BLACK_URL}
           style={{
             display: "block",
             height: 18,
