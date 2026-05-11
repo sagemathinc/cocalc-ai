@@ -144,7 +144,6 @@ function LangIndex({ siteName }: { siteName: string }) {
   return (
     <>
       <PublicHero
-        eyebrow="TRANSLATED LANDING PAGES"
         title={`Translations for ${siteName}`}
         subtitle={`Open a language-specific overview of ${siteName}. These pages are intentionally minimal public landing pages for discovery and SEO.`}
       />
@@ -176,12 +175,9 @@ function LocaleLanding({
   messages: LangMessages;
   siteName: string;
 }) {
-  const localization = LOCALIZATIONS[locale];
-
   return (
     <>
       <PublicHero
-        eyebrow={`${localization.flag} ${localization.native}`}
         title={messages.tagline ?? siteName}
         subtitle={messages["site-description"] ?? siteName}
         actions={

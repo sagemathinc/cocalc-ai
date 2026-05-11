@@ -16,15 +16,42 @@ import {
   theme,
   Typography,
 } from "antd";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   PublicConfigProvider,
   type PublicConfig,
 } from "@cocalc/frontend/public/config";
 import { COLORS } from "@cocalc/util/theme";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import PublicTopNav, { type PublicTopNavActiveKey } from "./top-nav";
 
 const { Content, Footer, Header } = Layout;
-const { Paragraph, Text, Title } = Typography;
+const { Paragraph, Title } = Typography;
+
+const PUBLIC_DISPLAY_FONT_FAMILY =
+  '"Space Grotesk", "Helvetica Neue", Arial, sans-serif';
+const PUBLIC_DISPLAY_FONT_URL = joinUrlPath(
+  appBasePath,
+  "public/fonts/space-grotesk/SpaceGrotesk-wght.woff2",
+);
+const PUBLIC_DISPLAY_FONT_CSS = `
+  @font-face {
+    font-family: "Space Grotesk";
+    src: url("${PUBLIC_DISPLAY_FONT_URL}") format("woff2");
+    font-style: normal;
+    font-weight: 300 700;
+    font-display: swap;
+  }
+
+  .cocalc-public-page h1,
+  .cocalc-public-page h2,
+  .cocalc-public-page h3,
+  .cocalc-public-page h4,
+  .cocalc-public-page .ant-card-head-title {
+    font-family: ${PUBLIC_DISPLAY_FONT_FAMILY};
+    letter-spacing: -0.02em;
+  }
+`;
 
 const PAGE_BAND_STYLE = {
   paddingInline: "max(16px, calc((100vw - 1200px) / 2))",
@@ -63,7 +90,9 @@ export function PublicPage({
     >
       <PublicConfigProvider config={config}>
         <AntdApp>
+          <style>{PUBLIC_DISPLAY_FONT_CSS}</style>
           <Layout
+            className="cocalc-public-page"
             style={{
               minHeight: "100vh",
             }}
@@ -117,20 +146,13 @@ export function PublicPage({
 
 interface PublicHeroProps {
   actions?: ReactNode;
-  eyebrow?: ReactNode;
   subtitle?: ReactNode;
   title: ReactNode;
 }
 
-export function PublicHero({
-  actions,
-  eyebrow,
-  subtitle,
-  title,
-}: PublicHeroProps) {
+export function PublicHero({ actions, subtitle, title }: PublicHeroProps) {
   return (
     <PublicSection>
-      {eyebrow ? <Text strong>{eyebrow}</Text> : null}
       <Title level={1} style={{ margin: 0 }}>
         {title}
       </Title>
