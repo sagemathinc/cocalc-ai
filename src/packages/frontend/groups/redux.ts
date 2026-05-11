@@ -3,8 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { EventEmitter } from "events";
+
 import { Table } from "@cocalc/frontend/app-framework/Table";
 import { redux, Store, Actions } from "@cocalc/frontend/app-framework";
+import { getLogger } from "@cocalc/frontend/logger";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { once } from "@cocalc/util/async-utils";
 import { isValidUUID, is_array } from "@cocalc/util/misc";
@@ -14,6 +17,14 @@ import {
   MAX_TITLE_LENGTH,
   MAX_COLOR_LENGTH,
 } from "@cocalc/util/db-schema/groups";
+
+const log = getLogger("groups:redux");
+const GROUPS_TABLE_CONNECT_TIMEOUT_MS = 15_000;
+const GROUPS_TABLE_CONNECT_ATTEMPTS = 2;
+
+interface GroupsTableConnection extends EventEmitter {
+  get_state?: () => string | undefined;
+}
 
 type iGroupMap = any;
 
@@ -205,16 +216,42 @@ class GroupsTable extends Table {
   }
 }
 
-const refresh_groups_table = reuseInFlight(async (): Promise<void> => {
+export const refresh_groups_table = reuseInFlight(async (): Promise<void> => {
   if (!webapp_client.is_signed_in()) {
     redux.removeTable("groups");
     redux.getActions("groups")?.setState({ groups: undefined, error: "" });
     return;
   }
   redux.removeTable("groups");
-  const table = redux.createTable("groups", GroupsTable);
-  await once(table._table, "connected");
+  await createGroupsTableUntilConnected();
 });
+
+async function waitForGroupsTableConnected(
+  table: GroupsTableConnection,
+): Promise<boolean> {
+  if (table.get_state?.() === "connected") {
+    return true;
+  }
+  try {
+    await once(table, "connected", GROUPS_TABLE_CONNECT_TIMEOUT_MS);
+    return true;
+  } catch (err) {
+    log.info("groups table did not connect cleanly", err);
+    return false;
+  }
+}
+
+async function createGroupsTableUntilConnected(): Promise<void> {
+  for (let attempt = 1; attempt <= GROUPS_TABLE_CONNECT_ATTEMPTS; attempt++) {
+    const table = redux.createTable("groups", GroupsTable);
+    if (await waitForGroupsTableConnected(table._table)) {
+      return;
+    }
+    if (attempt < GROUPS_TABLE_CONNECT_ATTEMPTS) {
+      redux.removeTable("groups");
+    }
+  }
+}
 
 let signedInListener: (() => void) | undefined;
 let signedOutListener: (() => void) | undefined;
