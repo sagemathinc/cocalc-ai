@@ -8,13 +8,15 @@ import { useState } from "react";
 import { CloseOutlined, MenuOutlined } from "@ant-design/icons";
 import type { MenuProps } from "antd";
 
-import { Button, Flex, Grid, Menu } from "antd";
+import { Button, Flex, Grid, Menu, theme } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
   getLogoSquare,
   getSiteName,
+  type PublicConfig,
   usePublicConfig,
 } from "@cocalc/frontend/public/config";
+import { SITE_NAME } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 type PublicInfoPageKey =
@@ -31,6 +33,77 @@ export type PublicTopNavActiveKey = PublicInfoPageKey | "auth";
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
+}
+
+const COCALC_WORDMARK_URL = joinUrlPath(
+  appBasePath,
+  "webapp/cocalc-font-black.svg",
+);
+
+function usesDefaultCoCalcBranding(
+  config: PublicConfig | undefined,
+  siteName: string,
+): boolean {
+  return !config?.logo_square?.trim() && siteName === SITE_NAME;
+}
+
+function HomeLogoLink({
+  active,
+  config,
+  isCompact,
+  logoSquare,
+  siteName,
+}: {
+  active?: PublicTopNavActiveKey;
+  config?: PublicConfig;
+  isCompact: boolean;
+  logoSquare: string;
+  siteName: string;
+}) {
+  const { token } = theme.useToken();
+  const showWordmark =
+    !isCompact && usesDefaultCoCalcBranding(config, siteName);
+
+  return (
+    <a
+      aria-current={active === "home" ? "page" : undefined}
+      aria-label={`${siteName} home`}
+      href={appPath("")}
+      style={{
+        alignItems: "center",
+        color: "inherit",
+        display: "flex",
+        flex: "0 0 auto",
+        gap: token.marginXS,
+        textDecoration: "none",
+      }}
+    >
+      <img
+        alt=""
+        aria-hidden="true"
+        src={logoSquare}
+        style={{
+          display: "block",
+          height: 28,
+          objectFit: "contain",
+          width: 28,
+        }}
+      />
+      {showWordmark ? (
+        <img
+          alt=""
+          aria-hidden="true"
+          src={COCALC_WORDMARK_URL}
+          style={{
+            display: "block",
+            height: 18,
+            objectFit: "contain",
+            width: "auto",
+          }}
+        />
+      ) : null}
+    </a>
+  );
 }
 
 export default function PublicTopNav({
@@ -102,29 +175,13 @@ export default function PublicTopNav({
     return (
       <Flex vertical gap="small">
         <Flex align="center" justify="space-between">
-          <a
-            aria-current={active === "home" ? "page" : undefined}
-            aria-label={`${siteName} home`}
-            href={appPath("")}
-            style={{
-              color: "inherit",
-              display: "block",
-              flex: "0 0 auto",
-              textDecoration: "none",
-            }}
-          >
-            <img
-              alt=""
-              aria-hidden="true"
-              src={logoSquare}
-              style={{
-                display: "block",
-                height: 28,
-                objectFit: "contain",
-                width: 28,
-              }}
-            />
-          </a>
+          <HomeLogoLink
+            active={active}
+            config={config}
+            isCompact={isCompact}
+            logoSquare={logoSquare}
+            siteName={siteName}
+          />
           <Flex align="center" gap="small">
             {authActions}
             <Button
@@ -168,29 +225,13 @@ export default function PublicTopNav({
         }}
         wrap
       >
-        <a
-          aria-current={active === "home" ? "page" : undefined}
-          aria-label={`${siteName} home`}
-          href={appPath("")}
-          style={{
-            color: "inherit",
-            display: "block",
-            flex: "0 0 auto",
-            textDecoration: "none",
-          }}
-        >
-          <img
-            alt=""
-            aria-hidden="true"
-            src={logoSquare}
-            style={{
-              display: "block",
-              height: 28,
-              objectFit: "contain",
-              width: 28,
-            }}
-          />
-        </a>
+        <HomeLogoLink
+          active={active}
+          config={config}
+          isCompact={isCompact}
+          logoSquare={logoSquare}
+          siteName={siteName}
+        />
         <Menu
           aria-label="Public pages"
           disabledOverflow

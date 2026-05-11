@@ -87,7 +87,11 @@ describe("PublicTopNav", () => {
       </PublicConfigProvider>,
     );
 
-    expect(screen.getByRole("link", { name: "Launchpad home" })).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "Launchpad home" })
+        .querySelectorAll("img").length,
+    ).toBe(1);
     const publicPages = screen.getByRole("menu", {
       name: "Public pages",
     });
@@ -104,6 +108,49 @@ describe("PublicTopNav", () => {
       "Policies",
       "Support",
     ]);
+  });
+
+  it("uses the full CoCalc lockup on regular screens for default branding", async () => {
+    await render(
+      <PublicConfigProvider config={{ show_policies: true }}>
+        <PublicTopNav />
+      </PublicConfigProvider>,
+    );
+
+    expect(
+      screen.getByRole("link", { name: "CoCalc home" }).querySelectorAll("img")
+        .length,
+    ).toBe(2);
+  });
+
+  it("uses the full CoCalc lockup when the square logo setting is empty", async () => {
+    await render(
+      <PublicConfigProvider
+        config={{ logo_square: "", show_policies: true, site_name: "CoCalc" }}
+      >
+        <PublicTopNav />
+      </PublicConfigProvider>,
+    );
+
+    expect(
+      screen.getByRole("link", { name: "CoCalc home" }).querySelectorAll("img")
+        .length,
+    ).toBe(2);
+  });
+
+  it("does not append the CoCalc wordmark to a custom square logo", async () => {
+    await render(
+      <PublicConfigProvider
+        config={{ logo_square: "/custom-logo.svg", site_name: "CoCalc" }}
+      >
+        <PublicTopNav />
+      </PublicConfigProvider>,
+    );
+
+    const homeLink = screen.getByRole("link", { name: "CoCalc home" });
+    const images = homeLink.querySelectorAll("img");
+    expect(images.length).toBe(1);
+    expect(images[0].getAttribute("src")).toBe("/custom-logo.svg");
   });
 
   it("selects the active public page in the menu", async () => {
@@ -167,6 +214,11 @@ describe("PublicTopNav", () => {
       </PublicConfigProvider>,
     );
 
+    expect(
+      screen
+        .getByRole("link", { name: "Launchpad home" })
+        .querySelectorAll("img").length,
+    ).toBe(1);
     expect(screen.queryByRole("menu", { name: "Public pages" })).toBeNull();
 
     fireEvent.click(
@@ -196,5 +248,19 @@ describe("PublicTopNav", () => {
         .getByRole("menuitem", { name: "Support" })
         .closest("li"),
     ).toHaveClass("ant-menu-item-selected");
+  });
+
+  it("keeps the compact default CoCalc logo to the mark only", async () => {
+    setViewportWidth(480);
+    await render(
+      <PublicConfigProvider config={{}}>
+        <PublicTopNav />
+      </PublicConfigProvider>,
+    );
+
+    expect(
+      screen.getByRole("link", { name: "CoCalc home" }).querySelectorAll("img")
+        .length,
+    ).toBe(1);
   });
 });
