@@ -11,7 +11,6 @@ import type {
   HostAccessRole,
   HostEffectiveAccessRole,
 } from "@cocalc/conat/hub/api/hosts";
-import { isValidUUID } from "@cocalc/util/misc";
 
 export type HostPermission =
   | "view"
@@ -153,8 +152,8 @@ export async function getHostAccessForAccount({
 }): Promise<HostAccessResolution> {
   const normalizedHostId = normalizeAccountId(host_id);
   const normalizedAccountId = normalizeAccountId(account_id);
-  if (!isValidUUID(normalizedHostId)) {
-    throw Error("host_id must be a valid uuid");
+  if (!normalizedHostId) {
+    throw Error("host_id must be specified");
   }
   const row = await loadHostOwnerRow({ host_id: normalizedHostId, client });
   const owner = getOwnerFromMetadata(row?.metadata);
