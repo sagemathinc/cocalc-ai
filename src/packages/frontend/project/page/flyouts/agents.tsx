@@ -107,6 +107,7 @@ function statusLabel(status: AgentSessionStatus): string {
   }
 }
 const CHAT_PATH_SCAN_INTERVAL_MS = 20000;
+const AGENT_SESSION_WATCH_TIMEOUT_MS = 15000;
 const AGENTS_MODEL_MIN_PANEL_WIDTH_PX = 360;
 const AGENTS_WORKSPACE_ONLY_STORAGE_PREFIX = "agents-panel-workspace-only";
 const NEW_AGENT_BASENAME = "agent";
@@ -275,18 +276,31 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
   useEffect(() => {
     let closed = false;
     let unsubscribe: (() => void) | undefined;
+    let timedOut = false;
     setError("");
     setLoading(true);
+
+    const timeout = setTimeout(() => {
+      if (closed) return;
+      timedOut = true;
+      setError("Timed out loading agent sessions.");
+      setLoading(false);
+    }, AGENT_SESSION_WATCH_TIMEOUT_MS);
 
     void watchAgentSessionsForProject(
       { project_id },
       (records: AgentSessionRecord[]) => {
         if (closed) return;
+        clearTimeout(timeout);
         setSessions(records);
+        if (timedOut) {
+          setError("");
+        }
         setLoading(false);
       },
     )
       .then((cleanup) => {
+        clearTimeout(timeout);
         if (closed) {
           cleanup();
           return;
@@ -294,6 +308,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
         unsubscribe = cleanup;
       })
       .catch((err) => {
+        clearTimeout(timeout);
         if (closed) return;
         setError(`${err}`);
         setLoading(false);
@@ -301,6 +316,7 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
 
     return () => {
       closed = true;
+      clearTimeout(timeout);
       unsubscribe?.();
     };
   }, [account_id, project_id]);

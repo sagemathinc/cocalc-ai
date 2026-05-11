@@ -45,12 +45,14 @@ jest.mock("@cocalc/conat/project/project-info", () => ({
 
 function TestComponent({
   projectId = "project-1",
+  intervalVisible,
   onValue,
 }: {
   projectId?: string;
+  intervalVisible?: number;
   onValue?: (value: ReturnType<typeof useProjectInfo>) => void;
 }) {
-  const value = useProjectInfo({ project_id: projectId });
+  const value = useProjectInfo({ project_id: projectId, intervalVisible });
   onValue?.(value);
   return null;
 }
@@ -180,6 +182,43 @@ describe("useProjectInfo", () => {
     );
     expect(latest?.info).toBeNull();
     expect(latest?.disconnected).toBe(true);
+  });
+
+  it("times out a stalled project info request instead of loading forever", async () => {
+    jest.useFakeTimers();
+    const logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+    projectConat.mockReturnValueOnce(new Promise(() => undefined));
+    let latest: ReturnType<typeof useProjectInfo> | undefined;
+
+    try {
+      render(
+        <TestComponent
+          intervalVisible={1000}
+          onValue={(value) => {
+            latest = value;
+          }}
+        />,
+      );
+      await flush();
+
+      expect(latest?.info).toBeNull();
+      expect(latest?.error).toBe("");
+
+      await act(async () => {
+        jest.advanceTimersByTime(15000);
+        await Promise.resolve();
+      });
+      await flush();
+
+      expect(latest?.info).toBeNull();
+      expect(latest?.disconnected).toBe(true);
+      expect(latest?.error).toBe(
+        "Project info not available -- start the project",
+      );
+    } finally {
+      logSpy.mockRestore();
+      jest.useRealTimers();
+    }
   });
 
   it("ignores stale info responses from a previously selected project", async () => {
