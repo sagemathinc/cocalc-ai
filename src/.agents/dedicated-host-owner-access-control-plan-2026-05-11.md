@@ -178,7 +178,7 @@ collaborators.
 | Remove/demote owner                         | No    | No      | No   | No                     |
 | Rename host                                 | Yes   | No      | No   | Yes                    |
 | Set per-host spend caps                     | Yes   | No      | No   | Yes                    |
-| Configure per-project RAM cap               | No    | No      | No   | Yes                    |
+| Configure per-project RAM cap               | Yes   | Yes     | No   | Yes                    |
 | Change machine/provider/funding mode        | Yes   | No      | No   | Yes                    |
 | Drain host                                  | Yes   | No      | No   | Yes                    |
 | Delete/deprovision host                     | Yes   | No      | No   | Yes                    |
@@ -190,8 +190,8 @@ Recommended first-release decisions:
 - keep rename owner/admin only unless there is a concrete user need
 - keep per-host spend cap owner/admin only because it directly changes the
   owner's financial risk
-- keep per-project RAM cap admin-only because it overrides normal membership
-  RAM limits for all projects placed on the host
+- allow owners, managers, and admins to set the per-project RAM cap because it
+  controls how the owner-paid host capacity is divided among projects
 - keep drain/delete/deprovision strictly owner/admin
 - never expose direct SSH to dedicated-host owners, managers, or users
 
@@ -250,14 +250,14 @@ Dedicated hosts need one host-level project resource option:
 metadata.resources.project_ram_limit_mb?: number;
 ```
 
-This lets an admin configure how much RAM projects on that host may use, even if
-the project owner's membership would normally provide less RAM. The limit is a
-host policy because dedicated hosts are finite physical/VM capacity that the
-host owner is paying for.
+This lets a host owner, host manager, or site admin configure how much RAM
+projects on that host may use, even if the project owner's membership would
+normally provide less RAM. The limit is a host policy because dedicated hosts are
+finite physical/VM capacity that the host owner is paying for.
 
 Semantics:
 
-- admin-only setting
+- owner, manager, or admin setting
 - applies to projects while they run on this host
 - allowed range is `500MB <= project_ram_limit_mb <= host_ram_mb - 3072MB`
 - reserve 3GB for host management and system services
@@ -429,8 +429,8 @@ Permission requirements:
 - `listHostAccess`: owner, manager, admin
 - `setHostAccess`: owner, manager, admin
 - `removeHostAccess`: owner, manager, admin
-- `setHostProjectRamLimit`: admin
-- `clearHostProjectRamLimit`: admin
+- `setHostProjectRamLimit`: owner, manager, admin
+- `clearHostProjectRamLimit`: owner, manager, admin
 - `setHostOwnerSpendLimits`: owner, admin
 - `clearHostOwnerSpendLimits`: owner, admin
 - `getHostOwnerSpendStatus`: owner, manager, admin; user can see a reduced
@@ -440,7 +440,7 @@ Fresh auth:
 
 - require fresh auth when granting `manager`
 - require fresh auth when changing owner spend caps
-- require fresh auth when changing the admin project RAM cap
+- require fresh auth when changing the project RAM cap
 - do not require fresh auth for adding a `user`
 
 ## Backend Implementation Plan
@@ -561,7 +561,7 @@ Owner/admin-only controls:
 - cap status
 - raise/remove cap
 
-Admin-only controls:
+Owner/manager/admin controls:
 
 - per-project RAM cap for projects running on this host
 - show allowed range: 500MB through host RAM minus 3GB
@@ -594,7 +594,7 @@ Add lightweight indicators:
 - paid-by owner when not owned by current user
 - 5-hour/7-day cap badge when configured
 - stopped-by-owner-cap badge when applicable
-- admin-visible project RAM cap badge when configured
+- project RAM cap badge when configured
 
 ## Audit And Notifications
 
@@ -635,6 +635,7 @@ Add tests for:
 - owner/manager/user cannot get direct SSH or host secret access
 - admin bypass works
 - metadata collaborator migration maps correctly
+- owner and manager can set/clear project RAM cap; user cannot
 - project RAM cap validates 500MB through host RAM minus 3GB
 - project RAM cap overrides membership RAM only while project is on that host
 - CPU and storage are not overridden by dedicated-host policy
@@ -673,7 +674,8 @@ On `lite4b` or equivalent multibay setup:
 9. maintenance stops the host with owner-cap reason
 10. owner raises/removes cap and starts host again
 11. inspect billing/purchase-session records and verify charges stay on owner
-12. admin sets project RAM cap and verifies placed projects can use that RAM
+12. owner or manager sets project RAM cap and verifies placed projects can use
+    that RAM
 13. verify CPU priority and storage still come from normal membership/project
     settings
 14. move host between bays and verify ACL/config still works from the new home
@@ -694,7 +696,7 @@ On `lite4b` or equivalent multibay setup:
 
 - add host access RPC methods
 - add owner spend cap RPC methods
-- add admin project RAM cap RPC methods
+- add project RAM cap RPC methods
 - add host drawer access UI
 - add host picker/list role and paid-by labels
 
