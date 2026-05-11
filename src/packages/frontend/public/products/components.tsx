@@ -4,14 +4,14 @@
  */
 
 import { Button, App as AntdApp } from "antd";
-import { COLORS } from "@cocalc/util/theme";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 
 export function CodeCommand({ value }: { value: string }) {
   return (
     <div
       style={{
-        background: "#f8fafc",
-        border: `1px solid ${COLORS.GRAY_LL}`,
+        background: PUBLIC_COLORS.brandTint,
+        border: `1px solid ${PUBLIC_COLORS.border}`,
         borderRadius: 12,
         padding: 16,
       }}

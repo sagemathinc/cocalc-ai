@@ -27,15 +27,17 @@ import {
   type PublicConfig,
   usesDefaultCoCalcBranding,
 } from "@cocalc/frontend/public/config";
-import { COLORS, COMPANY_NAME, DOC_URL } from "@cocalc/util/theme";
+import {
+  PUBLIC_COLORS,
+  PUBLIC_DISPLAY_FONT_FAMILY,
+} from "@cocalc/frontend/public/theme";
+import { COMPANY_NAME, DOC_URL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import PublicTopNav, { type PublicTopNavActiveKey } from "./top-nav";
 
 const { Content, Footer, Header } = Layout;
 const { Paragraph, Text, Title } = Typography;
 
-const PUBLIC_DISPLAY_FONT_FAMILY =
-  '"Space Grotesk", "Helvetica Neue", Arial, sans-serif';
 const PUBLIC_DISPLAY_FONT_URL = joinUrlPath(
   appBasePath,
   "public/fonts/space-grotesk/SpaceGrotesk-wght.woff2",
@@ -59,7 +61,23 @@ const PUBLIC_PAGE_CSS = `
   }
 
   .cocalc-public-footer a:hover {
-    color: ${COLORS.YELL_L} !important;
+    color: ${PUBLIC_COLORS.accent} !important;
+  }
+
+  .cocalc-public-card.ant-card {
+    border-color: ${PUBLIC_COLORS.border};
+  }
+
+  .cocalc-public-card.ant-card-hoverable:hover {
+    border-color: ${PUBLIC_COLORS.brandSubtle};
+  }
+
+  .cocalc-public-card .ant-card-head {
+    border-bottom-color: ${PUBLIC_COLORS.border};
+  }
+
+  .cocalc-public-card .ant-card-head-title {
+    color: ${PUBLIC_COLORS.heading};
   }
 `;
 
@@ -196,7 +214,7 @@ function FooterBrand({ config }: { config?: PublicConfig }) {
       </a>
       <Paragraph
         style={{
-          color: COLORS.BLUE_LLL,
+          color: PUBLIC_COLORS.footerText,
           margin: 0,
           maxWidth: "34ch",
         }}
@@ -205,7 +223,7 @@ function FooterBrand({ config }: { config?: PublicConfig }) {
         browser-based workspace.
       </Paragraph>
       {defaultBrand ? (
-        <Text style={{ color: COLORS.BLUE_LLL }}>
+        <Text style={{ color: PUBLIC_COLORS.footerText }}>
           © {new Date().getFullYear()} {COMPANY_NAME}
         </Text>
       ) : null}
@@ -249,7 +267,7 @@ function PublicFooter({ config }: { config?: PublicConfig }) {
             <Text
               strong
               style={{
-                color: COLORS.YELL_L,
+                color: PUBLIC_COLORS.footerHeading,
                 fontFamily: PUBLIC_DISPLAY_FONT_FAMILY,
                 fontSize: token.fontSizeLG,
               }}
@@ -292,10 +310,19 @@ export function PublicPage({
       theme={{
         token: {
           borderRadius: 16,
-          colorBgLayout: COLORS.GRAY_LLL,
-          colorPrimary: COLORS.BLUE_D,
-          colorText: COLORS.GRAY_D,
-          colorTextSecondary: COLORS.GRAY_M,
+          colorBgLayout: PUBLIC_COLORS.pageBackground,
+          colorBorder: PUBLIC_COLORS.border,
+          colorBorderSecondary: PUBLIC_COLORS.border,
+          colorInfo: PUBLIC_COLORS.brand,
+          colorLink: PUBLIC_COLORS.link,
+          colorLinkActive: PUBLIC_COLORS.brandActive,
+          colorLinkHover: PUBLIC_COLORS.linkHover,
+          colorPrimary: PUBLIC_COLORS.brand,
+          colorPrimaryActive: PUBLIC_COLORS.brandActive,
+          colorPrimaryHover: PUBLIC_COLORS.linkHover,
+          colorText: PUBLIC_COLORS.text,
+          colorTextHeading: PUBLIC_COLORS.heading,
+          colorTextSecondary: PUBLIC_COLORS.mutedText,
           fontSize: 16,
         },
       }}
@@ -312,7 +339,7 @@ export function PublicPage({
             <Header
               style={{
                 ...PAGE_BAND_STYLE,
-                background: COLORS.BLUE_LLLL,
+                background: PUBLIC_COLORS.brandTint,
                 height: "auto",
                 lineHeight: "normal",
                 paddingBlock: token.paddingXS,
@@ -347,7 +374,7 @@ export function PublicPage({
             <Footer
               style={{
                 ...PAGE_BAND_STYLE,
-                background: COLORS.BLUE_DDD,
+                background: PUBLIC_COLORS.footerBackground,
                 color: token.colorWhite,
                 paddingBlock: token.paddingXL,
               }}
@@ -435,6 +462,7 @@ export function PublicCard({
       target={target}
     >
       <Card
+        className="cocalc-public-card"
         hoverable
         style={{ height: "100%" }}
         title={title}

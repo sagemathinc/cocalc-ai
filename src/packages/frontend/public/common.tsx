@@ -14,7 +14,7 @@ import {
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import type { PublicTopNavActiveKey } from "@cocalc/frontend/public/layout/top-nav";
-import { COLORS } from "@cocalc/util/theme";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
@@ -24,7 +24,7 @@ export { getSiteName };
 export type { PublicConfig };
 
 export const MUTED_STYLE: CSSProperties = {
-  color: COLORS.GRAY_M,
+  color: PUBLIC_COLORS.mutedText,
 } as const;
 
 export async function fetchJson<T>(path: string): Promise<T> {
