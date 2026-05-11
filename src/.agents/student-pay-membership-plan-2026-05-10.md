@@ -49,7 +49,7 @@ The old model is still present and should be replaced.
 The newer membership-package path is already useful and should be reused.
 
 - `src/packages/conat/hub/api/purchases.ts`
-  - Defines `MembershipPackageKind = "course" | "team" | "domain" | "site"`.
+  - Defines `MembershipPackageKind = "course" | "team" | "site"`.
   - Exposes quote, purchase, list, assign, revoke, claim APIs for membership packages.
 
 - `src/packages/server/membership/packages.ts`
@@ -92,9 +92,11 @@ Each course can declare:
 
 - `student_pay_enabled`: students are responsible for buying access.
 - `instructor_pay_enabled`: instructor/institution buys seats and assigns them.
+- `site_license_enabled`: use a matching site license when the instructor's verified email domain is covered.
 - `required_membership_class`: tier id required by the course.
 - `student_grace_days`: default `14`.
-- `student_access_pass_duration_days`: default `120`.
+- `student_access_pass_duration_days`: default `122`.
+- `course_ends_at`: optional course end date used only to explain whether an existing expiring membership covers the whole class. It must not affect price.
 
 The final field names should be concise and live in course settings / `CourseInfo`, but the user-facing language should say "course access pass", not "membership class".
 
@@ -107,6 +109,7 @@ A student can use a course project if any of these is true:
 - The student's effective membership priority is greater than or equal to the required course tier priority.
 - The student has an active course-seat grant from an instructor-paid package for the required tier.
 - The student has an active direct student-course purchase grant for the required tier.
+- The course uses a site license, and the student has claimed or can claim a site-license membership with sufficient priority using a verified matching email domain.
 
 This intentionally solves section changes and multiple concurrent classes. If two courses require the same student tier, or the second course requires a lower-priority tier, one active purchase/grant is enough.
 
@@ -129,7 +132,7 @@ Open decision: if instructors strongly expect a single course-wide deadline, add
 
 Course student tiers should be one-time purchases:
 
-- Default duration: 4 months / 120 days.
+- Default duration: 4 months / 122 days.
 - Default template: `student` tier, `$25` for 4 months.
 - No automatic renewal.
 - No pricing based on course dates, project quotas, CPU, RAM, disk, uptime, or number of projects.
@@ -181,19 +184,21 @@ Template update:
 - `student.store_visible = false`
 - `student.course_store_visible = true`
 - `student.course_price = 25`
-- `student.course_duration_days = 120`
+- `student.course_duration_days = 122`
 
-Course config should stop using `payInfo` for new flows. Add fields to course settings and `CourseInfo`, for example:
+Course config should delete the old `payInfo` model instead of keeping a compatibility path. This is greenfield, and keeping old quota/date purchase state around creates confusing dead code. Add fields to course settings and `CourseInfo`, for example:
 
 ```ts
 student_pay?: boolean;
 institute_pay?: boolean;
+site_license_pay?: boolean;
 required_membership_class?: string;
 student_membership_required_at?: string;
 student_membership_grace_days?: number;
+course_ends_at?: string;
 ```
 
-Backward compatibility can keep reading `payInfo` for old projects temporarily, but new UI should not write it.
+Remove old `payInfo`, `paid`, `purchase_id`, quota-derived course fee, and course-fee transfer writes from the active model rather than retaining fallback reads.
 
 ### Access Resolver
 
@@ -208,7 +213,11 @@ Suggested API:
 ```ts
 type CourseStudentAccessStatus =
   | { status: "not-required" }
-  | { status: "active"; source: "membership" | "course-seat" | "student-course-purchase"; membership_class: string }
+  | {
+      status: "active";
+      source: "membership" | "course-seat" | "student-course-purchase";
+      membership_class: string;
+    }
   | { status: "grace"; deadline: Date; required_membership_class: string }
   | { status: "blocked"; deadline: Date; required_membership_class: string };
 ```
@@ -256,7 +265,7 @@ Behavior:
   - `expires_at = now + duration`
   - metadata includes `project_id`, `course_project_id`, `course_path`, and `required_membership_class`
 - Set project `usage_account_id = account_id`.
-- Do not write `course.paid` for new flows unless needed temporarily for old UI compatibility.
+- Do not write `course.paid`; the grant and access resolver are the source of truth.
 
 Stripe metadata should move from `{ project_id }` only to:
 
@@ -323,15 +332,18 @@ Assignment behavior can mostly stay:
 - Grant dates are package dates.
 - Project usage attribution updates to the student account when `metadata.project_id` is provided.
 
-Open decision: if a student already has equal/higher membership, the UI should show "covered by existing membership" and not consume a seat by default.
+Seat consumption should be explicit when a student is already covered:
+
+- If the existing qualifying membership renews, show "covered by existing renewing membership" and do not consume a seat by default.
+- If the existing qualifying membership expires, show "covered until DATE by existing membership".
+- If `course_ends_at` is configured and the existing membership expires before that date, the instructor UI should treat the student as only temporarily covered and offer an explicit "assign seat anyway" action.
+- If `course_ends_at` is not configured, do not confidently imply full-course coverage for expiring memberships; show the expiration date.
 
 ### Course Transfer
 
-Delete the old transfer logic for new flows.
+Delete the old transfer logic.
 
 Reason: the membership priority rule makes it unnecessary. A student changing sections simply has the same active membership, so no course-specific license needs to move.
-
-The old `studentPayTransfer` endpoint can be kept temporarily for legacy `payInfo` projects, then removed after migration.
 
 ## Frontend Design
 
@@ -348,9 +360,18 @@ Replace "Start and end dates and upgrades..." with a simpler section:
   - key resources/limits summary,
   - note that any equal-or-higher membership also satisfies the requirement.
 - Choose payment mode:
+  - Use matching site license, shown as the default if the instructor's verified email domain matches an active site license.
   - Students pay directly.
   - Instructor/institution buys seats.
   - No course payment requirement.
+
+For site-license coverage:
+
+- Check active site licenses whose allowed email domains match the instructor's verified email domain.
+- If one or more matches, default the course payment mode to "Use site license".
+- Show the site license tier, expiration, allowed domains, used seats, and seat cap.
+- Still allow the instructor to choose student-pay or instructor-pay instead, since the site license may be too minimal for a course that needs more resources, AI, GPU-related limits, or higher project quotas.
+- Student UI should prompt students to verify their email and claim the site license if their account is not already covered.
 
 For instructor-pay:
 
@@ -362,7 +383,7 @@ For student-pay:
 
 - Show a preview of the student banner and deadline policy.
 - No quota editor.
-- No course start/end picker in v1.
+- An optional course end date is allowed for coverage messaging and instructor seat decisions, but not for pricing.
 
 ### Student Project UI
 
@@ -377,7 +398,11 @@ Replace the old forced modal with a persistent banner/state machine:
   - "Course access payment is required to continue using this project."
   - Buttons: "Buy now", "Ask someone else to pay", "Close project".
 - Existing higher membership:
-  - "Your current membership covers this course."
+  - renewing: "Your current renewing membership covers this course."
+  - expiring: "Your current membership covers this course until DATE."
+- Site license:
+  - covered: "Your institution's site license covers this course."
+  - not claimed: "Verify your email and claim your institution's site license to use this course."
 
 The banner should mention exactly what membership/tier is required.
 
@@ -404,25 +429,34 @@ Update deferred language:
 ### Phase 1: Add Course Tier Fields
 
 - Add tier fields and admin UI.
-- Update student template to `$25 / 120 days`.
+- Update student template to `$25 / 122 days`.
 - Add shared utility to list active course-eligible tiers.
 - Tests for template fallback and admin tier round-trip.
 
-### Phase 2: Course Config Writes New Model
+### Phase 2: Remove Old Quota Student Pay
 
-- Add course settings fields for required membership class and grace.
+- Delete:
+  - `src/packages/util/purchases/quota/student-pay.ts`
+  - old `LicenseEditor` course payment UI
+  - old course-fee transfer UI and endpoint
+  - active reads/writes of course `payInfo`, `paid`, and `purchase_id`
+- Tests should fail if new course payment UI writes quota-derived `payInfo`.
+
+### Phase 3: Course Config Writes New Model
+
+- Add course settings fields for required membership class, grace, optional course end date, and funding mode.
 - Replace student-pay quota editor with tier selection.
-- Keep old `payInfo` read path only for legacy projects.
-- Tests for course settings serialization and UI rendering.
+- Add site-license defaulting when the instructor's verified email domain matches an active site license.
+- Tests for course settings serialization, UI rendering, and site-license default selection.
 
-### Phase 3: Access Resolver
+### Phase 4: Access Resolver
 
 - Implement backend resolver and Conat API.
 - Update project banner/page to use resolver result.
 - Stop using `ProjectsStore.date_when_course_payment_required` for new flows.
-- Tests for no requirement, grace, active membership, higher priority, expired, blocked.
+- Tests for no requirement, grace, active renewing membership, active expiring membership, higher priority, site-license claimable/claimed, expired, blocked.
 
-### Phase 4: Student Direct Purchase
+### Phase 5: Student Direct Purchase
 
 - Implement student-course purchase quote and purchase path.
 - Update Stripe payment intent metadata and processing.
@@ -430,7 +464,7 @@ Update deferred language:
 - Record purchases with clear beneficiary metadata.
 - Tests for direct purchase, idempotency, existing higher membership no-op, multi-bay account/project routing.
 
-### Phase 5: Third-Party Payer Link
+### Phase 6: Third-Party Payer Link
 
 - Add payment request table/API.
 - Add student UI to create/copy link.
@@ -438,22 +472,13 @@ Update deferred language:
 - Create grant for student after payer completes payment.
 - Tests for request creation, expiration, one-time completion, payer/beneficiary metadata, non-collaborator payer.
 
-### Phase 6: Instructor-Paid Seats On New Model
+### Phase 7: Instructor-Paid Seats On New Model
 
 - Change `getCourseSeatQuote` to use selected course membership tier.
 - Require `membership_class` for course package creation.
 - Remove `payInfo` dependency from instructor-pay UI and backend quotes.
 - Keep current assignment/revoke mechanics.
-- Tests for package quote, purchase, assignment, no-seat-available, existing higher membership UI.
-
-### Phase 7: Remove Legacy Quota Student Pay
-
-- Delete or quarantine:
-  - `src/packages/util/purchases/quota/student-pay.ts`
-  - old `LicenseEditor` course payment UI
-  - old course-fee transfer UI for new projects
-  - old `studentPayTransfer` from active UI
-- Keep a compatibility backend path only if real legacy data needs to be honored.
+- Tests for package quote, purchase, assignment, no-seat-available, existing renewing membership UI, and existing expiring membership UI.
 
 ## Smoke Test Plan
 
@@ -464,9 +489,10 @@ Use lite4b with Stripe test keys.
 1. Confirm `student` tier has:
    - `course_store_visible = true`
    - `course_price = 25`
-   - `course_duration_days = 120`
+   - `course_duration_days = 122`
    - `store_visible = false`
 2. Confirm normal store does not show the student tier.
+3. Confirm an active site license with the instructor's verified email domain appears as the default course funding option.
 
 ### Student Pay
 
@@ -479,6 +505,7 @@ Use lite4b with Stripe test keys.
 7. Banner changes to covered.
 8. Student opens a second course requiring `student`; it is covered without a second purchase.
 9. Student opens a course requiring a higher tier; it is not covered.
+10. Student with an expiring qualifying membership sees "covered until DATE" instead of a vague covered state.
 
 ### Third-Party Payer
 
@@ -497,12 +524,23 @@ Use lite4b with Stripe test keys.
 5. Student project usage attribution changes to student account.
 6. Revoking seat revokes grant and restores project usage attribution as designed.
 
+### Site License
+
+1. Create a site license for the instructor's verified email domain.
+2. Instructor creates course.
+3. Course payment defaults to "Use site license".
+4. Student with a matching verified email can claim coverage.
+5. Student without verified matching email sees a verify-email/claim-site-license prompt, not a payment prompt.
+
 ## Risks And Guardrails
 
 - Do not consume instructor-paid seats for students already covered by a higher membership unless the instructor explicitly chooses to do so.
+- Do not hide expiration: expiring memberships must say "covered until DATE"; only renewing memberships should be described as generally covered.
 - Do not derive course price from project resources.
+- Do not derive course price from course start/end dates.
 - Do not make course access depend on one specific project once a student has a qualifying membership.
 - Do not expose student tiers in the normal store unless explicitly marked for normal store visibility.
+- Do not retain `payInfo` compatibility code in this greenfield implementation.
 - Keep all writes bay-aware:
   - student membership grants belong on the student account home bay,
   - course packages belong on the owner account home bay,
@@ -511,10 +549,10 @@ Use lite4b with Stripe test keys.
   - direct purchase should not double-charge if an equivalent grant already exists,
   - third-party payment request should complete once.
 
-## Open Questions
+## Settled Decisions From Review
 
-1. Should grace be anchored to the student project creation time, the course requirement enable time, or an optional instructor-selected deadline? Recommended v1: per-student deadline from later of project creation and requirement enable time.
-2. Should the direct student purchase create a package plus assignment, or a direct grant? Recommended v1: direct grant; packages are for seat pools owned by someone else.
-3. Should a normal `member` or `pro` subscription satisfy a course requiring `student`? Recommended: yes, via priority.
-4. Should admins be able to mark more than one course-visible tier? Recommended: yes.
-5. Should course seats be assignable by verified email before a student account exists? Existing package assignment supports email reservations; keep it.
+1. Anchor grace per student from the later of student project creation and course requirement enable time.
+2. Direct student purchase creates a direct membership grant, not a package plus assignment.
+3. Normal `member`, `pro`, or other memberships satisfy a course requirement iff their priority is high enough.
+4. Admins can mark more than one tier as course-visible.
+5. Course seats can be assigned by verified email before a student account exists.
