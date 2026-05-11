@@ -541,6 +541,7 @@ export function PublicSignUpForm({
         <div style={FIELD_STYLE}>
           <div style={LABEL_STYLE}>Registration token</div>
           <TextInput
+            autoFocus={!!requiresToken}
             placeholder="Enter your registration token"
             value={registrationToken}
             onChange={setRegistrationToken}
@@ -551,7 +552,7 @@ export function PublicSignUpForm({
         <div style={LABEL_STYLE}>Email address</div>
         <TextInput
           autoComplete="username"
-          autoFocus
+          autoFocus={!requiresToken}
           placeholder="you@example.com"
           value={email}
           onChange={setEmail}

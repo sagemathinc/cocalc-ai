@@ -1,7 +1,7 @@
 import { authFirst } from "./util";
 import type { MoneyValue } from "@cocalc/util/money";
 export type MembershipClass = string;
-export type MembershipPackageKind = "course" | "team" | "domain" | "site";
+export type MembershipPackageKind = "course" | "team" | "site";
 
 export type MembershipEgressPolicy =
   | "metered-shared-hosts"
@@ -411,13 +411,20 @@ export interface Purchases {
   adminProvisionMembershipPackage: (opts?: {
     account_id?: string;
     owner_account_id?: string;
-    kind?: MembershipPackageKind;
+    kind?: "site";
     membership_class?: MembershipClass;
     seat_count?: number;
     allowed_domains?: string[];
     starts_at?: Date | string | null;
     expires_at?: Date | string | null;
     metadata?: Record<string, unknown> | null;
+  }) => Promise<MembershipPackageDetails>;
+  updateMembershipPackage: (opts?: {
+    account_id?: string;
+    package_id?: string;
+    owner_account_id?: string;
+    seat_count?: number;
+    expires_at?: Date | string | null;
   }) => Promise<MembershipPackageDetails>;
   getMembershipPackages: (opts?: {
     account_id?: string;
@@ -463,6 +470,7 @@ export const purchases = {
   getMembershipPackageQuote: authFirst,
   purchaseMembershipPackage: authFirst,
   adminProvisionMembershipPackage: authFirst,
+  updateMembershipPackage: authFirst,
   getMembershipPackages: authFirst,
   assignMembershipPackageSeat: authFirst,
   revokeMembershipPackageSeat: authFirst,

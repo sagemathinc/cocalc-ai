@@ -108,6 +108,7 @@ import {
   createMembershipPackage,
   listLocalClaimableMembershipPackagesForVerifiedEmails,
   listMembershipPackageDetailsForOwner,
+  updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
 import {
   resolveMembershipDetailsForAccount,
@@ -564,6 +565,12 @@ async function startAccountLocalService(): Promise<void> {
       }
       return membershipPackage;
     },
+    updateMembershipPackage: async ({ package_id, seat_count, expires_at }) =>
+      await updateMembershipPackage({
+        package_id,
+        seat_count,
+        expires_at,
+      }),
     getClaimableMembershipPackages: async ({
       account_id,
       verified_email_addresses,

@@ -242,7 +242,7 @@ export async function createTestMembershipGrant(
 
 export async function createTestMembershipPackage(opts: {
   owner_account_id: string;
-  kind: "course" | "team" | "domain" | "site";
+  kind: "course" | "team" | "site";
   membership_class: MembershipClass;
   seat_count: number;
   purchase_id?: number | null;

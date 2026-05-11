@@ -73,7 +73,7 @@ Table({
     },
     source: {
       type: "string",
-      desc: "Why this grant exists, e.g. student-pay, course-seat, team-seat, domain-license, or site-license.",
+      desc: "Why this grant exists, e.g. student-pay, course-seat, team-seat, or site-license.",
     },
     package_id: {
       type: "uuid",
@@ -173,7 +173,7 @@ Table({
     },
     kind: {
       type: "string",
-      desc: "Package type, e.g. course, team, domain, or site.",
+      desc: "Package type, e.g. course, team, or site.",
     },
     membership_class: {
       type: "string",

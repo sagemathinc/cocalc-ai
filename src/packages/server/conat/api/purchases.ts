@@ -20,6 +20,7 @@ import {
   listMembershipPackageDetailsForOwner,
   resolveMembershipPackageQuote as resolveMembershipPackageQuote0,
   revokeMembershipPackageSeat as revokeMembershipPackageSeat0,
+  updateMembershipPackage as updateMembershipPackage0,
 } from "@cocalc/server/membership/packages";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import type { MoneyValue } from "@cocalc/util/money";
@@ -34,7 +35,6 @@ import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser
 import type {
   MembershipClass,
   MembershipPackageDetails,
-  MembershipPackageKind,
 } from "@cocalc/conat/hub/api/purchases";
 
 export { getBalance };
@@ -73,11 +73,11 @@ function requireAccount(account_id?: string): string {
   return owner;
 }
 
-function normalizeSiteLicenseKind(kind?: string): "domain" | "site" {
-  if (kind === "domain" || kind === "site") {
-    return kind;
+function normalizeSiteLicenseKind(kind?: string): "site" {
+  if (kind == null || kind === "site") {
+    return "site";
   }
-  throw Error("kind must be 'domain' or 'site'");
+  throw Error("kind must be 'site'");
 }
 
 function normalizeAllowedDomain(domain: string): string {
@@ -346,14 +346,14 @@ export async function adminProvisionMembershipPackage({
 }: {
   account_id?: string;
   owner_account_id?: string;
-  kind?: MembershipPackageKind;
+  kind?: "site";
   membership_class?: MembershipClass;
   seat_count?: number;
   allowed_domains?: string[];
   starts_at?: Date | string | null;
   expires_at?: Date | string | null;
   metadata?: Record<string, unknown> | null;
-}): Promise<MembershipPackageDetails> {
+} = {}): Promise<MembershipPackageDetails> {
   const actorId = requireAccount(account_id);
   if (!(await isAdmin(actorId))) {
     throw Error("must be an admin");
@@ -411,6 +411,62 @@ export async function adminProvisionMembershipPackage({
   return await getCreatedMembershipPackageDetails({
     owner_account_id: targetId,
     package_id,
+  });
+}
+
+export async function updateMembershipPackage({
+  account_id,
+  package_id,
+  owner_account_id,
+  seat_count,
+  expires_at,
+}: {
+  account_id?: string;
+  package_id?: string;
+  owner_account_id?: string;
+  seat_count?: number;
+  expires_at?: Date | string | null;
+} = {}): Promise<MembershipPackageDetails> {
+  const actorId = requireAccount(account_id);
+  if (!package_id) {
+    throw Error("package_id required");
+  }
+  const isAdminActor = await isAdmin(actorId);
+  const targetOwnerId = `${owner_account_id ?? ""}`.trim();
+  const home_bay_id = targetOwnerId
+    ? await resolveTargetAccountHomeBay({
+        account_id: actorId,
+        user_account_id: targetOwnerId,
+      })
+    : getConfiguredBayId();
+  if (home_bay_id !== getConfiguredBayId()) {
+    if (!isAdminActor) {
+      throw Error("must be an admin");
+    }
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: home_bay_id,
+    }).updateMembershipPackage({
+      package_id,
+      actor_account_id: actorId,
+      seat_count,
+      expires_at,
+    });
+  }
+  const pkg = await getMembershipPackage({ package_id });
+  if (!pkg) {
+    throw Error("membership package not found");
+  }
+  if (pkg.owner_account_id !== actorId && !isAdminActor) {
+    throw Error("must own membership package");
+  }
+  if (targetOwnerId && pkg.owner_account_id !== targetOwnerId) {
+    throw Error("membership package does not belong to owner_account_id");
+  }
+  return await updateMembershipPackage0({
+    package_id,
+    seat_count,
+    expires_at,
   });
 }
 

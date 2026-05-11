@@ -98,7 +98,6 @@ interface RawMembershipPackageAssignment {
 const MEMBERSHIP_PACKAGE_KINDS = new Set<MembershipPackageKind>([
   "course",
   "team",
-  "domain",
   "site",
 ]);
 
@@ -132,6 +131,15 @@ function normalizePackageKind(kind?: string): MembershipPackageKind {
     throw Error(`unsupported membership package kind '${kind}'`);
   }
   return kind as MembershipPackageKind;
+}
+
+function normalizeStoredPackageKind(kind?: string): MembershipPackageKind {
+  // "domain" was an older name for the same product. Keep existing rows
+  // readable, but do not expose or create a separate package kind.
+  if (kind === "domain") {
+    return "site";
+  }
+  return normalizePackageKind(kind);
 }
 
 function normalizeSeatCount(seat_count: number): number {
@@ -186,7 +194,7 @@ function normalizePackageRecord(
   if (!row) return;
   return {
     ...row,
-    kind: normalizePackageKind(row.kind),
+    kind: normalizeStoredPackageKind(row.kind),
     seat_count: Number(row.seat_count),
     starts_at: asDate(row.starts_at),
     expires_at: asDate(row.expires_at),
@@ -223,8 +231,6 @@ function grantSourceForKind(kind: MembershipPackageKind): string {
       return "course-seat";
     case "team":
       return "team-seat";
-    case "domain":
-      return "domain-license";
     case "site":
       return "site-license";
   }
@@ -276,7 +282,7 @@ function getInstitutionalClaimDescriptorForEmail({
   pkg: MembershipPackageRecord;
   matched_email_address: string;
 }): InstitutionalClaimDescriptor | undefined {
-  if (pkg.kind !== "domain" && pkg.kind !== "site") {
+  if (pkg.kind !== "site") {
     return;
   }
   const normalizedEmail = normalizeEmailAddress(matched_email_address);
@@ -850,6 +856,154 @@ export async function addMembershipPackageSeats(
   });
 }
 
+async function syncUpdatedGrantForAssignment({
+  pkg,
+  assignment,
+  client,
+}: {
+  pkg: MembershipPackageRecord;
+  assignment: MembershipPackageAssignment;
+  client: PoolClient;
+}): Promise<void> {
+  if (!assignment.account_id || !assignment.grant_id) {
+    return;
+  }
+  const grant = {
+    id: assignment.grant_id,
+    account_id: assignment.account_id,
+    membership_class: pkg.membership_class,
+    source: grantSourceForKind(pkg.kind),
+    package_id: pkg.id,
+    purchase_id: pkg.purchase_id ?? null,
+    granted_by_account_id: assignment.assigned_by_account_id ?? null,
+    starts_at: pkg.starts_at ?? null,
+    expires_at: pkg.expires_at ?? null,
+    metadata: {
+      ...normalizeMetadata(assignment.metadata),
+      assignment_id: assignment.id,
+    },
+  };
+  const home_bay_id = await getHomeBayForAccount(assignment.account_id);
+  if (home_bay_id === getConfiguredBayId()) {
+    await getQueryClient(client).query(
+      `
+        UPDATE membership_grants
+        SET membership_class=$3,
+            source=$4,
+            purchase_id=$5,
+            granted_by_account_id=$6,
+            starts_at=$7,
+            expires_at=$8,
+            metadata=$9::jsonb,
+            updated=NOW()
+        WHERE id=$1
+          AND account_id=$2
+          AND revoked_at IS NULL
+      `,
+      [
+        grant.id,
+        grant.account_id,
+        grant.membership_class,
+        grant.source,
+        grant.purchase_id,
+        grant.granted_by_account_id,
+        grant.starts_at,
+        grant.expires_at,
+        grant.metadata,
+      ],
+    );
+  }
+  await queueMembershipGrantSyncEffect({
+    owner_account_id: pkg.owner_account_id,
+    package_id: pkg.id,
+    assignment_id: assignment.id,
+    desired_payload: {
+      desired_state: "active",
+      grant,
+    },
+    client,
+  });
+}
+
+export async function updateMembershipPackage({
+  package_id,
+  seat_count,
+  expires_at,
+  client,
+}: {
+  package_id: string;
+  seat_count?: number;
+  expires_at?: Date | string | null;
+  client?: PoolClient;
+}): Promise<MembershipPackageDetails> {
+  return await withPackageOwnerWriteFence({
+    package_id,
+    action: "update membership package",
+    client,
+    fn: async ({ client: dbClient }) => {
+      const assignments = await listMembershipPackageAssignments({
+        package_id,
+        include_revoked: false,
+        client: dbClient,
+      });
+      const activeSeatCount = assignments.filter(
+        (assignment) => !assignment.revoked_at,
+      ).length;
+      const normalizedSeatCount =
+        seat_count == null ? undefined : normalizeSeatCount(seat_count);
+      if (
+        normalizedSeatCount != null &&
+        normalizedSeatCount < activeSeatCount
+      ) {
+        throw Error(
+          `seat_count cannot be less than the ${activeSeatCount} active assigned seats`,
+        );
+      }
+      const nextExpiresAt =
+        expires_at === undefined ? undefined : asDate(expires_at);
+      const { rows } = await getQueryClient(
+        dbClient,
+      ).query<RawMembershipPackageRecord>(
+        `
+          UPDATE membership_packages
+          SET seat_count = COALESCE($2::integer, seat_count),
+              expires_at = CASE WHEN $3::boolean THEN $4::timestamp ELSE expires_at END,
+              updated = NOW()
+          WHERE id = $1
+          RETURNING id, owner_account_id, kind, membership_class, seat_count,
+                    purchase_id, starts_at, expires_at, metadata, created, updated
+        `,
+        [
+          package_id,
+          normalizedSeatCount ?? null,
+          expires_at !== undefined,
+          nextExpiresAt ?? null,
+        ],
+      );
+      const updatedPackage = normalizePackageRecord(rows[0]);
+      if (!updatedPackage) {
+        throw Error("membership package not found");
+      }
+      for (const assignment of assignments) {
+        await syncUpdatedGrantForAssignment({
+          pkg: updatedPackage,
+          assignment,
+          client: dbClient,
+        });
+      }
+      const details = await listMembershipPackageDetailsForOwner({
+        owner_account_id: updatedPackage.owner_account_id,
+        client: dbClient,
+      });
+      const updatedDetails = details.find(({ id }) => id === package_id);
+      if (!updatedDetails) {
+        throw Error("updated membership package not found");
+      }
+      return updatedDetails;
+    },
+  });
+}
+
 export async function setMembershipPackagePurchaseId(
   {
     package_id,
@@ -1253,7 +1407,7 @@ export async function revokeMembershipPackageSeat(
         assignment.account_id &&
         claim_scope_key &&
         claim_identity_key &&
-        (pkg.kind === "domain" || pkg.kind === "site")
+        pkg.kind === "site"
       ) {
         await queueMembershipClaimIdentitySyncEffect({
           owner_account_id: pkg.owner_account_id,
@@ -1405,7 +1559,7 @@ export async function listLocalClaimableMembershipPackagesForVerifiedEmails({
     if (
       !claimables.has(pkg.id) &&
       available_seat_count > 0 &&
-      (pkg.kind === "domain" || pkg.kind === "site")
+      pkg.kind === "site"
     ) {
       const allowedDomains = new Set(getPackageDomains(pkg.metadata));
       if (allowedDomains.size === 0) {
@@ -1663,7 +1817,7 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
           };
         }
 
-        if (pkg.kind !== "domain" && pkg.kind !== "site") {
+        if (pkg.kind !== "site") {
           throw Error("no claimable seat found for this account");
         }
         const allowedDomains = new Set(getPackageDomains(pkg.metadata));

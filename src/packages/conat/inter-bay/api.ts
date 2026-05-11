@@ -27,7 +27,6 @@ import type {
   MembershipEffectiveLimits,
   MembershipPackageAssignment,
   MembershipPackageDetails,
-  MembershipPackageKind,
   MembershipResolution,
 } from "@cocalc/conat/hub/api/purchases";
 import type { BayBackupsInfo, BayLoadInfo } from "@cocalc/conat/hub/api/system";
@@ -659,13 +658,20 @@ export interface AccountLocalGetMembershipPackagesRequest {
 export interface AccountLocalAdminProvisionMembershipPackageRequest {
   owner_account_id: string;
   actor_account_id: string;
-  kind: MembershipPackageKind;
+  kind: "site";
   membership_class: string;
   seat_count: number;
   allowed_domains: string[];
   starts_at?: Date | string | null;
   expires_at?: Date | string | null;
   metadata?: Record<string, unknown> | null;
+}
+
+export interface AccountLocalUpdateMembershipPackageRequest {
+  package_id: string;
+  actor_account_id: string;
+  seat_count?: number;
+  expires_at?: Date | string | null;
 }
 
 export interface AccountLocalGetClaimableMembershipPackagesRequest {
@@ -981,6 +987,7 @@ export type AccountLocalMethod =
   | "get-dedicated-host-policy-snapshot"
   | "get-membership-packages"
   | "admin-provision-membership-package"
+  | "update-membership-package"
   | "get-claimable-membership-packages"
   | "claim-membership-package-seat"
   | "get-membership-portable-state"
@@ -1587,6 +1594,9 @@ export interface InterBayAccountLocalApi {
   ) => Promise<MembershipPackageDetails[]>;
   adminProvisionMembershipPackage: (
     opts: AccountLocalAdminProvisionMembershipPackageRequest,
+  ) => Promise<MembershipPackageDetails>;
+  updateMembershipPackage: (
+    opts: AccountLocalUpdateMembershipPackageRequest,
   ) => Promise<MembershipPackageDetails>;
   getClaimableMembershipPackages: (
     opts: AccountLocalGetClaimableMembershipPackagesRequest,
@@ -2866,6 +2876,15 @@ export function createInterBayAccountLocalClient({
       method: "admin-provision-membership-package",
     }),
   });
+  const updateMembershipPackageClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "updateMembershipPackage">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "update-membership-package",
+    }),
+  });
   const getClaimableMembershipPackagesClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getClaimableMembershipPackages">
   >({
@@ -2955,6 +2974,8 @@ export function createInterBayAccountLocalClient({
       await adminProvisionMembershipPackageClient.adminProvisionMembershipPackage(
         opts,
       ),
+    updateMembershipPackage: async (opts) =>
+      await updateMembershipPackageClient.updateMembershipPackage(opts),
     getClaimableMembershipPackages: async (opts) =>
       await getClaimableMembershipPackagesClient.getClaimableMembershipPackages(
         opts,
@@ -3238,6 +3259,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         adminProvisionMembershipPackage: async (opts) =>
           await impl.adminProvisionMembershipPackage(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "updateMembershipPackage">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "update-membership-package",
+      }),
+      impl: {
+        updateMembershipPackage: async (opts) =>
+          await impl.updateMembershipPackage(opts),
       },
     }),
     createServiceHandler<
