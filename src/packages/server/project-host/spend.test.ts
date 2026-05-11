@@ -15,6 +15,7 @@ import {
   estimateDedicatedHostRateUsdPerHour,
   getDedicatedHostPostpaidUnbilledExposureLocal,
   getDedicatedHostWindowUsageLocal,
+  getDedicatedHostWindowUsageForHostLocal,
   reconcileDedicatedHostPurchaseSessionLocal,
 } from "./spend";
 
@@ -63,6 +64,49 @@ describe("dedicated host spend accounting", () => {
     expect(toDecimal(usage.prepaid_7d_usd).toNumber()).toBeCloseTo(30, 1);
     expect(toDecimal(usage.credit_5h_usd).toNumber()).toBeCloseTo(20, 1);
     expect(toDecimal(usage.credit_7d_usd).toNumber()).toBeCloseTo(45, 1);
+  });
+
+  it("computes rolling spend windows for a specific host", async () => {
+    const account_id = uuid();
+    const host_id = uuid();
+    const other_host_id = uuid();
+    await createPurchase({
+      account_id,
+      service: "dedicated-host",
+      description: {
+        type: "dedicated-host",
+        host_id,
+        provider: "gcp",
+        funding_lane: "prepaid",
+        hourly_cost_usd: "10",
+      } as any,
+      client: null,
+      cost_per_hour: "10",
+      period_start: dayjs().subtract(3, "hour").toDate(),
+      tag: `dedicated-host:${host_id}`,
+    });
+    await createPurchase({
+      account_id,
+      service: "dedicated-host",
+      description: {
+        type: "dedicated-host",
+        host_id: other_host_id,
+        provider: "gcp",
+        funding_lane: "prepaid",
+        hourly_cost_usd: "50",
+      } as any,
+      client: null,
+      cost_per_hour: "50",
+      period_start: dayjs().subtract(3, "hour").toDate(),
+      tag: `dedicated-host:${other_host_id}`,
+    });
+
+    const usage = await getDedicatedHostWindowUsageForHostLocal({
+      account_id,
+      host_id,
+    });
+    expect(toDecimal(usage.spend_5h_usd).toNumber()).toBeCloseTo(30, 1);
+    expect(toDecimal(usage.spend_7d_usd).toNumber()).toBeCloseTo(30, 1);
   });
 
   it("reconciles one open purchase session per host and closes the old one on rate change", async () => {

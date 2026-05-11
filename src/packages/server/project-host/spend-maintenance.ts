@@ -19,9 +19,11 @@ import {
 import {
   closeDedicatedHostPurchaseSessionForAccount,
   estimateDedicatedHostRateUsdPerHour,
+  getDedicatedHostWindowUsageForHostLocal,
   isDedicatedHostLaneCurrentlyAllowed,
   reconcileDedicatedHostPurchaseSessionForAccount,
   type DedicatedHostFundingLane,
+  type DedicatedHostOwnerWindowUsageSnapshot,
 } from "./spend";
 import {
   DEDICATED_HOST_BILLING_DISK_GRACE_HOURS,
@@ -30,6 +32,7 @@ import {
   type DedicatedHostBillingEnforcementMetadata,
 } from "./spend-enforcement";
 import { notifyDedicatedHostBillingEnforcementBestEffort } from "./billing-notifications";
+import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 
 const logger = getLogger("server:project-host:spend-maintenance");
 const CHECK_INTERVAL_MS = Math.max(
@@ -131,6 +134,7 @@ function retainedBillingPolicy(metadata: any): any {
     return null;
   }
   const enforcement = currentEnforcement(metadata);
+  const ownerSpendPolicy = retainedOwnerSpendPolicy(metadata);
   const started_at =
     typeof metadata?.billing?.started_at === "string"
       ? metadata.billing.started_at.trim()
@@ -139,6 +143,7 @@ function retainedBillingPolicy(metadata: any): any {
     funding_mode,
     ...(started_at ? { started_at } : {}),
     ...(enforcement ? { enforcement } : {}),
+    ...ownerSpendPolicy,
   };
 }
 
@@ -149,6 +154,86 @@ function currentEnforcement(
   return enforcement && typeof enforcement === "object"
     ? enforcement
     : undefined;
+}
+
+function retainedOwnerSpendPolicy(metadata: any): any {
+  const billing = metadata?.billing ?? {};
+  return {
+    ...(billing.owner_spend_limit_5h_usd != null
+      ? { owner_spend_limit_5h_usd: billing.owner_spend_limit_5h_usd }
+      : {}),
+    ...(billing.owner_spend_limit_7d_usd != null
+      ? { owner_spend_limit_7d_usd: billing.owner_spend_limit_7d_usd }
+      : {}),
+    ...(billing.owner_spend_limit_status != null
+      ? { owner_spend_limit_status: billing.owner_spend_limit_status }
+      : {}),
+  };
+}
+
+function positiveLimit(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return value;
+}
+
+function buildOwnerSpendLimitStatus({
+  metadata,
+  usage,
+}: {
+  metadata: any;
+  usage: DedicatedHostOwnerWindowUsageSnapshot;
+}): {
+  state: "ok" | "at_risk" | "stopped_limit_exceeded";
+  limit_5h_usd?: number;
+  limit_7d_usd?: number;
+  used_5h_usd: string;
+  used_7d_usd: string;
+  exceeded_window?: "5h" | "7d";
+  first_exceeded_at?: string;
+  stopped_at?: string;
+  reason?: string;
+} {
+  const previous = metadata?.billing?.owner_spend_limit_status ?? {};
+  const limit5h = positiveLimit(metadata?.billing?.owner_spend_limit_5h_usd);
+  const limit7d = positiveLimit(metadata?.billing?.owner_spend_limit_7d_usd);
+  const used5h = moneyToDbString(usage.spend_5h_usd);
+  const used7d = moneyToDbString(usage.spend_7d_usd);
+  const over5h = limit5h != null && toDecimal(used5h).gte(limit5h);
+  const over7d = limit7d != null && toDecimal(used7d).gte(limit7d);
+  const near5h = limit5h != null && toDecimal(used5h).gte(limit5h * 0.8);
+  const near7d = limit7d != null && toDecimal(used7d).gte(limit7d * 0.8);
+  const nowIso = new Date().toISOString();
+  const exceeded_window = over5h ? "5h" : over7d ? "7d" : undefined;
+  if (exceeded_window) {
+    const limit = exceeded_window === "5h" ? limit5h : limit7d;
+    return {
+      state: "stopped_limit_exceeded",
+      ...(limit5h != null ? { limit_5h_usd: limit5h } : {}),
+      ...(limit7d != null ? { limit_7d_usd: limit7d } : {}),
+      used_5h_usd: used5h,
+      used_7d_usd: used7d,
+      exceeded_window,
+      first_exceeded_at: previous.first_exceeded_at ?? nowIso,
+      stopped_at: previous.stopped_at,
+      reason: `owner-configured ${exceeded_window} spend limit of $${limit} was reached`,
+    };
+  }
+  return {
+    state: near5h || near7d ? "at_risk" : "ok",
+    ...(limit5h != null ? { limit_5h_usd: limit5h } : {}),
+    ...(limit7d != null ? { limit_7d_usd: limit7d } : {}),
+    used_5h_usd: used5h,
+    used_7d_usd: used7d,
+  };
+}
+
+function hasOwnerSpendLimit(metadata: any): boolean {
+  return (
+    positiveLimit(metadata?.billing?.owner_spend_limit_5h_usd) != null ||
+    positiveLimit(metadata?.billing?.owner_spend_limit_7d_usd) != null
+  );
 }
 
 async function notifyBillingEnforcementTransition({
@@ -293,6 +378,59 @@ async function requestHostStopForExceededLane({
     host_id: row.id,
     provider,
     reason,
+  });
+}
+
+async function requestHostStopForOwnerSpendLimit({
+  row,
+  provider,
+  ownerSpendStatus,
+}: {
+  row: CandidateHostRow;
+  provider: string;
+  ownerSpendStatus: ReturnType<typeof buildOwnerSpendLimitStatus>;
+}): Promise<void> {
+  const metadata = { ...(row.metadata ?? {}) };
+  if (
+    `${metadata?.desired_state ?? ""}`.trim().toLowerCase() === "stopped" &&
+    `${row.status ?? ""}`.trim().toLowerCase() === "stopping"
+  ) {
+    return;
+  }
+  const billing = { ...(metadata.billing ?? {}) };
+  const nowIso = new Date().toISOString();
+  metadata.desired_state = "stopped";
+  metadata.billing = {
+    ...billing,
+    owner_spend_limit_status: {
+      ...ownerSpendStatus,
+      stopped_at: ownerSpendStatus.stopped_at ?? nowIso,
+    },
+    stop_reason: ownerSpendStatus.reason,
+    stop_requested_at: nowIso,
+  };
+  metadata.last_action = "stop";
+  metadata.last_action_status = "pending";
+  metadata.last_action_error = null;
+  metadata.last_action_at = nowIso;
+  await getPool().query(
+    `
+      UPDATE project_hosts
+      SET status=$2, last_seen=$3, metadata=$4, updated=NOW()
+      WHERE id=$1 AND deleted IS NULL
+    `,
+    [row.id, "stopping", null, metadata],
+  );
+  await enqueueCloudVmWork({
+    vm_id: row.id,
+    action: "stop",
+    payload: { provider },
+  });
+  logger.warn("stopped dedicated host after owner spend cap was exceeded", {
+    host_id: row.id,
+    provider,
+    exceeded_window: ownerSpendStatus.exceeded_window,
+    reason: ownerSpendStatus.reason,
   });
 }
 
@@ -680,6 +818,7 @@ async function runPass(): Promise<void> {
       const nextBilling = {
         funding_mode: "site-funded" as const,
         started_at: metadata?.billing?.started_at ?? new Date().toISOString(),
+        ...retainedOwnerSpendPolicy(metadata),
       };
       if (
         JSON.stringify(nextBilling) !== JSON.stringify(metadata?.billing ?? {})
@@ -774,6 +913,41 @@ async function runPass(): Promise<void> {
       snapshot: refreshedSnapshot,
       funding_lane,
     });
+    const ownerSpendUsage = hasOwnerSpendLimit(metadata)
+      ? await getDedicatedHostWindowUsageForHostLocal({
+          account_id: owner,
+          host_id: row.id,
+        })
+      : undefined;
+    const ownerSpendStatus = ownerSpendUsage
+      ? buildOwnerSpendLimitStatus({
+          metadata,
+          usage: ownerSpendUsage,
+        })
+      : undefined;
+    if (ownerSpendStatus?.state === "stopped_limit_exceeded") {
+      await requestHostStopForOwnerSpendLimit({
+        row: {
+          ...row,
+          metadata: {
+            ...metadata,
+            billing: {
+              ...(metadata.billing ?? {}),
+              funding_mode: snapshot.funding_mode,
+              funding_lane,
+              hourly_cost_usd,
+              started_at: preserveStartedAt ?? new Date().toISOString(),
+              ...retainedOwnerSpendPolicy(metadata),
+              owner_spend_limit_status: ownerSpendStatus,
+            },
+          },
+        },
+        provider,
+        ownerSpendStatus,
+      });
+      snapshotCache.delete(owner);
+      continue;
+    }
     const enforcementDecision = evaluateDedicatedHostBillingEnforcement({
       snapshot: refreshedSnapshot,
       funding_lane,
@@ -793,6 +967,10 @@ async function runPass(): Promise<void> {
         funding_lane,
         hourly_cost_usd,
         started_at: preserveStartedAt ?? new Date().toISOString(),
+        ...retainedOwnerSpendPolicy(metadata),
+        ...(ownerSpendStatus
+          ? { owner_spend_limit_status: ownerSpendStatus }
+          : {}),
         enforcement: nextEnforcement,
       },
     };

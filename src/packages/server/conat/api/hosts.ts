@@ -150,6 +150,7 @@ import { to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import { computeAIUsageUnits } from "@cocalc/server/ai/usage-units";
 import { saveAIResponse } from "@cocalc/server/ai/save-response";
+import { moneyToDbString } from "@cocalc/util/money";
 import {
   isCoreLanguageModel,
   type LanguageModelCore,
@@ -170,6 +171,7 @@ import {
   isBillableDedicatedHostCloud,
   type DedicatedHostFundingMode,
 } from "@cocalc/server/project-host/admission";
+import { getDedicatedHostWindowUsageForHostLocal } from "@cocalc/server/project-host/spend";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
 import {
@@ -1008,6 +1010,22 @@ function currentHostFundingMode(
 }
 
 function assertHostBillingEnforcementAllowsStart(metadata: any): void {
+  const ownerSpendState = `${
+    metadata?.billing?.owner_spend_limit_status?.state ?? ""
+  }`
+    .trim()
+    .toLowerCase();
+  if (ownerSpendState === "stopped_limit_exceeded") {
+    throw Object.assign(
+      new Error(
+        "owner spend cap must be raised or removed before this dedicated host can be started",
+      ),
+      {
+        code: "owner_host_spend_limit_exceeded",
+        details: metadata?.billing?.owner_spend_limit_status,
+      },
+    );
+  }
   const state = `${metadata?.billing?.enforcement?.state ?? ""}`
     .trim()
     .toLowerCase();
@@ -2527,6 +2545,31 @@ export async function listHostsLocal({
     await loadHostRuntimeDesiredArtifactSummaries(
       visibleRows.map(({ row }) => row.id),
     );
+  const ownerSpendUsage = new Map<
+    string,
+    Awaited<ReturnType<typeof getDedicatedHostWindowUsageForHostLocal>>
+  >();
+  await Promise.all(
+    visibleRows.map(async ({ row }) => {
+      const ownerAccountId =
+        typeof row.metadata?.owner === "string" ? row.metadata.owner : "";
+      const billing = row.metadata?.billing ?? {};
+      if (
+        !ownerAccountId ||
+        (billing.owner_spend_limit_5h_usd == null &&
+          billing.owner_spend_limit_7d_usd == null)
+      ) {
+        return;
+      }
+      ownerSpendUsage.set(
+        row.id,
+        await getDedicatedHostWindowUsageForHostLocal({
+          account_id: ownerAccountId,
+          host_id: row.id,
+        }),
+      );
+    }),
+  );
 
   return visibleRows.map(
     ({
@@ -2552,6 +2595,16 @@ export async function listHostsLocal({
             : undefined,
         backup_status: backupStatus.get(row.id),
         starred,
+        owner_spend_5h_usd:
+          ownerSpendUsage.get(row.id)?.spend_5h_usd == null
+            ? undefined
+            : moneyToDbString(ownerSpendUsage.get(row.id)!.spend_5h_usd),
+        owner_spend_7d_usd:
+          ownerSpendUsage.get(row.id)?.spend_7d_usd == null
+            ? undefined
+            : moneyToDbString(ownerSpendUsage.get(row.id)!.spend_7d_usd),
+        owner_spend_limit_state:
+          row.metadata?.billing?.owner_spend_limit_status?.state,
         metrics_history: metricsHistory.get(row.id),
         runtime_exception_summary: runtimeExceptionSummaries.get(row.id),
         runtime_desired_artifacts: runtimeDesiredArtifactSummaries.get(row.id),
@@ -2855,6 +2908,7 @@ export async function setHostOwnerSpendLimits(opts: {
       );
     }
   }
+  delete billing.owner_spend_limit_status;
   if (Object.keys(billing).length) {
     metadata.billing = billing;
   } else {

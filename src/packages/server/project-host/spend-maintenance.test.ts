@@ -9,6 +9,7 @@ let queryMock: jest.Mock;
 let enqueueCloudVmWorkMock: jest.Mock;
 let getDedicatedHostPolicySnapshotForAccountMock: jest.Mock;
 let estimateDedicatedHostRateUsdPerHourMock: jest.Mock;
+let getDedicatedHostWindowUsageForHostLocalMock: jest.Mock;
 let reconcileDedicatedHostPurchaseSessionForAccountMock: jest.Mock;
 let closeDedicatedHostPurchaseSessionForAccountMock: jest.Mock;
 let isDedicatedHostLaneCurrentlyAllowedMock: jest.Mock;
@@ -69,6 +70,8 @@ jest.mock("./spend", () => ({
   __esModule: true,
   estimateDedicatedHostRateUsdPerHour: (...args: any[]) =>
     estimateDedicatedHostRateUsdPerHourMock(...args),
+  getDedicatedHostWindowUsageForHostLocal: (...args: any[]) =>
+    getDedicatedHostWindowUsageForHostLocalMock(...args),
   isDedicatedHostLaneCurrentlyAllowed: (...args: any[]) =>
     isDedicatedHostLaneCurrentlyAllowedMock(...args),
   reconcileDedicatedHostPurchaseSessionForAccount: (...args: any[]) =>
@@ -120,8 +123,14 @@ describe("dedicated host spend maintenance", () => {
         sql.includes("SET status=$2")
       ) {
         expect(params?.[0]).toBe("host-1");
-        expect(params?.[1]).toBe("draining");
-        expect(params?.[2].billing.enforcement.state).toBe("draining");
+        if (params?.[1] === "draining") {
+          expect(params?.[2].billing.enforcement.state).toBe("draining");
+        } else {
+          expect(params?.[1]).toBe("stopping");
+          expect(params?.[3].billing.owner_spend_limit_status.state).toBe(
+            "stopped_limit_exceeded",
+          );
+        }
         return { rows: [] };
       }
       if (
@@ -163,6 +172,10 @@ describe("dedicated host spend maintenance", () => {
       },
     }));
     estimateDedicatedHostRateUsdPerHourMock = jest.fn(async () => "12");
+    getDedicatedHostWindowUsageForHostLocalMock = jest.fn(async () => ({
+      spend_5h_usd: "0",
+      spend_7d_usd: "0",
+    }));
     reconcileDedicatedHostPurchaseSessionForAccountMock = jest.fn(
       async () => undefined,
     );
@@ -387,6 +400,87 @@ describe("dedicated host spend maintenance", () => {
       }),
     );
     expect(enqueueCloudVmWorkMock).not.toHaveBeenCalled();
+  });
+
+  it("stops a running host when the owner-configured host spend cap is exceeded", async () => {
+    queryMock = jest.fn(async (sql: string, params?: any[]) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return { rows: [{ locked: true }] };
+      }
+      if (sql.includes("FROM project_hosts")) {
+        return {
+          rows: [
+            {
+              id: "host-1",
+              name: "GPU Host",
+              region: "us-central1",
+              status: "running",
+              metadata: {
+                owner: "acc-1",
+                size: "n1-standard-4",
+                pricing_model: "on_demand",
+                desired_state: "running",
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "n1-standard-4",
+                  disk_gb: 100,
+                  disk_type: "ssd",
+                  storage_mode: "persistent",
+                  zone: "us-central1-a",
+                },
+                billing: {
+                  funding_lane: "prepaid",
+                  hourly_cost_usd: "12",
+                  started_at: "2026-05-07T00:00:00.000Z",
+                  owner_spend_limit_5h_usd: 25,
+                  owner_spend_limit_7d_usd: 1000,
+                },
+              },
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("UPDATE project_hosts") &&
+        sql.includes("SET status=$2")
+      ) {
+        expect(params?.[0]).toBe("host-1");
+        expect(params?.[1]).toBe("stopping");
+        expect(params?.[3].desired_state).toBe("stopped");
+        expect(params?.[3].billing.owner_spend_limit_status).toEqual(
+          expect.objectContaining({
+            state: "stopped_limit_exceeded",
+            exceeded_window: "5h",
+            limit_5h_usd: 25,
+            used_5h_usd: "30.0000000000",
+          }),
+        );
+        return { rows: [] };
+      }
+      if (sql.includes("pg_advisory_unlock")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    isDedicatedHostLaneCurrentlyAllowedMock = jest.fn(() => true);
+    getDedicatedHostWindowUsageForHostLocalMock = jest.fn(async () => ({
+      spend_5h_usd: "30",
+      spend_7d_usd: "30",
+    }));
+
+    const { runDedicatedHostSpendMaintenancePass } =
+      await import("./spend-maintenance");
+    await runDedicatedHostSpendMaintenancePass();
+
+    expect(
+      reconcileDedicatedHostPurchaseSessionForAccountMock,
+    ).toHaveBeenCalled();
+    expect(enqueueCloudVmWorkMock).toHaveBeenCalledWith({
+      vm_id: "host-1",
+      action: "stop",
+      payload: { provider: "gcp" },
+    });
+    expect(createLroMock).not.toHaveBeenCalled();
   });
 
   it("preserves an explicit site-funded policy on inactive hosts", async () => {
