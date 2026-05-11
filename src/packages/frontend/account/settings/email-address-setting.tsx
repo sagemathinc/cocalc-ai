@@ -3,11 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Input, Space } from "antd";
+import { Alert, Button, Card, Input, Space } from "antd";
 import { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
-import { alert_message } from "@cocalc/frontend/alerts";
 import { ErrorDisplay, LabeledRow, Saving } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -23,7 +22,6 @@ interface Props {
 export const EmailAddressSetting = ({
   email_address: email_address0,
   disabled,
-  verify_emails,
 }: Props) => {
   const intl = useIntl();
   const [state, setState] = useState<"view" | "edit" | "saving">("view");
@@ -33,11 +31,13 @@ export const EmailAddressSetting = ({
     email_address0 ?? "",
   );
   const [error, setError] = useState<string>("");
+  const [message, setMessage] = useState<string>("");
 
   function start_editing() {
     setState("edit");
     set_email_address(email_address0 ?? "");
     setError("");
+    setMessage("");
     setPassword("");
   }
 
@@ -55,8 +55,28 @@ export const EmailAddressSetting = ({
       return;
     }
     setState("saving");
+    setMessage("");
     try {
-      await webapp_client.account_client.change_email(email_address, password);
+      const result = await webapp_client.account_client.change_email(
+        email_address,
+        password,
+      );
+      const changedEmail = result.email_address ?? email_address;
+      if (result.already_verified) {
+        setMessage(
+          `Email address changed to ${changedEmail}. This address was already verified, so no new verification email was needed.`,
+        );
+      } else if (result.verification_email_sent) {
+        setMessage(
+          `Email address changed to ${changedEmail}. We sent a verification email to that address.`,
+        );
+      } else if (result.verification_email_error) {
+        setMessage(
+          `Email address changed to ${changedEmail}, but sending the verification email failed: ${result.verification_email_error}`,
+        );
+      } else {
+        setMessage(`Email address changed to ${changedEmail}.`);
+      }
     } catch (error) {
       setState("edit");
       setError(`Error -- ${error}`);
@@ -65,17 +85,6 @@ export const EmailAddressSetting = ({
     setState("view");
     setError("");
     setPassword("");
-    // if email verification is enabled, send out a token
-    if (!verify_emails) {
-      return;
-    }
-    try {
-      await webapp_client.account_client.send_verification_email();
-    } catch (error) {
-      const err_msg = `Problem sending welcome email: ${error}`;
-      console.log(err_msg);
-      alert_message({ type: "error", message: err_msg });
-    }
   }
 
   function is_submittable(): boolean {
@@ -225,6 +234,16 @@ export const EmailAddressSetting = ({
         ) : undefined}
       </div>
       {state !== "view" ? render_edit() : undefined}
+      {state === "view" && message ? (
+        <Alert
+          showIcon
+          type={message.includes("failed") ? "warning" : "success"}
+          title={message}
+          style={{ marginTop: "10px" }}
+          closable
+          onClose={() => setMessage("")}
+        />
+      ) : null}
     </LabeledRow>
   );
 };

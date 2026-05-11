@@ -22,6 +22,7 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import type {
   ClaimableMembershipPackage,
+  AccountEntitlementOverride,
   MembershipDetails,
   MembershipEffectiveLimits,
   MembershipPackageAssignment,
@@ -517,6 +518,8 @@ export interface AccountRehomeStateCopyRequest {
   account_impersonation_sessions?: Record<string, unknown>[];
   auth_tokens?: Record<string, unknown>[];
   api_keys?: Record<string, unknown>[];
+  account_entitlement_overrides?: Record<string, unknown>[];
+  account_entitlement_override_events?: Record<string, unknown>[];
   membership_grants?: Record<string, unknown>[];
   membership_packages?: Record<string, unknown>[];
   membership_package_assignments?: Record<string, unknown>[];
@@ -552,6 +555,26 @@ export interface AccountLocalGetMembershipDetailsRequest {
   refresh_usage_status?: boolean;
 }
 
+export interface AccountLocalGetEntitlementOverrideRequest {
+  account_id: string;
+}
+
+export interface AccountLocalSetEntitlementOverrideRequest {
+  account_id: string;
+  actor_account_id: string;
+  override: Omit<
+    Partial<AccountEntitlementOverride>,
+    "account_id" | "updated_by" | "updated_at"
+  >;
+  reason: string;
+}
+
+export interface AccountLocalClearEntitlementOverrideRequest {
+  account_id: string;
+  actor_account_id: string;
+  reason: string;
+}
+
 export interface AccountLocalDedicatedHostPolicySnapshot {
   account_id: string;
   membership_class: string;
@@ -563,13 +586,13 @@ export interface AccountLocalDedicatedHostPolicySnapshot {
   has_usage_subscription: boolean;
   balance: MoneyValue;
   postpaid_unbilled_exposure_usd: MoneyValue;
-  postpaid_unbilled_limit_usd: MoneyValue;
   dedicated_host_window_usage: {
     prepaid_5h_usd: MoneyValue;
     prepaid_7d_usd: MoneyValue;
     credit_5h_usd: MoneyValue;
     credit_7d_usd: MoneyValue;
   };
+  admin_override?: AccountEntitlementOverride;
 }
 
 export interface AccountLocalGetDedicatedHostPolicySnapshotRequest {
@@ -630,6 +653,25 @@ export interface AccountLocalVerifyFreshAuthCredentialsResult {
 
 export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
+}
+
+export interface AccountLocalAdminProvisionMembershipPackageRequest {
+  owner_account_id: string;
+  actor_account_id: string;
+  kind: "site";
+  membership_class: string;
+  seat_count: number;
+  allowed_domains: string[];
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AccountLocalUpdateMembershipPackageRequest {
+  package_id: string;
+  actor_account_id: string;
+  seat_count?: number;
+  expires_at?: Date | string | null;
 }
 
 export interface AccountLocalGetClaimableMembershipPackagesRequest {
@@ -939,8 +981,13 @@ export type AccountLocalMethod =
   | "revoke-membership-grant"
   | "get-membership"
   | "get-membership-details"
+  | "get-account-entitlement-override"
+  | "set-account-entitlement-override"
+  | "clear-account-entitlement-override"
   | "get-dedicated-host-policy-snapshot"
   | "get-membership-packages"
+  | "admin-provision-membership-package"
+  | "update-membership-package"
   | "get-claimable-membership-packages"
   | "claim-membership-package-seat"
   | "get-membership-portable-state"
@@ -1530,12 +1577,27 @@ export interface InterBayAccountLocalApi {
   getMembershipDetails: (
     opts: AccountLocalGetMembershipDetailsRequest,
   ) => Promise<MembershipDetails>;
+  getAccountEntitlementOverride: (
+    opts: AccountLocalGetEntitlementOverrideRequest,
+  ) => Promise<AccountEntitlementOverride | undefined>;
+  setAccountEntitlementOverride: (
+    opts: AccountLocalSetEntitlementOverrideRequest,
+  ) => Promise<AccountEntitlementOverride>;
+  clearAccountEntitlementOverride: (
+    opts: AccountLocalClearEntitlementOverrideRequest,
+  ) => Promise<void>;
   getDedicatedHostPolicySnapshot: (
     opts: AccountLocalGetDedicatedHostPolicySnapshotRequest,
   ) => Promise<AccountLocalDedicatedHostPolicySnapshot>;
   getMembershipPackages: (
     opts: AccountLocalGetMembershipPackagesRequest,
   ) => Promise<MembershipPackageDetails[]>;
+  adminProvisionMembershipPackage: (
+    opts: AccountLocalAdminProvisionMembershipPackageRequest,
+  ) => Promise<MembershipPackageDetails>;
+  updateMembershipPackage: (
+    opts: AccountLocalUpdateMembershipPackageRequest,
+  ) => Promise<MembershipPackageDetails>;
   getClaimableMembershipPackages: (
     opts: AccountLocalGetClaimableMembershipPackagesRequest,
   ) => Promise<ClaimableMembershipPackage[]>;
@@ -2760,6 +2822,33 @@ export function createInterBayAccountLocalClient({
       method: "get-membership-details",
     }),
   });
+  const getAccountEntitlementOverrideClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getAccountEntitlementOverride">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-account-entitlement-override",
+    }),
+  });
+  const setAccountEntitlementOverrideClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "setAccountEntitlementOverride">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "set-account-entitlement-override",
+    }),
+  });
+  const clearAccountEntitlementOverrideClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "clearAccountEntitlementOverride">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "clear-account-entitlement-override",
+    }),
+  });
   const getDedicatedHostPolicySnapshotClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getDedicatedHostPolicySnapshot">
   >({
@@ -2776,6 +2865,24 @@ export function createInterBayAccountLocalClient({
     subject: accountLocalSubject({
       dest_bay,
       method: "get-membership-packages",
+    }),
+  });
+  const adminProvisionMembershipPackageClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "adminProvisionMembershipPackage">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "admin-provision-membership-package",
+    }),
+  });
+  const updateMembershipPackageClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "updateMembershipPackage">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "update-membership-package",
     }),
   });
   const getClaimableMembershipPackagesClient = createServiceClient<
@@ -2845,12 +2952,30 @@ export function createInterBayAccountLocalClient({
       await getMembershipClient.getMembership(opts),
     getMembershipDetails: async (opts) =>
       await getMembershipDetailsClient.getMembershipDetails(opts),
+    getAccountEntitlementOverride: async (opts) =>
+      await getAccountEntitlementOverrideClient.getAccountEntitlementOverride(
+        opts,
+      ),
+    setAccountEntitlementOverride: async (opts) =>
+      await setAccountEntitlementOverrideClient.setAccountEntitlementOverride(
+        opts,
+      ),
+    clearAccountEntitlementOverride: async (opts) =>
+      await clearAccountEntitlementOverrideClient.clearAccountEntitlementOverride(
+        opts,
+      ),
     getDedicatedHostPolicySnapshot: async (opts) =>
       await getDedicatedHostPolicySnapshotClient.getDedicatedHostPolicySnapshot(
         opts,
       ),
     getMembershipPackages: async (opts) =>
       await getMembershipPackagesClient.getMembershipPackages(opts),
+    adminProvisionMembershipPackage: async (opts) =>
+      await adminProvisionMembershipPackageClient.adminProvisionMembershipPackage(
+        opts,
+      ),
+    updateMembershipPackage: async (opts) =>
+      await updateMembershipPackageClient.updateMembershipPackage(opts),
     getClaimableMembershipPackages: async (opts) =>
       await getClaimableMembershipPackagesClient.getClaimableMembershipPackages(
         opts,
@@ -3053,6 +3178,48 @@ export function createInterBayAccountLocalHandler({
       },
     ),
     createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getAccountEntitlementOverride">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-account-entitlement-override",
+      }),
+      impl: {
+        getAccountEntitlementOverride: async (opts) =>
+          await impl.getAccountEntitlementOverride(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "setAccountEntitlementOverride">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "set-account-entitlement-override",
+      }),
+      impl: {
+        setAccountEntitlementOverride: async (opts) =>
+          await impl.setAccountEntitlementOverride(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "clearAccountEntitlementOverride">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "clear-account-entitlement-override",
+      }),
+      impl: {
+        clearAccountEntitlementOverride: async (opts) =>
+          await impl.clearAccountEntitlementOverride(opts),
+      },
+    }),
+    createServiceHandler<
       Pick<InterBayAccountLocalApi, "getDedicatedHostPolicySnapshot">
     >({
       ...options,
@@ -3078,6 +3245,34 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getMembershipPackages: async (opts) =>
           await impl.getMembershipPackages(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "adminProvisionMembershipPackage">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "admin-provision-membership-package",
+      }),
+      impl: {
+        adminProvisionMembershipPackage: async (opts) =>
+          await impl.adminProvisionMembershipPackage(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "updateMembershipPackage">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "update-membership-package",
+      }),
+      impl: {
+        updateMembershipPackage: async (opts) =>
+          await impl.updateMembershipPackage(opts),
       },
     }),
     createServiceHandler<

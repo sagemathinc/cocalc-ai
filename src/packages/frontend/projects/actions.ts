@@ -29,7 +29,6 @@ import type {
   ProjectTheme,
   StudentProjectFunctionality,
 } from "@cocalc/util/db-schema/projects";
-import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import { defaults, is_valid_uuid_string } from "@cocalc/util/misc";
 import { ProjectsState, store } from "./store";
 import { refresh_projects_table, switch_to_project } from "./table";
@@ -1589,8 +1588,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
     project_id,
     course_project_id,
     path,
-    pay,
-    payInfo,
+    student_pay,
+    institute_pay,
+    site_license_pay,
+    required_membership_class,
+    student_membership_required_at,
+    student_membership_grace_days,
+    course_ends_at,
     account_id,
     email_address,
     datastore,
@@ -1603,8 +1607,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
     project_id: string;
     course_project_id: string;
     path: string;
-    pay: Date | string;
-    payInfo?: PurchaseInfo | null;
+    student_pay?: boolean;
+    institute_pay?: boolean;
+    site_license_pay?: boolean;
+    required_membership_class?: string;
+    student_membership_required_at?: string;
+    student_membership_grace_days?: number;
+    course_ends_at?: string;
     account_id?: string | null;
     email_address?: string | null;
     datastore: Datastore;
@@ -1623,11 +1632,28 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const course: CourseInfo = {
       project_id: course_project_id,
       path,
-      pay: typeof pay != "string" ? pay.toISOString() : pay,
-      payInfo: payInfo ?? undefined,
       datastore,
       type,
     };
+    if (student_pay != null) course.student_pay = student_pay;
+    if (institute_pay != null) course.institute_pay = institute_pay;
+    if (site_license_pay != null) course.site_license_pay = site_license_pay;
+    if (required_membership_class?.trim()) {
+      course.required_membership_class = required_membership_class.trim();
+    }
+    if (student_membership_required_at?.trim()) {
+      course.student_membership_required_at =
+        student_membership_required_at.trim();
+    }
+    if (
+      typeof student_membership_grace_days === "number" &&
+      Number.isFinite(student_membership_grace_days)
+    ) {
+      course.student_membership_grace_days = student_membership_grace_days;
+    }
+    if (course_ends_at?.trim()) {
+      course.course_ends_at = course_ends_at.trim();
+    }
     if (type == "student" && student_project_functionality != null) {
       course.student_project_functionality = student_project_functionality;
     }
@@ -1640,9 +1666,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (rootfs_image_id?.trim()) {
       course.rootfs_image_id = rootfs_image_id.trim();
     }
-    // account_id and email is null for shared/nbgrader project, otherwise student project
-    // the corresponding check of the two fields below is the
-    // is_student = ... or-test in ProjectsStore::date_when_course_payment_required
+    // account_id and email are null for shared/nbgrader projects; student
+    // projects use them to connect course membership requirements to a user.
     if (account_id != null) {
       course.account_id = account_id;
     }

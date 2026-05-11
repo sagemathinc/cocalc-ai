@@ -155,6 +155,7 @@ export default function SignUpFormBase({
         <div>
           <div>Registration token</div>
           <Input
+            autoFocus={!!requiresToken}
             value={registrationToken}
             placeholder="Enter your registration token"
             onChange={(e) => setRegistrationToken(e.target.value)}
@@ -166,6 +167,7 @@ export default function SignUpFormBase({
         <Input
           value={email}
           autoComplete="username"
+          autoFocus={!requiresToken}
           placeholder="you@example.com"
           onChange={(e) => setEmail(e.target.value)}
           onPressEnter={signUp}

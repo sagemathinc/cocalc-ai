@@ -5,10 +5,12 @@
 
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
+import { enqueueNotificationEmail } from "./notification-email-outbox";
 import type {
   NotificationTargetOutboxRow,
   NotificationTransportEventType,
 } from "./notifications-core";
+import { resolveNotificationDeliveryPolicy } from "@cocalc/util/notification-delivery-policy";
 
 const DEFAULT_SINGLE_BAY_ID = "bay-0";
 const RELEVANT_EVENT_TYPES: NotificationTransportEventType[] = [
@@ -16,11 +18,16 @@ const RELEVANT_EVENT_TYPES: NotificationTransportEventType[] = [
 ];
 
 type NotificationTargetOutboxPayload = {
+  event_id?: string | null;
   notification_id: string;
   kind: string;
   source_project_id?: string | null;
+  source_path?: string | null;
+  actor_account_id?: string | null;
+  origin_kind?: string | null;
   target_account_id: string;
   summary?: Record<string, any>;
+  event_payload?: Record<string, any>;
   created_at?: string | null;
 };
 
@@ -133,12 +140,111 @@ async function applyNotificationEventToAccountNotificationIndex(opts: {
       event.created_at,
     ],
   );
+  await enqueueProjectedNotificationEmail({
+    db,
+    event,
+    payload,
+  });
   return {
     inserted_rows: 1,
     deleted_rows: 0,
     affected_account_id: event.target_account_id,
     affected_notification_id: event.notification_id,
   };
+}
+
+async function enqueueProjectedNotificationEmail(opts: {
+  db: PoolClient;
+  event: NotificationTargetOutboxRow;
+  payload: NotificationTargetOutboxPayload;
+}): Promise<void> {
+  const { db, event, payload } = opts;
+  const { rows } = await db.query<{
+    email_address: string | null;
+    email_address_verified: Record<string, any> | null;
+    other_settings: Record<string, any> | null;
+  }>(
+    `SELECT email_address, email_address_verified, other_settings
+       FROM accounts
+      WHERE account_id = $1::UUID
+      LIMIT 1`,
+    [event.target_account_id],
+  );
+  const account = rows[0];
+  const other_settings = account?.other_settings ?? {};
+  const policy = resolveNotificationDeliveryPolicy({
+    kind: event.kind,
+    origin_kind: payload.origin_kind,
+    actor_account_id: payload.actor_account_id,
+    target_account_id: event.target_account_id,
+    summary: payload.summary,
+    event_payload: payload.event_payload,
+    preferences: other_settings.notification_preferences,
+  });
+  const recipient_email = resolveRecipientEmail(account);
+  const status =
+    policy.delivery_mode === "off"
+      ? "skipped_preference"
+      : recipient_email
+        ? "queued"
+        : "skipped_no_recipient";
+  await enqueueNotificationEmail({
+    db,
+    notification_id: event.notification_id,
+    event_id: payload.event_id ?? null,
+    target_account_id: event.target_account_id,
+    actor_account_id: payload.actor_account_id ?? null,
+    responsible_account_id: policy.responsible_account_id,
+    category: policy.category,
+    lane: policy.lane,
+    delivery_mode: policy.delivery_mode,
+    recipient_email,
+    subject: notificationEmailSubject({ event, payload }),
+    summary_json: {
+      kind: event.kind,
+      summary: payload.summary ?? {},
+      event_payload: payload.event_payload ?? {},
+      source_project_id: payload.source_project_id ?? null,
+      source_path: payload.source_path ?? null,
+      required: policy.required,
+    },
+    status,
+    scheduled_at: event.created_at,
+  });
+}
+
+function resolveRecipientEmail(
+  account:
+    | {
+        email_address: string | null;
+        email_address_verified: Record<string, any> | null;
+      }
+    | undefined,
+): string | null {
+  const primary = `${account?.email_address ?? ""}`.trim();
+  if (!primary) return null;
+  const verified = account?.email_address_verified;
+  if (verified == null || verified[primary]) {
+    return primary;
+  }
+  const firstVerified = Object.keys(verified).find((email) => verified[email]);
+  return firstVerified || null;
+}
+
+function notificationEmailSubject(opts: {
+  event: NotificationTargetOutboxRow;
+  payload: NotificationTargetOutboxPayload;
+}): string {
+  const summary = opts.payload.summary ?? {};
+  const title = `${summary.title ?? ""}`.trim();
+  if (title) {
+    return title;
+  }
+  if (opts.event.kind === "mention") {
+    const path = `${summary.path ?? opts.payload.source_path ?? ""}`.trim();
+    return path ? `CoCalc mention in ${path}` : "CoCalc mention";
+  }
+  return "CoCalc notification";
 }
 
 export async function getAccountNotificationIndexProjectionBacklogStatus(opts?: {

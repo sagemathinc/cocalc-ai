@@ -7,7 +7,7 @@
 A banner across the top of a course that appears if the instructor is not paying
 in any way, so they know they should.
 
-This banner only shows up if commerical is set for hub configuration.
+This banner only shows up if commercial is set for hub configuration.
 */
 
 import { CSS, useTypedRedux } from "../app-framework";
@@ -41,6 +41,9 @@ export function PayBanner({
       return true;
     }
     if (settings.get("institute_pay")) {
+      return true;
+    }
+    if (settings.get("site_license_pay")) {
       return true;
     }
     return false;
@@ -79,7 +82,7 @@ export function PayBanner({
           <Icon name="exclamation-triangle" />
           <div style={{ flex: 1, textAlign: "center" }}>
             <a onClick={show_config} style={linkStyle}>
-              Configure either the student or institute pay option...
+              Configure student pay, institute pay, or a site license...
             </a>
           </div>
           <Icon name="exclamation-triangle" />

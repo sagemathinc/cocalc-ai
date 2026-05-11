@@ -26,7 +26,6 @@ function snapshot(
     has_usage_subscription: false,
     balance: "100",
     postpaid_unbilled_exposure_usd: "0",
-    postpaid_unbilled_limit_usd: "1000",
     dedicated_host_window_usage: {
       prepaid_5h_usd: "0",
       prepaid_7d_usd: "0",
@@ -90,7 +89,7 @@ describe("dedicated host billing enforcement", () => {
     );
   });
 
-  it("requests drain when postpaid unbilled exposure has too little runway", () => {
+  it("requests drain when postpaid 7-day usage has too little runway", () => {
     const decision = evaluateDedicatedHostBillingEnforcement({
       snapshot: snapshot({
         funding_mode: "account-postpaid",
@@ -99,13 +98,11 @@ describe("dedicated host billing enforcement", () => {
           credit_spend_limit_7d_usd: 1000,
         },
         has_usage_subscription: true,
-        postpaid_unbilled_exposure_usd: "995",
-        postpaid_unbilled_limit_usd: "1000",
         dedicated_host_window_usage: {
           prepaid_5h_usd: "0",
           prepaid_7d_usd: "0",
           credit_5h_usd: "100",
-          credit_7d_usd: "200",
+          credit_7d_usd: "995",
         },
       }),
       funding_lane: "credit",
@@ -117,8 +114,8 @@ describe("dedicated host billing enforcement", () => {
       expect.objectContaining({
         state: "draining",
         action: "request_drain",
-        reason_code: "postpaid_unbilled_limit_exhausted",
-        limiting_window: "postpaid_unbilled",
+        reason_code: "postpaid_usage_window_7d_exhausted",
+        limiting_window: "credit_7d",
       }),
     );
   });

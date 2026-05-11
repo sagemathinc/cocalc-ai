@@ -1,151 +1,176 @@
 import {
   Alert,
-  Button,
   Card,
   Checkbox,
-  DatePicker,
-  Divider,
+  InputNumber,
+  Select,
   Space,
   Spin,
+  Tag,
 } from "antd";
-import dayjs from "dayjs";
-import { isEqual } from "lodash";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
-import { Gap, Icon, TimeAgo } from "@cocalc/frontend/components";
-import { labels } from "@cocalc/frontend/i18n";
-import LicenseEditor from "@cocalc/frontend/purchases/license-editor";
-import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { compute_cost } from "@cocalc/util/purchases/quota/compute-cost";
-import { DEFAULT_PURCHASE_INFO } from "@cocalc/util/purchases/quota/student-pay";
-import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
-import { currency } from "@cocalc/util/misc";
+
+import type { ClaimableMembershipPackage } from "@cocalc/conat/hub/api/purchases";
+import api from "@cocalc/frontend/client/api";
+import { Icon } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
+import { getClaimableMembershipPackages } from "@cocalc/frontend/purchases/api";
+import { currency } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import { InstitutePaySection } from "./institute-pay";
+
+interface CourseMembershipTier {
+  id: string;
+  label?: string;
+  priority?: number;
+  course_store_visible?: boolean;
+  course_price?: number;
+  course_duration_days?: number;
+  course_grace_days?: number;
+  disabled?: boolean;
+}
+
+interface MembershipTiersResponse {
+  tiers?: CourseMembershipTier[];
+}
+
+const DEFAULT_GRACE_DAYS = 14;
 
 export default function StudentPay({ actions, settings, project_id }) {
   const intl = useIntl();
-  const projectLabel = intl.formatMessage(labels.project);
-
+  const [tiers, setTiers] = useState<CourseMembershipTier[]>([]);
+  const [claimablePackages, setClaimablePackages] = useState<
+    ClaimableMembershipPackage[]
+  >([]);
+  const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const [minPayment, setMinPayment] = useState<number | undefined>(undefined);
-  const updateMinPayment = () => {
-    (async () => {
-      setMinPayment(await webapp_client.purchases_client.getMinimumPayment());
-    })();
-  };
-  useEffect(() => {
-    updateMinPayment();
-  }, []);
+  const siteLicenseDefaultedForTier = useRef<Set<string>>(new Set());
 
-  const [info, setInfo] = useState<PurchaseInfo>(() => {
-    let cur = settings.get("payInfo")?.toJS();
-    let info: PurchaseInfo;
-    if (cur != null) {
-      info = { ...DEFAULT_PURCHASE_INFO, ...cur };
-    } else {
-      info = {
-        ...DEFAULT_PURCHASE_INFO,
-        // @ts-ignore
-        start: new Date(),
-        end: dayjs().add(3, "month").toDate(),
-      };
-    }
-    setTimeout(() => {
-      // React requirement: this must happen in different render loop, because
-      // it causes an update to the UI.
-      actions.configuration.setStudentPay({ info, cost });
-    }, 1);
-    return info;
-  });
-
-  if (info.type == "vouchers") {
-    // for typescript
-    throw Error("bug");
-  }
-
-  const getWhenFromSettings = () => {
-    const pay = settings.get("pay");
-    if (pay) {
-      return dayjs(pay);
-    }
-    if (info.start) {
-      return dayjs(info.start).add(7, "day");
-    }
-    return dayjs().add(7, "day");
-  };
-
-  const [when, setWhen] = useState<dayjs.Dayjs>(getWhenFromSettings);
-  const cost = useMemo(() => {
+  async function loadTiers() {
+    setLoading(true);
+    setError("");
     try {
-      return compute_cost(info).cost;
+      const [result, claimables] = await Promise.all([
+        api(
+          "purchases/get-membership-tiers",
+        ) as Promise<MembershipTiersResponse>,
+        getClaimableMembershipPackages(),
+      ]);
+      setTiers(result.tiers ?? []);
+      setClaimablePackages(claimables);
     } catch (err) {
       setError(`${err}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadTiers();
+  }, []);
+
+  const courseTiers = useMemo(() => {
+    return tiers
+      .filter((tier) => tier.course_store_visible && !tier.disabled)
+      .sort((a, b) => {
+        const ap = a.priority ?? 0;
+        const bp = b.priority ?? 0;
+        if (ap !== bp) return ap - bp;
+        return a.id.localeCompare(b.id);
+      });
+  }, [tiers]);
+
+  const selectedTierId = `${settings?.get("required_membership_class") ?? ""}`;
+  const selectedTier =
+    courseTiers.find((tier) => tier.id === selectedTierId) ?? null;
+  const tierById = useMemo(() => {
+    return new Map(tiers.map((tier) => [tier.id, tier]));
+  }, [tiers]);
+  const matchingSiteLicense = useMemo(() => {
+    if (!selectedTier) {
       return null;
     }
-  }, [info]);
-
-  const [showStudentPay, setShowStudentPay] = useState<boolean>(false);
-  const reset = () => {
-    const cur = settings.get("payInfo")?.toJS();
-    if (cur != null) {
-      setInfo(cur);
-    }
-    setWhen(getWhenFromSettings());
-  };
+    const requiredPriority = selectedTier.priority ?? 0;
+    return (
+      claimablePackages
+        .filter((membershipPackage) => membershipPackage.kind === "site")
+        .filter((membershipPackage) => {
+          const siteTier = tierById.get(membershipPackage.membership_class);
+          return (siteTier?.priority ?? 0) >= requiredPriority;
+        })
+        .sort((left, right) => {
+          const leftPriority =
+            tierById.get(left.membership_class)?.priority ?? 0;
+          const rightPriority =
+            tierById.get(right.membership_class)?.priority ?? 0;
+          if (rightPriority !== leftPriority) {
+            return rightPriority - leftPriority;
+          }
+          return left.package_id.localeCompare(right.package_id);
+        })[0] ?? null
+    );
+  }, [claimablePackages, selectedTier, tierById]);
+  const selectedTierGraceDays = Number(selectedTier?.course_grace_days);
+  const defaultGraceDays = Number.isFinite(selectedTierGraceDays)
+    ? selectedTierGraceDays
+    : DEFAULT_GRACE_DAYS;
+  const configuredGraceDaysRaw = settings?.get("student_membership_grace_days");
+  const configuredGraceDays =
+    configuredGraceDaysRaw == null ? undefined : Number(configuredGraceDaysRaw);
+  const graceDays =
+    configuredGraceDays != null && Number.isFinite(configuredGraceDays)
+      ? configuredGraceDays
+      : defaultGraceDays;
+  const paymentEnabled = !!(
+    settings?.get("student_pay") ||
+    settings?.get("institute_pay") ||
+    settings?.get("site_license_pay")
+  );
 
   useEffect(() => {
-    // whenever opening the panel to edit, set controls to what is in the store.
-    if (showStudentPay) {
-      reset();
+    if (
+      !actions ||
+      !selectedTierId ||
+      paymentEnabled ||
+      !matchingSiteLicense ||
+      siteLicenseDefaultedForTier.current.has(selectedTierId)
+    ) {
+      return;
     }
-  }, [showStudentPay]);
-
-  useEffect(() => {
-    // this makes it sync with any other editor when closed.
-    if (!showStudentPay) {
-      reset();
-    }
-  }, [settings.get("payInfo")]);
-
-  const paySelected = useMemo(() => {
-    if (!settings) return false;
-    return settings.get("student_pay") || settings.get("institute_pay");
-  }, [settings]);
+    siteLicenseDefaultedForTier.current.add(selectedTierId);
+    actions.configuration.set_pay_choice("site_license", true);
+    actions.configuration.configure_all_projects();
+  }, [actions, matchingSiteLicense, paymentEnabled, selectedTierId]);
 
   if (settings == null || actions == null) {
     return <Spin />;
   }
 
-  const buttons = showStudentPay ? (
-    <Space style={{ margin: "10px 0", float: "right" }}>
-      <Button
-        onClick={() => {
-          setShowStudentPay(false);
-          reset();
-        }}
-      >
-        {intl.formatMessage(labels.cancel)}
-      </Button>
-      <Button
-        disabled={
-          isEqual(info, settings.get("payInfo")?.toJS()) &&
-          when.isSame(dayjs(settings.get("pay")))
-        }
-        type="primary"
-        onClick={() => {
-          actions.configuration.setStudentPay({ info, when, cost });
-        }}
-      >
-        {intl.formatMessage(labels.save_changes)}
-      </Button>
-    </Space>
-  ) : undefined;
+  function setSelectedTier(required_membership_class: string) {
+    const tier = courseTiers.find(
+      (tier) => tier.id === required_membership_class,
+    );
+    const tierGraceDays = Number(tier?.course_grace_days);
+    actions.configuration.set_course_membership({
+      required_membership_class,
+      student_membership_grace_days: Number.isFinite(tierGraceDays)
+        ? tierGraceDays
+        : DEFAULT_GRACE_DAYS,
+    });
+  }
+
+  function setGraceDays(student_membership_grace_days: number | null) {
+    actions.configuration.set_course_membership({
+      required_membership_class: selectedTierId,
+      student_membership_grace_days:
+        student_membership_grace_days ?? defaultGraceDays,
+    });
+  }
 
   return (
     <Card
-      style={!paySelected ? { background: "#fcf8e3" } : undefined}
+      style={!paymentEnabled ? { background: COLORS.YELL_LLL } : undefined}
       title={
         <>
           <Icon name="dashboard" />{" "}
@@ -157,240 +182,130 @@ export default function StudentPay({ actions, settings, project_id }) {
       }
     >
       <ShowError error={error} setError={setError} />
-      {cost != null &&
-        !showStudentPay &&
-        !!(settings?.get("student_pay") || settings?.get("institute_pay")) && (
-          <div style={{ float: "right" }}>
-            <MoneyStatistic title="Cost Per Student" value={cost} />
-          </div>
-        )}
-      <Checkbox
-        checked={!!settings?.get("student_pay")}
-        onChange={(e) => {
-          actions.configuration.set_pay_choice("student", e.target.checked);
-          if (e.target.checked) {
-            setShowStudentPay(true);
-            actions.configuration.setStudentPay({
-              when: getWhenFromSettings(),
-              info,
-              cost,
-            });
-            actions.configuration.configure_all_projects();
-          }
-        }}
-      >
-        <FormattedMessage
-          id="course.student-pay.checkbox.students-pay"
-          defaultMessage={"Students pay directly"}
+      {loading ? (
+        <Spin />
+      ) : courseTiers.length === 0 ? (
+        <Alert
+          type="warning"
+          showIcon
+          title="No course memberships are configured"
+          description="An admin must mark at least one membership tier as course-visible before courses can use student pay or instructor-paid seats."
         />
-      </Checkbox>
-      {settings?.get("student_pay") && (
-        <div>
-          {buttons}
-          <Space style={{ margin: "10px 0" }}>
-            <Button
-              disabled={showStudentPay}
-              onClick={() => {
-                setShowStudentPay(true);
-              }}
-            >
-              <Icon name="credit-card" /> Start and end dates and upgrades...
-            </Button>
-          </Space>
+      ) : (
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            title="Choose the membership students need for this course"
+            description="Pricing comes from the selected course-visible membership tier. It is not based on course dates or project quota settings."
+          />
           <div>
-            {showStudentPay && (
-              <Alert
-                style={{ margin: "15px 0" }}
-                title={
-                  <>
-                    <Icon name="credit-card" /> Require Students to Upgrade
-                    their {projectLabel}
-                  </>
-                }
-                description={
-                  <div>
-                    The cost is determined by the course length and desired
-                    upgrades, which you configure below:
-                    <div
-                      style={{
-                        height: "65px",
-                        textAlign: "center",
-                      }}
-                    >
-                      {cost != null && (
-                        <MoneyStatistic title="Cost" value={cost} />
-                      )}
-                    </div>
-                    <Divider>Configuration</Divider>
-                    <LicenseEditor
-                      noCancel
-                      cellStyle={{ padding: 0, margin: "-10px 0" }}
-                      info={info}
-                      onChange={setInfo}
-                      hiddenFields={new Set(["quantity", "custom_member"])}
-                      minDiskGb={1}
-                      minRamGb={2}
-                    />
-                    <div style={{ margin: "15px 0" }}>
-                      <StudentPayCheckboxLabel
-                        settings={settings}
-                        when={when}
-                      />
-                    </div>
-                    {!!settings.get("pay") && (
-                      <RequireStudentsPayWhen
-                        when={when}
-                        setWhen={setWhen}
-                        cost={cost}
-                        minPayment={minPayment}
-                        info={info}
-                      />
-                    )}
-                    {buttons}
-                  </div>
-                }
-              />
-            )}
-            <hr />
-            <div style={{ color: "#666" }}>
-              <StudentPayDesc
-                settings={settings}
-                when={when}
-                cost={cost}
-                minPayment={minPayment}
-              />
+            <div style={{ marginBottom: "6px", fontWeight: 600 }}>
+              Required student course membership
             </div>
+            <Select
+              style={{ width: "100%" }}
+              placeholder="Select a course membership tier"
+              value={selectedTierId || undefined}
+              onChange={setSelectedTier}
+              options={courseTiers.map((tier) => ({
+                value: tier.id,
+                label: `${tier.label ?? tier.id} (${currency(
+                  Number(tier.course_price ?? 0),
+                )} / ${Number(tier.course_duration_days ?? 0)} days)`,
+              }))}
+            />
           </div>
-        </div>
+          {selectedTier && (
+            <Space wrap>
+              <Tag color="blue">{selectedTier.label ?? selectedTier.id}</Tag>
+              <Tag>{currency(Number(selectedTier.course_price ?? 0))}</Tag>
+              <Tag>{Number(selectedTier.course_duration_days ?? 0)} days</Tag>
+              <Tag>{graceDays} grace days</Tag>
+              <Tag>priority {selectedTier.priority ?? 0}</Tag>
+            </Space>
+          )}
+          <div>
+            <div style={{ marginBottom: "6px", fontWeight: 600 }}>
+              Student grace period
+            </div>
+            <InputNumber
+              min={0}
+              precision={0}
+              value={graceDays}
+              onChange={setGraceDays}
+            />{" "}
+            <span style={{ color: COLORS.GRAY }}>
+              days of full access before payment is required
+            </span>
+          </div>
+          <Checkbox
+            checked={!!settings?.get("site_license_pay")}
+            disabled={!selectedTier || !matchingSiteLicense}
+            onChange={(e) => {
+              actions.configuration.set_pay_choice(
+                "site_license",
+                e.target.checked,
+              );
+              if (e.target.checked) {
+                actions.configuration.configure_all_projects();
+              }
+            }}
+          >
+            Use matching site license
+          </Checkbox>
+          {selectedTier && matchingSiteLicense ? (
+            <Alert
+              type="success"
+              showIcon
+              title="Matching site license available"
+              description={
+                <>
+                  The verified email{" "}
+                  <strong>{matchingSiteLicense.matched_email_address}</strong>{" "}
+                  can claim a site license for{" "}
+                  <strong>{matchingSiteLicense.membership_class}</strong>. This
+                  option is selected by default when no other course payment
+                  mode has been chosen.
+                </>
+              }
+            />
+          ) : selectedTier ? (
+            <Alert
+              type="info"
+              showIcon
+              title="No matching site license found"
+              description="Students can still pay directly or the instructor can buy course seats. If a site license is expected, verify the instructor email domain and confirm the site license has available seats."
+            />
+          ) : null}
+          <Checkbox
+            checked={!!settings?.get("student_pay")}
+            disabled={!selectedTier}
+            onChange={(e) => {
+              actions.configuration.set_pay_choice("student", e.target.checked);
+              if (e.target.checked) {
+                actions.configuration.configure_all_projects();
+              }
+            }}
+          >
+            {intl.formatMessage({
+              id: "course.student-pay.checkbox.students-pay",
+              defaultMessage: "Students pay directly",
+            })}
+          </Checkbox>
+          <InstitutePaySection
+            project_id={project_id}
+            enabled={!!settings?.get("institute_pay")}
+            selectedTier={selectedTier}
+            onToggle={(checked) => {
+              actions.configuration.set_pay_choice("institute", checked);
+              if (checked) {
+                actions.configuration.configure_all_projects();
+              }
+            }}
+          />
+        </Space>
       )}
-      <InstitutePaySection
-        project_id={project_id}
-        enabled={!!settings?.get("institute_pay")}
-        cost={cost}
-        payConfigured={cost != null}
-        when={when}
-        onConfigurePayment={() => {
-          setShowStudentPay(true);
-        }}
-        onToggle={(checked) => {
-          actions.configuration.set_pay_choice("institute", checked);
-          if (checked) {
-            setShowStudentPay(true);
-            actions.configuration.setStudentPay({
-              when: getWhenFromSettings(),
-              info,
-              cost,
-            });
-            actions.configuration.configure_all_projects();
-          }
-        }}
-      />
     </Card>
   );
-}
-
-function StudentPayCheckboxLabel({ settings, when }) {
-  if (settings.get("pay")) {
-    if (webapp_client.server_time() >= settings.get("pay")) {
-      return <span>Require that students upgrade immediately:</span>;
-    } else {
-      return (
-        <span>
-          Require that students upgrade by <TimeAgo date={when} />:{" "}
-        </span>
-      );
-    }
-  } else {
-    return <span>Require that students upgrade...</span>;
-  }
-}
-
-function RequireStudentsPayWhen({ when, setWhen, cost, minPayment, info }) {
-  const start = dayjs(info.start);
-  return (
-    <div style={{ marginBottom: "15px" }}>
-      <div style={{ textAlign: "center", marginBottom: "15px" }}>
-        <DatePicker
-          changeOnBlur
-          showNow
-          allowClear={false}
-          disabledDate={(current) =>
-            current < start.subtract(1, "day") ||
-            current >= start.add(21, "day")
-          }
-          defaultValue={when}
-          onChange={(date) => {
-            setWhen(date ?? dayjs());
-          }}
-        />
-      </div>
-      <RequireStudentPayDesc cost={cost} when={when} minPayment={minPayment} />
-    </div>
-  );
-}
-
-function StudentPayDesc({ settings, cost, when, minPayment }) {
-  if (settings.get("pay")) {
-    return (
-      <span>
-        <span style={{ fontSize: "18pt" }}>
-          <Icon name="check" />
-        </span>{" "}
-        <Gap />
-        <RequireStudentPayDesc
-          cost={cost}
-          when={when}
-          minPayment={minPayment}
-        />
-      </span>
-    );
-  } else {
-    return (
-      <span>
-        Require that all students in the course pay a one-time fee to upgrade
-        their project. This is strongly recommended, and ensures that your
-        students have a much better experience, and do not see a large{" "}
-        <span
-          style={{ color: "white", background: "darkred", padding: "0 5px" }}
-        >
-          RED warning banner
-        </span>{" "}
-        all the time. Alternatively, you (or your university) can pay for all
-        students -- see below.
-      </span>
-    );
-  }
-}
-
-function RequireStudentPayDesc({ cost, when, minPayment }) {
-  if (when > dayjs()) {
-    return (
-      <span>
-        <b>
-          Your students will see a warning until <TimeAgo date={when} />.
-        </b>{" "}
-        {cost != null && (
-          <>
-            They will then be required to upgrade for a{" "}
-            <b>one-time fee of {currency(cost)}</b>.{" "}
-            {minPayment != null && cost < minPayment
-              ? `NOTE: Students will have
-               to pay ${currency(
-                 minPayment,
-               )} since that is the minimum transaction; they can use excess credit for other purchases.`
-              : ""}
-          </>
-        )}
-      </span>
-    );
-  } else {
-    return (
-      <span>
-        <b>
-          Your students are required to upgrade their project now to use it.
-        </b>{" "}
-        If you want to give them more time to upgrade, move the date forward.
-      </span>
-    );
-  }
 }

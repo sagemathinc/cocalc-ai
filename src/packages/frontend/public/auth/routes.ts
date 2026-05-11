@@ -37,6 +37,17 @@ function normalizeSearch(search?: string): string {
   return search.startsWith("?") ? search : `?${search}`;
 }
 
+function decodePossiblyDoubleEncodedSearchParam(
+  value: string | null,
+): string | undefined {
+  if (value == null) return undefined;
+  try {
+    return decodeURIComponent(value);
+  } catch (_err) {
+    return value;
+  }
+}
+
 function basePathPrefix(): string {
   return appBasePath === "/" ? "" : appBasePath;
 }
@@ -160,7 +171,9 @@ export function getPublicAuthRouteFromPath(
 
   if (routeParts[0] === "auth" && routeParts[1] === "verify") {
     return {
-      email: url.searchParams.get("email") ?? undefined,
+      email: decodePossiblyDoubleEncodedSearchParam(
+        url.searchParams.get("email"),
+      ),
       kind: "auth-verify-email",
       token: routeParts[2] ?? url.searchParams.get("token") ?? "",
     };

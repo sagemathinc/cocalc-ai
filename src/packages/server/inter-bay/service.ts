@@ -105,13 +105,20 @@ import {
 } from "@cocalc/server/membership/claim-directory";
 import {
   claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
+  createMembershipPackage,
   listLocalClaimableMembershipPackagesForVerifiedEmails,
   listMembershipPackageDetailsForOwner,
+  updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
 import {
   resolveMembershipDetailsForAccount,
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
+import {
+  clearAccountEntitlementOverrideLocal,
+  getAccountEntitlementOverrideLocal,
+  setAccountEntitlementOverrideLocal,
+} from "@cocalc/server/membership/entitlement-overrides";
 import { getDedicatedHostPolicySnapshotLocal } from "@cocalc/server/project-host/admission";
 import {
   closeDedicatedHostPurchaseSessionLocal,
@@ -493,11 +500,76 @@ async function startAccountLocalService(): Promise<void> {
       await resolveMembershipDetailsForAccount(account_id, {
         refresh_usage_status,
       }),
+    getAccountEntitlementOverride: async ({ account_id }) =>
+      await getAccountEntitlementOverrideLocal(account_id),
+    setAccountEntitlementOverride: async ({
+      account_id,
+      actor_account_id,
+      override,
+      reason,
+    }) =>
+      await setAccountEntitlementOverrideLocal({
+        account_id,
+        actor_account_id,
+        override,
+        reason,
+      }),
+    clearAccountEntitlementOverride: async ({
+      account_id,
+      actor_account_id,
+      reason,
+    }) =>
+      await clearAccountEntitlementOverrideLocal({
+        account_id,
+        actor_account_id,
+        reason,
+      }),
     getDedicatedHostPolicySnapshot: async ({ account_id }) =>
       await getDedicatedHostPolicySnapshotLocal(account_id),
     getMembershipPackages: async ({ owner_account_id }) =>
       await listMembershipPackageDetailsForOwner({
         owner_account_id,
+      }),
+    adminProvisionMembershipPackage: async ({
+      owner_account_id,
+      actor_account_id,
+      kind,
+      membership_class,
+      seat_count,
+      allowed_domains,
+      starts_at,
+      expires_at,
+      metadata,
+    }) => {
+      const package_id = await createMembershipPackage({
+        owner_account_id,
+        kind,
+        membership_class,
+        seat_count,
+        starts_at,
+        expires_at,
+        metadata: {
+          ...(metadata ?? {}),
+          allowed_domains,
+          provisioned_by_account_id: actor_account_id,
+          provisioned_at: new Date().toISOString(),
+          provisioned_via: "admin",
+        },
+      });
+      const packages = await listMembershipPackageDetailsForOwner({
+        owner_account_id,
+      });
+      const membershipPackage = packages.find(({ id }) => id === package_id);
+      if (!membershipPackage) {
+        throw Error("created membership package not found");
+      }
+      return membershipPackage;
+    },
+    updateMembershipPackage: async ({ package_id, seat_count, expires_at }) =>
+      await updateMembershipPackage({
+        package_id,
+        seat_count,
+        expires_at,
       }),
     getClaimableMembershipPackages: async ({
       account_id,

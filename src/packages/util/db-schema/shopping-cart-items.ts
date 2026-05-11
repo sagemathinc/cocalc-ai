@@ -12,7 +12,7 @@ query for everything for account with canceled if everything they decided not to
 
 import { Table } from "./types";
 import { SCHEMA as schema } from "./index";
-export type MembershipPackageKind = "course" | "team" | "domain" | "site";
+export type MembershipPackageKind = "course" | "team" | "site";
 
 export interface CashVoucher {
   type: "cash-voucher";

@@ -79,6 +79,7 @@ import {
 } from "@cocalc/server/conat/project-local-access";
 import type {
   ChatStoreScope,
+  CourseStudentAccessStatus,
   ImportPublicUrlResult,
   ImportPublicPathResult,
   PublicPathInspectionResult,
@@ -101,6 +102,9 @@ import type {
   ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { getMembershipTierById } from "@cocalc/server/membership/tiers";
+import { listClaimableMembershipPackagesForAccount } from "@cocalc/server/membership/packages";
 import {
   deleteProjectSshKeyInDb,
   upsertProjectSshKeyInDb,
@@ -120,6 +124,7 @@ import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { fromWire as collabInviteFromWire } from "@cocalc/server/projects/collab-invite-inbox";
 import { deleteProjectDataOnHost } from "@cocalc/server/project-host/control";
+import dayjs from "dayjs";
 
 // Start/restart can legitimately take a long time because the owning bay may
 // need to provision storage, restore data, pull rootfs layers, or seal a
@@ -754,6 +759,115 @@ export async function getProjectCourseInfo({
 }): Promise<ProjectCourseInfo> {
   return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
     .course;
+}
+
+export async function getCourseStudentAccess({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<CourseStudentAccessStatus> {
+  const details = await getProjectReadDetailsAllowRemote({
+    account_id,
+    project_id,
+  });
+  const course = details.course;
+  const requiredMembershipClass = `${course?.required_membership_class ?? ""}`
+    .trim()
+    .toLowerCase();
+  if (
+    course?.type !== "student" ||
+    !requiredMembershipClass ||
+    course.account_id !== account_id
+  ) {
+    return { status: "not-required", course };
+  }
+
+  const requiredTier = await getMembershipTierById({
+    id: requiredMembershipClass,
+  });
+  const requiredPriority = requiredTier?.priority ?? 0;
+  const membership = await resolveMembershipForAccount(account_id);
+  const currentTier = await getMembershipTierById({ id: membership.class });
+  if ((currentTier?.priority ?? 0) >= requiredPriority) {
+    return {
+      status: "active",
+      source:
+        membership.grant_source === "course-seat"
+          ? "course-seat"
+          : membership.grant_source === "student-course-purchase"
+            ? "student-course-purchase"
+            : "membership",
+      required_membership_class: requiredMembershipClass,
+      required_label: requiredTier?.label,
+      current_membership_class: membership.class,
+      current_expires: membership.expires ?? null,
+      course,
+    };
+  }
+
+  if (course.site_license_pay) {
+    const claimables = await listClaimableMembershipPackagesForAccount({
+      account_id,
+    });
+    let matchingSiteLicense: (typeof claimables)[number] | undefined;
+    for (const pkg of claimables) {
+      if (pkg.kind !== "site") {
+        continue;
+      }
+      const pkgTier = await getMembershipTierById({
+        id: pkg.membership_class,
+      });
+      if (
+        pkg.membership_class === requiredMembershipClass ||
+        (pkgTier?.priority ?? 0) >= requiredPriority
+      ) {
+        matchingSiteLicense = pkg;
+        break;
+      }
+    }
+    if (matchingSiteLicense) {
+      return {
+        status: "site-license-claimable",
+        required_membership_class: requiredMembershipClass,
+        required_label: requiredTier?.label,
+        package_id: matchingSiteLicense.package_id,
+        membership_class: matchingSiteLicense.membership_class,
+        matched_email_address: matchingSiteLicense.matched_email_address,
+        expires_at: matchingSiteLicense.expires_at ?? null,
+        course,
+      };
+    }
+  }
+
+  const requiredAt = dayjs(
+    course.student_membership_required_at ?? details.created ?? undefined,
+  );
+  const graceDays =
+    typeof course.student_membership_grace_days === "number" &&
+    Number.isFinite(course.student_membership_grace_days)
+      ? course.student_membership_grace_days
+      : 14;
+  const deadline = requiredAt.isValid()
+    ? requiredAt.add(graceDays, "day")
+    : undefined;
+  if (deadline?.isValid() && deadline.isAfter(dayjs())) {
+    return {
+      status: "grace",
+      required_membership_class: requiredMembershipClass,
+      required_label: requiredTier?.label,
+      deadline: deadline.toDate(),
+      course,
+    };
+  }
+  return {
+    status: "blocked",
+    required_membership_class: requiredMembershipClass,
+    required_label: requiredTier?.label,
+    deadline: deadline?.isValid() ? deadline.toDate() : null,
+    course,
+  };
 }
 
 export async function createCollabInvite({

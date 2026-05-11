@@ -22,6 +22,7 @@ import passwordHash, {
 } from "@cocalc/backend/auth/password-hash";
 import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { publishAccountRowFeedEventsBestEffort } from "@cocalc/server/account/account-row-feed";
 import { checkRequiredSSO } from "@cocalc/server/auth/sso/check-required-sso";
 import getStrategies from "@cocalc/database/settings/get-sso-strategies";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
@@ -38,6 +39,13 @@ import { getLogger } from "@cocalc/backend/logger";
 
 const log = getLogger("server:accounts:email-address");
 
+export interface SetEmailAddressResult {
+  already_verified: boolean;
+  email_address: string;
+  verification_email_error?: string;
+  verification_email_sent: boolean;
+}
+
 export default async function setEmailAddress({
   account_id,
   email_address,
@@ -46,7 +54,7 @@ export default async function setEmailAddress({
   account_id: string;
   email_address: string;
   password: string;
-}): Promise<void> {
+}): Promise<SetEmailAddressResult> {
   log.debug("setEmailAddress", account_id, email_address);
   if (!isValidUUID(account_id)) {
     throw Error("account_id is not valid");
@@ -73,6 +81,7 @@ export default async function setEmailAddress({
     email_address_verified,
     stripe_customer_id,
   } = rows[0];
+  const already_verified = !!email_address_verified?.[email_address];
 
   // if you have an email address that's controlled by an "exclusive" SSO strategy
   // you're not allowed to change your email address
@@ -114,7 +123,24 @@ export default async function setEmailAddress({
         );
       },
     });
-    return;
+    const verification_email_error = already_verified
+      ? undefined
+      : await sendEmailVerification(account_id);
+    const verification_email_sent =
+      !already_verified && !verification_email_error;
+    await publishAccountRowFeedEventsBestEffort({
+      account_id,
+      patch: {
+        email_address,
+        email_address_verified,
+      },
+    });
+    return {
+      already_verified,
+      email_address,
+      verification_email_error,
+      verification_email_sent,
+    };
   }
   // Verify that existing password is correct.
   if (!verifyPassword(password, password_hash)) {
@@ -166,7 +192,23 @@ export default async function setEmailAddress({
   // if the email_address is not in the dict of verified email addresses, send a verification email
   // we do this at the very end, since we don't want an error sending the verification email
   // disrupt the account creation process above
-  if (email_address_verified?.[email_address] == null) {
-    await sendEmailVerification(account_id);
+  let verification_email_error: string | undefined;
+  let verification_email_sent = false;
+  if (!already_verified) {
+    verification_email_error = await sendEmailVerification(account_id);
+    verification_email_sent = !verification_email_error;
   }
+  await publishAccountRowFeedEventsBestEffort({
+    account_id,
+    patch: {
+      email_address,
+      email_address_verified,
+    },
+  });
+  return {
+    already_verified,
+    email_address,
+    verification_email_error,
+    verification_email_sent,
+  };
 }

@@ -24,9 +24,9 @@ export function StorePage() {
         Store
       </Title>
       <Paragraph type="secondary" style={{ marginBottom: "20px" }}>
-        Purchase memberships and vouchers inside the app. The student-pay, team,
-        and user-owned-host commerce flows are intentionally deferred to a
-        second round after the Next.js rewrite is complete.
+        Purchase memberships and vouchers inside the app. Course seats, team
+        seats, and user-owned-host commerce flows are handled from their
+        purpose-built pages.
       </Paragraph>
 
       <Space orientation="vertical" size="large" style={{ width: "100%" }}>

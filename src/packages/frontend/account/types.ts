@@ -62,7 +62,7 @@ export interface AccountState {
     news_read_ids?: string[];
     [OTHER_SETTINGS_LOCALE_KEY]?: string;
     [OTHER_SETTINGS_AI_REPLY_ENGLISH_KEY]?: string;
-    no_email_new_messages?: boolean;
+    notification_preferences?: Record<string, any>;
     use_balance_toward_subscriptions?: boolean;
     hide_button_tooltips?: boolean;
     auto_update_file_listing?: boolean;

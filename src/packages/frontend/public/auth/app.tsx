@@ -208,7 +208,11 @@ export default function PublicAuthApp({
           <PublicPasswordResetDoneView />
         )}
         {route.kind === "auth-verify-email" && (
-          <PublicVerifyEmailView email={route.email} token={route.token} />
+          <PublicVerifyEmailView
+            email={route.email}
+            isAuthenticated={!!config?.is_authenticated}
+            token={route.token}
+          />
         )}
         {route.kind === "redeem" && (
           <PublicRedeemVoucherView

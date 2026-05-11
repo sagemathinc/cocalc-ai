@@ -9,6 +9,7 @@ const getManagedEgressAdminOverviewMock = jest.fn();
 const getProjectUsageAccountIdMock = jest.fn();
 const isAdminMock = jest.fn();
 const resolveMembershipDetailsForAccountMock = jest.fn();
+const createMembershipPackageMock = jest.fn();
 const getMembershipPackageMock = jest.fn();
 const listMembershipPackageDetailsForOwnerMock = jest.fn();
 const resolveMembershipPackageQuoteMock = jest.fn();
@@ -20,6 +21,7 @@ const purchaseMembershipPackageMock = jest.fn();
 const resolveAccountHomeBayMock = jest.fn();
 const interBayGetMembershipDetailsMock = jest.fn();
 const interBayGetMembershipPackagesMock = jest.fn();
+const interBayAdminProvisionMembershipPackageMock = jest.fn();
 const getBrowserAuthSessionHashMock = jest.fn();
 const requireFreshAuthForSessionHashMock = jest.fn();
 
@@ -51,6 +53,8 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
 }));
 
 jest.mock("@cocalc/server/membership/packages", () => ({
+  createMembershipPackage: (...args: any[]) =>
+    createMembershipPackageMock(...args),
   getMembershipPackage: (...args: any[]) => getMembershipPackageMock(...args),
   listMembershipPackageDetailsForOwner: (...args: any[]) =>
     listMembershipPackageDetailsForOwnerMock(...args),
@@ -109,6 +113,8 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
       interBayGetMembershipDetailsMock(...args),
     getMembershipPackages: (...args: any[]) =>
       interBayGetMembershipPackagesMock(...args),
+    adminProvisionMembershipPackage: (...args: any[]) =>
+      interBayAdminProvisionMembershipPackageMock(...args),
   })),
 }));
 
@@ -356,6 +362,109 @@ describe("purchases membership packages", () => {
     });
     expect(listMembershipPackageDetailsForOwnerMock).not.toHaveBeenCalled();
     expect(result[0]?.id).toBe("package-remote-1");
+  });
+
+  it("lets admins provision site licenses without purchase sessions", async () => {
+    isAdminMock.mockResolvedValue(true);
+    createMembershipPackageMock.mockResolvedValue("site-1");
+    listMembershipPackageDetailsForOwnerMock.mockResolvedValue([
+      {
+        id: "site-1",
+        owner_account_id: "admin-1",
+        kind: "site",
+        membership_class: "pro",
+        seat_count: 25,
+        active_assignment_count: 0,
+        available_seat_count: 25,
+        assignments: [],
+        metadata: { allowed_domains: ["example.edu"] },
+      },
+    ]);
+
+    const { adminProvisionMembershipPackage } = await import("./purchases");
+    const result = await adminProvisionMembershipPackage({
+      account_id: "admin-1",
+      kind: "site",
+      membership_class: "pro",
+      seat_count: 25,
+      allowed_domains: ["Example.EDU", "@dept.example.edu"],
+    });
+
+    expect(createMembershipPackageMock).toHaveBeenCalledWith({
+      owner_account_id: "admin-1",
+      kind: "site",
+      membership_class: "pro",
+      seat_count: 25,
+      starts_at: undefined,
+      expires_at: undefined,
+      metadata: expect.objectContaining({
+        allowed_domains: ["dept.example.edu", "example.edu"],
+        provisioned_by_account_id: "admin-1",
+        provisioned_via: "admin",
+      }),
+    });
+    expect(result.id).toBe("site-1");
+    expect(purchaseMembershipPackageMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-admin site license provisioning", async () => {
+    isAdminMock.mockResolvedValue(false);
+
+    const { adminProvisionMembershipPackage } = await import("./purchases");
+    await expect(
+      adminProvisionMembershipPackage({
+        account_id: "user-1",
+        kind: "site",
+        membership_class: "member",
+        seat_count: 5,
+        allowed_domains: ["example.edu"],
+      }),
+    ).rejects.toThrow("must be an admin");
+
+    expect(createMembershipPackageMock).not.toHaveBeenCalled();
+  });
+
+  it("routes admin site-license provisioning to the owner's home bay", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resolveAccountHomeBayMock.mockResolvedValue({
+      account_id: "owner-1",
+      home_bay_id: "bay-2",
+      source: "cluster-directory",
+    });
+    interBayAdminProvisionMembershipPackageMock.mockResolvedValue({
+      id: "site-remote-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "member",
+      seat_count: 10,
+      active_assignment_count: 0,
+      available_seat_count: 10,
+      assignments: [],
+    });
+
+    const { adminProvisionMembershipPackage } = await import("./purchases");
+    const result = await adminProvisionMembershipPackage({
+      account_id: "admin-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "member",
+      seat_count: 10,
+      allowed_domains: ["example.edu"],
+    });
+
+    expect(interBayAdminProvisionMembershipPackageMock).toHaveBeenCalledWith({
+      owner_account_id: "owner-1",
+      actor_account_id: "admin-1",
+      kind: "site",
+      membership_class: "member",
+      seat_count: 10,
+      allowed_domains: ["example.edu"],
+      starts_at: undefined,
+      expires_at: undefined,
+      metadata: null,
+    });
+    expect(createMembershipPackageMock).not.toHaveBeenCalled();
+    expect(result.id).toBe("site-remote-1");
   });
 
   it("requires ownership or admin rights to quote an existing package", async () => {

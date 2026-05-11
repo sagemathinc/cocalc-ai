@@ -35,8 +35,12 @@ async function handle(req, res) {
       account_id,
       action: "change the account email address",
     });
-    await setEmailAddress({ account_id, email_address, password });
-    res.json(SuccessStatus);
+    const result = await setEmailAddress({
+      account_id,
+      email_address,
+      password,
+    });
+    res.json({ ...SuccessStatus, ...result });
   } catch (err) {
     if (err.message.includes("duplicate key")) {
       err = Error(

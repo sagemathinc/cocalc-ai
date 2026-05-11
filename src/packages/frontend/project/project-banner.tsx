@@ -6,6 +6,7 @@
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useProjectContext } from "./context";
 import { NoInternetModal, useInternetWarningClosed } from "./no-internet-modal";
+import { CourseMembershipBanner } from "./course-membership-banner";
 import { useRunQuota } from "./settings/run-quota/hooks";
 import { TrialBanner } from "./trial-banner";
 import { useProjectCourseInfo } from "./use-project-course";
@@ -95,6 +96,7 @@ export function ProjectWarningBanner() {
 
   return (
     <>
+      <CourseMembershipBanner project_id={project_id} />
       {renderTrialBanner()}
       {renderNoInternetModal()}
     </>

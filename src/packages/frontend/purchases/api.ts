@@ -469,6 +469,30 @@ export async function purchaseMembershipPackage(opts: {
   });
 }
 
+export async function adminProvisionMembershipPackage(opts: {
+  owner_account_id?: string;
+  kind: "site";
+  membership_class: MembershipClass;
+  seat_count: number;
+  allowed_domains: string[];
+  starts_at?: Date | string | null;
+  expires_at?: Date | string | null;
+  metadata?: Record<string, unknown> | null;
+}): Promise<MembershipPackageDetails> {
+  return await (
+    await getPurchasesHubRpc()
+  ).adminProvisionMembershipPackage(opts);
+}
+
+export async function updateMembershipPackage(opts: {
+  package_id: string;
+  owner_account_id?: string;
+  seat_count?: number;
+  expires_at?: Date | string | null;
+}): Promise<MembershipPackageDetails> {
+  return await (await getPurchasesHubRpc()).updateMembershipPackage(opts);
+}
+
 export async function getMembershipPackages(
   opts: {
     user_account_id?: string;
@@ -567,17 +591,6 @@ export async function renewSubscription(
   return await api("purchases/renew-subscription", {
     subscription_id,
   });
-}
-
-export async function studentPay(project_id: string) {
-  return await api("purchases/student-pay", { project_id });
-}
-
-export async function studentPayTransfer(opts: {
-  project_id: string;
-  paid_project_id: string;
-}): Promise<{ url: string }> {
-  return await api("purchases/student-pay-transfer", opts);
 }
 
 // will give error if user is not signed in - they can't make a purchase anyways in that case.

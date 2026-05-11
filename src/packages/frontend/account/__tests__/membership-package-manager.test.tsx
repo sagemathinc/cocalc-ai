@@ -12,15 +12,19 @@ const getMembershipPackageQuote = jest.fn();
 const isPurchaseAllowed = jest.fn();
 const purchaseMembershipPackage = jest.fn();
 const processPaymentIntents = jest.fn();
+const adminProvisionMembershipPackage = jest.fn();
+const updateMembershipPackage = jest.fn();
 const assignMembershipPackageSeat = jest.fn();
 const revokeMembershipPackageSeat = jest.fn();
 const userSearch = jest.fn();
 const getNames = jest.fn();
 
 let accountId = "owner-1";
+let isAdmin = false;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
-  useTypedRedux: () => accountId,
+  useTypedRedux: (_store: string, key: string) =>
+    key === "is_admin" ? isAdmin : accountId,
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({
@@ -58,6 +62,9 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
   purchaseMembershipPackage: (...args: any[]) =>
     purchaseMembershipPackage(...args),
   processPaymentIntents: (...args: any[]) => processPaymentIntents(...args),
+  adminProvisionMembershipPackage: (...args: any[]) =>
+    adminProvisionMembershipPackage(...args),
+  updateMembershipPackage: (...args: any[]) => updateMembershipPackage(...args),
   assignMembershipPackageSeat: (...args: any[]) =>
     assignMembershipPackageSeat(...args),
   revokeMembershipPackageSeat: (...args: any[]) =>
@@ -88,11 +95,38 @@ describe("MembershipPackageManager", () => {
           getPropertyValue: () => "",
         }) as CSSStyleDeclaration,
     });
+    class TestMessageChannel {
+      port1: {
+        onmessage: ((event: MessageEvent) => void) | null;
+        close: () => void;
+      };
+      port2: { postMessage: (data?: unknown) => void; close: () => void };
+
+      constructor() {
+        this.port1 = {
+          onmessage: null,
+          close: () => undefined,
+        };
+        this.port2 = {
+          postMessage: (data?: unknown) => {
+            setTimeout(() => {
+              this.port1.onmessage?.({ data } as MessageEvent);
+            }, 0);
+          },
+          close: () => undefined,
+        };
+      }
+    }
+    Object.defineProperty(global, "MessageChannel", {
+      configurable: true,
+      value: TestMessageChannel,
+    });
   });
 
   beforeEach(() => {
     jest.clearAllMocks();
     accountId = "owner-1";
+    isAdmin = false;
     getClaimableMembershipPackages.mockResolvedValue([]);
     processPaymentIntents.mockResolvedValue({ count: 0 });
     getNames.mockResolvedValue({
@@ -336,6 +370,99 @@ describe("MembershipPackageManager", () => {
       expect(assignMembershipPackageSeat).toHaveBeenCalledWith({
         package_id: "team-1",
         target_email_address: "newuser@example.com",
+      });
+    });
+  });
+
+  it("lets admins provision a site license without payment", async () => {
+    isAdmin = true;
+    getMembershipPackages.mockResolvedValue([]);
+    adminProvisionMembershipPackage.mockResolvedValue({
+      id: "site-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "pro",
+      seat_count: 25,
+      active_assignment_count: 0,
+      available_seat_count: 25,
+      assignments: [],
+      metadata: { allowed_domains: ["example.edu"] },
+    });
+
+    render(<MembershipPackageManager tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Provision site license")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Provision site license"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/support-managed license/i)).toBeTruthy();
+    });
+
+    const domainInput = screen.getByLabelText("Allowed email domains");
+    fireEvent.change(domainInput, {
+      target: { value: "example.edu, dept.example.edu" },
+    });
+    fireEvent.click(screen.getByText("Provision license"));
+
+    await waitFor(() => {
+      expect(adminProvisionMembershipPackage).toHaveBeenCalledWith({
+        owner_account_id: undefined,
+        kind: "site",
+        membership_class: "member",
+        seat_count: 25,
+        allowed_domains: ["dept.example.edu", "example.edu"],
+        expires_at: undefined,
+      });
+    });
+  });
+
+  it("lets admins update a site license seat count", async () => {
+    isAdmin = true;
+    getMembershipPackages.mockResolvedValue([
+      {
+        id: "site-1",
+        owner_account_id: "owner-1",
+        kind: "site",
+        membership_class: "pro",
+        seat_count: 50,
+        active_assignment_count: 2,
+        available_seat_count: 48,
+        assignments: [],
+        metadata: { allowed_domains: ["example.edu"] },
+      },
+    ]);
+    updateMembershipPackage.mockResolvedValue({
+      id: "site-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "pro",
+      seat_count: 75,
+      active_assignment_count: 2,
+      available_seat_count: 73,
+      assignments: [],
+      metadata: { allowed_domains: ["example.edu"] },
+    });
+
+    render(<MembershipPackageManager tiers={TIERS} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Edit license")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText("Edit license"));
+    const seats = await screen.findByDisplayValue("50");
+    fireEvent.change(seats, { target: { value: "75" } });
+    fireEvent.click(screen.getByText("Save license"));
+
+    await waitFor(() => {
+      expect(updateMembershipPackage).toHaveBeenCalledWith({
+        package_id: "site-1",
+        owner_account_id: "owner-1",
+        seat_count: 75,
+        expires_at: null,
       });
     });
   });

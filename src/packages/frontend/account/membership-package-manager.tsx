@@ -7,18 +7,21 @@ import {
   Alert,
   Button,
   Card,
+  DatePicker,
   Descriptions,
   Divider,
   Input,
   InputNumber,
   Modal,
   Radio,
+  Select,
   Space,
   Spin,
   Statistic,
   Tag,
   Typography,
 } from "antd";
+import dayjs, { type Dayjs } from "dayjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -31,6 +34,7 @@ import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import MoneyStatistic from "@cocalc/frontend/purchases/money-statistic";
 import Payments from "@cocalc/frontend/purchases/payments";
 import {
+  adminProvisionMembershipPackage,
   assignMembershipPackageSeat,
   claimMembershipPackageSeat,
   getClaimableMembershipPackages,
@@ -40,6 +44,7 @@ import {
   processPaymentIntents,
   purchaseMembershipPackage,
   revokeMembershipPackageSeat,
+  updateMembershipPackage,
 } from "@cocalc/frontend/purchases/api";
 import StripePayment from "@cocalc/frontend/purchases/stripe-payment";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -72,6 +77,7 @@ interface MembershipTierLike {
 interface Props {
   tiers: MembershipTierLike[];
   onChanged?: () => void;
+  user_account_id?: string;
 }
 
 interface PackageUserSearchResult {
@@ -109,7 +115,6 @@ function getPackageKindLabel(kind: MembershipPackageKind): string {
   switch (kind) {
     case "team":
       return "Team package";
-    case "domain":
     case "site":
       return "Site license";
     case "course":
@@ -146,6 +151,17 @@ function getPackageDomains(
     }
   }
   return [];
+}
+
+function normalizeDomainList(values: string[]): string[] {
+  return Array.from(
+    new Set(
+      values
+        .flatMap((value) => `${value ?? ""}`.split(/[\s,;]+/))
+        .map((domain) => domain.trim().toLowerCase().replace(/^@+/, ""))
+        .filter((domain) => domain.length > 0),
+    ),
+  ).sort();
 }
 
 function getAccountDisplayName(
@@ -241,7 +257,7 @@ export function ClaimableMembershipPackagesPanel({
           type="info"
           showIcon
           title="No claimable memberships right now"
-          description="Verify the relevant email address first if you expect a reserved team or site-license seat to appear here."
+          description="Please verify your email address to claim a reserved seat or site license membership. Only verified email addresses are used for membership claims."
         />
       ) : null}
       {!loading && claimables.length > 0 ? (
@@ -303,8 +319,14 @@ export function ClaimableMembershipPackagesPanel({
   );
 }
 
-export function MembershipPackageManager({ tiers, onChanged }: Props) {
+export function MembershipPackageManager({
+  tiers,
+  onChanged,
+  user_account_id,
+}: Props) {
   const account_id = useTypedRedux("account", "account_id");
+  const is_admin = !!useTypedRedux("account", "is_admin");
+  const ownerAccountId = user_account_id ?? account_id;
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [membershipPackages, setMembershipPackages] = useState<
@@ -316,6 +338,11 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
   >(undefined);
   const [assignmentTarget, setAssignmentTarget] =
     useState<MembershipPackageDetails | null>(null);
+  const [editTarget, setEditTarget] = useState<MembershipPackageDetails | null>(
+    null,
+  );
+  const [provisionSiteLicenseOpen, setProvisionSiteLicenseOpen] =
+    useState<boolean>(false);
   const [accountNames, setAccountNames] = useState<
     Record<string, { first_name?: string; last_name?: string } | undefined>
   >({});
@@ -324,7 +351,9 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
     setLoading(true);
     setError("");
     try {
-      const next = await getMembershipPackages();
+      const next = await getMembershipPackages(
+        user_account_id ? { user_account_id } : {},
+      );
       setMembershipPackages(sortPackagesByRecent(next));
     } catch (err) {
       setError(`${err}`);
@@ -334,7 +363,7 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
   };
 
   useEffect(() => {
-    if (!account_id) {
+    if (!ownerAccountId) {
       setMembershipPackages([]);
       setAccountNames({});
       setError("");
@@ -342,7 +371,7 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
       return;
     }
     void refreshPackages();
-  }, [account_id, refreshToken]);
+  }, [ownerAccountId, refreshToken, user_account_id]);
 
   const assignedAccountIds = useMemo(() => {
     return Array.from(
@@ -392,9 +421,7 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
   const sitePackages = useMemo(
     () =>
       membershipPackages.filter(
-        (membershipPackage) =>
-          membershipPackage.kind === "site" ||
-          membershipPackage.kind === "domain",
+        (membershipPackage) => membershipPackage.kind === "site",
       ),
     [membershipPackages],
   );
@@ -404,7 +431,7 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
     onChanged?.();
   };
 
-  if (!account_id) {
+  if (!ownerAccountId) {
     return null;
   }
 
@@ -414,7 +441,8 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
       <Paragraph type="secondary" style={{ marginTop: "6px" }}>
         Team packages let you buy seats and grant memberships to specific
         accounts. Site licenses are provisioned by support or admins, then
-        managed here. There is no self-serve site-license creation flow yet.
+        managed here. Users can claim site-license seats when one of their
+        verified email domains matches the license.
       </Paragraph>
       {error && (
         <Alert type="error" title={error} style={{ marginBottom: 12 }} />
@@ -426,6 +454,11 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
         <Button onClick={() => setRefreshToken((value) => value + 1)}>
           <Icon name="refresh" /> Refresh packages
         </Button>
+        {is_admin ? (
+          <Button onClick={() => setProvisionSiteLicenseOpen(true)}>
+            <Icon name="plus-circle" /> Provision site license
+          </Button>
+        ) : null}
       </Space>
       {loading ? (
         <Loading />
@@ -463,6 +496,11 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
             onAssignSeat={(membershipPackage) =>
               setAssignmentTarget(membershipPackage)
             }
+            onEditPackage={
+              is_admin
+                ? (membershipPackage) => setEditTarget(membershipPackage)
+                : undefined
+            }
             onRevokeSeat={async (membershipPackage, assignment) => {
               await revokeMembershipPackageSeat({
                 package_id: membershipPackage.id,
@@ -480,6 +518,25 @@ export function MembershipPackageManager({ tiers, onChanged }: Props) {
         tiers={tiers}
         onClose={() => setPurchaseTarget(undefined)}
         onPurchased={handleChanged}
+      />
+      <ProvisionSiteLicenseModal
+        open={provisionSiteLicenseOpen}
+        owner_account_id={user_account_id}
+        tiers={tiers}
+        onClose={() => setProvisionSiteLicenseOpen(false)}
+        onProvisioned={async () => {
+          setProvisionSiteLicenseOpen(false);
+          await handleChanged();
+        }}
+      />
+      <EditSiteLicenseModal
+        open={editTarget != null}
+        membershipPackage={editTarget}
+        onClose={() => setEditTarget(null)}
+        onUpdated={async () => {
+          setEditTarget(null);
+          await handleChanged();
+        }}
       />
       <AssignMembershipSeatModal
         open={assignmentTarget != null}
@@ -503,6 +560,7 @@ function PackageGroup({
   accountNames,
   onAddSeats,
   onAssignSeat,
+  onEditPackage,
   onRevokeSeat,
 }: {
   title: string;
@@ -516,6 +574,7 @@ function PackageGroup({
   >;
   onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
+  onEditPackage?: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
     membershipPackage: MembershipPackageDetails,
     assignment: MembershipPackageAssignment,
@@ -549,6 +608,7 @@ function PackageGroup({
             accountNames={accountNames}
             onAddSeats={onAddSeats}
             onAssignSeat={onAssignSeat}
+            onEditPackage={onEditPackage}
             onRevokeSeat={onRevokeSeat}
           />
         ))}
@@ -563,6 +623,7 @@ function MembershipPackageCard({
   accountNames,
   onAddSeats,
   onAssignSeat,
+  onEditPackage,
   onRevokeSeat,
 }: {
   membershipPackage: MembershipPackageDetails;
@@ -573,6 +634,7 @@ function MembershipPackageCard({
   >;
   onAddSeats?: (membershipPackage: MembershipPackageDetails) => void;
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
+  onEditPackage?: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
     membershipPackage: MembershipPackageDetails,
     assignment: MembershipPackageAssignment,
@@ -611,6 +673,11 @@ function MembershipPackageCard({
           {membershipPackage.kind === "team" && onAddSeats ? (
             <Button onClick={() => onAddSeats(membershipPackage)}>
               Add seats
+            </Button>
+          ) : null}
+          {membershipPackage.kind === "site" && onEditPackage ? (
+            <Button onClick={() => onEditPackage(membershipPackage)}>
+              Edit license
             </Button>
           ) : null}
         </Space>
@@ -708,6 +775,254 @@ function MembershipPackageCard({
         </div>
       )}
     </Card>
+  );
+}
+
+function ProvisionSiteLicenseModal({
+  open,
+  owner_account_id,
+  tiers,
+  onClose,
+  onProvisioned,
+}: {
+  open: boolean;
+  owner_account_id?: string;
+  tiers: MembershipTierLike[];
+  onClose: () => void;
+  onProvisioned: () => Promise<void>;
+}) {
+  const provisionableTiers = useMemo(() => getTeamSeatTiers(tiers), [tiers]);
+  const [membershipClass, setMembershipClass] = useState<string>("");
+  const [seatCount, setSeatCount] = useState<number>(25);
+  const [domains, setDomains] = useState<string[]>([]);
+  const [domainSearch, setDomainSearch] = useState<string>("");
+  const [expiresAt, setExpiresAt] = useState<Dayjs | null>(null);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
+
+  useEffect(() => {
+    if (!open) return;
+    setMembershipClass(provisionableTiers[0]?.id ?? "");
+    setSeatCount(25);
+    setDomains([]);
+    setDomainSearch("");
+    setExpiresAt(null);
+    setSubmitting(false);
+    setError("");
+  }, [open, provisionableTiers]);
+
+  async function provision() {
+    setSubmitting(true);
+    setError("");
+    try {
+      const allowed_domains = normalizeDomainList([...domains, domainSearch]);
+      if (allowed_domains.length === 0) {
+        throw Error("Enter at least one allowed email domain.");
+      }
+      if (!membershipClass) {
+        throw Error("Select a membership tier.");
+      }
+      await adminProvisionMembershipPackage({
+        owner_account_id,
+        kind: "site",
+        membership_class: membershipClass,
+        seat_count: seatCount,
+        allowed_domains,
+        expires_at: expiresAt?.endOf("day").toDate() ?? undefined,
+      });
+      await onProvisioned();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      onOk={provision}
+      okButtonProps={{ loading: submitting }}
+      okText="Provision license"
+      destroyOnHidden
+      title={
+        <>
+          <Icon name="plus-circle" style={{ marginRight: 10 }} />
+          Provision site license
+        </>
+      }
+    >
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        {error ? (
+          <Alert
+            type="error"
+            title={error}
+            closable
+            onClose={() => setError("")}
+          />
+        ) : null}
+        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          This creates a support-managed license without a payment flow. Users
+          can claim seats after verifying an email address at one of the allowed
+          domains, or an admin can assign seats directly.
+        </Paragraph>
+        <div>
+          <Text strong>Membership tier</Text>
+          <Select
+            value={membershipClass || undefined}
+            onChange={setMembershipClass}
+            style={{ width: "100%", marginTop: 6 }}
+            options={provisionableTiers.map((tier) => ({
+              label: tier.label ?? capitalize(tier.id),
+              value: tier.id,
+            }))}
+          />
+        </div>
+        <div>
+          <Text strong>Seats</Text>
+          <InputNumber
+            min={1}
+            precision={0}
+            value={seatCount}
+            onChange={(value) => setSeatCount(Number(value ?? 1))}
+            style={{ width: "100%", marginTop: 6 }}
+          />
+        </div>
+        <div>
+          <Text strong>Allowed email domains</Text>
+          <Select
+            aria-label="Allowed email domains"
+            mode="tags"
+            tokenSeparators={[",", " ", ";", "\n"]}
+            value={domains}
+            searchValue={domainSearch}
+            onSearch={setDomainSearch}
+            onChange={(values) => {
+              setDomains(normalizeDomainList(values));
+              setDomainSearch("");
+            }}
+            onBlur={() => {
+              const next = normalizeDomainList([...domains, domainSearch]);
+              setDomains(next);
+              setDomainSearch("");
+            }}
+            placeholder="example.edu, department.example.edu"
+            style={{ width: "100%", marginTop: 6 }}
+          />
+          <Text type="secondary">
+            Separate domains with commas, spaces, or new lines. Do not include
+            full email addresses.
+          </Text>
+        </div>
+        <div>
+          <Text strong>Expires at</Text>
+          <DatePicker
+            value={expiresAt}
+            onChange={setExpiresAt}
+            style={{ width: "100%", marginTop: 6 }}
+          />
+        </div>
+      </Space>
+    </Modal>
+  );
+}
+
+function EditSiteLicenseModal({
+  open,
+  membershipPackage,
+  onClose,
+  onUpdated,
+}: {
+  open: boolean;
+  membershipPackage: MembershipPackageDetails | null;
+  onClose: () => void;
+  onUpdated: () => Promise<void>;
+}) {
+  const [seatCount, setSeatCount] = useState<number>(1);
+  const [expiresAt, setExpiresAt] = useState<Dayjs | null>(null);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
+
+  useEffect(() => {
+    if (!open || !membershipPackage) return;
+    setSeatCount(membershipPackage.seat_count);
+    setExpiresAt(
+      membershipPackage.expires_at ? dayjs(membershipPackage.expires_at) : null,
+    );
+    setSubmitting(false);
+    setError("");
+  }, [open, membershipPackage]);
+
+  async function save() {
+    if (!membershipPackage) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await updateMembershipPackage({
+        package_id: membershipPackage.id,
+        owner_account_id: membershipPackage.owner_account_id,
+        seat_count: seatCount,
+        expires_at: expiresAt?.endOf("day").toDate() ?? null,
+      });
+      await onUpdated();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const activeSeats = membershipPackage?.active_assignment_count ?? 0;
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      onOk={save}
+      okButtonProps={{ loading: submitting }}
+      okText="Save license"
+      destroyOnHidden
+      title="Edit site license"
+    >
+      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+        {error ? (
+          <Alert
+            type="error"
+            title={error}
+            closable
+            onClose={() => setError("")}
+          />
+        ) : null}
+        <Alert
+          type="info"
+          showIcon
+          title="Changing the expiration date updates active membership grants for assigned or claimed seats."
+        />
+        <div>
+          <Text strong>Seats</Text>
+          <InputNumber
+            min={Math.max(1, activeSeats)}
+            precision={0}
+            value={seatCount}
+            onChange={(value) => setSeatCount(Number(value ?? 1))}
+            style={{ width: "100%", marginTop: 6 }}
+          />
+          <Text type="secondary">
+            Must be at least the current active assignment count ({activeSeats}
+            ).
+          </Text>
+        </div>
+        <div>
+          <Text strong>Expires at</Text>
+          <DatePicker
+            allowClear
+            value={expiresAt}
+            onChange={setExpiresAt}
+            style={{ width: "100%", marginTop: 6 }}
+          />
+        </div>
+      </Space>
+    </Modal>
   );
 }
 

@@ -144,7 +144,6 @@ describe("hosts.createHost", () => {
       has_usage_subscription: false,
       balance: "25",
       postpaid_unbilled_exposure_usd: "0",
-      postpaid_unbilled_limit_usd: "1000",
       effective_limits: {
         prepaid_host_usage_limit_5h_usd: 300,
         prepaid_host_usage_limit_7d_usd: 1000,
@@ -260,7 +259,6 @@ describe("hosts.createHost", () => {
       has_usage_subscription: false,
       balance: "0",
       postpaid_unbilled_exposure_usd: "0",
-      postpaid_unbilled_limit_usd: "0",
       effective_limits: {},
       dedicated_host_window_usage: {
         prepaid_5h_usd: "0",
@@ -335,7 +333,6 @@ describe("hosts.createHost", () => {
       has_usage_subscription: false,
       balance: "0",
       postpaid_unbilled_exposure_usd: "0",
-      postpaid_unbilled_limit_usd: "0",
       effective_limits: {},
       dedicated_host_window_usage: {
         prepaid_5h_usd: "0",
@@ -377,7 +374,6 @@ describe("hosts.createHost", () => {
       has_usage_subscription: true,
       balance: "0",
       postpaid_unbilled_exposure_usd: "0",
-      postpaid_unbilled_limit_usd: "1000",
       effective_limits: {
         credit_spend_limit_5h_usd: 300,
         credit_spend_limit_7d_usd: 1000,
@@ -511,7 +507,6 @@ describe("hosts.startHostInternal", () => {
       has_usage_subscription: false,
       balance: "0",
       postpaid_unbilled_exposure_usd: "0",
-      postpaid_unbilled_limit_usd: "1000",
       effective_limits: {},
       dedicated_host_window_usage: {
         prepaid_5h_usd: "0",

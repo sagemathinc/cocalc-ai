@@ -7,7 +7,6 @@ import { DirectoryListingEntry } from "@cocalc/util/types";
 import { NotebookScores } from "../jupyter/nbgrader/autograde";
 import { Datastore, EnvVars } from "../projects/actions";
 import { StudentProjectFunctionality } from "./configuration/customize-student-project-functionality";
-import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import type {
   CopyConfigurationOptions,
   CopyConfigurationTargets,
@@ -21,16 +20,18 @@ export interface SyncDBRecordSettings {
   table: string;
   allow_collabs?: boolean;
   institute_pay?: boolean;
+  site_license_pay?: boolean;
   mirror_config?: boolean;
   mirror_config_path?: string;
-  payCost?: number;
   student_project_functionality?: StudentProjectFunctionality;
   student_project_rootfs_image?: string;
   student_project_rootfs_image_id?: string;
   student_pay?: boolean;
+  required_membership_class?: string;
+  student_membership_required_at?: string;
+  student_membership_grace_days?: number;
+  course_ends_at?: string;
   shared_project_id?: string;
-  pay?: string;
-  payInfo?: PurchaseInfo;
   copy_parallel?: number; // how many assignments to copy at once in parallel when assigning/collecting/returning
   nbgrader_grade_in_instructor_project?: boolean; // deprecated
   nbgrader_grade_project?: string;

@@ -196,6 +196,13 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
     resolveMembershipForAccountMock(...args),
 }));
 
+jest.mock("@cocalc/server/membership/entitlement-overrides", () => ({
+  __esModule: true,
+  getActiveAccountEntitlementOverride: jest.fn(async () => undefined),
+  applyAccountEntitlementOverride: ({ membership }: any) => membership,
+  applyNumericLimitRule: (base: number | undefined) => base,
+}));
+
 jest.mock("@cocalc/database/postgres/project-host-metrics", () => ({
   __esModule: true,
   clearProjectHostMetrics: jest.fn(async () => undefined),

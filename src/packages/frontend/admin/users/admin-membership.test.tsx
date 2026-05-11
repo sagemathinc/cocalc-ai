@@ -18,6 +18,14 @@ jest.mock("antd", () => {
       {children}
     </div>
   );
+  const Collapse = Object.assign(({ children }: any) => <div>{children}</div>, {
+    Panel: ({ children, header }: any) => (
+      <div>
+        {header}
+        {children}
+      </div>
+    ),
+  });
   const Select = ({ value, onChange }: any) => (
     <select
       value={value ?? ""}
@@ -37,6 +45,7 @@ jest.mock("antd", () => {
   return {
     Alert: Div,
     Button,
+    Collapse,
     DatePicker,
     Descriptions: Object.assign(Div, { Item: Div }),
     Divider: Div,
@@ -48,6 +57,7 @@ jest.mock("antd", () => {
           {children}
         </div>
       ) : null,
+    Popover: Div,
     Select,
     Space: Div,
     Spin: () => <div>loading</div>,
@@ -102,6 +112,10 @@ jest.mock("./actions", () => ({
     set_admin_membership: jest.fn(),
     clear_admin_membership: jest.fn(),
   },
+}));
+
+jest.mock("./account-entitlement-override", () => ({
+  AccountEntitlementOverridePanel: () => null,
 }));
 
 describe("AdminMembership", () => {

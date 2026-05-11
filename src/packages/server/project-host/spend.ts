@@ -70,14 +70,6 @@ function hasPositiveLimit(value: unknown): boolean {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-function hasPositiveMoneyValue(value: unknown): boolean {
-  try {
-    return toDecimal(value as any).gt(0);
-  } catch {
-    return false;
-  }
-}
-
 function isLaneWindowAvailable({
   used,
   limit,
@@ -132,14 +124,6 @@ export function isDedicatedHostLaneCurrentlyAllowed({
   if (
     !hasPositiveLimit(limits.credit_spend_limit_5h_usd) &&
     !hasPositiveLimit(limits.credit_spend_limit_7d_usd)
-  ) {
-    return false;
-  }
-  if (
-    hasPositiveMoneyValue(snapshot.postpaid_unbilled_limit_usd) &&
-    !toDecimal(snapshot.postpaid_unbilled_exposure_usd).lt(
-      toDecimal(snapshot.postpaid_unbilled_limit_usd),
-    )
   ) {
     return false;
   }

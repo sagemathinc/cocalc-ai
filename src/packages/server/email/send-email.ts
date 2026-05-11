@@ -13,6 +13,10 @@ import sendViaSMTP from "./smtp";
 import sendViaSendgrid from "./sendgrid";
 import sendEmailThrottle from "./throttle";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import {
+  resolveEmailBackendForLane,
+  type EmailLane,
+} from "@cocalc/util/notification-email";
 
 export const testEmails: Message[] = [];
 export function resetTestEmails() {
@@ -22,6 +26,7 @@ export function resetTestEmails() {
 export default async function sendEmail(
   message: Message,
   account_id?: string, // account that we are sending this email *on behalf of*, if any (used for throttling).
+  lane: EmailLane = "transactional",
 ): Promise<void> {
   if (process.env.COCALC_TEST_MODE) {
     // In testing mode, we just push emails into a list. The test framework can then check to see
@@ -32,8 +37,9 @@ export default async function sendEmail(
 
   await sendEmailThrottle(account_id);
 
-  const { email_backend } = await getServerSettings();
-  switch (email_backend) {
+  const settings = await getServerSettings();
+  const backend = resolveEmailBackendForLane(settings, lane);
+  switch (backend) {
     case "":
     case "none":
       throw Error(`no email backend configured`);
@@ -42,13 +48,14 @@ export default async function sendEmail(
     case "sendgrid":
       return await sendViaSendgrid(message);
     default:
-      throw Error(`no valid email backend configured: ${email_backend}`);
+      throw Error(`no valid email backend configured: ${backend}`);
   }
 }
 
-export async function isEmailConfigured() {
-  const { email_backend } = await getServerSettings();
-  if (!email_backend || email_backend == "none") {
+export async function isEmailConfigured(lane: EmailLane = "transactional") {
+  const settings = await getServerSettings();
+  const backend = resolveEmailBackendForLane(settings, lane);
+  if (!backend || backend == "none") {
     return false;
   } else {
     return true;

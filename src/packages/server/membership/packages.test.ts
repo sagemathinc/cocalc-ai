@@ -5,6 +5,8 @@
 
 export {};
 
+import dayjs from "dayjs";
+
 let createInterBayAccountLocalClientMock: jest.Mock;
 let getInterBayFabricClientMock: jest.Mock;
 let projectControlSetUsageAccountMock: jest.Mock;
@@ -67,6 +69,7 @@ afterAll(after);
 
 describe("membership packages", () => {
   const teamTier = `team-tier-${uuid()}`;
+  const courseTier = `course-tier-${uuid()}`;
   let remoteGrantUpserts: Array<{ dest_bay: string; grant: any }>;
   let remoteGrantRevocations: Array<{ dest_bay: string; opts: any }>;
   let remoteProjectUsageUpdates: Array<{ dest_bay: string; opts: any }>;
@@ -110,6 +113,14 @@ describe("membership packages", () => {
       priority: 25,
       price_monthly: 20,
       price_yearly: 200,
+    });
+    await createTestMembershipTier({
+      id: courseTier,
+      priority: 10,
+      course_store_visible: true,
+      course_price: 25,
+      course_duration_days: 122,
+      course_grace_days: 14,
     });
   });
 
@@ -253,6 +264,38 @@ describe("membership packages", () => {
     expect(revokedMembership.source).toBe("free");
   });
 
+  it("marks self-purchased course package grants distinctly", async () => {
+    const student_account_id = uuid();
+    await createTestAccount(student_account_id);
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id: student_account_id,
+      kind: "course",
+      membership_class: courseTier,
+      seat_count: 1,
+      metadata: {
+        direct_student_purchase: true,
+        course_project_id: uuid(),
+      },
+    });
+
+    const assignment = await assignMembershipPackageSeat({
+      package_id,
+      account_id: student_account_id,
+      assigned_by_account_id: student_account_id,
+      metadata: {
+        direct_student_purchase: true,
+        grant_source: "student-course-purchase",
+      },
+    });
+    expect(assignment.grant_source).toBe("student-course-purchase");
+
+    const membership = await resolveMembershipForAccount(student_account_id);
+    expect(membership.class).toBe(courseTier);
+    expect(membership.grant_package_id).toBe(package_id);
+    expect(membership.grant_source).toBe("student-course-purchase");
+  });
+
   it("reuses the package's stored seat price when expanding seats later", async () => {
     const owner_account_id = uuid();
     await createTestAccount(owner_account_id);
@@ -286,6 +329,48 @@ describe("membership packages", () => {
     expect(quote.package_id).toBe(package_id);
     expect(quote.seat_price).toBe(17.5);
     expect(quote.total_price).toBe(87.5);
+  });
+
+  it("quotes course seats from the selected course-visible membership tier", async () => {
+    const course_project_id = uuid();
+    await getPool("medium").query(
+      `INSERT INTO projects (project_id, title, users, course, last_edited)
+       VALUES ($1, $2, $3::jsonb, $4::jsonb, NOW())`,
+      [
+        course_project_id,
+        "Math 101",
+        "{}",
+        JSON.stringify({
+          type: "student",
+          project_id: course_project_id,
+          path: "math101.course",
+        }),
+      ],
+    );
+
+    const quote = await resolveMembershipPackageQuote({
+      type: "membership-package",
+      kind: "course",
+      membership_class: courseTier,
+      course_project_id,
+      seat_count: 3,
+    });
+
+    expect(quote.kind).toBe("course");
+    expect(quote.membership_class).toBe(courseTier);
+    expect(quote.seat_price).toBe(25);
+    expect(quote.total_price).toBe(75);
+    expect(quote.metadata).toMatchObject({
+      course_project_id,
+      course_path: "math101.course",
+      course_title: "Math 101",
+      course_duration_days: 122,
+      course_grace_days: 14,
+      seat_price: 25,
+    });
+    expect(dayjs(quote.expires_at).diff(dayjs(quote.starts_at), "day")).toBe(
+      122,
+    );
   });
 
   it("allows expanding an existing package without resupplying the package kind", async () => {
@@ -665,7 +750,7 @@ describe("membership packages", () => {
     expect(localGrantCount.rows[0]?.count).toBe(0);
   });
 
-  it("dedupes domain and site claims across plus aliases until the prior claim is revoked", async () => {
+  it("dedupes site-license claims across plus aliases until the prior claim is revoked", async () => {
     const owner_account_id = uuid();
     const first_account_id = uuid();
     const second_account_id = uuid();
@@ -676,7 +761,7 @@ describe("membership packages", () => {
     await markVerifiedEmail(first_account_id, `ada@${domain}`);
     await markVerifiedEmail(second_account_id, `ada+lab@${domain}`);
 
-    const site_package_id = await createTestMembershipPackage({
+    const first_site_package_id = await createTestMembershipPackage({
       owner_account_id,
       kind: "site",
       membership_class: teamTier,
@@ -687,9 +772,9 @@ describe("membership packages", () => {
         allowed_domains: [domain],
       },
     });
-    const domain_package_id = await createTestMembershipPackage({
+    const second_site_package_id = await createTestMembershipPackage({
       owner_account_id,
-      kind: "domain",
+      kind: "site",
       membership_class: teamTier,
       seat_count: 3,
       metadata: {
@@ -704,13 +789,13 @@ describe("membership packages", () => {
     });
     expect(firstClaimables).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ package_id: site_package_id }),
-        expect.objectContaining({ package_id: domain_package_id }),
+        expect.objectContaining({ package_id: first_site_package_id }),
+        expect.objectContaining({ package_id: second_site_package_id }),
       ]),
     );
 
     const firstClaim = await claimMembershipPackageSeat({
-      package_id: site_package_id,
+      package_id: first_site_package_id,
       account_id: first_account_id,
     });
     expect(firstClaim.metadata?.claim_identity_key).toBe(`ada@${domain}`);
@@ -747,19 +832,19 @@ describe("membership packages", () => {
     expect(
       secondClaimables.some(
         (claimable) =>
-          claimable.package_id === site_package_id ||
-          claimable.package_id === domain_package_id,
+          claimable.package_id === first_site_package_id ||
+          claimable.package_id === second_site_package_id,
       ),
     ).toBe(false);
     await expect(
       claimMembershipPackageSeat({
-        package_id: domain_package_id,
+        package_id: second_site_package_id,
         account_id: second_account_id,
       }),
     ).rejects.toThrow(/institutional|no claimable seat/i);
 
     await revokeMembershipPackageSeat({
-      package_id: site_package_id,
+      package_id: first_site_package_id,
       account_id: first_account_id,
     });
 
@@ -769,7 +854,7 @@ describe("membership packages", () => {
       });
     expect(
       stillBlockedClaimables.some(
-        (claimable) => claimable.package_id === domain_package_id,
+        (claimable) => claimable.package_id === second_site_package_id,
       ),
     ).toBe(false);
 
@@ -781,14 +866,14 @@ describe("membership packages", () => {
     expect(releasedClaimables).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          package_id: domain_package_id,
+          package_id: second_site_package_id,
           matched_email_address: `ada+lab@${domain}`,
         }),
       ]),
     );
   });
 
-  it("discovers remote claimable domain packages across the cluster", async () => {
+  it("discovers remote claimable site packages across the cluster", async () => {
     process.env.COCALC_CLUSTER_BAY_IDS = "bay-0,bay-1";
     const claimant_account_id = uuid();
     const remote_package_id = uuid();
@@ -819,7 +904,7 @@ describe("membership packages", () => {
             return [
               {
                 package_id: remote_package_id,
-                kind: "domain",
+                kind: "site",
                 membership_class: teamTier,
                 owner_account_id: uuid(),
                 starts_at: new Date("2026-05-07T00:00:00.000Z"),
@@ -845,7 +930,7 @@ describe("membership packages", () => {
       expect.arrayContaining([
         expect.objectContaining({
           package_id: remote_package_id,
-          kind: "domain",
+          kind: "site",
           matched_email_address: verifiedEmail,
           reason: "domain-match",
         }),
@@ -870,7 +955,7 @@ describe("membership packages", () => {
         claimed_from_domain: "example.edu",
       },
       grant_id: uuid(),
-      grant_source: "domain-license",
+      grant_source: "site-license",
       grant_purchase_id: null,
     };
     await createTestAccount(claimant_account_id);
@@ -889,7 +974,7 @@ describe("membership packages", () => {
         getClaimableMembershipPackages: jest.fn(async () => [
           {
             package_id: remote_package_id,
-            kind: "domain",
+            kind: "site",
             membership_class: teamTier,
             owner_account_id: uuid(),
             starts_at: new Date("2026-05-07T00:00:00.000Z"),

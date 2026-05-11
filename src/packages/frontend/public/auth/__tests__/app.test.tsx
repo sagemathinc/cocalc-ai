@@ -67,6 +67,16 @@ describe("getPublicAuthRouteFromPath", () => {
       kind: "auth-verify-email",
       token: "abc",
     });
+    expect(
+      getPublicAuthRouteFromPath(
+        "/base/auth/verify",
+        "?email=x%2540y.z&token=abc",
+      ),
+    ).toEqual({
+      email: "x@y.z",
+      kind: "auth-verify-email",
+      token: "abc",
+    });
     expect(getPublicAuthRouteFromPath("/base/sso")).toEqual({
       kind: "sso-index",
     });
@@ -169,6 +179,30 @@ describe("PublicAuthApp", () => {
       screen.getByRole("heading", { name: "Launchpad password updated" }),
     ).not.toBeNull();
     expect(screen.getByText("Password updated")).not.toBeNull();
+  });
+
+  it("confirms verified email and uses signed-in actions", async () => {
+    mockedApi.mockResolvedValueOnce(undefined);
+
+    render(
+      <PublicAuthApp
+        config={config({ is_authenticated: true })}
+        initialRoute={{
+          email: "ada@example.edu",
+          kind: "auth-verify-email",
+          token: "verification-token",
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("Email verified")).not.toBeNull();
+    expect(screen.getByText("ada@example.edu")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Open projects" })).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Account settings" }),
+    ).not.toBeNull();
+    expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
   });
 
   it("renders the sso index with provided strategies", () => {

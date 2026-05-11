@@ -56,21 +56,34 @@ export async function createTestMembershipTier(opts: {
   priority?: number;
   price_monthly?: number;
   price_yearly?: number;
+  course_store_visible?: boolean;
+  course_price?: number;
+  course_duration_days?: number;
+  course_grace_days?: number;
+  project_defaults?: Record<string, unknown>;
+  ai_limits?: Record<string, unknown>;
+  features?: Record<string, unknown>;
   usage_limits?: Record<string, unknown>;
 }) {
   const pool = getPool("medium");
   await pool.query(
     `INSERT INTO membership_tiers
-      (id, label, store_visible, priority, price_monthly, price_yearly,
+      (id, label, store_visible, course_store_visible, priority,
+       price_monthly, price_yearly, course_price, course_duration_days,
+       course_grace_days,
        project_defaults, ai_limits, features, usage_limits,
        disabled, notes, history, created, updated)
-     VALUES ($1,$2,$3,$4,$5,$6,$7::JSONB,$8::JSONB,$9::JSONB,$10::JSONB,$11,$12,$13::JSONB,NOW(),NOW())
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::JSONB,$12::JSONB,$13::JSONB,$14::JSONB,$15,$16,$17::JSONB,NOW(),NOW())
      ON CONFLICT (id) DO UPDATE SET
        label=EXCLUDED.label,
        store_visible=EXCLUDED.store_visible,
+       course_store_visible=EXCLUDED.course_store_visible,
        priority=EXCLUDED.priority,
        price_monthly=EXCLUDED.price_monthly,
        price_yearly=EXCLUDED.price_yearly,
+       course_price=EXCLUDED.course_price,
+       course_duration_days=EXCLUDED.course_duration_days,
+       course_grace_days=EXCLUDED.course_grace_days,
        project_defaults=EXCLUDED.project_defaults,
        ai_limits=EXCLUDED.ai_limits,
        features=EXCLUDED.features,
@@ -82,16 +95,71 @@ export async function createTestMembershipTier(opts: {
       opts.id,
       opts.id,
       false,
+      opts.course_store_visible ?? false,
       opts.priority ?? 0,
       opts.price_monthly ?? 0,
       opts.price_yearly ?? 0,
-      {},
-      {},
-      {},
+      opts.course_price ?? null,
+      opts.course_duration_days ?? null,
+      opts.course_grace_days ?? null,
+      opts.project_defaults ?? {},
+      opts.ai_limits ?? {},
+      opts.features ?? {},
       opts.usage_limits ?? {},
       false,
       null,
       [],
+    ],
+  );
+}
+
+export async function createTestAccountEntitlementOverride(
+  account_id: string,
+  opts?: {
+    enabled?: boolean;
+    features?: Record<string, unknown>;
+    project_defaults?: Record<string, unknown>;
+    ai_limits?: Record<string, unknown>;
+    usage_limits?: Record<string, unknown>;
+    dedicated_hosts?: Record<string, unknown>;
+    reason?: string | null;
+    expires_at?: Date | null;
+    updated_by?: string;
+    updated_at?: Date;
+  },
+) {
+  const pool = getPool("medium");
+  await pool.query(
+    `INSERT INTO account_entitlement_overrides (
+       account_id, enabled, features, project_defaults, ai_limits,
+       usage_limits, dedicated_hosts, reason, expires_at, updated_by,
+       updated_at
+     )
+     VALUES ($1,$2,$3::JSONB,$4::JSONB,$5::JSONB,$6::JSONB,$7::JSONB,$8,$9,$10,$11)
+     ON CONFLICT (account_id)
+     DO UPDATE SET
+       enabled=EXCLUDED.enabled,
+       features=EXCLUDED.features,
+       project_defaults=EXCLUDED.project_defaults,
+       ai_limits=EXCLUDED.ai_limits,
+       usage_limits=EXCLUDED.usage_limits,
+       dedicated_hosts=EXCLUDED.dedicated_hosts,
+       reason=EXCLUDED.reason,
+       expires_at=EXCLUDED.expires_at,
+       updated_by=EXCLUDED.updated_by,
+       updated_at=EXCLUDED.updated_at`,
+    [
+      account_id,
+      opts?.enabled ?? true,
+      opts?.features ?? {},
+      opts?.project_defaults ?? {},
+      opts?.ai_limits ?? {},
+      opts?.usage_limits ?? {},
+      opts?.dedicated_hosts ?? {},
+      opts?.reason ?? "test override",
+      opts?.expires_at ?? null,
+      opts?.updated_by ?? uuid(),
+      opts?.updated_at ?? new Date(),
     ],
   );
 }
@@ -188,7 +256,7 @@ export async function createTestMembershipGrant(
 
 export async function createTestMembershipPackage(opts: {
   owner_account_id: string;
-  kind: "course" | "team" | "domain" | "site";
+  kind: "course" | "team" | "site";
   membership_class: MembershipClass;
   seat_count: number;
   purchase_id?: number | null;

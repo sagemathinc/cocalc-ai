@@ -108,7 +108,6 @@ export type SiteSettingsKeys =
   | "project_hosts_funding_mode"
   | "project_hosts_gcp_surcharge_percent"
   | "project_hosts_nebius_surcharge_percent"
-  | "project_hosts_postpaid_unbilled_limit_usd"
   | "cloudflare_mode"
   | "project_hosts_dns"
   | "project_hosts_app_public_subdomain_suffix"
@@ -439,14 +438,15 @@ export const site_settings_conf: SiteSettings = {
   },
   help_email: {
     name: help_email_name,
-    desc: "Email address that user is directed to use for support requests",
+    desc: "Email address that users are directed to use for support requests. When outbound email is enabled, notification email also uses this address as its sender.",
     default: "",
     valid: is_valid_email_address,
     clearable: true,
     show: show_theming_vars,
+    required_when: [{ key: "email_enabled", equals: "yes" }],
     tags: ["Theme", "Email", "Support"],
-    group: "Branding & UI",
-    subgroup: "Contact",
+    group: "Messaging & Email",
+    subgroup: "Sender & Contact",
   },
   show_policies: {
     name: "Legacy show policy pages",
@@ -954,16 +954,6 @@ export const site_settings_conf: SiteSettings = {
     },
     to_val: project_hosts_funding_mode_to_val,
     tags: ["Project Hosts", "Cloud", "Commercialization", "On-Prem"],
-    group: "Compute / Project Hosts",
-    subgroup: "Billing",
-  },
-  project_hosts_postpaid_unbilled_limit_usd: {
-    name: "Project Hosts: Postpaid Unbilled Limit (USD)",
-    desc: "Maximum unbilled dedicated-host exposure allowed for one account in **account-postpaid** mode before running hosts are stopped or new ones are denied. This applies alongside the membership rolling 5-hour and 7-day credit windows.",
-    default: "1000",
-    valid: onlyNonnegFloat,
-    to_val: toFloat,
-    tags: ["Project Hosts", "Cloud", "Commercialization"],
     group: "Compute / Project Hosts",
     subgroup: "Billing",
   },

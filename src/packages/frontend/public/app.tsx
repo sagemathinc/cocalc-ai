@@ -7,6 +7,7 @@ import { Suspense, lazy, useEffect, useState } from "react";
 
 import { Button, Typography } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { getAuthBootstrap } from "@cocalc/frontend/auth/api";
 import { getSiteName, type PublicConfig, PublicSectionShell } from "./common";
 import type { PublicRoute } from "./routes";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -148,6 +149,26 @@ export default function PublicApp({
       const nextConfig = await loadCustomize();
       if (!cancelled) {
         setResolvedConfig(nextConfig);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [config]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const bootstrap = await getAuthBootstrap();
+        if (cancelled || typeof bootstrap?.signed_in !== "boolean") return;
+        setResolvedConfig((current) => ({
+          ...(current ?? config ?? {}),
+          is_authenticated: !!bootstrap?.signed_in,
+        }));
+      } catch {
+        // Public pages can render without auth bootstrap; this only corrects
+        // stale customize state after sign-in/sign-up.
       }
     })();
     return () => {

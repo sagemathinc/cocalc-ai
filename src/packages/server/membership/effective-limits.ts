@@ -93,6 +93,12 @@ export function normalizeMembershipEffectiveLimits(
     prepaid_host_usage_limit_7d_usd: normalizeNonNegativeNumber(
       usageLimits?.prepaid_host_usage_limit_7d_usd,
     ),
+    notification_email_send_limit_5h: normalizeNonNegativeInteger(
+      usageLimits?.notification_email_send_limit_5h,
+    ),
+    notification_email_send_limit_7d: normalizeNonNegativeInteger(
+      usageLimits?.notification_email_send_limit_7d,
+    ),
   };
 }
 

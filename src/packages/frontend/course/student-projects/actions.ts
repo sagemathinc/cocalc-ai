@@ -462,14 +462,6 @@ export class StudentProjectsActions {
   set_all_student_project_course_info = async (): Promise<void> => {
     const store = this.get_store();
     if (store == null) return;
-    let pay = store.get_pay() ?? "";
-    const payInfo = store.get_payInfo();
-
-    if (pay != "" && !(pay instanceof Date)) {
-      // pay *must* be a Date, not just a string timestamp... or "" for not paying.
-      pay = new Date(pay);
-    }
-
     const datastore: Datastore = store.get_datastore();
     const envvars: EnvVars = store.get_envvars();
     const courseRootfs = await this.get_student_project_rootfs();
@@ -493,8 +485,17 @@ export class StudentProjectsActions {
           project_id: student_project_id,
           course_project_id: store.get("course_project_id"),
           path: store.get("course_filename"),
-          pay,
-          payInfo,
+          student_pay: !!store.getIn(["settings", "student_pay"]),
+          institute_pay: !!store.getIn(["settings", "institute_pay"]),
+          site_license_pay: !!store.getIn(["settings", "site_license_pay"]),
+          required_membership_class:
+            store.getIn(["settings", "required_membership_class"]) ?? "",
+          student_membership_required_at:
+            store.getIn(["settings", "student_membership_required_at"]) ?? "",
+          student_membership_grace_days: Number(
+            store.getIn(["settings", "student_membership_grace_days"]) ?? 14,
+          ),
+          course_ends_at: store.getIn(["settings", "course_ends_at"]) ?? "",
           account_id: student_account_id,
           email_address: student_email_address,
           datastore,

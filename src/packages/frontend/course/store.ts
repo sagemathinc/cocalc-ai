@@ -19,12 +19,10 @@ import {
   EnvVarsRecord,
 } from "@cocalc/frontend/projects/actions";
 import { StudentProjectFunctionality } from "./configuration/customize-student-project-functionality";
-import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import type {
   CopyConfigurationOptions,
   CopyConfigurationTargets,
 } from "./configuration/configuration-copying";
-import { DEFAULT_PURCHASE_INFO } from "@cocalc/util/purchases/quota/student-pay";
 
 export const PARALLEL_DEFAULT = 5;
 export const MAX_COPY_PARALLEL = 25;
@@ -141,9 +139,11 @@ export type CourseSettingsRecord = TypedMap<{
   description: string;
   email_invite: string;
   institute_pay: boolean;
-  pay: string | Date;
-  payInfo?: TypedMap<PurchaseInfo>;
-  payCost?: number;
+  site_license_pay?: boolean;
+  required_membership_class?: string;
+  student_membership_required_at?: string;
+  student_membership_grace_days?: number;
+  course_ends_at?: string;
   shared_project_id: string;
   student_pay: boolean;
   title: string;
@@ -256,36 +256,6 @@ export class CourseStore extends Store<CourseState> {
     // return project_id (a string) if shared project has been created,
     // or undefined or empty string otherwise.
     return this.getIn(["settings", "shared_project_id"]);
-  }
-
-  public get_pay(): string | Date {
-    const settings = this.get("settings");
-    if (
-      settings == null ||
-      !(settings.get("student_pay") || settings.get("institute_pay"))
-    ) {
-      return "";
-    }
-    const pay = settings.get("pay");
-    if (!pay) return "";
-    return pay;
-  }
-
-  public get_payInfo(): PurchaseInfo | null {
-    const settings = this.get("settings");
-    if (
-      settings == null ||
-      !(settings.get("student_pay") || settings.get("institute_pay"))
-    ) {
-      return null;
-    }
-    const payInfo = settings.get("payInfo")?.toJS();
-    if (!payInfo) return null;
-    // merge in defaults for backward compat if e.g., no version set
-    return {
-      ...DEFAULT_PURCHASE_INFO,
-      ...payInfo,
-    };
   }
 
   public get_datastore(): Datastore {

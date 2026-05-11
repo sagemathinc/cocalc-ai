@@ -8,6 +8,7 @@ import { isChatBot, chatBotName } from "@cocalc/frontend/account/chatbot";
 import TTL from "@isaacs/ttlcache";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import type { WebappClient } from "./client";
+import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
 
 const nameCache = new TTL({ ttl: 60 * 1000 });
 
@@ -94,6 +95,40 @@ export class UsersClient {
     user_account_id: string;
   }): Promise<void> => {
     await this.client.conat_client.hub.system.clearAdminAssignedMembership(
+      opts,
+    );
+  };
+
+  getAccountEntitlementOverride = reuseInFlight(
+    async ({
+      user_account_id,
+    }: {
+      user_account_id: string;
+    }): Promise<AccountEntitlementOverride | undefined> => {
+      return await this.client.conat_client.hub.system.getAccountEntitlementOverride(
+        { user_account_id },
+      );
+    },
+  );
+
+  setAccountEntitlementOverride = async (opts: {
+    user_account_id: string;
+    override: Omit<
+      Partial<AccountEntitlementOverride>,
+      "account_id" | "updated_by" | "updated_at"
+    >;
+    reason: string;
+  }): Promise<AccountEntitlementOverride> => {
+    return await this.client.conat_client.hub.system.setAccountEntitlementOverride(
+      opts,
+    );
+  };
+
+  clearAccountEntitlementOverride = async (opts: {
+    user_account_id: string;
+    reason: string;
+  }): Promise<void> => {
+    await this.client.conat_client.hub.system.clearAccountEntitlementOverride(
       opts,
     );
   };
