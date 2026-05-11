@@ -18,7 +18,7 @@ export const EVALUATION_PERIOD_DAYS = 3;
 export const BANNER_NON_DISMISSIBLE_DAYS = 7;
 
 // The "standard license" disk size.
-// used in next/store and student-pay
+// used in store and project quota displays
 // Aug 2025: changed from 3 to 10 GB in anticipation of the new file server
 // However, the actual presets are capped at the maximum disk size.
 // That disk max is in util/upgrades/consts.ts

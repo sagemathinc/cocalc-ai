@@ -8,11 +8,9 @@ import {
   shoppingCartCheckout,
   shoppingCartPutItemsBack,
 } from "@cocalc/server/purchases/shopping-cart-checkout";
-import studentPay from "@cocalc/server/purchases/student-pay";
 import {
   AUTO_CREDIT,
   SHOPPING_CART_CHECKOUT,
-  STUDENT_PAY,
   SUBSCRIPTION_RENEWAL,
   RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
@@ -258,12 +256,6 @@ customer.  So we don't know what to do with this.  Please manually investigate.
           if (cart_ids != null) {
             await shoppingCartPutItemsBack({ cart_ids });
           }
-        } else if (paymentIntent.metadata.purpose == STUDENT_PAY) {
-          // Student pay for a course
-          result = `the course (project_id=${paymentIntent.metadata.project_id}) was not paid for`;
-          // nothing further to do if it fails, since when student tries again,
-          // we query stripe for the payment intent and check that its status is
-          // 'canceled'.
         } else if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
           result = `we did NOT renew subscription (id=${paymentIntent.metadata.subscription_id})`;
           await processSubscriptionRenewalFailure({
@@ -386,15 +378,6 @@ ${await support()}`;
             paymentIntent.metadata.cart_ids != null
               ? JSON.parse(paymentIntent.metadata.cart_ids)
               : undefined,
-        });
-      } else if (paymentIntent.metadata.purpose == STUDENT_PAY) {
-        reason = `pay for a course (project_id=${paymentIntent.metadata.project_id})`;
-        // Student pay for a course
-        await studentPay({
-          account_id,
-          project_id: paymentIntent.metadata.project_id,
-          amount,
-          credit_id,
         });
       } else if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
         reason = `renew a subscription (id=${paymentIntent.metadata.subscription_id})`;

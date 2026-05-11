@@ -165,8 +165,6 @@ export class SharedProjectActions {
       project_id: shared_project_id,
       course_project_id: store.get("course_project_id"),
       path: store.get("course_filename"),
-      pay: "", // pay
-      payInfo: null, // payInfo
       account_id: null, // account_id
       email_address: null, // email_address
       datastore,

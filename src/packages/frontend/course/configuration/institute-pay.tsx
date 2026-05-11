@@ -17,7 +17,6 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Dayjs } from "dayjs";
 
 import {
   FreshAuthModal,
@@ -53,21 +52,20 @@ const { Paragraph, Text } = Typography;
 interface InstitutePaySectionProps {
   project_id: string;
   enabled: boolean;
-  cost: number | null;
-  payConfigured: boolean;
-  when: Dayjs;
+  selectedTier: {
+    id: string;
+    label?: string;
+    course_price?: number;
+    course_duration_days?: number;
+  } | null;
   onToggle: (checked: boolean) => void;
-  onConfigurePayment: () => void;
 }
 
 export function InstitutePaySection({
   project_id,
   enabled,
-  cost,
-  payConfigured,
-  when,
+  selectedTier,
   onToggle,
-  onConfigurePayment,
 }: InstitutePaySectionProps) {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -111,22 +109,19 @@ export function InstitutePaySection({
       {enabled && (
         <div style={{ marginTop: "15px" }}>
           <ShowError error={error} setError={setError} />
-          {!payConfigured && (
+          {!selectedTier && (
             <Alert
               type="warning"
               showIcon
               style={{ marginBottom: "15px" }}
-              title="Configure the course fee first"
-              description="Set the term dates and upgrade requirements first, then purchase seats for the course."
+              title="Select a course membership first"
+              description="Choose the course-visible membership tier students need before purchasing instructor-paid seats."
             />
           )}
           <Space style={{ marginBottom: "15px" }} wrap>
-            <Button onClick={onConfigurePayment}>
-              <Icon name="credit-card" /> Configure course fee and upgrades...
-            </Button>
             <Button
               type="primary"
-              disabled={!payConfigured}
+              disabled={!selectedTier}
               onClick={() => setPurchaseOpen(true)}
             >
               <Icon name="shopping-cart" />{" "}
@@ -143,7 +138,9 @@ export function InstitutePaySection({
                 <MoneyStatistic
                   title="Seat price"
                   value={Number(
-                    membershipPackage.metadata?.seat_price ?? cost ?? 0,
+                    membershipPackage.metadata?.seat_price ??
+                      selectedTier?.course_price ??
+                      0,
                   )}
                 />
                 <MoneyStatistic
@@ -185,22 +182,16 @@ export function InstitutePaySection({
             onClose={() => setPurchaseOpen(false)}
             project_id={project_id}
             membershipPackage={membershipPackage}
-            courseCost={cost}
+            selectedTier={selectedTier}
             onPurchased={async () => {
               await refreshPackages();
             }}
           />
-          {payConfigured && (
+          {selectedTier && (
             <Paragraph type="secondary" style={{ marginTop: "15px" }}>
               Students will not be asked to pay directly. You manage the seat
               count here and assign purchased seats to student accounts
               individually.
-            </Paragraph>
-          )}
-          {when.isValid() && (
-            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              The configured course access window begins <TimeAgo date={when} />
-              .
             </Paragraph>
           )}
         </div>
@@ -214,14 +205,19 @@ function PurchaseCourseSeatsModal({
   onClose,
   project_id,
   membershipPackage,
-  courseCost,
+  selectedTier,
   onPurchased,
 }: {
   open: boolean;
   onClose: () => void;
   project_id: string;
   membershipPackage?: MembershipPackageDetails;
-  courseCost: number | null;
+  selectedTier: {
+    id: string;
+    label?: string;
+    course_price?: number;
+    course_duration_days?: number;
+  } | null;
   onPurchased: () => Promise<void>;
 }) {
   const [seatCount, setSeatCount] = useState<number>(1);
@@ -243,10 +239,11 @@ function PurchaseCourseSeatsModal({
     () => ({
       package_id: membershipPackage?.id,
       kind: "course" as const,
+      membership_class: selectedTier?.id,
       seat_count: seatCount,
       course_project_id: membershipPackage ? undefined : project_id,
     }),
-    [membershipPackage, project_id, seatCount],
+    [membershipPackage, project_id, seatCount, selectedTier?.id],
   );
 
   useEffect(() => {
@@ -391,8 +388,10 @@ function PurchaseCourseSeatsModal({
               ? "Existing course package"
               : "New course package"}
           </Tag>
-          {courseCost != null && (
-            <Tag>{`Configured seat price ${currency(courseCost)}`}</Tag>
+          {selectedTier != null && (
+            <Tag>{`${selectedTier.label ?? selectedTier.id}: ${currency(
+              Number(selectedTier.course_price ?? 0),
+            )} / ${Number(selectedTier.course_duration_days ?? 0)} days`}</Tag>
           )}
         </Space>
         <div>

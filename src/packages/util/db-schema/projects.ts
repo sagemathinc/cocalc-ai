@@ -6,7 +6,6 @@
 import { callback2 } from "@cocalc/util/async-utils";
 import { State } from "@cocalc/util/compute-states";
 import { PROJECT_GROUPS } from "@cocalc/util/misc";
-import { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import {
   ExecuteCodeOptions,
   ExecuteCodeOptionsAsyncGet,
@@ -318,8 +317,8 @@ Table({
     },
     course: {
       type: "map",
-      desc: "{project_id:[id of project that contains .course file], path:[path to .course file], pay:?, payInfo:?, email_address:[optional email address of student -- used if account_id not known], account_id:[account id of student]}, where pay is either not set (or equals falseish) or is a timestamp by which the students must pay. If payInfo is set, it specifies the parameters of the course fee students should pay.",
-      date: ["pay"],
+      desc: "{project_id:[id of project that contains .course file], path:[path to .course file], email_address:[optional email address of student -- used if account_id not known], account_id:[account id of student], required_membership_class:?, student_membership_required_at:?, student_membership_grace_days:?}.",
+      date: ["student_membership_required_at", "course_ends_at"],
     },
     storage_server: {
       type: "integer",
@@ -453,8 +452,9 @@ collaborators to set those things.
 **wARNING:** right now we're not using this since when multiple people add
 students to a course and the 'course' field doesn't get properly set,
 much confusion and misery arises.... and it is very hard to fix.
-In theory a malicous student could not pay via this.  But if they could
-mess with their client, they could easily not pay anyways.
+In theory a malicious student could tamper with course metadata via this. But if
+they could mess with their client, they could easily bypass client-side course
+checks anyways.
 */
 Table({
   name: "projects_owner",
@@ -692,10 +692,13 @@ export interface CourseInfo {
   account_id?: string; // account_id of the student that this project is for.
   project_id: string; // the course project, i.e., project with the .course file
   path: string; // path to the .course file in project_id
-  pay?: string; // iso timestamp or ""
-  paid?: string; // iso timestamp with *when* they paid.
-  purchase_id?: number; // id of purchase record in purchases table.
-  payInfo?: PurchaseInfo;
+  student_pay?: boolean;
+  institute_pay?: boolean;
+  site_license_pay?: boolean;
+  required_membership_class?: string;
+  student_membership_required_at?: string;
+  student_membership_grace_days?: number;
+  course_ends_at?: string;
   email_address?: string;
   datastore: Datastore;
   student_project_functionality?: StudentProjectFunctionality;

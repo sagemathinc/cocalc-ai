@@ -23,7 +23,6 @@ import {
   FrameContext,
   defaultFrameContext,
 } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
-import StudentPayUpgrade from "@cocalc/frontend/purchases/student-pay";
 import { EDITOR_PREFIX, path_to_tab, tab_to_path } from "@cocalc/util/misc";
 import { pathMatchesWorkspace } from "@cocalc/conat/workspaces";
 import { COLORS } from "@cocalc/util/theme";
@@ -714,7 +713,6 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
             }}
           />
         ) : null}
-        <StudentPayUpgrade project_id={project_id} />
         <DiskSpaceWarning project_id={project_id} />
         <RamWarning project_id={project_id} />
         <OOMWarning project_id={project_id} />

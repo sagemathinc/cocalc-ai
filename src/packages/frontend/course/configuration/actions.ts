@@ -20,7 +20,6 @@ import {
   StudentProjectFunctionality,
   completeStudentProjectFunctionality,
 } from "./customize-student-project-functionality";
-import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import { delay } from "awaiting";
 import {
   NBGRADER_CELL_TIMEOUT_MS,
@@ -64,20 +63,19 @@ export class ConfigurationActions {
     this.course_actions.shared_project.set_project_description();
   };
 
-  set_pay_choice = (type: "student" | "institute", value: boolean): void => {
+  set_pay_choice = (
+    type: "student" | "institute" | "site_license",
+    value: boolean,
+  ): void => {
     if (value) {
       this.set({
         student_pay: type === "student",
         institute_pay: type === "institute",
+        site_license_pay: type === "site_license",
         table: "settings",
       });
     } else {
       this.set({ [type + "_pay"]: value, table: "settings" });
-    }
-    if (type == "student") {
-      if (!value) {
-        this.setStudentPay({ when: "" });
-      }
     }
   };
 
@@ -108,26 +106,36 @@ export class ConfigurationActions {
     this.set({ email_invite: body, table: "settings" });
   };
 
-  // Set the pay option for the course, and ensure that the course fields are
-  // set on every student project in the course (see schema.coffee for format
-  // of the course field) to reflect this change in the database.
-  setStudentPay = async ({
-    when,
-    info,
-    cost,
+  // Set membership payment requirements and propagate the course field to every
+  // student project so project-level access checks see the current course state.
+  set_course_membership = async ({
+    required_membership_class,
+    student_membership_grace_days,
+    course_ends_at,
   }: {
-    when?: Date | string; // date when they need to pay
-    info?: PurchaseInfo; // what they must buy for the course
-    cost?: number;
+    required_membership_class?: string;
+    student_membership_grace_days?: number;
+    course_ends_at?: Date | string | null;
   }) => {
-    const value = {
-      ...(info != null ? { payInfo: info } : undefined),
-      ...(when != null
-        ? { pay: typeof when != "string" ? when.toISOString() : when }
-        : undefined),
-      ...(cost != null ? { payCost: cost } : undefined),
-    };
     const store = this.course_actions.get_store();
+    const existingRequiredAt = store.getIn([
+      "settings",
+      "student_membership_required_at",
+    ]);
+    const value = {
+      required_membership_class: required_membership_class?.trim() || "",
+      student_membership_grace_days,
+      student_membership_required_at:
+        existingRequiredAt || new Date().toISOString(),
+      ...(course_ends_at !== undefined
+        ? {
+            course_ends_at:
+              course_ends_at instanceof Date
+                ? course_ends_at.toISOString()
+                : (course_ends_at ?? ""),
+          }
+        : undefined),
+    };
     // wait until store changes with new settings, then configure student projects
     store.once("change", async () => {
       await this.course_actions.student_projects.set_all_student_project_course_info();
@@ -214,8 +222,6 @@ export class ConfigurationActions {
           project_id,
           course_project_id: store.get("course_project_id"),
           path: store.get("course_filename"),
-          pay: "", // pay
-          payInfo: null,
           account_id: null,
           email_address: null,
           datastore,
@@ -464,10 +470,12 @@ async function configureGroup({
     case "upgrades":
       if (settings.get("student_pay")) {
         actions.configuration.set_pay_choice("student", true);
-        await actions.configuration.setStudentPay({
-          when: settings.get("pay"),
-          info: settings.get("payInfo")?.toJS(),
-          cost: settings.get("payCost"),
+        await actions.configuration.set_course_membership({
+          required_membership_class: settings.get("required_membership_class"),
+          student_membership_grace_days: settings.get(
+            "student_membership_grace_days",
+          ),
+          course_ends_at: settings.get("course_ends_at"),
         });
         await actions.configuration.configure_all_projects();
       } else {

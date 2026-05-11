@@ -593,17 +593,6 @@ export async function renewSubscription(
   });
 }
 
-export async function studentPay(project_id: string) {
-  return await api("purchases/student-pay", { project_id });
-}
-
-export async function studentPayTransfer(opts: {
-  project_id: string;
-  paid_project_id: string;
-}): Promise<{ url: string }> {
-  return await api("purchases/student-pay-transfer", opts);
-}
-
 // will give error if user is not signed in - they can't make a purchase anyways in that case.
 export async function getStripePublishableKey(): Promise<string> {
   const { stripe_publishable_key } = await api(
