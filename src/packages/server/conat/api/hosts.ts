@@ -2432,12 +2432,12 @@ export async function listHostsLocal({
   const params: any[] = [owner];
   if (!admin_view) {
     filters.push(
-      `(metadata->>'owner' = $1
+      `(metadata->>'owner' = $1::text
         OR EXISTS (
           SELECT 1
           FROM project_host_access access
           WHERE access.host_id = project_hosts.id
-            AND access.account_id = $1
+            AND access.account_id::text = $1::text
             AND access.revoked_at IS NULL
         )
         OR tier IS NOT NULL)`,
@@ -2453,7 +2453,7 @@ export async function listHostsLocal({
               SELECT access.role AS delegated_access_role
               FROM project_host_access access
               WHERE access.host_id = project_hosts.id
-                AND access.account_id = $1
+                AND access.account_id::text = $1::text
                 AND access.revoked_at IS NULL
               LIMIT 1
             ) delegated_access ON TRUE
