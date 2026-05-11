@@ -26,6 +26,9 @@ import { lite, remote_sync } from "@cocalc/frontend/lite";
 import { showCodexTurnCompletionToastBestEffort } from "../codex-turn-toast";
 
 const DEFAULT_INBOX_LIMIT = 500;
+const REFRESH_RETRY_INITIAL_MS = 5_000;
+const REFRESH_RETRY_MAX_MS = 60_000;
+const REFRESH_ON_RESUME_STALE_MS = 60_000;
 
 function mentionSort(a: MentionInfo, b: MentionInfo): number {
   return b.get("time").getTime() - a.get("time").getTime();
@@ -113,6 +116,12 @@ export class MentionsActions extends Actions<MentionsState> {
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
+  private visibilityChangeListener?: () => void;
+  private focusListener?: () => void;
+  private refreshRetryTimer?: ReturnType<typeof setTimeout>;
+  private refreshRetryDelayMs = REFRESH_RETRY_INITIAL_MS;
+  private lastSuccessfulRefreshAt = 0;
+  private destroyed = false;
   private accountStoreReadyListener?: () => void;
   private accountStoreSubscription?: () => void;
   private observedAccountStore?: {
@@ -124,10 +133,12 @@ export class MentionsActions extends Actions<MentionsState> {
   private realtimeFeedAccountId?: string;
 
   _init() {
+    this.destroyed = false;
     this.signedInListener = () => {
       void this.refresh();
     };
     this.signedOutListener = () => {
+      this.clearRefreshRetry();
       this.closeRealtimeFeed();
       this.setState({ mentions: Map(), unread_count: 0, loading: false });
     };
@@ -140,11 +151,13 @@ export class MentionsActions extends Actions<MentionsState> {
     webapp_client.on("signed_in", this.signedInListener);
     webapp_client.on("signed_out", this.signedOutListener);
     webapp_client.conat_client.on("connected", this.conatConnectedListener);
+    this.installResumeRefreshListeners();
     this.observeAccountStoreReady();
     void this.refresh();
   }
 
   public override destroy = (): void => {
+    this.destroyed = true;
     if (this.signedInListener != null) {
       webapp_client.removeListener?.("signed_in", this.signedInListener);
       this.signedInListener = undefined;
@@ -160,6 +173,8 @@ export class MentionsActions extends Actions<MentionsState> {
       );
       this.conatConnectedListener = undefined;
     }
+    this.removeResumeRefreshListeners();
+    this.clearRefreshRetry();
     if (this.accountStoreSubscription != null) {
       this.accountStoreSubscription();
       this.accountStoreSubscription = undefined;
@@ -176,7 +191,7 @@ export class MentionsActions extends Actions<MentionsState> {
       this.accountStoreReadyListener = undefined;
     }
     this.closeRealtimeFeed();
-    Actions.prototype.destroy.call(this);
+    this.redux?.removeActions?.(this.name);
   };
 
   public set_filter(filter: NotificationFilter, id?: number) {
@@ -205,6 +220,9 @@ export class MentionsActions extends Actions<MentionsState> {
   }
 
   public refresh = async (): Promise<void> => {
+    if (this.destroyed) {
+      return;
+    }
     if (this.refreshInFlight != null) {
       return await this.refreshInFlight;
     }
@@ -245,9 +263,92 @@ export class MentionsActions extends Actions<MentionsState> {
         mentions: buildNotificationInboxMap({ account_id, rows }),
         unread_count: getUnreadNotificationCount(counts),
       });
+      this.lastSuccessfulRefreshAt = Date.now();
+      this.clearRefreshRetry();
       await this.ensureRealtimeFeed(account_id);
     } catch (err) {
       console.warn("WARNING: notifications refresh error -- ", err);
+      if (this.destroyed) {
+        return;
+      }
+      this.setState({ loading: false });
+      this.scheduleRefreshRetry();
+    }
+  }
+
+  private scheduleRefreshRetry(): void {
+    if (
+      this.destroyed ||
+      this.refreshRetryTimer != null ||
+      !webapp_client.is_signed_in()
+    ) {
+      return;
+    }
+    const delayMs = this.refreshRetryDelayMs;
+    this.refreshRetryDelayMs = Math.min(
+      this.refreshRetryDelayMs * 2,
+      REFRESH_RETRY_MAX_MS,
+    );
+    this.refreshRetryTimer = setTimeout(() => {
+      this.refreshRetryTimer = undefined;
+      if (!this.destroyed) {
+        void this.refresh();
+      }
+    }, delayMs);
+  }
+
+  private clearRefreshRetry(): void {
+    if (this.refreshRetryTimer == null) {
+      this.refreshRetryDelayMs = REFRESH_RETRY_INITIAL_MS;
+      return;
+    }
+    clearTimeout(this.refreshRetryTimer);
+    this.refreshRetryTimer = undefined;
+    this.refreshRetryDelayMs = REFRESH_RETRY_INITIAL_MS;
+  }
+
+  private refreshIfStaleOrLoading = (): void => {
+    const loading = this.redux.getStore("mentions")?.get?.("loading") === true;
+    const stale =
+      this.lastSuccessfulRefreshAt === 0 ||
+      Date.now() - this.lastSuccessfulRefreshAt > REFRESH_ON_RESUME_STALE_MS;
+    if (loading || stale) {
+      void this.refresh();
+    }
+  };
+
+  private installResumeRefreshListeners(): void {
+    if (typeof document !== "undefined") {
+      this.visibilityChangeListener = () => {
+        if (document.visibilityState === "visible") {
+          this.refreshIfStaleOrLoading();
+        }
+      };
+      document.addEventListener(
+        "visibilitychange",
+        this.visibilityChangeListener,
+      );
+    }
+    if (typeof window !== "undefined") {
+      this.focusListener = this.refreshIfStaleOrLoading;
+      window.addEventListener("focus", this.focusListener);
+    }
+  }
+
+  private removeResumeRefreshListeners(): void {
+    if (
+      this.visibilityChangeListener != null &&
+      typeof document !== "undefined"
+    ) {
+      document.removeEventListener(
+        "visibilitychange",
+        this.visibilityChangeListener,
+      );
+      this.visibilityChangeListener = undefined;
+    }
+    if (this.focusListener != null && typeof window !== "undefined") {
+      window.removeEventListener("focus", this.focusListener);
+      this.focusListener = undefined;
     }
   }
 
