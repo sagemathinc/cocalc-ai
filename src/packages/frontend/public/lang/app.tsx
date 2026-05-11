@@ -26,7 +26,6 @@ const { Paragraph, Text, Title } = Typography;
 interface LangConfig {
   is_authenticated?: boolean;
   logo_square?: string;
-  show_policies?: boolean;
   site_name?: string;
 }
 

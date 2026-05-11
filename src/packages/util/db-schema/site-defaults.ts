@@ -77,7 +77,6 @@ export type SiteSettingsKeys =
   | "organization_email"
   | "organization_url"
   | "policy_pages"
-  | "show_policies"
   | "terms_of_service"
   | "terms_of_service_url"
   | "commercial"
@@ -446,18 +445,6 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Theme", "Email", "Support"],
     group: "Branding & UI",
     subgroup: "Contact",
-  },
-  show_policies: {
-    name: "Legacy show policy pages",
-    desc: "Deprecated legacy boolean. Use Policy pages instead.",
-    default: "no",
-    valid: only_booleans,
-    hidden: true,
-    show: show_theming_vars,
-    tags: ["Theme"],
-    to_val: to_bool,
-    group: "Branding & UI",
-    subgroup: "Legal",
   },
   policy_pages: {
     name: "Policy pages",

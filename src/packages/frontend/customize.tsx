@@ -121,7 +121,6 @@ export interface CustomizeState {
   organization_name: string;
   organization_url: string;
   policy_pages: string;
-  show_policies: boolean;
   share_server: boolean;
   site_description: string;
   site_name: string;

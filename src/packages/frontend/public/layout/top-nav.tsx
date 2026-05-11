@@ -11,6 +11,7 @@ import type { MenuProps } from "antd";
 import { Button, Flex, Grid, Menu, theme } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
+  arePublicPoliciesVisible,
   COCALC_WORDMARK_BLACK_URL,
   getLogoSquare,
   getSiteName,
@@ -105,7 +106,7 @@ export default function PublicTopNav({
   const isAuthenticated = !!config?.is_authenticated;
   const isCompact = !screens.md;
   const logoSquare = getLogoSquare(config);
-  const showPolicies = !!config?.show_policies;
+  const showPolicies = arePublicPoliciesVisible(config);
   const siteName = getSiteName(config);
   const items: Array<{ href: string; key: PublicInfoPageKey; label: string }> =
     [

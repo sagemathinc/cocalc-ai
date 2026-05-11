@@ -41,7 +41,6 @@ interface FeaturesConfig {
   help_email?: string;
   is_authenticated?: boolean;
   logo_square?: string;
-  show_policies?: boolean;
   site_name?: string;
 }
 

@@ -34,7 +34,6 @@ interface HomeConfig {
   logo_square?: string;
   organization_name?: string;
   organization_url?: string;
-  show_policies?: boolean;
   site_description?: string;
   site_name?: string;
   splash_image?: string;

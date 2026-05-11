@@ -29,7 +29,7 @@ describe("PublicPage", () => {
       <PublicPage
         config={{
           help_email: "help@example.com",
-          show_policies: true,
+          policy_pages: "sagemathinc",
           site_name: "CoCalc",
         }}
       >
@@ -116,7 +116,15 @@ describe("PublicPage", () => {
 
   it("hides policies when there is no policy destination", () => {
     render(
-      <PublicPage config={{ show_policies: false, site_name: "Launchpad" }}>
+      <PublicPage
+        config={
+          {
+            policy_pages: "none",
+            show_policies: true,
+            site_name: "Launchpad",
+          } as any
+        }
+      >
         Body
       </PublicPage>,
     );
@@ -129,7 +137,7 @@ describe("PublicPage", () => {
     render(
       <PublicPage
         config={{
-          show_policies: false,
+          policy_pages: "none",
           site_name: "Launchpad",
           terms_of_service_url: "https://example.com/policies",
         }}

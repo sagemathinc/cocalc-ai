@@ -18,7 +18,9 @@ import {
 } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
+  arePublicPoliciesVisible,
   COCALC_WORDMARK_WHITE_URL,
+  getExternalPoliciesUrl,
   getLogoSquare,
   getSiteName,
   PublicConfigProvider,
@@ -80,7 +82,7 @@ function appPath(path: string): string {
 function getPoliciesFooterLink(
   config?: PublicConfig,
 ): FooterLinkSpec | undefined {
-  const externalPoliciesUrl = config?.terms_of_service_url?.trim();
+  const externalPoliciesUrl = getExternalPoliciesUrl(config);
   if (externalPoliciesUrl) {
     return {
       href: externalPoliciesUrl,
@@ -89,7 +91,7 @@ function getPoliciesFooterLink(
       target: "_blank",
     };
   }
-  if (config?.show_policies) {
+  if (arePublicPoliciesVisible(config)) {
     return { href: appPath("policies"), label: "Policies" };
   }
 }

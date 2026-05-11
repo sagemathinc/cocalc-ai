@@ -81,7 +81,7 @@ describe("PublicTopNav", () => {
   it("renders logo and public page navigation with Support at the end", async () => {
     await render(
       <PublicConfigProvider
-        config={{ show_policies: true, site_name: "Launchpad" }}
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
       >
         <PublicTopNav />
       </PublicConfigProvider>,
@@ -112,7 +112,7 @@ describe("PublicTopNav", () => {
 
   it("uses the full CoCalc lockup on regular screens for default branding", async () => {
     await render(
-      <PublicConfigProvider config={{ show_policies: true }}>
+      <PublicConfigProvider config={{}}>
         <PublicTopNav />
       </PublicConfigProvider>,
     );
@@ -125,9 +125,7 @@ describe("PublicTopNav", () => {
 
   it("uses the full CoCalc lockup when the square logo setting is empty", async () => {
     await render(
-      <PublicConfigProvider
-        config={{ logo_square: "", show_policies: true, site_name: "CoCalc" }}
-      >
+      <PublicConfigProvider config={{ logo_square: "", site_name: "CoCalc" }}>
         <PublicTopNav />
       </PublicConfigProvider>,
     );
@@ -156,7 +154,7 @@ describe("PublicTopNav", () => {
   it("selects the active public page in the menu", async () => {
     await render(
       <PublicConfigProvider
-        config={{ show_policies: true, site_name: "Launchpad" }}
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
       >
         <PublicTopNav active="policies" />
       </PublicConfigProvider>,
@@ -208,7 +206,7 @@ describe("PublicTopNav", () => {
     setViewportWidth(480);
     await render(
       <PublicConfigProvider
-        config={{ show_policies: true, site_name: "Launchpad" }}
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
       >
         <PublicTopNav active="support" />
       </PublicConfigProvider>,
@@ -248,6 +246,24 @@ describe("PublicTopNav", () => {
         .getByRole("menuitem", { name: "Support" })
         .closest("li"),
     ).toHaveClass("ant-menu-item-selected");
+  });
+
+  it("ignores stale legacy policy visibility settings", async () => {
+    await render(
+      <PublicConfigProvider
+        config={
+          {
+            policy_pages: "none",
+            show_policies: true,
+            site_name: "Launchpad",
+          } as any
+        }
+      >
+        <PublicTopNav />
+      </PublicConfigProvider>,
+    );
+
+    expect(screen.queryByRole("link", { name: "Policies" })).toBeNull();
   });
 
   it("keeps the compact default CoCalc logo to the mark only", async () => {

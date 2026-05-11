@@ -147,7 +147,7 @@ describe("PublicApp", () => {
     global.fetch = jest.fn().mockResolvedValue({
       json: async () => ({
         configuration: {
-          show_policies: true,
+          policy_pages: "sagemathinc",
           site_name: "Fetched Launchpad",
         },
       }),
@@ -255,7 +255,13 @@ describe("PublicApp", () => {
   it("hides the shared Policies nav item when public policies are disabled", async () => {
     await renderPublicApp(
       <PublicApp
-        config={{ show_policies: false, site_name: "Launchpad" }}
+        config={
+          {
+            policy_pages: "none",
+            show_policies: true,
+            site_name: "Launchpad",
+          } as any
+        }
         initialRoute={aboutRoute({ view: "about" })}
       />,
     );
@@ -269,7 +275,7 @@ describe("PublicApp", () => {
         config={{
           imprint: "enabled",
           policies: "enabled",
-          show_policies: true,
+          policy_pages: "custom",
           site_name: "Hub",
         }}
         initialRoute={policiesRoute({ view: "policies" })}
@@ -280,6 +286,7 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Hub Policies" }),
     ).not.toBeNull();
     expect(screen.getByText("Imprint")).not.toBeNull();
+    expect(screen.queryByText("Terms of Service")).toBeNull();
     expect(
       screen.getByRole("link", {
         name: /Policies Site-specific policy information configured by admins\./i,
@@ -290,7 +297,7 @@ describe("PublicApp", () => {
   it("shows built-in policy pages even without custom policy settings", async () => {
     await renderPublicApp(
       <PublicApp
-        config={{ show_policies: true, site_name: "Launchpad" }}
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
         initialRoute={policiesRoute({ view: "policies" })}
       />,
     );
@@ -349,7 +356,7 @@ describe("PublicApp", () => {
   it("renders the built-in privacy policy page", async () => {
     await renderPublicApp(
       <PublicApp
-        config={{ show_policies: true, site_name: "Launchpad" }}
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
         initialRoute={policiesRoute({
           policySlug: "privacy",
           view: "policies-detail",
@@ -374,7 +381,7 @@ describe("PublicApp", () => {
   it("renders the built-in third-party policy page", async () => {
     await renderPublicApp(
       <PublicApp
-        config={{ show_policies: true, site_name: "Launchpad" }}
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
         initialRoute={policiesRoute({
           policySlug: "thirdparties",
           view: "policies-detail",
@@ -407,7 +414,7 @@ describe("PublicApp", () => {
   it("renders the built-in terms page", async () => {
     await renderPublicApp(
       <PublicApp
-        config={{ show_policies: true, site_name: "Launchpad" }}
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
         initialRoute={policiesRoute({
           policySlug: "terms",
           view: "policies-detail",
@@ -426,7 +433,7 @@ describe("PublicApp", () => {
       <PublicApp
         config={{
           policies: "# Local Policies\n\nDeployment specific terms.",
-          show_policies: true,
+          policy_pages: "custom",
           site_name: "Launchpad",
         }}
         initialRoute={policiesRoute({ view: "policies-custom" })}
@@ -443,7 +450,7 @@ describe("PublicApp", () => {
   it("shows a generic title for unknown policy routes", async () => {
     await renderPublicApp(
       <PublicApp
-        config={{ show_policies: true, site_name: "Launchpad" }}
+        config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
         initialRoute={policiesRoute({
           policySlug: "unknown-policy",
           view: "policies-detail",
@@ -458,12 +465,20 @@ describe("PublicApp", () => {
   it("hides policy pages when public policies are disabled", async () => {
     await renderPublicApp(
       <PublicApp
-        config={{ show_policies: false, site_name: "Launchpad" }}
+        config={
+          {
+            policy_pages: "none",
+            show_policies: true,
+            site_name: "Launchpad",
+          } as any
+        }
         initialRoute={policiesRoute({ view: "policies" })}
       />,
     );
 
-    expect(screen.getByText("Public policy pages are disabled")).not.toBeNull();
+    expect(
+      screen.getByText("Public policy pages are not configured"),
+    ).not.toBeNull();
     expect(screen.queryByText("Terms of service")).toBeNull();
   });
 
@@ -471,7 +486,7 @@ describe("PublicApp", () => {
     await renderPublicApp(
       <PublicApp
         config={{
-          show_policies: true,
+          policy_pages: "none",
           site_name: "Launchpad",
           terms_of_service_url: "https://example.com/policies",
         }}
@@ -490,7 +505,7 @@ describe("PublicApp", () => {
     await renderPublicApp(
       <PublicApp
         config={{
-          show_policies: true,
+          policy_pages: "none",
           site_name: "Launchpad",
           terms_of_service_url: "https://example.com/policies",
         }}
