@@ -4,6 +4,9 @@ import {
   getStorageOverview as getProjectStorageOverview,
   type ProjectStorageOverview,
 } from "@cocalc/conat/project/storage-info";
+import { withTimeout } from "@cocalc/util/async-utils";
+
+const STORAGE_OVERVIEW_REQUEST_TIMEOUT_MS = 15_000;
 
 const storageOverviewCache = new TTLCache<string, ProjectStorageOverview>({
   ttl: 3 * 60 * 1000,
@@ -50,18 +53,21 @@ export default async function getStorageOverview({
   }
   const inflight = storageOverviewInflight.get(k);
   if (inflight) return await inflight;
-  const request = (async () => {
-    const client = await webapp_client.conat_client.projectConat({
-      project_id,
-      caller: "getStorageOverview",
-    });
-    return await getProjectStorageOverview({
-      client,
-      project_id,
-      home,
-      force_sample,
-    });
-  })();
+  const request = withTimeout(
+    (async () => {
+      const client = await webapp_client.conat_client.projectConat({
+        project_id,
+        caller: "getStorageOverview",
+      });
+      return await getProjectStorageOverview({
+        client,
+        project_id,
+        home,
+        force_sample,
+      });
+    })(),
+    STORAGE_OVERVIEW_REQUEST_TIMEOUT_MS,
+  );
   storageOverviewInflight.set(k, request);
   try {
     const overview = await request;
