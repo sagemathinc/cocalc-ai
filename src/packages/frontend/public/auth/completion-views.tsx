@@ -122,9 +122,11 @@ export function PublicPasswordResetDoneView() {
 
 export function PublicVerifyEmailView({
   email,
+  isAuthenticated = false,
   token,
 }: {
   email?: string;
+  isAuthenticated?: boolean;
   token: string;
 }) {
   const [error, setError] = useState("");
@@ -175,7 +177,16 @@ export function PublicVerifyEmailView({
       ) : success ? (
         <Alert
           title="Email verified"
-          description={success}
+          description={
+            <Flex vertical gap={6}>
+              <span>{success}</span>
+              {email ? (
+                <span>
+                  Verified email: <Text code>{email}</Text>
+                </span>
+              ) : null}
+            </Flex>
+          }
           showIcon
           type="success"
         />
@@ -188,10 +199,20 @@ export function PublicVerifyEmailView({
         />
       )}
       <Flex wrap gap={12}>
-        <Button href={pathForAuthView("sign-in")} type="primary">
-          Sign in
-        </Button>
-        <Button href={pathForAuthView("sign-up")}>Create account</Button>
+        {success && isAuthenticated ? (
+          <>
+            <Button href={joinUrlPath(appBasePath, "projects")} type="primary">
+              Open projects
+            </Button>
+            <Button href={joinUrlPath(appBasePath, "settings")}>
+              Account settings
+            </Button>
+          </>
+        ) : (
+          <Button href={pathForAuthView("sign-in")} type="primary">
+            Sign in
+          </Button>
+        )}
       </Flex>
     </Flex>
   );

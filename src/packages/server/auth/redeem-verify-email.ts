@@ -5,6 +5,7 @@ has been verified.
 
 import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { publishAccountRowFeedEventsBestEffort } from "@cocalc/server/account/account-row-feed";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 
 function normalizeEmailAddress(email_address: string): string {
@@ -49,6 +50,10 @@ export default async function redeemVerifyEmail(
   if (email_address_challenge.token != token) {
     throw Error("tokens do not match");
   }
+  const email_address_verified_next = {
+    ...email_address_verified,
+    [email_address]: new Date(),
+  };
   // we're good, save this in the email_address_verified JSONB record and also delete the challenge
   await withAccountRehomeWriteFence({
     account_id,
@@ -56,11 +61,15 @@ export default async function redeemVerifyEmail(
     fn: async (db) => {
       await db.query(
         "UPDATE accounts SET email_address_challenge=NULL, email_address_verified=$1::JSONB WHERE account_id=$2",
-        [
-          { ...email_address_verified, [email_address]: new Date() },
-          account_id,
-        ],
+        [email_address_verified_next, account_id],
       );
+    },
+  });
+  await publishAccountRowFeedEventsBestEffort({
+    account_id,
+    patch: {
+      email_address_challenge: null,
+      email_address_verified: email_address_verified_next,
     },
   });
 }
