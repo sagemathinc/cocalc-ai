@@ -39,6 +39,7 @@ import type {
   ProjectBackupConfig,
   ProjectBackupIndexRecord,
   HostAccessRole,
+  HostAccessEntry,
   HostEffectiveAccessRole,
 } from "@cocalc/conat/hub/api/hosts";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
@@ -65,6 +66,9 @@ import {
 import {
   getHostAccessForAccount,
   hostAccessRoleCan,
+  listHostAccessEntries,
+  removeHostAccessEntry,
+  setHostAccessEntry,
 } from "@cocalc/server/project-host/access";
 import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/project-host/auto-grow";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
@@ -2601,6 +2605,102 @@ export async function listHosts(opts: ListHostsOptions): Promise<Host[]> {
     );
   }
   return Array.from(deduped.values(), ({ host }) => host);
+}
+
+function serializeHostAccessEntry(
+  entry?: HostAccessEntry,
+): HostAccessEntry | undefined {
+  if (!entry) return undefined;
+  const normalizeDate = (value: HostAccessEntry["created_at"]) =>
+    value instanceof Date ? value.toISOString() : value;
+  return {
+    ...entry,
+    created_at: normalizeDate(entry.created_at),
+    updated_at: normalizeDate(entry.updated_at),
+    revoked_at: normalizeDate(entry.revoked_at),
+  };
+}
+
+export async function listHostAccess({
+  account_id,
+  id,
+  include_revoked,
+}: {
+  account_id?: string;
+  id: string;
+  include_revoked?: boolean;
+}): Promise<HostAccessEntry[]> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .listHostAccess({ account_id, id, include_revoked });
+  }
+  const row = await loadHostForView(id, account_id);
+  await requireLoadedHostPermission({
+    row,
+    account_id: requireAccount(account_id),
+    permission: "manage-access",
+  });
+  return (
+    await listHostAccessEntries({
+      host_id: row.id,
+      include_revoked,
+    })
+  ).map((entry) => serializeHostAccessEntry(entry)!);
+}
+
+export async function setHostAccess({
+  account_id,
+  id,
+  target_account_id,
+  role,
+}: {
+  account_id?: string;
+  id: string;
+  target_account_id: string;
+  role: HostAccessRole;
+}): Promise<HostAccessEntry> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge().hostConnection(remoteBay).setHostAccess({
+      account_id,
+      id,
+      target_account_id,
+      role,
+    });
+  }
+  const entry = await setHostAccessEntry({
+    host_id: id,
+    actor_account_id: requireAccount(account_id),
+    target_account_id,
+    role,
+  });
+  return serializeHostAccessEntry(entry)!;
+}
+
+export async function removeHostAccess({
+  account_id,
+  id,
+  target_account_id,
+}: {
+  account_id?: string;
+  id: string;
+  target_account_id: string;
+}): Promise<HostAccessEntry | undefined> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .removeHostAccess({ account_id, id, target_account_id });
+  }
+  return serializeHostAccessEntry(
+    await removeHostAccessEntry({
+      host_id: id,
+      actor_account_id: requireAccount(account_id),
+      target_account_id,
+    }),
+  );
 }
 
 function timestampMs(value: string | undefined): number | undefined {

@@ -1003,6 +1003,9 @@ export interface ExternalCredentialRecord {
 
 export const hosts = {
   listHosts: authFirstRequireAccount,
+  listHostAccess: authFirstRequireAccount,
+  setHostAccess: authFirstRequireAccount,
+  removeHostAccess: authFirstRequireAccount,
   listHostProjects: authFirstRequireAccount,
   stopHostProjects: authFirstRequireAccount,
   restartHostProjects: authFirstRequireAccount,
@@ -1084,6 +1087,22 @@ export interface Hosts {
     catalog?: boolean;
     show_all?: boolean;
   }) => Promise<Host[]>;
+  listHostAccess: (opts: {
+    account_id?: string;
+    id: string;
+    include_revoked?: boolean;
+  }) => Promise<HostAccessEntry[]>;
+  setHostAccess: (opts: {
+    account_id?: string;
+    id: string;
+    target_account_id: string;
+    role: HostAccessRole;
+  }) => Promise<HostAccessEntry>;
+  removeHostAccess: (opts: {
+    account_id?: string;
+    id: string;
+    target_account_id: string;
+  }) => Promise<HostAccessEntry | undefined>;
   listHostProjects: (opts: {
     account_id?: string;
     id: string;

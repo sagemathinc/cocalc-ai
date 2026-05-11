@@ -875,6 +875,9 @@ export type ProjectDetailsMethod = "get";
 export type HostConnectionMethod =
   | "get"
   | "list"
+  | "list-host-access"
+  | "set-host-access"
+  | "remove-host-access"
   | "get-host-log"
   | "get-host-runtime-log"
   | "get-host-metrics-history"
@@ -1056,6 +1059,15 @@ export interface InterBayProjectDetailsApi {
 export interface InterBayHostConnectionApi {
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
+  listHostAccess: (
+    opts: Parameters<Hosts["listHostAccess"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["listHostAccess"]>>>;
+  setHostAccess: (
+    opts: Parameters<Hosts["setHostAccess"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["setHostAccess"]>>>;
+  removeHostAccess: (
+    opts: Parameters<Hosts["removeHostAccess"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["removeHostAccess"]>>>;
   getHostLog: (
     opts: Parameters<Hosts["getHostLog"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getHostLog"]>>>;
@@ -1241,6 +1253,9 @@ export interface InterBayHostConnectionApi {
 const HOST_CONNECTION_METHOD_SPECS = [
   { name: "get", method: "get" },
   { name: "list", method: "list" },
+  { name: "listHostAccess", method: "list-host-access" },
+  { name: "setHostAccess", method: "set-host-access" },
+  { name: "removeHostAccess", method: "remove-host-access" },
   { name: "getHostLog", method: "get-host-log" },
   { name: "getHostRuntimeLog", method: "get-host-runtime-log" },
   { name: "getHostMetricsHistory", method: "get-host-metrics-history" },
