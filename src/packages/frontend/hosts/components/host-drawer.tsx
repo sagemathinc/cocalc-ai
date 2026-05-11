@@ -198,7 +198,11 @@ type HostDrawerViewModel = {
   onListHostAccess?: (id: string) => Promise<HostAccessEntry[]>;
   onSetHostAccess?: (
     id: string,
-    opts: { target_account_id: string; role: HostAccessRole },
+    opts: {
+      target_account_id?: string;
+      target_email_address?: string;
+      role: HostAccessRole;
+    },
   ) => void | Promise<void>;
   onRemoveHostAccess?: (
     id: string,
@@ -1917,7 +1921,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
               <Divider style={{ margin: "8px 0" }} />
               <Space.Compact style={{ width: "100%" }}>
                 <Input
-                  placeholder="Account ID to allow"
+                  placeholder="Email address or account ID to allow"
                   value={accessAccountId}
                   onChange={(event) => setAccessAccountId(event.target.value)}
                 />
@@ -1937,8 +1941,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   onClick={async () => {
                     setAccessSavingKey("add");
                     try {
+                      const principal = accessAccountId.trim();
                       await onSetHostAccess(host.id, {
-                        target_account_id: accessAccountId.trim(),
+                        ...(principal.includes("@")
+                          ? { target_email_address: principal }
+                          : { target_account_id: principal }),
                         role: accessRole,
                       });
                       setAccessAccountId("");

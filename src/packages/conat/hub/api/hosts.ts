@@ -1099,7 +1099,8 @@ export interface Hosts {
     browser_id?: string;
     session_hash?: string;
     id: string;
-    target_account_id: string;
+    target_account_id?: string;
+    target_email_address?: string;
     role: HostAccessRole;
   }) => Promise<HostAccessEntry>;
   removeHostAccess: (opts: {

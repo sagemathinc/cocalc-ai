@@ -124,7 +124,11 @@ type UseHostDrawerViewModelArgs = {
   onListHostAccess?: (id: string) => Promise<HostAccessEntry[]>;
   onSetHostAccess?: (
     id: string,
-    opts: { target_account_id: string; role: HostAccessRole },
+    opts: {
+      target_account_id?: string;
+      target_email_address?: string;
+      role: HostAccessRole;
+    },
   ) => void | Promise<void>;
   onRemoveHostAccess?: (
     id: string,

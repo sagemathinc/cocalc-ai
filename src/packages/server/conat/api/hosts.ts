@@ -147,6 +147,7 @@ import {
   syncProjectBackupIndexes as syncProjectBackupIndexesLocalInternal,
 } from "@cocalc/server/project-backup";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
+import { is_valid_email_address } from "@cocalc/util/misc";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import { computeAIUsageUnits } from "@cocalc/server/ai/usage-units";
 import { saveAIResponse } from "@cocalc/server/ai/save-response";
@@ -162,6 +163,7 @@ import {
   resolveHostBay,
   resolveProjectBay,
 } from "@cocalc/server/inter-bay/directory";
+import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -2670,6 +2672,33 @@ function serializeHostAccessEntry(
   };
 }
 
+async function resolveHostAccessTargetAccount({
+  target_account_id,
+  target_email_address,
+}: {
+  target_account_id?: string;
+  target_email_address?: string;
+}): Promise<string> {
+  const accountId = `${target_account_id ?? ""}`.trim();
+  const emailAddress = `${target_email_address ?? ""}`.trim().toLowerCase();
+  if (!!accountId === !!emailAddress) {
+    throw new Error(
+      "specify exactly one of target_account_id or target_email_address",
+    );
+  }
+  if (accountId) {
+    return accountId;
+  }
+  if (!is_valid_email_address(emailAddress)) {
+    throw new Error("target_email_address is not a valid email address");
+  }
+  const account = await getClusterAccountByEmail(emailAddress);
+  if (!account?.account_id) {
+    throw new Error(`no account found with email address ${emailAddress}`);
+  }
+  return account.account_id;
+}
+
 export async function listHostAccess({
   account_id,
   id,
@@ -2705,13 +2734,15 @@ export async function setHostAccess({
   session_hash,
   id,
   target_account_id,
+  target_email_address,
   role,
 }: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
   id: string;
-  target_account_id: string;
+  target_account_id?: string;
+  target_email_address?: string;
   role: HostAccessRole;
 }): Promise<HostAccessEntry> {
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
@@ -2722,6 +2753,7 @@ export async function setHostAccess({
       session_hash,
       id,
       target_account_id,
+      target_email_address,
       role,
     });
   }
@@ -2736,7 +2768,10 @@ export async function setHostAccess({
   const entry = await setHostAccessEntry({
     host_id: id,
     actor_account_id: requireAccount(account_id),
-    target_account_id,
+    target_account_id: await resolveHostAccessTargetAccount({
+      target_account_id,
+      target_email_address,
+    }),
     role,
   });
   return serializeHostAccessEntry(entry)!;
