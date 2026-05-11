@@ -94,6 +94,7 @@ export const ProjectInviteTokens: React.FC<Props> = React.memo(
         const message = `Error getting project invite tokens: ${err}`;
         if (is_mounted_ref.current) {
           set_fetch_error(message);
+          set_tokens((tokens) => tokens ?? []);
         }
         alert_message({
           type: "error",

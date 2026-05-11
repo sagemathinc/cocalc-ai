@@ -60,7 +60,16 @@ jest.mock("@cocalc/frontend/app-framework", () => {
 
 jest.mock("@cocalc/frontend/components", () => ({
   CopyToClipBoard: ({ value }: any) => <span>{value}</span>,
-  ErrorDisplay: ({ error }: any) => <div role="alert">{error}</div>,
+  ErrorDisplay: ({ error, onClose }: any) => (
+    <div role="alert">
+      {error}
+      {onClose ? (
+        <button type="button" onClick={onClose}>
+          close
+        </button>
+      ) : null}
+    </div>
+  ),
   Gap: () => <span />,
   Icon: ({ name }: any) => <span>{name}</span>,
   Loading: () => <div>Loading...</div>,
@@ -116,5 +125,27 @@ describe("ProjectInviteTokens", () => {
       message:
         'Error getting project invite tokens: Error: once: "connected" not emitted before "closed"',
     });
+  });
+
+  it("does not return to a loading spinner when dismissing an initial fetch error", async () => {
+    asyncQueryMock.mockRejectedValueOnce(new Error("network offline"));
+
+    render(<ProjectInviteTokens project_id="project-1" />);
+
+    fireEvent.click(
+      screen.getByText("Invite collaborators by sending them an invite URL..."),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Error getting project invite tokens: Error: network offline",
+      );
+    });
+
+    fireEvent.click(screen.getByText("close"));
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading...")).not.toBeInTheDocument();
+    expect(screen.getByTestId("token-table")).toHaveTextContent("0");
   });
 });
