@@ -3,7 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export { useFocused, useSelected, useSlateSelection } from "../slate-react";
+export {
+  useFocused,
+  useReadOnly,
+  useSelected,
+  useSlateSelection,
+} from "../slate-react";
 
 import {
   useEffect,
@@ -52,6 +57,6 @@ export const useProcessLinks = (
       file_path: path_split(path).head, // TODO: inefficient to compute this every time.
       doubleClick,
     });
-  }, deps);
+  }, [project_id, path, doubleClick, ...deps]);
   return ref;
 };
