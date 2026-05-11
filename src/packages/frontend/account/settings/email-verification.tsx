@@ -4,10 +4,10 @@
  */
 
 import { Map } from "immutable";
+import { Button } from "antd";
 import { defineMessage, FormattedMessage, useIntl } from "react-intl";
 
 import { alert_message } from "@cocalc/frontend/alerts";
-import { Button } from "@cocalc/frontend/antd-bootstrap";
 import {
   Rendered,
   useEffect,
@@ -24,7 +24,10 @@ interface Props {
 
 export const emailVerificationMsg = defineMessage({
   id: "account.settings.email-verification.button.status",
-  defaultMessage: `{disabled_button, select, true {Email Sent} other {Send Verification Email}}`,
+  defaultMessage: `{state, select,
+    sending {Sending...}
+    sent {Verification Email Sent}
+    other {Send Verification Email}}`,
 });
 
 export function EmailVerification({
@@ -34,22 +37,30 @@ export function EmailVerification({
   const intl = useIntl();
 
   const is_mounted = useIsMountedRef();
-  const [disabled_button, set_disabled_button] = useState(false);
+  const [sendState, setSendState] = useState<"idle" | "sending" | "sent">(
+    "idle",
+  );
 
   useEffect(() => {
-    set_disabled_button(false);
+    setSendState("idle");
   }, [email_address]);
 
   async function verify(): Promise<void> {
+    if (sendState !== "idle") {
+      return;
+    }
+    setSendState("sending");
     try {
       await webapp_client.account_client.send_verification_email();
+      if (is_mounted.current) {
+        setSendState("sent");
+      }
     } catch (err) {
       const err_msg = `Problem sending email verification: ${err}`;
       console.log(err_msg);
       alert_message({ type: "error", message: err_msg });
-    } finally {
       if (is_mounted.current) {
-        set_disabled_button(true);
+        setSendState("idle");
       }
     }
   }
@@ -76,21 +87,23 @@ export function EmailVerification({
         );
       } else {
         return (
-          <>
-            <span key={1} style={{ color: "red", paddingRight: "3em" }}>
+          <span>
+            <span style={{ color: "red", paddingRight: "3em" }}>
               <FormattedMessage
                 id="account.settings.email-verification.button.label"
                 defaultMessage={"Not Verified"}
               />
             </span>
             <Button
+              key="send-verification-email"
               onClick={verify}
-              bsStyle="success"
-              disabled={disabled_button}
+              type="primary"
+              loading={sendState === "sending"}
+              disabled={sendState !== "idle"}
             >
-              {intl.formatMessage(emailVerificationMsg, { disabled_button })}
+              {intl.formatMessage(emailVerificationMsg, { state: sendState })}
             </Button>
-          </>
+          </span>
         );
       }
     }
@@ -106,10 +119,10 @@ export function EmailVerification({
     >
       <div>
         <FormattedMessage
-          id="account.settings.email-verification.status"
-          defaultMessage={"Status: {status}"}
-          values={{ status: render_status() }}
-        />
+          id="account.settings.email-verification.status_label"
+          defaultMessage={"Status:"}
+        />{" "}
+        {render_status()}
       </div>
     </LabeledRow>
   );

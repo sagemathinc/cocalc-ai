@@ -23,7 +23,21 @@ export const SetAccountEmailAddressInputSchema = z
 
 export const SetAccountEmailAddressOutputSchema = z.union([
   FailedAPIOperationSchema,
-  SuccessfulAPIOperationSchema,
+  SuccessfulAPIOperationSchema.extend({
+    already_verified: z
+      .boolean()
+      .describe("Whether this email address was already verified."),
+    email_address: AccountEmailSchema,
+    verification_email_error: z
+      .string()
+      .describe("Error from sending the automatic verification email.")
+      .optional(),
+    verification_email_sent: z
+      .boolean()
+      .describe(
+        "Whether a verification email was automatically sent for this change.",
+      ),
+  }),
 ]);
 
 export type SetAccountEmailAddressInput = z.infer<
