@@ -1,10 +1,20 @@
+import type { EventEmitter } from "events";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { COCALC_MINIMAL } from "../fullscreen";
 import { parse_query } from "@cocalc/sync/table/util";
 import { once } from "@cocalc/util/async-utils";
 import { redux, Table } from "../app-framework";
+import { getLogger } from "@cocalc/frontend/logger";
 
 declare var DEBUG: boolean;
+
+const log = getLogger("projects:table");
+const PROJECTS_TABLE_CONNECT_TIMEOUT_MS = 15_000;
+const PROJECTS_TABLE_CONNECT_ATTEMPTS = 2;
+
+interface ProjectsTableConnection extends EventEmitter {
+  get_state?: () => string | undefined;
+}
 
 // Create and register projects table, which gets automatically
 // synchronized with the server.
@@ -64,24 +74,41 @@ function initTableError(): void {
   });
 }
 
-export const refresh_projects_table = reuseInFlight(async () => {
-  const project_id = redux.getStore("page").get("kiosk_project_id");
-  redux.removeTable("projects");
-  if (project_id != null) {
+async function waitForProjectsTableConnected(
+  table: ProjectsTableConnection,
+): Promise<boolean> {
+  if (table.get_state?.() === "connected") {
+    return true;
+  }
+  try {
+    await once(table, "connected", PROJECTS_TABLE_CONNECT_TIMEOUT_MS);
+    return true;
+  } catch (err) {
+    log.info("projects table did not connect cleanly", err);
+    return false;
+  }
+}
+
+async function createProjectsTableUntilConnected(): Promise<void> {
+  for (let attempt = 1; attempt <= PROJECTS_TABLE_CONNECT_ATTEMPTS; attempt++) {
     const table = redux.createTable("projects", ProjectsTable);
     initTableError();
-    await once(table._table, "connected");
-    return;
+    if (await waitForProjectsTableConnected(table._table)) {
+      return;
+    }
+    if (attempt < PROJECTS_TABLE_CONNECT_ATTEMPTS) {
+      redux.removeTable("projects");
+    }
   }
-  redux.createTable("projects", ProjectsTable);
-  initTableError();
-  await once(redux.getTable("projects")._table, "connected");
+}
+
+export const refresh_projects_table = reuseInFlight(async () => {
+  redux.removeTable("projects");
+  await createProjectsTableUntilConnected();
 });
 
 async function load_projects(): Promise<void> {
-  const table = redux.createTable("projects", ProjectsTable);
-  initTableError();
-  await once(table._table, "connected");
+  await createProjectsTableUntilConnected();
 }
 
 export function init() {
@@ -110,6 +137,6 @@ export async function switch_to_project(project_id: string): Promise<void> {
     redux.removeTable("projects");
     const pt = redux.createTable("projects", ProjectsTable);
     project_tables[project_id] = pt;
-    await once(redux.getTable("projects")._table, "connected");
+    await waitForProjectsTableConnected(redux.getTable("projects")._table);
   }
 }

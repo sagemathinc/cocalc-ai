@@ -185,11 +185,12 @@ const FrameTreeEditor: React.FC<FrameTreeEditorProps> = React.memo(
         style.fontFamily = "monospace";
         style.whiteSpace = "pre-wrap";
       }
+      const loaded = !!is_loaded;
       return (
         <ErrorDisplay
-          banner={true}
+          banner={loaded}
           error={error}
-          onClose={() => actions.set_error("")}
+          onClose={loaded ? () => actions.set_error("") : undefined}
           style={style}
         />
       );
@@ -205,6 +206,7 @@ const FrameTreeEditor: React.FC<FrameTreeEditorProps> = React.memo(
 
     function render_loading(): Rendered {
       if (is_loaded) return;
+      if (error) return;
       return (
         <div className="smc-vfill" style={LOADING_STYLE}>
           <Loading estimate={load_time_estimate} delay={1000} />
