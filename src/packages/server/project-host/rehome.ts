@@ -14,6 +14,7 @@ import type {
   HostRehomeResponse as InterBayHostRehomeResponse,
 } from "@cocalc/conat/inter-bay/api";
 import type {
+  HostAccessEntry,
   HostOwnerSshTrustResult,
   HostRehomeOperationStage,
   HostRehomeOperationStatus,
@@ -277,6 +278,105 @@ async function upsertHostRowForRehome({
       host.deleted ?? null,
     ],
   );
+}
+
+function normalizeAccessRole(role: unknown): "user" | "manager" {
+  const normalized = `${role ?? ""}`.trim().toLowerCase();
+  if (normalized !== "user" && normalized !== "manager") {
+    throw new Error("host access role must be 'user' or 'manager'");
+  }
+  return normalized;
+}
+
+function nullableUuid(name: string, value: unknown): string | null {
+  if (value == null || value === "") {
+    return null;
+  }
+  return normalizeUuid(name, `${value}`);
+}
+
+async function loadHostAccessRowsForRehome(
+  host_id: string,
+): Promise<HostAccessEntry[]> {
+  const { rows } = await getPool().query(
+    `
+      SELECT host_id, account_id, role, created_by, created_at, updated_by,
+             updated_at, revoked_at, revoked_by
+        FROM project_host_access
+       WHERE host_id = $1
+       ORDER BY account_id
+    `,
+    [host_id],
+  );
+  return rows.map((row) => ({
+    host_id: row.host_id,
+    account_id: row.account_id,
+    role: normalizeAccessRole(row.role),
+    created_by: row.created_by ?? null,
+    created_at: row.created_at ?? null,
+    updated_by: row.updated_by ?? null,
+    updated_at: row.updated_at ?? null,
+    revoked_at: row.revoked_at ?? null,
+    revoked_by: row.revoked_by ?? null,
+  }));
+}
+
+async function replaceHostAccessRowsForRehome({
+  host_id,
+  host_access,
+}: {
+  host_id: string;
+  host_access?: HostAccessEntry[];
+}): Promise<void> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM project_host_access WHERE host_id = $1", [
+      host_id,
+    ]);
+    for (const row of host_access ?? []) {
+      const rowHostId = normalizeUuid("host_access.host_id", row.host_id);
+      if (rowHostId !== host_id) {
+        throw new Error(
+          `host access row for ${rowHostId} does not match rehome host ${host_id}`,
+        );
+      }
+      await client.query(
+        `
+          INSERT INTO project_host_access
+            (host_id, account_id, role, created_by, created_at, updated_by,
+             updated_at, revoked_at, revoked_by)
+          VALUES
+            ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `,
+        [
+          host_id,
+          normalizeUuid("host_access.account_id", row.account_id),
+          normalizeAccessRole(row.role),
+          nullableUuid("host_access.created_by", row.created_by),
+          row.created_at ?? null,
+          nullableUuid("host_access.updated_by", row.updated_by),
+          row.updated_at ?? null,
+          row.revoked_at ?? null,
+          nullableUuid("host_access.revoked_by", row.revoked_by),
+        ],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function deleteSourceHostAccessRowsForRehome(
+  host_id: string,
+): Promise<void> {
+  await getPool().query("DELETE FROM project_host_access WHERE host_id = $1", [
+    host_id,
+  ]);
 }
 
 async function createOperation({
@@ -610,6 +710,7 @@ export async function acceptHostRehome({
   source_bay_id,
   dest_bay_id,
   host,
+  host_access,
 }: HostRehomeAcceptRequest): Promise<InterBayHostRehomeResponse> {
   const hostId = normalizeUuid("host_id", host_id);
   const sourceBayId = normalizeBayId("source_bay_id", source_bay_id);
@@ -630,6 +731,12 @@ export async function acceptHostRehome({
     host,
     dest_bay_id: destBayId,
   });
+  if (host_access !== undefined) {
+    await replaceHostAccessRowsForRehome({
+      host_id: hostId,
+      host_access,
+    });
+  }
   await notifyProjectHostUpdate({ host_id: hostId });
   return {
     host_id: hostId,
@@ -803,6 +910,7 @@ export async function runHostRehomeOperation(
     }
 
     if (op.stage === "destination_prepared") {
+      const hostAccess = await loadHostAccessRowsForRehome(op.host_id);
       await getInterBayBridge()
         .hostConnection(op.dest_bay_id, {
           timeout_ms: HOST_REHOME_TIMEOUT_MS,
@@ -812,6 +920,7 @@ export async function runHostRehomeOperation(
           source_bay_id: op.source_bay_id,
           dest_bay_id: op.dest_bay_id,
           host: host ?? op.host ?? {},
+          host_access: hostAccess,
         });
       op = await updateOperation({
         op_id,
@@ -824,6 +933,7 @@ export async function runHostRehomeOperation(
         host_id: op.host_id,
         dest_bay_id: op.dest_bay_id,
       });
+      await deleteSourceHostAccessRowsForRehome(op.host_id);
       op = await updateOperation({
         op_id,
         stage: "source_flipped",

@@ -17,6 +17,7 @@ import type {
 import type { LroEvent, LroSummary } from "@cocalc/conat/hub/api/lro";
 import type {
   Host,
+  HostAccessEntry,
   HostConnectionInfo,
   Hosts,
 } from "@cocalc/conat/hub/api/hosts";
@@ -291,6 +292,7 @@ export interface HostRehomeAcceptRequest {
   source_bay_id: string;
   dest_bay_id: string;
   host: Record<string, unknown>;
+  host_access?: HostAccessEntry[];
   epoch?: number;
 }
 
