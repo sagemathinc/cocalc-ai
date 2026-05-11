@@ -1,5 +1,8 @@
 import { act, render, screen } from "@testing-library/react";
-import { useProjectWorkspaces } from "./state";
+import {
+  WORKSPACE_STORE_FOREGROUND_LOADING_TIMEOUT_MS,
+  useProjectWorkspaces,
+} from "./state";
 import { WORKSPACE_STORE_ROUTING_RETRY_DELAY_MS } from "./store";
 
 const openProjectWorkspaceStore = jest.fn();
@@ -134,5 +137,37 @@ describe("useProjectWorkspaces loading", () => {
     expect(openProjectWorkspaceStore).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("loading").textContent).toBe("no");
     expect(screen.getByTestId("count").textContent).toBe("1");
+  });
+
+  it("stops foreground loading while routing retries continue in the background", async () => {
+    openProjectWorkspaceStore.mockRejectedValue(
+      new Error(
+        "unable to route 'useProjectWorkspaces' to project-host for project 00000000-0000-4000-8000-000000000111; host routing info unavailable",
+      ),
+    );
+
+    render(<Probe />);
+    await flush();
+
+    expect(screen.getByTestId("loading").textContent).toBe("yes");
+
+    await act(async () => {
+      jest.advanceTimersByTime(WORKSPACE_STORE_FOREGROUND_LOADING_TIMEOUT_MS);
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(screen.getByTestId("loading").textContent).toBe("no");
+
+    const callsAtTimeout = openProjectWorkspaceStore.mock.calls.length;
+    await act(async () => {
+      jest.advanceTimersByTime(WORKSPACE_STORE_ROUTING_RETRY_DELAY_MS);
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(openProjectWorkspaceStore.mock.calls.length).toBeGreaterThan(
+      callsAtTimeout,
+    );
   });
 });
