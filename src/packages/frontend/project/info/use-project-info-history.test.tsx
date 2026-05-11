@@ -223,7 +223,7 @@ describe("useProjectInfoHistory", () => {
     );
   });
 
-  it("times out a stalled project info history request instead of waiting forever", async () => {
+  it("times out a stalled project info connection instead of waiting forever", async () => {
     jest.useFakeTimers();
     projectConat.mockReturnValueOnce(new Promise(() => undefined));
     let latest: ReturnType<typeof useProjectInfoHistory> | undefined;

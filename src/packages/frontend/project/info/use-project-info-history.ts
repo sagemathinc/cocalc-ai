@@ -11,7 +11,7 @@ import { withTimeout } from "@cocalc/util/async-utils";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 
-const PROJECT_INFO_HISTORY_REQUEST_TIMEOUT_MS = 15_000;
+const PROJECT_INFO_HISTORY_CONNECT_TIMEOUT_MS = 15_000;
 
 function isVisible(): boolean {
   if (typeof document === "undefined") return true;
@@ -43,20 +43,18 @@ export default function useProjectInfoHistory({
   const update = useCallback(async () => {
     const requestScope = `${project_id}:${minutes}`;
     try {
-      const value = await withTimeout(
-        (async () => {
-          const client = await webapp_client.conat_client.projectConat({
-            project_id,
-            caller: "useProjectInfoHistory",
-          });
-          return await getHistory({
-            client,
-            project_id,
-            minutes,
-          });
-        })(),
-        PROJECT_INFO_HISTORY_REQUEST_TIMEOUT_MS,
+      const client = await withTimeout(
+        webapp_client.conat_client.projectConat({
+          project_id,
+          caller: "useProjectInfoHistory",
+        }),
+        PROJECT_INFO_HISTORY_CONNECT_TIMEOUT_MS,
       );
+      const value = await getHistory({
+        client,
+        project_id,
+        minutes,
+      });
       if (scopeRef.current !== requestScope) return;
       setHistory(value);
       setError("");
