@@ -8,12 +8,14 @@ import {
   Spin,
   Tag,
 } from "antd";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
+import type { ClaimableMembershipPackage } from "@cocalc/conat/hub/api/purchases";
 import api from "@cocalc/frontend/client/api";
 import { Icon } from "@cocalc/frontend/components";
 import ShowError from "@cocalc/frontend/components/error";
+import { getClaimableMembershipPackages } from "@cocalc/frontend/purchases/api";
 import { currency } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { InstitutePaySection } from "./institute-pay";
@@ -37,17 +39,25 @@ const DEFAULT_GRACE_DAYS = 14;
 export default function StudentPay({ actions, settings, project_id }) {
   const intl = useIntl();
   const [tiers, setTiers] = useState<CourseMembershipTier[]>([]);
+  const [claimablePackages, setClaimablePackages] = useState<
+    ClaimableMembershipPackage[]
+  >([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const siteLicenseDefaultedForTier = useRef<Set<string>>(new Set());
 
   async function loadTiers() {
     setLoading(true);
     setError("");
     try {
-      const result = (await api(
-        "purchases/get-membership-tiers",
-      )) as MembershipTiersResponse;
+      const [result, claimables] = await Promise.all([
+        api(
+          "purchases/get-membership-tiers",
+        ) as Promise<MembershipTiersResponse>,
+        getClaimableMembershipPackages(),
+      ]);
       setTiers(result.tiers ?? []);
+      setClaimablePackages(claimables);
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -73,6 +83,33 @@ export default function StudentPay({ actions, settings, project_id }) {
   const selectedTierId = `${settings?.get("required_membership_class") ?? ""}`;
   const selectedTier =
     courseTiers.find((tier) => tier.id === selectedTierId) ?? null;
+  const tierById = useMemo(() => {
+    return new Map(tiers.map((tier) => [tier.id, tier]));
+  }, [tiers]);
+  const matchingSiteLicense = useMemo(() => {
+    if (!selectedTier) {
+      return null;
+    }
+    const requiredPriority = selectedTier.priority ?? 0;
+    return (
+      claimablePackages
+        .filter((membershipPackage) => membershipPackage.kind === "site")
+        .filter((membershipPackage) => {
+          const siteTier = tierById.get(membershipPackage.membership_class);
+          return (siteTier?.priority ?? 0) >= requiredPriority;
+        })
+        .sort((left, right) => {
+          const leftPriority =
+            tierById.get(left.membership_class)?.priority ?? 0;
+          const rightPriority =
+            tierById.get(right.membership_class)?.priority ?? 0;
+          if (rightPriority !== leftPriority) {
+            return rightPriority - leftPriority;
+          }
+          return left.package_id.localeCompare(right.package_id);
+        })[0] ?? null
+    );
+  }, [claimablePackages, selectedTier, tierById]);
   const graceDays =
     Number(settings?.get("student_membership_grace_days")) ||
     DEFAULT_GRACE_DAYS;
@@ -81,6 +118,21 @@ export default function StudentPay({ actions, settings, project_id }) {
     settings?.get("institute_pay") ||
     settings?.get("site_license_pay")
   );
+
+  useEffect(() => {
+    if (
+      !actions ||
+      !selectedTierId ||
+      paymentEnabled ||
+      !matchingSiteLicense ||
+      siteLicenseDefaultedForTier.current.has(selectedTierId)
+    ) {
+      return;
+    }
+    siteLicenseDefaultedForTier.current.add(selectedTierId);
+    actions.configuration.set_pay_choice("site_license", true);
+    actions.configuration.configure_all_projects();
+  }, [actions, matchingSiteLicense, paymentEnabled, selectedTierId]);
 
   if (settings == null || actions == null) {
     return <Spin />;
@@ -172,6 +224,45 @@ export default function StudentPay({ actions, settings, project_id }) {
             </span>
           </div>
           <Checkbox
+            checked={!!settings?.get("site_license_pay")}
+            disabled={!selectedTier || !matchingSiteLicense}
+            onChange={(e) => {
+              actions.configuration.set_pay_choice(
+                "site_license",
+                e.target.checked,
+              );
+              if (e.target.checked) {
+                actions.configuration.configure_all_projects();
+              }
+            }}
+          >
+            Use matching site license
+          </Checkbox>
+          {selectedTier && matchingSiteLicense ? (
+            <Alert
+              type="success"
+              showIcon
+              title="Matching site license available"
+              description={
+                <>
+                  The verified email{" "}
+                  <strong>{matchingSiteLicense.matched_email_address}</strong>{" "}
+                  can claim a site license for{" "}
+                  <strong>{matchingSiteLicense.membership_class}</strong>. This
+                  option is selected by default when no other course payment
+                  mode has been chosen.
+                </>
+              }
+            />
+          ) : selectedTier ? (
+            <Alert
+              type="info"
+              showIcon
+              title="No matching site license found"
+              description="Students can still pay directly or the instructor can buy course seats. If a site license is expected, verify the instructor email domain and confirm the site license has available seats."
+            />
+          ) : null}
+          <Checkbox
             checked={!!settings?.get("student_pay")}
             disabled={!selectedTier}
             onChange={(e) => {
@@ -196,12 +287,6 @@ export default function StudentPay({ actions, settings, project_id }) {
                 actions.configuration.configure_all_projects();
               }
             }}
-          />
-          <Alert
-            type="warning"
-            showIcon
-            title="Site license defaulting is not wired yet"
-            description="The next implementation slice should detect matching site licenses for the instructor's verified email domain and offer that as the default funding option."
           />
         </Space>
       )}
