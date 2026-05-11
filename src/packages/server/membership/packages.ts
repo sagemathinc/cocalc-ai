@@ -29,10 +29,7 @@ import {
   isValidUUID,
   uuid,
 } from "@cocalc/util/misc";
-import { DEFAULT_PURCHASE_INFO } from "@cocalc/util/purchases/quota/student-pay";
-import type { PurchaseInfo } from "@cocalc/util/purchases/quota/types";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
-import { getCost as getCoursePayCost } from "@cocalc/server/purchases/student-pay";
 import {
   canonicalizeInstitutionalClaimEmail,
   getMembershipClaimIdentity,
@@ -574,37 +571,53 @@ async function getCourseSeatQuote({
     throw Error("course project not found");
   }
   const course = row.course as CourseInfo | undefined;
-  if (!course?.payInfo) {
-    throw Error("course pay configuration not found");
+  const membership_class = `${product.membership_class ?? ""}`.trim();
+  if (!membership_class) {
+    throw Error("membership_class is required for course packages");
   }
-  const purchaseInfo = {
-    ...DEFAULT_PURCHASE_INFO,
-    ...course.payInfo,
-  } as PurchaseInfo;
-  if (purchaseInfo.type !== "quota") {
-    throw Error("course seat packages require quota-based payInfo");
+  const tier = await getMembershipTierById({
+    id: membership_class,
+    client,
+  });
+  if (!tier || tier.disabled || !tier.course_store_visible) {
+    throw Error(
+      `course membership tier "${membership_class}" is not available`,
+    );
   }
-  if (purchaseInfo.start == null || purchaseInfo.end == null) {
-    throw Error("course payInfo must define start and end");
+  const seat_price = toDecimal(tier.course_price ?? NaN).toNumber();
+  if (!Number.isFinite(seat_price) || seat_price < 0) {
+    throw Error(
+      `course membership tier "${membership_class}" has invalid price`,
+    );
   }
-  const seat_price = toDecimal(getCoursePayCost(purchaseInfo)).toNumber();
+  const duration_days = Number(tier.course_duration_days);
+  if (
+    !Number.isFinite(duration_days) ||
+    !Number.isInteger(duration_days) ||
+    duration_days <= 0
+  ) {
+    throw Error(
+      `course membership tier "${membership_class}" has invalid duration`,
+    );
+  }
+  const starts_at = new Date();
+  const expires_at = dayjs(starts_at).add(duration_days, "day").toDate();
   return {
     kind: "course",
-    membership_class: "student",
+    membership_class,
     seat_count: normalizeSeatCount(product.seat_count),
     seat_price,
     total_price: moneyRound2Up(
       toDecimal(seat_price).mul(product.seat_count),
     ).toNumber(),
-    starts_at: asDate(purchaseInfo.start),
-    expires_at: asDate(purchaseInfo.end),
-    interval: product.interval,
+    starts_at,
+    expires_at,
     metadata: {
       ...normalizeMetadata(product.metadata),
       course_project_id,
-      course_path: course.path,
+      course_path: course?.path,
       course_title: row.title,
-      payInfo: purchaseInfo,
+      course_duration_days: duration_days,
       seat_price,
     },
   };
@@ -677,7 +690,11 @@ export async function resolveMembershipPackageQuote(
       isValidUUID(`${existing.metadata?.course_project_id ?? ""}`)
         ? (
             await getCourseSeatQuote({
-              product,
+              product: {
+                ...product,
+                membership_class:
+                  product.membership_class ?? existing.membership_class,
+              },
               course_project_id: `${existing.metadata?.course_project_id}`,
               client,
             })

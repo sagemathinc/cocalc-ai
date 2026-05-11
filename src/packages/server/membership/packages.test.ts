@@ -5,6 +5,8 @@
 
 export {};
 
+import dayjs from "dayjs";
+
 let createInterBayAccountLocalClientMock: jest.Mock;
 let getInterBayFabricClientMock: jest.Mock;
 let projectControlSetUsageAccountMock: jest.Mock;
@@ -67,6 +69,7 @@ afterAll(after);
 
 describe("membership packages", () => {
   const teamTier = `team-tier-${uuid()}`;
+  const courseTier = `course-tier-${uuid()}`;
   let remoteGrantUpserts: Array<{ dest_bay: string; grant: any }>;
   let remoteGrantRevocations: Array<{ dest_bay: string; opts: any }>;
   let remoteProjectUsageUpdates: Array<{ dest_bay: string; opts: any }>;
@@ -110,6 +113,13 @@ describe("membership packages", () => {
       priority: 25,
       price_monthly: 20,
       price_yearly: 200,
+    });
+    await createTestMembershipTier({
+      id: courseTier,
+      priority: 10,
+      course_store_visible: true,
+      course_price: 25,
+      course_duration_days: 122,
     });
   });
 
@@ -286,6 +296,47 @@ describe("membership packages", () => {
     expect(quote.package_id).toBe(package_id);
     expect(quote.seat_price).toBe(17.5);
     expect(quote.total_price).toBe(87.5);
+  });
+
+  it("quotes course seats from the selected course-visible membership tier", async () => {
+    const course_project_id = uuid();
+    await getPool("medium").query(
+      `INSERT INTO projects (project_id, title, users, course, last_edited)
+       VALUES ($1, $2, $3::jsonb, $4::jsonb, NOW())`,
+      [
+        course_project_id,
+        "Math 101",
+        "{}",
+        JSON.stringify({
+          type: "student",
+          project_id: course_project_id,
+          path: "math101.course",
+        }),
+      ],
+    );
+
+    const quote = await resolveMembershipPackageQuote({
+      type: "membership-package",
+      kind: "course",
+      membership_class: courseTier,
+      course_project_id,
+      seat_count: 3,
+    });
+
+    expect(quote.kind).toBe("course");
+    expect(quote.membership_class).toBe(courseTier);
+    expect(quote.seat_price).toBe(25);
+    expect(quote.total_price).toBe(75);
+    expect(quote.metadata).toMatchObject({
+      course_project_id,
+      course_path: "math101.course",
+      course_title: "Math 101",
+      course_duration_days: 122,
+      seat_price: 25,
+    });
+    expect(dayjs(quote.expires_at).diff(dayjs(quote.starts_at), "day")).toBe(
+      122,
+    );
   });
 
   it("allows expanding an existing package without resupplying the package kind", async () => {
