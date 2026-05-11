@@ -120,6 +120,7 @@ describe("membership packages", () => {
       course_store_visible: true,
       course_price: 25,
       course_duration_days: 122,
+      course_grace_days: 14,
     });
   });
 
@@ -332,6 +333,7 @@ describe("membership packages", () => {
       course_path: "math101.course",
       course_title: "Math 101",
       course_duration_days: 122,
+      course_grace_days: 14,
       seat_price: 25,
     });
     expect(dayjs(quote.expires_at).diff(dayjs(quote.starts_at), "day")).toBe(

@@ -340,6 +340,7 @@ export type MembershipTierSetFields =
   | "price_yearly"
   | "course_price"
   | "course_duration_days"
+  | "course_grace_days"
   | "project_defaults"
   | "ai_limits"
   | "features"

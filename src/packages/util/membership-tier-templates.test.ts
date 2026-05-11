@@ -36,6 +36,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       course_store_visible: true,
       course_price: 10,
       course_duration_days: 30,
+      course_grace_days: 3,
       project_defaults: { memory: 1234 },
       ai_limits: { units_5h: 7 },
       features: { create_hosts: false },
@@ -46,6 +47,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(tier.course_store_visible).toBe(true);
     expect(tier.course_price).toBe(10);
     expect(tier.course_duration_days).toBe(30);
+    expect(tier.course_grace_days).toBe(3);
     expect(tier.ai_limits).toEqual({ units_5h: 7 });
     expect(tier.features).toEqual({ create_hosts: false });
     expect(tier.usage_limits).toEqual({
@@ -63,10 +65,12 @@ describe("applyMembershipTierTemplateFallbacks", () => {
       course_store_visible: undefined,
       course_price: undefined,
       course_duration_days: undefined,
+      course_grace_days: undefined,
     });
 
     expect(tier.course_store_visible).toBe(true);
     expect(tier.course_price).toBe(25);
     expect(tier.course_duration_days).toBe(122);
+    expect(tier.course_grace_days).toBe(14);
   });
 });

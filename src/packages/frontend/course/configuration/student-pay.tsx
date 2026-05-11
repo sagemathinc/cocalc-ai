@@ -27,6 +27,7 @@ interface CourseMembershipTier {
   course_store_visible?: boolean;
   course_price?: number;
   course_duration_days?: number;
+  course_grace_days?: number;
   disabled?: boolean;
 }
 
@@ -110,9 +111,17 @@ export default function StudentPay({ actions, settings, project_id }) {
         })[0] ?? null
     );
   }, [claimablePackages, selectedTier, tierById]);
+  const selectedTierGraceDays = Number(selectedTier?.course_grace_days);
+  const defaultGraceDays = Number.isFinite(selectedTierGraceDays)
+    ? selectedTierGraceDays
+    : DEFAULT_GRACE_DAYS;
+  const configuredGraceDaysRaw = settings?.get("student_membership_grace_days");
+  const configuredGraceDays =
+    configuredGraceDaysRaw == null ? undefined : Number(configuredGraceDaysRaw);
   const graceDays =
-    Number(settings?.get("student_membership_grace_days")) ||
-    DEFAULT_GRACE_DAYS;
+    configuredGraceDays != null && Number.isFinite(configuredGraceDays)
+      ? configuredGraceDays
+      : defaultGraceDays;
   const paymentEnabled = !!(
     settings?.get("student_pay") ||
     settings?.get("institute_pay") ||
@@ -139,9 +148,15 @@ export default function StudentPay({ actions, settings, project_id }) {
   }
 
   function setSelectedTier(required_membership_class: string) {
+    const tier = courseTiers.find(
+      (tier) => tier.id === required_membership_class,
+    );
+    const tierGraceDays = Number(tier?.course_grace_days);
     actions.configuration.set_course_membership({
       required_membership_class,
-      student_membership_grace_days: graceDays,
+      student_membership_grace_days: Number.isFinite(tierGraceDays)
+        ? tierGraceDays
+        : DEFAULT_GRACE_DAYS,
     });
   }
 
@@ -149,7 +164,7 @@ export default function StudentPay({ actions, settings, project_id }) {
     actions.configuration.set_course_membership({
       required_membership_class: selectedTierId,
       student_membership_grace_days:
-        student_membership_grace_days ?? DEFAULT_GRACE_DAYS,
+        student_membership_grace_days ?? defaultGraceDays,
     });
   }
 
@@ -206,6 +221,7 @@ export default function StudentPay({ actions, settings, project_id }) {
               <Tag color="blue">{selectedTier.label ?? selectedTier.id}</Tag>
               <Tag>{currency(Number(selectedTier.course_price ?? 0))}</Tag>
               <Tag>{Number(selectedTier.course_duration_days ?? 0)} days</Tag>
+              <Tag>{graceDays} grace days</Tag>
               <Tag>priority {selectedTier.priority ?? 0}</Tag>
             </Space>
           )}

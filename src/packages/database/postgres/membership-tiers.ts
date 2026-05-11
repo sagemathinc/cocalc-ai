@@ -15,6 +15,7 @@ interface Query {
   price_yearly?: number;
   course_price?: number;
   course_duration_days?: number;
+  course_grace_days?: number;
   project_defaults?;
   ai_limits?;
   features?;
@@ -88,6 +89,7 @@ export default async function membershipTiersQuery(
       price_yearly,
       course_price,
       course_duration_days,
+      course_grace_days,
       project_defaults,
       ai_limits,
       features,
@@ -116,6 +118,7 @@ export default async function membershipTiersQuery(
                 "price_yearly",
                 "course_price",
                 "course_duration_days",
+                "course_grace_days",
                 "project_defaults",
                 "ai_limits",
                 "features",
@@ -126,7 +129,7 @@ export default async function membershipTiersQuery(
                 "created",
                 "updated"
               )
-              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::JSONB,$11::JSONB,$12::JSONB,$13::JSONB,$14,$15,$16::JSONB,NOW(),NOW())
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::JSONB,$12::JSONB,$13::JSONB,$14::JSONB,$15,$16,$17::JSONB,NOW(),NOW())
               ON CONFLICT (id)
               DO UPDATE SET
                 "label" = EXCLUDED.label,
@@ -137,6 +140,7 @@ export default async function membershipTiersQuery(
                 "price_yearly" = EXCLUDED.price_yearly,
                 "course_price" = EXCLUDED.course_price,
                 "course_duration_days" = EXCLUDED.course_duration_days,
+                "course_grace_days" = EXCLUDED.course_grace_days,
                 "project_defaults" = EXCLUDED.project_defaults,
                 "ai_limits" = EXCLUDED.ai_limits,
                 "features" = EXCLUDED.features,
@@ -155,6 +159,7 @@ export default async function membershipTiersQuery(
         price_yearly ?? null,
         course_price ?? null,
         course_duration_days ?? null,
+        course_grace_days ?? null,
         toJsonParam(project_defaults),
         toJsonParam(ai_limits),
         toJsonParam(features),

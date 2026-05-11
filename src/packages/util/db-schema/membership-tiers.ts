@@ -37,6 +37,7 @@ Table({
           price_yearly: null,
           course_price: null,
           course_duration_days: null,
+          course_grace_days: null,
           project_defaults: null,
           ai_limits: null,
           features: null,
@@ -59,6 +60,7 @@ Table({
           price_yearly: null,
           course_price: null,
           course_duration_days: null,
+          course_grace_days: null,
           project_defaults: null,
           ai_limits: null,
           features: null,
@@ -111,6 +113,10 @@ Table({
     course_duration_days: {
       type: "number",
       desc: "Duration in days for one-time course student memberships.",
+    },
+    course_grace_days: {
+      type: "number",
+      desc: "Default full-access grace period in days before course student membership payment is required.",
     },
     project_defaults: {
       type: "map",

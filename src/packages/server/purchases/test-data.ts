@@ -59,6 +59,7 @@ export async function createTestMembershipTier(opts: {
   course_store_visible?: boolean;
   course_price?: number;
   course_duration_days?: number;
+  course_grace_days?: number;
   project_defaults?: Record<string, unknown>;
   ai_limits?: Record<string, unknown>;
   features?: Record<string, unknown>;
@@ -69,9 +70,10 @@ export async function createTestMembershipTier(opts: {
     `INSERT INTO membership_tiers
       (id, label, store_visible, course_store_visible, priority,
        price_monthly, price_yearly, course_price, course_duration_days,
+       course_grace_days,
        project_defaults, ai_limits, features, usage_limits,
        disabled, notes, history, created, updated)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::JSONB,$11::JSONB,$12::JSONB,$13::JSONB,$14,$15,$16::JSONB,NOW(),NOW())
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::JSONB,$12::JSONB,$13::JSONB,$14::JSONB,$15,$16,$17::JSONB,NOW(),NOW())
      ON CONFLICT (id) DO UPDATE SET
        label=EXCLUDED.label,
        store_visible=EXCLUDED.store_visible,
@@ -81,6 +83,7 @@ export async function createTestMembershipTier(opts: {
        price_yearly=EXCLUDED.price_yearly,
        course_price=EXCLUDED.course_price,
        course_duration_days=EXCLUDED.course_duration_days,
+       course_grace_days=EXCLUDED.course_grace_days,
        project_defaults=EXCLUDED.project_defaults,
        ai_limits=EXCLUDED.ai_limits,
        features=EXCLUDED.features,
@@ -98,6 +101,7 @@ export async function createTestMembershipTier(opts: {
       opts.price_yearly ?? 0,
       opts.course_price ?? null,
       opts.course_duration_days ?? null,
+      opts.course_grace_days ?? null,
       opts.project_defaults ?? {},
       opts.ai_limits ?? {},
       opts.features ?? {},

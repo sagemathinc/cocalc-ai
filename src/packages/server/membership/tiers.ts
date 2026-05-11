@@ -11,6 +11,7 @@ export interface MembershipTierPricing {
   price_yearly?: number;
   course_price?: number;
   course_duration_days?: number;
+  course_grace_days?: number;
   features?: Record<string, unknown>;
   project_defaults?: Record<string, unknown>;
   ai_limits?: Record<string, unknown>;
@@ -57,6 +58,7 @@ export async function getMembershipTiers({
   const { rows } = await pool.query(
     `SELECT id, label, store_visible, course_store_visible, priority,
             price_monthly, price_yearly, course_price, course_duration_days,
+            course_grace_days,
             project_defaults, ai_limits, features, usage_limits, disabled
      FROM membership_tiers`,
   );
@@ -104,6 +106,7 @@ export async function getMembershipTierById({
   const { rows } = await pool.query(
     `SELECT id, label, store_visible, course_store_visible, priority,
             price_monthly, price_yearly, course_price, course_duration_days,
+            course_grace_days,
             project_defaults, ai_limits, features, usage_limits, disabled
      FROM membership_tiers
      WHERE id=$1`,

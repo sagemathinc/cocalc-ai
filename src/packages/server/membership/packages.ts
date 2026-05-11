@@ -600,8 +600,21 @@ async function getCourseSeatQuote({
       `course membership tier "${membership_class}" has invalid duration`,
     );
   }
+  const configured_grace_days = Number(tier.course_grace_days);
+  if (
+    tier.course_grace_days != null &&
+    (!Number.isFinite(configured_grace_days) ||
+      !Number.isInteger(configured_grace_days) ||
+      configured_grace_days < 0)
+  ) {
+    throw Error(
+      `course membership tier "${membership_class}" has invalid grace period`,
+    );
+  }
   const starts_at = new Date();
   const expires_at = dayjs(starts_at).add(duration_days, "day").toDate();
+  const grace_days =
+    tier.course_grace_days == null ? undefined : configured_grace_days;
   return {
     kind: "course",
     membership_class,
@@ -618,6 +631,7 @@ async function getCourseSeatQuote({
       course_path: course?.path,
       course_title: row.title,
       course_duration_days: duration_days,
+      course_grace_days: grace_days,
       seat_price,
     },
   };

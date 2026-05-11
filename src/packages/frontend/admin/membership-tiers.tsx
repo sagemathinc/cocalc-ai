@@ -55,6 +55,7 @@ interface Tier {
   price_yearly?: number;
   course_price?: number;
   course_duration_days?: number;
+  course_grace_days?: number;
   project_defaults?: any;
   ai_limits?: any;
   features?: any;
@@ -144,6 +145,7 @@ function useMembershipTiers() {
             price_yearly: null,
             course_price: null,
             course_duration_days: null,
+            course_grace_days: null,
             project_defaults: null,
             ai_limits: null,
             features: null,
@@ -327,6 +329,7 @@ function useMembershipTiers() {
           "price_yearly",
           "course_price",
           "course_duration_days",
+          "course_grace_days",
           "project_defaults",
           "ai_limits",
           "features",
@@ -557,7 +560,10 @@ export function MembershipTiers() {
             <InputNumber min={0} step={1} />
           </Form.Item>
           <Form.Item name="course_duration_days" label="Course duration days">
-            <InputNumber min={1} step={1} />
+            <InputNumber min={1} step={1} precision={0} />
+          </Form.Item>
+          <Form.Item name="course_grace_days" label="Course grace days">
+            <InputNumber min={0} step={1} precision={0} />
           </Form.Item>
           <Form.Item name="notes" label="Notes">
             <Input.TextArea rows={2} />
@@ -792,6 +798,11 @@ export function MembershipTiers() {
           <Table.Column<Tier>
             title="Course days"
             dataIndex="course_duration_days"
+            render={(val) => (val != null ? val : "")}
+          />
+          <Table.Column<Tier>
+            title="Grace days"
+            dataIndex="course_grace_days"
             render={(val) => (val != null ? val : "")}
           />
           <Table.Column<Tier>
