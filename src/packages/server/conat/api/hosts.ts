@@ -2701,11 +2701,15 @@ export async function listHostAccess({
 
 export async function setHostAccess({
   account_id,
+  browser_id,
+  session_hash,
   id,
   target_account_id,
   role,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   target_account_id: string;
   role: HostAccessRole;
@@ -2714,9 +2718,19 @@ export async function setHostAccess({
   if (remoteBay) {
     return await getInterBayBridge().hostConnection(remoteBay).setHostAccess({
       account_id,
+      browser_id,
+      session_hash,
       id,
       target_account_id,
       role,
+    });
+  }
+  if (role === "manager") {
+    await maybeRequireFreshAuthForInteractiveHostAction({
+      account_id,
+      browser_id,
+      session_hash,
+      required: true,
     });
   }
   const entry = await setHostAccessEntry({
@@ -2816,10 +2830,14 @@ function normalizeOptionalPositiveUsd(
 
 export async function setHostProjectRamLimit({
   account_id,
+  browser_id,
+  session_hash,
   id,
   project_ram_limit_mb,
 }: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   project_ram_limit_mb?: number | null;
 }): Promise<Host> {
@@ -2827,13 +2845,25 @@ export async function setHostProjectRamLimit({
   if (remoteBay) {
     return await getInterBayBridge()
       .hostConnection(remoteBay)
-      .setHostProjectRamLimit({ account_id, id, project_ram_limit_mb });
+      .setHostProjectRamLimit({
+        account_id,
+        browser_id,
+        session_hash,
+        id,
+        project_ram_limit_mb,
+      });
   }
   const row = await loadHostForView(id, account_id);
   await requireLoadedHostPermission({
     row,
     account_id: requireAccount(account_id),
     permission: "configure-project-ram",
+  });
+  await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id,
+    session_hash,
+    required: true,
   });
   const normalizedLimit = normalizeProjectRamLimitMb({
     value: project_ram_limit_mb,
@@ -2866,6 +2896,8 @@ export async function setHostProjectRamLimit({
 
 export async function setHostOwnerSpendLimits(opts: {
   account_id?: string;
+  browser_id?: string;
+  session_hash?: string;
   id: string;
   owner_spend_limit_5h_usd?: number | null;
   owner_spend_limit_7d_usd?: number | null;
@@ -2877,6 +2909,8 @@ export async function setHostOwnerSpendLimits(opts: {
       .hostConnection(remoteBay)
       .setHostOwnerSpendLimits({
         account_id,
+        browser_id: opts.browser_id,
+        session_hash: opts.session_hash,
         id,
         owner_spend_limit_5h_usd: opts.owner_spend_limit_5h_usd,
         owner_spend_limit_7d_usd: opts.owner_spend_limit_7d_usd,
@@ -2887,6 +2921,12 @@ export async function setHostOwnerSpendLimits(opts: {
     row,
     account_id: requireAccount(account_id),
     permission: "configure-spend-caps",
+  });
+  await maybeRequireFreshAuthForInteractiveHostAction({
+    account_id,
+    browser_id: opts.browser_id,
+    session_hash: opts.session_hash,
+    required: true,
   });
   const metadata = { ...(row.metadata ?? {}) };
   const billing = { ...(metadata.billing ?? {}) };
