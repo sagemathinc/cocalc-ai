@@ -5316,7 +5316,7 @@ export async function upgradeHostSoftware({
         align_runtime_stack,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
     kind: HOST_UPGRADE_LRO_KIND,
@@ -5348,7 +5348,7 @@ export async function reconcileHostSoftware({
         id,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
     kind: HOST_RECONCILE_LRO_KIND,
@@ -5537,7 +5537,7 @@ export async function reconcileHostRuntimeDeployments({
         reason,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
     kind: HOST_RECONCILE_RUNTIME_DEPLOYMENTS_LRO_KIND,
@@ -5744,7 +5744,7 @@ export async function rollbackHostRuntimeDeployments({
         reason,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   const normalizedTarget =
     target_type === "component"
@@ -5797,7 +5797,7 @@ export async function getHostManagedComponentStatus({
         id,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   const client = await hostControlClient(id, 30_000);
   return await client.getManagedComponentStatus();
@@ -5825,7 +5825,7 @@ export async function rolloutHostManagedComponents({
         reason,
       });
   }
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   assertHostRunningForUpgrade(row);
   return await createHostLro({
     kind: HOST_ROLLOUT_MANAGED_COMPONENTS_LRO_KIND,
@@ -5853,7 +5853,7 @@ export async function upgradeHostConnector({
     account_id,
     id,
     version,
-    loadHostForStartStop,
+    loadHostForStartStop: loadHostForRootfsManagement,
     ensureSelfHostReverseTunnel,
     createPairingTokenForHost,
     getServerSettings,
@@ -5926,7 +5926,7 @@ export async function reconcileHostSoftwareInternal({
       let refreshedRow = row;
       if (touchedHostControl) {
         await waitForHostHeartbeatAfter({ host_id: id, since: startedAt });
-        refreshedRow = await loadHostForStartStop(id, account_id);
+        refreshedRow = await loadHostForRootfsManagement(id, account_id);
       }
       if (bootstrapLifecycleSummaryStatus(refreshedRow) === "in_sync") {
         return;
@@ -5988,7 +5988,7 @@ async function recordProjectHostLocalRollbackInternal({
   rollback_version: string;
   source: "host-agent";
 }> {
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   return await recordProjectHostLocalRollbackInternalHelper({
     row,
     requested_by: requestedByForRuntimeDeployments({ account_id, row }),
@@ -6011,7 +6011,7 @@ export async function rollbackProjectHostOverSshInternal({
   host_id: string;
   rollback_version: string;
 }> {
-  const row = await loadHostForStartStop(id, account_id);
+  const row = await loadHostForRootfsManagement(id, account_id);
   return await rollbackProjectHostOverSshInternalHelper({
     row,
     requested_by: requestedByForRuntimeDeployments({ account_id, row }),
@@ -6041,7 +6041,7 @@ export async function reconcileHostRuntimeDeploymentsInternal({
     id,
     components,
     reason,
-    loadHostForStartStop,
+    loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     getHostRuntimeDeploymentStatus,
     computeHostRuntimeDeploymentReconcilePlan,
@@ -6075,7 +6075,7 @@ export async function rollbackHostRuntimeDeploymentsInternal({
     version,
     last_known_good,
     reason,
-    loadHostForStartStop,
+    loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     getHostRuntimeDeploymentStatus,
     targetKeyForRuntimeDeployment,
@@ -6167,7 +6167,7 @@ export async function upgradeHostSoftwareInternal({
     targets,
     base_url,
     align_runtime_stack,
-    loadHostForStartStop,
+    loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     computeHostOperationalAvailability,
     resolveHostSoftwareBaseUrl,
@@ -6221,7 +6221,7 @@ export async function rolloutHostManagedComponentsInternal({
     id,
     components,
     reason,
-    loadHostForStartStop,
+    loadHostForStartStop: loadHostForRootfsManagement,
     assertHostRunningForUpgrade,
     hostControlClient,
     waitForHostHeartbeatAfter,
