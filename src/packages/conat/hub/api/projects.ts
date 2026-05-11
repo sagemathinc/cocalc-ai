@@ -111,6 +111,41 @@ export interface ImportPublicPathResult {
 
 export type ProjectQuotaSettings = Record<string, unknown> | null;
 export type ProjectCourseInfo = CourseInfo | null;
+export type CourseStudentAccessStatus =
+  | { status: "not-required"; course?: ProjectCourseInfo }
+  | {
+      status: "active";
+      source: "membership" | "course-seat" | "student-course-purchase";
+      required_membership_class: string;
+      required_label?: string;
+      current_membership_class: string;
+      current_expires?: Date | string | null;
+      course?: ProjectCourseInfo;
+    }
+  | {
+      status: "site-license-claimable";
+      required_membership_class: string;
+      required_label?: string;
+      package_id: string;
+      membership_class: string;
+      matched_email_address: string;
+      expires_at?: Date | string | null;
+      course?: ProjectCourseInfo;
+    }
+  | {
+      status: "grace";
+      required_membership_class: string;
+      required_label?: string;
+      deadline: Date | string;
+      course?: ProjectCourseInfo;
+    }
+  | {
+      status: "blocked";
+      required_membership_class: string;
+      required_label?: string;
+      deadline?: Date | string | null;
+      course?: ProjectCourseInfo;
+    };
 
 // "cloudflare-access-tcp" is kept temporarily for compatibility with older
 // servers/clients. The route is a Cloudflare-published SSH/TCP endpoint; it
@@ -408,6 +443,7 @@ export const projects = {
   getProjectRootfs: authFirstRequireAccount,
   getProjectSettings: authFirstRequireAccount,
   getProjectCourseInfo: authFirstRequireAccount,
+  getCourseStudentAccess: authFirstRequireAccount,
   getProjectSnapshotSchedule: authFirstRequireAccount,
   getProjectBackupSchedule: authFirstRequireAccount,
   getProjectRunQuota: authFirstRequireAccount,
@@ -580,6 +616,11 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectCourseInfo>;
+
+  getCourseStudentAccess: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<CourseStudentAccessStatus>;
 
   getProjectRunQuota: (opts: {
     account_id?: string;
