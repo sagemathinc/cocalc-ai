@@ -67,6 +67,16 @@ describe("getPublicAuthRouteFromPath", () => {
       kind: "auth-verify-email",
       token: "abc",
     });
+    expect(
+      getPublicAuthRouteFromPath(
+        "/base/auth/verify",
+        "?email=x%2540y.z&token=abc",
+      ),
+    ).toEqual({
+      email: "x@y.z",
+      kind: "auth-verify-email",
+      token: "abc",
+    });
     expect(getPublicAuthRouteFromPath("/base/sso")).toEqual({
       kind: "sso-index",
     });

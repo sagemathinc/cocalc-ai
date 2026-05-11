@@ -7,6 +7,15 @@ import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 
+function normalizeEmailAddress(email_address: string): string {
+  const value = `${email_address ?? ""}`.trim().toLowerCase();
+  try {
+    return decodeURIComponent(value).trim().toLowerCase();
+  } catch (_err) {
+    return value;
+  }
+}
+
 export default async function redeemVerifyEmail(
   email_address: string,
   token: string,
@@ -14,6 +23,7 @@ export default async function redeemVerifyEmail(
   if (token.length < 16) {
     throw Error("token is too short");
   }
+  email_address = normalizeEmailAddress(email_address);
   if (!isValidEmailAddress(email_address)) {
     throw Error("email_address is not valid");
   }

@@ -814,9 +814,10 @@ export function welcome_email(opts): void {
   const site_name = fallback(settings.site_name, SITE_NAME);
   const dns = fallback(settings.dns, DNS);
   const url = dns.startsWith("http") ? dns : `https://${dns}`;
-  const token_query = encodeURI(
-    `email=${encodeURIComponent(opts.to)}&token=${opts.token}`,
-  );
+  const token_query = new URLSearchParams({
+    email: opts.to,
+    token: opts.token,
+  }).toString();
   const endpoint = os_path.join(base_path, "auth", "verify");
   const token_url = `${url}${endpoint}?${token_query}`;
   const verify_emails = opts.settings.verify_emails ?? true;
