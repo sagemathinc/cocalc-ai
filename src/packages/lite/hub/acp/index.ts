@@ -114,9 +114,12 @@ import {
 import {
   admitAcpJobCreation,
   admitAcpJobCreationIdentity,
+  admitAcpJobExecution,
   acpAdmissionLimitsFromEffectiveLimits,
   isAcpAdmissionDeniedError,
+  recordAcpAdmissionDenial,
   resolveAcpAdmissionLimits,
+  setAcpAdmissionDenialRecorder,
   setAcpAdmissionLimitsProvider,
   throwIfAcpAdmissionDenied,
 } from "./admission";
@@ -222,7 +225,11 @@ import {
 } from "./worker-manager";
 import { buildCodexRuntimeEnv } from "./runtime-env";
 
-export { acpAdmissionLimitsFromEffectiveLimits, setAcpAdmissionLimitsProvider };
+export {
+  acpAdmissionLimitsFromEffectiveLimits,
+  setAcpAdmissionDenialRecorder,
+  setAcpAdmissionLimitsProvider,
+};
 
 // How often to persist in-flight ACP metadata (thread state/usage/flags).
 // Message body content is persisted at terminal commits only.
@@ -5458,6 +5465,7 @@ async function enqueueAutomationRun(
         admissionLimits,
         now,
       ),
+      "automation",
     );
   } catch (err) {
     if (isAcpAdmissionDeniedError(err)) {
@@ -5559,7 +5567,10 @@ async function enqueueAutomationRun(
           chat,
         };
 
-  throwIfAcpAdmissionDenied(admitAcpJobCreation(request, admissionLimits));
+  throwIfAcpAdmissionDenied(
+    admitAcpJobCreation(request, admissionLimits),
+    "automation",
+  );
   const job = enqueueAcpJob(request);
   await persistQueuedUserMessageProjection({
     client: conatClient,
@@ -6353,6 +6364,7 @@ async function enqueueRecoveryContinuationForJob({
         acpAdmissionContextFromRequest(resumedRequest),
       ),
     ),
+    "recovery",
   );
   const queued = enqueueAcpJob(resumedRequest);
   await persistQueuedUserMessageProjection({
@@ -6717,6 +6729,11 @@ async function pumpQueuedAcpJobsForThread({
       path,
       thread_id,
     });
+    const executionDecision = admitAcpJobExecution(nextQueued, admissionLimits);
+    if (!executionDecision.ok) {
+      recordAcpAdmissionDenial(executionDecision, "claim");
+      return;
+    }
     const job = claimNextQueuedAcpJobForThread({
       project_id,
       path,
@@ -7173,6 +7190,7 @@ async function enqueueChatAcpTurn({
       request,
       await resolveAcpAdmissionLimits(acpAdmissionContextFromRequest(request)),
     ),
+    "chat",
   );
   await acknowledgeAutomationFromHumanTurn(request);
   const row = enqueueAcpJob(request);
@@ -7486,6 +7504,7 @@ async function handleAcpControlRequest(
           acpAdmissionContextFromRequest(currentRequest),
         ),
       ),
+      "resend",
     );
     const row = resendCanceledAcpJob({
       project_id,

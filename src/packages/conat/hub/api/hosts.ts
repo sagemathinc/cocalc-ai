@@ -41,6 +41,35 @@ export type HostEffectiveAccessRole =
   | "shared"
   | "admin";
 
+export type AcpAdmissionDenialLimit =
+  | "queued_per_account"
+  | "queued_per_thread"
+  | "created_5h_per_account"
+  | "created_7d_per_account"
+  | "running_per_account"
+  | "running_per_project";
+
+export type AcpAdmissionDenialSource =
+  | "automation"
+  | "chat"
+  | "claim"
+  | "recovery"
+  | "resend"
+  | "unknown";
+
+export interface AcpAdmissionDenialRecord {
+  host_id?: string;
+  account_id?: string;
+  project_id: string;
+  path?: string;
+  thread_id?: string;
+  limit: AcpAdmissionDenialLimit;
+  current: number;
+  maximum: number;
+  source?: AcpAdmissionDenialSource;
+  time?: number;
+}
+
 export interface HostAccessEntry {
   host_id: string;
   account_id: string;
@@ -1053,6 +1082,7 @@ export const hosts = {
   setHostStar: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
   getProjectOwnerEffectiveLimits: authFirstRequireHost,
+  recordAcpAdmissionDenial: authFirstRequireHost,
   recordProjectBackup: authFirstRequireHost,
   recordProjectBackupIndex: authFirstRequireHost,
   getProjectBackupIndexes: authFirstRequireHost,
@@ -1262,6 +1292,7 @@ export interface Hosts {
     host_id?: string;
     project_id?: string;
   }) => Promise<MembershipEffectiveLimits>;
+  recordAcpAdmissionDenial: (opts: AcpAdmissionDenialRecord) => Promise<void>;
   recordProjectBackup: (opts: {
     host_id?: string;
     project_id: string;

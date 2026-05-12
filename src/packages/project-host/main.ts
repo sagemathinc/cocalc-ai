@@ -110,6 +110,7 @@ import {
   ensureProjectHostAcpWorkerRunning,
   startProjectHostAcpWorkerSupervisor,
 } from "./hub/acp/worker-manager";
+import { configureProjectHostAcpAdmissionDenialRecorder } from "./hub/acp/admission-denials";
 import { main as runHostAgentMain } from "./host-agent";
 import { matchAppRequest } from "./app-public-access";
 import { maybeHandleStaticAppRequest } from "./static-apps";
@@ -527,6 +528,7 @@ export async function main(
       await getProjectOwnerEffectiveLimits(id),
     );
   });
+  configureProjectHostAcpAdmissionDenialRecorder();
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
   // Local persist must exist before ACP startup so automation indexes can
   // republish into the project-scoped DKV stores on restart.

@@ -161,6 +161,7 @@ import {
   getHostRuntimeLog,
   getProjectOwnerEffectiveLimitsLocal,
   getProjectStartMetadataLocal,
+  recordAcpAdmissionDenialLocal,
   reconcileHostRuntimeDeployments,
   reconcileHostSoftware,
   refreshHostCloudState,
@@ -1104,6 +1105,8 @@ async function startHostConnectionService(): Promise<void> {
         host_id,
         project_id,
       }),
+    recordAcpAdmissionDenial: async (opts) =>
+      await recordAcpAdmissionDenialLocal(opts),
     recordProjectBackup: async ({ host_id, project_id, time }) =>
       await recordProjectBackupLocal({ host_id, project_id, time }),
     recordProjectBackupIndex: async ({

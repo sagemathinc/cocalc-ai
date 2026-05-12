@@ -1159,6 +1159,9 @@ export interface InterBayHostConnectionApi {
   getProjectOwnerEffectiveLimits: (
     opts: Parameters<Hosts["getProjectOwnerEffectiveLimits"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectOwnerEffectiveLimits"]>>>;
+  recordAcpAdmissionDenial: (
+    opts: Parameters<Hosts["recordAcpAdmissionDenial"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["recordAcpAdmissionDenial"]>>>;
   getSeedBackupConfig: (opts: {
     project_id: string;
     project_region?: string | null;

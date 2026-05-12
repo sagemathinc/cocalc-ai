@@ -63,6 +63,23 @@ export type AcpAdmissionDenial = {
 
 export type AcpAdmissionDecision = { ok: true } | AcpAdmissionDenial;
 
+export type AcpAdmissionDenialSource =
+  | "automation"
+  | "chat"
+  | "claim"
+  | "recovery"
+  | "resend"
+  | "unknown";
+
+export type AcpAdmissionDenialEvent = AcpAdmissionDenial & {
+  source: AcpAdmissionDenialSource;
+  time: number;
+};
+
+export type AcpAdmissionDenialRecorder = (
+  event: AcpAdmissionDenialEvent,
+) => void | Promise<void>;
+
 type AcpCreationAdmissionIdentity = {
   account_id?: string;
   project_id?: string;
@@ -82,11 +99,18 @@ export class AcpAdmissionDeniedError extends Error {
 }
 
 let acpAdmissionLimitsProvider: AcpAdmissionLimitsProvider | undefined;
+let acpAdmissionDenialRecorder: AcpAdmissionDenialRecorder | undefined;
 
 export function setAcpAdmissionLimitsProvider(
   provider?: AcpAdmissionLimitsProvider,
 ): void {
   acpAdmissionLimitsProvider = provider;
+}
+
+export function setAcpAdmissionDenialRecorder(
+  recorder?: AcpAdmissionDenialRecorder,
+): void {
+  acpAdmissionDenialRecorder = recorder;
 }
 
 export function isAcpAdmissionDeniedError(
@@ -371,10 +395,27 @@ export function admitAcpJobExecution(
 
 export function throwIfAcpAdmissionDenied(
   decision: AcpAdmissionDecision,
+  source: AcpAdmissionDenialSource = "unknown",
 ): void {
   if (!decision.ok) {
+    recordAcpAdmissionDenial(decision, source);
     throw new AcpAdmissionDeniedError(decision);
   }
+}
+
+export function recordAcpAdmissionDenial(
+  denial: AcpAdmissionDenial,
+  source: AcpAdmissionDenialSource = "unknown",
+): void {
+  if (acpAdmissionDenialRecorder == null) return;
+  const event: AcpAdmissionDenialEvent = {
+    ...denial,
+    source,
+    time: Date.now(),
+  };
+  void Promise.resolve(acpAdmissionDenialRecorder(event)).catch(() => {
+    // Admission telemetry must never make enqueue/claim admission less robust.
+  });
 }
 
 export function formatAcpAdmissionDenial(denial: AcpAdmissionDenial): string {

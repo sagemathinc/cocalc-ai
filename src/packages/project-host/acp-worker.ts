@@ -33,6 +33,7 @@ import { setMasterConatClient } from "./master-status";
 import { initSqlite } from "./sqlite/init";
 import { getLocalHostId } from "./sqlite/hosts";
 import { startEventLoopStallMonitor } from "./event-loop-stalls";
+import { configureProjectHostAcpAdmissionDenialRecorder } from "./hub/acp/admission-denials";
 
 const logger = getLogger("project-host:acp-worker");
 
@@ -90,6 +91,7 @@ function configureProjectHostAcpRuntime(): void {
       await getProjectOwnerEffectiveLimits(id),
     );
   });
+  configureProjectHostAcpAdmissionDenialRecorder();
   setContainerExec((opts) =>
     sandboxExec({
       ...opts,

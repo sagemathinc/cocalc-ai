@@ -41,6 +41,7 @@ import type {
   HostAccessRole,
   HostAccessEntry,
   HostEffectiveAccessRole,
+  AcpAdmissionDenialRecord,
 } from "@cocalc/conat/hub/api/hosts";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
@@ -57,6 +58,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import centralLog from "@cocalc/database/postgres/central-log";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import {
@@ -1247,6 +1249,109 @@ export async function getProjectOwnerEffectiveLimitsLocal({
   }
   const resolution = await resolveMembershipForAccount(account_id);
   return resolution.effective_limits ?? {};
+}
+
+function nonnegativeInteger(value: unknown): number {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
+}
+
+function optionalString(value: unknown, maxLength: number): string | undefined {
+  const trimmed = `${value ?? ""}`.trim();
+  if (!trimmed) return undefined;
+  return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed;
+}
+
+export async function recordAcpAdmissionDenial({
+  host_id,
+  project_id,
+  account_id,
+  path,
+  thread_id,
+  limit,
+  current,
+  maximum,
+  source,
+  time,
+}: AcpAdmissionDenialRecord): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .recordAcpAdmissionDenial({
+        host_id,
+        project_id,
+        account_id,
+        path,
+        thread_id,
+        limit,
+        current,
+        maximum,
+        source,
+        time,
+      });
+    return;
+  }
+  await recordAcpAdmissionDenialLocal({
+    host_id,
+    project_id,
+    account_id,
+    path,
+    thread_id,
+    limit,
+    current,
+    maximum,
+    source,
+    time,
+  });
+}
+
+export async function recordAcpAdmissionDenialLocal({
+  host_id,
+  project_id,
+  account_id,
+  path,
+  thread_id,
+  limit,
+  current,
+  maximum,
+  source,
+  time,
+}: AcpAdmissionDenialRecord): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+  });
+  await centralLog({
+    event: "acp_admission_denied",
+    value: {
+      host_id,
+      project_id,
+      account_id: optionalString(account_id, 80),
+      path: optionalString(path, 1024),
+      thread_id: optionalString(thread_id, 256),
+      limit: optionalString(limit, 80),
+      current: nonnegativeInteger(current),
+      maximum: nonnegativeInteger(maximum),
+      source: optionalString(source, 80) ?? "unknown",
+      time:
+        typeof time === "number" && Number.isFinite(time)
+          ? new Date(time).toISOString()
+          : new Date().toISOString(),
+    },
+  });
 }
 
 export async function recordProjectBackup({

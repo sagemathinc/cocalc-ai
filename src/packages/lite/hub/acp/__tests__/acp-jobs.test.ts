@@ -9,7 +9,9 @@ import {
   acpAdmissionLimitsFromEffectiveLimits,
   admitAcpJobCreation,
   mergeAcpAdmissionLimits,
+  setAcpAdmissionDenialRecorder,
   throwIfAcpAdmissionDenied,
+  type AcpAdmissionDenialEvent,
 } from "../admission";
 import {
   claimNextQueuedAcpJobForThread,
@@ -72,6 +74,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  setAcpAdmissionDenialRecorder(undefined);
   getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
 });
 
@@ -406,6 +409,35 @@ describe("acp job queue ordering", () => {
       "ACP turn limit reached",
     );
     expect(countQueuedAcpJobsForAccount(firstRequest.account_id)).toBe(1);
+  });
+
+  it("records ACP admission denials before throwing", async () => {
+    const events: AcpAdmissionDenialEvent[] = [];
+    setAcpAdmissionDenialRecorder((event) => {
+      events.push(event);
+    });
+    const decision = {
+      ok: false as const,
+      limit: "running_per_account" as const,
+      current: 2,
+      maximum: 2,
+      account_id: "00000000-1000-4000-8000-000000000001",
+      project_id: "00000000-1000-4000-8000-000000000000",
+      path: "/tmp/acp.chat",
+      thread_id: "thread-1",
+    };
+
+    expect(() => throwIfAcpAdmissionDenied(decision, "claim")).toThrow(
+      "ACP turn limit reached",
+    );
+    await Promise.resolve();
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      ...decision,
+      source: "claim",
+    });
+    expect(events[0].time).toBeGreaterThan(0);
   });
 
   it("allows recovery continuation creation through local queue caps", () => {
