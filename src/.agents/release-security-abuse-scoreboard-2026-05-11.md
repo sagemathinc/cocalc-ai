@@ -165,10 +165,10 @@ Required release behavior:
 ## Open Questions
 
 - Where should hosted SaaS ACP usage accounting live long-term: `acp_jobs`,
-  existing membership usage tables, or a new event ledger?
+  existing membership usage tables, or a new event ledger? ANS: I don't know.  My main concern is that we e don't want to accidentally make things slow or increase load too much during the normal flow usage and checking.   This acp stuff is all running on _project hosts,_ not the bay hubs, and these project hosts should be thought of as far away from the hubs (literally), and we don't want them to put too much stress on hubs. So maybe we have a slightly stale project-host level table, which gets periodically sent to the central bay it is connected to, so it can be seen by admins (and users)?  Basically, I don't know the answer.
 - Should "queued turns" count only pending `acp_jobs`, or also not-yet-acked
-  frontend retry attempts?
-- What are the first production default limits per membership tier?
+  frontend retry attempts?  ANS: Not sure, but whichever is easier and puts less load on the system overall; I would rather be a little more lenient than to slow everything down a lot just checking for limits.
+- What are the first production default limits per membership tier?  ANS: any suggestions?   free: 1;  standard: 10; pro: 50.  I assume this is concurrent turns.      This is really meant to prevent out of control issues, abuse, etc., not severely throttle things.
 - Should recovery continuation jobs consume fresh quota, or use a bounded
-  retry/recovery budget attached to the original turn?
-- Should operator/admin Codex sessions have separate audited emergency limits?
+  retry/recovery budget attached to the original turn?  ANS: original turn
+- Should operator/admin Codex sessions have separate audited emergency limits?  That should not be necessary.
