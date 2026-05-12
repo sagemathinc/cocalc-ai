@@ -10,6 +10,7 @@ import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
 import { CSS, redux } from "@cocalc/frontend/app-framework";
 import { Icon, IconName, TimeAgo } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
+import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { User } from "@cocalc/frontend/users";
 import { MentionInfo } from "./types";
@@ -67,6 +68,7 @@ export function NotificationRow(props: Props) {
     time,
     target,
     description,
+    fragment_id,
     title,
     body_markdown,
     origin_label,
@@ -74,6 +76,7 @@ export function NotificationRow(props: Props) {
     action_label,
     severity,
   } = mention.toJS();
+  const fragmentId = Fragment.decode(fragment_id);
   const is_read = mention.getIn(["users", target, "read"]);
 
   const row_style: CSS = is_read ? { color: "rgb(88, 96, 105)" } : {};
@@ -93,6 +96,16 @@ export function NotificationRow(props: Props) {
     e.preventDefault();
     e.stopPropagation();
     markReadState(is_read ? "unread" : "read");
+  }
+
+  function clickNotificationTarget(): void {
+    if (!project_id || !path) return;
+    redux.getProjectActions(project_id).open_file({
+      path,
+      chat: !!fragmentId?.chat,
+      fragmentId,
+    });
+    markReadState("read");
   }
 
   function renderActionLink() {
@@ -163,8 +176,14 @@ export function NotificationRow(props: Props) {
     );
   }
 
+  const onClick = project_id && path ? clickNotificationTarget : undefined;
+
   return (
-    <li className="cocalc-notification-row-entry" style={row_style}>
+    <li
+      className="cocalc-notification-row-entry"
+      onClick={onClick}
+      style={row_style}
+    >
       <div style={AVATAR_WRAPPING_STYLE}>
         {kind === "mention" && source ? (
           <Avatar account_id={source} />

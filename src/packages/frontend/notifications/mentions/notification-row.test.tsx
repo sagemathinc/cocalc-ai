@@ -50,7 +50,34 @@ describe("NotificationRow", () => {
     markMany.mockReset();
   });
 
-  it("does not mark account notices read when clicking notification content", () => {
+  it("does not mark account notices read when they do not target a file", () => {
+    render(
+      <NotificationRow
+        id="notice-1"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            target: "acct-1",
+            time: new Date("2026-05-07T00:00:00.000Z"),
+            title: "Codex turn finished",
+            body_markdown: "done",
+            origin_label: "Codex",
+            fragment_id: "chat=1234",
+            users: { "acct-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex turn finished"));
+
+    expect(open_file).not.toHaveBeenCalled();
+    expect(mark).not.toHaveBeenCalled();
+    expect(markMany).not.toHaveBeenCalled();
+  });
+
+  it("opens file-target notifications and marks them read", () => {
     render(
       <NotificationRow
         id="notice-1"
@@ -74,8 +101,12 @@ describe("NotificationRow", () => {
 
     fireEvent.click(screen.getByText("Codex turn finished"));
 
-    expect(open_file).not.toHaveBeenCalled();
-    expect(mark).not.toHaveBeenCalled();
+    expect(open_file).toHaveBeenCalledWith({
+      path: "work/chat.chat",
+      chat: true,
+      fragmentId: { chat: "1234" },
+    });
+    expect(mark).toHaveBeenCalledWith(expect.anything(), "notice-1", "read");
     expect(markMany).not.toHaveBeenCalled();
   });
 
