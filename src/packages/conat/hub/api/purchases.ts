@@ -425,6 +425,7 @@ export interface Purchases {
     owner_account_id?: string;
     seat_count?: number;
     expires_at?: Date | string | null;
+    allowed_domains?: string[];
   }) => Promise<MembershipPackageDetails>;
   getMembershipPackages: (opts?: {
     account_id?: string;

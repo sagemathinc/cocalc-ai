@@ -420,12 +420,14 @@ export async function updateMembershipPackage({
   owner_account_id,
   seat_count,
   expires_at,
+  allowed_domains,
 }: {
   account_id?: string;
   package_id?: string;
   owner_account_id?: string;
   seat_count?: number;
   expires_at?: Date | string | null;
+  allowed_domains?: string[];
 } = {}): Promise<MembershipPackageDetails> {
   const actorId = requireAccount(account_id);
   if (!package_id) {
@@ -443,6 +445,10 @@ export async function updateMembershipPackage({
     if (!isAdminActor) {
       throw Error("must be an admin");
     }
+    const normalizedAllowedDomains =
+      allowed_domains === undefined
+        ? undefined
+        : normalizeAllowedDomains(allowed_domains);
     return await createInterBayAccountLocalClient({
       client: getInterBayFabricClient(),
       dest_bay: home_bay_id,
@@ -451,6 +457,7 @@ export async function updateMembershipPackage({
       actor_account_id: actorId,
       seat_count,
       expires_at,
+      allowed_domains: normalizedAllowedDomains,
     });
   }
   const pkg = await getMembershipPackage({ package_id });
@@ -467,6 +474,10 @@ export async function updateMembershipPackage({
     package_id,
     seat_count,
     expires_at,
+    allowed_domains:
+      allowed_domains === undefined
+        ? undefined
+        : normalizeAllowedDomains(allowed_domains),
   });
 }
 

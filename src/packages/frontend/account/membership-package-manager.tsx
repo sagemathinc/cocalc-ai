@@ -940,6 +940,8 @@ function EditSiteLicenseModal({
   onUpdated: () => Promise<void>;
 }) {
   const [seatCount, setSeatCount] = useState<number>(1);
+  const [domains, setDomains] = useState<string[]>([]);
+  const [domainSearch, setDomainSearch] = useState<string>("");
   const [expiresAt, setExpiresAt] = useState<Dayjs | null>(null);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
@@ -947,6 +949,8 @@ function EditSiteLicenseModal({
   useEffect(() => {
     if (!open || !membershipPackage) return;
     setSeatCount(membershipPackage.seat_count);
+    setDomains(normalizeDomainList(getPackageDomains(membershipPackage)));
+    setDomainSearch("");
     setExpiresAt(
       membershipPackage.expires_at ? dayjs(membershipPackage.expires_at) : null,
     );
@@ -959,10 +963,15 @@ function EditSiteLicenseModal({
     setSubmitting(true);
     setError("");
     try {
+      const allowed_domains = normalizeDomainList([...domains, domainSearch]);
+      if (allowed_domains.length === 0) {
+        throw Error("Enter at least one allowed email domain.");
+      }
       await updateMembershipPackage({
         package_id: membershipPackage.id,
         owner_account_id: membershipPackage.owner_account_id,
         seat_count: seatCount,
+        allowed_domains,
         expires_at: expiresAt?.endOf("day").toDate() ?? null,
       });
       await onUpdated();
@@ -996,7 +1005,7 @@ function EditSiteLicenseModal({
         <Alert
           type="info"
           showIcon
-          title="Changing the expiration date updates active membership grants for assigned or claimed seats."
+          title="Changing the expiration date updates active membership grants for assigned or claimed seats. Changing domains only affects future site-license claims; it does not revoke existing claimed seats."
         />
         <div>
           <Text strong>Seats</Text>
@@ -1010,6 +1019,30 @@ function EditSiteLicenseModal({
           <Text type="secondary">
             Must be at least the current active assignment count ({activeSeats}
             ).
+          </Text>
+        </div>
+        <div>
+          <Text strong>Allowed email domains</Text>
+          <Select
+            mode="tags"
+            tokenSeparators={[",", " ", "\n", ";"]}
+            value={domains}
+            onSearch={setDomainSearch}
+            onChange={(values) => {
+              setDomains(normalizeDomainList(values));
+              setDomainSearch("");
+            }}
+            onBlur={() => {
+              const next = normalizeDomainList([...domains, domainSearch]);
+              setDomains(next);
+              setDomainSearch("");
+            }}
+            placeholder="example.edu, department.example.edu"
+            style={{ width: "100%", marginTop: 6 }}
+          />
+          <Text type="secondary">
+            Add or remove domains for future verified-domain claims. Existing
+            claimed seats stay assigned unless you revoke them explicitly.
           </Text>
         </div>
         <div>

@@ -419,7 +419,7 @@ describe("MembershipPackageManager", () => {
     });
   });
 
-  it("lets admins update a site license seat count", async () => {
+  it("lets admins update a site license seat count and allowed domains", async () => {
     isAdmin = true;
     getMembershipPackages.mockResolvedValue([
       {
@@ -455,6 +455,11 @@ describe("MembershipPackageManager", () => {
     fireEvent.click(screen.getByText("Edit license"));
     const seats = await screen.findByDisplayValue("50");
     fireEvent.change(seats, { target: { value: "75" } });
+    const domainInput = screen.getAllByRole("combobox")[0];
+    fireEvent.change(domainInput!, {
+      target: { value: "Example.EDU, dept.example.edu" },
+    });
+    fireEvent.blur(domainInput!);
     fireEvent.click(screen.getByText("Save license"));
 
     await waitFor(() => {
@@ -462,6 +467,7 @@ describe("MembershipPackageManager", () => {
         package_id: "site-1",
         owner_account_id: "owner-1",
         seat_count: 75,
+        allowed_domains: ["dept.example.edu", "example.edu"],
         expires_at: null,
       });
     });

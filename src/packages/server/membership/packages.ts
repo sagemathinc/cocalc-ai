@@ -973,18 +973,20 @@ export async function updateMembershipPackage({
   package_id,
   seat_count,
   expires_at,
+  allowed_domains,
   client,
 }: {
   package_id: string;
   seat_count?: number;
   expires_at?: Date | string | null;
+  allowed_domains?: string[];
   client?: PoolClient;
 }): Promise<MembershipPackageDetails> {
   return await withPackageOwnerWriteFence({
     package_id,
     action: "update membership package",
     client,
-    fn: async ({ client: dbClient }) => {
+    fn: async ({ client: dbClient, pkg }) => {
       const assignments = await listMembershipPackageAssignments({
         package_id,
         include_revoked: false,
@@ -1005,6 +1007,16 @@ export async function updateMembershipPackage({
       }
       const nextExpiresAt =
         expires_at === undefined ? undefined : asDate(expires_at);
+      if (allowed_domains !== undefined && pkg.kind !== "site") {
+        throw Error("allowed_domains can only be updated for site packages");
+      }
+      const nextMetadata =
+        allowed_domains === undefined
+          ? undefined
+          : {
+              ...normalizeMetadata(pkg.metadata),
+              allowed_domains,
+            };
       const { rows } = await getQueryClient(
         dbClient,
       ).query<RawMembershipPackageRecord>(
@@ -1012,6 +1024,7 @@ export async function updateMembershipPackage({
           UPDATE membership_packages
           SET seat_count = COALESCE($2::integer, seat_count),
               expires_at = CASE WHEN $3::boolean THEN $4::timestamp ELSE expires_at END,
+              metadata = CASE WHEN $5::boolean THEN $6::jsonb ELSE metadata END,
               updated = NOW()
           WHERE id = $1
           RETURNING id, owner_account_id, kind, membership_class, seat_count,
@@ -1022,6 +1035,8 @@ export async function updateMembershipPackage({
           normalizedSeatCount ?? null,
           expires_at !== undefined,
           nextExpiresAt ?? null,
+          allowed_domains !== undefined,
+          nextMetadata ?? null,
         ],
       );
       const updatedPackage = normalizePackageRecord(rows[0]);
