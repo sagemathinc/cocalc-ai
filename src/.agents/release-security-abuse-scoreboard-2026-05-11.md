@@ -22,7 +22,7 @@ Statuses:
 | SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                                                                             | Revisit defaults after load testing.                                            |
 | SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report. | Add actor-account limit cache if collaborator caps must differ from owner caps. |
 | SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                                                                                                                                                                             | Add membership-backed automation-specific caps if needed.                       |
-| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, and app proxy websockets; these now fast-fail above conservative active-request caps.                                        | Continue low-level socket.io admission review.                                  |
+| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, app proxy websockets, and raw Conat socket events; these now fast-fail above conservative active-request/message caps.       | Tune per-identity limits and production alert thresholds from telemetry.        |
 | SEC-BROWSER-001 | Browser exec/session automation              | unknown | critical | Not audited in this pass.                                                                                                                                                                                                                                 | Audit QuickJS sandbox defaults and raw exec production policy.                  |
 | SEC-CLI-001     | `cocalc-cli` authority classes               | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Classify command families by credential type and dangerous-action requirements. |
 | SEC-KEY-001     | Account/project API keys                     | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Inventory project-key consumers and account-key scope checks.                   |
@@ -282,21 +282,25 @@ Implemented first guard:
 - App-server websocket proxying now has local active websocket caps:
   - `COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_PER_TARGET`, default `64`.
   - `COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_TOTAL`, default `256`.
+- Raw Conat/socket.io protocol events now have a per-socket sliding-window
+  admission guard before publish/RPC/subscription handler work:
+  - `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW`, default `2000`.
+  - `COCALC_CONAT_INBOUND_EVENT_WINDOW_MS`, default `10000`.
+  - `COCALC_CONAT_INBOUND_EVENT_BLOCK_MS`, default `10000`.
+  - Denials return normal 429-style responses for acked events and increment
+    `inbound-deny:count` in Conat usage metrics.
 
 Residual risk:
 
-- This first pass bounds active handler count, not all possible inbound socket
-  messages. The Conat/socket.io layer may still need lower-level per-connection
-  admission for malformed, unauthenticated, or high-rate message streams before
-  they reach a service handler.
-- Raw Conat/socket.io still needs per-connection and per-auth-identity
-  admission below the service layer.
+- This pass now bounds active handler count and high-rate raw Conat socket
+  messages per connection. It does not yet enforce a shared per-account or
+  per-project message budget across many simultaneous sockets.
 - Defaults are intentionally broad and should be tuned with production load
   testing and observability.
 
 Suggested next audit steps:
 
-1. Add lower-level Conat/socket.io per-connection message admission for
-   malformed, unauthenticated, or high-rate traffic before service dispatch.
+1. Add per-auth-identity Conat/socket.io message admission across multiple
+   simultaneous sockets.
 2. Add central denial telemetry for hub/service busy rejections if operational
    monitoring shows these caps are hit in production.
