@@ -4652,9 +4652,11 @@ export async function reconcileHostRehome({
 export async function refreshHostCloudState({
   account_id,
   id,
+  confirm_missing,
 }: {
   account_id?: string;
   id: string;
+  confirm_missing?: boolean;
 }): Promise<HostCloudRefreshResult> {
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
@@ -4663,6 +4665,7 @@ export async function refreshHostCloudState({
       .refreshHostCloudState({
         account_id,
         id,
+        confirm_missing,
       });
   }
   const owner = requireAccount(account_id);
@@ -4671,10 +4674,11 @@ export async function refreshHostCloudState({
   }
   const { rows } = await pool().query<{
     id: string;
+    status?: string | null;
     deleted: Date | null;
     metadata?: Record<string, any> | null;
   }>(
-    `SELECT id, deleted, metadata
+    `SELECT id, status, deleted, metadata
      FROM project_hosts
      WHERE id=$1`,
     [id],
@@ -4687,16 +4691,58 @@ export async function refreshHostCloudState({
   if (!provider || provider === "local" || provider === "self-host") {
     throw new Error("cloud refresh is only supported for cloud hosts");
   }
-  await bumpReconcile(provider, 0);
-  const result = await runReconcileOnce(provider);
+  const requestedPasses = confirm_missing ? 2 : 1;
+  let ranPasses = 0;
+  let skipped: HostCloudRefreshResult["skipped"] | undefined;
+  let nextAt: string | undefined;
+  for (let i = 0; i < requestedPasses; i++) {
+    await bumpReconcile(provider, 0);
+    const result = await runReconcileOnce(provider);
+    nextAt = result?.next_at?.toISOString();
+    if (result?.ran) {
+      ranPasses += 1;
+      continue;
+    }
+    skipped = result?.skipped ?? (result == null ? "locked" : undefined);
+    break;
+  }
+  const { rows: refreshedRows } = await pool().query<{
+    id: string;
+    status?: string | null;
+    deleted: Date | null;
+    metadata?: Record<string, any> | null;
+  }>(
+    `SELECT id, status, deleted, metadata
+     FROM project_hosts
+     WHERE id=$1`,
+    [id],
+  );
+  const refreshed = refreshedRows[0] ?? row;
+  const runtime = refreshed.metadata?.runtime ?? {};
+  const reconcileMetadata = runtime.metadata?.reconcile ?? {};
   return {
     host_id: id,
     provider,
     scope: "provider",
     refreshed_at: new Date().toISOString(),
-    ran: !!result?.ran,
-    skipped: result?.skipped ?? (result == null ? "locked" : undefined),
-    next_at: result?.next_at?.toISOString(),
+    ran: ranPasses > 0,
+    passes: ranPasses,
+    skipped,
+    next_at: nextAt,
+    status: refreshed.status ?? null,
+    deleted: !!refreshed.deleted,
+    runtime_provider_status:
+      typeof runtime.provider_status === "string"
+        ? runtime.provider_status
+        : null,
+    runtime_missing_count: Number.isFinite(
+      Number(reconcileMetadata.missing_count),
+    )
+      ? Number(reconcileMetadata.missing_count)
+      : null,
+    runtime_observed_at:
+      typeof runtime.observed_at === "string" ? runtime.observed_at : null,
+    public_ip: typeof runtime.public_ip === "string" ? runtime.public_ip : null,
   };
 }
 

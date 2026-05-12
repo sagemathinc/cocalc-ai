@@ -269,8 +269,15 @@ export interface HostCloudRefreshResult {
   scope: "provider";
   refreshed_at: string;
   ran: boolean;
+  passes?: number;
   skipped?: "locked" | "not_due";
   next_at?: string;
+  status?: HostStatus | string | null;
+  deleted?: boolean;
+  runtime_provider_status?: string | null;
+  runtime_missing_count?: number | null;
+  runtime_observed_at?: string | null;
+  public_ip?: string | null;
 }
 
 export interface ProjectBackupIndexStoreConfig {
@@ -1534,6 +1541,7 @@ export interface Hosts {
   refreshHostCloudState: (opts: {
     account_id?: string;
     id: string;
+    confirm_missing?: boolean;
   }) => Promise<HostCloudRefreshResult>;
   removeSelfHostConnector: (opts: {
     account_id?: string;

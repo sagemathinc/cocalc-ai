@@ -4603,17 +4603,29 @@ describe("hosts.refreshHostCloudState", () => {
       epoch: 1,
     }));
     queryMock = jest.fn(async (sql: string, params: any[]) => {
-      if (sql.includes("SELECT id, deleted, metadata")) {
+      if (sql.includes("SELECT id, status, deleted, metadata")) {
         return {
           rows: [
             {
               id: params?.[0],
+              status: "running",
               deleted: null,
               metadata: {
                 machine: {
                   cloud: "gcp",
                 },
+                runtime: {
+                  provider_status: "running",
+                  observed_at: "2026-01-01T00:00:00Z",
+                  public_ip: "203.0.113.10",
+                  metadata: {
+                    reconcile: {
+                      missing_count: 0,
+                    },
+                  },
+                },
               },
+              public_url: "https://host.example.com",
             },
           ],
         };
@@ -4634,15 +4646,40 @@ describe("hosts.refreshHostCloudState", () => {
       provider: "gcp",
       scope: "provider",
       ran: true,
+      passes: 1,
       next_at: "2026-01-01T00:00:00.000Z",
+      status: "running",
+      runtime_provider_status: "running",
+      runtime_missing_count: 0,
+      runtime_observed_at: "2026-01-01T00:00:00Z",
+      public_ip: "203.0.113.10",
     });
     expect(bumpReconcileMock).toHaveBeenCalledWith("gcp", 0);
     expect(runReconcileOnceMock).toHaveBeenCalledWith("gcp");
   });
 
+  it("can intentionally run two passes to confirm a missing cloud VM", async () => {
+    const { refreshHostCloudState } = await import("./hosts");
+    await expect(
+      refreshHostCloudState({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+        confirm_missing: true,
+      }),
+    ).resolves.toMatchObject({
+      host_id: HOST_ID,
+      provider: "gcp",
+      ran: true,
+      passes: 2,
+      status: "running",
+    });
+    expect(bumpReconcileMock).toHaveBeenCalledTimes(2);
+    expect(runReconcileOnceMock).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects non-cloud hosts", async () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
-      if (sql.includes("SELECT id, deleted, metadata")) {
+      if (sql.includes("SELECT id, status, deleted, metadata")) {
         return {
           rows: [
             {
