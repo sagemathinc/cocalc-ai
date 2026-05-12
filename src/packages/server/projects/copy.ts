@@ -10,6 +10,7 @@ import { createBackup as createBackupLro } from "@cocalc/server/conat/api/projec
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { insertCopyRowIfMissing, upsertCopyRow } from "./copy-db";
+import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 
 const logger = getLogger("server:projects:copy");
 
@@ -90,6 +91,15 @@ function normalizeCopyPath(raw: string, label: string): string {
   return normalized;
 }
 
+function normalizeDestPath(raw: string, label: string): string {
+  const normalized = normalizeCopyPath(raw, label);
+  const homeRelative = projectRuntimeHomeRelativePath(normalized);
+  if (homeRelative != null) {
+    return homeRelative;
+  }
+  return normalized;
+}
+
 function normalizeSrcPaths(src: CopySource): string[] {
   const raw = Array.isArray(src.path) ? src.path : [src.path];
   if (!raw.length) {
@@ -131,6 +141,10 @@ function normalizeBackupPath({
       return normalized.slice(src_home.length + 1);
     }
   }
+  const homeRelative = projectRuntimeHomeRelativePath(normalized);
+  if (homeRelative != null) {
+    return homeRelative;
+  }
   if (normalized === "/root") return "";
   if (normalized.startsWith("/root/")) {
     return normalized.slice("/root/".length);
@@ -159,10 +173,7 @@ function resolveRemoteSingleDestPath({
   if (!srcPath || !isProjectRootCopyDest(destPath)) {
     return destPath;
   }
-  return normalizeCopyPath(
-    path.posix.join("/root", path.posix.basename(srcPath)),
-    "dest.path",
-  );
+  return normalizeCopyPath(path.posix.basename(srcPath), "dest.path");
 }
 
 async function getHostIds(project_ids: string[]): Promise<Map<string, string>> {
@@ -467,7 +478,7 @@ export async function copyProjectFiles({
 
   const normalizedDests = dests.map((dest, idx) => ({
     project_id: dest.project_id,
-    path: normalizeCopyPath(dest.path, `dests[${idx}].path`),
+    path: normalizeDestPath(dest.path, `dests[${idx}].path`),
   }));
 
   const projectIds = new Set<string>([src.project_id]);

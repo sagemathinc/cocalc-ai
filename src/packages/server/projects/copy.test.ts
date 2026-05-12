@@ -157,7 +157,7 @@ describe("projects.copyProjectFiles", () => {
     expect(cpMock).toHaveBeenCalledTimes(1);
     expect(cpMock).toHaveBeenCalledWith({
       src: { project_id: "src", path: "/root/a.txt" },
-      dest: { project_id: "dest", path: "/root/b.txt" },
+      dest: { project_id: "dest", path: "b.txt" },
       options: undefined,
     });
     expect(upsertMock).not.toHaveBeenCalled();
@@ -206,7 +206,7 @@ describe("projects.copyProjectFiles", () => {
         src_project_id: "src",
         src_path: "a.txt",
         dest_project_id: "dest",
-        dest_path: "/root/b.txt",
+        dest_path: "b.txt",
         snapshot_id: "snap-existing",
       }),
     );
@@ -245,12 +245,37 @@ describe("projects.copyProjectFiles", () => {
     expect(upsertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         src_path: "a.txt",
-        dest_path: "/root/a.txt",
+        dest_path: "a.txt",
       }),
     );
     expect(applyPendingCopiesMock).toHaveBeenCalledWith(
       expect.objectContaining({
         limit: 10,
+      }),
+    );
+  });
+
+  it("treats /home/user as the project root for remote single-file copies", async () => {
+    queryMock = makeProjectQuery({ src: "h1", dest: "h2" });
+    getBackupFilesMock.mockResolvedValue([{ name: "bar.txt" }]);
+    const { copyProjectFiles } = await import("./copy");
+    const result = await copyProjectFiles({
+      account_id: "acct",
+      timeout_ms: 0,
+      src: { project_id: "src", path: "/home/user/bar.txt" },
+      dests: [{ project_id: "dest", path: "/home/user" }],
+      snapshot_id: "snap-existing",
+    });
+
+    expect(result).toEqual({
+      queued: 1,
+      local: 0,
+      snapshot_id: "snap-existing",
+    });
+    expect(upsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        src_path: "bar.txt",
+        dest_path: "bar.txt",
       }),
     );
   });
@@ -280,14 +305,14 @@ describe("projects.copyProjectFiles", () => {
       1,
       expect.objectContaining({
         src_path: "a.txt",
-        dest_path: "/root/target/a.txt",
+        dest_path: "target/a.txt",
       }),
     );
     expect(upsertMock).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
         src_path: "b.txt",
-        dest_path: "/root/target/b.txt",
+        dest_path: "target/b.txt",
       }),
     );
   });
@@ -313,7 +338,7 @@ describe("projects.copyProjectFiles", () => {
     expect(upsertMock).toHaveBeenCalledWith(
       expect.objectContaining({
         src_path: "x.py",
-        dest_path: "/root/out",
+        dest_path: "out",
       }),
     );
   });
