@@ -39,6 +39,7 @@ export const system = {
   setBayProjectOwnershipAdmission: authFirstRequireAccount,
   getBayLoad: authFirst,
   getBayBackups: authFirst,
+  getAcpAdmissionDenialReport: authFirstRequireAccount,
   getProjectBackupShards: authFirst,
   runBayBackup: authFirst,
   runBayRestore: authFirst,
@@ -217,6 +218,28 @@ export interface BrowserSessionInfo {
   stale: boolean;
   connected?: boolean;
   connection_count?: number;
+}
+
+export interface AcpAdmissionDenialSummary {
+  account_id: string | null;
+  project_id: string | null;
+  limit: string;
+  source: string;
+  count: number;
+  first_time: string;
+  last_time: string;
+  max_current: number;
+  max_maximum: number;
+  sample_path?: string | null;
+  sample_thread_id?: string | null;
+}
+
+export interface AcpAdmissionDenialReport {
+  checked_at: string;
+  since: string;
+  window_minutes: number;
+  min_count: number;
+  groups: AcpAdmissionDenialSummary[];
 }
 
 export interface BrowserSignInCookieInfo {
@@ -1017,6 +1040,17 @@ export interface System {
     account_id?: string;
     bay_id?: string;
   }) => Promise<BayBackupsInfo>;
+
+  getAcpAdmissionDenialReport: (opts?: {
+    account_id?: string;
+    window_minutes?: number;
+    min_count?: number;
+    limit?: number;
+    user_account_id?: string | null;
+    project_id?: string | null;
+    denial_limit?: string | null;
+    source?: string | null;
+  }) => Promise<AcpAdmissionDenialReport>;
 
   getProjectBackupShards: (opts?: {
     account_id?: string;

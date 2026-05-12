@@ -213,6 +213,46 @@ export function buildEntitlementOverrideSchemaDoc() {
           descriptions.usage_limits.prepaid_host_usage_limit_7d_usd
             .adminDescription,
       }),
+      fieldDoc({
+        path: "usage_limits.acp_max_queued_per_account",
+        ...descriptions.usage_limits.acp_max_queued_per_account,
+        description:
+          descriptions.usage_limits.acp_max_queued_per_account.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.acp_max_queued_per_thread",
+        ...descriptions.usage_limits.acp_max_queued_per_thread,
+        description:
+          descriptions.usage_limits.acp_max_queued_per_thread.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.acp_max_created_5h_per_account",
+        ...descriptions.usage_limits.acp_max_created_5h_per_account,
+        description:
+          descriptions.usage_limits.acp_max_created_5h_per_account
+            .adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.acp_max_created_7d_per_account",
+        ...descriptions.usage_limits.acp_max_created_7d_per_account,
+        description:
+          descriptions.usage_limits.acp_max_created_7d_per_account
+            .adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.acp_max_running_per_account",
+        ...descriptions.usage_limits.acp_max_running_per_account,
+        description:
+          descriptions.usage_limits.acp_max_running_per_account
+            .adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.acp_max_running_per_project",
+        ...descriptions.usage_limits.acp_max_running_per_project,
+        description:
+          descriptions.usage_limits.acp_max_running_per_project
+            .adminDescription,
+      }),
       {
         path: "dedicated_hosts.funding_mode",
         kind: "enum_rule",
@@ -312,6 +352,76 @@ function requireReason(value: string | undefined): string {
     throw new Error("--reason is required");
   }
   return reason;
+}
+
+function parsePositiveIntegerOption({
+  name,
+  value,
+  fallback,
+  max,
+}: {
+  name: string;
+  value?: string;
+  fallback: number;
+  max: number;
+}): number {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return Math.min(parsed, max);
+}
+
+function prometheusLabelValue(value: unknown): string {
+  return `${value ?? ""}`
+    .replace(/\\/g, "\\\\")
+    .replace(/\n/g, "\\n")
+    .replace(/"/g, '\\"');
+}
+
+function prometheusLabels(labels: Record<string, unknown>): string {
+  return Object.entries(labels)
+    .map(([key, value]) => `${key}="${prometheusLabelValue(value)}"`)
+    .join(",");
+}
+
+function formatAcpDenialPrometheus(report: any): string {
+  const lines = [
+    "# HELP cocalc_acp_admission_denials_window_total ACP admission denials in the selected recent time window.",
+    "# TYPE cocalc_acp_admission_denials_window_total gauge",
+  ];
+  const windowMinutes = report?.window_minutes ?? "";
+  for (const group of report?.groups ?? []) {
+    const labels = prometheusLabels({
+      account_id: group.account_id ?? "",
+      project_id: group.project_id ?? "",
+      limit: group.limit ?? "unknown",
+      source: group.source ?? "unknown",
+      window_minutes: windowMinutes,
+    });
+    lines.push(
+      `cocalc_acp_admission_denials_window_total{${labels}} ${Number(group.count) || 0}`,
+    );
+  }
+  lines.push(
+    "# HELP cocalc_acp_admission_denials_max_current Maximum observed current usage in the selected recent time window.",
+    "# TYPE cocalc_acp_admission_denials_max_current gauge",
+  );
+  for (const group of report?.groups ?? []) {
+    const labels = prometheusLabels({
+      account_id: group.account_id ?? "",
+      project_id: group.project_id ?? "",
+      limit: group.limit ?? "unknown",
+      source: group.source ?? "unknown",
+      window_minutes: windowMinutes,
+    });
+    lines.push(
+      `cocalc_acp_admission_denials_max_current{${labels}} ${Number(group.max_current) || 0}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 export function registerAdminCommand(
@@ -432,6 +542,75 @@ export function registerAdminCommand(
           return await ctx.hub.system.getProjectBackupShards({
             region: opts.region?.trim() || undefined,
           });
+        });
+      },
+    );
+
+  admin
+    .command("acp-denials")
+    .description(
+      "show repeated ACP admission-denied events from central_log (admin-only)",
+    )
+    .option("--window-minutes <n>", "lookback window in minutes", "60")
+    .option("--min-count <n>", "minimum grouped denial count", "1")
+    .option("--limit <n>", "maximum grouped rows", "50")
+    .option("--account <account>", "filter by account id, email, or name query")
+    .option("--project <project_id>", "filter by project id")
+    .option(
+      "--denial-limit <name>",
+      "filter by denial limit, e.g. queued_per_account",
+    )
+    .option("--source <source>", "filter by source: chat, automation, claim")
+    .option(
+      "--prometheus",
+      "emit Prometheus text exposition for command-based scraping",
+    )
+    .action(
+      async (
+        opts: {
+          windowMinutes?: string;
+          minCount?: string;
+          limit?: string;
+          account?: string;
+          project?: string;
+          denialLimit?: string;
+          source?: string;
+          prometheus?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin acp-denials", async (ctx) => {
+          const userAccountId = opts.account
+            ? await resolveTargetAccountId(ctx, opts.account)
+            : undefined;
+          const report = await ctx.hub.system.getAcpAdmissionDenialReport({
+            window_minutes: parsePositiveIntegerOption({
+              name: "--window-minutes",
+              value: opts.windowMinutes,
+              fallback: 60,
+              max: 7 * 24 * 60,
+            }),
+            min_count: parsePositiveIntegerOption({
+              name: "--min-count",
+              value: opts.minCount,
+              fallback: 1,
+              max: 1_000_000,
+            }),
+            limit: parsePositiveIntegerOption({
+              name: "--limit",
+              value: opts.limit,
+              fallback: 50,
+              max: 500,
+            }),
+            user_account_id: userAccountId,
+            project_id: opts.project?.trim() || undefined,
+            denial_limit: opts.denialLimit?.trim() || undefined,
+            source: opts.source?.trim() || undefined,
+          });
+          if (opts.prometheus) {
+            return formatAcpDenialPrometheus(report);
+          }
+          return report.groups ?? [];
         });
       },
     );

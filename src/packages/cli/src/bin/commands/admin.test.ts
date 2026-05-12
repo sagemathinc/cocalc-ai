@@ -204,6 +204,121 @@ test("admin entitlement-override schema documents usable override payloads", asy
   );
 });
 
+test("admin acp-denials forwards filters to the hub report endpoint", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      system: {
+        getAcpAdmissionDenialReport: async (opts: any) => {
+          captured = opts;
+          return {
+            checked_at: "2026-05-11T00:00:00.000Z",
+            since: "2026-05-10T23:00:00.000Z",
+            window_minutes: opts.window_minutes,
+            min_count: opts.min_count,
+            groups: [
+              {
+                account_id: opts.user_account_id,
+                project_id: opts.project_id,
+                limit: opts.denial_limit,
+                source: opts.source,
+                count: 7,
+                first_time: "2026-05-10T23:30:00.000Z",
+                last_time: "2026-05-10T23:59:00.000Z",
+                max_current: 10,
+                max_maximum: 10,
+              },
+            ],
+          };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "acp-denials",
+    "--window-minutes",
+    "30",
+    "--min-count",
+    "3",
+    "--limit",
+    "25",
+    "--account",
+    "alice@example.com",
+    "--project",
+    "11111111-1111-4111-8111-111111111111",
+    "--denial-limit",
+    "queued_per_account",
+    "--source",
+    "chat",
+  ]);
+
+  assert.deepEqual(captured, {
+    window_minutes: 30,
+    min_count: 3,
+    limit: 25,
+    user_account_id: "22222222-2222-4222-8222-222222222222",
+    project_id: "11111111-1111-4111-8111-111111111111",
+    denial_limit: "queued_per_account",
+    source: "chat",
+  });
+});
+
+test("admin acp-denials can emit prometheus text", async () => {
+  let output = "";
+  const program = new Command();
+  registerAdminCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      output = await fn({
+        hub: {
+          system: {
+            getAcpAdmissionDenialReport: async () => ({
+              checked_at: "2026-05-11T00:00:00.000Z",
+              since: "2026-05-10T23:00:00.000Z",
+              window_minutes: 60,
+              min_count: 1,
+              groups: [
+                {
+                  account_id: "acct",
+                  project_id: "project",
+                  limit: "running_per_account",
+                  source: "claim",
+                  count: 4,
+                  first_time: "2026-05-10T23:30:00.000Z",
+                  last_time: "2026-05-10T23:59:00.000Z",
+                  max_current: 8,
+                  max_maximum: 8,
+                },
+              ],
+            }),
+          },
+        },
+      });
+    },
+    resolveAccountByIdentifier: async () => {
+      throw new Error("not used");
+    },
+    isValidUUID: () => false,
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "acp-denials",
+    "--prometheus",
+  ]);
+
+  assert.match(output, /cocalc_acp_admission_denials_window_total/);
+  assert.match(output, /limit="running_per_account"/);
+  assert.match(output, / 4\n/);
+});
+
 test("admin message send-system-notice forwards the system notice payload", async () => {
   let captured: any;
   const program = new Command();
