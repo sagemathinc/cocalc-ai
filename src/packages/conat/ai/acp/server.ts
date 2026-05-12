@@ -105,7 +105,22 @@ let forkSub: Subscription | null = null;
 let truncateSub: Subscription | null = null;
 let controlSub: Subscription | null = null;
 let automationSub: Subscription | null = null;
-const MAX_CONCURRENCY = Number(process.env.COCALC_ACP_MAX_CONCURRENCY ?? 64);
+function nonNegativeIntegerFromEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value) || value < 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+const MAX_CONCURRENCY = Math.max(
+  1,
+  nonNegativeIntegerFromEnv("COCALC_ACP_MAX_CONCURRENCY", 64),
+);
+const MAX_PENDING = nonNegativeIntegerFromEnv(
+  "COCALC_ACP_MAX_PENDING",
+  MAX_CONCURRENCY * 4,
+);
 const limiter = pLimit(MAX_CONCURRENCY);
 const inFlightChatTurnKeys = new Map<
   string,
@@ -116,10 +131,33 @@ const inFlightSessionTurnKeys = new Map<
   { startedAt: number; subject: string }
 >();
 
+async function rejectOverloaded(label: string, mesg): Promise<void> {
+  const error = `ACP server is busy; too many pending ${label} requests`;
+  logger.warn("rejecting ACP request because pending queue is full", {
+    label,
+    activeCount: limiter.activeCount,
+    pendingCount: limiter.pendingCount,
+    maxConcurrency: MAX_CONCURRENCY,
+    maxPending: MAX_PENDING,
+    subject: mesg?.subject,
+  });
+  if (label === "message") {
+    await mesg.respond({ seq: 0, type: "error", error }, { noThrow: true });
+    await mesg.respond(null, { noThrow: true });
+    return;
+  }
+  await mesg.respond({ error }, { noThrow: true });
+}
+
 async function runLimited(
   label: string,
+  mesg,
   fn: () => Promise<void>,
 ): Promise<void> {
+  if (limiter.pendingCount >= MAX_PENDING) {
+    await rejectOverloaded(label, mesg);
+    return;
+  }
   void limiter(async () => {
     try {
       await fn();
@@ -240,7 +278,7 @@ function listenApi(evaluate: EvaluateHandler): void {
   if (apiSub == null) throw Error("must init first");
   (async () => {
     for await (const mesg of apiSub!) {
-      void runLimited("message", () => handleMessage(mesg, evaluate));
+      void runLimited("message", mesg, () => handleMessage(mesg, evaluate));
     }
   })().catch((err) => {
     logger.warn("acp api listener stopped", err);
@@ -251,7 +289,7 @@ function listenInterrupts(interruptHandler: InterruptHandler): void {
   if (interruptSub == null) return;
   (async () => {
     for await (const mesg of interruptSub!) {
-      void runLimited("interrupt", () =>
+      void runLimited("interrupt", mesg, () =>
         handleInterruptMessage(mesg, interruptHandler),
       );
     }
@@ -264,7 +302,9 @@ function listenSteers(steerHandler: SteerHandler): void {
   if (steerSub == null) return;
   (async () => {
     for await (const mesg of steerSub!) {
-      void runLimited("steer", () => handleSteerMessage(mesg, steerHandler));
+      void runLimited("steer", mesg, () =>
+        handleSteerMessage(mesg, steerHandler),
+      );
     }
   })().catch((err) => {
     logger.warn("acp steer listener stopped", err);
@@ -275,7 +315,7 @@ function listenForks(forkHandler: ForkHandler): void {
   if (forkSub == null) return;
   (async () => {
     for await (const mesg of forkSub!) {
-      void runLimited("fork", () => handleForkMessage(mesg, forkHandler));
+      void runLimited("fork", mesg, () => handleForkMessage(mesg, forkHandler));
     }
   })().catch((err) => {
     logger.warn("acp fork listener stopped", err);
@@ -286,7 +326,7 @@ function listenTruncates(truncateHandler: TruncateHandler): void {
   if (truncateSub == null) return;
   (async () => {
     for await (const mesg of truncateSub!) {
-      void runLimited("truncate", () =>
+      void runLimited("truncate", mesg, () =>
         handleTruncateMessage(mesg, truncateHandler),
       );
     }
@@ -299,7 +339,7 @@ function listenControls(controlHandler: ControlHandler): void {
   if (controlSub == null) return;
   (async () => {
     for await (const mesg of controlSub!) {
-      void runLimited("control", () =>
+      void runLimited("control", mesg, () =>
         handleControlMessage(mesg, controlHandler),
       );
     }
@@ -312,7 +352,7 @@ function listenAutomations(automationHandler: AutomationHandler): void {
   if (automationSub == null) return;
   (async () => {
     for await (const mesg of automationSub!) {
-      void runLimited("automation", () =>
+      void runLimited("automation", mesg, () =>
         handleAutomationMessage(mesg, automationHandler),
       );
     }
