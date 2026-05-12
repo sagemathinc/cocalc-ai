@@ -24,7 +24,7 @@ import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
 import getServerSettings, {
   ServerSettingsDynamic,
 } from "./servers/server-settings";
-import { have_active_registration_tokens } from "./utils";
+import { requires_registration_token } from "./utils";
 import {
   getCocalcProduct,
   isLaunchpadProduct,
@@ -349,7 +349,7 @@ export class WebappConfiguration {
           }),
         ),
         this.traceSlowStep("registration", () =>
-          have_active_registration_tokens(this.db),
+          requires_registration_token(this.db),
         ),
         this.traceSlowStep("ollama", () => this.get_ollama_public()),
         this.traceSlowStep("custom_openai", () =>

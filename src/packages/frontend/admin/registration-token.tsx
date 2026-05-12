@@ -30,6 +30,7 @@ import {
   redux,
   Rendered,
   TypedMap,
+  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import {
   ErrorDisplay,
@@ -69,6 +70,8 @@ function useRegistrationTokens() {
   const [loading, set_loading] = React.useState<boolean>(false);
   const [last_saved, set_last_saved] = React.useState<Token | null>(null);
   const [error, set_error] = React.useState<string>("");
+  const [saving_public_signup, set_saving_public_signup] =
+    React.useState<boolean>(false);
   const [sel_rows, set_sel_rows] = React.useState<any>([]);
 
   // Antd
@@ -217,6 +220,28 @@ function useRegistrationTokens() {
     }
   }
 
+  async function save_public_signup_without_token(
+    enabled: boolean,
+  ): Promise<void> {
+    set_saving_public_signup(true);
+    try {
+      await query({
+        query: {
+          site_settings: {
+            name: "public_signup_without_registration_token",
+            value: enabled ? "yes" : "no",
+          },
+        },
+      });
+      set_error("");
+    } catch (err) {
+      set_error(`${err}`);
+      throw err;
+    } finally {
+      set_saving_public_signup(false);
+    }
+  }
+
   // we generate a random token and make sure it doesn't exist
   // TODO also let the user generate one with a validation check
   function new_random_token(): string {
@@ -235,6 +260,7 @@ function useRegistrationTokens() {
     form,
     editing,
     saving,
+    saving_public_signup,
     deleting,
     delete_token,
     delete_tokens,
@@ -249,6 +275,7 @@ function useRegistrationTokens() {
     new_random_token,
     edit_new_token,
     save,
+    save_public_signup_without_token,
     load,
     no_or_all_inactive,
   };
@@ -267,6 +294,7 @@ export function RegistrationToken() {
     editing,
     set_editing,
     saving,
+    saving_public_signup,
     sel_rows,
     set_sel_rows,
     last_saved,
@@ -274,9 +302,19 @@ export function RegistrationToken() {
     no_or_all_inactive,
     edit_new_token,
     save,
+    save_public_signup_without_token,
     load,
     loading,
   } = useRegistrationTokens();
+  const configuredPublicSignupWithoutToken = !!useTypedRedux(
+    "customize",
+    "public_signup_without_registration_token",
+  );
+  const [publicSignupOverride, setPublicSignupOverride] = React.useState<
+    boolean | undefined
+  >();
+  const publicSignupWithoutToken =
+    publicSignupOverride ?? configuredPublicSignupWithoutToken;
 
   function render_edit(): Rendered {
     const layout = {
@@ -535,16 +573,46 @@ export function RegistrationToken() {
     }
   }
 
-  // this tells an admin that users can sign in freely if there are no tokens or no active tokens
+  function render_signup_policy(): Rendered {
+    const activeTokens = !no_or_all_inactive;
+    return (
+      <Alert bsStyle={publicSignupWithoutToken ? "warning" : "info"}>
+        <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
+          <div style={{ flex: 1 }}>
+            <b>Public signup without a registration token</b>
+            <div>
+              {publicSignupWithoutToken
+                ? "Enabled. Anyone who can reach this server can create an account without a token."
+                : activeTokens
+                  ? "Disabled. Users must provide an active registration token to create an account."
+                  : "Disabled. There are no active registration tokens, so email signup is blocked until you add an active token or explicitly enable public signup."}
+            </div>
+          </div>
+          <Switch
+            checked={publicSignupWithoutToken}
+            loading={saving_public_signup}
+            onChange={async (checked) => {
+              const before = publicSignupWithoutToken;
+              setPublicSignupOverride(checked);
+              try {
+                await save_public_signup_without_token(checked);
+              } catch {
+                setPublicSignupOverride(before);
+              }
+            }}
+          />
+        </div>
+      </Alert>
+    );
+  }
+
   function render_no_active_token_warning(): Rendered {
-    if (no_or_all_inactive) {
+    if (no_or_all_inactive && !publicSignupWithoutToken) {
       return (
         <Alert bsStyle="warning">
-          No tokens, or there are no active tokens. This means anybody can use
-          your server.
+          No active registration tokens. Email signup is currently blocked.
           <br />
-          Create at least one active token to prevent just anybody from signing
-          up for your server!
+          Create at least one active token to allow invite-only signup.
         </Alert>
       );
     }
@@ -595,6 +663,7 @@ export function RegistrationToken() {
   } else {
     return (
       <div>
+        {render_signup_policy()}
         {render_no_active_token_warning()}
         {render_error()}
         {render_control()}

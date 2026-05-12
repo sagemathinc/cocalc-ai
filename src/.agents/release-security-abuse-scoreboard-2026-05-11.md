@@ -26,7 +26,7 @@ Statuses:
 | SEC-BROWSER-001 | Browser exec/session automation              | guarded | critical | Browser-session async exec history was bounded, but active raw/QuickJS exec and typed action work per browser tab was not. Local per-tab caps now fast-fail excess work, `browser_raw_exec_policy` gates raw JS by admin setting, and the browser-session service now exposes a local allow/deny audit stream for raw exec, async exec, typed actions, and QuickJS sandbox host actions. | Continue QuickJS host-capability review and decide whether browser automation audit events need central persistence. |
 | SEC-CLI-001     | `cocalc-cli` authority classes               | guarded | high     | First-pass authority matrix completed. CLI auth config and daemon runtime storage now force private local permissions; ambient env auth can be disabled per invocation.                                                                                                                                                                                                                  | Audit endpoint-level freshness/2FA and API-key scope enforcement for dangerous CLI command families.                 |
 | SEC-KEY-001     | Account/project API keys                     | guarded | high     | Legacy project-scoped CoCalc API-key management, auth, schema, UI, and project-rehome portability were removed. Account API keys now require explicit capabilities and project allowlists; API-key websocket hub RPC fails closed and HTTP Conat bridges deny unreviewed RPCs by default.                                                                                                | Propagate auth method through websocket hub dispatch if API-key hub RPC support is needed beyond the HTTP bridge.    |
-| SEC-REG-001     | Registration-token signup policy             | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                | Verify no-token behavior and add explicit public-signup setting.                                                     |
+| SEC-REG-001     | Registration-token signup policy             | done    | high     | Public signup without a registration token is now explicit opt-in via `public_signup_without_registration_token`, default `no`. Deleting or disabling all registration tokens now blocks signup instead of making signup public, and the admin registration-token page shows the effective policy.                                                                                       | Revisit wording if SSO-specific signup policies need separate controls.                                              |
 | SEC-MASTER-001  | Master-key storage/unlock                    | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                | Inventory master-key read/storage paths and production unlock options.                                               |
 
 ## Findings
@@ -499,3 +499,36 @@ Suggested next audit steps:
    needed.
 2. Add central audit events for API-key create/delete/use/deny.
 3. Expand reviewed API-key capabilities only for concrete product workflows.
+
+### SEC-REG-001: Registration-Token Signup Policy
+
+Status: `done`.
+
+Severity: high.
+
+Evidence:
+
+- The old signup policy inferred "registration token required" from whether any
+  active registration tokens existed.
+- That made an empty or all-disabled token table a fail-open state: registration
+  tokens were intended to restrict signup, but removing every token could make
+  signup public.
+
+Implemented guard:
+
+- Added the explicit admin setting
+  `public_signup_without_registration_token`, default `no`.
+- Server auth token checks now require registration tokens unless that setting
+  is explicitly enabled.
+- Hub webapp configuration now reports "registration token required" from the
+  explicit setting instead of active-token existence.
+- The admin registration-token page now has a visible public-signup toggle and
+  warns that no active tokens means email signup is blocked when public signup
+  is disabled.
+- Added focused tests for the server and hub policy helpers.
+
+Residual risk:
+
+- This pass covers the email/password registration-token policy. SSO signup
+  behavior should be reviewed separately if public SSO strategies are used to
+  create new accounts.

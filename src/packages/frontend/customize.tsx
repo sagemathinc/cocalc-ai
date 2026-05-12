@@ -105,6 +105,7 @@ export interface CustomizeState {
   public_viewer_dns?: string;
   email_enabled: false;
   email_signup: boolean;
+  public_signup_without_registration_token: boolean;
   google_analytics: string;
   help_email: string;
   zendesk?: boolean;
