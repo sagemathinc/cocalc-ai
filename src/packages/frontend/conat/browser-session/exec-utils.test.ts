@@ -3,12 +3,12 @@ import { normalizeRawExecPolicy, resolveExecMode } from "./exec-utils";
 const PROJECT_ID = "94ee01cf-2d7a-4e56-b8af-76d9a697877b";
 
 describe("browser exec raw JavaScript policy", () => {
-  it("normalizes invalid raw exec policy to admin_only", () => {
+  it("normalizes invalid raw exec policy to disabled", () => {
     expect(normalizeRawExecPolicy("disabled")).toBe("disabled");
     expect(normalizeRawExecPolicy("admin_only")).toBe("admin_only");
     expect(normalizeRawExecPolicy("enabled")).toBe("enabled");
-    expect(normalizeRawExecPolicy("")).toBe("admin_only");
-    expect(normalizeRawExecPolicy("bogus")).toBe("admin_only");
+    expect(normalizeRawExecPolicy("")).toBe("disabled");
+    expect(normalizeRawExecPolicy("bogus")).toBe("disabled");
   });
 
   it("forces QuickJS when raw exec is disabled", () => {

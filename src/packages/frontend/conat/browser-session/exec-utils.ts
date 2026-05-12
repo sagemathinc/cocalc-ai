@@ -55,10 +55,10 @@ export function normalizePosture(value: unknown): BrowserAutomationPosture {
 
 export function normalizeRawExecPolicy(value: unknown): BrowserRawExecPolicy {
   const v = `${value ?? ""}`.trim().toLowerCase();
-  if (v === "disabled" || v === "enabled") {
+  if (v === "admin_only" || v === "enabled") {
     return v;
   }
-  return "admin_only";
+  return "disabled";
 }
 
 export function normalizePolicy(

@@ -354,9 +354,10 @@ Implemented first guard:
   account identity, so stale operations cannot leave a tab permanently busy.
 - Raw browser JavaScript is now gated by the admin site setting
   `browser_raw_exec_policy`:
-  - `disabled`: always use the QuickJS typed-action sandbox.
+  - `disabled`: always use the QuickJS typed-action sandbox. This is the
+    default.
   - `admin_only`: allow raw JS only for admin accounts when the caller requests
-    raw JS. This is the default.
+    raw JS.
   - `enabled`: honor caller posture/policy requests for raw JS.
 - Caller-controlled `posture=dev` and `policy.allow_raw_exec` can request raw
   JS, but they can no longer override the deployment-level admin setting.

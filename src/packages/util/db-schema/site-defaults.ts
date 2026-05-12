@@ -1063,7 +1063,7 @@ export const site_settings_conf: SiteSettings = {
   browser_raw_exec_policy: {
     name: "Browser raw JavaScript exec policy",
     desc: "Controls whether browser-session automation may run raw JavaScript in a live browser tab. The constrained QuickJS typed-action sandbox is used when raw JavaScript is not allowed. Raw JavaScript execution is intended mainly for development and debugging.",
-    default: "admin_only",
+    default: "disabled",
     valid: ["disabled", "admin_only", "enabled"],
     valid_labels: {
       disabled: "Disabled for all accounts",
@@ -1072,7 +1072,7 @@ export const site_settings_conf: SiteSettings = {
     },
     to_val: (x) => {
       const value = `${x ?? ""}`.trim().toLowerCase();
-      return value === "disabled" || value === "enabled" ? value : "admin_only";
+      return value === "admin_only" || value === "enabled" ? value : "disabled";
     },
     tags: ["Security"],
     group: "Access & Identity",
