@@ -517,13 +517,18 @@ async function runPodmanCommand(
     args,
     timeout: 30,
     env: podmanEnv(),
+    err_on_exit: false,
   });
   if (result.exit_code === 0) return result;
+  if (containerMissingError(String(result.stderr ?? result.stdout ?? ""))) {
+    return result;
+  }
   result = await executeCode({
     command: "sudo",
     args: ["-n", "podman", ...args],
     timeout: 30,
     env: podmanEnv(),
+    err_on_exit: false,
   });
   return result;
 }
@@ -532,10 +537,13 @@ function containerMissingError(message: string): boolean {
   const text = message.toLowerCase();
   return (
     text.includes("no such container") ||
+    text.includes("no such object") ||
     text.includes("no container with name") ||
     text.includes("container not known") ||
     text.includes("cannot find container") ||
-    text.includes("no container found")
+    text.includes("no container found") ||
+    text.includes("does not exist") ||
+    text.includes("unable to find")
   );
 }
 
