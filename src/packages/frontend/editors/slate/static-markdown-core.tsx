@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { CSSProperties, useEffect, useState } from "react";
+import { CSSProperties, useEffect, useRef, useState } from "react";
 import type { InlineCodeLink } from "@cocalc/chat";
 import { getStaticRender } from "./elements/register";
 import { slateCodeBlockThemeVars } from "./elements/code-block/render-theme";
@@ -32,29 +32,30 @@ export default function StaticMarkdown({
   inlineCodeProjectRoot,
   highlightQuery,
 }: Props) {
+  const didMountRef = useRef(false);
   const [editor, setEditor] = useState<PartialSlateEditor>({
-    children: applySearchHighlights(
-      applyInlineCodeLinks(markdownToSlate(value), {
-        inlineCodeLinks,
-        inlineCodeProjectRoot,
-      }),
+    children: renderStaticMarkdownChildren({
+      value,
+      inlineCodeLinks,
+      inlineCodeProjectRoot,
       highlightQuery,
-    ),
+    }),
   });
   const [change, setChange] = useState<number>(0);
   useEffect(() => {
-    setChange(change + 1);
-    if (change > 0) {
-      setEditor({
-        children: applySearchHighlights(
-          applyInlineCodeLinks(markdownToSlate(value), {
-            inlineCodeLinks,
-            inlineCodeProjectRoot,
-          }),
-          highlightQuery,
-        ),
-      });
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
     }
+    setEditor({
+      children: renderStaticMarkdownChildren({
+        value,
+        inlineCodeLinks,
+        inlineCodeProjectRoot,
+        highlightQuery,
+      }),
+    });
+    setChange((change) => change + 1);
   }, [value, inlineCodeLinks, inlineCodeProjectRoot, highlightQuery]);
 
   if (editor == null) {
@@ -68,7 +69,7 @@ export default function StaticMarkdown({
         editor,
         setEditor: (editor) => {
           setEditor(editor);
-          setChange(change + 1);
+          setChange((change) => change + 1);
         },
       }}
     >
@@ -85,6 +86,26 @@ export default function StaticMarkdown({
         })}
       </div>
     </ChangeContext.Provider>
+  );
+}
+
+function renderStaticMarkdownChildren({
+  value,
+  inlineCodeLinks,
+  inlineCodeProjectRoot,
+  highlightQuery,
+}: {
+  value: string;
+  inlineCodeLinks?: InlineCodeLink[];
+  inlineCodeProjectRoot?: string;
+  highlightQuery?: string;
+}): any[] {
+  return applySearchHighlights(
+    applyInlineCodeLinks(markdownToSlate(value), {
+      inlineCodeLinks,
+      inlineCodeProjectRoot,
+    }),
+    highlightQuery,
   );
 }
 
