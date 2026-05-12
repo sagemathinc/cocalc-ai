@@ -234,6 +234,20 @@ describe("appendStreamMessages", () => {
 
     expect(merged).toEqual(repeated);
   });
+
+  test("preserves progressive full snapshots for live projection", () => {
+    const merged = appendStreamMessages(
+      [],
+      [
+        textEvent("message", "I", 1),
+        textEvent("message", "I'm", 2),
+        textEvent("message", "I'm testing", 3),
+      ],
+    );
+
+    expect(merged).toHaveLength(3);
+    expect(getLiveResponseMarkdown(merged)).toBe("I'm testing");
+  });
 });
 
 describe("response text helpers", () => {
