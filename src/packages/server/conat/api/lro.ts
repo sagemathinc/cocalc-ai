@@ -148,7 +148,7 @@ export async function cancel({
     });
   }
   if (row.kind === "copy-path-between-projects") {
-    await cancelCopiesByOpId({ op_id });
+    await cancelCopiesByOpId({ op_id, include_applying: true });
   }
 }
 

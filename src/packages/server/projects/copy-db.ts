@@ -5,7 +5,7 @@ import type {
   ProjectCopyState,
 } from "@cocalc/conat/hub/api/projects";
 import type { LroStatus } from "@cocalc/conat/hub/api/lro";
-import { getLro, updateLro } from "@cocalc/server/lro/lro-db";
+import { ensureLroSchema, getLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroSummary } from "@cocalc/server/lro/stream";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
@@ -23,6 +23,29 @@ const STALE_APPLYING_MS = 35 * 60 * 1000;
 
 function staleApplyingIntervalSql(param: number): string {
   return `now() - ($${param}::text || ' milliseconds')::interval`;
+}
+
+async function reconcileTerminalParentCopyRows(): Promise<ProjectCopyRow[]> {
+  await ensureCopySchema();
+  await ensureLroSchema();
+  const { rows } = await pool().query(
+    `
+      UPDATE project_copies pc
+      SET status=CASE
+            WHEN l.status = 'expired' THEN 'expired'
+            ELSE 'canceled'
+          END,
+          last_error=COALESCE(pc.last_error, 'parent operation ' || l.status),
+          updated_at=now()
+      FROM long_running_operations l
+      WHERE pc.op_id = l.op_id
+        AND pc.status = ANY($1::text[])
+        AND l.status = ANY($2::text[])
+      RETURNING pc.*
+    `,
+    [ACTIVE_STATUSES, TERMINAL_LRO_STATUSES],
+  );
+  return rows as ProjectCopyRow[];
 }
 
 async function refreshCopyOperation(op_id: string): Promise<void> {
@@ -232,6 +255,7 @@ async function maybeCleanupSnapshot({
 
 export async function expireCopies(): Promise<ProjectCopyRow[]> {
   await ensureCopySchema();
+  const terminalParentRows = await reconcileTerminalParentCopyRows();
   const { rows } = await pool().query(
     `
       UPDATE project_copies
@@ -244,7 +268,7 @@ export async function expireCopies(): Promise<ProjectCopyRow[]> {
     `,
     [TERMINAL_STATUSES],
   );
-  const expired = rows as ProjectCopyRow[];
+  const expired = [...terminalParentRows, ...(rows as ProjectCopyRow[])];
   const seen = new Set<string>();
   const opIds = new Set<string>();
   for (const row of expired) {
