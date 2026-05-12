@@ -1,6 +1,6 @@
 # Release Security and Abuse Audit Plan
 
-Status: initial plan, 2026-05-11.
+Status: reviewed and expanded plan, 2026-05-11.
 
 This plan is for the post-feature release phase of `cocalc-ai`, covering both
 the hosted SaaS product and installable CoCalc Plus/local deployments. The goal
@@ -54,6 +54,11 @@ Primary release risks:
 6. NPM dependency vulnerabilities or supply-chain risk in production bundles.
 7. Installable/local defaults that are safe on localhost but unsafe when exposed
    behind a proxy.
+8. Account and project API keys whose effective authority is broader than their
+   visible scope.
+9. Registration-token configuration where "no configured token" accidentally
+   means "public signup allowed".
+10. Plaintext-on-disk master-key handling for encrypted application secrets.
 
 ## Audit Rules
 
@@ -106,6 +111,10 @@ Initial inventory buckets:
 10. Billing, membership, entitlement override, and package/seat flows.
 11. Admin/operator tools and impersonation.
 12. Installable/local CoCalc Plus bootstrap defaults and reverse-proxy exposure.
+13. Account-scoped and project-scoped API keys, including CLI use and project
+    restrictions.
+14. Registration-token signup policy and public-signup configuration.
+15. Master-key loading, storage, rotation, and bay startup unlock flows.
 
 Inventory commands:
 
@@ -119,6 +128,11 @@ rg -n "admin|operator|impersonat|entitlement|billing|purchase|host" src/packages
 ## Phase 1: Central Admission Control
 
 Goal: make the default behavior safe when traffic arrives too fast.
+
+This is expected to find major release-blocking issues. Historical dogfood
+failures were mostly fixed by making browser clients less stormy after reconnect,
+not by adding uniform backend protection. The backend must assume clients can be
+buggy, stale, malicious, or duplicated across many tabs and devices.
 
 Required decisions:
 
@@ -150,7 +164,10 @@ Implementation targets:
 - one shared rate/admission helper for hub HTTP and Conat service methods where
   possible
 - per-socket message rate and pending-request limits
+- per-socket reconnect and resubscription storm limits
+- per-account/project/browser reconnect dampening
 - max concurrent expensive operations per account/project
+- bounded queue depth for work accepted by a websocket service
 - structured deny reasons returned to clients
 - metrics/logs for allowed, delayed, and denied work
 
@@ -159,12 +176,31 @@ High-priority checks:
 - Can one browser tab flood a hub websocket with arbitrary requests?
 - Can one project-host socket retain unbounded pending calls?
 - Can retries after reconnect multiply work?
+- Can a suspended/resumed browser tab cause a reconnect storm that degrades hub
+  or project-host availability?
+- Can many stale browser tabs for one account simultaneously resubscribe,
+  re-fetch, or re-open expensive resources?
 - Are rate-limit keys based on trusted address resolution only?
 - Do limits apply before project-host wake/start operations?
+- Are denied/rejected websocket requests cheap enough to process under attack?
+
+Minimum release target:
+
+- backend-side guards exist even if every frontend reconnect mitigation is
+  accidentally removed.
+- one misbehaving browser account cannot materially degrade a bay or
+  project-host.
+- denied work is visible in logs/metrics with actor, source, and reason.
 
 ## Phase 2: Codex/ACP Scheduling Limits
 
 Goal: durable agents should be useful but not unbounded.
+
+These limits should be membership-entitlement backed, not hardcoded release
+constants. Each membership tier already has admin-configurable 5-hour and 7-day
+rate limits for several resources; Codex/ACP scheduling must use the same
+framework. Admin overrides should work only after each new limit is explicitly
+wired into the entitlement/override machinery.
 
 Minimum release policy:
 
@@ -172,6 +208,12 @@ Minimum release policy:
 - per-account max running turns
 - per-project max running turns
 - per-thread max queued turns
+- per-account 5-hour created-turn limit
+- per-account 7-day created-turn limit
+- per-account 5-hour model/token/cost budget if measurable
+- per-account 7-day model/token/cost budget if measurable
+- per-project 5-hour worker-start or project-host wake budget
+- per-project 7-day worker-start or project-host wake budget
 - per-worker max sessions
 - per-session max lifetime
 - per-turn max wall clock and idle timeout
@@ -185,9 +227,22 @@ Recommended first limits:
 - team/org/admin: higher caps, still bounded
 - operator override: explicit, expiring, audited
 
+Membership-tier work:
+
+- add explicit Codex/ACP limit fields to the admin-editable membership tier
+  model.
+- display current effective Codex/ACP limits in account/admin membership views.
+- add expiring admin overrides for each newly wired limit.
+- record limit-denial events with tier, effective limit, current usage, and
+  actor.
+- expose top users and near-limit users for each 5-hour and 7-day limit.
+
 Audit questions:
 
 - Can a user queue thousands of Codex turns without a running worker?
+  - Expected current answer may be yes, with "thousands" effectively meaning
+    "unbounded enough to be millions"; verify and treat as release-blocking if
+    true.
 - Can a queued turn survive forever after account membership changes?
 - Can several tabs schedule duplicate turns for the same message?
 - Can a project-local worker create a global notification or start another
@@ -200,9 +255,15 @@ Audit questions:
 
 Goal: raw browser power must not be a production default.
 
+The codebase now has a QuickJS/WASM JavaScript sandbox for browser automation.
+That gives a plausible path to safe production automation, but it does not by
+itself solve authorization, action classification, or auditability. Non-sandbox
+raw browser exec remains highly dangerous.
+
 Minimum release policy:
 
 - prod posture blocks raw `browser exec` by default
+- sandboxed QuickJS/WASM exec is the default programmable path in production
 - typed browser actions have action-level policy checks
 - project_id, browser_id, origin, and actor must be explicit under agent auth
 - no automatic session discovery for agent auth in production
@@ -216,6 +277,7 @@ Audit targets:
 - `src/packages/frontend/conat/browser-session/syncdoc-leases.ts`
 - `src/packages/frontend/conat/browser-session/session-heartbeat.ts`
 - `src/packages/frontend/conat/browser-session/exec-api-declaration.ts`
+- QuickJS/WASM host-function bridge and exposed capabilities
 - CLI browser command implementation
 
 Abuse scenarios:
@@ -223,6 +285,8 @@ Abuse scenarios:
 - agent auth tries to discover or control another browser session
 - raw JS submits billing/admin/destructive UI actions
 - raw JS exfiltrates page state or tokens
+- sandboxed JS escapes through an overly broad host function
+- sandboxed JS consumes unbounded CPU, memory, time, or queued browser actions
 - browser filesystem helpers read/write outside intended project scope
 - stale browser_id/project_id environment targets the wrong session after
   reconnect
@@ -231,6 +295,12 @@ Abuse scenarios:
 
 Goal: CLI behavior should be predictable under user, project, agent, and
 operator auth.
+
+CoCalc now has 2FA, auth freshness, and dangerous-action controls. These should
+be used to make high-risk CLI and browser-automation actions explicit without
+making Codex useless for operations. Codex is often valuable for cluster
+debugging with enough access to read logs and run safe commands, so the target
+is scoped, temporary, auditable elevation rather than blanket denial.
 
 For each command family, classify:
 
@@ -241,6 +311,8 @@ For each command family, classify:
 - requires operator/admin auth
 - requires explicit approval or recent auth
 - should be disabled in production
+- may run under temporary 2FA-backed elevation
+- read-only safe for Codex-assisted operations
 
 High-priority command families:
 
@@ -259,7 +331,55 @@ Audit questions:
 - Does agent auth require explicit project/browser targets?
 - Can project auth mutate account/global state?
 - Are dangerous commands logged with actor and target?
-- Can local CoCalc Plus expose CLI-backed APIs over a public network by mistake?
+- Can Launchpad expose CLI-backed APIs over a public network without the
+  expected Cloudflare/proxy/auth posture?
+
+CoCalc Plus constraint:
+
+- CoCalc Plus should only bind to localhost.
+- Audit this as an invariant: no supported CoCalc Plus mode should listen on
+  `0.0.0.0` or a public interface.
+- The public-exposure concern is primarily Launchpad, especially when exposed by
+  Cloudflare Tunnel or another reverse proxy.
+
+Operational Codex policy:
+
+- support read-only cluster diagnostics for Codex with scoped operator
+  credentials.
+- require recent admin auth/2FA or an explicit short-lived approval for
+  destructive host, billing, membership, security, and secret-management
+  commands.
+- log every elevated command with actor, subject, credential type, command
+  family, target IDs, and approval source.
+
+## Phase 4b: API Key Scope Audit
+
+Goal: reduce API-key authority to the minimum visible scope.
+
+Current concern:
+
+- account-scoped API keys are effectively broad account credentials.
+- project-scoped API keys increase surface area and were intended to be removed.
+- the preferred model is account-scoped API keys with explicit restrictions,
+  including no-project access, one-project access, or a bounded project set.
+
+Audit targets:
+
+- account API-key creation, storage, display, revocation, and authentication.
+- project-scoped API-key creation and all remaining consumers.
+- CLI behavior when both account and project credentials are present.
+- Conat/API service authorization decisions that accept API-key auth.
+
+Required release direction:
+
+- eliminate project-scoped API keys if practical before release.
+- add explicit project restrictions to account-scoped API keys.
+- make unrestricted account API keys visually high-risk in the UI.
+- support least-privilege keys for Codex/automation use.
+- add audit events for API-key creation, use on dangerous endpoints, and
+  revocation.
+- make API-key auth incompatible with high-risk security/billing mutations
+  unless explicitly allowed by a future scoped policy.
 
 ## Phase 5: Project-Local to Global Boundary
 
@@ -294,6 +414,13 @@ Required controls:
 
 Goal: avoid XSS, token exfiltration, and unbounded rendering work.
 
+CoCalc has a relatively small HTTP API surface and a much larger websocket/Conat
+RPC surface. HTTP endpoints are usually easier to probe with commodity tooling,
+but websocket-only RPC is not automatically safe: browsers can open websockets,
+cookies can be ambient, and origin/auth/CSRF-style assumptions still matter.
+Reducing unnecessary HTTP API surface is useful, but it is not a substitute for
+auditing websocket RPC authorization and admission.
+
 High-risk surfaces:
 
 - markdown/slate rendering in chat
@@ -303,9 +430,17 @@ High-risk surfaces:
 - app-server/proxy error pages
 - notifications and outbound email rendering
 - imported public URLs and file previews
+- remaining HTTP API routes used for auth, purchasing, billing, and account
+  flows
+- websocket/Conat RPC methods reachable from browser credentials
 
 Audit questions:
 
+- Which HTTP endpoints can be removed, moved behind Conat RPC, or made
+  internal-only before release?
+- Which HTTP endpoints are intentionally public or unauthenticated?
+- Do HTTP endpoints have CSRF/origin/session expectations documented and tested?
+- Do websocket/Conat RPC services validate origin, auth, actor, and target scope?
 - Where is raw HTML allowed?
 - Are links sanitized and target-safe?
 - Can an output render unbounded DOM or CPU work?
@@ -350,6 +485,7 @@ proxy.
 Audit questions:
 
 - What binds to `0.0.0.0` by default?
+- Does CoCalc Plus enforce localhost-only binding as an invariant?
 - Are default secrets generated uniquely?
 - Are admin/bootstrap tokens short-lived or visibly persistent?
 - Is Cloudflare/proxy trust disabled unless explicitly configured?
@@ -363,6 +499,88 @@ Required release artifacts:
 - explicit production checklist
 - `cocalc doctor security` or equivalent preflight if practical
 - visible warning when running with dev/insecure settings on non-loopback origins
+
+## Phase 8b: Master-Key and Secret Unlock Model
+
+Goal: avoid treating a plaintext master-key file on disk as the final
+production answer.
+
+Current model:
+
+- most application secrets are stored in Postgres encrypted with a master key.
+- the master key itself is stored as a plaintext file on disk.
+- this is operationally simple but uncomfortable for hosted SaaS and Launchpad
+  installs.
+
+Audit questions:
+
+- Where is the master key read, cached, logged, backed up, or copied?
+- What file permissions and ownership are enforced?
+- Can the master key be rotated?
+- What happens if the master key file is missing at startup?
+- Are backups/snapshots likely to include plaintext master keys?
+- How does this differ for SaaS bays, Launchpad, CoCalc Plus on macOS, and Linux
+  servers?
+
+Potential directions:
+
+1. OS keystore integration:
+   - macOS Keychain for local Launchpad/CoCalc Plus.
+   - Linux Secret Service/libsecret where a user session exists.
+   - systemd credentials, TPM, cloud KMS, or sealed secrets for server contexts.
+2. Manual startup unlock:
+   - bay startup pauses before decrypting the master key.
+   - a site admin authenticates with password plus 2FA.
+   - the process receives the decrypted master key only in memory.
+   - restart/automation semantics are explicit and documented.
+3. Hybrid:
+   - development and localhost-only CoCalc Plus can use plaintext with warnings.
+   - hosted production requires keystore/KMS/manual unlock mode.
+   - Launchpad supports both, with clear production-mode checks.
+
+Release target:
+
+- document the current residual risk if plaintext remains for first release.
+- ensure file permissions are strict and checked.
+- keep the door open for KMS/keystore/manual-unlock implementation without
+  changing every secret consumer.
+- add the master-key state to `cocalc doctor security` or equivalent.
+
+## Phase 8c: Registration Token Signup Policy
+
+Goal: avoid accidental public account creation on Launchpad.
+
+Current concern:
+
+- registration tokens are intended to prevent random people from creating
+  accounts on a Launchpad instance.
+- if all registration tokens are disabled or absent, signup currently may become
+  public without an explicit operator opt-in.
+- this is confusing and unsafe.
+
+Required behavior:
+
+- signup without a registration token is disabled by default.
+- public signup without a token requires an explicit setting.
+- that setting is visible and editable on the registration-token admin page.
+- disabling/deleting all tokens must not implicitly enable public signup.
+- the UI should clearly show the current signup policy:
+  - token required,
+  - public signup explicitly enabled,
+  - signup disabled.
+
+Audit targets:
+
+- registration-token database/config model.
+- account creation HTTP/API path.
+- admin registration-token page.
+- Launchpad bootstrap defaults.
+- tests for "no tokens configured" and "all tokens disabled".
+
+Release gate:
+
+- public signup without a token must be explicit opt-in, never an implicit
+  fallback.
 
 ## Phase 9: Abuse Observability
 
@@ -379,6 +597,9 @@ Minimum metrics/logs:
 - host create/start/stop/deprovision attempts
 - project wake/start attempts
 - membership/billing mutation attempts
+- API-key creations, revocations, and dangerous-use attempts
+- registration-token signup attempts and public-signup denials
+- master-key unlock/startup mode and failures
 
 Minimum admin/CLI readouts:
 
@@ -388,6 +609,9 @@ Minimum admin/CLI readouts:
 - top accounts by websocket/request rate
 - top accounts by outbound notifications/email
 - top accounts by host/project wake cost
+- top users in absolute terms for every 5-hour and 7-day limit
+- users closest to their effective 5-hour and 7-day limits, accounting for
+  membership tier and admin overrides
 - recent denied actions with reason
 
 Near-term design principle:
@@ -419,6 +643,14 @@ Suggested first five passes:
 4. `cocalc-cli` agent/project/operator auth command classification.
 5. Notification/outbound email abuse-limit audit.
 
+Suggested next five passes:
+
+1. API-key scope and project-scoped key elimination audit.
+2. Registration-token public-signup default audit.
+3. Master-key storage/unlock risk audit.
+4. HTTP API surface reduction and websocket RPC origin/auth audit.
+5. CoCalc Plus localhost-only binding audit.
+
 ## Severity Model
 
 High:
@@ -447,10 +679,18 @@ Low:
 Do not release hosted SaaS until:
 
 - Codex scheduling has explicit quotas and cancellation cleanup.
+- Codex scheduling quotas are backed by admin-editable membership tier limits
+  and explicit admin overrides.
 - Hub/Conat websocket admission has a baseline per-socket/account/project limit.
 - Browser automation prod posture is deny-by-default for raw exec.
+- Browser automation sandbox host functions are audited and bounded.
 - Agent/project/operator CLI auth classification exists for dangerous commands.
 - Outbound email/notification abuse controls exist for user-triggered sends.
+- API keys have a least-privilege scope story, and project-scoped keys are
+  removed or explicitly risk-accepted.
+- Public signup without registration tokens is explicit opt-in, never automatic.
+- Master-key plaintext-on-disk risk is either mitigated or explicitly accepted
+  with documented file-permission checks and upgrade path.
 - High/critical production dependency CVEs are fixed or explicitly documented as
   non-exploitable.
 - Installable defaults are safe for accidental LAN exposure or loudly warn.
@@ -460,20 +700,35 @@ Do not release hosted SaaS until:
 Do not release installable CoCalc Plus until:
 
 - default secrets are unique,
+- localhost-only binding is enforced,
 - dev-only browser automation is not exposed remotely by default,
 - reverse-proxy trust is explicit,
 - production-mode checklist exists,
 - local admin/bootstrap credentials are visible and rotatable.
 
-## Open Questions
+## Resolved Directions
 
-1. Should Codex scheduling limits be membership-entitlement backed from day one,
-   or start as a simpler hardcoded release policy?
-2. Should websocket admission be implemented inside Conat core, hub wrappers, or
-   both?
-3. Which browser automation actions count as privileged for the first release?
-4. Should agent-auth `cocalc-cli` commands be deny-by-default except for an
-   allow-list?
-5. What minimum operator abuse dashboard is required before public launch?
-6. For CoCalc Plus, should production mode be an explicit opt-in command rather
-   than inferred from bind address/origin?
+1. Codex scheduling limits should be membership-entitlement backed from day one,
+   not hardcoded release constants.
+2. CoCalc Plus must only bind to localhost. Public exposure concerns mainly
+   apply to Launchpad, especially when made internet-visible through Cloudflare
+   Tunnel or another reverse proxy.
+3. Non-sandbox browser exec is dangerous. The QuickJS/WASM sandbox is the
+   preferred production programmable path, but its host capabilities still need
+   an explicit privilege and resource audit.
+4. The minimum abuse dashboard should cover every 5-hour and 7-day limit:
+   - top users in absolute usage,
+   - users closest to their effective limit,
+   - effective limits after membership tier and admin overrides.
+
+## Remaining Questions
+
+1. Should websocket admission live primarily inside Conat core, hub/service
+   wrappers, or both?
+2. Which browser automation actions count as privileged for the first release,
+   given the QuickJS/WASM sandbox and typed action API?
+3. Should agent-auth `cocalc-cli` commands be deny-by-default except for an
+   allow-list, or is the right boundary entirely at the underlying Conat RPC
+   authorization layer?
+4. What OS/KMS/manual-unlock master-key path is practical for hosted SaaS bays
+   before first public release?
