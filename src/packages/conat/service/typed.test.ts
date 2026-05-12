@@ -179,4 +179,51 @@ describe("typed service client", () => {
       ),
     });
   });
+
+  it("rejects typed fast-rpc requests above the active handler cap", async () => {
+    let handler: ((mesg: { raw: Uint8Array }) => any) | undefined;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fastRpcService = jest.fn(async (_subject, h) => {
+      handler = h;
+      return { close: jest.fn(), stop: jest.fn() };
+    });
+    const subscribe = jest.fn(async () => ({
+      stop: jest.fn(),
+      [Symbol.asyncIterator]: async function* () {},
+    }));
+
+    createServiceHandler<any>({
+      service: "test",
+      subject: "test.subject",
+      client: { fastRpcService, subscribe } as any,
+      maxParallelHandlers: 1,
+      impl: {
+        wait: async () => {
+          await blocked;
+          return "done";
+        },
+      },
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const raw = encode({
+      encoding: DataEncoding.MsgPack,
+      mesg: { name: "wait", args: [] },
+    });
+    const first = handler!({ raw });
+    await expect(handler!({ raw })).rejects.toMatchObject({
+      code: 503,
+      message: "typed service 'test' is busy",
+    });
+
+    release();
+    const firstResponse = await first;
+    expect(
+      decode({ encoding: DataEncoding.MsgPack, data: firstResponse.raw }),
+    ).toBe("done");
+  });
 });

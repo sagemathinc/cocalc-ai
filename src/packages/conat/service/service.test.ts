@@ -78,4 +78,50 @@ describe("ConatService", () => {
     expect(respond2).toHaveBeenCalledWith("two");
     service.close();
   });
+
+  it("rejects parallel requests above the active handler cap", async () => {
+    const firstDone = deferred<void>();
+    const respond1 = jest.fn(async () => undefined);
+    const respond2 = jest.fn(async () => undefined);
+    const handler = jest.fn(async (req) => {
+      if (req.id === 1) {
+        await firstDone.promise;
+      }
+      return "ok";
+    });
+    const subscription = createSubscription([
+      { data: { id: 1 }, respond: respond1 },
+      { data: { id: 2 }, respond: respond2 },
+    ]);
+    const client = {
+      subscribe: jest.fn(async () => subscription),
+    };
+
+    const service = createConatService({
+      client: client as any,
+      service: "test-service",
+      subject: "test.subject",
+      parallel: true,
+      maxParallelHandlers: 1,
+      handler,
+    });
+
+    await flushAsyncWork();
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(respond2).toHaveBeenCalledWith(
+      { error: "service 'test-service' is busy", code: 503 },
+      {
+        noThrow: true,
+        headers: {
+          error: "service 'test-service' is busy",
+          error_attrs: { code: 503 },
+        },
+      },
+    );
+
+    firstDone.resolve();
+    await flushAsyncWork();
+    expect(respond1).toHaveBeenCalledWith("ok");
+    service.close();
+  });
 });

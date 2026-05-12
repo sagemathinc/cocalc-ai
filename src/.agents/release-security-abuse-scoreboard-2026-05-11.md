@@ -22,7 +22,7 @@ Statuses:
 | SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                                                                             | Revisit defaults after load testing.                                            |
 | SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report. | Add actor-account limit cache if collaborator caps must differ from owner caps. |
 | SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                                                                                                                                                                             | Add membership-backed automation-specific caps if needed.                       |
-| SEC-WS-001      | General hub/project-host websocket admission | unknown | critical | Not audited in this pass.                                                                                                                                                                                                                                 | Inventory Conat services and socket pending-request limits.                     |
+| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch and unbounded generic parallel Conat service handlers; both now fast-fail above conservative active-request caps.                                                                                       | Continue inventory of raw project-host streaming/socket services.               |
 | SEC-BROWSER-001 | Browser exec/session automation              | unknown | critical | Not audited in this pass.                                                                                                                                                                                                                                 | Audit QuickJS sandbox defaults and raw exec production policy.                  |
 | SEC-CLI-001     | `cocalc-cli` authority classes               | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Classify command families by credential type and dangerous-action requirements. |
 | SEC-KEY-001     | Account/project API keys                     | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Inventory project-key consumers and account-key scope checks.                   |
@@ -227,3 +227,58 @@ Remaining release gap:
 - Should recovery continuation jobs consume fresh quota, or use a bounded
   retry/recovery budget attached to the original turn? ANS: original turn
 - Should operator/admin Codex sessions have separate audited emergency limits? That should not be necessary.
+
+### SEC-WS-001: Hub/Service Conat Dispatch Had Unbounded Parallel Handlers
+
+Status: `guarded`.
+
+Severity: critical.
+
+Evidence:
+
+- `src/packages/server/conat/api/index.ts` subscribes to `hub.*.*.api` and
+  intentionally starts `handleApiRequest` without awaiting it. This is the main
+  browser-reachable hub RPC surface, so reconnect storms or scripted clients
+  could create an unbounded number of active server-side API handlers.
+- `src/packages/conat/service/service.ts` supports
+  `createConatService({ parallel: true })`, but the parallel path only tracked
+  active handler promises and did not bound them.
+- `src/packages/server/inter-bay/service.ts` starts many inter-bay handlers with
+  `parallel: true`, including account directory, project control, host control,
+  and registration-token paths.
+- Typed fast-RPC services in `src/packages/conat/service/typed.ts` bypass the
+  legacy request transport and therefore needed an explicit active-handler cap
+  as well.
+
+Implemented first guard:
+
+- Hub Conat API dispatch now caps active requests with
+  `COCALC_HUB_CONAT_API_MAX_ACTIVE`, default `200`. Requests above the cap are
+  rejected immediately with a 503-style error instead of being started.
+- Generic parallel Conat services now cap active handlers with
+  `COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE`, default `128`, and immediately
+  return a 503-style busy error above the cap.
+- Typed fast-RPC service handlers use the same
+  `COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE` default unless a service passes an
+  explicit `maxParallelHandlers`.
+
+Residual risk:
+
+- This first pass bounds active handler count, not all possible inbound socket
+  messages. The Conat/socket.io layer may still need lower-level per-connection
+  admission for malformed, unauthenticated, or high-rate message streams before
+  they reach a service handler.
+- Several raw project-host services still need focused review, especially file
+  write/read streaming, exec-stream, terminal sockets, Jupyter run-code streams,
+  and app-server websocket proxying.
+- Defaults are intentionally broad and should be tuned with production load
+  testing and observability.
+
+Suggested next audit steps:
+
+1. Inventory raw project-host streaming services and classify which can create
+   long-lived subprocesses, filesystem streams, or websocket proxies.
+2. Add per-project or per-account caps for exec-stream/Jupyter/terminal/app
+   websocket creation if existing membership limits do not already cover them.
+3. Add central denial telemetry for hub/service busy rejections if operational
+   monitoring shows these caps are hit in production.

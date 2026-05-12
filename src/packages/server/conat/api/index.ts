@@ -83,6 +83,26 @@ export const hubApi: HubApi = {
 
 const logger = getLogger("server:conat:api");
 
+function positiveIntegerEnv({
+  name,
+  fallback,
+}: {
+  name: string;
+  fallback: number;
+}): number {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+const MAX_ACTIVE_API_REQUESTS = positiveIntegerEnv({
+  name: "COCALC_HUB_CONAT_API_MAX_ACTIVE",
+  fallback: 200,
+});
+let activeApiRequests = 0;
+
 export function initAPI() {
   mainLoop();
 }
@@ -176,7 +196,25 @@ async function handleMessage({ api, subject, mesg }) {
   } else {
     // we explicitly do NOT await this, since we want this hub server to handle
     // potentially many messages at once, not one at a time!
-    handleApiRequest({ request, mesg });
+    if (activeApiRequests >= MAX_ACTIVE_API_REQUESTS) {
+      logger.warn("rejecting hub.api request; active request cap reached", {
+        active: activeApiRequests,
+        max: MAX_ACTIVE_API_REQUESTS,
+        name: request?.name,
+      });
+      mesg.respond(null, {
+        noThrow: true,
+        headers: {
+          error: "hub api server is busy",
+          error_attrs: { code: 503 },
+        },
+      });
+      return;
+    }
+    activeApiRequests += 1;
+    void handleApiRequest({ request, mesg }).finally(() => {
+      activeApiRequests -= 1;
+    });
   }
 }
 

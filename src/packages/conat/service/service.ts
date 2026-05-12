@@ -22,6 +22,25 @@ const DEFAULT_TIMEOUT = 10 * 1000;
 
 const logger = getLogger("conat:service");
 
+function positiveIntegerEnv({
+  name,
+  fallback,
+}: {
+  name: string;
+  fallback: number;
+}): number {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+const DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS = positiveIntegerEnv({
+  name: "COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE",
+  fallback: 128,
+});
+
 export interface ServiceDescription extends Location {
   service: string;
 
@@ -93,6 +112,7 @@ export interface Options extends ServiceDescription {
   handler: (mesg) => Promise<any>;
   client: Client;
   parallel?: boolean;
+  maxParallelHandlers?: number;
 }
 
 export function createConatService(options: Options) {
@@ -201,6 +221,14 @@ export class ConatService extends EventEmitter {
   private listen = async () => {
     for await (const mesg of this.sub) {
       if (this.options.parallel) {
+        if (
+          this.activeHandlers.size >=
+          (this.options.maxParallelHandlers ??
+            DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS)
+        ) {
+          this.respondBusy(mesg);
+          continue;
+        }
         let task: Promise<void>;
         task = this.handleMessage(mesg)
           .catch((err) => {
@@ -240,6 +268,27 @@ export class ConatService extends EventEmitter {
         logger.debug("WARNING: unable to send error", this.name, err, err2);
       }
     }
+  };
+
+  private respondBusy = (mesg): void => {
+    const message = `service '${this.name}' is busy`;
+    logger.warn(message, {
+      subject: this.subject,
+      active: this.activeHandlers.size,
+      max:
+        this.options.maxParallelHandlers ??
+        DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS,
+    });
+    void mesg.respond(
+      { error: message, code: 503 },
+      {
+        noThrow: true,
+        headers: {
+          error: message,
+          error_attrs: { code: 503 },
+        },
+      },
+    );
   };
 
   close = () => {

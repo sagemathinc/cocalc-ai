@@ -27,6 +27,25 @@ const TYPED_SERVICE_ENCODING = DataEncoding.MsgPack;
 // this budget.
 const MAX_FAST_RPC_TYPED_SERVICE_BYTES = 4 * 1024 * 1024;
 
+function positiveIntegerEnv({
+  name,
+  fallback,
+}: {
+  name: string;
+  fallback: number;
+}): number {
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
+}
+
+const DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS = positiveIntegerEnv({
+  name: "COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE",
+  fallback: 128,
+});
+
 function serviceTransport(options: { transport?: ServiceTransport }) {
   return (
     options.transport ??
@@ -159,27 +178,39 @@ export function createServiceHandler<Api>({
   const subject = serviceSubject(options);
   let closed = false;
   let handle: { close: () => void; stop: () => void } | undefined;
-  void (async () => {
-    handle = await options.client.fastRpcService(
-      subject,
-      async ({ raw }: { raw: Uint8Array }) => {
-        const mesg = decode({ encoding: TYPED_SERVICE_ENCODING, data: raw });
-        if (mesg?.name == FAST_RPC_PING) {
-          return {
-            raw: requireFastRpcSizedRaw("pong"),
-          };
-        }
-        const name = mesg?.name;
-        const args = mesg?.args ?? [];
-        if (typeof name != "string" || typeof impl[name] != "function") {
-          throw Error(`unknown service method '${String(name)}'`);
-        }
+  let activeFastRpcHandlers = 0;
+  const maxFastRpcHandlers =
+    options.maxParallelHandlers ?? DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS;
+  const runFastRpcHandler = async ({ raw }: { raw: Uint8Array }) => {
+    if (activeFastRpcHandlers >= maxFastRpcHandlers) {
+      const err = new Error(`typed service '${options.service}' is busy`);
+      (err as any).code = 503;
+      throw err;
+    }
+    activeFastRpcHandlers += 1;
+    try {
+      const mesg = decode({ encoding: TYPED_SERVICE_ENCODING, data: raw });
+      if (mesg?.name == FAST_RPC_PING) {
         return {
-          raw: requireFastRpcSizedRaw(await impl[name](...args)),
+          raw: requireFastRpcSizedRaw("pong"),
         };
-      },
-      { queue: options.all ? randomId() : "0" },
-    );
+      }
+      const name = mesg?.name;
+      const args = mesg?.args ?? [];
+      if (typeof name != "string" || typeof impl[name] != "function") {
+        throw Error(`unknown service method '${String(name)}'`);
+      }
+      return {
+        raw: requireFastRpcSizedRaw(await impl[name](...args)),
+      };
+    } finally {
+      activeFastRpcHandlers -= 1;
+    }
+  };
+  void (async () => {
+    handle = await options.client.fastRpcService(subject, runFastRpcHandler, {
+      queue: options.all ? randomId() : "0",
+    });
     if (closed) {
       handle.close();
     }
