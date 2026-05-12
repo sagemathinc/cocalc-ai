@@ -9,6 +9,7 @@ import { getParallelOpsWorkerRegistration } from "@cocalc/server/lro/worker-regi
 import { getProjectHostDefaultParallelLimits } from "@cocalc/server/lro/project-host-defaults";
 import {
   ensureLroSchema,
+  expireDueLros,
   touchLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
@@ -364,6 +365,13 @@ async function claimBackupLroOps({
   lease_ms?: number;
 }): Promise<LroSummary[]> {
   if (limit <= 0) return [];
+  const expired = await expireDueLros({ kind: BACKUP_LRO_KIND });
+  if (expired.length > 0) {
+    logger.info("expired stale backup LROs before claim", {
+      count: expired.length,
+      op_ids: expired.map(({ op_id }) => op_id),
+    });
+  }
   const hostStatuses = await listHostLocalBackupStatuses();
   const freshRunningCounts = await listFreshRunningBackupCountsByHost({
     lease_ms,
@@ -422,6 +430,8 @@ async function claimBackupLroOps({
         FROM long_running_operations l
         JOIN projects p ON p.project_id = l.scope_id::uuid
         WHERE l.kind = $1
+          AND l.dismissed_at IS NULL
+          AND l.expires_at > now()
           AND p.host_id IS NOT NULL
           AND (
             l.status = 'queued'
