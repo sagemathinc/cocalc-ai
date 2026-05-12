@@ -354,4 +354,79 @@ describe("projects.copy-db", () => {
       },
     ]);
   });
+
+  it("does not retry failed copy rows or let them block later copies", async () => {
+    const {
+      claimPendingCopies,
+      ensureCopySchema,
+      updateCopyStatus,
+      upsertCopyRow,
+    } = await import("./copy-db");
+    await ensureCopySchema();
+
+    const failed = await upsertCopyRow({
+      op_id: "99999999-9999-4999-8999-999999999999",
+      src_project_id: SRC_PROJECT_ID,
+      src_path: "cowasm",
+      dest_project_id: DEST_PROJECT_ID,
+      dest_path: "cowasm",
+      snapshot_id: "snap-failed",
+      expires_at: new Date(Date.now() + 60_000),
+    });
+
+    await updateCopyStatus({
+      copy_id: failed.copy_id,
+      key: {
+        src_project_id: SRC_PROJECT_ID,
+        src_path: "cowasm",
+        dest_project_id: DEST_PROJECT_ID,
+        dest_path: "cowasm",
+      },
+      status: "failed",
+      last_error: "permission denied",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const next = await upsertCopyRow({
+      op_id: "aaaaaaaa-9999-4999-8999-999999999999",
+      src_project_id: SRC_PROJECT_ID,
+      src_path: "cowasm",
+      dest_project_id: DEST_PROJECT_ID,
+      dest_path: "cowasm",
+      snapshot_id: "snap-next",
+      expires_at: new Date(Date.now() + 60_000),
+    });
+
+    const claimed = await claimPendingCopies({ host_id: HOST_ID, limit: 10 });
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0].copy_id).toBe(next.copy_id);
+    expect(claimed[0].snapshot_id).toBe("snap-next");
+
+    const rows = await getPool().query<{
+      copy_id: string;
+      status: string;
+      snapshot_id: string;
+      last_error: string | null;
+    }>(
+      `
+        SELECT copy_id, status, snapshot_id, last_error
+        FROM project_copies
+        ORDER BY created_at
+      `,
+    );
+    expect(rows.rows).toEqual([
+      {
+        copy_id: failed.copy_id,
+        status: "failed",
+        snapshot_id: "snap-failed",
+        last_error: "permission denied",
+      },
+      {
+        copy_id: next.copy_id,
+        status: "applying",
+        snapshot_id: "snap-next",
+        last_error: null,
+      },
+    ]);
+  });
 });
