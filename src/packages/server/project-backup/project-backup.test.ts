@@ -469,6 +469,49 @@ describe("project-backup", () => {
     expect(result.ttl_seconds).toBeGreaterThan(0);
   });
 
+  it("moves an existing assignment away from a disabled repo", async () => {
+    settings = {
+      r2_account_id: "account",
+      r2_api_token: "token",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      r2_bucket_prefix: "cocalc-backups",
+      project_region: "wnam",
+      backup_repo_id: REPO_ID,
+      repos: [
+        repoRow({
+          id: REPO_ID,
+          root: "rustic/shared-wnam-0001",
+          status: "disabled",
+        }),
+        repoRow({
+          id: REPO_IDS[1],
+          root: "rustic/shared-wnam-0002-clean",
+          status: "active",
+        }),
+      ],
+      project_backup_assignments: {
+        [PROJECT_ID]: {
+          project_id: PROJECT_ID,
+          region: "wnam",
+          backup_repo_id: REPO_ID,
+          created: new Date("2026-01-01T00:00:00Z"),
+          updated: new Date("2026-01-01T00:00:00Z"),
+        },
+      },
+    };
+    const { getBackupConfig } = await import("./index");
+    const result = await getBackupConfig({
+      host_id: HOST_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(result.toml).toContain('root = "rustic/shared-wnam-0002-clean"');
+    expect(settings.backup_repo_id).toBe(REPO_IDS[1]);
+    expect(settings.project_backup_assignments[PROJECT_ID].backup_repo_id).toBe(
+      REPO_IDS[1],
+    );
+  });
+
   it("creates the first shared repo and bucket on first use", async () => {
     settings = {
       r2_account_id: "account",

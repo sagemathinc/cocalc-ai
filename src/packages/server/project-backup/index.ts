@@ -605,6 +605,12 @@ function projectBackupRepoHasCapacity(repo: ProjectBackupRepoRow): boolean {
   );
 }
 
+function projectBackupRepoCanAcceptExistingAssignment(
+  repo: ProjectBackupRepoRow,
+): boolean {
+  return repo.status !== PROJECT_BACKUP_REPO_STATUS_DISABLED;
+}
+
 async function selectProjectBackupRepoForAssignmentLocal({
   project_id,
   project_region,
@@ -636,7 +642,10 @@ async function selectProjectBackupRepoForAssignmentLocal({
         client,
         existingAssignment.backup_repo_id,
       );
-      if (existingRepo) {
+      if (
+        existingRepo &&
+        projectBackupRepoCanAcceptExistingAssignment(existingRepo)
+      ) {
         return { repo: existingRepo, bucket };
       }
     }
@@ -648,7 +657,8 @@ async function selectProjectBackupRepoForAssignmentLocal({
       );
       if (
         existingRepo &&
-        normalizeBackupRegion(existingRepo.region) === region
+        normalizeBackupRegion(existingRepo.region) === region &&
+        projectBackupRepoCanAcceptExistingAssignment(existingRepo)
       ) {
         return { repo: existingRepo, bucket };
       }
@@ -1973,7 +1983,7 @@ export async function getBackupConfig({
 
   if (assignment.backup_repo_id) {
     const repo = await loadProjectBackupRepoById(assignment.backup_repo_id);
-    if (repo) {
+    if (repo && projectBackupRepoCanAcceptExistingAssignment(repo)) {
       const config = await buildBackupConfigFromRepo({
         repo,
         fallbackRegion: projectR2Region,
