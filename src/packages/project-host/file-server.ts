@@ -2540,7 +2540,7 @@ async function syncBackupIndexCache(
   }
   const task = (async () => {
     await mkdir(backupIndexDir(project_id), { recursive: true });
-    const manifest = await loadBackupIndexManifest(project_id);
+    let manifest = await loadBackupIndexManifest(project_id);
     const localEntries = await loadLocalBackupIndexEntries(project_id);
     for (const [backup_id, entry] of Object.entries(localEntries)) {
       manifest.entries[backup_id] = {
@@ -2551,10 +2551,12 @@ async function syncBackupIndexCache(
     try {
       const directConfig = await getBackupIndexStoreConfig(project_id);
       if (directConfig) {
-        return await syncDirectBackupIndexCache(project_id, manifest, {
+        manifest = await syncDirectBackupIndexCache(project_id, manifest, {
           backupIds: opts?.backupIds,
           materialize: opts?.materialize,
         });
+        // Continue below to merge legacy rustic index snapshots. Projects can
+        // have both when they span the direct-index rollout.
       }
     } catch (err) {
       logger.warn("direct backup index sync failed; falling back to rustic", {
