@@ -900,6 +900,15 @@ function formatHostGetRuntimeTargetRows(
   }));
 }
 
+function isAuthorizationErrorMessage(message: string | undefined): boolean {
+  const normalized = `${message ?? ""}`.trim().toLowerCase();
+  return (
+    normalized.includes("not authorized") ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("permission denied")
+  );
+}
+
 function emitHostGetHuman({
   host,
   runtime_status,
@@ -967,7 +976,11 @@ function emitHostGetHuman({
       console.log("");
     }
     if (`${runtime_status.fetch_error ?? ""}`.trim()) {
-      console.log(`Runtime Status Error: ${runtime_status.fetch_error}`);
+      if (isAuthorizationErrorMessage(runtime_status.fetch_error)) {
+        console.log("Runtime details: unavailable for this account.");
+      } else {
+        console.log(`Runtime Status Error: ${runtime_status.fetch_error}`);
+      }
       console.log("");
     }
   }
