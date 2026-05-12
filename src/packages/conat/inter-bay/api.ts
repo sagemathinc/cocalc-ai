@@ -797,6 +797,10 @@ export interface AuthTokenRedeemRequest {
   token: string;
 }
 
+export interface AuthTokenValidateRequest {
+  token: string;
+}
+
 export interface AuthTokenDisableRequest {
   token: string;
 }
@@ -1003,7 +1007,11 @@ export type AccountLocalMethod =
   | "claim-membership-package-seat"
   | "get-membership-portable-state"
   | "replace-membership-portable-state";
-export type AuthTokenMethod = "requires-token" | "redeem" | "disable";
+export type AuthTokenMethod =
+  | "requires-token"
+  | "validate"
+  | "redeem"
+  | "disable";
 export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod = "get-load" | "get-backups";
 export type ProjectCollabInviteMethod =
@@ -1669,6 +1677,9 @@ export interface InterBayBayOpsApi {
 
 export interface InterBayAuthTokenApi {
   requiresToken: (opts: AuthTokenRequiresRequest) => Promise<boolean>;
+  validate: (
+    opts: AuthTokenValidateRequest,
+  ) => Promise<RegistrationTokenInfoWire | null>;
   redeem: (
     opts: AuthTokenRedeemRequest,
   ) => Promise<RegistrationTokenInfoWire | null>;
@@ -3498,6 +3509,12 @@ export function createInterBayAuthTokenClient({
     ...serviceClientOptions({ client, timeout }),
     subject: authTokenSubject({ method: "redeem" }),
   });
+  const validateClient = createServiceClient<
+    Pick<InterBayAuthTokenApi, "validate">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: authTokenSubject({ method: "validate" }),
+  });
   const disableClient = createServiceClient<
     Pick<InterBayAuthTokenApi, "disable">
   >({
@@ -3507,6 +3524,7 @@ export function createInterBayAuthTokenClient({
   return {
     requiresToken: async (opts) =>
       await requiresTokenClient.requiresToken(opts),
+    validate: async (opts) => await validateClient.validate(opts),
     redeem: async (opts) => await redeemClient.redeem(opts),
     disable: async (opts) => await disableClient.disable(opts),
   };
@@ -3531,6 +3549,14 @@ export function createInterBayAuthTokenHandlers({
       subject: authTokenSubject({ method: "redeem" }),
       impl: {
         redeem: async (opts) => await impl.redeem(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAuthTokenApi, "validate">>({
+      ...options,
+      service: "inter-bay-auth-token",
+      subject: authTokenSubject({ method: "validate" }),
+      impl: {
+        validate: async (opts) => await impl.validate(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAuthTokenApi, "disable">>({

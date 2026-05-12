@@ -31,7 +31,6 @@ export const SignUpInputSchema = z
       .describe(
         "ID of a published document, used to resume a share flow after signup.",
       ),
-    signupReason: z.string().optional(),
   })
   .describe(
     "Create a new account. In production, this is not available for all users and requires additional trust! For on-premises, this functionality is only available for administrators.",

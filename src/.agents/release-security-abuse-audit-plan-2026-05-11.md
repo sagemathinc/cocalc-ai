@@ -659,9 +659,11 @@ Release target:
   changing every secret consumer.
 - add the master-key state to `cocalc doctor security` or equivalent.
 
-## Phase 8c: Registration Token Signup Policy
+## Phase 8c: Registration Token Signup Security
 
-Goal: avoid accidental public account creation on Launchpad.
+Goal: make account signup fail closed, avoid account-enumeration shortcuts, and
+avoid treating database access as sufficient to mint registration-token
+signups.
 
 Current concern:
 
@@ -670,6 +672,17 @@ Current concern:
 - if all registration tokens are disabled or absent, signup currently may become
   public without an explicit operator opt-in.
 - this is confusing and unsafe.
+- registration-token values are stored as plaintext primary keys, so a leaked
+  database backup leaks active signup/admin-bootstrap tokens.
+- sign-up must not double as sign-in and must not bypass sign-in 2FA.
+- token-gated signup should validate the token before returning
+  account-specific errors, otherwise invalid-token attempts can enumerate
+  existing accounts.
+- registration tokens should not be consumed until all cheap pre-create checks
+  have passed.
+- unauthenticated signup should not accept arbitrary metadata such as tags or
+  signup reason; any such policy should come from validated token metadata or
+  later authenticated account setup.
 
 Required behavior:
 
@@ -677,6 +690,12 @@ Required behavior:
 - public signup without a token requires an explicit setting.
 - that setting is visible and editable on the registration-token admin page.
 - disabling/deleting all tokens must not implicitly enable public signup.
+- active token values are stored as hashes, with cleartext shown only at token
+  creation time.
+- invalid token attempts are throttled whether the submitted token is wrong,
+  disabled, expired, exhausted, or missing.
+- signup creation failures are logged server-side but returned to users as
+  generic signup failures.
 - the UI should clearly show the current signup policy:
   - token required,
   - public signup explicitly enabled,
@@ -689,11 +708,16 @@ Audit targets:
 - admin registration-token page.
 - Launchpad bootstrap defaults.
 - tests for "no tokens configured" and "all tokens disabled".
+- migration/removal path for any remaining plaintext token values before
+  release.
 
 Release gate:
 
 - public signup without a token must be explicit opt-in, never an implicit
   fallback.
+- database access alone must not reveal active registration-token cleartext or
+  bootstrap-admin signup URLs.
+- sign-up cannot authenticate an existing account or bypass sign-in 2FA.
 
 ## Phase 9: Abuse Observability
 

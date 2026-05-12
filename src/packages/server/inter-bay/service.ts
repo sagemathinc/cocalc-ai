@@ -52,6 +52,7 @@ import { getRequiresTokensDirect } from "@cocalc/server/auth/tokens/get-requires
 import {
   disableRegistrationTokenDirect,
   redeemRegistrationTokenDirect,
+  validateRegistrationTokenDirect,
 } from "@cocalc/server/auth/tokens/redeem";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
@@ -321,6 +322,8 @@ async function startAuthTokenService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayAuthTokenApi = {
     requiresToken: async () => await getRequiresTokensDirect(),
+    validate: async ({ token }) =>
+      (await validateRegistrationTokenDirect(token)) ?? null,
     redeem: async ({ token }) =>
       (await redeemRegistrationTokenDirect(token)) ?? null,
     disable: async ({ token }) => {

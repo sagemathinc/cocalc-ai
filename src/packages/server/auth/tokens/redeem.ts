@@ -9,7 +9,7 @@ then returns no matter what the input is.
 import { createInterBayAuthTokenClient } from "@cocalc/conat/inter-bay/api";
 import getRequiresTokens from "./get-requires-token";
 import { getRequiresTokensDirect } from "./get-requires-token";
-import { getTransactionClient } from "@cocalc/database/pool";
+import getPool, { getTransactionClient } from "@cocalc/database/pool";
 import {
   getConfiguredClusterRole,
   isMultiBayCluster,
@@ -20,6 +20,64 @@ export interface RegistrationTokenInfo {
   token: string;
   ephemeral?: number;
   customize?: any;
+}
+
+function registrationTokenInfoFromRow(
+  token: string,
+  row: {
+    expires?: Date | null;
+    counter?: number | null;
+    limit?: number | null;
+    disabled?: boolean | null;
+    ephemeral?: number | null;
+    customize?: any;
+  },
+): RegistrationTokenInfo {
+  const counter = row.counter ?? 0;
+  const disabled = row.disabled ?? false;
+
+  if (disabled) {
+    throw Error("Registration token disabled.");
+  }
+
+  if (row.expires != null && row.expires.getTime() < new Date().getTime()) {
+    throw Error("Registration token no longer valid.");
+  }
+
+  if (row.limit != null && row.limit <= counter) {
+    throw Error("Registration token used up.");
+  }
+
+  return {
+    token,
+    ephemeral: typeof row.ephemeral === "number" ? row.ephemeral : undefined,
+    customize: row.customize,
+  };
+}
+
+export async function validateRegistrationTokenDirect(
+  token: string,
+): Promise<RegistrationTokenInfo | undefined> {
+  const required = await getRequiresTokensDirect();
+  if (!required) {
+    return;
+  }
+
+  if (!token) {
+    throw Error("no registration token provided");
+  }
+
+  const { rows } = await getPool().query(
+    `SELECT "expires", "counter", "limit", "disabled", "ephemeral", "customize"
+     FROM registration_tokens
+     WHERE token = $1::TEXT`,
+    [token],
+  );
+
+  if (rows.length != 1) {
+    throw Error("Registration token is wrong.");
+  }
+  return registrationTokenInfoFromRow(token, rows[0]);
 }
 
 export async function redeemRegistrationTokenDirect(
@@ -54,42 +112,16 @@ export async function redeemRegistrationTokenDirect(
       throw Error("Registration token is wrong.");
     }
     // e.g. { expires: 2020-12-04T11:54:52.889Z, counter: null, limit: 10, disabled: ... }
-    const {
-      expires,
-      counter: counter_raw,
-      limit,
-      disabled: disabled_raw,
-      ephemeral,
-      customize,
-    } = match.rows[0];
-    const counter = counter_raw ?? 0;
-    const disabled = disabled_raw ?? false;
+    const info = registrationTokenInfoFromRow(token, match.rows[0]);
 
-    if (disabled) {
-      throw Error("Registration token disabled.");
-    }
-
-    if (expires != null && expires.getTime() < new Date().getTime()) {
-      throw Error("Registration token no longer valid.");
-    }
-
-    // we count in any case, but only enforce the limit if there is actually a limit set
-    if (limit != null && limit <= counter) {
-      throw Error("Registration token used up.");
-    } else {
-      // increase counter
-      const q_inc = `UPDATE registration_tokens SET "counter" = coalesce("counter", 0) + 1
-                     WHERE token = $1::TEXT`;
-      await client.query(q_inc, [token]);
-    }
+    // we count in any case after validation succeeds.
+    const q_inc = `UPDATE registration_tokens SET "counter" = coalesce("counter", 0) + 1
+                   WHERE token = $1::TEXT`;
+    await client.query(q_inc, [token]);
 
     // all good, let's commit
     await client.query("COMMIT");
-    return {
-      token,
-      ephemeral: typeof ephemeral === "number" ? ephemeral : undefined,
-      customize,
-    };
+    return info;
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -146,5 +178,21 @@ export default async function redeem(
   const result = await createInterBayAuthTokenClient({
     client: getInterBayFabricClient(),
   }).redeem({ token });
+  return result ?? undefined;
+}
+
+export async function validateRegistrationToken(
+  token: string,
+): Promise<RegistrationTokenInfo | undefined> {
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    return await validateRegistrationTokenDirect(token);
+  }
+  const required = await getRequiresTokens();
+  if (!required) {
+    return;
+  }
+  const result = await createInterBayAuthTokenClient({
+    client: getInterBayFabricClient(),
+  }).validate({ token });
   return result ?? undefined;
 }

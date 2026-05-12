@@ -43,7 +43,9 @@ import {
 } from "@cocalc/server/auth/throttle";
 import redeemRegistrationToken, {
   disableRegistrationToken,
+  validateRegistrationToken,
 } from "@cocalc/server/auth/tokens/redeem";
+import getRequiresRegistrationToken from "@cocalc/server/auth/tokens/get-requires-token";
 import sendWelcomeEmail from "@cocalc/server/email/welcome-email";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -80,15 +82,8 @@ import {
 const logger = getLogger("auth:sign-up");
 
 export async function signUp(req, res) {
-  let {
-    terms,
-    email,
-    password,
-    firstName,
-    lastName,
-    registrationToken,
-    signupReason,
-  } = getParams(req);
+  let { terms, email, password, firstName, lastName, registrationToken } =
+    getParams(req);
 
   password = (password ?? "").trim();
   email = (email ?? "").toLowerCase().trim();
@@ -165,15 +160,8 @@ export async function signUp(req, res) {
     return;
   }
 
-  if (!(await isAccountAvailable(email))) {
-    res.json({
-      issues: { email: `Email address "${email}" already in use.` },
-    });
-    return;
-  }
-
-  let tokenInfo;
-  if (registrationToken) {
+  const requiresRegistrationToken = await getRequiresRegistrationToken();
+  if (requiresRegistrationToken) {
     const tokenThrottle = signUpTokenCheck(email, req.ip);
     if (tokenThrottle) {
       res.json({
@@ -183,17 +171,39 @@ export async function signUp(req, res) {
       });
       return;
     }
+    try {
+      await validateRegistrationToken(registrationToken);
+    } catch (err) {
+      recordSignUpTokenFail(email, req.ip);
+      res.json({
+        issues: {
+          registrationToken: `Issue with registration token -- ${err.message}`,
+        },
+      });
+      return;
+    }
   }
-  try {
-    tokenInfo = await redeemRegistrationToken(registrationToken);
-  } catch (err) {
-    recordSignUpTokenFail(email, req.ip);
+
+  if (!(await isAccountAvailable(email))) {
     res.json({
-      issues: {
-        registrationToken: `Issue with registration token -- ${err.message}`,
-      },
+      issues: { email: `Email address "${email}" already in use.` },
     });
     return;
+  }
+
+  let tokenInfo;
+  if (requiresRegistrationToken) {
+    try {
+      tokenInfo = await redeemRegistrationToken(registrationToken);
+    } catch (err) {
+      recordSignUpTokenFail(email, req.ip);
+      res.json({
+        issues: {
+          registrationToken: `Issue with registration token -- ${err.message}`,
+        },
+      });
+      return;
+    }
   }
 
   const tokenCustomize = tokenInfo?.customize;
@@ -218,7 +228,6 @@ export async function signUp(req, res) {
       first_name: firstName,
       last_name: lastName,
       home_bay_id: selected_home_bay_id,
-      signup_reason: signupReason,
       owner_id,
       ephemeral: tokenInfo?.ephemeral,
     });
@@ -348,7 +357,12 @@ export async function signUp(req, res) {
     });
   } catch (err) {
     if (!res.headersSent) {
-      res.json({ error: err.message });
+      logger.error("error creating account", { email, err });
+      res.json({
+        issues: {
+          api: "Problem creating account. Please try again.",
+        },
+      });
     }
   }
 }
