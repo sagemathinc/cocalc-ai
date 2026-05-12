@@ -141,16 +141,56 @@ Reconcile smoke:
 - decision: `already_aligned`
 - reconciled components: none
 
+Canary rollback and forward restore:
+
+- rollback command:
+  `host deploy rollback host1 --component project-host --reason canary_rollback_repro_smoke --wait --json`
+- rollback LRO: `bfd7a9ba-22a6-4aa3-920d-d0c990b7c13f`
+- rollback result: `succeeded`
+- rollback version: `20260510T044911Z-65ccdc8ef43a`
+- forward component restore command:
+  `host deploy rollback host1 --component project-host --to-version 20260511T232018Z-6bddf7c9d7bc --reason canary_forward_restore_repro_smoke --wait --json`
+- forward component restore LRO: `6f9b2c11-67d9-4172-97d4-90ffe88ae958`
+- forward artifact restore command:
+  `host deploy rollback host1 --artifact project-host --to-version 20260511T232018Z-6bddf7c9d7bc --reason canary_forward_restore_artifact_repro_smoke --wait --json`
+- forward artifact restore LRO: `93b6a39f-e84a-4f1c-b791-ac8964fa205e`
+- final project-host artifact and component desired state are both aligned to
+  `20260511T232018Z-6bddf7c9d7bc`
+- final active LRO count over the last 2 hours: `0`
+
+User-facing verification after runtime restart:
+
+- project:
+  `e51e9c3f-23c7-4c08-a40b-b512f7c498fb`
+- command:
+  `project exec --project e51e9c3f-23c7-4c08-a40b-b512f7c498fb --bash 'pwd; echo cocalc-canary-rollback-smoke; date -u; ls -la | sed -n "1,5p"'`
+- result: exit code `0`
+- output included `/home/user`, `cocalc-canary-rollback-smoke`, UTC date, and
+  directory listing
+
+Non-blocking observations:
+
+- During the rollback window, project-bundle/tools host-upgrade LROs also ran
+  and succeeded. This appears to be ordinary project runtime artifact
+  convergence, not a project-host rollback failure, but it makes the operation
+  history noisier than ideal.
+- `project logs` for the same project returned a project-host container lookup
+  error even though `project exec` worked. This is a follow-up bug candidate for
+  project runtime log lookup, not a deploy/rollback blocker.
+
 ## Remaining Release Work
 
 The deploy/rollback path is now reproducible enough for ordinary operator
-inspection and non-destructive rollback rehearsal.
+inspection, non-destructive rollback rehearsal, and one actual canary
+rollback/forward-restore rehearsal.
 
 Remaining work before calling this fully done:
 
-- perform one intentional canary rollback and forward rollback on a disposable
-  or low-risk host
-- document exact expected user-facing verification after a real component
-  restart, e.g. project open, terminal open, file save, and ACP worker action
+- decide whether the project-host artifact and component targets should be
+  restored together by a single operator command after a component rollback
+- decide whether noisy project-bundle/tools upgrade LROs during rollback smoke
+  need suppression or clearer history grouping
+- investigate the `project logs` container lookup failure seen after the
+  project-host restart
 - decide whether `host deploy rollback --dry-run` should also be exposed in the
   admin UI before first public release
