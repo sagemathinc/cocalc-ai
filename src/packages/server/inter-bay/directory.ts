@@ -19,6 +19,10 @@ const DIRECTORY_FALLBACK_TIMEOUT_MS = 2_000;
 export async function resolveProjectBay(
   project_id: string,
 ): Promise<BayOwnership | null> {
+  const local = await resolveProjectBayDirect(project_id);
+  if (local != null) {
+    return local;
+  }
   return await createInterBayDirectoryClient({
     client: getInterBayFabricClient(),
   }).resolveProjectBay({ project_id });

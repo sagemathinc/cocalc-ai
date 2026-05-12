@@ -54,7 +54,18 @@ describe("inter-bay directory", () => {
     delete process.env.COCALC_BAY_ID;
   });
 
-  it("resolves project ownership through the directory rpc subject", async () => {
+  it("uses direct local project resolution before directory rpc", async () => {
+    queryMock.mockResolvedValue({ rows: [{ bay_id: "bay-local" }] });
+    const { resolveProjectBay } = await import("./directory");
+    await expect(resolveProjectBay("proj-1")).resolves.toEqual({
+      bay_id: "bay-local",
+      epoch: 0,
+    });
+    expect(requestMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves project ownership through the directory rpc subject on a local miss", async () => {
+    queryMock.mockResolvedValue({ rows: [] });
     requestMock.mockResolvedValue({ data: { bay_id: "bay-0", epoch: 0 } });
     const { resolveProjectBay } = await import("./directory");
     await expect(resolveProjectBay("proj-1")).resolves.toEqual({
