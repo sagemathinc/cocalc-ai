@@ -208,6 +208,110 @@ describe("projects.copyPathBetweenProjects", () => {
     });
   });
 
+  it("accepts multiple destinations and stores canonical dests in one LRO", async () => {
+    getProjectOwnerAccountIdMock = jest.fn(async (project_id: string) =>
+      project_id === "dest-a" ? "owner-a" : "owner-b",
+    );
+    const { copyPathBetweenProjects } = await import("./projects");
+    await copyPathBetweenProjects({
+      account_id: "acct-1",
+      src: { project_id: "src-project", path: "/root/assignment" },
+      dests: [
+        {
+          project_id: "dest-a",
+          path: "/root/assignment",
+          metadata: { student_id: "student-a" },
+        },
+        {
+          project_id: "dest-b",
+          path: "/root/assignment",
+          metadata: { student_id: "student-b" },
+        },
+      ],
+      options: { recursive: true, force: true },
+    });
+
+    expect(assertCollabMock).toHaveBeenCalledTimes(3);
+    expect(assertCollabMock).toHaveBeenNthCalledWith(1, {
+      account_id: "acct-1",
+      project_id: "src-project",
+    });
+    expect(assertCollabMock).toHaveBeenNthCalledWith(2, {
+      account_id: "acct-1",
+      project_id: "dest-a",
+    });
+    expect(assertCollabMock).toHaveBeenNthCalledWith(3, {
+      account_id: "acct-1",
+      project_id: "dest-b",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: {
+          src: { project_id: "src-project", path: "/root/assignment" },
+          dests: [
+            {
+              project_id: "dest-a",
+              path: "/root/assignment",
+              metadata: { student_id: "student-a" },
+            },
+            {
+              project_id: "dest-b",
+              path: "/root/assignment",
+              metadata: { student_id: "student-b" },
+            },
+          ],
+          options: { recursive: true, force: true },
+        },
+      }),
+    );
+    expect(getProjectOwnerAccountIdMock).toHaveBeenCalledTimes(2);
+    expect(assertCanIncreaseAccountStorageMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("deduplicates repeated destinations before authorization and LRO creation", async () => {
+    const { copyPathBetweenProjects } = await import("./projects");
+    await copyPathBetweenProjects({
+      account_id: "acct-1",
+      src: { project_id: "src-project", path: "/root/assignment" },
+      dests: [
+        { project_id: "dest-project", path: "/root/assignment" },
+        { project_id: "dest-project", path: "/root/assignment" },
+      ],
+    });
+
+    expect(assertCollabMock).toHaveBeenCalledTimes(2);
+    expect(getProjectOwnerAccountIdMock).toHaveBeenCalledTimes(1);
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: {
+          src: { project_id: "src-project", path: "/root/assignment" },
+          dests: [{ project_id: "dest-project", path: "/root/assignment" }],
+          options: undefined,
+        },
+      }),
+    );
+  });
+
+  it("rejects ambiguous or empty destination input", async () => {
+    const { copyPathBetweenProjects } = await import("./projects");
+    await expect(
+      copyPathBetweenProjects({
+        account_id: "acct-1",
+        src: { project_id: "src-project", path: "/root/a.txt" },
+        dest: { project_id: "dest-project", path: "/root/a.txt" },
+        dests: [{ project_id: "dest-project", path: "/root/b.txt" }],
+      }),
+    ).rejects.toThrow("specify exactly one of dest or dests");
+    await expect(
+      copyPathBetweenProjects({
+        account_id: "acct-1",
+        src: { project_id: "src-project", path: "/root/a.txt" },
+        dests: [],
+      }),
+    ).rejects.toThrow("at least one destination is required");
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
   it("blocks copy when the destination owner is already at the hard storage cap", async () => {
     assertCanIncreaseAccountStorageMock = jest.fn(async () => {
       throw new Error("total account storage hard cap reached");

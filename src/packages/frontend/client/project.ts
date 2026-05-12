@@ -42,6 +42,7 @@ import { isDirViaFs } from "./is-dir";
 import { throttle } from "lodash";
 import { type ProjectApi } from "@cocalc/conat/project/api";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
+import { type ProjectCopyDestination } from "@cocalc/conat/hub/api/projects";
 import { resolveExplicitStreamStart } from "./stream-start";
 
 const TOUCH_THROTTLE = 30_000;
@@ -131,7 +132,8 @@ export class ProjectClient {
   copyPathBetweenProjects = async (opts: {
     src: { project_id: string; path: string | string[] };
     src_home?: string;
-    dest: { project_id: string; path: string };
+    dest?: ProjectCopyDestination;
+    dests?: ProjectCopyDestination[];
     options?: CopyOptions;
   }): Promise<{
     op_id: string;

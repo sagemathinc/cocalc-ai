@@ -142,9 +142,24 @@ Work here:
    - Status: fixed in `e5819088e1`; needs live confirmation after frontend
      rebuild/restart.
 
+7. Active chat room can stay forever in `Loading...` after project-host restart.
+   - Symptom: on `alpha.cocalc.ai`, after rebuilding/upgrading project-host
+     components, the active dogfood chatroom stayed stuck indefinitely in a
+     full-page `Loading...` state.
+   - Related symptom: earlier `lite4.chat` testing showed a tiny forever
+     `Loading` state after backend component upgrade.
+   - Release risk: routine project-host upgrades/restarts can break active chat
+     sessions and require manual close/reopen or refresh.
+   - First hypothesis: frontend project/chat reconnect state does not recover
+     after project-host websocket/session invalidation, or a stale loading
+     promise masks the reconnect/auth failure.
+   - Validation: restart a project-host while a chatroom is open; confirm the
+     existing tab reconnects, or shows an actionable reconnect/auth error, and
+     never remains indefinitely in `Loading...`.
+
 ### P1: Fix Before May 31, Pull Forward If Easy
 
-7. Nebius H200 GPU is visible to `nvidia-smi` but not TensorFlow/PyTorch.
+8. Nebius H200 GPU is visible to `nvidia-smi` but not TensorFlow/PyTorch.
    - Symptom: on a Nebius H200 host in the US, `pip install` of TensorFlow and
      PyTorch works and `nvidia-smi` sees the GPU, but Python frameworks do not
      see CUDA devices.
@@ -156,19 +171,14 @@ Work here:
      library visibility, `torch.cuda.is_available()`, and TensorFlow GPU device
      listing; distinguish rootfs-image problem from host bootstrap problem.
 
-8. Jupyter kernel selector/add-kernel UX regresses after one kernel exists.
+9. Jupyter kernel selector/add-kernel UX regresses after one kernel exists.
    - Keep an obvious "add/install kernel" path even when kernels already exist.
    - Keep the top Jupyter bar and red no-kernel warning visible when no kernel
      is selected.
 
-9. Notification toast timing is wrong.
+10. Notification toast timing is wrong.
    - Toasts should appear when notifications arrive, not when notifications are
      marked read.
-
-10. Tiny forever-loading UI after backend component upgrade.
-
-- Likely stale session/reconnect edge case after project-host/backend
-  restart. Needs browser-console and network evidence.
 
 11. Backup time display appears random.
 
