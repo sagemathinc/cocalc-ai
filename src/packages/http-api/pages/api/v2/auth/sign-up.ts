@@ -6,7 +6,6 @@
 /*
 Sign up for a new account:
 
-0. If email/password matches an existing account, just sign them in.  Reduces confusion.
 1. Reject if password is absurdly weak.
 2. Query the database to make sure the email address is not already taken.
 3. Generate a random account_id. Do not check it is not already taken, since that's
@@ -52,7 +51,6 @@ import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { issueHomeBayRetryToken } from "@cocalc/server/auth/home-bay-retry-token";
 import { selectSignupHomeBay } from "@cocalc/server/accounts/select-home-bay";
 import { createClusterAccount } from "@cocalc/server/inter-bay/accounts";
-import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
 import { getTierTemplate } from "@cocalc/util/membership-tier-templates";
 import {
   isLaunchpadMode,
@@ -72,7 +70,7 @@ import {
   SignUpOutputSchema,
 } from "@cocalc/http-api/lib/api/schema/accounts/sign-up";
 import { SignUpIssues } from "@cocalc/http-api/lib/types/sign-up";
-import { getAccount, isWrongBayError, signUserIn } from "./sign-in";
+import { signUserIn } from "./sign-in";
 import {
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
@@ -108,29 +106,6 @@ export async function signUp(req, res) {
       },
     });
     return;
-  }
-
-  if (email && password) {
-    // Maybe there is already an account with this email and password?
-    try {
-      const account_id = await getAccount(email, password);
-      await signUserIn(req, res, account_id);
-      return;
-    } catch (err) {
-      if (isWrongBayError(err)) {
-        await clearAuthCookies({ req, res });
-        res.json({
-          wrong_bay: true,
-          home_bay_id: err.home_bay_id,
-          home_bay_url:
-            (await getBayPublicOriginForRequest(req, err.home_bay_id)) ??
-            err.home_bay_url,
-          retry_token: err.retry_token,
-        });
-        return;
-      }
-      // fine -- just means they don't already have an account.
-    }
   }
 
   const issues = checkObviousConditions({ terms, email, password });
