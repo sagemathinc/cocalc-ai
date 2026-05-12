@@ -75,6 +75,7 @@ import {
 } from "@cocalc/conat/core/client";
 import { type Readable } from "node:stream";
 import { getLogger } from "@cocalc/conat/logger";
+import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 const logger = getLogger("conat:files:write");
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -158,6 +159,16 @@ async function listen({
   for await (const mesg of sub) {
     if (activeWriteStreams >= maxActiveStreams) {
       const error = "project file write service is busy";
+      recordServiceAdmissionDenial({
+        surface: "project-file-write",
+        source: "project-service",
+        limit: "COCALC_PROJECT_FILE_WRITE_MAX_ACTIVE",
+        current: activeWriteStreams,
+        maximum: maxActiveStreams,
+        reason: error,
+        subject: mesg.subject,
+        project_id,
+      });
       logger.warn(error, {
         active: activeWriteStreams,
         max: maxActiveStreams,

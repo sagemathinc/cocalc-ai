@@ -10,6 +10,7 @@ import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 import { project_id } from "@cocalc/project/data";
 import { getLogger } from "@cocalc/project/logger";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 
 const logger = getLogger("project:exec-stream");
 
@@ -69,6 +70,16 @@ async function listen(
   for await (const mesg of api) {
     if (activeExecStreams >= maxActiveExecStreams) {
       const error = "project exec-stream service is busy";
+      recordServiceAdmissionDenial({
+        surface: "project-exec-stream",
+        source: "project-service",
+        limit: "COCALC_PROJECT_EXEC_STREAM_MAX_ACTIVE",
+        current: activeExecStreams,
+        maximum: maxActiveExecStreams,
+        reason: error,
+        project_id,
+        subject,
+      });
       logger.warn(error, {
         active: activeExecStreams,
         max: maxActiveExecStreams,

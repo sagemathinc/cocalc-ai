@@ -12,6 +12,7 @@ import {
 } from "@cocalc/conat/socket";
 import { EventIterator } from "@cocalc/util/event-iterator";
 import { getLogger } from "@cocalc/conat/logger";
+import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 import { Throttle } from "@cocalc/util/throttle";
 import {
   canonicalJupyterLiveRunPath,
@@ -277,6 +278,16 @@ export function jupyterServer({
 
   server.on("connection", (socket: ServerSocket) => {
     if (activeSockets >= maxActiveSockets) {
+      recordServiceAdmissionDenial({
+        surface: "jupyter-run-code",
+        source: "project-service",
+        limit: "COCALC_JUPYTER_MAX_ACTIVE_SOCKETS",
+        current: activeSockets,
+        maximum: maxActiveSockets,
+        reason: "jupyter socket active cap reached",
+        subject,
+        project_id,
+      });
       logger.warn("rejecting jupyter socket; active socket cap reached", {
         active: activeSockets,
         max: maxActiveSockets,
@@ -305,6 +316,18 @@ export function jupyterServer({
           typeof data.run_id == "string" ? data.run_id : nextRunId();
         if (activeRuns >= maxActiveRuns) {
           const error = "jupyter run service is busy";
+          recordServiceAdmissionDenial({
+            surface: "jupyter-run-code",
+            source: "project-service",
+            limit: "COCALC_JUPYTER_MAX_ACTIVE_RUNS",
+            current: activeRuns,
+            maximum: maxActiveRuns,
+            reason: error,
+            subject,
+            project_id,
+            path,
+            key: run_id,
+          });
           logger.warn(error, {
             active: activeRuns,
             max: maxActiveRuns,

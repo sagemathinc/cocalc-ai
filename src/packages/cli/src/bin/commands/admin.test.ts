@@ -319,6 +319,114 @@ test("admin acp-denials can emit prometheus text", async () => {
   assert.match(output, / 4\n/);
 });
 
+test("admin service-denials forwards filters to the hub report endpoint", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      system: {
+        getServiceAdmissionDenialReport: async (opts: any) => {
+          captured = opts;
+          return {
+            checked_at: "2026-05-11T00:00:00.000Z",
+            since: "2026-05-10T23:00:00.000Z",
+            window_minutes: opts.window_minutes,
+            min_count: opts.min_count,
+            groups: [],
+          };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "service-denials",
+    "--window-minutes",
+    "30",
+    "--min-count",
+    "3",
+    "--limit",
+    "25",
+    "--account",
+    "alice@example.com",
+    "--project",
+    "11111111-1111-4111-8111-111111111111",
+    "--surface",
+    "hub-conat-api",
+    "--denial-limit",
+    "COCALC_HUB_CONAT_API_MAX_ACTIVE",
+    "--source",
+    "hub-api",
+  ]);
+
+  assert.deepEqual(captured, {
+    window_minutes: 30,
+    min_count: 3,
+    limit: 25,
+    user_account_id: "22222222-2222-4222-8222-222222222222",
+    project_id: "11111111-1111-4111-8111-111111111111",
+    surface: "hub-conat-api",
+    denial_limit: "COCALC_HUB_CONAT_API_MAX_ACTIVE",
+    source: "hub-api",
+  });
+});
+
+test("admin service-denials can emit prometheus text", async () => {
+  let output = "";
+  const program = new Command();
+  registerAdminCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      output = await fn({
+        hub: {
+          system: {
+            getServiceAdmissionDenialReport: async () => ({
+              checked_at: "2026-05-11T00:00:00.000Z",
+              since: "2026-05-10T23:00:00.000Z",
+              window_minutes: 60,
+              min_count: 1,
+              groups: [
+                {
+                  host_id: "host",
+                  account_id: "acct",
+                  project_id: "project",
+                  surface: "jupyter-run-code",
+                  limit: "COCALC_JUPYTER_MAX_ACTIVE_RUNS",
+                  source: "project-service",
+                  count: 4,
+                  first_time: "2026-05-10T23:30:00.000Z",
+                  last_time: "2026-05-10T23:59:00.000Z",
+                  max_current: 8,
+                  max_maximum: 8,
+                },
+              ],
+            }),
+          },
+        },
+      });
+    },
+    resolveAccountByIdentifier: async () => {
+      throw new Error("not used");
+    },
+    isValidUUID: () => false,
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "service-denials",
+    "--prometheus",
+  ]);
+
+  assert.match(output, /cocalc_service_admission_denials_window_total/);
+  assert.match(output, /surface="jupyter-run-code"/);
+  assert.match(output, / 4\n/);
+});
+
 test("admin message send-system-notice forwards the system notice payload", async () => {
   let captured: any;
   const program = new Command();

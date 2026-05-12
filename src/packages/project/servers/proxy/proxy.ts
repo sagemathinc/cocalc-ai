@@ -54,6 +54,7 @@ import {
   APP_PROXY_EXPOSURE_HEADER,
   type AppProxyExposureMode,
 } from "@cocalc/backend/auth/app-proxy";
+import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 import listen from "@cocalc/backend/misc/async-server-listen";
 import { resolveProxyListenPort } from "./config";
 import {
@@ -195,6 +196,19 @@ function rejectWebsocket({
   key: string;
   admission: Exclude<ReturnType<typeof claimProxyWebsocket>, { allowed: true }>;
 }): void {
+  recordServiceAdmissionDenial({
+    surface: "app-proxy-websocket",
+    source: "project-app-proxy",
+    limit:
+      admission.reason === "app proxy websocket total limit reached"
+        ? "COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_TOTAL"
+        : "COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_PER_TARGET",
+    current: admission.active,
+    maximum: admission.max,
+    reason: admission.reason,
+    project_id,
+    key,
+  });
   logger.warn(admission.reason, {
     key,
     active: admission.active,

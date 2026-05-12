@@ -1163,6 +1163,9 @@ export interface InterBayHostConnectionApi {
   recordAcpAdmissionDenial: (
     opts: Parameters<Hosts["recordAcpAdmissionDenial"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["recordAcpAdmissionDenial"]>>>;
+  recordServiceAdmissionDenial: (
+    opts: Parameters<Hosts["recordServiceAdmissionDenial"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["recordServiceAdmissionDenial"]>>>;
   getSeedBackupConfig: (opts: {
     project_id: string;
     project_region?: string | null;

@@ -60,6 +60,7 @@ import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { close as terminatePersistServer } from "@cocalc/backend/conat/persist";
 import * as Module from "module";
 import { delay } from "awaiting";
+import { recordServiceAdmissionDenialLocal } from "./service-admission-denials";
 
 const ssh = {} as any;
 const reflect = {} as any;
@@ -197,6 +198,16 @@ async function handleMessage({ api, subject, mesg }) {
     // we explicitly do NOT await this, since we want this hub server to handle
     // potentially many messages at once, not one at a time!
     if (activeApiRequests >= MAX_ACTIVE_API_REQUESTS) {
+      void recordServiceAdmissionDenialLocal({
+        surface: "hub-conat-api",
+        source: "hub-api",
+        limit: "COCALC_HUB_CONAT_API_MAX_ACTIVE",
+        current: activeApiRequests,
+        maximum: MAX_ACTIVE_API_REQUESTS,
+        reason: "hub api server is busy",
+        subject: mesg.subject,
+        key: request?.name,
+      });
       logger.warn("rejecting hub.api request; active request cap reached", {
         active: activeApiRequests,
         max: MAX_ACTIVE_API_REQUESTS,

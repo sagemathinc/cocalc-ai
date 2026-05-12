@@ -111,6 +111,7 @@ import {
   startProjectHostAcpWorkerSupervisor,
 } from "./hub/acp/worker-manager";
 import { configureProjectHostAcpAdmissionDenialRecorder } from "./hub/acp/admission-denials";
+import { configureProjectHostServiceAdmissionDenialRecorder } from "./hub/service-admission-denials";
 import { main as runHostAgentMain } from "./host-agent";
 import { matchAppRequest } from "./app-public-access";
 import { maybeHandleStaticAppRequest } from "./static-apps";
@@ -488,6 +489,7 @@ export async function main(
     conat: () => conatClient,
     getLogger,
   });
+  configureProjectHostServiceAdmissionDenialRecorder();
   const stopConatRevocationKickLoop = startConatRevocationKickLoop({
     client: conatClient,
   });

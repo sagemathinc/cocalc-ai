@@ -43,6 +43,7 @@ import {
 } from "@cocalc/conat/core/client";
 import { delay } from "awaiting";
 import { getLogger } from "@cocalc/conat/logger";
+import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 
 const logger = getLogger("conat:files:read");
 
@@ -121,14 +122,25 @@ export async function createServer({
   listen({
     sub,
     createReadStream,
+    project_id,
     maxActiveStreams: maxActiveStreams ?? MAX_ACTIVE_READ_STREAMS,
   });
 }
 
-async function listen({ sub, createReadStream, maxActiveStreams }) {
+async function listen({ sub, createReadStream, project_id, maxActiveStreams }) {
   for await (const mesg of sub) {
     if (activeReadStreams >= maxActiveStreams) {
       const error = "project file read service is busy";
+      recordServiceAdmissionDenial({
+        surface: "project-file-read",
+        source: "project-service",
+        limit: "COCALC_PROJECT_FILE_READ_MAX_ACTIVE",
+        current: activeReadStreams,
+        maximum: maxActiveStreams,
+        reason: error,
+        subject: mesg.subject,
+        project_id,
+      });
       logger.warn(error, {
         active: activeReadStreams,
         max: maxActiveStreams,

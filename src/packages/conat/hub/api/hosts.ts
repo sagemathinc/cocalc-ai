@@ -70,6 +70,22 @@ export interface AcpAdmissionDenialRecord {
   time?: number;
 }
 
+export interface ServiceAdmissionDenialRecord {
+  host_id?: string;
+  account_id?: string;
+  project_id?: string;
+  surface: string;
+  limit: string;
+  current: number;
+  maximum: number;
+  source?: string;
+  reason?: string;
+  subject?: string;
+  path?: string;
+  key?: string;
+  time?: number;
+}
+
 export interface HostAccessEntry {
   host_id: string;
   account_id: string;
@@ -1083,6 +1099,7 @@ export const hosts = {
   getBackupConfig: authFirstRequireHost,
   getProjectOwnerEffectiveLimits: authFirstRequireHost,
   recordAcpAdmissionDenial: authFirstRequireHost,
+  recordServiceAdmissionDenial: authFirstRequireHost,
   recordProjectBackup: authFirstRequireHost,
   recordProjectBackupIndex: authFirstRequireHost,
   getProjectBackupIndexes: authFirstRequireHost,
@@ -1293,6 +1310,9 @@ export interface Hosts {
     project_id?: string;
   }) => Promise<MembershipEffectiveLimits>;
   recordAcpAdmissionDenial: (opts: AcpAdmissionDenialRecord) => Promise<void>;
+  recordServiceAdmissionDenial: (
+    opts: ServiceAdmissionDenialRecord,
+  ) => Promise<void>;
   recordProjectBackup: (opts: {
     host_id?: string;
     project_id: string;

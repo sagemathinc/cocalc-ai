@@ -42,6 +42,7 @@ import type {
   HostAccessEntry,
   HostEffectiveAccessRole,
   AcpAdmissionDenialRecord,
+  ServiceAdmissionDenialRecord,
 } from "@cocalc/conat/hub/api/hosts";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
@@ -59,6 +60,7 @@ import type {
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import centralLog from "@cocalc/database/postgres/central-log";
+import { recordServiceAdmissionDenialLocal as recordServiceAdmissionDenialCentralLog } from "./service-admission-denials";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import {
@@ -1351,6 +1353,57 @@ export async function recordAcpAdmissionDenialLocal({
           ? new Date(time).toISOString()
           : new Date().toISOString(),
     },
+  });
+}
+
+export async function recordServiceAdmissionDenial({
+  host_id,
+  project_id,
+  ...event
+}: ServiceAdmissionDenialRecord): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .recordServiceAdmissionDenial({
+        host_id,
+        project_id,
+        ...event,
+      });
+    return;
+  }
+  await recordServiceAdmissionDenialLocal({
+    host_id,
+    project_id,
+    ...event,
+  });
+}
+
+export async function recordServiceAdmissionDenialLocal({
+  host_id,
+  project_id,
+  ...event
+}: ServiceAdmissionDenialRecord): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+  });
+  await recordServiceAdmissionDenialCentralLog({
+    host_id,
+    project_id,
+    ...event,
   });
 }
 

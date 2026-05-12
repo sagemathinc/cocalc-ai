@@ -8,6 +8,7 @@ import type { Options, ServiceCall } from "./service";
 import { until } from "@cocalc/util/async-utils";
 import { randomId } from "@cocalc/conat/names";
 import { DataEncoding, decode, encode } from "../core/codec";
+import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 export type { ConatService };
 
 type ServiceTransport = "fast-rpc" | "request";
@@ -183,6 +184,18 @@ export function createServiceHandler<Api>({
     options.maxParallelHandlers ?? DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS;
   const runFastRpcHandler = async ({ raw }: { raw: Uint8Array }) => {
     if (activeFastRpcHandlers >= maxFastRpcHandlers) {
+      recordServiceAdmissionDenial({
+        surface: "conat-typed-service",
+        source: "fast-rpc-handler",
+        limit: "COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE",
+        current: activeFastRpcHandlers,
+        maximum: maxFastRpcHandlers,
+        reason: `typed service '${options.service}' is busy`,
+        subject,
+        project_id: options.project_id,
+        account_id: options.account_id,
+        key: options.service,
+      });
       const err = new Error(`typed service '${options.service}' is busy`);
       (err as any).code = 503;
       throw err;

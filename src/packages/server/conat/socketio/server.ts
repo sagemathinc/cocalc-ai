@@ -59,6 +59,7 @@ import { dnsScan, localAddress, SCAN_INTERVAL } from "./dns-scan";
 import { handleHealth } from "./health";
 import { handleMetrics, initMetrics } from "./metrics";
 import { startHubConatManagedEgressLoop } from "./managed-egress";
+import { configureHubServiceAdmissionDenialRecorder } from "../api/service-admission-denials";
 
 const logger = getLogger("conat-server");
 
@@ -135,6 +136,7 @@ export async function init(
   options0: Partial<Options> & { kucalc?: boolean } = {},
 ) {
   logger.debug("init");
+  configureHubServiceAdmissionDenialRecorder();
   const { kucalc, ...options } = options0;
 
   if (kucalc) {

@@ -172,6 +172,8 @@ import type {
   BayLoadProjectionStatus,
   AcpAdmissionDenialReport,
   AcpAdmissionDenialSummary,
+  ServiceAdmissionDenialReport,
+  ServiceAdmissionDenialSummary,
   ProjectBackupShardAdminStatus,
 } from "@cocalc/conat/hub/api/system";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -909,6 +911,146 @@ export async function getAcpAdmissionDenialReport({
     window_minutes: windowMinutes,
     min_count: minCount,
     groups: rows.map(parseDenialSummaryRow),
+  };
+}
+
+function parseServiceDenialSummaryRow(
+  row: Record<string, any>,
+): ServiceAdmissionDenialSummary {
+  return {
+    host_id: row.host_id || null,
+    account_id: row.account_id || null,
+    project_id: row.project_id || null,
+    surface: row.surface || "unknown",
+    limit: row.denial_limit || "unknown",
+    source: row.source || "unknown",
+    count: Number(row.count) || 0,
+    first_time:
+      row.first_time instanceof Date
+        ? row.first_time.toISOString()
+        : `${row.first_time}`,
+    last_time:
+      row.last_time instanceof Date
+        ? row.last_time.toISOString()
+        : `${row.last_time}`,
+    max_current: Number(row.max_current) || 0,
+    max_maximum: Number(row.max_maximum) || 0,
+    sample_subject: row.sample_subject || null,
+    sample_path: row.sample_path || null,
+    sample_key: row.sample_key || null,
+    sample_reason: row.sample_reason || null,
+  };
+}
+
+export async function getServiceAdmissionDenialReport({
+  account_id,
+  window_minutes,
+  min_count,
+  limit,
+  user_account_id,
+  project_id,
+  surface,
+  denial_limit,
+  source,
+}: {
+  account_id?: string;
+  window_minutes?: number;
+  min_count?: number;
+  limit?: number;
+  user_account_id?: string | null;
+  project_id?: string | null;
+  surface?: string | null;
+  denial_limit?: string | null;
+  source?: string | null;
+} = {}): Promise<ServiceAdmissionDenialReport> {
+  await assertAdmin(account_id);
+  const windowMinutes = boundedPositiveInteger({
+    value: window_minutes,
+    fallback: 60,
+    max: 7 * 24 * 60,
+  });
+  const minCount = boundedPositiveInteger({
+    value: min_count,
+    fallback: 1,
+    max: 1_000_000,
+  });
+  const rowLimit = boundedPositiveInteger({
+    value: limit,
+    fallback: 50,
+    max: 500,
+  });
+
+  const params: any[] = [windowMinutes];
+  const conditions = [
+    "event = 'service_admission_denied'",
+    `"time" >= NOW() - ($1::int * INTERVAL '1 minute')`,
+  ];
+  const addFilter = (jsonKey: string, value: unknown) => {
+    const filter = optionalFilter(value);
+    if (!filter) return;
+    params.push(filter);
+    conditions.push(`value->>'${jsonKey}' = $${params.length}`);
+  };
+  addFilter("account_id", user_account_id);
+  addFilter("project_id", project_id);
+  addFilter("surface", surface);
+  addFilter("limit", denial_limit);
+  addFilter("source", source);
+  params.push(minCount, rowLimit);
+  const minCountParam = params.length - 1;
+  const limitParam = params.length;
+
+  const { rows } = await getPool().query(
+    `
+      WITH filtered AS (
+        SELECT "time", value
+        FROM central_log
+        WHERE ${conditions.join(" AND ")}
+      )
+      SELECT
+        NULLIF(value->>'host_id', '') AS host_id,
+        NULLIF(value->>'account_id', '') AS account_id,
+        NULLIF(value->>'project_id', '') AS project_id,
+        COALESCE(NULLIF(value->>'surface', ''), 'unknown') AS surface,
+        COALESCE(NULLIF(value->>'limit', ''), 'unknown') AS denial_limit,
+        COALESCE(NULLIF(value->>'source', ''), 'unknown') AS source,
+        COUNT(*)::int AS count,
+        MIN("time") AS first_time,
+        MAX("time") AS last_time,
+        MAX(
+          CASE
+            WHEN (value->>'current') ~ '^[0-9]+$'
+            THEN (value->>'current')::int
+            ELSE 0
+          END
+        )::int AS max_current,
+        MAX(
+          CASE
+            WHEN (value->>'maximum') ~ '^[0-9]+$'
+            THEN (value->>'maximum')::int
+            ELSE 0
+          END
+        )::int AS max_maximum,
+        MAX(NULLIF(value->>'subject', '')) AS sample_subject,
+        MAX(NULLIF(value->>'path', '')) AS sample_path,
+        MAX(NULLIF(value->>'key', '')) AS sample_key,
+        MAX(NULLIF(value->>'reason', '')) AS sample_reason
+      FROM filtered
+      GROUP BY host_id, account_id, project_id, surface, denial_limit, source
+      HAVING COUNT(*) >= $${minCountParam}
+      ORDER BY count DESC, last_time DESC
+      LIMIT $${limitParam}
+    `,
+    params,
+  );
+
+  const checkedAt = new Date();
+  return {
+    checked_at: checkedAt.toISOString(),
+    since: new Date(checkedAt.valueOf() - windowMinutes * 60_000).toISOString(),
+    window_minutes: windowMinutes,
+    min_count: minCount,
+    groups: rows.map(parseServiceDenialSummaryRow),
   };
 }
 
