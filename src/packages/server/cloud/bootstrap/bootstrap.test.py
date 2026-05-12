@@ -370,11 +370,14 @@ class BootstrapRuntimeUserContractTest(unittest.TestCase):
 
 
 class BootstrapRootlessPodmanResetTest(unittest.TestCase):
-    def test_configure_podman_clears_stale_rootless_state_on_owner_drift(self) -> None:
+    def test_configure_podman_does_not_clear_rootless_state_on_subuid_ownership(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
             recorded = []
             removed = []
+            writes = []
 
             original_run_best_effort = bootstrap.run_best_effort
             original_runtime_home = bootstrap.runtime_home
@@ -388,7 +391,9 @@ class BootstrapRootlessPodmanResetTest(unittest.TestCase):
                 )
                 bootstrap.runtime_home = lambda _cfg: str(Path(tmpdir) / "home")
                 Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
-                Path.write_text = lambda self, _text, encoding="utf-8": 0  # type: ignore[method-assign]
+                Path.write_text = lambda self, text, encoding="utf-8": writes.append(  # type: ignore[method-assign]
+                    (str(self), text)
+                )
                 bootstrap.tree_has_unexpected_ownership = lambda *_args, **_kwargs: True
                 bootstrap.shutil.rmtree = lambda path, ignore_errors=False: removed.append(
                     (str(path), ignore_errors)
@@ -402,13 +407,20 @@ class BootstrapRootlessPodmanResetTest(unittest.TestCase):
                 bootstrap.tree_has_unexpected_ownership = original_has_unexpected
                 bootstrap.shutil.rmtree = original_rmtree
 
+            self.assertEqual([], removed)
             self.assertIn(
-                ("/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage", True),
-                removed,
+                (
+                    "/etc/containers/containers.conf",
+                    '[engine]\ncgroup_manager = "cgroupfs"\n',
+                ),
+                writes,
             )
             self.assertIn(
-                ("/mnt/cocalc/data/containers/rootless/missing-runtime-user/run", True),
-                removed,
+                (
+                    str(Path(tmpdir) / "home" / ".config" / "containers" / "containers.conf"),
+                    '[engine]\ncgroup_manager = "cgroupfs"\n',
+                ),
+                writes,
             )
             self.assertIn(
                 (
@@ -417,6 +429,23 @@ class BootstrapRootlessPodmanResetTest(unittest.TestCase):
                      "/mnt/cocalc/data/containers/rootless/missing-runtime-user/storage",
                      "/mnt/cocalc/data/containers/rootless/missing-runtime-user/run"],
                     "chown rootless podman path roots",
+                ),
+                recorded,
+            )
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "missing-runtime-user:missing-runtime-user",
+                        str(
+                            Path(tmpdir)
+                            / "home"
+                            / ".config"
+                            / "containers"
+                            / "containers.conf"
+                        ),
+                    ],
+                    "chown containers.conf",
                 ),
                 recorded,
             )
@@ -690,6 +719,7 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             cfg = make_cfg(tmpdir)
             recorded = []
+            writes = []
 
             original_run_best_effort = bootstrap.run_best_effort
             original_runtime_home = bootstrap.runtime_home
@@ -701,7 +731,9 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
                 )
                 bootstrap.runtime_home = lambda _cfg: str(Path(tmpdir) / "home")
                 Path.mkdir = lambda self, parents=False, exist_ok=False: None  # type: ignore[method-assign]
-                Path.write_text = lambda self, _text, encoding="utf-8": 0  # type: ignore[method-assign]
+                Path.write_text = lambda self, text, encoding="utf-8": writes.append(  # type: ignore[method-assign]
+                    (str(self), text)
+                )
                 bootstrap.configure_podman(cfg)
             finally:
                 bootstrap.run_best_effort = original_run_best_effort
@@ -711,12 +743,43 @@ class BootstrapOwnershipScopeTest(unittest.TestCase):
 
             self.assertIn(
                 (
+                    "/etc/containers/containers.conf",
+                    '[engine]\ncgroup_manager = "cgroupfs"\n',
+                ),
+                writes,
+            )
+            self.assertIn(
+                (
+                    str(Path(tmpdir) / "home" / ".config" / "containers" / "containers.conf"),
+                    '[engine]\ncgroup_manager = "cgroupfs"\n',
+                ),
+                writes,
+            )
+            self.assertIn(
+                (
                     [
                         "chown",
                         "missing-runtime-user:missing-runtime-user",
                         str(Path(tmpdir) / "home" / ".config" / "containers"),
                     ],
                     "chown rootless podman config",
+                ),
+                recorded,
+            )
+            self.assertIn(
+                (
+                    [
+                        "chown",
+                        "missing-runtime-user:missing-runtime-user",
+                        str(
+                            Path(tmpdir)
+                            / "home"
+                            / ".config"
+                            / "containers"
+                            / "containers.conf"
+                        ),
+                    ],
+                    "chown containers.conf",
                 ),
                 recorded,
             )

@@ -2736,6 +2736,11 @@ def configure_podman(cfg: BootstrapConfig) -> None:
         'graphroot = "/mnt/cocalc/data/containers/root/storage"\n',
         encoding="utf-8",
     )
+    Path("/etc/containers/containers.conf").write_text(
+        '[engine]\n'
+        'cgroup_manager = "cgroupfs"\n',
+        encoding="utf-8",
+    )
     if cfg.ssh_user != "root":
         desired_uid, desired_gid = resolve_runtime_user_identity(cfg)
         user_config_root = Path(runtime_home(cfg)) / ".config"
@@ -2743,13 +2748,6 @@ def configure_podman(cfg: BootstrapConfig) -> None:
         rootless_root = Path(f"/mnt/cocalc/data/containers/rootless/{cfg.ssh_user}")
         rootless_storage = rootless_root / "storage"
         rootless_run = rootless_root / "run"
-        if tree_has_unexpected_ownership(rootless_root, desired_uid, desired_gid):
-            log_line(
-                cfg,
-                "bootstrap: clearing stale rootless podman state with mismatched ownership",
-            )
-            shutil.rmtree(rootless_storage, ignore_errors=True)
-            shutil.rmtree(rootless_run, ignore_errors=True)
         user_config_root.mkdir(parents=True, exist_ok=True)
         run_best_effort(
             cfg,
@@ -2786,7 +2784,29 @@ def configure_podman(cfg: BootstrapConfig) -> None:
             f'graphroot = "{rootless_storage}"\n',
             encoding="utf-8",
         )
-        run_best_effort(cfg, ["chown", f"{cfg.ssh_user}:{cfg.ssh_user}", str(user_config / "storage.conf")], "chown storage.conf")
+        run_best_effort(
+            cfg,
+            [
+                "chown",
+                f"{cfg.ssh_user}:{cfg.ssh_user}",
+                str(user_config / "storage.conf"),
+            ],
+            "chown storage.conf",
+        )
+        (user_config / "containers.conf").write_text(
+            '[engine]\n'
+            'cgroup_manager = "cgroupfs"\n',
+            encoding="utf-8",
+        )
+        run_best_effort(
+            cfg,
+            [
+                "chown",
+                f"{cfg.ssh_user}:{cfg.ssh_user}",
+                str(user_config / "containers.conf"),
+            ],
+            "chown containers.conf",
+        )
 
 
 def write_env(cfg: BootstrapConfig, image_size_gb: int) -> None:
