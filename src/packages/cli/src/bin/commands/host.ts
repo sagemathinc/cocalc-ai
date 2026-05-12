@@ -411,6 +411,72 @@ function parseRuntimeDeploymentTarget(opts: {
   };
 }
 
+async function dryRunHostRuntimeDeploymentRollback({
+  ctx,
+  host,
+  target_type,
+  target,
+  version,
+  last_known_good,
+}: {
+  ctx: any;
+  host: { id: string; name?: string | null };
+  target_type: "artifact" | "component";
+  target: string;
+  version?: string;
+  last_known_good?: boolean;
+}) {
+  const status = await ctx.hub.hosts.getHostRuntimeDeploymentStatus({
+    id: host.id,
+  });
+  const key = `${target_type}:${target}`;
+  const rollbackTarget = (status.rollback_targets ?? []).find(
+    (candidate: any) =>
+      `${candidate?.target_type ?? ""}:${candidate?.target ?? ""}` === key,
+  ) as any;
+  const explicitVersion = `${version ?? ""}`.trim();
+  if (explicitVersion) {
+    return {
+      host_id: host.id,
+      name: host.name ?? undefined,
+      dry_run: true,
+      target_type,
+      target,
+      rollback_version: explicitVersion,
+      rollback_source: "explicit",
+      desired_version: rollbackTarget?.desired_version ?? "",
+      current_version: rollbackTarget?.current_version ?? "",
+      previous_version: rollbackTarget?.previous_version ?? "",
+      last_known_good_version: rollbackTarget?.last_known_good_version ?? "",
+    };
+  }
+  if (!rollbackTarget) {
+    throw new Error(`no rollback target found for ${key}`);
+  }
+  const rollbackVersion =
+    `${last_known_good ? rollbackTarget.last_known_good_version : (rollbackTarget.previous_version ?? "")}`.trim();
+  if (!rollbackVersion) {
+    throw new Error(
+      last_known_good
+        ? `no last-known-good rollback version found for ${key}`
+        : `no previous rollback version found for ${key}`,
+    );
+  }
+  return {
+    host_id: host.id,
+    name: host.name ?? undefined,
+    dry_run: true,
+    target_type,
+    target,
+    rollback_version: rollbackVersion,
+    rollback_source: last_known_good ? "last_known_good" : "previous_version",
+    desired_version: rollbackTarget.desired_version ?? "",
+    current_version: rollbackTarget.current_version ?? "",
+    previous_version: rollbackTarget.previous_version ?? "",
+    last_known_good_version: rollbackTarget.last_known_good_version ?? "",
+  };
+}
+
 function deploymentUpsertFromRecord(record: any) {
   return {
     target_type: record.target_type,
@@ -2685,6 +2751,10 @@ does not yet have the required runtime artifact version installed.
       "--last-known-good",
       "use the recorded last-known-good version instead of the previous retained version",
     )
+    .option(
+      "--dry-run",
+      "resolve the rollback version without changing desired state or queuing work",
+    )
     .option("--reason <reason>", "optional rollback reason")
     .option("--wait", "wait for completion")
     .addHelpText(
@@ -2706,6 +2776,7 @@ version when available, or \`--to-version\` to force a specific published versio
           artifact?: string;
           toVersion?: string;
           lastKnownGood?: boolean;
+          dryRun?: boolean;
           reason?: string;
           wait?: boolean;
         },
@@ -2719,6 +2790,16 @@ version when available, or \`--to-version\` to force a specific published versio
           }
           const host = await resolveHost(ctx, hostIdentifier);
           const parsedTarget = parseRuntimeDeploymentTarget(opts);
+          if (opts.dryRun) {
+            return await dryRunHostRuntimeDeploymentRollback({
+              ctx,
+              host,
+              target_type: parsedTarget.target_type,
+              target: parsedTarget.target,
+              version: `${opts.toVersion ?? ""}`.trim() || undefined,
+              last_known_good: !!opts.lastKnownGood,
+            });
+          }
           const op = await ctx.hub.hosts.rollbackHostRuntimeDeployments({
             id: host.id,
             target_type: parsedTarget.target_type,
