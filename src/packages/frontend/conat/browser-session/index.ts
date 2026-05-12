@@ -62,6 +62,7 @@ import {
   getSnapshotFileText as getProjectSnapshotFileText,
 } from "@cocalc/frontend/project/archive-info";
 import { createManagedSyncDocLeases } from "./syncdoc-leases";
+import { createBrowserAutomationAuditBuffer } from "./automation-audit";
 import { createBrowserExecOperations } from "./exec-operations";
 import { createBrowserSessionHeartbeat } from "./session-heartbeat";
 import {
@@ -85,6 +86,9 @@ import {
   type BrowserAtomicActionRequest,
   type BrowserActionName,
   type BrowserActionResult,
+  type BrowserAutomationAuditDecision,
+  type BrowserAutomationAuditEvent,
+  type BrowserAutomationAuditKind,
   type BrowserExecPolicyV1,
   type BrowserOpenFileInfo,
   type BrowserSessionServiceApi,
@@ -161,6 +165,7 @@ export function createBrowserSessionAutomation({
 }): BrowserSessionAutomation {
   let service: ConatService | undefined;
   const runtimeObservability = createBrowserRuntimeObservability();
+  const automationAudit = createBrowserAutomationAuditBuffer();
   const syncDocLeases = createManagedSyncDocLeases({ projectConat });
   const extensionsRuntime = new BrowserExtensionsRuntime();
   let activeExecOps = 0;
@@ -187,6 +192,23 @@ export function createBrowserSessionAutomation({
   const resetAdmissionCounters = (): void => {
     activeExecOps = 0;
     activeActions = 0;
+  };
+  const currentPageUrl = (): string | undefined =>
+    typeof location !== "undefined" && location.href
+      ? `${location.href}`
+      : undefined;
+  const currentOrigin = (): string | undefined =>
+    typeof location !== "undefined" && location.origin
+      ? `${location.origin}`
+      : undefined;
+  const recordAutomationAudit = (
+    event: Omit<BrowserAutomationAuditEvent, "seq" | "ts">,
+  ): void => {
+    automationAudit.append({
+      ...event,
+      ...(event.page_url ? {} : { page_url: currentPageUrl() }),
+      ...(event.origin ? {} : { origin: currentOrigin() }),
+    });
   };
   const heartbeatController = createBrowserSessionHeartbeat({
     hub,
@@ -1964,19 +1986,53 @@ export function createBrowserSessionAutomation({
     }
   };
 
-  const executeBrowserActionWithAdmission = async (
-    args: Parameters<typeof executeBrowserAction>[0],
-  ): Promise<BrowserActionResult> => {
+  const claimActionSlot = (): (() => void) => {
     if (activeActions >= MAX_ACTIVE_ACTIONS) {
       throw Error(
         `browser action is busy (${activeActions} active); max ${MAX_ACTIVE_ACTIONS}`,
       );
     }
     activeActions += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      activeActions = Math.max(0, activeActions - 1);
+    };
+  };
+
+  const executeBrowserActionWithAudit = async (
+    args: Parameters<typeof executeBrowserAction>[0] & {
+      audit_kind: BrowserAutomationAuditKind;
+      posture: "prod" | "dev";
+      audit_policy_decision?: BrowserAutomationAuditDecision;
+    },
+  ): Promise<BrowserActionResult> => {
+    let release: (() => void) | undefined;
+    try {
+      release = claimActionSlot();
+    } catch (err) {
+      recordAutomationAudit({
+        kind: args.audit_kind,
+        decision: "deny",
+        project_id: args.project_id,
+        posture: args.posture,
+        action_name: args.action.name,
+        reason: `${err}`,
+      });
+      throw err;
+    }
+    recordAutomationAudit({
+      kind: args.audit_kind,
+      decision: args.audit_policy_decision ?? "allow",
+      project_id: args.project_id,
+      posture: args.posture,
+      action_name: args.action.name,
+    });
     try {
       return await executeBrowserAction(args);
     } finally {
-      activeActions = Math.max(0, activeActions - 1);
+      release();
     }
   };
 
@@ -2042,15 +2098,29 @@ export function createBrowserSessionAutomation({
             );
           }
           const action = parsed as BrowserAtomicActionRequest;
-          enforceActionPolicy({
-            project_id,
-            action_name: name as BrowserActionName,
-            posture: "prod",
-            policy,
-          });
-          const result = await executeBrowserActionWithAdmission({
+          try {
+            enforceActionPolicy({
+              project_id,
+              action_name: name as BrowserActionName,
+              posture: "prod",
+              policy,
+            });
+          } catch (err) {
+            recordAutomationAudit({
+              kind: "sandbox_action",
+              decision: "deny",
+              project_id,
+              posture: "prod",
+              action_name: name as BrowserActionName,
+              reason: `${err}`,
+            });
+            throw err;
+          }
+          const result = await executeBrowserActionWithAudit({
             project_id,
             action,
+            audit_kind: "sandbox_action",
+            posture: "prod",
           });
           actionCount += 1;
           actionResults.push(result);
@@ -2172,17 +2242,6 @@ export function createBrowserSessionAutomation({
     };
   };
 
-  const runBrowserScriptWithAdmission = async (
-    args: Parameters<typeof executeBrowserScript>[0],
-  ): Promise<unknown> => {
-    const release = claimExecSlot();
-    try {
-      return await executeBrowserScript(args);
-    } finally {
-      release();
-    }
-  };
-
   const execOperations = createBrowserExecOperations({
     maxExecOps: MAX_EXEC_OPS,
     execOpTtlMs: EXEC_OP_TTL_MS,
@@ -2191,10 +2250,28 @@ export function createBrowserSessionAutomation({
     resolveExecMode: resolveExecModeForSession,
     executeBrowserScript,
     claimExecutionSlot: claimExecSlot,
+    onAudit: (event) =>
+      recordAutomationAudit({
+        kind: event.kind ?? "start_exec",
+        decision: event.decision,
+        project_id: event.project_id,
+        posture: event.posture,
+        mode: event.mode,
+        reason: event.reason,
+      }),
   });
 
   const impl: BrowserSessionServiceApi = {
     getExecApiDeclaration: async () => BROWSER_EXEC_API_DECLARATION,
+    getAutomationPolicyInfo: async () => ({
+      raw_exec_policy: getBrowserRawExecPolicy(),
+      raw_exec_admin: isBrowserRawExecAdmin(),
+      max_active_exec_ops: MAX_ACTIVE_EXEC_OPS,
+      max_active_actions: MAX_ACTIVE_ACTIONS,
+      max_async_exec_ops: MAX_EXEC_OPS,
+      max_exec_code_length: MAX_EXEC_CODE_LENGTH,
+      max_sandbox_actions: MAX_SANDBOX_ACTIONS,
+    }),
     getSessionInfo: async () => buildSessionSnapshot(client),
     configureNetworkTrace: async (opts) =>
       runtimeObservability.configureNetworkTrace(opts),
@@ -2203,6 +2280,8 @@ export function createBrowserSessionAutomation({
     clearNetworkTrace: async () => runtimeObservability.clearNetworkTrace(),
     listRuntimeEvents: async (opts) =>
       runtimeObservability.listRuntimeEvents(opts),
+    listAutomationAudit: async (opts) => automationAudit.list(opts),
+    clearAutomationAudit: async () => automationAudit.clear(),
     listOpenFiles: async () => {
       const snapshot = buildSessionSnapshot(client);
       return flattenOpenFiles(snapshot.open_projects);
@@ -2224,56 +2303,107 @@ export function createBrowserSessionAutomation({
     closeFile: async ({ project_id, path }) =>
       await closeFileInProject({ project_id, path }),
     exec: async ({ project_id, code, posture, policy }) => {
-      const enforced = resolveExecModeForSession({
-        project_id,
-        posture,
-        policy,
-      });
-      return {
-        ok: true,
-        result: await runBrowserScriptWithAdmission({
+      let enforced: ReturnType<typeof resolveExecModeForSession>;
+      let release: (() => void) | undefined;
+      try {
+        enforced = resolveExecModeForSession({
           project_id,
-          code,
-          mode: enforced.mode,
-          policy: enforced.policy,
-        }),
-      };
+          posture,
+          policy,
+        });
+        release = claimExecSlot();
+      } catch (err) {
+        recordAutomationAudit({
+          kind: "exec",
+          decision: "deny",
+          project_id,
+          posture,
+          reason: `${err}`,
+        });
+        throw err;
+      }
+      recordAutomationAudit({
+        kind: "exec",
+        decision: "allow",
+        project_id,
+        posture: enforced.posture,
+        mode: enforced.mode,
+      });
+      try {
+        return {
+          ok: true,
+          result: await executeBrowserScript({
+            project_id,
+            code,
+            mode: enforced.mode,
+            policy: enforced.policy,
+          }),
+        };
+      } finally {
+        release();
+      }
     },
     action: async ({ project_id, action, posture, policy }) => {
+      const normalizedPosture = posture === "prod" ? "prod" : "dev";
       const actionName =
         `${(action as any)?.name ?? ""}`.trim() as BrowserActionName;
       if (!actionName) {
-        throw Error("action.name must be specified");
+        const reason = "action.name must be specified";
+        recordAutomationAudit({
+          kind: "action",
+          decision: "deny",
+          project_id,
+          posture: normalizedPosture,
+          reason,
+        });
+        throw Error(reason);
       }
-      enforceActionPolicy({
-        project_id,
-        action_name: actionName,
-        posture,
-        policy,
-      });
-      if (actionName === "batch") {
-        const steps = Array.isArray((action as any)?.actions)
-          ? ((action as any).actions as Array<{ name?: string }>)
-          : [];
-        for (let i = 0; i < steps.length; i++) {
-          const stepName =
-            `${steps[i]?.name ?? ""}`.trim() as BrowserActionName;
-          if (!stepName || stepName === "batch") {
-            throw Error(
-              `invalid batch step ${i}: action name must be a non-empty non-batch action`,
-            );
+      try {
+        enforceActionPolicy({
+          project_id,
+          action_name: actionName,
+          posture,
+          policy,
+        });
+        if (actionName === "batch") {
+          const steps = Array.isArray((action as any)?.actions)
+            ? ((action as any).actions as Array<{ name?: string }>)
+            : [];
+          for (let i = 0; i < steps.length; i++) {
+            const stepName =
+              `${steps[i]?.name ?? ""}`.trim() as BrowserActionName;
+            if (!stepName || stepName === "batch") {
+              throw Error(
+                `invalid batch step ${i}: action name must be a non-empty non-batch action`,
+              );
+            }
+            enforceActionPolicy({
+              project_id,
+              action_name: stepName,
+              posture,
+              policy,
+            });
           }
-          enforceActionPolicy({
-            project_id,
-            action_name: stepName,
-            posture,
-            policy,
-          });
         }
+      } catch (err) {
+        recordAutomationAudit({
+          kind: "action",
+          decision: "deny",
+          project_id,
+          posture: normalizedPosture,
+          action_name: actionName,
+          reason: `${err}`,
+        });
+        throw err;
       }
       return {
         ok: true,
-        result: await executeBrowserActionWithAdmission({ project_id, action }),
+        result: await executeBrowserActionWithAudit({
+          project_id,
+          action,
+          audit_kind: "action",
+          posture: normalizedPosture,
+        }),
       };
     },
     startExec: async ({ project_id, code, posture, policy }) =>
@@ -2299,6 +2429,7 @@ export function createBrowserSessionAutomation({
         }
       });
       execOperations.clearExecs();
+      automationAudit.reset();
       resetAdmissionCounters();
       runtimeObservability.reset();
       runtimeObservability.onStart();
@@ -2319,6 +2450,7 @@ export function createBrowserSessionAutomation({
     stop: async () => {
       const currentAccountId = heartbeatController.deactivate();
       execOperations.clearExecs();
+      automationAudit.reset();
       resetAdmissionCounters();
       runtimeObservability.reset();
       runtimeObservability.stop();

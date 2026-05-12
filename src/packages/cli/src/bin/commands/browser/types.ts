@@ -5,12 +5,20 @@ import type {
   BrowserAtomicActionRequest,
   BrowserActionRequest,
   BrowserActionResult,
+  BrowserAutomationAuditDecision as ConatBrowserAutomationAuditDecision,
+  BrowserAutomationAuditEvent as ConatBrowserAutomationAuditEvent,
+  BrowserAutomationAuditKind as ConatBrowserAutomationAuditKind,
   BrowserAutomationPosture,
   BrowserCoordinateSpace,
   BrowserExecPolicyV1,
   BrowserScreenshotMetadata,
 } from "@cocalc/conat/service/browser-session";
 import type { WorkspaceSelection } from "@cocalc/conat/workspaces";
+
+export type BrowserAutomationAuditDecision =
+  ConatBrowserAutomationAuditDecision;
+export type BrowserAutomationAuditEvent = ConatBrowserAutomationAuditEvent;
+export type BrowserAutomationAuditKind = ConatBrowserAutomationAuditKind;
 
 export type BrowserExecStatus =
   | "pending"
@@ -102,6 +110,15 @@ export type BrowserNetworkTraceEvent = {
 
 export type BrowserSessionClient = {
   getExecApiDeclaration: () => Promise<string>;
+  getAutomationPolicyInfo: () => Promise<{
+    raw_exec_policy: "disabled" | "admin_only" | "enabled";
+    raw_exec_admin: boolean;
+    max_active_exec_ops: number;
+    max_active_actions: number;
+    max_async_exec_ops: number;
+    max_exec_code_length: number;
+    max_sandbox_actions: number;
+  }>;
   configureNetworkTrace: (opts?: {
     enabled?: boolean;
     include_decoded?: boolean;
@@ -155,6 +172,22 @@ export type BrowserSessionClient = {
     next_seq: number;
     dropped: number;
     total_buffered: number;
+  }>;
+  listAutomationAudit: (opts?: {
+    after_seq?: number;
+    limit?: number;
+    kinds?: BrowserAutomationAuditKind[];
+    decisions?: BrowserAutomationAuditDecision[];
+  }) => Promise<{
+    events: BrowserAutomationAuditEvent[];
+    next_seq: number;
+    dropped: number;
+    total_buffered: number;
+  }>;
+  clearAutomationAudit: () => Promise<{
+    ok: true;
+    cleared: number;
+    next_seq: number;
   }>;
   startExec: (opts: {
     project_id: string;

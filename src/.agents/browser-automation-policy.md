@@ -54,7 +54,15 @@ Policy schema (`version: 1`):
   "allow_raw_exec": true,
   "allowed_project_ids": ["<project-uuid>"],
   "allowed_origins": ["https://example.cocalc.com"],
-  "allowed_actions": ["click", "click_at", "drag", "type", "press", "wait_for_selector", "wait_for_url"]
+  "allowed_actions": [
+    "click",
+    "click_at",
+    "drag",
+    "type",
+    "press",
+    "wait_for_selector",
+    "wait_for_url"
+  ]
 }
 ```
 
@@ -110,6 +118,19 @@ However, this should complement (not replace) action-level policy:
 - short-lived approval tokens for privileged actions
 - policy decisions logged with actor/session/url/selector/action/decision
 - retrieval commands for incident review
+
+Current audit baseline:
+
+- The browser-session service keeps a bounded in-memory allow/deny audit stream
+  for synchronous exec, async exec, typed actions, and QuickJS sandbox host
+  actions.
+- `cocalc browser audit list` and `cocalc browser audit clear` expose the
+  current session stream.
+- `cocalc browser exec-api` prints the targeted session's effective raw-exec
+  policy and local active-work caps before the API declaration.
+
+This is not central immutable logging. It is a practical first release
+inspection path for the currently targeted browser session.
 
 ### Phase D: Optional WASM sandbox
 

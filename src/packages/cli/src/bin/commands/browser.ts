@@ -436,7 +436,22 @@ export function registerBrowserCommand(
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
           });
-          return await browserClient.getExecApiDeclaration();
+          const [policyInfo, declaration] = await Promise.all([
+            browserClient.getAutomationPolicyInfo().catch(() => undefined),
+            browserClient.getExecApiDeclaration(),
+          ]);
+          if (!policyInfo) return declaration;
+          return `/* Effective browser automation policy for this session:
+ * raw_exec_policy=${policyInfo.raw_exec_policy}
+ * raw_exec_admin=${policyInfo.raw_exec_admin}
+ * max_active_exec_ops=${policyInfo.max_active_exec_ops}
+ * max_active_actions=${policyInfo.max_active_actions}
+ * max_async_exec_ops=${policyInfo.max_async_exec_ops}
+ * max_exec_code_length=${policyInfo.max_exec_code_length}
+ * max_sandbox_actions=${policyInfo.max_sandbox_actions}
+ */
+
+${declaration}`;
         });
       },
     );

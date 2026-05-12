@@ -1,5 +1,6 @@
 import { isValidUUID } from "@cocalc/util/misc";
 import type {
+  BrowserAutomationAuditEvent,
   BrowserAutomationPosture,
   BrowserExecOperation,
   BrowserExecPolicyV1,
@@ -21,6 +22,7 @@ export function createBrowserExecOperations({
   resolveExecMode,
   executeBrowserScript,
   claimExecutionSlot,
+  onAudit,
 }: {
   maxExecOps: number;
   execOpTtlMs: number;
@@ -43,6 +45,11 @@ export function createBrowserExecOperations({
     isCanceled?: () => boolean;
   }) => Promise<unknown>;
   claimExecutionSlot?: () => () => void;
+  onAudit?: (
+    event: Omit<BrowserAutomationAuditEvent, "seq" | "ts" | "kind"> & {
+      kind?: "start_exec";
+    },
+  ) => void;
 }): {
   startExec: (args: {
     project_id: string;
@@ -183,8 +190,28 @@ export function createBrowserExecOperations({
     if (!isValidUUID(project_id)) {
       throw Error("project_id must be a UUID");
     }
-    const enforced = resolveExecMode({ project_id, posture, policy });
-    const releaseExecutionSlot = claimExecutionSlot?.();
+    let enforced: ReturnType<typeof resolveExecMode>;
+    let releaseExecutionSlot: (() => void) | undefined;
+    try {
+      enforced = resolveExecMode({ project_id, posture, policy });
+      releaseExecutionSlot = claimExecutionSlot?.();
+    } catch (err) {
+      onAudit?.({
+        kind: "start_exec",
+        decision: "deny",
+        project_id,
+        posture,
+        reason: `${err}`,
+      });
+      throw err;
+    }
+    onAudit?.({
+      kind: "start_exec",
+      decision: "allow",
+      project_id,
+      posture: enforced.posture,
+      mode: enforced.mode,
+    });
     const exec_id = createExecId();
     const op: BrowserExecPendingOperation = {
       exec_id,
