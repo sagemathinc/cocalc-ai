@@ -4,6 +4,17 @@ import { render, screen } from "@testing-library/react";
 import StaticMarkdown from "../static-markdown";
 
 describe("StaticMarkdown inline code links", () => {
+  it("updates displayed markdown on the first value rerender", () => {
+    const { rerender } = render(<StaticMarkdown value="first chunk" />);
+
+    expect(screen.getByText("first chunk")).toBeTruthy();
+
+    rerender(<StaticMarkdown value="first chunk and second chunk" />);
+
+    expect(screen.queryByText("first chunk")).toBeNull();
+    expect(screen.getByText("first chunk and second chunk")).toBeTruthy();
+  });
+
   it("renders verified inline code paths using the internal file-link scheme", () => {
     render(
       <StaticMarkdown

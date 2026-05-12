@@ -1569,6 +1569,49 @@ export function registerHostCommand(
     });
 
   host
+    .command("cloud-refresh <host>")
+    .description("force cloud-provider reconciliation for one host")
+    .option(
+      "--confirm-missing",
+      "run two immediate passes so a missing VM can cross the safe confirmation threshold",
+    )
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: { confirmMissing?: boolean },
+        command: Command,
+      ) => {
+        await withContext(command, "host cloud-refresh", async (ctx) => {
+          const h = await resolveHostForInformationalLookup(
+            ctx,
+            hostIdentifier,
+          );
+          return await ctx.hub.hosts.refreshHostCloudState({
+            id: h.id,
+            confirm_missing: !!opts.confirmMissing,
+          });
+        });
+      },
+    );
+
+  host
+    .command("cloud-orphans")
+    .description("list provider VMs that are not owned by an active host row")
+    .option(
+      "--provider <provider>",
+      "provider id: gcp, nebius, hyperstack, lambda",
+      "gcp",
+    )
+    .action(async (opts: { provider?: string }, command: Command) => {
+      await withContext(command, "host cloud-orphans", async (ctx) => {
+        const provider = normalizeHostProviderValue(
+          `${opts.provider ?? "gcp"}`,
+        );
+        return await ctx.hub.hosts.listHostCloudOrphans({ provider });
+      });
+    });
+
+  host
     .command("ssh-trust <host>")
     .description("ensure the host trusts its owning bay SSH key")
     .action(async (hostIdentifier: string, command: Command) => {

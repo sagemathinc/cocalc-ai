@@ -270,8 +270,36 @@ export interface HostCloudRefreshResult {
   scope: "provider";
   refreshed_at: string;
   ran: boolean;
+  passes?: number;
   skipped?: "locked" | "not_due";
   next_at?: string;
+  status?: HostStatus | string | null;
+  deleted?: boolean;
+  runtime_provider_status?: string | null;
+  runtime_missing_count?: number | null;
+  runtime_observed_at?: string | null;
+  public_ip?: string | null;
+}
+
+export interface HostCloudOrphanInstance {
+  provider: string;
+  category: "untracked" | "deleted-host" | "deprovisioned-host";
+  instance_id: string;
+  name?: string;
+  status?: string;
+  zone?: string;
+  public_ip?: string;
+  matched_host_id?: string;
+  matched_host_name?: string;
+  matched_host_status?: string;
+  matched_host_deleted?: string | Date | null;
+}
+
+export interface HostCloudOrphansResult {
+  provider: string;
+  refreshed_at: string;
+  count: number;
+  instances: HostCloudOrphanInstance[];
 }
 
 export interface ProjectBackupIndexStoreConfig {
@@ -1082,6 +1110,7 @@ export const hosts = {
   getHostRehomeOperation: authFirstRequireAccount,
   reconcileHostRehome: authFirstRequireAccount,
   refreshHostCloudState: authFirstRequireAccount,
+  listHostCloudOrphans: authFirstRequireAccount,
   removeSelfHostConnector: authFirstRequireAccount,
   renameHost: authFirstRequireAccount,
   updateHostMachine: authFirstRequireAccount,
@@ -1535,7 +1564,12 @@ export interface Hosts {
   refreshHostCloudState: (opts: {
     account_id?: string;
     id: string;
+    confirm_missing?: boolean;
   }) => Promise<HostCloudRefreshResult>;
+  listHostCloudOrphans: (opts: {
+    account_id?: string;
+    provider: string;
+  }) => Promise<HostCloudOrphansResult>;
   removeSelfHostConnector: (opts: {
     account_id?: string;
     id: string;

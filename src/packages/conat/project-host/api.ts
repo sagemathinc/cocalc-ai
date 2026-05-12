@@ -64,6 +64,7 @@ export interface HostProjectRuntimeLogResponse {
   text: string;
   found: boolean;
   running: boolean;
+  reason?: string;
 }
 
 export interface HostRootfsCacheEntry {

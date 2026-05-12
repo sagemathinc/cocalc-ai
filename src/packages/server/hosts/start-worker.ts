@@ -32,9 +32,9 @@ import {
   upgradeHostSoftwareInternal,
 } from "@cocalc/server/conat/api/hosts";
 import {
-  restart as restartProject,
-  stop as stopProject,
-} from "@cocalc/server/conat/api/projects";
+  startProjectOnHost,
+  stopProjectOnHost,
+} from "@cocalc/server/project-host/control";
 import { stopSelfHostReverseTunnel } from "@cocalc/server/self-host/ssh-target";
 
 const logger = getLogger("server:hosts:ops-worker");
@@ -426,14 +426,12 @@ async function waitForProjectStopped(project_id: string): Promise<string> {
 
 async function runHostProjectsAction({
   action,
-  account_id,
   host_id,
   input,
   shouldCancel,
   progressStep,
 }: {
   action: "stop" | "restart";
-  account_id: string;
   host_id: string;
   input: any;
   shouldCancel: () => Promise<boolean>;
@@ -512,27 +510,15 @@ async function runHostProjectsAction({
           state,
         });
         if (action === "stop") {
-          await stopProject({ account_id, project_id });
+          // The host operation has already authorized the operator against the
+          // host and captured projects assigned to that host. Do not require
+          // the host operator to also be a collaborator on every project.
+          await stopProjectOnHost(project_id);
           await waitForProjectStopped(project_id);
         } else {
-          const op = await restartProject({
-            account_id,
-            project_id,
-            wait: false,
-          });
-          const summary = await waitForLroCompletion({
-            op_id: op.op_id,
-            scope_type: op.scope_type,
-            scope_id: op.scope_id,
-            client: conat(),
-            timeout_ms: MAX_WAIT_MS,
-          });
-          if (summary.status !== "succeeded") {
-            throw new Error(
-              summary.error ??
-                `restart ${summary.status} for project ${project_id}`,
-            );
-          }
+          await stopProjectOnHost(project_id);
+          await waitForProjectStopped(project_id);
+          await startProjectOnHost(project_id);
         }
         completed += 1;
         results.push({ project_id, status: "succeeded", state });
@@ -1561,7 +1547,6 @@ async function handleOp(op: LroSummary): Promise<void> {
       const action = kind === "host-stop-projects" ? "stop" : "restart";
       const response = await runHostProjectsAction({
         action,
-        account_id,
         host_id,
         input,
         shouldCancel,

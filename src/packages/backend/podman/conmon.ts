@@ -5,10 +5,23 @@ export interface ConmonContainerProcess {
   project_id?: string;
   conmon_pid: number;
   child_pids: number[];
+  log_path?: string;
 }
 
 function isExecConmonArgs(args: string): boolean {
   return args.includes("--exec-attach") || args.includes("--exec-process-spec");
+}
+
+function parseConmonLogPath(args: string): string | undefined {
+  for (const pattern of [
+    /(?:^|\s)--runtime-arg=(\S*\/oci-log)(?:\s|$)/,
+    /(?:^|\s)--runtime-arg\s+(\S*\/oci-log)(?:\s|$)/,
+    /(?:^|\s)--log-path=(\S+)(?:\s|$)/,
+    /(?:^|\s)--log-path\s+(\S+)(?:\s|$)/,
+  ]) {
+    const match = args.match(pattern);
+    if (match?.[1]) return match[1];
+  }
 }
 
 export function parseConmonContainerProcessLists(
@@ -40,6 +53,7 @@ export function parseConmonContainerProcessLists(
       project_id: projectMatch?.[1],
       conmon_pid: pid,
       child_pids: [],
+      log_path: parseConmonLogPath(args),
     });
   }
 

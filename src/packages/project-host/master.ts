@@ -29,6 +29,7 @@ import { getBootstrapLifecycle } from "./bootstrap-lifecycle";
 import { upgradeSoftware } from "./upgrade";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { podmanEnv } from "@cocalc/backend/podman/env";
+import { getConmonContainerProcesses } from "@cocalc/backend/podman/conmon";
 import { deleteProjectLocal } from "./sqlite/projects";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
 import { matchAppRequest } from "./app-public-access";
@@ -533,6 +534,25 @@ async function runPodmanCommand(
   return result;
 }
 
+async function runTailCommand(
+  args: string[],
+): Promise<{ stdout: string; stderr: string; exit_code: number }> {
+  let result = await executeCode({
+    command: "tail",
+    args,
+    timeout: 30,
+    err_on_exit: false,
+  });
+  if (result.exit_code === 0) return result;
+  result = await executeCode({
+    command: "sudo",
+    args: ["-n", "tail", ...args],
+    timeout: 30,
+    err_on_exit: false,
+  });
+  return result;
+}
+
 function containerMissingError(message: string): boolean {
   const text = message.toLowerCase();
   return (
@@ -545,6 +565,68 @@ function containerMissingError(message: string): boolean {
     text.includes("does not exist") ||
     text.includes("unable to find")
   );
+}
+
+async function readConmonProjectRuntimeLogTail({
+  project_id,
+  container,
+  lines,
+}: {
+  project_id: string;
+  container: string;
+  lines: number;
+}) {
+  const conmon = (await getConmonContainerProcesses()).get(container);
+  if (!conmon) {
+    return {
+      project_id,
+      container,
+      lines,
+      text: "",
+      found: false,
+      running: false,
+    };
+  }
+  if (!conmon.log_path) {
+    return {
+      project_id,
+      container,
+      lines,
+      text: "",
+      found: true,
+      running: true,
+      reason: "workspace is running via conmon, but log path is unavailable",
+    };
+  }
+  const logs = await runTailCommand(["-n", String(lines), conmon.log_path]);
+  if (logs.exit_code !== 0) {
+    const logsMessage = String(logs.stderr ?? logs.stdout ?? "").trim();
+    logger.warn("failed to read conmon project runtime log", {
+      project_id,
+      container,
+      log_path: conmon.log_path,
+      message: logsMessage,
+    });
+    return {
+      project_id,
+      container,
+      lines,
+      text: "",
+      found: true,
+      running: true,
+      reason:
+        "workspace is running via conmon, but runtime log could not be read",
+    };
+  }
+  return {
+    project_id,
+    container,
+    lines,
+    text: String(logs.stdout ?? ""),
+    found: true,
+    running: true,
+    reason: "workspace is running via conmon fallback",
+  };
 }
 
 async function readProjectRuntimeLogTail(project_id: string, lines?: number) {
@@ -565,14 +647,11 @@ async function readProjectRuntimeLogTail(project_id: string, lines?: number) {
       inspect.stderr ?? inspect.stdout ?? "",
     ).trim();
     if (containerMissingError(inspectMessage)) {
-      return {
+      return await readConmonProjectRuntimeLogTail({
         project_id,
         container,
         lines: tailLines,
-        text: "",
-        found: false,
-        running: false,
-      };
+      });
     }
     throw new Error(
       `failed to inspect container ${container}: ${inspectMessage || `exit ${inspect.exit_code}`}`,
@@ -603,14 +682,13 @@ async function readProjectRuntimeLogTail(project_id: string, lines?: number) {
   if (logs.exit_code !== 0) {
     const logsMessage = String(logs.stderr ?? logs.stdout ?? "").trim();
     if (containerMissingError(logsMessage)) {
-      return {
+      const conmon = await readConmonProjectRuntimeLogTail({
         project_id,
         container,
         lines: tailLines,
-        text: "",
-        found: false,
-        running: false,
-      };
+      });
+      if (conmon.found) return conmon;
+      return conmon;
     }
     throw new Error(
       `failed to read logs for ${container}: ${logsMessage || `exit ${logs.exit_code}`}`,
