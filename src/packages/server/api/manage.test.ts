@@ -136,10 +136,8 @@ describe("manageApiKeys local bay access", () => {
     });
     const key = result?.[0];
     expect(key?.key_id).toBe("random-key-id");
-    expect(key?.secret).toMatch(
-      /^sk-cocalc-v2\.random-key-id\.[A-Za-z0-9_-]+$/,
-    );
-    expect(key?.trunc).toMatch(/^sk-co\.\.\.[A-Za-z0-9_-]{8}$/);
+    expect(key?.secret).toMatch(/^sk-cc-v2\.random-key-id\.[A-Za-z0-9_-]+$/);
+    expect(key?.trunc).toMatch(/^sk-cc\.\.\.[A-Za-z0-9_-]{8}$/);
     const update = nonSchemaQueries().find(([sql]) =>
       `${sql}`.includes("UPDATE api_keys SET trunc=$1,hash=$2"),
     );

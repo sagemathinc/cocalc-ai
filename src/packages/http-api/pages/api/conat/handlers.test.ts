@@ -77,6 +77,34 @@ describe("/api/conat/hub", () => {
     expect(res._getJSONData()).toEqual({ ok: true });
   });
 
+  test("allows system ping for any authenticated account api key", async () => {
+    mockGetAccountFromApiKey.mockResolvedValue({
+      account_id: "acc-1",
+      api_key_id: 1,
+      key_id: "key-1",
+      auth_method: "api_key",
+      capabilities: [],
+      allowed_project_ids: [],
+    } as any);
+    mockHubBridge.mockResolvedValue({ now: 123 } as any);
+
+    const { req, res } = createMocks({
+      body: { args: [], name: "system.ping", timeout: 5000 },
+      method: "POST",
+      url: "/api/conat/hub",
+    });
+
+    await hubHandler(req, res);
+    expect(mockHubBridge).toHaveBeenCalledWith({
+      client: { id: "backend-client" },
+      account_id: "acc-1",
+      args: [],
+      name: "system.ping",
+      timeout: 5000,
+    });
+    expect(res._getJSONData()).toEqual({ now: 123 });
+  });
+
   test("denies unreviewed hub rpc calls for api keys", async () => {
     mockGetAccountFromApiKey.mockResolvedValue({
       account_id: "acc-1",

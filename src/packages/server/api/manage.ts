@@ -36,8 +36,9 @@ const log = getLogger("server:api:manage");
 
 // Global per user limit to avoid abuse/bugs. Nobody should ever hit this.
 const MAX_API_KEYS = 100000;
-const API_KEY_V2_PREFIX = "sk-cocalc-v2";
-const API_KEY_ID_BYTES = 18;
+const API_KEY_V2_PREFIX = "sk-cc-v2";
+const API_KEY_V2_LEGACY_PREFIXES = new Set(["sk-cocalc-v2"]);
+const API_KEY_ID_BYTES = 12;
 const API_KEY_SECRET_BYTES = 32;
 
 let apiKeysV2SchemaReady: Promise<void> | undefined;
@@ -77,7 +78,11 @@ function createApiKeySecret({ key_id }: { key_id: string }): string {
 
 function parseApiKeyV2(secret: string): { key_id: string } | undefined {
   const parts = `${secret ?? ""}`.split(".");
-  if (parts.length !== 3 || parts[0] !== API_KEY_V2_PREFIX) {
+  if (
+    parts.length !== 3 ||
+    (parts[0] !== API_KEY_V2_PREFIX &&
+      !API_KEY_V2_LEGACY_PREFIXES.has(parts[0]))
+  ) {
     return undefined;
   }
   const key_id = parts[1]?.trim();

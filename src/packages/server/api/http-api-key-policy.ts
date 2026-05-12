@@ -10,6 +10,8 @@ const HUB_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "projects.createProject": "project:create",
 };
 
+const HUB_API_KEY_HELLO_WORLD = new Set(["system.ping"]);
+
 const HUB_PROJECT_CAPABILITY_BY_NAME: Record<string, ApiKeyCapability> = {
   "projects.exec": "project:exec",
   "projects.getProjectState": "project:read",
@@ -28,6 +30,10 @@ export function assertHttpHubApiKeyAllowed({
   name: string;
   args?: any[];
 }): void {
+  if (HUB_API_KEY_HELLO_WORLD.has(name)) {
+    return;
+  }
+
   const projectCapability = HUB_PROJECT_CAPABILITY_BY_NAME[name];
   if (projectCapability) {
     const project_id = `${args?.[0]?.project_id ?? ""}`.trim();
