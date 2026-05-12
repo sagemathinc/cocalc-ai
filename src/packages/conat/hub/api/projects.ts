@@ -45,6 +45,16 @@ export interface ProjectCopyRow {
   last_attempt_at: Date | null;
 }
 
+export interface ProjectCopyDestination {
+  project_id: string;
+  path: string;
+  metadata?: {
+    student_id?: string;
+    course_item_id?: string;
+    [key: string]: string | undefined;
+  };
+}
+
 export interface BackupFindResult {
   id: string;
   time: Date;
@@ -538,7 +548,8 @@ export interface Projects {
   copyPathBetweenProjects: (opts: {
     src: { project_id: string; path: string | string[] };
     src_home?: string;
-    dest: { project_id: string; path: string };
+    dest?: ProjectCopyDestination;
+    dests?: ProjectCopyDestination[];
     options?: CopyOptions;
   }) => Promise<{
     op_id: string;

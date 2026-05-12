@@ -84,6 +84,7 @@ import type {
   ImportPublicPathResult,
   PublicPathInspectionResult,
   ProjectActiveOperationSummary,
+  ProjectCopyDestination,
   ProjectCopyRow,
   ProjectRuntimeLog,
   ProjectAddress,
@@ -170,12 +171,14 @@ export async function copyPathBetweenProjects({
   src,
   src_home,
   dest,
+  dests,
   options,
   account_id,
 }: {
   src: { project_id: string; path: string | string[] };
   src_home?: string;
-  dest: { project_id: string; path: string };
+  dest?: ProjectCopyDestination;
+  dests?: ProjectCopyDestination[];
   options?: CopyOptions;
   account_id?: string;
 }): Promise<{
@@ -188,14 +191,26 @@ export async function copyPathBetweenProjects({
   if (!account_id) {
     throw Error("user must be signed in");
   }
+  const normalizedDests = normalizeCopyDests({ dest, dests });
   await assertCollab({ account_id, project_id: src.project_id });
-  if (dest.project_id !== src.project_id) {
-    await assertCollab({ account_id, project_id: dest.project_id });
+  const destProjectIds = Array.from(
+    new Set(normalizedDests.map((dest) => dest.project_id)),
+  );
+  for (const project_id of destProjectIds) {
+    if (project_id !== src.project_id) {
+      await assertCollab({ account_id, project_id });
+    }
   }
-  const destOwnerAccountId = await getProjectOwnerAccountId(dest.project_id);
-  if (destOwnerAccountId) {
+  const destOwnerAccountIds = new Set<string>();
+  for (const project_id of destProjectIds) {
+    const destOwnerAccountId = await getProjectOwnerAccountId(project_id);
+    if (destOwnerAccountId) {
+      destOwnerAccountIds.add(destOwnerAccountId);
+    }
+  }
+  for (const ownerAccountId of destOwnerAccountIds) {
     await assertCanIncreaseAccountStorage({
-      account_id: destOwnerAccountId,
+      account_id: ownerAccountId,
     });
   }
   const op = await createLro({
@@ -207,8 +222,17 @@ export async function copyPathBetweenProjects({
     input: {
       src,
       ...(src_home ? { src_home } : {}),
-      dests: [dest],
+      dests: normalizedDests,
       options,
+    },
+    progress_summary: {
+      total: normalizedDests.length,
+      queued: normalizedDests.length,
+      applying: 0,
+      done: 0,
+      failed: 0,
+      canceled: 0,
+      expired: 0,
     },
     status: "queued",
   });
@@ -254,6 +278,46 @@ export async function copyPathBetweenProjects({
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
   };
+}
+
+const MAX_COPY_DESTINATIONS = 500;
+
+function normalizeCopyDests({
+  dest,
+  dests,
+}: {
+  dest?: ProjectCopyDestination;
+  dests?: ProjectCopyDestination[];
+}): ProjectCopyDestination[] {
+  if (dest != null && dests != null) {
+    throw new Error("specify exactly one of dest or dests");
+  }
+  const rawDests = dest != null ? [dest] : dests;
+  if (!Array.isArray(rawDests) || rawDests.length === 0) {
+    throw new Error("at least one destination is required");
+  }
+  if (rawDests.length > MAX_COPY_DESTINATIONS) {
+    throw new Error(
+      `too many destinations; maximum is ${MAX_COPY_DESTINATIONS}`,
+    );
+  }
+  const deduped = new Map<string, ProjectCopyDestination>();
+  for (const raw of rawDests) {
+    const project_id = `${raw?.project_id ?? ""}`.trim();
+    const path = `${raw?.path ?? ""}`.trim();
+    if (!project_id) {
+      throw new Error("destination project_id is required");
+    }
+    const key = `${project_id}\n${path}`;
+    if (!deduped.has(key)) {
+      deduped.set(key, {
+        project_id,
+        path,
+        ...(raw.metadata != null ? { metadata: raw.metadata } : {}),
+      });
+    }
+  }
+  return Array.from(deduped.values());
 }
 
 function basename(path: string): string {
