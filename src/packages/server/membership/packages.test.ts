@@ -55,6 +55,7 @@ import {
   listMembershipPackageDetailsForOwner,
   resolveMembershipPackageQuote,
   revokeMembershipPackageSeat,
+  updateMembershipPackage,
 } from "./packages";
 import {
   resetMembershipSideEffectsMaintenanceStateForTests,
@@ -748,6 +749,63 @@ describe("membership packages", () => {
       [site_user_account_id, package_id],
     );
     expect(localGrantCount.rows[0]?.count).toBe(0);
+  });
+
+  it("updates site-license domains for future claims without revoking existing seats", async () => {
+    const owner_account_id = uuid();
+    const first_account_id = uuid();
+    const second_account_id = uuid();
+    const firstDomain = `first-${uuid().slice(0, 8)}.edu`;
+    const secondDomain = `second-${uuid().slice(0, 8)}.edu`;
+    await createTestAccount(owner_account_id);
+    await createTestAccount(first_account_id);
+    await createTestAccount(second_account_id);
+    await markVerifiedEmail(first_account_id, `ada@${firstDomain}`);
+    await markVerifiedEmail(second_account_id, `grace@${secondDomain}`);
+
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "site",
+      membership_class: teamTier,
+      seat_count: 3,
+      metadata: {
+        interval: "year",
+        seat_price: 100,
+        allowed_domains: [firstDomain],
+      },
+    });
+
+    const firstClaim = await claimMembershipPackageSeat({
+      package_id,
+      account_id: first_account_id,
+    });
+    expect(firstClaim.grant_source).toBe("site-license");
+
+    const updated = await updateMembershipPackage({
+      package_id,
+      allowed_domains: [secondDomain],
+    });
+    expect(updated.metadata?.allowed_domains).toEqual([secondDomain]);
+    expect(updated.active_assignment_count).toBe(1);
+
+    expect(
+      await listClaimableMembershipPackagesForAccount({
+        account_id: first_account_id,
+      }),
+    ).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ package_id })]),
+    );
+    expect(
+      await listClaimableMembershipPackagesForAccount({
+        account_id: second_account_id,
+      }),
+    ).toEqual(
+      expect.arrayContaining([expect.objectContaining({ package_id })]),
+    );
+
+    const membership = await resolveMembershipForAccount(first_account_id);
+    expect(membership.class).toBe(teamTier);
+    expect(membership.source).toBe("grant");
   });
 
   it("dedupes site-license claims across plus aliases until the prior claim is revoked", async () => {

@@ -571,11 +571,17 @@ async function startAccountLocalService(): Promise<void> {
       }
       return membershipPackage;
     },
-    updateMembershipPackage: async ({ package_id, seat_count, expires_at }) =>
+    updateMembershipPackage: async ({
+      package_id,
+      seat_count,
+      expires_at,
+      allowed_domains,
+    }) =>
       await updateMembershipPackage({
         package_id,
         seat_count,
         expires_at,
+        allowed_domains,
       }),
     getClaimableMembershipPackages: async ({
       account_id,

@@ -674,6 +674,7 @@ export interface AccountLocalUpdateMembershipPackageRequest {
   actor_account_id: string;
   seat_count?: number;
   expires_at?: Date | string | null;
+  allowed_domains?: string[];
 }
 
 export interface AccountLocalGetClaimableMembershipPackagesRequest {

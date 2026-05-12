@@ -227,6 +227,36 @@ export async function dismissLro({
   });
 }
 
+export async function expireDueLros({
+  kind,
+}: {
+  kind?: string;
+} = {}): Promise<LroSummary[]> {
+  await ensureLroSchema();
+  const values: any[] = [TERMINAL_STATUSES];
+  let kindClause = "";
+  if (kind != null && `${kind}`.trim()) {
+    values.push(`${kind}`.trim());
+    kindClause = `AND kind=$${values.length}`;
+  }
+  const { rows } = await pool().query(
+    `
+      UPDATE long_running_operations
+      SET status='expired',
+          error=COALESCE(NULLIF(error, ''), 'expired'),
+          finished_at=COALESCE(finished_at, now()),
+          updated_at=now()
+      WHERE status <> ALL($1::text[])
+        AND dismissed_at IS NULL
+        AND expires_at <= now()
+        ${kindClause}
+      RETURNING *
+    `,
+    values,
+  );
+  return rows as LroSummary[];
+}
+
 export async function getLro(op_id: string): Promise<LroSummary | undefined> {
   await ensureLroSchema();
   const { rows } = await pool().query(
@@ -281,6 +311,7 @@ export async function claimLroOps({
   limit?: number;
   lease_ms?: number;
 }): Promise<LroSummary[]> {
+  await expireDueLros({ kind });
   await ensureLroSchema();
   const client = await pool().connect();
   try {
@@ -291,6 +322,8 @@ export async function claimLroOps({
           SELECT op_id
           FROM long_running_operations
           WHERE kind=$1
+            AND dismissed_at IS NULL
+            AND expires_at > now()
             AND (
               status='queued'
               OR (
