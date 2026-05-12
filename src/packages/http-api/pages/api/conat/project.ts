@@ -1,7 +1,8 @@
 /*
 This is a bridge to call the Conat RPC API that is offered by projects.
-This is meant to be called by either a user account or a project, so API
-keys that resolve to either are allowed.
+This is meant to be called with an account API key. Project-specific CoCalc
+API keys are disabled; project-host secret-token auth is separate from this
+HTTP bridge.
 */
 
 import { conat } from "@cocalc/backend/conat";
@@ -12,24 +13,16 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 
 export default async function handle(req, res) {
   try {
-    const { account_id, project_id: project_id0 } =
-      (await getAccountFromApiKey(req)) ?? {};
-    if (!account_id && !project_id0) {
-      throw Error("must sign in as project or account");
+    const { account_id } = (await getAccountFromApiKey(req)) ?? {};
+    if (!account_id) {
+      throw Error("must sign in with an account API key");
     }
-    const { project_id = project_id0, name, args, timeout } = getParams(req);
+    const { project_id, name, args, timeout } = getParams(req);
     if (!project_id) {
-      throw Error("must specify project_id or use project-specific api key");
+      throw Error("must specify project_id");
     }
-    if (project_id0) {
-      if (project_id0 != project_id) {
-        throw Error("project specific api key must match requested project");
-      }
-    }
-    if (account_id) {
-      if (!(await isCollaborator({ account_id, project_id }))) {
-        throw Error("user must be a collaborator on the project");
-      }
+    if (!(await isCollaborator({ account_id, project_id }))) {
+      throw Error("user must be a collaborator on the project");
     }
     const resp = await projectBridge({
       project_id,

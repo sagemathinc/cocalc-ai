@@ -3,7 +3,6 @@ export {};
 let queryMock: jest.Mock;
 let isValidAccountMock: jest.Mock;
 let assertProjectCollaboratorAccessAllowRemoteMock: jest.Mock;
-let getLocalProjectCollaboratorAccessStatusMock: jest.Mock;
 let verifyPasswordMock: jest.Mock;
 let isBannedMock: jest.Mock;
 let getClusterAccountByIdMock: jest.Mock;
@@ -26,12 +25,6 @@ jest.mock("@cocalc/server/conat/project-remote-access", () => ({
   __esModule: true,
   assertProjectCollaboratorAccessAllowRemote: (...args: any[]) =>
     assertProjectCollaboratorAccessAllowRemoteMock(...args),
-}));
-
-jest.mock("@cocalc/server/conat/project-local-access", () => ({
-  __esModule: true,
-  getLocalProjectCollaboratorAccessStatus: (...args: any[]) =>
-    getLocalProjectCollaboratorAccessStatusMock(...args),
 }));
 
 jest.mock("@cocalc/backend/auth/password-hash", () => ({
@@ -91,9 +84,6 @@ describe("manageApiKeys local bay access", () => {
     assertProjectCollaboratorAccessAllowRemoteMock = jest.fn(
       async () => undefined,
     );
-    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
-      async () => "local-collaborator",
-    );
     verifyPasswordMock = jest.fn(() => true);
     isBannedMock = jest.fn(async () => false);
     getClusterAccountByIdMock = jest.fn(async () => ({
@@ -112,7 +102,7 @@ describe("manageApiKeys local bay access", () => {
     );
   });
 
-  it("allows project-scoped api key management for remote collaborators", async () => {
+  it("allows project-scoped api key listing for cleanup", async () => {
     const { default: manageApiKeys } = await import("./manage");
     await expect(
       manageApiKeys({
@@ -144,26 +134,61 @@ describe("manageApiKeys local bay access", () => {
     expect(nonSchemaQueries()).toHaveLength(1);
   });
 
-  it("allows project-scoped api key management for collaborators", async () => {
+  it("rejects project-scoped api key creation", async () => {
     const { default: manageApiKeys } = await import("./manage");
     await expect(
       manageApiKeys({
         account_id: ACCOUNT_ID,
-        action: "get",
+        action: "create",
         project_id: PROJECT_ID,
+        name: "legacy project key",
       }),
-    ).resolves.toEqual([]);
+    ).rejects.toThrow("Project-specific CoCalc API keys are disabled");
     expect(assertProjectCollaboratorAccessAllowRemoteMock).toHaveBeenCalledWith(
       {
         account_id: ACCOUNT_ID,
         project_id: PROJECT_ID,
       },
     );
-    expect(nonSchemaQueries()).toHaveLength(1);
+    expect(nonSchemaQueries()).toHaveLength(0);
   });
 
-  it("rejects project api keys on the wrong bay without deleting them", async () => {
-    const secret = "sk-cocalc-v2.project-key.wrong-bay-secret";
+  it("deletes legacy project-scoped api keys from the cluster directory during cleanup", async () => {
+    queryMock = jest.fn(async (sql) => {
+      if (`${sql}`.includes("WHERE id=$1 AND project_id=$2")) {
+        return {
+          rows: [
+            {
+              id: 7,
+              key_id: "legacy-project-key",
+              account_id: ACCOUNT_ID,
+              expire: null,
+              created: new Date("2026-04-22T00:00:00Z"),
+              name: "legacy",
+              trunc: "sk-co...legacy",
+              last_active: null,
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const { default: manageApiKeys } = await import("./manage");
+    await expect(
+      manageApiKeys({
+        account_id: ACCOUNT_ID,
+        action: "delete",
+        project_id: PROJECT_ID,
+        id: 7,
+      }),
+    ).resolves.toBeUndefined();
+    expect(deleteClusterAccountApiKeyDirectoryEntryMock).toHaveBeenCalledWith({
+      key_id: "legacy-project-key",
+    });
+  });
+
+  it("rejects project-scoped api keys without granting project identity", async () => {
+    const secret = "sk-cocalc-v2.project-key.legacy-secret";
     queryMock = jest.fn(async (sql) => {
       if (`${sql}`.includes("WHERE key_id=$1")) {
         return {
@@ -180,49 +205,13 @@ describe("manageApiKeys local bay access", () => {
       }
       return { rows: [] };
     });
-    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
-      async () => "wrong-bay",
-    );
     const { getAccountWithApiKey } = await import("./manage");
     await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
     expect(nonSchemaQueries()[0]).toEqual([
       "SELECT id,key_id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
       ["project-key"],
     ]);
-    expect(getLocalProjectCollaboratorAccessStatusMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      project_id: PROJECT_ID,
-    });
     expect(nonSchemaQueries()).toHaveLength(1);
-  });
-
-  it("deletes stale project api keys when creator is no longer a collaborator", async () => {
-    const secret = "sk-cocalc-v2.project-key.stale-secret";
-    queryMock = jest.fn(async (sql) => {
-      if (`${sql}`.includes("WHERE key_id=$1")) {
-        return {
-          rows: [
-            {
-              id: 7,
-              account_id: ACCOUNT_ID,
-              project_id: PROJECT_ID,
-              hash: "hash",
-              expire: null,
-            },
-          ],
-        };
-      }
-      return { rows: [], rowCount: 1 };
-    });
-    getLocalProjectCollaboratorAccessStatusMock = jest.fn(
-      async () => "not-collaborator",
-    );
-    const { getAccountWithApiKey } = await import("./manage");
-    await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
-    expect(nonSchemaQueries()[2]).toEqual([
-      "DELETE FROM api_keys WHERE project_id=$1 AND id=$2",
-      [PROJECT_ID, 7],
-    ]);
   });
 
   it("creates v2 api keys with random portable key ids", async () => {
@@ -298,6 +287,7 @@ describe("manageApiKeys local bay access", () => {
       account_id: ACCOUNT_ID,
       home_bay_id: "bay-1",
       hash: "hash",
+      scope: "account",
       expire: null,
       last_active: null,
     }));
@@ -311,6 +301,24 @@ describe("manageApiKeys local bay access", () => {
     expect(touchClusterAccountApiKeyDirectoryEntryMock).toHaveBeenCalledWith({
       key_id: "key-id-remote",
     });
+  });
+
+  it("rejects legacy cluster api key directory entries without account scope", async () => {
+    const secret = "sk-cocalc-v2.key-id-legacy.secret-part";
+    getClusterAccountApiKeyByKeyIdMock = jest.fn(async () => ({
+      key_id: "key-id-legacy",
+      account_id: ACCOUNT_ID,
+      home_bay_id: "bay-1",
+      hash: "hash",
+      expire: null,
+      last_active: null,
+    }));
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
+    expect(getClusterAccountApiKeyByKeyIdMock).toHaveBeenCalledWith(
+      "key-id-legacy",
+    );
+    expect(touchClusterAccountApiKeyDirectoryEntryMock).not.toHaveBeenCalled();
   });
 
   it("rejects pre-v2 api key formats without lookup", async () => {

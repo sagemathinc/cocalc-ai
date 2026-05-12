@@ -77,7 +77,7 @@ describe("/api/conat/project", () => {
     mockConat.mockReturnValue({ id: "backend-client" } as any);
   });
 
-  test("requires either an account or project api key", async () => {
+  test("requires an account api key", async () => {
     mockGetAccountFromApiKey.mockResolvedValue(undefined as any);
 
     const { req, res } = createMocks({
@@ -88,7 +88,7 @@ describe("/api/conat/project", () => {
 
     await projectHandler(req, res);
     expect(res._getJSONData()).toEqual({
-      error: "must sign in as project or account",
+      error: "must sign in with an account API key",
     });
   });
 
@@ -112,8 +112,9 @@ describe("/api/conat/project", () => {
     });
   });
 
-  test("accepts project-specific api keys without collaborator checks", async () => {
-    mockGetAccountFromApiKey.mockResolvedValue({ project_id: "proj-1" } as any);
+  test("bridges project rpc calls for account collaborators", async () => {
+    mockGetAccountFromApiKey.mockResolvedValue({ account_id: "acc-1" } as any);
+    mockIsCollaborator.mockResolvedValue(true as any);
     mockProjectBridge.mockResolvedValue({ pong: true } as any);
 
     const { req, res } = createMocks({
@@ -123,7 +124,10 @@ describe("/api/conat/project", () => {
     });
 
     await projectHandler(req, res);
-    expect(mockIsCollaborator).not.toHaveBeenCalled();
+    expect(mockIsCollaborator).toHaveBeenCalledWith({
+      account_id: "acc-1",
+      project_id: "proj-1",
+    });
     expect(mockProjectBridge).toHaveBeenCalledWith({
       client: { id: "backend-client" },
       args: [],

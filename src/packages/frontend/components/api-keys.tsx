@@ -21,7 +21,7 @@ import {
 } from "antd";
 import { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 const { Text, Paragraph } = Typography; // so can use from nextjs
 import { CancelText } from "@cocalc/frontend/i18n/components";
 import type { ApiKey } from "@cocalc/util/db-schema/api-keys";
@@ -51,9 +51,18 @@ interface Props {
     expire?: Date;
   }) => Promise<ApiKey[] | undefined>;
   mode?: "project" | "flyout";
+  allowCreate?: boolean;
+  allowEdit?: boolean;
+  createDisabledMessage?: ReactNode;
 }
 
-export default function ApiKeys({ manage, mode = "project" }: Props) {
+export default function ApiKeys({
+  manage,
+  mode = "project",
+  allowCreate = true,
+  allowEdit = true,
+  createDisabledMessage,
+}: Props) {
   const isFlyout = mode === "flyout";
   const size = isFlyout ? "small" : undefined; // for e.g. buttons
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
@@ -178,17 +187,19 @@ export default function ApiKeys({ manage, mode = "project" }: Props) {
           >
             <a>Delete</a>
           </Popconfirm>
-          <a
-            onClick={() => {
-              // Set the initial form value as the current key name
-              form.setFieldsValue({ name: record.name });
-              setEditModalVisible(true);
-              setEditingKey(record.id);
-            }}
-            style={{ marginLeft: "1em" }}
-          >
-            Edit
-          </a>
+          {allowEdit && (
+            <a
+              onClick={() => {
+                // Set the initial form value as the current key name
+                form.setFieldsValue({ name: record.name });
+                setEditModalVisible(true);
+                setEditingKey(record.id);
+              }}
+              style={{ marginLeft: "1em" }}
+            >
+              Edit
+            </a>
+          )}
         </Space.Compact>
       ),
     },
@@ -234,6 +245,13 @@ export default function ApiKeys({ manage, mode = "project" }: Props) {
           style={{ marginBottom: 16 }}
         />
       )}
+      {!allowCreate && createDisabledMessage && (
+        <Alert
+          message={createDisabledMessage}
+          type="info"
+          style={{ marginBottom: 16 }}
+        />
+      )}
       {apiKeys.length > 0 && (
         <Table
           style={{ marginBottom: 16 }}
@@ -246,9 +264,11 @@ export default function ApiKeys({ manage, mode = "project" }: Props) {
       )}
       <div style={isFlyout ? { padding: "5px" } : undefined}>
         <Space.Compact size={size}>
-          <Button onClick={handleAdd} size={size}>
-            <Icon name="plus-circle" /> Add API key...
-          </Button>
+          {allowCreate && (
+            <Button onClick={handleAdd} size={size}>
+              <Icon name="plus-circle" /> Add API key...
+            </Button>
+          )}
           <Button onClick={getAllApiKeys} size={size}>
             Refresh
           </Button>

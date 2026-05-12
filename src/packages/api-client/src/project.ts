@@ -1,6 +1,6 @@
 /*
-These are api calls that only involve a single project.  A project-specific
-API key should be enough to allow them.
+These are api calls that only involve a single project. Account API keys
+authenticate the caller, and project access is checked per request.
 */
 
 import { apiCall } from "./call";

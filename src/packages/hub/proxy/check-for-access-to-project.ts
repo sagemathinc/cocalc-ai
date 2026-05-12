@@ -222,11 +222,8 @@ async function checkForApiKeyAccess({ project_id, api_key, type, dbg }) {
     dbg("api key is not valid (probably expired)");
     return { access: false, error: "invalid or expired api key" };
   }
-  if (user.project_id) {
-    return { access: user.project_id == project_id };
-  }
   return {
-    access: await isCollaborator({ account_id: user.account_id!, project_id }),
+    access: await isCollaborator({ account_id: user.account_id, project_id }),
   };
 }
 
@@ -234,7 +231,7 @@ async function resolveApiKeyAccountId(
   api_key: string,
 ): Promise<string | undefined> {
   const user = await getAccountWithApiKey(api_key);
-  if (!user?.account_id || user.project_id) {
+  if (!user?.account_id) {
     return;
   }
   return user.account_id;

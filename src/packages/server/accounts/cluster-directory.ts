@@ -77,10 +77,14 @@ export async function ensureClusterAccountApiKeyDirectorySchema(): Promise<void>
       account_id UUID NOT NULL,
       home_bay_id VARCHAR(64) NOT NULL,
       hash TEXT NOT NULL,
+      scope TEXT,
       expire TIMESTAMPTZ,
       last_active TIMESTAMPTZ
     )
   `);
+  await pool.query(
+    `ALTER TABLE ${API_KEY_TABLE} ADD COLUMN IF NOT EXISTS scope TEXT`,
+  );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS ${API_KEY_TABLE}_account_idx ON ${API_KEY_TABLE} (account_id)`,
   );
@@ -139,6 +143,7 @@ function canonicalApiKeyDirectoryEntry(row: any): AccountApiKeyDirectoryEntry {
     account_id: row.account_id,
     home_bay_id: normalizedHomeBayId(row.home_bay_id),
     hash: row.hash,
+    scope: row.scope === "account" ? "account" : undefined,
     expire:
       row.expire instanceof Date ? row.expire.valueOf() : (row.expire ?? null),
     last_active:
@@ -241,7 +246,7 @@ export async function getClusterAccountApiKeyByKeyIdDirect(
   }
   await ensureClusterAccountApiKeyDirectorySchema();
   const { rows } = await getPool().query(
-    `SELECT key_id, account_id, home_bay_id, hash, expire, last_active
+    `SELECT key_id, account_id, home_bay_id, hash, scope, expire, last_active
        FROM ${API_KEY_TABLE}
       WHERE key_id=$1
       LIMIT 1`,
@@ -603,6 +608,7 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
   account_id,
   home_bay_id,
   hash,
+  scope = "account",
   expire,
   last_active,
 }: {
@@ -610,6 +616,7 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
   account_id: string;
   home_bay_id: string;
   hash: string;
+  scope?: "account";
   expire?: number | null;
   last_active?: number | null;
 }): Promise<void> {
@@ -626,13 +633,14 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
   await ensureClusterAccountApiKeyDirectorySchema();
   await getPool().query(
     `INSERT INTO ${API_KEY_TABLE}
-       (key_id, account_id, home_bay_id, hash, expire, last_active)
+       (key_id, account_id, home_bay_id, hash, scope, expire, last_active)
      VALUES
-       ($1, $2, $3, $4, $5, $6)
+       ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (key_id) DO UPDATE SET
        account_id=EXCLUDED.account_id,
        home_bay_id=EXCLUDED.home_bay_id,
        hash=EXCLUDED.hash,
+       scope=EXCLUDED.scope,
        expire=EXCLUDED.expire,
        last_active=EXCLUDED.last_active`,
     [
@@ -640,6 +648,7 @@ export async function upsertClusterAccountApiKeyDirectoryEntryDirect({
       account_id,
       normalizedHomeBayId(home_bay_id),
       hash,
+      scope,
       expire == null ? null : new Date(expire),
       last_active == null ? null : new Date(last_active),
     ],

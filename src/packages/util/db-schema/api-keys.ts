@@ -10,7 +10,7 @@ export interface ApiKey {
   created: Date;
   hash?: string; // usually NOT available
   trunc: string;
-  project_id?: string; // only for project api keys
+  project_id?: string; // legacy project api keys; creation/auth is disabled
   expire?: Date;
   name: string;
   last_active?: Date;
@@ -52,7 +52,7 @@ Table({
     },
     project_id: {
       type: "uuid",
-      desc: "Optional uuid of the project that this api key applies to.  If not set, api key is global.",
+      desc: "Legacy project-scoped API key marker. New project API key creation and authentication are disabled.",
     },
     last_active: {
       type: "timestamp",

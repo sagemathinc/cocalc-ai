@@ -25,8 +25,8 @@ export default function ApiKeys() {
       <Paragraph>
         <FormattedMessage
           id="account.settings.api-keys.explanation"
-          defaultMessage={`You can also make project specific api keys in any project's settings.
-          If you only need to use the API to access one project, these are safer.`}
+          defaultMessage={`Account API keys currently authenticate as your account.
+          Project-specific CoCalc API keys are disabled and will be replaced by scoped account API keys.`}
         />
       </Paragraph>
     </SettingBox>

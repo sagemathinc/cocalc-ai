@@ -4,6 +4,7 @@
  */
 
 import { useCallback } from "react";
+import { Alert } from "antd";
 import ApiKeysTables from "@cocalc/frontend/components/api-keys";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { SettingBox } from "@cocalc/frontend/components";
@@ -25,11 +26,25 @@ export function ApiKeys({ project_id, mode = "project" }: Props) {
   );
 
   if (mode === "flyout") {
-    return <ApiKeysTables manage={manage} mode={mode} />;
+    return (
+      <ApiKeysTables
+        manage={manage}
+        mode={mode}
+        allowCreate={false}
+        allowEdit={false}
+        createDisabledMessage="Project-specific CoCalc API keys are disabled. Use account API keys instead."
+      />
+    );
   } else {
     return (
       <SettingBox title="API Keys" icon={"api"}>
-        <ApiKeysTables manage={manage} />
+        <Alert
+          message="Project-specific CoCalc API keys are disabled."
+          description="Use account API keys instead. Existing project-specific keys are shown only so they can be deleted."
+          type="info"
+          style={{ marginBottom: 16 }}
+        />
+        <ApiKeysTables manage={manage} allowCreate={false} allowEdit={false} />
       </SettingBox>
     );
   }
