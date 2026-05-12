@@ -5,9 +5,15 @@ import {
   getAcpDatabase,
   initAcpDatabase,
 } from "../../sqlite/acp-database";
+import { admitAcpJobCreation, throwIfAcpAdmissionDenied } from "../admission";
 import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
+  countCreatedAcpJobsForAccountSince,
+  countQueuedAcpJobsForAccount,
+  countQueuedAcpJobsForThread,
+  countRunningAcpJobsForAccount,
+  countRunningAcpJobsForProject,
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   enqueueAcpJob,
@@ -218,6 +224,7 @@ describe("acp job queue ordering", () => {
       user_message_id: job.user_message_id,
     });
     expect(stored?.session_id).toBeNull();
+    expect(stored?.account_id).toBe("00000000-1000-4000-8000-000000000001");
     expect(stored ? decodeAcpJobRequest(stored) : undefined).toEqual({
       request_kind: "command",
       project_id: "00000000-1000-4000-8000-000000000000",
@@ -236,6 +243,195 @@ describe("acp job queue ordering", () => {
         sender_id: "openai-codex-agent",
       },
     });
+  });
+
+  it("stores account identity and counts queued/running/created jobs cheaply", async () => {
+    const first = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-count-1",
+        assistantMessageId: "assistant-count-1",
+        assistantDate: "2026-03-08T00:00:05.000Z",
+      }),
+    );
+    await delay();
+    const second = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-count-2",
+        assistantMessageId: "assistant-count-2",
+        assistantDate: "2026-03-08T00:00:06.000Z",
+      }),
+    );
+
+    expect(first.account_id).toBe("00000000-1000-4000-8000-000000000001");
+    expect(countQueuedAcpJobsForAccount(first.account_id!)).toBe(2);
+    expect(
+      countQueuedAcpJobsForThread({
+        project_id: first.project_id,
+        path: first.path,
+        thread_id: first.thread_id,
+      }),
+    ).toBe(2);
+    expect(
+      countCreatedAcpJobsForAccountSince({
+        account_id: first.account_id!,
+        since: Date.now() - 60_000,
+      }),
+    ).toBe(2);
+
+    claimNextQueuedAcpJobForThread({
+      project_id: first.project_id,
+      path: first.path,
+      thread_id: first.thread_id,
+    });
+    expect(countRunningAcpJobsForAccount(first.account_id!)).toBe(1);
+    expect(countRunningAcpJobsForProject(first.project_id)).toBe(1);
+    expect(countQueuedAcpJobsForAccount(second.account_id!)).toBe(1);
+  });
+
+  it("does not count recovery continuations as new created-turn usage", () => {
+    const parent = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-created-parent",
+        assistantMessageId: "assistant-created-parent",
+        assistantDate: "2026-03-08T00:00:07.000Z",
+      }),
+    );
+    enqueueAcpJob({
+      ...makeRequest({
+        userMessageId: "user-created-recovery",
+        assistantMessageId: "assistant-created-recovery",
+        assistantDate: "2026-03-08T00:00:08.000Z",
+      }),
+      recovery_parent_op_id: parent.op_id,
+      recovery_reason: "server restart",
+      recovery_count: 1,
+    });
+
+    expect(
+      countCreatedAcpJobsForAccountSince({
+        account_id: parent.account_id!,
+        since: Date.now() - 60_000,
+      }),
+    ).toBe(1);
+    expect(
+      countCreatedAcpJobsForAccountSince({
+        account_id: parent.account_id!,
+        since: Date.now() - 60_000,
+        includeRecovery: true,
+      }),
+    ).toBe(2);
+  });
+
+  it("does not claim a job when account or project running caps are reached", async () => {
+    const first = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-cap-1",
+        assistantMessageId: "assistant-cap-1",
+        assistantDate: "2026-03-08T00:00:09.000Z",
+      }),
+    );
+    const running = claimNextQueuedAcpJobForThread({
+      project_id: first.project_id,
+      path: first.path,
+      thread_id: first.thread_id,
+    });
+    expect(running?.op_id).toBe(first.op_id);
+
+    const second = enqueueAcpJob({
+      ...makeRequest({
+        userMessageId: "user-cap-2",
+        assistantMessageId: "assistant-cap-2",
+        assistantDate: "2026-03-08T00:00:10.000Z",
+      }),
+      chat: {
+        ...makeRequest({
+          userMessageId: "user-cap-2",
+          assistantMessageId: "assistant-cap-2",
+          assistantDate: "2026-03-08T00:00:10.000Z",
+        }).chat,
+        thread_id: "thread-2",
+      },
+    });
+    expect(
+      claimNextQueuedAcpJobForThread({
+        project_id: second.project_id,
+        path: second.path,
+        thread_id: second.thread_id,
+        max_running_for_account: 1,
+      }),
+    ).toBeUndefined();
+    expect(
+      claimNextQueuedAcpJobForThread({
+        project_id: second.project_id,
+        path: second.path,
+        thread_id: second.thread_id,
+        max_running_for_project: 1,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("denies new job creation before insert when local queue caps are reached", () => {
+    const firstRequest = makeRequest({
+      userMessageId: "user-admit-1",
+      assistantMessageId: "assistant-admit-1",
+      assistantDate: "2026-03-08T00:00:11.000Z",
+    });
+    enqueueAcpJob(firstRequest);
+    const secondRequest = makeRequest({
+      userMessageId: "user-admit-2",
+      assistantMessageId: "assistant-admit-2",
+      assistantDate: "2026-03-08T00:00:12.000Z",
+    });
+
+    const decision = admitAcpJobCreation(secondRequest, {
+      queuedPerAccount: 1,
+      queuedPerThread: 100,
+      created5hPerAccount: 100,
+      created7dPerAccount: 100,
+      runningPerAccount: 100,
+      runningPerProject: 100,
+    });
+    expect(decision).toMatchObject({
+      ok: false,
+      limit: "queued_per_account",
+      current: 1,
+      maximum: 1,
+    });
+    expect(() => throwIfAcpAdmissionDenied(decision)).toThrow(
+      "ACP turn limit reached",
+    );
+    expect(countQueuedAcpJobsForAccount(firstRequest.account_id)).toBe(1);
+  });
+
+  it("allows recovery continuation creation through local queue caps", () => {
+    const parent = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-admit-recovery-parent",
+        assistantMessageId: "assistant-admit-recovery-parent",
+        assistantDate: "2026-03-08T00:00:13.000Z",
+      }),
+    );
+    const recoveryRequest = {
+      ...makeRequest({
+        userMessageId: "user-admit-recovery",
+        assistantMessageId: "assistant-admit-recovery",
+        assistantDate: "2026-03-08T00:00:14.000Z",
+      }),
+      recovery_parent_op_id: parent.op_id,
+      recovery_reason: "server restart",
+      recovery_count: 1,
+    };
+
+    expect(
+      admitAcpJobCreation(recoveryRequest, {
+        queuedPerAccount: 0,
+        queuedPerThread: 0,
+        created5hPerAccount: 0,
+        created7dPerAccount: 0,
+        runningPerAccount: 0,
+        runningPerProject: 0,
+      }),
+    ).toEqual({ ok: true });
   });
 
   it("stores recovery metadata for resumed codex turns", () => {

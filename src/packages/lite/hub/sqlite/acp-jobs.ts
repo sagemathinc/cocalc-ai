@@ -19,6 +19,7 @@ export type AcpJobState =
 export interface AcpJobRow {
   op_id: string;
   project_id: string;
+  account_id?: string | null;
   path: string;
   thread_id: string;
   user_message_id: string;
@@ -47,6 +48,7 @@ function init(): void {
     CREATE TABLE IF NOT EXISTS ${TABLE} (
       op_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
       path TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       user_message_id TEXT NOT NULL,
@@ -84,6 +86,9 @@ function init(): void {
   if (!hasColumn("worker_id")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN worker_id TEXT`);
   }
+  if (!hasColumn("account_id")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN account_id TEXT`);
+  }
   if (!hasColumn("worker_bundle_version")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN worker_bundle_version TEXT`);
   }
@@ -98,6 +103,12 @@ function init(): void {
   }
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_recovery_parent_idx ON ${TABLE}(recovery_parent_op_id, state, created_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS acp_jobs_account_state_idx ON ${TABLE}(account_id, state, created_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS acp_jobs_project_state_idx ON ${TABLE}(project_id, state, created_at)`,
   );
   ensureAcpTableMigrated(TABLE);
 }
@@ -124,6 +135,7 @@ function normalizeRequest(request: AcpJobRequest): AcpJobRequest {
 
 function assertChatIdentity(request: AcpJobRequest): {
   project_id: string;
+  account_id: string;
   path: string;
   thread_id: string;
   user_message_id: string;
@@ -132,12 +144,13 @@ function assertChatIdentity(request: AcpJobRequest): {
 } {
   const project_id =
     `${request.chat?.project_id ?? request.project_id ?? ""}`.trim();
+  const account_id = `${request.account_id ?? ""}`.trim();
   const path = `${request.chat?.path ?? ""}`.trim();
   const thread_id = `${request.chat?.thread_id ?? ""}`.trim();
   const user_message_id = `${request.chat?.parent_message_id ?? ""}`.trim();
   const assistant_message_id = `${request.chat?.message_id ?? ""}`.trim();
   const assistant_message_date = `${request.chat?.message_date ?? ""}`.trim();
-  if (!project_id || !path || !thread_id || !user_message_id) {
+  if (!project_id || !account_id || !path || !thread_id || !user_message_id) {
     throw new Error("acp job is missing required chat identity");
   }
   if (!assistant_message_id || !assistant_message_date) {
@@ -145,6 +158,7 @@ function assertChatIdentity(request: AcpJobRequest): {
   }
   return {
     project_id,
+    account_id,
     path,
     thread_id,
     user_message_id,
@@ -158,6 +172,7 @@ export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
   const db = getAcpDatabase();
   const {
     project_id,
+    account_id,
     path,
     thread_id,
     user_message_id,
@@ -185,15 +200,17 @@ export function enqueueAcpJob(request: AcpJobRequest): AcpJobRow {
         : null;
   db.prepare(
     `INSERT INTO ${TABLE}
-      (op_id, project_id, path, thread_id, user_message_id, assistant_message_id, assistant_message_date, session_id, state, send_mode, priority, worker_id, worker_bundle_version, recovery_parent_op_id, recovery_reason, recovery_count, request_json, error, created_at, updated_at, started_at, finished_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
+      (op_id, project_id, account_id, path, thread_id, user_message_id, assistant_message_id, assistant_message_date, session_id, state, send_mode, priority, worker_id, worker_bundle_version, recovery_parent_op_id, recovery_reason, recovery_count, request_json, error, created_at, updated_at, started_at, finished_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, NULL, NULL, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL)
       ON CONFLICT(project_id, path, user_message_id) DO UPDATE SET
+        account_id = excluded.account_id,
         send_mode = COALESCE(excluded.send_mode, ${TABLE}.send_mode),
         priority = MAX(${TABLE}.priority, excluded.priority),
         updated_at = excluded.updated_at`,
   ).run(
     op_id,
     project_id,
+    account_id,
     path,
     thread_id,
     user_message_id,
@@ -271,6 +288,59 @@ export function listQueuedAcpJobs(): AcpJobRow[] {
     .all() as AcpJobRow[];
 }
 
+function countAcpJobsByWhere(where: string, args: unknown[]): number {
+  ensureInit();
+  const db = getAcpDatabase();
+  const row = db
+    .prepare(`SELECT COUNT(*) AS count FROM ${TABLE} ${where}`)
+    .get(...args) as { count?: number } | undefined;
+  return Number(row?.count ?? 0) || 0;
+}
+
+export function countQueuedAcpJobsForAccount(account_id: string): number {
+  const accountId = `${account_id ?? ""}`.trim();
+  if (!accountId) return 0;
+  return countAcpJobsByWhere(`WHERE account_id = ? AND state = 'queued'`, [
+    accountId,
+  ]);
+}
+
+export function countRunningAcpJobsForAccount(account_id: string): number {
+  const accountId = `${account_id ?? ""}`.trim();
+  if (!accountId) return 0;
+  return countAcpJobsByWhere(`WHERE account_id = ? AND state = 'running'`, [
+    accountId,
+  ]);
+}
+
+export function countRunningAcpJobsForProject(project_id: string): number {
+  const projectId = `${project_id ?? ""}`.trim();
+  if (!projectId) return 0;
+  return countAcpJobsByWhere(`WHERE project_id = ? AND state = 'running'`, [
+    projectId,
+  ]);
+}
+
+export function countCreatedAcpJobsForAccountSince({
+  account_id,
+  since,
+  includeRecovery = false,
+}: {
+  account_id: string;
+  since: number;
+  includeRecovery?: boolean;
+}): number {
+  const accountId = `${account_id ?? ""}`.trim();
+  if (!accountId) return 0;
+  const recoveryClause = includeRecovery
+    ? ""
+    : "AND recovery_parent_op_id IS NULL";
+  return countAcpJobsByWhere(
+    `WHERE account_id = ? AND created_at >= ? ${recoveryClause}`,
+    [accountId, since],
+  );
+}
+
 export function listRunningAcpJobs(): AcpJobRow[] {
   ensureInit();
   return listRunningAcpJobsByWorker();
@@ -312,6 +382,24 @@ export function countRunningAcpJobsForWorker(worker_id: string): number {
   return Number(row?.count ?? 0) || 0;
 }
 
+export function countQueuedAcpJobsForThread({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): number {
+  return countAcpJobsByWhere(
+    `WHERE project_id = ?
+       AND path = ?
+       AND thread_id = ?
+       AND state = 'queued'`,
+    [project_id, path, thread_id],
+  );
+}
+
 export function listQueuedAcpJobsForThread({
   project_id,
   path,
@@ -341,12 +429,16 @@ export function claimNextQueuedAcpJobForThread({
   thread_id,
   worker_id,
   worker_bundle_version,
+  max_running_for_account,
+  max_running_for_project,
 }: {
   project_id: string;
   path: string;
   thread_id: string;
   worker_id?: string;
   worker_bundle_version?: string;
+  max_running_for_account?: number;
+  max_running_for_project?: number;
 }): AcpJobRow | undefined {
   ensureInit();
   const db = getAcpDatabase();
@@ -378,6 +470,26 @@ export function claimNextQueuedAcpJobForThread({
       )
       .get(project_id, path, thread_id) as AcpJobRow | undefined;
     if (!next) {
+      db.exec("COMMIT");
+      return undefined;
+    }
+    const maxProject = Number(max_running_for_project);
+    if (
+      Number.isFinite(maxProject) &&
+      maxProject >= 0 &&
+      countRunningAcpJobsForProject(project_id) >= maxProject
+    ) {
+      db.exec("COMMIT");
+      return undefined;
+    }
+    const accountId = `${next.account_id ?? ""}`.trim();
+    const maxAccount = Number(max_running_for_account);
+    if (
+      accountId &&
+      Number.isFinite(maxAccount) &&
+      maxAccount >= 0 &&
+      countRunningAcpJobsForAccount(accountId) >= maxAccount
+    ) {
       db.exec("COMMIT");
       return undefined;
     }

@@ -112,6 +112,13 @@ import {
   getLatestQueuedUserMessageContent,
 } from "./queued-user-message";
 import {
+  admitAcpJobCreation,
+  admitAcpJobCreationIdentity,
+  getDefaultAcpAdmissionLimits,
+  isAcpAdmissionDeniedError,
+  throwIfAcpAdmissionDenied,
+} from "./admission";
+import {
   buildCodexTurnNoticeOptions,
   publishCodexTurnNotice,
   shouldNotifyOnCodexTurnFinish,
@@ -144,6 +151,7 @@ import {
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   enqueueAcpJob,
+  getAcpJob,
   getAcpJobByOpId,
   listQueuedAcpJobs,
   listAcpJobsByRecoveryParent,
@@ -5419,6 +5427,44 @@ async function enqueueAutomationRun(
     return row;
   }
   const now = Date.now();
+  try {
+    throwIfAcpAdmissionDenied(
+      admitAcpJobCreationIdentity(
+        {
+          account_id: row.account_id,
+          project_id: row.project_id,
+          path: row.path,
+          thread_id: row.thread_id,
+        },
+        undefined,
+        now,
+      ),
+    );
+  } catch (err) {
+    if (isAcpAdmissionDeniedError(err)) {
+      const updated = upsertAcpAutomation({
+        ...row,
+        status: "paused",
+        paused_reason: "acp_admission_denied",
+        last_error: err.message,
+        updated_at: now,
+      });
+      await patchThreadAutomationProjection({
+        project_id: updated.project_id,
+        path: updated.path,
+        thread_id: updated.thread_id,
+        updated_by: updated.account_id,
+        automation_config: toAutomationConfig(
+          updated,
+        ) as ChatThreadAutomationConfig,
+        automation_state: toAutomationState(
+          updated,
+        ) as ChatThreadAutomationState,
+      });
+      await publishAutomationRecordToProjectIndex(updated);
+    }
+    throw err;
+  }
   const user_message_id = randomUUID();
   const assistant_message_id = randomUUID();
   const userDate = new Date(now).toISOString();
@@ -5494,6 +5540,7 @@ async function enqueueAutomationRun(
           chat,
         };
 
+  throwIfAcpAdmissionDenied(admitAcpJobCreation(request));
   const job = enqueueAcpJob(request);
   await persistQueuedUserMessageProjection({
     client: conatClient,
@@ -6280,6 +6327,7 @@ async function enqueueRecoveryContinuationForJob({
       recovery_count: recoveryCount,
     },
   };
+  throwIfAcpAdmissionDenied(admitAcpJobCreation(resumedRequest));
   const queued = enqueueAcpJob(resumedRequest);
   await persistQueuedUserMessageProjection({
     client,
@@ -6635,6 +6683,8 @@ async function pumpQueuedAcpJobsForThread({
       thread_id,
       worker_id: currentDetachedWorkerContext?.worker_id,
       worker_bundle_version: currentDetachedWorkerContext?.bundle_version,
+      max_running_for_account: getDefaultAcpAdmissionLimits().runningPerAccount,
+      max_running_for_project: getDefaultAcpAdmissionLimits().runningPerProject,
     });
     if (!job) {
       return;
@@ -7078,6 +7128,7 @@ async function enqueueChatAcpTurn({
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
+  throwIfAcpAdmissionDenied(admitAcpJobCreation(request));
   await acknowledgeAutomationFromHumanTurn(request);
   const row = enqueueAcpJob(request);
   const projectedState = await persistQueuedUserMessageProjection({
@@ -7378,6 +7429,13 @@ async function handleAcpControlRequest(
     }
   }
   if (request.action === "resend") {
+    const current = getAcpJob({ project_id, path, user_message_id });
+    if (!current || current.state !== "canceled") {
+      return { ok: false, state: current?.state ?? "missing" };
+    }
+    throwIfAcpAdmissionDenied(
+      admitAcpJobCreation(decodeAcpJobRequest(current)),
+    );
     const row = resendCanceledAcpJob({
       project_id,
       path,
