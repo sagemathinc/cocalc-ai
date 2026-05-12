@@ -10,7 +10,7 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import type { ProviderId } from "@cocalc/cloud";
-import { getProviderContext } from "./provider-context";
+import { getProviderContext, getProviderPrefix } from "./provider-context";
 import { DisksClient } from "@google-cloud/compute";
 import { NebiusClient } from "@cocalc/cloud/nebius/client";
 import { getVolumes } from "@cocalc/cloud/hyperstack/client";
@@ -348,7 +348,7 @@ export function classifyCloudOrphanInstances({
 export async function listCloudOrphanInstances(
   provider: Provider,
 ): Promise<CloudOrphanInstance[]> {
-  const { prefix } = await getProviderContext(provider);
+  const prefix = await getProviderPrefix(provider);
   const instances = await listProviderInstances(provider, prefix);
   if (!instances) return [];
   const hosts = await loadKnownCloudHosts(provider);
