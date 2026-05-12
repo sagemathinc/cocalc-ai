@@ -50,7 +50,34 @@ describe("NotificationRow", () => {
     markMany.mockReset();
   });
 
-  it("opens account notices that target a chat location", () => {
+  it("does not mark account notices read when they do not target a file", () => {
+    render(
+      <NotificationRow
+        id="notice-1"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            target: "acct-1",
+            time: new Date("2026-05-07T00:00:00.000Z"),
+            title: "Codex turn finished",
+            body_markdown: "done",
+            origin_label: "Codex",
+            fragment_id: "chat=1234",
+            users: { "acct-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Codex turn finished"));
+
+    expect(open_file).not.toHaveBeenCalled();
+    expect(mark).not.toHaveBeenCalled();
+    expect(markMany).not.toHaveBeenCalled();
+  });
+
+  it("opens file-target notifications and marks them read", () => {
     render(
       <NotificationRow
         id="notice-1"
@@ -79,7 +106,34 @@ describe("NotificationRow", () => {
       chat: true,
       fragmentId: { chat: "1234" },
     });
-    expect(mark).toHaveBeenCalled();
+    expect(mark).toHaveBeenCalledWith(expect.anything(), "notice-1", "read");
+    expect(markMany).not.toHaveBeenCalled();
+  });
+
+  it("does not mark account notices read when clicking action links", () => {
+    render(
+      <NotificationRow
+        id="notice-1"
+        user_map={{}}
+        mention={
+          fromJS({
+            kind: "account_notice",
+            target: "acct-1",
+            time: new Date("2026-05-07T00:00:00.000Z"),
+            title: "Billing notice",
+            body_markdown: "Review billing details",
+            action_link: "/hosts",
+            action_label: "Open dedicated hosts",
+            users: { "acct-1": { read: false, saved: false } },
+          }) as any
+        }
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Open dedicated hosts"));
+
+    expect(mark).not.toHaveBeenCalled();
+    expect(markMany).not.toHaveBeenCalled();
   });
 
   it("shows grouped account notice counts and marks all grouped notices", () => {

@@ -12,6 +12,7 @@ const resolveMembershipDetailsForAccountMock = jest.fn();
 const createMembershipPackageMock = jest.fn();
 const getMembershipPackageMock = jest.fn();
 const listMembershipPackageDetailsForOwnerMock = jest.fn();
+const updateMembershipPackageMock = jest.fn();
 const resolveMembershipPackageQuoteMock = jest.fn();
 const assignMembershipPackageSeatMock = jest.fn();
 const revokeMembershipPackageSeatMock = jest.fn();
@@ -22,6 +23,7 @@ const resolveAccountHomeBayMock = jest.fn();
 const interBayGetMembershipDetailsMock = jest.fn();
 const interBayGetMembershipPackagesMock = jest.fn();
 const interBayAdminProvisionMembershipPackageMock = jest.fn();
+const interBayUpdateMembershipPackageMock = jest.fn();
 const getBrowserAuthSessionHashMock = jest.fn();
 const requireFreshAuthForSessionHashMock = jest.fn();
 
@@ -58,6 +60,8 @@ jest.mock("@cocalc/server/membership/packages", () => ({
   getMembershipPackage: (...args: any[]) => getMembershipPackageMock(...args),
   listMembershipPackageDetailsForOwner: (...args: any[]) =>
     listMembershipPackageDetailsForOwnerMock(...args),
+  updateMembershipPackage: (...args: any[]) =>
+    updateMembershipPackageMock(...args),
   resolveMembershipPackageQuote: (...args: any[]) =>
     resolveMembershipPackageQuoteMock(...args),
   assignMembershipPackageSeat: (...args: any[]) =>
@@ -115,6 +119,8 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
       interBayGetMembershipPackagesMock(...args),
     adminProvisionMembershipPackage: (...args: any[]) =>
       interBayAdminProvisionMembershipPackageMock(...args),
+    updateMembershipPackage: (...args: any[]) =>
+      interBayUpdateMembershipPackageMock(...args),
   })),
 }));
 
@@ -465,6 +471,91 @@ describe("purchases membership packages", () => {
     });
     expect(createMembershipPackageMock).not.toHaveBeenCalled();
     expect(result.id).toBe("site-remote-1");
+  });
+
+  it("updates site-license allowed domains", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resolveAccountHomeBayMock.mockResolvedValue({
+      account_id: "owner-1",
+      home_bay_id: "bay-0",
+      source: "cluster-directory",
+    });
+    getMembershipPackageMock.mockResolvedValue({
+      id: "site-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "member",
+      seat_count: 10,
+      metadata: { allowed_domains: ["example.edu"] },
+    });
+    updateMembershipPackageMock.mockResolvedValue({
+      id: "site-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "member",
+      seat_count: 12,
+      active_assignment_count: 0,
+      available_seat_count: 12,
+      assignments: [],
+      metadata: { allowed_domains: ["dept.example.edu", "example.edu"] },
+    });
+
+    const { updateMembershipPackage } = await import("./purchases");
+    const result = await updateMembershipPackage({
+      account_id: "admin-1",
+      owner_account_id: "owner-1",
+      package_id: "site-1",
+      seat_count: 12,
+      allowed_domains: ["Example.EDU", "@dept.example.edu"],
+    });
+
+    expect(updateMembershipPackageMock).toHaveBeenCalledWith({
+      package_id: "site-1",
+      seat_count: 12,
+      expires_at: undefined,
+      allowed_domains: ["dept.example.edu", "example.edu"],
+    });
+    expect(result.metadata?.allowed_domains).toEqual([
+      "dept.example.edu",
+      "example.edu",
+    ]);
+  });
+
+  it("routes site-license allowed domain updates to the owner's home bay", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resolveAccountHomeBayMock.mockResolvedValue({
+      account_id: "owner-1",
+      home_bay_id: "bay-2",
+      source: "cluster-directory",
+    });
+    interBayUpdateMembershipPackageMock.mockResolvedValue({
+      id: "site-remote-1",
+      owner_account_id: "owner-1",
+      kind: "site",
+      membership_class: "member",
+      seat_count: 10,
+      active_assignment_count: 0,
+      available_seat_count: 10,
+      assignments: [],
+      metadata: { allowed_domains: ["dept.example.edu", "example.edu"] },
+    });
+
+    const { updateMembershipPackage } = await import("./purchases");
+    await updateMembershipPackage({
+      account_id: "admin-1",
+      owner_account_id: "owner-1",
+      package_id: "site-remote-1",
+      allowed_domains: ["Example.EDU", "@dept.example.edu"],
+    });
+
+    expect(interBayUpdateMembershipPackageMock).toHaveBeenCalledWith({
+      package_id: "site-remote-1",
+      actor_account_id: "admin-1",
+      seat_count: undefined,
+      expires_at: undefined,
+      allowed_domains: ["dept.example.edu", "example.edu"],
+    });
+    expect(updateMembershipPackageMock).not.toHaveBeenCalled();
   });
 
   it("requires ownership or admin rights to quote an existing package", async () => {

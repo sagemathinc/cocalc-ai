@@ -51,6 +51,7 @@ type Capture = {
     reason?: string;
   }>;
   runtimeDeploymentStatusRequests: string[];
+  runtimeDeploymentStatusError?: Error;
   runtimeDeploymentSetRequests: Array<{
     scope_type: string;
     id?: string;
@@ -372,6 +373,9 @@ function makeDeps(
             },
             getHostRuntimeDeploymentStatus: async ({ id }) => {
               capture.runtimeDeploymentStatusRequests.push(id);
+              if (capture.runtimeDeploymentStatusError != null) {
+                throw capture.runtimeDeploymentStatusError;
+              }
               return {
                 host_id: id,
                 configured: [
@@ -1217,6 +1221,57 @@ test("host get emits runtime operator summary in human output", async () => {
   assert.match(output, /Repair State/);
   assert.match(output, /bootstrap_last_reconcile_result/);
   assert.match(output, /project_host_last_automatic_rollback/);
+});
+
+test("host get renders unauthorized runtime status as unavailable in human output", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentStatusError: new Error(
+      "not authorized - callHub: subject='hub.account.user'",
+    ),
+    runtimeDeploymentSetRequests: [],
+  };
+  const deps = makeDeps(
+    capture,
+    {
+      resolveHost: async (_ctx, host) => ({
+        id: host,
+        name: `host-${host}`,
+        status: "running",
+        bay_id: "bay-0",
+        region: "us-west3",
+        pricing_model: "spot",
+        size: "t2d-standard-16",
+        last_seen: "2026-05-01T18:38:02.717Z",
+        bootstrap_lifecycle: {
+          summary_status: "in_sync",
+          summary_message: "desired and installed software are aligned",
+          drift_count: 0,
+          items: [],
+          last_reconcile_result: "success",
+          last_reconcile_finished_at: "2026-05-01T18:39:46Z",
+        },
+      }),
+    },
+    { json: false, output: "table" },
+  );
+  const program = new Command();
+  registerHostCommand(program, deps);
+
+  const output = await withConsoleCapture(async () => {
+    await program.parseAsync(["node", "test", "host", "get", "host-1"]);
+  });
+
+  assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
+  assert.match(output, /Host ID: host-1/);
+  assert.match(output, /Repair State/);
+  assert.match(output, /Runtime details: unavailable for this account\./);
+  assert.doesNotMatch(output, /Runtime Status Error/);
+  assert.doesNotMatch(output, /not authorized/);
 });
 
 test("host ssh-trust forwards the resolved host", async () => {

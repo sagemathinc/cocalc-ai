@@ -41,7 +41,7 @@ The remaining release risk has shifted from "build the model" to:
 - finish live end-to-end smoke on real hosted paths
 - finish dedicated-host billing recovery, provider/funding-lane, and churn smoke
 - prove multibay/operator trust under churn
-- make deployment and rollback boring
+- tighten deploy/rollback polish found during the canary rehearsal
 
 The right strategy is still:
 
@@ -71,7 +71,7 @@ The right strategy is still:
 | Student pay                                                  | In progress, close          | Membership-based model implemented; API smoke and browser/Stripe direct-student smoke passed                          | Instructor workflow smoke, site-license defaulting smoke, wording polish        |
 | Stale/deleted host convergence across bays                   | Blocker                     | Still a trust risk when the UI lies; several concrete bugs have been fixed during smoke                               | Harden convergence and operator inspection                                      |
 | VM/provider/db orphan healing                                | Blocker                     | Operators still should not need DB surgery                                                                            | Make healing workflows explicit and smoke them                                  |
-| Deployment / packaging / rollback reproducibility            | Blocker                     | Needed for boring production operation                                                                                | Finish standard deploy/rollback path                                            |
+| Deployment / packaging / rollback reproducibility            | Done enough, polish         | Operator workflow, rollback dry-run, status/history/reconcile smoke, and one canary rollback/forward restore passed   | Polish artifact/component restore ergonomics and project-log follow-up          |
 | Real 3-bay hosted soak                                       | Blocker                     | Needed to convert "promising" into "trustworthy"                                                                      | Run soak and fix only correctness/trust issues                                  |
 | Self-hosted provider bootstrap UX                            | Post-release for SaaS       | Important for Launchpad, not SaaS launch-critical                                                                     | Resume after hosted release                                                     |
 | Cloudflare bootstrap redesign                                | Post-release for SaaS       | Important but not launch-critical                                                                                     | Treat as Launchpad workstream                                                   |
@@ -241,16 +241,38 @@ Why this is a blocker:
 
 ### 6. Deployment / operator boringness
 
-Required:
+Implemented:
 
-- reproducible deploy
-- reproducible rollback
-- standard packaging/runtime path
-- less env-sensitive operator flows
+- standard hub build/restart/status commands are documented for the 3-bay dev
+  hub
+- project-host runtime status, history, reconcile, and rollback commands are
+  available under `cocalc host deploy`
+- `host deploy rollback --dry-run` resolves previous-version and
+  last-known-good rollback targets without changing desired state or queuing
+  work
+- live `host1` smoke confirmed rollback target selection and aligned
+  `acp-worker` reconcile behavior
+- one intentional `host1` project-host rollback and forward restore completed
+  successfully
+- post-restart project exec smoke succeeded in a running project on `host1`
+- detailed smoke notes:
+  [deploy-rollback-reproducibility-smoke-2026-05-11.md](/home/user/cocalc-ai/src/.agents/deploy-rollback-reproducibility-smoke-2026-05-11.md)
+
+Remaining:
+
+- decide whether artifact and component targets should be restored together by
+  one operator command after component rollback
+- investigate the non-blocking `project logs` container lookup failure seen
+  after the project-host restart
+- decide whether project-bundle/tools upgrade LRO noise during rollback smoke
+  needs clearer history grouping
+- decide whether rollback dry-run belongs in admin UI before first public release
 
 Why this is a blocker:
 
-- a public hosted release cannot depend on expert tribal knowledge for routine operations
+- public release operation must not depend on undocumented SSH/DB intervention
+- remaining work is now polish around operator ergonomics and follow-up
+  observability, not the core rollback path
 
 ### 7. Real hosted soak
 
@@ -334,7 +356,7 @@ This is the shortest sensible path to a trustworthy first release.
 6. Finish notification immediate/digest E2E smoke and abuse-limit review.
 7. Decide whether Cloudflare email is release-critical or whether SMTP/SendGrid is acceptable for the first hosted release with Cloudflare as follow-up.
 8. Harden stale/deleted host convergence and orphan healing workflows.
-9. Finish deploy/rollback reproducibility.
+9. Polish deploy/rollback ergonomics found during the canary rehearsal.
 10. Run real 3-bay hosted soak and fix only correctness/trust issues.
 11. Freeze support boundaries and launch conservatively.
 

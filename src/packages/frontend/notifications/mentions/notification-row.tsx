@@ -99,10 +99,7 @@ export function NotificationRow(props: Props) {
   }
 
   function clickNotificationTarget(): void {
-    if (!project_id || !path) {
-      markReadState("read");
-      return;
-    }
+    if (!project_id || !path) return;
     redux.getProjectActions(project_id).open_file({
       path,
       chat: !!fragmentId?.chat,
@@ -122,7 +119,6 @@ export function NotificationRow(props: Props) {
           href={action_link}
           onClick={(e) => {
             e.stopPropagation();
-            markReadState("read");
           }}
         >
           {action_label ?? "Open"}
@@ -180,10 +176,7 @@ export function NotificationRow(props: Props) {
     );
   }
 
-  const onClick =
-    project_id && path && (kind === "mention" || kind === "account_notice")
-      ? clickNotificationTarget
-      : () => markReadState("read");
+  const onClick = project_id && path ? clickNotificationTarget : undefined;
 
   return (
     <li

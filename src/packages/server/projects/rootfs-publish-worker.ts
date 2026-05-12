@@ -8,6 +8,7 @@ import {
 } from "@cocalc/server/conat/file-server-client";
 import {
   ensureLroSchema,
+  expireDueLros,
   touchLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
@@ -213,6 +214,13 @@ async function claimRootfsPublishLroOps({
   lease_ms?: number;
 }): Promise<LroSummary[]> {
   if (limit <= 0) return [];
+  const expired = await expireDueLros({ kind: ROOTFS_PUBLISH_LRO_KIND });
+  if (expired.length > 0) {
+    logger.info("expired stale RootFS publish LROs before claim", {
+      count: expired.length,
+      op_ids: expired.map(({ op_id }) => op_id),
+    });
+  }
   const runningRows = await listFreshRunningRootfsPublishTopologyRows({
     lease_ms,
   });
@@ -247,6 +255,7 @@ async function claimRootfsPublishLroOps({
          AND ph.deleted IS NULL
         WHERE l.kind = $1
           AND l.dismissed_at IS NULL
+          AND l.expires_at > now()
           AND (
             l.status = 'queued'
             OR (
