@@ -13,7 +13,6 @@ import { deleteRememberMe } from "@cocalc/frontend/misc/remember-me";
 import { clearStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 import track from "@cocalc/frontend/user-tracking";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { once } from "@cocalc/util/async-utils";
 import { define, required } from "@cocalc/util/fill";
 import { Actions } from "@cocalc/util/redux/Actions";
 import type { SettingsPageType } from "@cocalc/util/types/settings";
@@ -36,7 +35,6 @@ export class AccountActions extends Actions<AccountState> {
   _init(store): void {
     store.on("change", this.derive_show_global_info);
     store.on("change", this.update_unread_news);
-    this.processSignUpTags();
   }
 
   derive_show_global_info(store: AccountStore): void {
@@ -281,29 +279,6 @@ export class AccountActions extends Actions<AccountState> {
       });
     }
   }
-
-  processSignUpTags = async () => {
-    if (!localStorage.sign_up_tags) {
-      return;
-    }
-    try {
-      if (!webapp_client.is_signed_in()) {
-        await once(webapp_client, "signed_in");
-      }
-      await webapp_client.async_query({
-        query: {
-          accounts: {
-            tags: JSON.parse(localStorage.sign_up_tags),
-            sign_up_usage_intent: localStorage.sign_up_usage_intent,
-          },
-        },
-      });
-      delete localStorage.sign_up_tags;
-      delete localStorage.sign_up_usage_intent;
-    } catch (err) {
-      console.warn("processSignUpTags", err);
-    }
-  };
 
   setFragment = (fragment) => {
     // @ts-ignore

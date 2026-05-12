@@ -25,7 +25,6 @@ export const SignUpInputSchema = z
       .string()
       .optional()
       .describe("If required, enter a currently valid registration token."),
-    tags: z.array(z.string()).optional().describe("Tag users"),
     publicPathId: z
       .string()
       .optional()

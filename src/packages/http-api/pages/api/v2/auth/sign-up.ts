@@ -87,7 +87,6 @@ export async function signUp(req, res) {
     firstName,
     lastName,
     registrationToken,
-    tags,
     signupReason,
   } = getParams(req);
 
@@ -219,7 +218,6 @@ export async function signUp(req, res) {
       first_name: firstName,
       last_name: lastName,
       home_bay_id: selected_home_bay_id,
-      tags,
       signup_reason: signupReason,
       owner_id,
       ephemeral: tokenInfo?.ephemeral,
