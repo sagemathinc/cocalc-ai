@@ -2164,6 +2164,100 @@ test("host deploy rollback queues runtime rollback and waits for completion", as
   assert.equal(capture.data.status, "succeeded");
 });
 
+test("host rollback defaults to project-host artifact and waits for completion", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentRollbacks: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "rollback",
+    "host-1",
+    "--to",
+    "bundle-v0",
+    "--reason",
+    "test high-level rollback",
+  ]);
+
+  assert.deepEqual(capture.runtimeDeploymentRollbacks, [
+    {
+      id: "host-1",
+      target_type: "artifact",
+      target: "project-host",
+      version: "bundle-v0",
+      last_known_good: false,
+      reason: "test high-level rollback",
+    },
+  ]);
+  assert.equal(capture.data.host_id, "host-1");
+  assert.equal(capture.data.op_id, "deploy-rollback-host-1");
+  assert.equal(capture.data.status, "succeeded");
+});
+
+test("host rollback --dry-run shows project-host stack targets", async () => {
+  const capture: Capture = {
+    upgrades: [],
+    reconciles: [],
+    rollouts: [],
+    runtimeDeploymentReconciles: [],
+    runtimeDeploymentRollbacks: [],
+    runtimeDeploymentStatusRequests: [],
+    runtimeDeploymentSetRequests: [],
+  };
+  const program = new Command();
+  registerHostCommand(program, makeDeps(capture));
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "host",
+    "rollback",
+    "host-1",
+    "--dry-run",
+  ]);
+
+  assert.deepEqual(capture.runtimeDeploymentRollbacks, []);
+  assert.deepEqual(capture.runtimeDeploymentStatusRequests, ["host-1"]);
+  assert.equal(capture.data.rollback_version, "bundle-v0");
+  assert.deepEqual(capture.data.affected_targets, [
+    {
+      target_type: "artifact",
+      target: "project-host",
+      desired_version: "bundle-v0",
+    },
+    {
+      target_type: "component",
+      target: "project-host",
+      desired_version: "bundle-v0",
+    },
+    {
+      target_type: "component",
+      target: "conat-router",
+      desired_version: "bundle-v0",
+    },
+    {
+      target_type: "component",
+      target: "conat-persist",
+      desired_version: "bundle-v0",
+    },
+    {
+      target_type: "component",
+      target: "acp-worker",
+      desired_version: "bundle-v0",
+    },
+  ]);
+});
+
 test("host deploy history lists host-scoped runtime deployment operations", async () => {
   const capture: Capture = {
     upgrades: [],

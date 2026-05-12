@@ -477,6 +477,21 @@ async function dryRunHostRuntimeDeploymentRollback({
   };
 }
 
+function projectHostRuntimeStackTargets(version: string) {
+  return [
+    {
+      target_type: "artifact",
+      target: "project-host",
+      desired_version: version,
+    },
+    ...MANAGED_COMPONENT_KINDS.map((component) => ({
+      target_type: "component",
+      target: component,
+      desired_version: version,
+    })),
+  ];
+}
+
 function deploymentUpsertFromRecord(record: any) {
   return {
     target_type: record.target_type,
@@ -2505,6 +2520,145 @@ Example:
           opts,
           command,
         ),
+    );
+
+  host
+    .command("rollback <host>")
+    .description(
+      "roll back a host runtime artifact and the matching managed runtime stack",
+    )
+    .option(
+      "--artifact <artifact>",
+      "artifact to roll back (default: project-host)",
+      "project-host",
+    )
+    .option("--to <version>", "explicit rollback version override")
+    .option("--to-version <version>", "explicit rollback version override")
+    .option(
+      "--last-known-good",
+      "use the recorded last-known-good version instead of the previous retained version",
+    )
+    .option(
+      "--dry-run",
+      "resolve the rollback version without changing desired state or queuing work",
+    )
+    .option("--reason <reason>", "optional rollback reason")
+    .option("--no-wait", "queue rollback without waiting for completion")
+    .addHelpText(
+      "after",
+      `
+This is the high-level rollback path for the common project-host case. It
+defaults to \`--artifact project-host\`, which restores the project-host artifact
+and records matching desired versions for \`project-host\`, \`conat-router\`,
+\`conat-persist\`, and \`acp-worker\` together.
+
+Use \`host deploy rollback\` for the low-level single-target rollback primitive.
+
+Examples:
+  cocalc host rollback my-project-host --dry-run
+  cocalc host rollback my-project-host --to previous
+  cocalc host rollback my-project-host --last-known-good
+`,
+    )
+    .action(
+      async (
+        hostIdentifier: string,
+        opts: {
+          artifact?: string;
+          to?: string;
+          toVersion?: string;
+          lastKnownGood?: boolean;
+          dryRun?: boolean;
+          reason?: string;
+          wait?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "host rollback", async (ctx) => {
+          const explicitVersion = `${opts.toVersion ?? opts.to ?? ""}`.trim();
+          if (opts.lastKnownGood && explicitVersion) {
+            throw new Error(
+              "specify at most one of --to/--to-version or --last-known-good",
+            );
+          }
+          const host = await resolveHost(ctx, hostIdentifier);
+          const parsedTarget = parseRuntimeDeploymentTarget({
+            artifact:
+              `${opts.artifact ?? "project-host"}`.trim() || "project-host",
+          });
+          const version =
+            explicitVersion && explicitVersion !== "previous"
+              ? explicitVersion
+              : undefined;
+          if (opts.dryRun) {
+            const dryRun = await dryRunHostRuntimeDeploymentRollback({
+              ctx,
+              host,
+              target_type: parsedTarget.target_type,
+              target: parsedTarget.target,
+              version,
+              last_known_good: !!opts.lastKnownGood,
+            });
+            return {
+              ...dryRun,
+              affected_targets:
+                parsedTarget.target === "project-host" &&
+                dryRun.rollback_version
+                  ? projectHostRuntimeStackTargets(dryRun.rollback_version)
+                  : [
+                      {
+                        target_type: parsedTarget.target_type,
+                        target: parsedTarget.target,
+                        desired_version: dryRun.rollback_version,
+                      },
+                    ],
+            };
+          }
+          const op = await ctx.hub.hosts.rollbackHostRuntimeDeployments({
+            id: host.id,
+            target_type: parsedTarget.target_type,
+            target: parsedTarget.target,
+            version,
+            last_known_good: !!opts.lastKnownGood,
+            reason: `${opts.reason ?? ""}`.trim() || undefined,
+          });
+          if (opts.wait === false) {
+            return {
+              host_id: host.id,
+              op_id: op.op_id,
+              status: "queued",
+              target_type: parsedTarget.target_type,
+              target: parsedTarget.target,
+            };
+          }
+          const summary = await waitForLro(ctx, op.op_id, {
+            timeoutMs: ctx.timeoutMs,
+            pollMs: ctx.pollMs,
+            onUpdate: createHostLroProgressReporter(ctx, {
+              host_id: host.id,
+              name: host.name,
+              op_id: op.op_id,
+            }),
+          });
+          if (summary.timedOut) {
+            throw new Error(
+              `host rollback timed out (op=${op.op_id}, last_status=${summary.status})`,
+            );
+          }
+          if (summary.status !== "succeeded") {
+            throw new Error(
+              `host rollback failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+            );
+          }
+          const final = await ctx.hub.lro.get({ op_id: op.op_id });
+          return {
+            host_id: host.id,
+            op_id: op.op_id,
+            status: summary.status,
+            rollback: final?.result ?? null,
+          };
+        });
+      },
     );
 
   const deploy = host
