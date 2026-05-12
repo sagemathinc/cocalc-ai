@@ -12,11 +12,10 @@ export default async function handle(req, res) {
     if (!account_id) {
       throw Error("must be signed in");
     }
-    const { action, project_id, name, expire, id } = getParams(req);
+    const { action, name, expire, id } = getParams(req);
     const response = await manageApiKeys({
       account_id,
       action,
-      project_id,
       name,
       expire,
       id,

@@ -18,7 +18,7 @@ project allowlist.
 
 ## Why
 
-The current split between account-wide keys and project-scoped keys adds
+The removed split between account-wide keys and project-scoped keys added
 unnecessary complexity:
 
 - separate semantics for create/list/edit/delete
@@ -105,7 +105,7 @@ predictable and least-privilege by default.
 
 Current table:
 
-- `api_keys(id, account_id, project_id, expire, created, hash, key_id, name, trunc, last_active)`
+- `api_keys(id, account_id, expire, created, hash, key_id, name, trunc, last_active)`
 
 Target table:
 
@@ -122,8 +122,6 @@ Target table:
 - add:
   - `capabilities TEXT[] NOT NULL DEFAULT '{}'::TEXT[]`
   - `allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]`
-- remove:
-  - `project_id`
 
 Suggested constraints:
 
@@ -138,14 +136,14 @@ Suggested invariant checks in application code:
 - `project:*` implies `allowed_project_ids` non-empty
 - no `project:*` implies `allowed_project_ids` empty
 
-Because the product is unreleased, we do **not** need a compatibility layer for
-legacy project keys. We can delete them and migrate directly to the new shape.
+Because the product is unreleased, project-key CRUD/auth/schema branches have
+been removed instead of supported through a compatibility layer.
 
 ## Exact Auth Contract Changes
 
 Current auth path:
 
-- API key auth may return either `{ account_id }` or `{ project_id }`
+- API key auth returns `{ account_id }`
 
 Target auth path:
 
@@ -169,7 +167,7 @@ interface ApiKeyPrincipal {
 
 This means:
 
-- remove the `project_id` return path from API-key authentication
+- keep the `project_id` return path out of API-key authentication
 - remove project-key-specific wrong-bay auth behavior
 - keep account-key cluster-directory portability by `key_id`
 
@@ -187,8 +185,8 @@ Project authorization becomes:
 
 ## Exact Manage API Changes
 
-Current manage flow overloads account keys and project keys using optional
-`project_id`.
+Current manage flow is account-owned only. It still needs explicit capability
+and project-allowlist fields.
 
 Target manage flow:
 
@@ -198,7 +196,7 @@ Target manage flow:
 - `updateApiKey({ account_id, id, name, expire, capabilities, allowed_project_ids })`
 - `deleteApiKey({ account_id, id })`
 
-Delete support for:
+Support already deleted:
 
 - `project_id` parameter on key management
 - project-collaborator creation/deletion/editing of keys for a project
@@ -238,14 +236,13 @@ No separate project-key UI should remain.
 
 ## Migration Plan
 
-Because CoCalc-ai is unreleased, use the simplest migration:
+Because CoCalc-ai is unreleased, the project-key removal part is already done.
+The remaining scoped-account-key migration is:
 
 1. Add `capabilities` and `allowed_project_ids`.
-2. Delete all rows where `project_id IS NOT NULL`.
-3. Remove `project_id` from auth and manage paths.
-4. Drop `project_id` from the schema.
-5. Update the cluster account API-key directory to carry scope fields.
-6. Update callers to use scoped account-key authorization.
+2. Update the cluster account API-key directory to carry scope fields.
+3. Update callers to use scoped account-key authorization.
+4. Add upgrade cleanup only if a pre-removal database must be preserved.
 
 No backward compatibility for project keys is required.
 
@@ -266,8 +263,7 @@ Those can come later if there is a real product need.
 1. Extend `api_keys` and the cluster account API-key directory with scope data.
 2. Change API-key auth to always return account-scoped principals.
 3. Update manage API and UI to create/edit scoped account keys only.
-4. Delete project-key CRUD/auth branches.
-5. Add focused tests for:
+4. Add focused tests for:
    - account-only keys
    - project-allowlisted keys
    - wrong-project rejection

@@ -10,7 +10,6 @@ export interface ApiKey {
   created: Date;
   hash?: string; // usually NOT available
   trunc: string;
-  project_id?: string; // legacy project api keys; creation/auth is disabled
   expire?: Date;
   name: string;
   last_active?: Date;
@@ -50,10 +49,6 @@ Table({
       pg_type: "VARCHAR(16)",
       desc: "Truncated version of the actual api key, suitable for display to remind user which key it is.",
     },
-    project_id: {
-      type: "uuid",
-      desc: "Legacy project-scoped API key marker. New project API key creation and authentication are disabled.",
-    },
     last_active: {
       type: "timestamp",
       desc: "When this api key was last used.",
@@ -61,11 +56,7 @@ Table({
   },
   rules: {
     primary_key: "id",
-    pg_indexes: [
-      "((created IS NOT NULL))",
-      "((account_id IS NOT NULL))",
-      "project_id",
-    ],
+    pg_indexes: ["((created IS NOT NULL))", "((account_id IS NOT NULL))"],
     pg_unique_indexes: ["key_id"],
   },
 });

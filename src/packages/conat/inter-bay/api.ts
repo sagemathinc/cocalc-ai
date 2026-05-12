@@ -199,7 +199,6 @@ export interface ProjectControlAcceptRehomeRequest {
 
 export interface ProjectControlPortableProjectState {
   project_log?: ProjectLogRow[];
-  api_keys?: Record<string, unknown>[];
 }
 
 export interface ProjectControlRehomeResponse {
@@ -389,7 +388,6 @@ export interface AccountApiKeyDirectoryEntry {
   account_id: string;
   home_bay_id: string;
   hash: string;
-  scope?: "account";
   expire?: number | null;
   last_active?: number | null;
 }
@@ -403,7 +401,6 @@ export interface AccountApiKeyDirectoryUpsertRequest {
   account_id: string;
   home_bay_id: string;
   hash: string;
-  scope?: "account";
   expire?: number | null;
   last_active?: number | null;
 }

@@ -21,7 +21,6 @@ import {
   Configuration,
   ConfigurationAspect,
 } from "@cocalc/frontend/project_configuration";
-import type { ApiKey } from "@cocalc/util/db-schema/api-keys";
 import {
   ExecOptsBlocking,
   isExecOptsBlocking,
@@ -626,18 +625,6 @@ export class ProjectClient {
       caller: "ProjectClient.isDir",
     });
     return await isDirViaFs(fs, path);
-  };
-
-  // getting, setting, editing, deleting, etc., the  api keys for a project
-  api_keys = async (opts: {
-    project_id: string;
-    action: "get" | "delete" | "create" | "edit";
-    password?: string;
-    name?: string;
-    id?: number;
-    expire?: Date;
-  }): Promise<ApiKey[] | undefined> => {
-    return await this.client.conat_client.hub.system.manageApiKeys(opts);
   };
 }
 

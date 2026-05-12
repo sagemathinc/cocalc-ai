@@ -22,7 +22,6 @@ import { NoNetworkProjectWarning } from "../warnings/no-network";
 import { NonMemberProjectWarning } from "../warnings/non-member";
 import { AboutBox } from "./about-box";
 import { LauncherDefaults } from "./launcher-defaults";
-import { ApiKeys } from "./api-keys";
 import { Datastore } from "./datastore";
 import { Environment } from "./environment";
 import { HideDeleteBox } from "./hide-delete-box";
@@ -126,7 +125,6 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
               project={project}
               actions={redux.getActions("projects")}
             />
-            <ApiKeys project_id={project_id} />
           </Col>
         )}
       </Row>

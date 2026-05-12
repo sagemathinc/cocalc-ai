@@ -1185,7 +1185,6 @@ export interface System {
   manageApiKeys: (opts: {
     account_id?: string;
     action: ApiKeyAction;
-    project_id?: string;
     name?: string;
     expire?: Date;
     id?: number;

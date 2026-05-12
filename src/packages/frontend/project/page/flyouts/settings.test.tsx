@@ -106,9 +106,6 @@ jest.mock("@cocalc/frontend/project/context", () => ({
 jest.mock("@cocalc/frontend/project/settings/about-box", () => ({
   AboutBox: () => <div>AboutBox</div>,
 }));
-jest.mock("@cocalc/frontend/project/settings/api-keys", () => ({
-  ApiKeys: () => <div>ApiKeys</div>,
-}));
 jest.mock("@cocalc/frontend/project/backups/create", () => ({
   __esModule: true,
   default: () => <button type="button">Create Backup</button>,

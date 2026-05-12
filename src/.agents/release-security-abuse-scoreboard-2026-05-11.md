@@ -25,7 +25,7 @@ Statuses:
 | SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, app proxy websockets, and raw Conat socket events; these now fast-fail above conservative active-request/message caps.                                                                                                                                      | Tune per-identity limits and production alert thresholds from telemetry.                                             |
 | SEC-BROWSER-001 | Browser exec/session automation              | guarded | critical | Browser-session async exec history was bounded, but active raw/QuickJS exec and typed action work per browser tab was not. Local per-tab caps now fast-fail excess work, `browser_raw_exec_policy` gates raw JS by admin setting, and the browser-session service now exposes a local allow/deny audit stream for raw exec, async exec, typed actions, and QuickJS sandbox host actions. | Continue QuickJS host-capability review and decide whether browser automation audit events need central persistence. |
 | SEC-CLI-001     | `cocalc-cli` authority classes               | guarded | high     | First-pass authority matrix completed. CLI auth config and daemon runtime storage now force private local permissions; ambient env auth can be disabled per invocation.                                                                                                                                                                                                                  | Audit endpoint-level freshness/2FA and API-key scope enforcement for dangerous CLI command families.                 |
-| SEC-KEY-001     | Account/project API keys                     | guarded | high     | First-pass audit completed. Legacy project-scoped CoCalc API-key creation/editing and authentication are disabled; existing project keys remain listable/deletable for cleanup. Account API keys remain broad account credentials.                                                                                                                                                       | Propagate auth method through hub dispatch and add scoped account-key capabilities/project allowlists.               |
+| SEC-KEY-001     | Account/project API keys                     | guarded | high     | First-pass audit completed. Legacy project-scoped CoCalc API-key management, auth, schema, UI, and project-rehome portability were removed. Account API keys remain broad account credentials.                                                                                                                                                                                           | Propagate auth method through hub dispatch and add scoped account-key capabilities/project allowlists.               |
 | SEC-REG-001     | Registration-token signup policy             | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                | Verify no-token behavior and add explicit public-signup setting.                                                     |
 | SEC-MASTER-001  | Master-key storage/unlock                    | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                | Inventory master-key read/storage paths and production unlock options.                                               |
 
@@ -465,17 +465,15 @@ Evidence:
 - Account API keys still authenticate as broad account credentials with no
   capability list or allowed-project list.
 
-Implemented first guard:
+Implemented first guard/removal:
 
 - Added `src/.agents/api-key-scope-audit-2026-05-12.md`.
-- Project-scoped CoCalc API-key creation and editing now fail server-side.
-- Project-scoped CoCalc API-key authentication now fails; API-key auth returns
+- Project-scoped CoCalc API-key management paths, schema column, project
+  settings UI, and project rehome portability were removed.
+- Project-scoped CoCalc API-key authentication was removed; API-key auth returns
   account principals only.
-- Cluster account API-key directory fallback now requires explicit
-  `scope="account"` metadata, so legacy mirrored project-key directory entries
-  fail closed.
-- Existing project-scoped CoCalc API keys remain listable and deletable from
-  project settings for cleanup, but the UI no longer offers create/edit actions.
+- Cluster account API-key directory fallback is account-key-only; the temporary
+  project-key scope discriminator was removed with the project-key model.
 - The HTTP Conat project bridge now requires an account API key plus explicit
   `project_id`, then applies normal collaborator authorization.
 
@@ -486,10 +484,8 @@ Residual risk:
   came from a browser cookie, account API key, or agent bearer token into
   endpoint transforms. That blocks a central "no API keys for dangerous
   endpoints" policy until auth method is carried through dispatch.
-- The `api_keys.project_id` column remains until the scoped account-key schema
-  migration removes legacy project keys.
-- Legacy account-key directory entries without `scope="account"` may need a
-  home-bay key use or resync before they work as cross-bay account keys.
+- Installations created before this removal may need a one-time upgrade cleanup
+  if they already have project-key columns or rows.
 
 Suggested next audit steps:
 

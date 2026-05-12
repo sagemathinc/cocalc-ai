@@ -23,7 +23,6 @@ import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { IntlMessage, isIntlMessage } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { AboutBox } from "@cocalc/frontend/project/settings/about-box";
-import { ApiKeys } from "@cocalc/frontend/project/settings/api-keys";
 import CreateBackup from "@cocalc/frontend/project/backups/create";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import { Datastore } from "@cocalc/frontend/project/settings/datastore";
@@ -285,17 +284,6 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
             },
           ]
         : []),
-
-      {
-        key: "api",
-        label: (
-          <>
-            <Icon name="api" /> API Keys
-          </>
-        ),
-        className: "cc-project-flyout-settings-panel",
-        children: <ApiKeys project_id={project_id} mode="flyout" />,
-      },
     ];
 
     items.push({

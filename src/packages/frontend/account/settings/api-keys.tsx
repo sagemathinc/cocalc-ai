@@ -26,7 +26,7 @@ export default function ApiKeys() {
         <FormattedMessage
           id="account.settings.api-keys.explanation"
           defaultMessage={`Account API keys currently authenticate as your account.
-          Project-specific CoCalc API keys are disabled and will be replaced by scoped account API keys.`}
+          Scoped account API keys will add least-privilege access controls.`}
         />
       </Paragraph>
     </SettingBox>

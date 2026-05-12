@@ -318,7 +318,6 @@ async function replacePortableRows({
       `
         DELETE FROM api_keys
          WHERE account_id=$1
-           AND project_id IS NULL
            AND key_id IS NOT NULL
       `,
       [account_id],
@@ -410,7 +409,6 @@ async function clearPortableRows({
       `
         DELETE FROM api_keys
          WHERE account_id=$1
-           AND project_id IS NULL
       `,
       [account_id],
     );
@@ -482,7 +480,6 @@ async function loadAccountWidePortableApiKeyRows(
           SELECT *
             FROM api_keys
            WHERE account_id=$1
-             AND project_id IS NULL
              AND key_id IS NOT NULL
         ) t
     `,

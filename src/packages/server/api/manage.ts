@@ -1,9 +1,9 @@
 /*
-This supports three actions:
+This supports four actions:
 
-- get: get the already created keys associated to an account or project
+- get: get the already created keys associated to an account
 - delete: delete a specific key given by an id
-- create: create a new api key associated to an account or project
+- create: create a new api key associated to an account
 - edit: edit an existing api key: you can change the name and expiration date
 
 If the user has a password, then it must be provided and be correct. If
@@ -12,7 +12,6 @@ they have no password, then the provided one is ignored.
 
 import getPool from "@cocalc/database/pool";
 import { randomBytes } from "node:crypto";
-import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
@@ -38,8 +37,6 @@ const MAX_API_KEYS = 100000;
 const API_KEY_V2_PREFIX = "sk-cocalc-v2";
 const API_KEY_ID_BYTES = 18;
 const API_KEY_SECRET_BYTES = 32;
-export const PROJECT_API_KEYS_DISABLED_MESSAGE =
-  "Project-specific CoCalc API keys are disabled. Use account API keys instead; scoped account API keys will replace project-specific keys.";
 
 let apiKeysV2SchemaReady: Promise<void> | undefined;
 
@@ -106,7 +103,6 @@ async function syncAccountApiKeyDirectory({
     account_id,
     home_bay_id,
     hash,
-    scope: "account",
     expire: expire == null ? null : new Date(expire).valueOf(),
     last_active: last_active == null ? null : new Date(last_active).valueOf(),
   });
@@ -115,7 +111,6 @@ async function syncAccountApiKeyDirectory({
 interface Options {
   account_id: string;
   action: ApiKeyAction;
-  project_id?: string;
   name?: string;
   expire?: Date;
   id?: number;
@@ -125,107 +120,59 @@ interface Options {
 export default async function manageApiKeys({
   account_id,
   action,
-  project_id,
   name,
   expire,
   id,
 }: Options): Promise<undefined | ApiKeyType[]> {
-  log.debug("manage", { account_id, project_id, action, name, expire, id });
+  log.debug("manage", { account_id, action, name, expire, id });
   if (!(await isValidAccount(account_id))) {
     throw Error("account_id is not a valid account");
-  }
-
-  // Now we allow the action.
-  if (project_id != null) {
-    await assertProjectCollaboratorAccessAllowRemote({
-      account_id,
-      project_id,
-    });
-    if (action === "create" || action === "edit") {
-      throw Error(PROJECT_API_KEYS_DISABLED_MESSAGE);
-    }
   }
 
   return await doManageApiKeys({
     action,
     account_id,
-    project_id,
     name,
     expire,
     id,
   });
 }
 
-// Return all api keys for the given account_id or project_id.
+// Return all api keys for the given account_id.
 // No security checks.
-async function getApiKeys({
-  account_id,
-  project_id,
-}: {
-  account_id: string;
-  project_id?: string;
-}): Promise<ApiKeyType[]> {
-  log.debug("getProjectApiKeys", project_id);
+async function getApiKeys(account_id: string): Promise<ApiKeyType[]> {
+  log.debug("getApiKeys", account_id);
   const pool = getPool();
   await ensureApiKeysV2Schema();
-  if (project_id) {
-    const { rows } = await pool.query(
-      "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE project_id=$1::UUID ORDER BY created DESC",
-      [project_id],
-    );
-    return rows;
-  } else {
-    const { rows } = await pool.query(
-      "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE account_id=$1::UUID AND project_id IS NULL ORDER BY created DESC",
-      [account_id],
-    );
-    return rows;
-  }
+  const { rows } = await pool.query(
+    "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE account_id=$1::UUID ORDER BY created DESC",
+    [account_id],
+  );
+  return rows;
 }
 
-async function getApiKey({ id, account_id, project_id }) {
+async function getApiKey({ id, account_id }) {
   const pool = getPool();
   await ensureApiKeysV2Schema();
-  if (project_id) {
-    const { rows } = await pool.query(
-      "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE id=$1 AND project_id=$2",
-      [id, project_id],
-    );
-    return rows[0];
-  } else {
-    const { rows } = await pool.query(
-      "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE id=$1 AND account_id=$2",
-      [id, account_id],
-    );
-    return rows[0];
-  }
+  const { rows } = await pool.query(
+    "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE id=$1 AND account_id=$2",
+    [id, account_id],
+  );
+  return rows[0];
 }
 
 // We require the account_id here even though the id would technically suffice,
 // so a user can't just delete random api keys they don't own.
-// Edge case: we're not allowing
-async function deleteApiKey({ account_id, project_id, id }) {
+async function deleteApiKey({ account_id, id }) {
   const pool = getPool();
-  const existing = await getApiKey({ id, account_id, project_id });
-  if (project_id) {
-    // We allow a collab on a project to delete any api key for that project,
-    // even from another user.  This increases security, rather than reducing it.
-    await pool.query("DELETE FROM api_keys WHERE project_id=$1 AND id=$2", [
-      project_id,
-      id,
-    ]);
-    await deleteClusterAccountApiKeyDirectoryEntry({
-      key_id: `${existing?.key_id ?? ""}`.trim(),
-    });
-  } else {
-    await pool.query("DELETE FROM api_keys WHERE account_id=$1 AND id=$2", [
-      account_id,
-      id,
-    ]);
-    await deleteClusterAccountApiKeyDirectoryEntry({
-      key_id: `${existing?.key_id ?? ""}`.trim(),
-    });
-  }
+  const existing = await getApiKey({ id, account_id });
+  await pool.query("DELETE FROM api_keys WHERE account_id=$1 AND id=$2", [
+    account_id,
+    id,
+  ]);
+  await deleteClusterAccountApiKeyDirectoryEntry({
+    key_id: `${existing?.key_id ?? ""}`.trim(),
+  });
 }
 
 async function numKeys(account_id: string): Promise<number> {
@@ -239,28 +186,23 @@ async function numKeys(account_id: string): Promise<number> {
 
 async function createApiKey({
   account_id,
-  project_id,
   expire,
   name,
 }: {
   account_id: string;
-  project_id?: string;
   expire?: Date;
   name: string;
 }): Promise<ApiKeyType> {
   const pool = getPool();
   await ensureApiKeysV2Schema();
-  if (project_id) {
-    throw Error(PROJECT_API_KEYS_DISABLED_MESSAGE);
-  }
   if ((await numKeys(account_id)) >= MAX_API_KEYS) {
     throw Error(
       `There is a limit of ${MAX_API_KEYS} per account; please delete some api keys.`,
     );
   }
   const { rows } = await pool.query(
-    "INSERT INTO api_keys(account_id,created,project_id,expire,name,key_id) VALUES($1,NOW(),$2,$3,$4,$5) RETURNING id,key_id,account_id,expire,created,name,last_active",
-    [account_id, project_id, expire, name, randomBase64Url(API_KEY_ID_BYTES)],
+    "INSERT INTO api_keys(account_id,created,expire,name,key_id) VALUES($1,NOW(),$2,$3,$4) RETURNING id,key_id,account_id,expire,created,name,last_active",
+    [account_id, expire, name, randomBase64Url(API_KEY_ID_BYTES)],
   );
   const { id, key_id } = rows[0];
   // Note that passwordHash is NOT a "function" -- due to salt every time you call it, the output is different!
@@ -284,68 +226,52 @@ async function createApiKey({
   return { ...rows[0], trunc, secret };
 }
 
-async function updateApiKey({ apiKey, account_id, project_id }) {
+async function updateApiKey({ apiKey, account_id }) {
   log.debug("udpateApiKey", apiKey);
   const pool = getPool();
   const { id, key_id, expire, name, last_active } = apiKey;
-  if (project_id) {
-    // including account_id and project_id so so you can't edit an api_key
-    // for some other random project or user.
-    await pool.query(
-      "UPDATE api_keys SET expire=$3,name=$4,last_active=$5 WHERE id=$1 AND project_id=$2",
-      [id, project_id, expire, name, last_active],
-    );
-  } else {
-    await pool.query(
-      "UPDATE api_keys SET expire=$3,name=$4,last_active=$5 WHERE id=$1 AND account_id=$2",
-      [id, account_id, expire, name, last_active],
-    );
-    const { rows } = await pool.query(
-      "SELECT hash FROM api_keys WHERE id=$1 AND account_id=$2",
-      [id, account_id],
-    );
-    const hash = `${rows[0]?.hash ?? ""}`.trim();
-    if (hash) {
-      await syncAccountApiKeyDirectory({
-        key_id,
-        account_id,
-        hash,
-        expire: expire ?? null,
-        last_active: last_active ?? null,
-      });
-    }
+  await pool.query(
+    "UPDATE api_keys SET expire=$3,name=$4,last_active=$5 WHERE id=$1 AND account_id=$2",
+    [id, account_id, expire, name, last_active],
+  );
+  const { rows } = await pool.query(
+    "SELECT hash FROM api_keys WHERE id=$1 AND account_id=$2",
+    [id, account_id],
+  );
+  const hash = `${rows[0]?.hash ?? ""}`.trim();
+  if (hash) {
+    await syncAccountApiKeyDirectory({
+      key_id,
+      account_id,
+      hash,
+      expire: expire ?? null,
+      last_active: last_active ?? null,
+    });
   }
 }
 
 //api_key.slice(0, 3) + "..." + api_key.slice(-4)
 // This function does no auth checks.
-async function doManageApiKeys({
-  action,
-  account_id,
-  project_id,
-  name,
-  expire,
-  id,
-}) {
+async function doManageApiKeys({ action, account_id, name, expire, id }) {
   switch (action) {
     case "get":
       if (!id) {
-        return await getApiKeys({ account_id, project_id });
+        return await getApiKeys(account_id);
       } else {
-        return [await getApiKey({ id, account_id, project_id })];
+        return [await getApiKey({ id, account_id })];
       }
 
     case "delete":
       // delete key with given id
-      await deleteApiKey({ account_id, project_id, id });
+      await deleteApiKey({ account_id, id });
       break;
 
     case "create":
       // creates a key with given name (if given)
-      return [await createApiKey({ account_id, project_id, name, expire })];
+      return [await createApiKey({ account_id, name, expire })];
 
     case "edit": // change the name or expire time
-      const apiKey = await getApiKey({ id, account_id, project_id });
+      const apiKey = await getApiKey({ id, account_id });
       if (apiKey == null) {
         throw Error(`no api key with id ${id}`);
       }
@@ -359,7 +285,7 @@ async function doManageApiKeys({
         changed = true;
       }
       if (changed) {
-        await updateApiKey({ apiKey, account_id, project_id });
+        await updateApiKey({ apiKey, account_id });
       }
       break;
   }
@@ -384,7 +310,7 @@ export async function getAccountWithApiKey(
     return undefined;
   }
   const { rows } = await pool.query(
-    "SELECT id,key_id,account_id,project_id,hash,expire FROM api_keys WHERE key_id=$1",
+    "SELECT id,key_id,account_id,hash,expire FROM api_keys WHERE key_id=$1",
     [v2.key_id],
   );
   return (
@@ -406,13 +332,6 @@ async function checkApiKeyRows({
     return;
   }
   if (verifyPassword(secret, rows[0].hash)) {
-    if (rows[0].project_id) {
-      log.debug("getAccountWithApiKey: project api key rejected", {
-        account_id: rows[0].account_id,
-        project_id: rows[0].project_id,
-      });
-      return undefined;
-    }
     const { expire } = rows[0];
     if (expire != null && expire.valueOf() <= Date.now()) {
       // expired entries will get automatically deleted eventually by database
@@ -449,13 +368,6 @@ async function checkClusterAccountApiKeyDirectoryEntry({
   if (!v2) return undefined;
   const entry = await getClusterAccountApiKeyByKeyId(v2.key_id);
   if (!entry?.account_id || !entry.hash) return undefined;
-  if (entry.scope !== "account") {
-    log.debug("getAccountWithApiKey: legacy api key directory entry rejected", {
-      key_id: v2.key_id,
-      account_id: entry.account_id,
-    });
-    return undefined;
-  }
   const account = await getClusterAccountById(entry.account_id);
   if (account?.banned) {
     return undefined;

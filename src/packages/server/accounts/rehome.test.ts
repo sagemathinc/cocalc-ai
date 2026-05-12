@@ -223,10 +223,7 @@ describe("account rehome", () => {
       if (sql.includes('DELETE FROM "auth_tokens" WHERE account_id=$1')) {
         return { rows: [], rowCount: 0 };
       }
-      if (
-        sql.includes("DELETE FROM api_keys") &&
-        sql.includes("project_id IS NULL")
-      ) {
+      if (sql.includes("DELETE FROM api_keys")) {
         return { rows: [], rowCount: 0 };
       }
       if (
@@ -425,11 +422,7 @@ describe("account rehome", () => {
       if (sql.includes('FROM "auth_tokens"')) {
         return { rows: [{ rows: [] }] };
       }
-      if (
-        sql.includes("FROM api_keys") &&
-        sql.includes("project_id IS NULL") &&
-        sql.includes("jsonb_agg")
-      ) {
+      if (sql.includes("FROM api_keys") && sql.includes("jsonb_agg")) {
         return { rows: [{ rows: [] }] };
       }
       if (sql.includes('FROM "account_entitlement_overrides"')) {
@@ -602,10 +595,7 @@ describe("account rehome", () => {
       if (sql.includes('DELETE FROM "auth_tokens" WHERE account_id=$1')) {
         return { rows: [], rowCount: 0 };
       }
-      if (
-        sql.includes("DELETE FROM api_keys") &&
-        sql.includes("project_id IS NULL")
-      ) {
+      if (sql.includes("DELETE FROM api_keys")) {
         return { rows: [], rowCount: 0 };
       }
       if (

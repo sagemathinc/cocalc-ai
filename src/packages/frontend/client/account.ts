@@ -75,7 +75,7 @@ export class AccountClient {
     });
   };
 
-  // new interface: getting, setting, editing, deleting, etc., the  api keys for a project
+  // Account API key management.
   api_keys = async (opts: {
     action: "get" | "delete" | "create" | "edit";
     password?: string;
