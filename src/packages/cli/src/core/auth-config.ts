@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -35,6 +41,8 @@ export type GlobalAuthOptions = {
 };
 
 const DEFAULT_PROFILE = "default";
+const CONFIG_DIR_MODE = 0o700;
+const CONFIG_FILE_MODE = 0o600;
 export const ENV_AUTH_PROFILE = "_env";
 const ENV_AUTH_PROFILE_ALIASES = new Set([ENV_AUTH_PROFILE, "env"]);
 
@@ -121,12 +129,16 @@ export function saveAuthConfig(
   config: AuthConfig,
   path = authConfigPath(),
 ): void {
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true, mode: CONFIG_DIR_MODE });
   const payload: AuthConfig = {
     current_profile: config.current_profile,
     profiles: config.profiles ?? {},
   };
-  writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  writeFileSync(path, `${JSON.stringify(payload, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: CONFIG_FILE_MODE,
+  });
+  chmodSync(path, CONFIG_FILE_MODE);
 }
 
 export function selectedProfileName(

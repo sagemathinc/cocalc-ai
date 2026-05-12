@@ -4,19 +4,20 @@
  * This module hosts request routing for daemon file actions, context caching,
  * and the long-running UNIX-socket daemon lifecycle used by CLI file commands.
  */
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
 import {
   createServer as createNetServer,
   type Server as NetServer,
 } from "node:net";
-import { dirname } from "node:path";
 
 import {
   currentDaemonFingerprint,
+  DAEMON_PRIVATE_FILE_MODE,
   daemonPidPath,
   daemonRequestId,
   daemonRequestWithAutoStart,
   daemonSocketPath,
+  ensurePrivateDaemonRuntimeDir,
   type DaemonRequest,
   type DaemonResponse,
 } from "./daemon-transport";
@@ -433,7 +434,7 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
   }
 
   async function serveDaemon(socketPath = daemonSocketPath()): Promise<void> {
-    mkdirSync(dirname(socketPath), { recursive: true });
+    ensurePrivateDaemonRuntimeDir(socketPath);
     try {
       if (existsSync(socketPath)) unlinkSync(socketPath);
     } catch {
@@ -446,7 +447,11 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
       contexts: new Map(),
       closing: false,
     };
-    writeFileSync(state.pidPath, `${process.pid}\n`, "utf8");
+    writeFileSync(state.pidPath, `${process.pid}\n`, {
+      encoding: "utf8",
+      mode: DAEMON_PRIVATE_FILE_MODE,
+    });
+    chmodSync(state.pidPath, DAEMON_PRIVATE_FILE_MODE);
 
     const server = createNetServer((socket) => {
       let buffer = "";
@@ -483,6 +488,7 @@ export function createDaemonServerOps<Ctx>(deps: DaemonServerDeps<Ctx>) {
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(socketPath, () => {
+        chmodSync(socketPath, DAEMON_PRIVATE_FILE_MODE);
         server.off("error", reject);
         resolve();
       });

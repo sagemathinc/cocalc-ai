@@ -2318,6 +2318,10 @@ program
   .option("--cookie <cookie>", "raw Cookie header value")
   .option("--bearer <token>", "bearer token for conat authorization")
   .option(
+    "--disable-env-auth-defaults",
+    "do not read ambient COCALC_* auth environment variables",
+  )
+  .option(
     "--hub-password <password-or-file>",
     "hub system password for local dev",
   )
