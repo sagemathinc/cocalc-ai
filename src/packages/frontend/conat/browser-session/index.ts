@@ -126,6 +126,8 @@ const HEARTBEAT_STALE_PROBE_AFTER_FAILURES = 1;
 const HEARTBEAT_FORCE_RECONNECT_AFTER_FAILURES = 2;
 const MAX_EXEC_CODE_LENGTH = 100_000;
 const MAX_EXEC_OPS = 256;
+const MAX_ACTIVE_EXEC_OPS = 2;
+const MAX_ACTIVE_ACTIONS = 8;
 const EXEC_OP_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_SANDBOX_ACTIONS = 512;
 const MAX_SANDBOX_ACTION_JSON_LENGTH = 100_000;
@@ -160,7 +162,13 @@ export function createBrowserSessionAutomation({
   const runtimeObservability = createBrowserRuntimeObservability();
   const syncDocLeases = createManagedSyncDocLeases({ projectConat });
   const extensionsRuntime = new BrowserExtensionsRuntime();
+  let activeExecOps = 0;
+  let activeActions = 0;
   let staleHeartbeatProbe: Promise<void> | undefined;
+  const resetAdmissionCounters = (): void => {
+    activeExecOps = 0;
+    activeActions = 0;
+  };
   const heartbeatController = createBrowserSessionHeartbeat({
     hub,
     getSnapshot: () => buildSessionSnapshot(client),
@@ -1937,6 +1945,22 @@ export function createBrowserSessionAutomation({
     }
   };
 
+  const executeBrowserActionWithAdmission = async (
+    args: Parameters<typeof executeBrowserAction>[0],
+  ): Promise<BrowserActionResult> => {
+    if (activeActions >= MAX_ACTIVE_ACTIONS) {
+      throw Error(
+        `browser action is busy (${activeActions} active); max ${MAX_ACTIVE_ACTIONS}`,
+      );
+    }
+    activeActions += 1;
+    try {
+      return await executeBrowserAction(args);
+    } finally {
+      activeActions = Math.max(0, activeActions - 1);
+    }
+  };
+
   const executeBrowserScriptQuickJSSandbox = async ({
     project_id,
     code,
@@ -2005,7 +2029,10 @@ export function createBrowserSessionAutomation({
             posture: "prod",
             policy,
           });
-          const result = await executeBrowserAction({ project_id, action });
+          const result = await executeBrowserActionWithAdmission({
+            project_id,
+            action,
+          });
           actionCount += 1;
           actionResults.push(result);
           return vm.newString(JSON.stringify(toSerializableValue(result)));
@@ -2111,6 +2138,32 @@ export function createBrowserSessionAutomation({
     return await executeBrowserScriptRaw({ project_id, code, isCanceled });
   };
 
+  const claimExecSlot = (): (() => void) => {
+    if (activeExecOps >= MAX_ACTIVE_EXEC_OPS) {
+      throw Error(
+        `browser exec is busy (${activeExecOps} active); max ${MAX_ACTIVE_EXEC_OPS}`,
+      );
+    }
+    activeExecOps += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      activeExecOps = Math.max(0, activeExecOps - 1);
+    };
+  };
+
+  const runBrowserScriptWithAdmission = async (
+    args: Parameters<typeof executeBrowserScript>[0],
+  ): Promise<unknown> => {
+    const release = claimExecSlot();
+    try {
+      return await executeBrowserScript(args);
+    } finally {
+      release();
+    }
+  };
+
   const execOperations = createBrowserExecOperations({
     maxExecOps: MAX_EXEC_OPS,
     execOpTtlMs: EXEC_OP_TTL_MS,
@@ -2118,6 +2171,7 @@ export function createBrowserSessionAutomation({
     createExecId,
     resolveExecMode,
     executeBrowserScript,
+    claimExecutionSlot: claimExecSlot,
   });
 
   const impl: BrowserSessionServiceApi = {
@@ -2154,7 +2208,7 @@ export function createBrowserSessionAutomation({
       const enforced = resolveExecMode({ project_id, posture, policy });
       return {
         ok: true,
-        result: await executeBrowserScript({
+        result: await runBrowserScriptWithAdmission({
           project_id,
           code,
           mode: enforced.mode,
@@ -2196,7 +2250,7 @@ export function createBrowserSessionAutomation({
       }
       return {
         ok: true,
-        result: await executeBrowserAction({ project_id, action }),
+        result: await executeBrowserActionWithAdmission({ project_id, action }),
       };
     },
     startExec: async ({ project_id, code, posture, policy }) =>
@@ -2221,6 +2275,8 @@ export function createBrowserSessionAutomation({
           service = undefined;
         }
       });
+      execOperations.clearExecs();
+      resetAdmissionCounters();
       runtimeObservability.reset();
       runtimeObservability.onStart();
       heartbeatController.activate(cleanAccountId);
@@ -2240,6 +2296,7 @@ export function createBrowserSessionAutomation({
     stop: async () => {
       const currentAccountId = heartbeatController.deactivate();
       execOperations.clearExecs();
+      resetAdmissionCounters();
       runtimeObservability.reset();
       runtimeObservability.stop();
       await syncDocLeases.closeAllManagedSyncDocs();

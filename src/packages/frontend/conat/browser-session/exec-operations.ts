@@ -20,6 +20,7 @@ export function createBrowserExecOperations({
   createExecId,
   resolveExecMode,
   executeBrowserScript,
+  claimExecutionSlot,
 }: {
   maxExecOps: number;
   execOpTtlMs: number;
@@ -41,6 +42,7 @@ export function createBrowserExecOperations({
     policy?: BrowserExecPolicyV1;
     isCanceled?: () => boolean;
   }) => Promise<unknown>;
+  claimExecutionSlot?: () => () => void;
 }): {
   startExec: (args: {
     project_id: string;
@@ -118,7 +120,10 @@ export function createBrowserExecOperations({
     };
   };
 
-  const runExecOperation = async (op: BrowserExecPendingOperation) => {
+  const runExecOperation = async (
+    op: BrowserExecPendingOperation,
+    releaseExecutionSlot?: () => void,
+  ) => {
     if (op.status !== "pending") return;
     op.status = "running";
     op.started_at = new Date().toISOString();
@@ -149,6 +154,7 @@ export function createBrowserExecOperations({
         delete op.result;
       }
     } finally {
+      releaseExecutionSlot?.();
       op.finished_at = new Date().toISOString();
       pruneExecOps();
     }
@@ -178,6 +184,7 @@ export function createBrowserExecOperations({
       throw Error("project_id must be a UUID");
     }
     const enforced = resolveExecMode({ project_id, posture, policy });
+    const releaseExecutionSlot = claimExecutionSlot?.();
     const exec_id = createExecId();
     const op: BrowserExecPendingOperation = {
       exec_id,
@@ -191,7 +198,7 @@ export function createBrowserExecOperations({
     };
     execOps.set(exec_id, op);
     pruneExecOps();
-    void runExecOperation(op);
+    void runExecOperation(op, releaseExecutionSlot);
     return { exec_id, status: op.status };
   };
 

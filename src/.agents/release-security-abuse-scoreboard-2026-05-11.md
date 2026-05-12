@@ -23,7 +23,7 @@ Statuses:
 | SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report. | Add actor-account limit cache if collaborator caps must differ from owner caps. |
 | SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                                                                                                                                                                             | Add membership-backed automation-specific caps if needed.                       |
 | SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, app proxy websockets, and raw Conat socket events; these now fast-fail above conservative active-request/message caps.       | Tune per-identity limits and production alert thresholds from telemetry.        |
-| SEC-BROWSER-001 | Browser exec/session automation              | unknown | critical | Not audited in this pass.                                                                                                                                                                                                                                 | Audit QuickJS sandbox defaults and raw exec production policy.                  |
+| SEC-BROWSER-001 | Browser exec/session automation              | guarded | critical | First pass found that browser-session async exec history was bounded, but active raw/QuickJS exec and typed action work per browser tab was not. Local per-tab active caps now fast-fail excess browser exec/action work.                                 | Audit raw exec production policy and browser-session credential classes.        |
 | SEC-CLI-001     | `cocalc-cli` authority classes               | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Classify command families by credential type and dangerous-action requirements. |
 | SEC-KEY-001     | Account/project API keys                     | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Inventory project-key consumers and account-key scope checks.                   |
 | SEC-REG-001     | Registration-token signup policy             | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Verify no-token behavior and add explicit public-signup setting.                |
@@ -317,3 +317,57 @@ Suggested next audit steps:
    after production telemetry is available.
 2. Add dashboards/alerts once production baselines for
    `service_admission_denied` are known.
+
+### SEC-BROWSER-001: Browser Exec/Session Automation Needs Per-Tab Admission and Policy Audit
+
+Status: `guarded`.
+
+Severity: critical.
+
+Evidence:
+
+- `src/packages/frontend/conat/browser-session/index.ts` publishes a
+  per-account/per-browser Conat `browser-session` service that can list/open
+  files, read workspace selection, run typed browser actions, and execute
+  browser-side JavaScript.
+- `exec` runs synchronously; `startExec` stores async operation records with
+  `MAX_EXEC_OPS`, `MAX_EXEC_CODE_LENGTH`, and a 24-hour operation TTL.
+- Before this pass, `MAX_EXEC_OPS` bounded retained async history only. It did
+  not bound concurrently running `exec`/`startExec` work. A scripted caller
+  could submit many raw-JS or QuickJS executions to one browser tab and make the
+  tab itself the unbounded worker.
+- Typed actions are safer than raw JS but still mutate the live browser session
+  and can wait, navigate, type, click, reload, and run batches. They also needed
+  a local active-work cap.
+
+Implemented first guard:
+
+- Browser session automation now has local per-tab active admission:
+  - `MAX_ACTIVE_EXEC_OPS=2` for synchronous `exec` plus async `startExec`
+    executions.
+  - `MAX_ACTIVE_ACTIONS=8` for typed actions, including actions invoked from
+    the QuickJS sandbox API.
+- `startExec` claims an execution slot before creating an async operation. If
+  the tab is already saturated, the request fails immediately instead of
+  creating queued browser-side work.
+- Admission counters reset when the browser-session service stops or switches
+  account identity, so stale operations cannot leave a tab permanently busy.
+
+Residual risk:
+
+- This is a local browser-tab stability guard, not a full authorization policy.
+- The next pass still needs to audit raw exec production policy. In particular,
+  direct callers can request `posture=dev` or pass `policy.allow_raw_exec`, and
+  the browser-side service currently treats that as caller intent rather than a
+  server/admin policy decision.
+- The audit still needs to classify browser-session access by credential type:
+  ordinary account sessions, project-scoped agent auth, explicit
+  `browser_session` agent scope, and spawned Playwright sessions.
+
+Suggested next audit steps:
+
+1. Decide whether raw browser JS execution should be disabled by default on
+   non-loopback origins regardless of caller-provided posture.
+2. Add a browser-session policy source that is not solely caller-controlled if
+   raw exec remains available in hosted production.
+3. Audit session spawn/list/use behavior under account auth versus agent auth.
