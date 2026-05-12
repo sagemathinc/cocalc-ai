@@ -240,7 +240,7 @@ export function Flyout(_: Readonly<Props>): React.JSX.Element {
     }
   }
 
-  if (projectIsRunning && loading) {
+  if (projectIsRunning && loading && error == null) {
     return <Loading theme="medium" transparent />;
   }
 

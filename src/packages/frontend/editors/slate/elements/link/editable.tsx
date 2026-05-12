@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Text } from "slate";
+import { Editor, Element, Path, Range, Text, Transforms } from "slate";
 import { register } from "../register";
-import { useProcessLinks } from "../hooks";
+import { useProcessLinks, useReadOnly } from "../hooks";
 import { Tooltip } from "@cocalc/frontend/components";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import { Link, LINK_STYLE } from "./index";
@@ -18,19 +18,36 @@ register({
   Element: ({ attributes, children, element }) => {
     const node = element as Link;
     const { url, title } = node;
-    const ref = useProcessLinks([url], { doubleClick: true });
+    const readOnly = useReadOnly();
+    const doubleClick = !readOnly;
+    const ref = useProcessLinks([url], { doubleClick });
     return (
       <span {...attributes}>
         <span ref={ref}>
-          <Tooltip title={url ? `Double click to open ${url}...` : undefined}>
+          <Tooltip
+            title={
+              url
+                ? `${doubleClick ? "Double click" : "Click"} to open ${url}...`
+                : undefined
+            }
+          >
             <a
               href={url}
               title={title}
-              onDoubleClick={() => {
-                if (url) {
-                  open_new_tab(url);
-                }
-              }}
+              onDoubleClick={
+                doubleClick && url
+                  ? () => {
+                      open_new_tab(url);
+                    }
+                  : undefined
+              }
+              onClick={
+                readOnly
+                  ? undefined
+                  : (event) => {
+                      event.preventDefault();
+                    }
+              }
               style={LINK_STYLE}
             >
               {children}
@@ -82,8 +99,6 @@ register({
 });
 
 // This is a workaround for https://github.com/ianstormtaylor/slate/issues/3772
-import { Editor, Element, Path, Range, Transforms } from "slate";
-
 export const withInsertBreakHack = (editor) => {
   const { insertBreak } = editor;
 

@@ -129,4 +129,36 @@ describe("useBookmarkedProjects", () => {
     expect(screen.getByTestId("mirror").textContent).toBe("");
     expect(bookmarks.set).toHaveBeenLastCalledWith("projects", []);
   });
+
+  it("finishes initialization if account readiness is stale", async () => {
+    getStoreMock.mockReturnValue({
+      async_wait: jest.fn(({ timeout }) => {
+        if (timeout === 0) {
+          return new Promise(() => undefined);
+        }
+        return Promise.reject(new Error("account wait timed out"));
+      }),
+      get_account_id: () => undefined,
+    });
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      render(<TestComponent />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("ready").textContent).toBe("yes");
+      });
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    const store = getStoreMock.mock.results[0].value;
+    expect(store.async_wait).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeout: expect.any(Number),
+      }),
+    );
+    expect(store.async_wait.mock.calls[0][0].timeout).toBeGreaterThan(0);
+    expect(dkvMock).not.toHaveBeenCalled();
+  });
 });

@@ -30,6 +30,7 @@ export const NEWS = "news";
 const NewsItemMap = createTypedMap<NewsItemWebapp>();
 const SEEN_STATE_DKV_NAME = "seen-state";
 const SYSTEM_NEWS_SEEN_PREFIX = "system-news.";
+const ACCOUNT_ID_WAIT_TIMEOUT_S = 5;
 
 export interface NewsState {
   loading: boolean;
@@ -128,10 +129,24 @@ async function getCurrentAccountId(): Promise<string | undefined> {
   if (accountStore == null) {
     return;
   }
-  await accountStore.async_wait({
-    until: () => accountStore.get_account_id() != null,
-    timeout: 0,
-  });
+
+  const current = normalizeNewsId(accountStore.get_account_id());
+  if (current) {
+    return current;
+  }
+
+  try {
+    // Seen-state and realtime feed setup are best-effort; never let a stale
+    // account-store readiness wait block the visible news refresh forever.
+    await accountStore.async_wait({
+      until: () => accountStore.get_account_id() != null,
+      timeout: ACCOUNT_ID_WAIT_TIMEOUT_S,
+    });
+  } catch (err) {
+    console.warn("news account id wait failed", err);
+    return;
+  }
+
   const account_id = normalizeNewsId(accountStore.get_account_id());
   return account_id || undefined;
 }

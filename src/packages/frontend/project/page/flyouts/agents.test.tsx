@@ -62,6 +62,12 @@ function createMockChatActions(initialState = "ready") {
 let mockChatActions = createMockChatActions();
 
 let mockSessions: any[] = [];
+const mockWatchAgentSessionsForProject = jest.fn(
+  async (_args: any, cb: (records: any[]) => void) => {
+    cb(mockSessions);
+    return () => undefined;
+  },
+);
 let mockCurrentPath = "/home/user";
 let mockActiveProjectTab = "";
 let mockWorkspaceCurrent: any = null;
@@ -71,7 +77,9 @@ let mockResolveWorkspaceForPath: jest.Mock<any, [string]> = jest.fn(
 let mockDirEntries = [] as string[];
 
 jest.mock("antd", () => {
-  const Div = ({ children, ...props }: any) => <div {...props}>{children}</div>;
+  const Div = ({ children, showIcon: _showIcon, ...props }: any) => (
+    <div {...props}>{children}</div>
+  );
   const Button = ({ children, onClick, loading: _loading, ...props }: any) => (
     <button type="button" onClick={onClick} {...props}>
       {children}
@@ -170,13 +178,8 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 }));
 
 jest.mock("@cocalc/frontend/chat/agent-session-index", () => ({
-  watchAgentSessionsForProject: async (
-    _args: any,
-    cb: (records: any[]) => void,
-  ) => {
-    cb(mockSessions);
-    return () => undefined;
-  },
+  watchAgentSessionsForProject: (...args: any[]) =>
+    mockWatchAgentSessionsForProject(...args),
   upsertAgentSessionRecord: (...args: any[]) =>
     mockUpsertAgentSessionRecord(...args),
 }));
@@ -286,6 +289,13 @@ describe("AgentsPanel session cards", () => {
     mockAntdMessageSuccess.mockClear();
     mockEnsureWorkspaceChatPath.mockReset();
     mockEnsureWorkspaceChatDirectory.mockReset();
+    mockWatchAgentSessionsForProject.mockReset();
+    mockWatchAgentSessionsForProject.mockImplementation(
+      async (_args: any, cb: (records: any[]) => void) => {
+        cb(mockSessions);
+        return () => undefined;
+      },
+    );
     mockSessions = [
       {
         session_id: "session-1",
@@ -315,6 +325,30 @@ describe("AgentsPanel session cards", () => {
     render(<AgentsPanel project_id="project-1" layout="page" />);
 
     await waitFor(() => expect(screen.getByText("idle")).toBeTruthy());
+  });
+
+  it("does not leave the session list loading forever if the watcher stalls", async () => {
+    jest.useFakeTimers();
+    mockWatchAgentSessionsForProject.mockReturnValueOnce(
+      new Promise(() => undefined),
+    );
+
+    try {
+      render(<AgentsPanel project_id="project-1" layout="page" />);
+      expect(screen.getByText("Loading...")).toBeTruthy();
+
+      await act(async () => {
+        jest.advanceTimersByTime(15000);
+        await Promise.resolve();
+      });
+
+      expect(screen.queryByText("Loading...")).toBeNull();
+      expect(
+        screen.getByTitle("Timed out loading agent sessions."),
+      ).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("opens the inline chat when the card is clicked", async () => {

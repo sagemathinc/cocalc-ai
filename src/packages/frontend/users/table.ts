@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import type { EventEmitter } from "events";
 import { fromJS, Map } from "immutable";
 
 import {
@@ -11,6 +12,7 @@ import {
   type AccountFeedEvent,
 } from "@cocalc/conat/hub/api/account-feed";
 import type { DStream } from "@cocalc/conat/sync/dstream";
+import { getLogger } from "@cocalc/frontend/logger";
 import { once } from "@cocalc/util/async-utils";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { getSharedAccountDStream } from "@cocalc/frontend/conat/account-dstream";
@@ -19,6 +21,14 @@ import { COCALC_MINIMAL } from "../fullscreen";
 import { webapp_client } from "../webapp-client";
 import { actions } from "./actions";
 import { store } from "./store";
+
+const log = getLogger("users:table");
+const USERS_TABLE_CONNECT_TIMEOUT_MS = 15_000;
+const USERS_TABLE_CONNECT_ATTEMPTS = 2;
+
+interface UsersTableConnection extends EventEmitter {
+  get_state?: () => string | undefined;
+}
 
 function dateOrNull(value: unknown): Date | null {
   if (value == null) return null;
@@ -184,9 +194,35 @@ const refreshUsersTable = reuseInFlight(async (): Promise<void> => {
     return;
   }
   redux.removeTable("users");
-  const table = redux.createTable("users", UsersTable);
-  await once(table._table, "connected");
+  await createUsersTableUntilConnected();
 });
+
+async function waitForUsersTableConnected(
+  table: UsersTableConnection,
+): Promise<boolean> {
+  if (table.get_state?.() === "connected") {
+    return true;
+  }
+  try {
+    await once(table, "connected", USERS_TABLE_CONNECT_TIMEOUT_MS);
+    return true;
+  } catch (err) {
+    log.info("users table did not connect cleanly", err);
+    return false;
+  }
+}
+
+async function createUsersTableUntilConnected(): Promise<void> {
+  for (let attempt = 1; attempt <= USERS_TABLE_CONNECT_ATTEMPTS; attempt++) {
+    const table = redux.createTable("users", UsersTable);
+    if (await waitForUsersTableConnected(table._table)) {
+      return;
+    }
+    if (attempt < USERS_TABLE_CONNECT_ATTEMPTS) {
+      redux.removeTable("users");
+    }
+  }
+}
 
 function handleRealtimeFeedChange(event?: AccountFeedEvent): void {
   if (event == null) {

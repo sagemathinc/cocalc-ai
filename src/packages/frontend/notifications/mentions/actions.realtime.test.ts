@@ -184,6 +184,67 @@ describe("MentionsActions realtime feed", () => {
     ).toHaveBeenCalledTimes(2);
   });
 
+  it("does not leave notifications loading forever after a transient refresh failure", async () => {
+    jest.useFakeTimers();
+    mockedWebappClient.conat_client.hub.notifications.list
+      .mockRejectedValueOnce(
+        new Error('once: "connected" not emitted before "closed"'),
+      )
+      .mockResolvedValueOnce([]);
+
+    let mentionsStore = ImmutableMap({
+      mentions: ImmutableMap(),
+      loading: true,
+    });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1", is_ready: true });
+        }
+        if (name === "mentions") {
+          return mentionsStore;
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((patch) => {
+        if (patch.mentions != null) {
+          mentionsStore = mentionsStore.merge(patch.mentions);
+        }
+      }),
+      removeActions: jest.fn(),
+    } as any;
+    const actions = new MentionsActions("mentions", redux);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      actions._init();
+      await flushMicrotasks();
+
+      expect(
+        mockedWebappClient.conat_client.hub.notifications.list,
+      ).toHaveBeenCalledTimes(1);
+      expect(mentionsStore.get("loading")).toBe(false);
+
+      jest.advanceTimersByTime(5000);
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      expect(
+        mockedWebappClient.conat_client.hub.notifications.list,
+      ).toHaveBeenCalledTimes(2);
+      expect(getSharedAccountDStreamMock).toHaveBeenCalledWith({
+        account_id: "acct-1",
+        name: accountFeedStreamName(),
+        ephemeral: true,
+        maxListeners: 100,
+      });
+    } finally {
+      warnSpy.mockRestore();
+      actions.destroy();
+      jest.useRealTimers();
+    }
+  });
+
   it("waits for the account store is_ready event before bootstrapping", async () => {
     class MockAccountStore extends EventEmitter {
       private ready = false;

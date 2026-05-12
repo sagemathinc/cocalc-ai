@@ -33,12 +33,17 @@ jest.mock("@cocalc/conat/project/project-info", () => ({
 
 function TestComponent({
   projectId = "project-1",
+  intervalVisible,
   onValue,
 }: {
   projectId?: string;
+  intervalVisible?: number;
   onValue?: (value: ReturnType<typeof useProjectInfoHistory>) => void;
 }) {
-  const value = useProjectInfoHistory({ project_id: projectId });
+  const value = useProjectInfoHistory({
+    project_id: projectId,
+    intervalVisible,
+  });
   onValue?.(value);
   return null;
 }
@@ -216,5 +221,39 @@ describe("useProjectInfoHistory", () => {
         caller: "useProjectInfoHistory",
       }),
     );
+  });
+
+  it("times out a stalled project info connection instead of waiting forever", async () => {
+    jest.useFakeTimers();
+    projectConat.mockReturnValueOnce(new Promise(() => undefined));
+    let latest: ReturnType<typeof useProjectInfoHistory> | undefined;
+
+    try {
+      render(
+        <TestComponent
+          intervalVisible={1000}
+          onValue={(value) => {
+            latest = value;
+          }}
+        />,
+      );
+      await flush();
+
+      expect(latest?.history).toBeNull();
+      expect(latest?.error).toBe("");
+
+      await act(async () => {
+        jest.advanceTimersByTime(15_000);
+        await Promise.resolve();
+      });
+      await flush();
+
+      expect(latest?.history).toBeNull();
+      expect(latest?.error).toBe(
+        "Unable to load process history: Error: timeout",
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

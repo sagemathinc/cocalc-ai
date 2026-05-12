@@ -686,7 +686,7 @@ export class BaseEditorActions<
 
       if (err) {
         this.setState({ rtc_status: "error" });
-        this.set_error(`${err}\nFix this, then try opening the file again.`);
+        this.topError(`${err}\nFix this, then try opening the file again.`);
         return;
       }
       if (!this._syncstring || this.isClosed()) {
@@ -736,7 +736,7 @@ export class BaseEditorActions<
       if (this.doctype !== "none") {
         this.setState({ rtc_status: "error" });
       }
-      this.set_error(`${err}\nFix this, then try opening the file again.`);
+      this.topError(`${err}\nFix this, then try opening the file again.`);
     });
 
     this._syncstring.once("closed", this.handleSyncstringClosed);
@@ -792,7 +792,10 @@ export class BaseEditorActions<
     this._syncdb.on("disconnected", this.handleSyncdocDisconnected);
     this._syncdb.on("connected", this.handleSyncdocConnected);
     this._syncdb.once("error", (err) => {
-      this.set_error(`${err}.\nFix this, then try opening the file again.`);
+      if (this.doctype !== "none") {
+        this.setState({ rtc_status: "error" });
+      }
+      this.topError(`${err}.\nFix this, then try opening the file again.`);
     });
 
     this._syncdb.once("closed", this.handleSyncdbClosed);

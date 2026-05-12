@@ -162,6 +162,8 @@ function sameSelection(a: WorkspaceSelection, b: WorkspaceSelection): boolean {
   );
 }
 
+export const WORKSPACE_STORE_FOREGROUND_LOADING_TIMEOUT_MS = 15_000;
+
 export function useProjectWorkspaces(
   account_id: string | undefined,
   project_id: string,
@@ -297,6 +299,11 @@ export function useProjectWorkspaces(
       | ((event: { key: string; value?: WorkspaceRecord[] | number }) => void)
       | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const foregroundLoadingTimer = setTimeout(() => {
+      if (!closed) {
+        setLoading(false);
+      }
+    }, WORKSPACE_STORE_FOREGROUND_LOADING_TIMEOUT_MS);
 
     const waitForRetry = async () => {
       await new Promise<void>((resolve) => {
@@ -362,6 +369,7 @@ export function useProjectWorkspaces(
           };
 
           store.on("change", onChange);
+          clearTimeout(foregroundLoadingTimer);
           setLoading(false);
           return;
         } catch (err) {
@@ -373,6 +381,7 @@ export function useProjectWorkspaces(
             continue;
           }
           console.warn(`workspace store initialization warning -- ${err}`);
+          clearTimeout(foregroundLoadingTimer);
           setLoading(false);
           return;
         }
@@ -390,6 +399,7 @@ export function useProjectWorkspaces(
         clearTimeout(retryTimer);
         retryTimer = undefined;
       }
+      clearTimeout(foregroundLoadingTimer);
       if (store != null && onChange != null) {
         store.off("change", onChange);
       }
