@@ -1031,7 +1031,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
           !incomingProjectMap.has(project_id)
         ) {
           project_map = project_map.set(project_id, currentProject);
-        } else if (this.isProjectOpen(project_id)) {
+        } else if (
+          !incomingProjectMap.has(project_id) &&
+          this.isProjectOpen(project_id)
+        ) {
           projectsToClose.add(project_id);
         }
       }
