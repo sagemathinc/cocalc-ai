@@ -1,6 +1,6 @@
 # First Public Release Scoreboard
 
-Status: working scoreboard, updated 2026-05-11.
+Status: working scoreboard, updated 2026-05-12.
 
 Purpose:
 
@@ -15,8 +15,9 @@ This scoreboard is derived from:
 - [control-plane-launch-readiness-plan.md](/home/user/cocalc-ai/src/.agents/control-plane-launch-readiness-plan.md)
 - [notification-delivery-controls-plan-2026-05-10.md](/home/user/cocalc-ai/src/.agents/notification-delivery-controls-plan-2026-05-10.md)
 - [student-pay-membership-plan-2026-05-10.md](/home/user/cocalc-ai/src/.agents/student-pay-membership-plan-2026-05-10.md)
-- recent admin override, site-license, notification, email-verification, and
-  student-pay implementation work through 2026-05-11
+- recent admin override, site-license, notification, email-verification,
+  student-pay, dedicated-host access-control, host-state convergence, and
+  deploy/rollback implementation work through 2026-05-12
 
 ## Current Read
 
@@ -35,13 +36,16 @@ The system now has credible implementations for:
   student purchases, and claimable site licenses
 - dedicated-host owner/manager/user access control
 - owner-configurable dedicated-host RAM and spend safety limits
+- explicit cloud refresh and cloud-orphan inspection commands
+- rootless Podman bootstrap hardening that preserves live project state during
+  project-host upgrades
 
 The remaining release risk has shifted from "build the model" to:
 
-- finish live end-to-end smoke on real hosted paths
-- finish dedicated-host billing recovery, provider/funding-lane, and churn smoke
-- prove multibay/operator trust under churn
-- tighten deploy/rollback polish found during the canary rehearsal
+- prove the whole system stays boring during real 3-bay hosted soak
+- finish bounded notification/email abuse review
+- tighten operator support docs and remaining deploy/rollback polish
+- fix only correctness/trust issues found during soak
 
 The right strategy is still:
 
@@ -51,31 +55,31 @@ The right strategy is still:
 
 ## Scoreboard
 
-| Area                                                         | Status                      | Read                                                                                                                  | Immediate Next Step                                                             |
-| ------------------------------------------------------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Multibay routing / stable URL / home-bay auth                | Done                        | Real strength                                                                                                         | Keep fixing only correctness bugs found in soak                                 |
-| Browser 2FA / fresh-auth / CLI auth elevation                | Done                        | Strong enough to dogfood and ship                                                                                     | Maintenance only                                                                |
-| Email verification                                           | Done                        | Verify link encoding, completion UX, address-change verification reset, and feed updates work                         | Maintenance only                                                                |
-| Project move between regions                                 | Done enough                 | Release-credible path exists                                                                                          | Soak and document semantics                                                     |
-| Shared-host protection / eviction / stopping                 | Done enough                 | One of the stronger release areas                                                                                     | Keep policy/docs coherent                                                       |
-| Managed spot recovery                                        | Done enough                 | Real system on the supported path                                                                                     | Final provider-matrix smoke                                                     |
-| Hosted backup sharding / direct R2 backup indexes            | Done enough                 | Major risk reduced materially                                                                                         | Soak under ordinary churn                                                       |
-| Dedicated-host pricing UX                                    | Done enough, bug-fix only   | Pricing breakdown, price sorting, CoreMark/value metadata, and unavailable handling are credible                      | Fix correctness bugs only                                                       |
-| Dedicated-host product definition                            | Done enough                 | GCP/Nebius release catalog is intentionally narrow and frozen enough for first release                                | Keep SKU/region/support docs aligned                                            |
-| Dedicated-host billing enforcement / failed-payment handling | In progress, close          | Backend drain/backup/stop/deprovision state and notifications exist                                                   | Live smoke exhaustion, recovery, admin limit increase, and deprovision paths    |
-| Dedicated-host owner access control                          | Done enough, smoke-followup | Owner/manager/user grants, placement enforcement, RAM caps, spend caps, manager controls, and fresh-auth gating exist | Rebuild/re-smoke stale-session fresh-auth, soft-delete cleanup, and role matrix |
-| Dedicated-host provider/funding-lane final smoke             | Blocker                     | Needs final trusted matrix                                                                                            | Run supported-path matrix on real cluster                                       |
-| Admin entitlement overrides                                  | Done enough, bug-fix only   | Backend, multibay routing, audit trail, CLI, admin UI, user summary, and live save path work                          | Keep wording/UX precise; only fix correctness bugs                              |
-| Notification delivery controls / outbound email              | In progress, close          | Preferences, outbox, SendGrid/SMTP-style delivery, and daily digest exist                                             | Cloudflare adapter decision, live E2E smoke, abuse/rate-limit review            |
-| Minimal site license                                         | In progress, close          | Site licenses are simplified, domain claim path exists, admin provisioning/edit UI exists                             | Live verified-domain claim smoke, usage display polish, edge-case cleanup       |
-| Student pay                                                  | In progress, close          | Membership-based model implemented; API smoke and browser/Stripe direct-student smoke passed                          | Instructor workflow smoke, site-license defaulting smoke, wording polish        |
-| Stale/deleted host convergence across bays                   | Blocker                     | Still a trust risk when the UI lies; several concrete bugs have been fixed during smoke                               | Harden convergence and operator inspection                                      |
-| VM/provider/db orphan healing                                | Blocker                     | Operators still should not need DB surgery                                                                            | Make healing workflows explicit and smoke them                                  |
-| Deployment / packaging / rollback reproducibility            | Done enough, polish         | Operator workflow, rollback dry-run, status/history/reconcile smoke, and one canary rollback/forward restore passed   | Polish artifact/component restore ergonomics and project-log follow-up          |
-| Real 3-bay hosted soak                                       | Blocker                     | Needed to convert "promising" into "trustworthy"                                                                      | Run soak and fix only correctness/trust issues                                  |
-| Self-hosted provider bootstrap UX                            | Post-release for SaaS       | Important for Launchpad, not SaaS launch-critical                                                                     | Resume after hosted release                                                     |
-| Cloudflare bootstrap redesign                                | Post-release for SaaS       | Important but not launch-critical                                                                                     | Treat as Launchpad workstream                                                   |
-| Benchmark metadata / CoreMark selector work                  | Post-release                | Valuable differentiation, not a blocker                                                                               | Revisit after trust/commercial blockers                                         |
+| Area                                                         | Status                     | Read                                                                                                                  | Immediate Next Step                                                          |
+| ------------------------------------------------------------ | -------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Multibay routing / stable URL / home-bay auth                | Done                       | Real strength                                                                                                         | Keep fixing only correctness bugs found in soak                              |
+| Browser 2FA / fresh-auth / CLI auth elevation                | Done                       | Strong enough to dogfood and ship                                                                                     | Maintenance only                                                             |
+| Email verification                                           | Done                       | Verify link encoding, completion UX, address-change verification reset, and feed updates work                         | Maintenance only                                                             |
+| Project move between regions                                 | Done enough                | Release-credible path exists                                                                                          | Soak and document semantics                                                  |
+| Shared-host protection / eviction / stopping                 | Done enough                | One of the stronger release areas                                                                                     | Keep policy/docs coherent                                                    |
+| Managed spot recovery                                        | Done enough                | Real system on the supported path                                                                                     | Final provider-matrix smoke                                                  |
+| Hosted backup sharding / direct R2 backup indexes            | Done enough                | Major risk reduced materially                                                                                         | Soak under ordinary churn                                                    |
+| Dedicated-host pricing UX                                    | Done enough, bug-fix only  | Pricing breakdown, price sorting, CoreMark/value metadata, and unavailable handling are credible                      | Fix correctness bugs only                                                    |
+| Dedicated-host product definition                            | Done enough                | GCP/Nebius release catalog is intentionally narrow and frozen enough for first release                                | Keep SKU/region/support docs aligned                                         |
+| Dedicated-host billing enforcement / failed-payment handling | Done enough, soak target   | Backend drain/backup/stop/deprovision state, recovery surfaces, and notifications exist                               | Keep under soak; fix correctness bugs only                                   |
+| Dedicated-host owner access control                          | Done enough, soak target   | Owner/manager/user grants, placement enforcement, RAM caps, spend caps, manager controls, and fresh-auth gating exist | Keep under soak; fix correctness bugs only                                   |
+| Dedicated-host provider/funding-lane final smoke             | Done enough, soak target   | Supported paths have been smoke-tested enough for soak                                                                | Keep provider matrix narrow and watch during soak                            |
+| Admin entitlement overrides                                  | Done enough, bug-fix only  | Backend, multibay routing, audit trail, CLI, admin UI, user summary, and live save path work                          | Keep wording/UX precise; only fix correctness bugs                           |
+| Notification delivery controls / outbound email              | Done enough, abuse-review  | Preferences, outbox, SMTP/SendGrid-style delivery, daily digest, and live sends work                                  | Abuse/rate-limit review; Cloudflare adapter can follow unless policy changes |
+| Minimal site license                                         | Done enough, soak target   | Simplified site licenses, verified-domain claim path, admin provisioning/edit UI, and domain edit smoke exist         | Keep under soak; improve admin usage display if time permits                 |
+| Student pay                                                  | Done enough, soak target   | Membership-based model, direct student purchase, instructor workflow, seats, and site-license defaulting smoke passed | Keep under soak; polish wording only                                         |
+| Stale/deleted host convergence across bays                   | Done enough, soak target   | Duplicate/stale host selection and soft-delete follow-ups have been fixed and tested                                  | Keep under soak; inspect any lying-state bug immediately                     |
+| VM/provider/db orphan healing                                | Done enough, operator-safe | `host cloud-refresh` and `host cloud-orphans` give explicit no-DB-surgery inspection/reconcile paths                  | Decide later whether guarded destructive orphan cleanup is needed            |
+| Deployment / packaging / rollback reproducibility            | Done enough, polish        | Rollback dry-run, rollback/forward restore, combined restore command, project-log fix, and bootstrap hardening landed | Keep under soak; document operator workflow                                  |
+| Real 3-bay hosted soak                                       | Blocker                    | Needed to convert "promising" into "trustworthy"                                                                      | Run soak and fix only correctness/trust issues                               |
+| Self-hosted provider bootstrap UX                            | Post-release for SaaS      | Important for Launchpad, not SaaS launch-critical                                                                     | Resume after hosted release                                                  |
+| Cloudflare bootstrap redesign                                | Post-release for SaaS      | Important but not launch-critical                                                                                     | Treat as Launchpad workstream                                                |
+| Benchmark metadata / CoreMark selector work                  | Post-release               | Valuable differentiation, not a blocker                                                                               | Revisit after trust/commercial blockers                                      |
 
 ## What Is Now Good Enough To Build On
 
@@ -94,6 +98,8 @@ The right strategy is still:
 - dedicated-host selector/pricing/value metadata foundation
 - dedicated-host owner/manager/user access-control foundation
 - dedicated-host per-host 5-hour/7-day spend caps and per-host project RAM caps
+- dedicated-host explicit cloud refresh and cloud-orphan inspection
+- project-host bootstrap preservation of live rootless Podman state
 - admin entitlement override foundation and UI
 - notification preference/outbox/digest foundation
 - membership package foundation for team, site, and course seats
@@ -109,6 +115,8 @@ These areas should now be treated as:
 ## True Release Blockers
 
 These are the items that still clearly block a trustworthy first public SaaS release.
+Most feature work has moved out of this list; the dominant remaining blocker is
+proving the hosted system under real churn.
 
 ### 1. Dedicated-host commercialization, access, and safety
 
@@ -127,12 +135,8 @@ Implemented:
 
 Remaining:
 
-- rebuild and re-smoke the fresh-auth modal path for stale browser sessions
-- re-smoke soft-delete cleanup after moving backup assignment release/restore out
-  of the delete transaction
-- finish live smoke for billing enforcement, recovery, and failed-charge behavior
-- finish final create/start/stop/delete/status smoke on the real supported matrix
-- smoke owner, manager, user, unrelated-user, and site-admin role matrix on `lite4b`
+- keep billing enforcement, recovery, start/stop/delete, access-control, and
+  role-matrix paths under the 3-bay soak
 - write narrow support-boundary docs
 
 Why this is a blocker:
@@ -166,16 +170,14 @@ Smoke passed:
 
 Remaining:
 
-- instructor course configuration UX smoke
-- instructor-paid seat assignment/revocation smoke using course-visible tiers
-- site-license-defaulting smoke from instructor course setup
 - confirm student messaging for grace, blocked, covered-by-existing-membership,
   and covered-until-expiry cases
+- keep browser purchase and instructor workflows under soak
 
 Why this is still a blocker:
 
-- the backend model is now credible, but public course adoption depends on the
-  actual student and instructor UX being hard to misunderstand
+- public course adoption depends on the student and instructor UX being hard to
+  misunderstand, so any confusing soak finding should be fixed quickly
 
 ### 3. Minimal site license end-to-end validation
 
@@ -190,10 +192,9 @@ Implemented:
 
 Remaining:
 
-- live verified-domain claim smoke in the browser
-- smoke admin edit controls for expiry, seats, and domains
-- confirm user-facing "verify email to claim membership" messaging
-- verify site-license precedence against direct memberships and student-pay course requirements
+- keep verified-domain claim, admin edit controls, and site-license precedence
+  under soak
+- confirm user-facing "verify email to claim membership" messaging remains clear
 - usage display polish for admins
 
 Why this is still a blocker:
@@ -214,11 +215,12 @@ Implemented:
 
 Remaining:
 
-- decide and implement the Cloudflare email adapter if it meets operational needs
-- live E2E smoke for immediate email and digest email
 - verify category defaults, especially billing, mentions, LLM completion, and product/news
-- implement or confirm actor/responsible-account email send limits for abuse control
+- implement or confirm actor/responsible-account email send limits for abuse
+  control
 - expose enough admin inspection for failed delivery/retry state
+- decide whether Cloudflare email is a launch blocker; current read is no if
+  SMTP/SendGrid remains acceptable for hosted launch
 
 Why this is still a blocker:
 
@@ -228,16 +230,20 @@ Why this is still a blocker:
 
 ### 5. Multibay host-state trust under churn
 
-Required:
+Implemented:
 
-- stale/deleted host convergence
-- "VM gone but row still live" healing
-- trustworthy host inspection and search/filter
-- explicit orphan workflows
+- stale/deleted host selection fixes
+- soft-delete cleanup follow-up smoke
+- `cocalc host cloud-refresh <host>`
+- `cocalc host cloud-refresh <host> --confirm-missing`
+- `cocalc host cloud-orphans --provider <provider>`
+- rootless Podman bootstrap fix that avoids deleting live Podman metadata
+- live lite4b smoke for GCP/Nebius orphan listing and host refresh
 
 Why this is a blocker:
 
 - if the control plane lies about host state, operators and users lose trust quickly
+- this is now primarily a soak blocker, not a missing-command blocker
 
 ### 6. Deployment / operator boringness
 
@@ -260,13 +266,10 @@ Implemented:
 
 Remaining:
 
-- decide whether artifact and component targets should be restored together by
-  one operator command after component rollback
-- investigate the non-blocking `project logs` container lookup failure seen
-  after the project-host restart
 - decide whether project-bundle/tools upgrade LRO noise during rollback smoke
   needs clearer history grouping
 - decide whether rollback dry-run belongs in admin UI before first public release
+- write the short operator restore/rollback runbook
 
 Why this is a blocker:
 
@@ -348,17 +351,46 @@ But for the first hosted `cocalc-ai.com` release, this is not a blocker.
 
 This is the shortest sensible path to a trustworthy first release.
 
-1. Rebuild/restart `lite4b` and re-smoke the two dedicated-host smoke follow-ups: stale-session fresh-auth modal and project soft-delete cleanup.
-2. Finish the dedicated-host role matrix smoke: owner, manager, user, unrelated user, and site admin across access editing, start/stop, RAM cap, spend cap, and project placement.
-3. Finish dedicated-host billing enforcement recovery smoke and provider/funding-lane matrix.
-4. Finish instructor course workflow smoke for student-pay, instructor-paid seats, and site-license defaulting.
-5. Finish site-license verified-domain claim smoke and admin edit smoke.
-6. Finish notification immediate/digest E2E smoke and abuse-limit review.
-7. Decide whether Cloudflare email is release-critical or whether SMTP/SendGrid is acceptable for the first hosted release with Cloudflare as follow-up.
-8. Harden stale/deleted host convergence and orphan healing workflows.
-9. Polish deploy/rollback ergonomics found during the canary rehearsal.
-10. Run real 3-bay hosted soak and fix only correctness/trust issues.
-11. Freeze support boundaries and launch conservatively.
+1. Run the real 3-bay hosted soak on `lite4b`.
+2. During soak, repeatedly cover browser reconnects, hub restarts, project
+   start/stop, project move, dedicated-host access control, dedicated-host
+   billing safety, site-license claims, student-pay purchases, notifications,
+   and admin workflows.
+3. Run bounded stress/load probes that exercise real release risks without
+   creating uncontrolled cost or noisy false positives.
+4. Fix only correctness, trust, data-loss, billing, auth, and operator-recovery
+   issues found during soak.
+5. Decide whether Cloudflare email is release-critical or whether SMTP/SendGrid
+   is acceptable for the first hosted release with Cloudflare as follow-up.
+6. Polish deploy/rollback history grouping only if soak shows it is confusing in
+   practice.
+7. Write narrow support-boundary and operator runbook docs.
+8. Freeze support boundaries and launch conservatively.
+
+## Bounded Stress / Load Testing
+
+Yes, do serious load/stress testing, but keep it targeted. The useful first
+release goal is not "maximum benchmark number"; it is proving that admission,
+backpressure, reconnect, and operator recovery behavior is predictable.
+
+Do:
+
+- browser reconnect churn across all three bays
+- concurrent project starts and stops against shared hosts
+- concurrent project starts and moves involving dedicated hosts
+- ACP/chat admission-limit pressure from several projects/accounts
+- notification outbox pressure with category/rate-limit checks
+- control-plane API concurrency around host list/get/refresh/orphan inspection
+- hub restart while browser sessions, project terminals, and host operations are active
+- billing-risk notification and host-stop safety paths under controlled conditions
+
+Do not:
+
+- run unbounded VM creation loops
+- run unbounded email sends
+- run provider stress that can create surprise cloud cost
+- interpret synthetic throughput numbers as launch readiness
+- broaden provider/SKU scope during the soak
 
 ## What To Say "No" To Right Now
 
