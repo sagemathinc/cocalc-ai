@@ -225,6 +225,24 @@ function useMembershipTiers() {
         usage_limit_prepaid_host_usage_limit_7d_usd: normalizedOptionalNumber(
           editing.usage_limits?.prepaid_host_usage_limit_7d_usd,
         ),
+        usage_limit_acp_max_queued_per_account: normalizedOptionalNumber(
+          editing.usage_limits?.acp_max_queued_per_account,
+        ),
+        usage_limit_acp_max_queued_per_thread: normalizedOptionalNumber(
+          editing.usage_limits?.acp_max_queued_per_thread,
+        ),
+        usage_limit_acp_max_created_5h_per_account: normalizedOptionalNumber(
+          editing.usage_limits?.acp_max_created_5h_per_account,
+        ),
+        usage_limit_acp_max_created_7d_per_account: normalizedOptionalNumber(
+          editing.usage_limits?.acp_max_created_7d_per_account,
+        ),
+        usage_limit_acp_max_running_per_account: normalizedOptionalNumber(
+          editing.usage_limits?.acp_max_running_per_account,
+        ),
+        usage_limit_acp_max_running_per_project: normalizedOptionalNumber(
+          editing.usage_limits?.acp_max_running_per_project,
+        ),
         active: !editing.disabled,
       });
     }
@@ -308,6 +326,36 @@ function useMembershipTiers() {
         usage_limits,
         "prepaid_host_usage_limit_7d_usd",
         values.usage_limit_prepaid_host_usage_limit_7d_usd,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "acp_max_queued_per_account",
+        values.usage_limit_acp_max_queued_per_account,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "acp_max_queued_per_thread",
+        values.usage_limit_acp_max_queued_per_thread,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "acp_max_created_5h_per_account",
+        values.usage_limit_acp_max_created_5h_per_account,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "acp_max_created_7d_per_account",
+        values.usage_limit_acp_max_created_7d_per_account,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "acp_max_running_per_account",
+        values.usage_limit_acp_max_running_per_account,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "acp_max_running_per_project",
+        values.usage_limit_acp_max_running_per_project,
       );
 
       const payload = pick(
@@ -647,6 +695,43 @@ export function MembershipTiers() {
             label="Dedicated host prepaid 7d ($)"
           >
             <InputNumber min={0} step={1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Divider>Codex / ACP Turn Limits</Divider>
+          <Form.Item
+            name="usage_limit_acp_max_queued_per_account"
+            label="Queued ACP turns / account"
+          >
+            <InputNumber min={0} step={1} precision={0} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_acp_max_queued_per_thread"
+            label="Queued ACP turns / thread"
+          >
+            <InputNumber min={0} step={1} precision={0} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_acp_max_created_5h_per_account"
+            label="Created ACP turns / account / 5h"
+          >
+            <InputNumber min={0} step={1} precision={0} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_acp_max_created_7d_per_account"
+            label="Created ACP turns / account / 7d"
+          >
+            <InputNumber min={0} step={1} precision={0} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_acp_max_running_per_account"
+            label="Running ACP turns / account"
+          >
+            <InputNumber min={0} step={1} precision={0} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_acp_max_running_per_project"
+            label="Running ACP turns / project"
+          >
+            <InputNumber min={0} step={1} precision={0} />
           </Form.Item>
           <Paragraph style={{ color: COLORS.GRAY }}>
             These fields populate the standard shared-host usage limit keys. Use

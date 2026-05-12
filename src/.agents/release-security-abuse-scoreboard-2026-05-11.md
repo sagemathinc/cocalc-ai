@@ -17,17 +17,17 @@ Statuses:
 
 ## Summary
 
-| ID              | Surface                                      | Status  | Severity | Current Result                                                                                             | Next Action                                                                     |
-| --------------- | -------------------------------------------- | ------- | -------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                              | Revisit defaults after load testing.                                            |
-| SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. | Replace env defaults with periodically cached membership-tier limits.           |
-| SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                              | Add membership-backed automation-specific caps if needed.                       |
-| SEC-WS-001      | General hub/project-host websocket admission | unknown | critical | Not audited in this pass.                                                                                  | Inventory Conat services and socket pending-request limits.                     |
-| SEC-BROWSER-001 | Browser exec/session automation              | unknown | critical | Not audited in this pass.                                                                                  | Audit QuickJS sandbox defaults and raw exec production policy.                  |
-| SEC-CLI-001     | `cocalc-cli` authority classes               | unknown | high     | Not audited in this pass.                                                                                  | Classify command families by credential type and dangerous-action requirements. |
-| SEC-KEY-001     | Account/project API keys                     | unknown | high     | Not audited in this pass.                                                                                  | Inventory project-key consumers and account-key scope checks.                   |
-| SEC-REG-001     | Registration-token signup policy             | unknown | high     | Not audited in this pass.                                                                                  | Verify no-token behavior and add explicit public-signup setting.                |
-| SEC-MASTER-001  | Master-key storage/unlock                    | unknown | high     | Not audited in this pass.                                                                                  | Inventory master-key read/storage paths and production unlock options.          |
+| ID              | Surface                                      | Status  | Severity | Current Result                                                                                                                                                                                    | Next Action                                                                     |
+| --------------- | -------------------------------------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                     | Revisit defaults after load testing.                                            |
+| SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits when available. | Add denial observability and actor-account limit cache.                         |
+| SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                                                                                                                     | Add membership-backed automation-specific caps if needed.                       |
+| SEC-WS-001      | General hub/project-host websocket admission | unknown | critical | Not audited in this pass.                                                                                                                                                                         | Inventory Conat services and socket pending-request limits.                     |
+| SEC-BROWSER-001 | Browser exec/session automation              | unknown | critical | Not audited in this pass.                                                                                                                                                                         | Audit QuickJS sandbox defaults and raw exec production policy.                  |
+| SEC-CLI-001     | `cocalc-cli` authority classes               | unknown | high     | Not audited in this pass.                                                                                                                                                                         | Classify command families by credential type and dangerous-action requirements. |
+| SEC-KEY-001     | Account/project API keys                     | unknown | high     | Not audited in this pass.                                                                                                                                                                         | Inventory project-key consumers and account-key scope checks.                   |
+| SEC-REG-001     | Registration-token signup policy             | unknown | high     | Not audited in this pass.                                                                                                                                                                         | Verify no-token behavior and add explicit public-signup setting.                |
+| SEC-MASTER-001  | Master-key storage/unlock                    | unknown | high     | Not audited in this pass.                                                                                                                                                                         | Inventory master-key read/storage paths and production unlock options.          |
 
 ## Findings
 
@@ -140,29 +140,35 @@ Implemented first guard:
 - These defaults are intentionally broad. They prevent runaway millions-scale
   queue growth without requiring a bay-hub round trip for every project-host
   turn.
+- ACP turn caps are now first-class `usage_limits` in membership tiers and
+  account entitlement overrides:
+  - `acp_max_queued_per_account`
+  - `acp_max_queued_per_thread`
+  - `acp_max_created_5h_per_account`
+  - `acp_max_created_7d_per_account`
+  - `acp_max_running_per_account`
+  - `acp_max_running_per_project`
+- Project-host installs a local ACP admission limit provider backed by the
+  existing host-only `getProjectOwnerEffectiveLimits` cache. Lite keeps the env
+  defaults; hosted project-host overlays project-owner membership/admin limits
+  when the bay/hub cache is available.
 
 Remaining release gap:
 
-- The guard is not yet membership-tier backed. The next step is a periodically
-  refreshed project-host-local effective-limit cache, populated from bay/hub
-  membership data and admin overrides, so normal turn admission stays local and
-  cheap.
+- Running/queued per-account admission currently uses the project-owner effective
+  limit cache on project-host. If collaborator actors need distinct caps, add an
+  actor-account effective-limit cache keyed by `account_id`.
 - Denial observability is currently structured through error text and local logs,
   not yet a central abuse/account usage feed.
 
 Suggested implementation sequence:
 
-1. Add ACP usage-limit fields to the membership tier model and admin override
-   plumbing.
-2. Add counting helpers for `acp_jobs` by account, project, thread, state, and
-   created time window. If `acp_jobs` cannot reliably answer account-scoped
-   questions today, store `account_id` as an indexed column.
-3. Add `admitAcpTurnCreation` in the hub/lite ACP layer and call it before
-   `enqueueAcpJob`.
-4. Apply the helper to normal chat sends, send-immediately fallback, queued
-   resend, recovery continuation creation, and automation `run_now`/scheduled
-   runs.
-5. Add tests proving denial before `acp_jobs` insertion.
+1. Record ACP admission denials centrally with account, project, thread, tier,
+   effective limit, current usage, and source action.
+2. Add an actor-account effective-limit cache if collaborator account limits
+   need to differ from project-owner limits.
+3. Add per-project 5-hour/7-day worker-start or project wake budget if load
+   testing shows running caps are not sufficient.
 
 ### SEC-ACP-003: ACP Automations Share the Same Queue Without Independent Caps
 

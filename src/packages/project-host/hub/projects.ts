@@ -436,7 +436,7 @@ function runnerConfigFromQuota(run_quota?: any): Partial<Configuration> {
   return limits;
 }
 
-async function getProjectOwnerEffectiveLimits(
+export async function getProjectOwnerEffectiveLimits(
   project_id: string,
 ): Promise<MembershipEffectiveLimits> {
   const cached = projectOwnerLimitsCache.get(project_id);

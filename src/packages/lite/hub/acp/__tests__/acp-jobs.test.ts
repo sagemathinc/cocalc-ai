@@ -5,7 +5,12 @@ import {
   getAcpDatabase,
   initAcpDatabase,
 } from "../../sqlite/acp-database";
-import { admitAcpJobCreation, throwIfAcpAdmissionDenied } from "../admission";
+import {
+  acpAdmissionLimitsFromEffectiveLimits,
+  admitAcpJobCreation,
+  mergeAcpAdmissionLimits,
+  throwIfAcpAdmissionDenied,
+} from "../admission";
 import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
@@ -432,6 +437,38 @@ describe("acp job queue ordering", () => {
         runningPerProject: 0,
       }),
     ).toEqual({ ok: true });
+  });
+
+  it("maps membership effective limits into ACP admission limits", () => {
+    const defaults = {
+      queuedPerAccount: 1000,
+      queuedPerThread: 100,
+      created5hPerAccount: 500,
+      created7dPerAccount: 2000,
+      runningPerAccount: 50,
+      runningPerProject: 50,
+    };
+
+    expect(
+      mergeAcpAdmissionLimits(
+        defaults,
+        acpAdmissionLimitsFromEffectiveLimits({
+          acp_max_queued_per_account: 12,
+          acp_max_queued_per_thread: 3,
+          acp_max_created_5h_per_account: 20,
+          acp_max_created_7d_per_account: 70,
+          acp_max_running_per_account: 4,
+          acp_max_running_per_project: 2,
+        }),
+      ),
+    ).toEqual({
+      queuedPerAccount: 12,
+      queuedPerThread: 3,
+      created5hPerAccount: 20,
+      created7dPerAccount: 70,
+      runningPerAccount: 4,
+      runningPerProject: 2,
+    });
   });
 
   it("stores recovery metadata for resumed codex turns", () => {

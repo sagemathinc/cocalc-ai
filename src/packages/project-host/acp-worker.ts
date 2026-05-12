@@ -5,8 +5,10 @@ import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
 import { setConatClient } from "@cocalc/conat/client";
 import {
+  acpAdmissionLimitsFromEffectiveLimits,
   disposeAcpAgents,
   runDetachedAcpQueueWorker,
+  setAcpAdmissionLimitsProvider,
 } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
@@ -20,7 +22,11 @@ import { configureProjectHostAcpContainerFileIO } from "./file-server";
 import { wireHostsApi } from "./hub/hosts";
 import { wireNotificationsApi } from "./hub/notifications";
 import { wireSystemApi } from "./hub/system";
-import { PROJECT_RUNNER_RPC_TIMEOUT_MS, wireProjectsApi } from "./hub/projects";
+import {
+  getProjectOwnerEffectiveLimits,
+  PROJECT_RUNNER_RPC_TIMEOUT_MS,
+  wireProjectsApi,
+} from "./hub/projects";
 import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
 import { getProjectHostMasterConatToken } from "./master-conat-token";
 import { setMasterConatClient } from "./master-status";
@@ -77,6 +83,13 @@ function configureProjectHostAcpRuntime(): void {
   wireSystemApi();
   wireHostsApi();
   wireNotificationsApi();
+  setAcpAdmissionLimitsProvider(async ({ project_id }) => {
+    const id = `${project_id ?? ""}`.trim();
+    if (!id) return undefined;
+    return acpAdmissionLimitsFromEffectiveLimits(
+      await getProjectOwnerEffectiveLimits(id),
+    );
+  });
   setContainerExec((opts) =>
     sandboxExec({
       ...opts,

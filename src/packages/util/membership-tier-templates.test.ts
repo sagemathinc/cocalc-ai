@@ -50,13 +50,16 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(tier.course_grace_days).toBe(3);
     expect(tier.ai_limits).toEqual({ units_5h: 7 });
     expect(tier.features).toEqual({ create_hosts: false });
-    expect(tier.usage_limits).toEqual({
-      shared_compute_priority: 99,
-      notification_email_send_limit_5h: 200,
-      notification_email_send_limit_7d: 1000,
-      prepaid_host_usage_limit_5h_usd: 300,
-      prepaid_host_usage_limit_7d_usd: 1000,
-    });
+    expect(tier.usage_limits).toEqual(
+      expect.objectContaining({
+        shared_compute_priority: 99,
+        notification_email_send_limit_5h: 200,
+        notification_email_send_limit_7d: 1000,
+        prepaid_host_usage_limit_5h_usd: 300,
+        prepaid_host_usage_limit_7d_usd: 1000,
+        acp_max_running_per_account: 10,
+      }),
+    );
   });
 
   it("marks the student template as course-visible with a one-time course price", () => {

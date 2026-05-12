@@ -289,6 +289,84 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
       MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
         .notification_email_send_limit_7d.adminDescription,
   },
+  {
+    id: "acp_queued_per_account",
+    section: "usage_limits",
+    key: "acp_max_queued_per_account",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_queued_per_account.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_queued_per_account.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_queued_per_account.adminDescription,
+  },
+  {
+    id: "acp_queued_per_thread",
+    section: "usage_limits",
+    key: "acp_max_queued_per_thread",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_queued_per_thread.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_queued_per_thread.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_queued_per_thread.adminDescription,
+  },
+  {
+    id: "acp_created_5h_per_account",
+    section: "usage_limits",
+    key: "acp_max_created_5h_per_account",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_created_5h_per_account.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_created_5h_per_account.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_created_5h_per_account.adminDescription,
+  },
+  {
+    id: "acp_created_7d_per_account",
+    section: "usage_limits",
+    key: "acp_max_created_7d_per_account",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_created_7d_per_account.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_created_7d_per_account.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_created_7d_per_account.adminDescription,
+  },
+  {
+    id: "acp_running_per_account",
+    section: "usage_limits",
+    key: "acp_max_running_per_account",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_running_per_account.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_running_per_account.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_running_per_account.adminDescription,
+  },
+  {
+    id: "acp_running_per_project",
+    section: "usage_limits",
+    key: "acp_max_running_per_project",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_running_per_project.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_running_per_project.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_running_per_project.adminDescription,
+  },
 ];
 
 const PROJECT_FIELD_IDS = new Set([
@@ -311,6 +389,15 @@ const AI_FIELD_IDS = new Set(["ai_units_5h", "ai_units_7d"]);
 const NOTIFICATION_EMAIL_FIELD_IDS = new Set([
   "notification_email_5h",
   "notification_email_7d",
+]);
+
+const ACP_FIELD_IDS = new Set([
+  "acp_queued_per_account",
+  "acp_queued_per_thread",
+  "acp_created_5h_per_account",
+  "acp_created_7d_per_account",
+  "acp_running_per_account",
+  "acp_running_per_project",
 ]);
 
 const SPEND_FIELD_IDS = new Set([
@@ -935,6 +1022,15 @@ export function AccountEntitlementOverridePanel({
                     form={form}
                     fields={NUMERIC_FIELDS.filter((field) =>
                       NOTIFICATION_EMAIL_FIELD_IDS.has(field.id),
+                    )}
+                  />
+                </Collapse.Panel>
+                <Collapse.Panel header="Codex/ACP turns" key="acp">
+                  <NumericFieldGroup
+                    details={details}
+                    form={form}
+                    fields={NUMERIC_FIELDS.filter((field) =>
+                      ACP_FIELD_IDS.has(field.id),
                     )}
                   />
                 </Collapse.Panel>

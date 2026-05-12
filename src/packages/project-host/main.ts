@@ -50,17 +50,23 @@ import { attachProjectProxy } from "@cocalc/project-proxy/proxy";
 import { init as initChangefeeds } from "@cocalc/lite/hub/changefeeds";
 import { hubApi, init as initHubApi } from "@cocalc/lite/hub/api";
 import { listAcpAutomationProjectIds } from "@cocalc/lite/hub/sqlite/acp-automations";
-import { PROJECT_RUNNER_RPC_TIMEOUT_MS, wireProjectsApi } from "./hub/projects";
+import {
+  getProjectOwnerEffectiveLimits,
+  PROJECT_RUNNER_RPC_TIMEOUT_MS,
+  wireProjectsApi,
+} from "./hub/projects";
 import { wireHostsApi } from "./hub/hosts";
 import { wireNotificationsApi } from "./hub/notifications";
 import { wireSystemApi } from "./hub/system";
 import { startMasterRegistration } from "./master";
 import { startReconciler } from "./reconcile";
 import {
+  acpAdmissionLimitsFromEffectiveLimits,
   clearLocalAcpAutomationsForProject,
-  rehydrateAcpAutomationsForProject,
   configureAcpDetachedWorkerRunning,
   init as initAcp,
+  rehydrateAcpAutomationsForProject,
+  setAcpAdmissionLimitsProvider,
 } from "@cocalc/lite/hub/acp";
 import { partitionAcpStartupProjectIds } from "./acp-startup-rehydrate";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
@@ -514,6 +520,13 @@ export async function main(
   configureProjectHostAcpContainerFileIO();
   initCodexProjectRunner();
   initCodexSiteKeyGovernor();
+  setAcpAdmissionLimitsProvider(async ({ project_id }) => {
+    const id = `${project_id ?? ""}`.trim();
+    if (!id) return undefined;
+    return acpAdmissionLimitsFromEffectiveLimits(
+      await getProjectOwnerEffectiveLimits(id),
+    );
+  });
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
   // Local persist must exist before ACP startup so automation indexes can
   // republish into the project-scoped DKV stores on restart.

@@ -146,5 +146,53 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       userDescription:
         "Notification emails this account can cause over a rolling 7-day window.",
     },
+    acp_max_queued_per_account: {
+      label: "ACP queued turns per account",
+      unit: "turns",
+      adminDescription:
+        "Maximum queued durable Codex/ACP turns this account may have across projects before new turns are rejected.",
+      userDescription:
+        "Maximum queued durable Codex/ACP turns across your projects.",
+    },
+    acp_max_queued_per_thread: {
+      label: "ACP queued turns per thread",
+      unit: "turns",
+      adminDescription:
+        "Maximum queued durable Codex/ACP turns allowed in a single chat thread before new turns are rejected.",
+      userDescription:
+        "Maximum queued durable Codex/ACP turns in a single thread.",
+    },
+    acp_max_created_5h_per_account: {
+      label: "ACP created turns, 5-hour window",
+      unit: "turns",
+      adminDescription:
+        "Rolling 5-hour creation limit for durable Codex/ACP turns caused by this account.",
+      userDescription:
+        "Durable Codex/ACP turns you can create over a rolling 5-hour window.",
+    },
+    acp_max_created_7d_per_account: {
+      label: "ACP created turns, 7-day window",
+      unit: "turns",
+      adminDescription:
+        "Rolling 7-day creation limit for durable Codex/ACP turns caused by this account.",
+      userDescription:
+        "Durable Codex/ACP turns you can create over a rolling 7-day window.",
+    },
+    acp_max_running_per_account: {
+      label: "ACP running turns per account",
+      unit: "turns",
+      adminDescription:
+        "Maximum concurrently running durable Codex/ACP turns this account may have across projects.",
+      userDescription:
+        "Maximum concurrently running durable Codex/ACP turns across your projects.",
+    },
+    acp_max_running_per_project: {
+      label: "ACP running turns per project",
+      unit: "turns",
+      adminDescription:
+        "Maximum concurrently running durable Codex/ACP turns allowed for one project.",
+      userDescription:
+        "Maximum concurrently running durable Codex/ACP turns in one project.",
+    },
   },
 } as const;

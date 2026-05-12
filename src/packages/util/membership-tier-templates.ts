@@ -25,6 +25,31 @@ function usageLimitsTemplate(
   };
 }
 
+function acpUsageLimits({
+  queuedPerAccount,
+  queuedPerThread,
+  created5hPerAccount,
+  created7dPerAccount,
+  runningPerAccount,
+  runningPerProject,
+}: {
+  queuedPerAccount: number;
+  queuedPerThread: number;
+  created5hPerAccount: number;
+  created7dPerAccount: number;
+  runningPerAccount: number;
+  runningPerProject: number;
+}) {
+  return {
+    acp_max_queued_per_account: queuedPerAccount,
+    acp_max_queued_per_thread: queuedPerThread,
+    acp_max_created_5h_per_account: created5hPerAccount,
+    acp_max_created_7d_per_account: created7dPerAccount,
+    acp_max_running_per_account: runningPerAccount,
+    acp_max_running_per_project: runningPerProject,
+  };
+}
+
 function aiLimitsFromYearly(price_yearly: number, monthlyOverride?: number) {
   const monthlyCost = monthlyOverride ?? price_yearly / 12;
   const monthlyBudget = monthlyCost * 0.5;
@@ -60,7 +85,16 @@ export const TIER_TEMPLATES = {
       create_hosts: false,
       project_host_tier: 0,
     },
-    usage_limits: usageLimitsTemplate(1),
+    usage_limits: usageLimitsTemplate(1, {
+      ...acpUsageLimits({
+        queuedPerAccount: 20,
+        queuedPerThread: 5,
+        created5hPerAccount: 20,
+        created7dPerAccount: 100,
+        runningPerAccount: 1,
+        runningPerProject: 1,
+      }),
+    }),
   },
   student: {
     id: "student",
@@ -88,6 +122,14 @@ export const TIER_TEMPLATES = {
     usage_limits: usageLimitsTemplate(2, {
       notification_email_send_limit_5h: 50,
       notification_email_send_limit_7d: 200,
+      ...acpUsageLimits({
+        queuedPerAccount: 100,
+        queuedPerThread: 20,
+        created5hPerAccount: 100,
+        created7dPerAccount: 500,
+        runningPerAccount: 10,
+        runningPerProject: 10,
+      }),
     }),
   },
   member: {
@@ -119,6 +161,14 @@ export const TIER_TEMPLATES = {
       notification_email_send_limit_7d: 1000,
       prepaid_host_usage_limit_5h_usd: 300,
       prepaid_host_usage_limit_7d_usd: 1000,
+      ...acpUsageLimits({
+        queuedPerAccount: 100,
+        queuedPerThread: 20,
+        created5hPerAccount: 100,
+        created7dPerAccount: 500,
+        runningPerAccount: 10,
+        runningPerProject: 10,
+      }),
     }),
   },
   pro: {
@@ -152,6 +202,14 @@ export const TIER_TEMPLATES = {
       credit_spend_limit_7d_usd: 1000,
       prepaid_host_usage_limit_5h_usd: 1000,
       prepaid_host_usage_limit_7d_usd: 3000,
+      ...acpUsageLimits({
+        queuedPerAccount: 500,
+        queuedPerThread: 100,
+        created5hPerAccount: 500,
+        created7dPerAccount: 2000,
+        runningPerAccount: 50,
+        runningPerProject: 50,
+      }),
     }),
   },
 } as const;

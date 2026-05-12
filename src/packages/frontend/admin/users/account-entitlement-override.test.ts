@@ -39,4 +39,23 @@ describe("buildOverride", () => {
       },
     });
   });
+
+  it("serializes ACP usage-limit overrides", () => {
+    expect(
+      buildOverride({
+        enabled: true,
+        acp_running_per_account_mode: "maximum",
+        acp_running_per_account_value: 3,
+      }),
+    ).toEqual({
+      enabled: true,
+      expires_at: null,
+      usage_limits: {
+        acp_max_running_per_account: {
+          mode: "maximum",
+          value: 3,
+        },
+      },
+    });
+  });
 });

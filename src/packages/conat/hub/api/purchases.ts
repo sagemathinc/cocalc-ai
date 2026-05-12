@@ -30,6 +30,12 @@ export interface MembershipUsageLimits {
   prepaid_host_usage_limit_7d_usd?: number;
   notification_email_send_limit_5h?: number;
   notification_email_send_limit_7d?: number;
+  acp_max_queued_per_account?: number;
+  acp_max_queued_per_thread?: number;
+  acp_max_created_5h_per_account?: number;
+  acp_max_created_7d_per_account?: number;
+  acp_max_running_per_account?: number;
+  acp_max_running_per_project?: number;
 }
 
 export interface MembershipEffectiveLimits extends MembershipUsageLimits {}
@@ -85,6 +91,12 @@ export interface AccountUsageLimitOverrides {
   prepaid_host_usage_limit_7d_usd?: NumericLimitRule;
   notification_email_send_limit_5h?: NumericLimitRule;
   notification_email_send_limit_7d?: NumericLimitRule;
+  acp_max_queued_per_account?: NumericLimitRule;
+  acp_max_queued_per_thread?: NumericLimitRule;
+  acp_max_created_5h_per_account?: NumericLimitRule;
+  acp_max_created_7d_per_account?: NumericLimitRule;
+  acp_max_running_per_account?: NumericLimitRule;
+  acp_max_running_per_project?: NumericLimitRule;
 }
 
 export interface DedicatedHostPolicyOverrides {

@@ -1,4 +1,5 @@
 import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
+import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import {
   countCreatedAcpJobsForAccountSince,
   countQueuedAcpJobsForAccount,
@@ -35,6 +36,20 @@ export type AcpAdmissionLimits = {
   runningPerProject: number;
 };
 
+export type AcpAdmissionLimitContext = {
+  account_id?: string;
+  project_id?: string;
+  path?: string;
+  thread_id?: string;
+};
+
+export type AcpAdmissionLimitsProvider = (
+  context: AcpAdmissionLimitContext,
+) =>
+  | Partial<AcpAdmissionLimits>
+  | undefined
+  | Promise<Partial<AcpAdmissionLimits> | undefined>;
+
 export type AcpAdmissionDenial = {
   ok: false;
   limit: AcpAdmissionLimitName;
@@ -66,6 +81,14 @@ export class AcpAdmissionDeniedError extends Error {
   }
 }
 
+let acpAdmissionLimitsProvider: AcpAdmissionLimitsProvider | undefined;
+
+export function setAcpAdmissionLimitsProvider(
+  provider?: AcpAdmissionLimitsProvider,
+): void {
+  acpAdmissionLimitsProvider = provider;
+}
+
 export function isAcpAdmissionDeniedError(
   err: unknown,
 ): err is AcpAdmissionDeniedError {
@@ -84,6 +107,87 @@ export function getDefaultAcpAdmissionLimits(): AcpAdmissionLimits {
     runningPerAccount: envLimit("COCALC_ACP_MAX_RUNNING_PER_ACCOUNT", 50),
     runningPerProject: envLimit("COCALC_ACP_MAX_RUNNING_PER_PROJECT", 50),
   };
+}
+
+function normalizedLimit(value: unknown): number | undefined {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) && number >= 0
+    ? Math.floor(number)
+    : undefined;
+}
+
+export function mergeAcpAdmissionLimits(
+  base: AcpAdmissionLimits,
+  overrides?: Partial<AcpAdmissionLimits>,
+): AcpAdmissionLimits {
+  if (overrides == null) return base;
+  return {
+    queuedPerAccount:
+      normalizedLimit(overrides.queuedPerAccount) ?? base.queuedPerAccount,
+    queuedPerThread:
+      normalizedLimit(overrides.queuedPerThread) ?? base.queuedPerThread,
+    created5hPerAccount:
+      normalizedLimit(overrides.created5hPerAccount) ??
+      base.created5hPerAccount,
+    created7dPerAccount:
+      normalizedLimit(overrides.created7dPerAccount) ??
+      base.created7dPerAccount,
+    runningPerAccount:
+      normalizedLimit(overrides.runningPerAccount) ?? base.runningPerAccount,
+    runningPerProject:
+      normalizedLimit(overrides.runningPerProject) ?? base.runningPerProject,
+  };
+}
+
+export function acpAdmissionLimitsFromEffectiveLimits(
+  effectiveLimits?: MembershipEffectiveLimits | null,
+): Partial<AcpAdmissionLimits> | undefined {
+  if (effectiveLimits == null) return undefined;
+  const limits: Partial<AcpAdmissionLimits> = {};
+  const queuedPerAccount = normalizedLimit(
+    effectiveLimits.acp_max_queued_per_account,
+  );
+  if (queuedPerAccount != null) limits.queuedPerAccount = queuedPerAccount;
+  const queuedPerThread = normalizedLimit(
+    effectiveLimits.acp_max_queued_per_thread,
+  );
+  if (queuedPerThread != null) limits.queuedPerThread = queuedPerThread;
+  const created5hPerAccount = normalizedLimit(
+    effectiveLimits.acp_max_created_5h_per_account,
+  );
+  if (created5hPerAccount != null) {
+    limits.created5hPerAccount = created5hPerAccount;
+  }
+  const created7dPerAccount = normalizedLimit(
+    effectiveLimits.acp_max_created_7d_per_account,
+  );
+  if (created7dPerAccount != null) {
+    limits.created7dPerAccount = created7dPerAccount;
+  }
+  const runningPerAccount = normalizedLimit(
+    effectiveLimits.acp_max_running_per_account,
+  );
+  if (runningPerAccount != null) limits.runningPerAccount = runningPerAccount;
+  const runningPerProject = normalizedLimit(
+    effectiveLimits.acp_max_running_per_project,
+  );
+  if (runningPerProject != null) limits.runningPerProject = runningPerProject;
+  return limits;
+}
+
+export async function resolveAcpAdmissionLimits(
+  context: AcpAdmissionLimitContext = {},
+): Promise<AcpAdmissionLimits> {
+  const defaults = getDefaultAcpAdmissionLimits();
+  if (acpAdmissionLimitsProvider == null) return defaults;
+  try {
+    return mergeAcpAdmissionLimits(
+      defaults,
+      await acpAdmissionLimitsProvider(context),
+    );
+  } catch {
+    return defaults;
+  }
 }
 
 function finiteLimit(value: number): number | undefined {
