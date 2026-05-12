@@ -15,11 +15,95 @@ import {
   isMultiBayCluster,
 } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import {
+  encryptRegistrationTokenValue,
+  hashRegistrationTokenValue,
+  isEncryptedRegistrationTokenValue,
+  isHashedRegistrationTokenValue,
+  storedRegistrationTokenMatches,
+} from "@cocalc/database/postgres/account/registration-token-secret";
 
 export interface RegistrationTokenInfo {
   token: string;
   ephemeral?: number;
   customize?: any;
+}
+
+interface RegistrationTokenRow {
+  token: string;
+  expires?: Date | null;
+  counter?: number | null;
+  limit?: number | null;
+  disabled?: boolean | null;
+  ephemeral?: number | null;
+  customize?: any;
+}
+
+interface MatchedRegistrationToken {
+  storedToken: string;
+  row: RegistrationTokenRow;
+}
+
+function isBootstrapCustomize(customize: unknown): boolean {
+  return (
+    !!customize &&
+    typeof customize === "object" &&
+    (customize as { bootstrap?: boolean }).bootstrap === true
+  );
+}
+
+async function findRegistrationToken(
+  client: {
+    query: (query: string, params?: any[]) => Promise<{ rows: any[] }>;
+  },
+  token: string,
+  opts: { forUpdate?: boolean } = {},
+): Promise<MatchedRegistrationToken | undefined> {
+  const { rows } = await client.query(
+    `SELECT "token", "expires", "counter", "limit", "disabled", "ephemeral", "customize"
+       FROM registration_tokens${opts.forUpdate ? " FOR UPDATE" : ""}`,
+  );
+  for (const row of rows ?? []) {
+    if (await storedRegistrationTokenMatches(row.token, token)) {
+      return { storedToken: row.token, row };
+    }
+  }
+}
+
+async function protectedStorageValueForMatchedToken(
+  clearToken: string,
+  match: MatchedRegistrationToken,
+): Promise<string> {
+  if (isBootstrapCustomize(match.row.customize)) {
+    return await hashRegistrationTokenValue(clearToken);
+  }
+  if (
+    isEncryptedRegistrationTokenValue(match.storedToken) ||
+    isHashedRegistrationTokenValue(match.storedToken)
+  ) {
+    return match.storedToken;
+  }
+  return await encryptRegistrationTokenValue(clearToken);
+}
+
+async function protectMatchedRegistrationTokenAtRest(
+  client: {
+    query: (query: string, params?: any[]) => Promise<{ rows: any[] }>;
+  },
+  clearToken: string,
+  match: MatchedRegistrationToken,
+): Promise<string> {
+  const protectedToken = await protectedStorageValueForMatchedToken(
+    clearToken,
+    match,
+  );
+  if (protectedToken !== match.storedToken) {
+    await client.query(
+      "UPDATE registration_tokens SET token=$1 WHERE token=$2",
+      [protectedToken, match.storedToken],
+    );
+  }
+  return protectedToken;
 }
 
 function registrationTokenInfoFromRow(
@@ -67,17 +151,13 @@ export async function validateRegistrationTokenDirect(
     throw Error("no registration token provided");
   }
 
-  const { rows } = await getPool().query(
-    `SELECT "expires", "counter", "limit", "disabled", "ephemeral", "customize"
-     FROM registration_tokens
-     WHERE token = $1::TEXT`,
-    [token],
-  );
-
-  if (rows.length != 1) {
+  const pool = getPool();
+  const match = await findRegistrationToken(pool, token);
+  if (match == null) {
     throw Error("Registration token is wrong.");
   }
-  return registrationTokenInfoFromRow(token, rows[0]);
+  await protectMatchedRegistrationTokenAtRest(pool, token, match);
+  return registrationTokenInfoFromRow(token, match.row);
 }
 
 export async function redeemRegistrationTokenDirect(
@@ -102,22 +182,28 @@ export async function redeemRegistrationTokenDirect(
     // → if counter, check counter vs. limit
     //   → true: increase the counter → ok
     //   → false: ok
-    const q_match = `SELECT "expires", "counter", "limit", "disabled", "ephemeral", "customize"
-                     FROM registration_tokens
-                     WHERE token = $1::TEXT
-                     FOR UPDATE`;
-    const match = await client.query(q_match, [token]);
+    const match = await findRegistrationToken(client, token, {
+      forUpdate: true,
+    });
 
-    if (match.rows.length != 1) {
+    if (match == null) {
       throw Error("Registration token is wrong.");
     }
     // e.g. { expires: 2020-12-04T11:54:52.889Z, counter: null, limit: 10, disabled: ... }
-    const info = registrationTokenInfoFromRow(token, match.rows[0]);
+    const info = registrationTokenInfoFromRow(token, match.row);
+    const protectedStoredToken = await protectedStorageValueForMatchedToken(
+      token,
+      match,
+    );
 
     // we count in any case after validation succeeds.
-    const q_inc = `UPDATE registration_tokens SET "counter" = coalesce("counter", 0) + 1
-                   WHERE token = $1::TEXT`;
-    await client.query(q_inc, [token]);
+    await client.query(
+      `UPDATE registration_tokens
+          SET "token"=$1,
+              "counter"=coalesce("counter", 0) + 1
+        WHERE token=$2`,
+      [protectedStoredToken, match.storedToken],
+    );
 
     // all good, let's commit
     await client.query("COMMIT");
@@ -138,10 +224,46 @@ export async function disableRegistrationTokenDirect(
   }
   await getTransactionClient().then(async (client) => {
     try {
+      const match = await findRegistrationToken(client, token, {
+        forUpdate: true,
+      });
+      if (match == null) {
+        await client.query("COMMIT");
+        return;
+      }
       await client.query(
-        "UPDATE registration_tokens SET disabled=true WHERE token=$1",
-        [token],
+        "UPDATE registration_tokens SET token=$1, disabled=true WHERE token=$2",
+        [
+          await protectedStorageValueForMatchedToken(token, match),
+          match.storedToken,
+        ],
       );
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  });
+}
+
+export async function deleteRegistrationTokenDirect(
+  token: string,
+): Promise<void> {
+  if (!token) {
+    return;
+  }
+  await getTransactionClient().then(async (client) => {
+    try {
+      const match = await findRegistrationToken(client, token, {
+        forUpdate: true,
+      });
+      if (match != null) {
+        await client.query("DELETE FROM registration_tokens WHERE token=$1", [
+          match.storedToken,
+        ]);
+      }
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK");
@@ -163,6 +285,19 @@ export async function disableRegistrationToken(token: string): Promise<void> {
   await createInterBayAuthTokenClient({
     client: getInterBayFabricClient(),
   }).disable({ token });
+}
+
+export async function deleteRegistrationToken(token: string): Promise<void> {
+  if (!token) {
+    return;
+  }
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    await deleteRegistrationTokenDirect(token);
+    return;
+  }
+  await createInterBayAuthTokenClient({
+    client: getInterBayFabricClient(),
+  }).delete({ token });
 }
 
 export default async function redeem(

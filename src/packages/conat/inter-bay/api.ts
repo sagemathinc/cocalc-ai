@@ -805,6 +805,10 @@ export interface AuthTokenDisableRequest {
   token: string;
 }
 
+export interface AuthTokenDeleteRequest {
+  token: string;
+}
+
 export interface RegistrationTokenInfoWire {
   token: string;
   ephemeral?: number;
@@ -1011,7 +1015,8 @@ export type AuthTokenMethod =
   | "requires-token"
   | "validate"
   | "redeem"
-  | "disable";
+  | "disable"
+  | "delete";
 export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod = "get-load" | "get-backups";
 export type ProjectCollabInviteMethod =
@@ -1684,6 +1689,7 @@ export interface InterBayAuthTokenApi {
     opts: AuthTokenRedeemRequest,
   ) => Promise<RegistrationTokenInfoWire | null>;
   disable: (opts: AuthTokenDisableRequest) => Promise<void>;
+  delete: (opts: AuthTokenDeleteRequest) => Promise<void>;
 }
 
 export interface InterBayProjectCollabInviteApi {
@@ -3521,12 +3527,19 @@ export function createInterBayAuthTokenClient({
     ...serviceClientOptions({ client, timeout }),
     subject: authTokenSubject({ method: "disable" }),
   });
+  const deleteClient = createServiceClient<
+    Pick<InterBayAuthTokenApi, "delete">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: authTokenSubject({ method: "delete" }),
+  });
   return {
     requiresToken: async (opts) =>
       await requiresTokenClient.requiresToken(opts),
     validate: async (opts) => await validateClient.validate(opts),
     redeem: async (opts) => await redeemClient.redeem(opts),
     disable: async (opts) => await disableClient.disable(opts),
+    delete: async (opts) => await deleteClient.delete(opts),
   };
 }
 
@@ -3565,6 +3578,14 @@ export function createInterBayAuthTokenHandlers({
       subject: authTokenSubject({ method: "disable" }),
       impl: {
         disable: async (opts) => await impl.disable(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAuthTokenApi, "delete">>({
+      ...options,
+      service: "inter-bay-auth-token",
+      subject: authTokenSubject({ method: "delete" }),
+      impl: {
+        delete: async (opts) => await impl.delete(opts),
       },
     }),
   ];

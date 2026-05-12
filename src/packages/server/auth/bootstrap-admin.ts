@@ -1,5 +1,10 @@
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
+import {
+  decryptRegistrationTokenValue,
+  hashRegistrationTokenValue,
+  isHashedRegistrationTokenValue,
+} from "@cocalc/database/postgres/account/registration-token-secret";
 import siteURL from "@cocalc/database/settings/site-url";
 import { isRocketProduct } from "@cocalc/server/launchpad/mode";
 import { secure_random_token } from "@cocalc/util/misc";
@@ -11,7 +16,10 @@ const BOOTSTRAP_TTL_MS = 24 * 60 * 60 * 1000;
 type BootstrapToken = {
   token: string;
   expires: Date | null;
+  storedToken: string;
 };
+
+let cachedBootstrapToken: BootstrapToken | undefined;
 
 function isBootstrapCustomize(customize: unknown): boolean {
   return (
@@ -33,7 +41,31 @@ async function findBootstrapToken(): Promise<BootstrapToken | undefined> {
   );
   for (const row of rows ?? []) {
     if (isBootstrapCustomize(row.customize)) {
-      return { token: row.token, expires: row.expires ?? null };
+      if (isHashedRegistrationTokenValue(row.token)) {
+        if (cachedBootstrapToken?.storedToken === row.token) {
+          return cachedBootstrapToken;
+        }
+        await pool.query("DELETE FROM registration_tokens WHERE token=$1", [
+          row.token,
+        ]);
+        logger.warn(
+          "deleted unrecoverable hash-only bootstrap token; creating replacement",
+          { expires: row.expires?.toISOString?.() ?? null },
+        );
+        continue;
+      }
+      const token = await decryptRegistrationTokenValue(row.token);
+      const storedToken = await hashRegistrationTokenValue(token);
+      await pool.query(
+        "UPDATE registration_tokens SET token=$1 WHERE token=$2",
+        [storedToken, row.token],
+      );
+      cachedBootstrapToken = {
+        token,
+        storedToken,
+        expires: row.expires ?? null,
+      };
+      return cachedBootstrapToken;
     }
   }
   return undefined;
@@ -42,13 +74,14 @@ async function findBootstrapToken(): Promise<BootstrapToken | undefined> {
 async function createBootstrapToken(): Promise<BootstrapToken> {
   const pool = getPool();
   const token = secure_random_token(32);
+  const storedToken = await hashRegistrationTokenValue(token);
   const expires = new Date(Date.now() + BOOTSTRAP_TTL_MS);
   await pool.query(
     `INSERT INTO registration_tokens
         (token, descr, expires, "limit", disabled, customize)
       VALUES ($1, $2, $3, $4, $5, $6)`,
     [
-      token,
+      storedToken,
       "Bootstrap Admin",
       expires,
       1,
@@ -56,7 +89,8 @@ async function createBootstrapToken(): Promise<BootstrapToken> {
       { make_admin: true, bootstrap: true },
     ],
   );
-  return { token, expires };
+  cachedBootstrapToken = { token, storedToken, expires };
+  return cachedBootstrapToken;
 }
 
 function withTrailingSlash(url: string): string {

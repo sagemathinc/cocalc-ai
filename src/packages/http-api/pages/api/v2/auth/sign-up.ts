@@ -42,7 +42,7 @@ import {
   signUpTokenCheck,
 } from "@cocalc/server/auth/throttle";
 import redeemRegistrationToken, {
-  disableRegistrationToken,
+  deleteRegistrationToken,
   validateRegistrationToken,
 } from "@cocalc/server/auth/tokens/redeem";
 import getRequiresRegistrationToken from "@cocalc/server/auth/tokens/get-requires-token";
@@ -319,7 +319,7 @@ export async function signUp(req, res) {
     }
 
     if (isBootstrap && registrationToken) {
-      await disableRegistrationToken(registrationToken);
+      await deleteRegistrationToken(registrationToken);
     }
 
     if (email) {

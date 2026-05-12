@@ -18,6 +18,7 @@ import {
   Space,
   Switch,
   Table,
+  Typography,
 } from "antd";
 import dayjs from "dayjs";
 import { List } from "immutable";
@@ -303,6 +304,21 @@ export function RegistrationToken() {
   >();
   const publicSignupWithoutToken =
     publicSignupOverride ?? configuredPublicSignupWithoutToken;
+  const [visibleTokens, setVisibleTokens] = React.useState<Set<string>>(
+    () => new Set(),
+  );
+
+  function toggleVisibleToken(token: string): void {
+    setVisibleTokens((tokens) => {
+      const next = new Set(tokens);
+      if (next.has(token)) {
+        next.delete(token);
+      } else {
+        next.add(token);
+      }
+      return next;
+    });
+  }
 
   function render_edit(): Rendered {
     const layout = {
@@ -438,6 +454,27 @@ export function RegistrationToken() {
             dataIndex="token"
             defaultSortOrder={"ascend"}
             sorter={(a, b) => a.token.localeCompare(b.token)}
+            render={(_text, token) => {
+              const visible = visibleTokens.has(token.token);
+              return (
+                <Space>
+                  {visible ? (
+                    <Typography.Text code copyable={{ text: token.token }}>
+                      {token.token}
+                    </Typography.Text>
+                  ) : (
+                    <Typography.Text code>••••••••••••</Typography.Text>
+                  )}
+                  <AntdButton
+                    htmlType="button"
+                    size="small"
+                    onClick={() => toggleVisibleToken(token.token)}
+                  >
+                    {visible ? "Hide" : "Show"}
+                  </AntdButton>
+                </Space>
+              );
+            }}
           />
           <Table.Column<Token> title="Description" dataIndex="descr" />
           <Table.Column<Token>

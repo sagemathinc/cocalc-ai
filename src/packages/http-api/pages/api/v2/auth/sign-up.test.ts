@@ -14,11 +14,13 @@ const mockGetAccountId = jest.fn();
 const mockIsDomainExclusiveSSO = jest.fn();
 const mockRedeemRegistrationToken = jest.fn();
 const mockValidateRegistrationToken = jest.fn();
+const mockDeleteRegistrationToken = jest.fn();
 const mockGetRequiresRegistrationToken = jest.fn();
 const mockCreateClusterAccount = jest.fn();
 const mockSignUserIn = jest.fn();
 const mockRecordSignUpTokenFail = jest.fn();
 const mockSignUpTokenCheck = jest.fn();
+const mockPoolQuery = jest.fn();
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: (...args) => mockGetServerSettings(...args),
@@ -49,7 +51,7 @@ jest.mock("@cocalc/server/auth/tokens/redeem", () => ({
   default: (...args) => mockRedeemRegistrationToken(...args),
   validateRegistrationToken: (...args) =>
     mockValidateRegistrationToken(...args),
-  disableRegistrationToken: jest.fn(),
+  deleteRegistrationToken: (...args) => mockDeleteRegistrationToken(...args),
 }));
 
 jest.mock("@cocalc/server/auth/tokens/get-requires-token", () => ({
@@ -97,7 +99,7 @@ jest.mock("@cocalc/server/email/welcome-email", () => ({
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({
-    query: jest.fn(),
+    query: (...args) => mockPoolQuery(...args),
   }),
 }));
 
@@ -112,11 +114,13 @@ describe("/api/v2/auth/sign-up", () => {
     mockIsDomainExclusiveSSO.mockReset().mockResolvedValue(undefined);
     mockGetRequiresRegistrationToken.mockReset().mockResolvedValue(true);
     mockValidateRegistrationToken.mockReset().mockResolvedValue({});
+    mockDeleteRegistrationToken.mockReset().mockResolvedValue(undefined);
     mockRedeemRegistrationToken.mockReset().mockResolvedValue(undefined);
     mockCreateClusterAccount.mockReset();
     mockSignUserIn.mockReset();
     mockRecordSignUpTokenFail.mockReset();
     mockSignUpTokenCheck.mockReset().mockReturnValue(undefined);
+    mockPoolQuery.mockReset().mockResolvedValue({ rows: [] });
   });
 
   it("does not sign in an existing account from the sign-up endpoint", async () => {
@@ -271,5 +275,38 @@ describe("/api/v2/auth/sign-up", () => {
         api: "Problem creating account. Please try again.",
       },
     });
+  });
+
+  it("deletes a bootstrap registration token after successful use", async () => {
+    mockRedeemRegistrationToken.mockResolvedValue({
+      customize: { make_admin: true, bootstrap: true },
+    });
+    mockCreateClusterAccount.mockResolvedValue({
+      account_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      home_bay_id: "bay-0",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "admin@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "Admin",
+        lastName: "User",
+        registrationToken: "bootstrap-token",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(mockCreateClusterAccount).toHaveBeenCalled();
+    expect(mockDeleteRegistrationToken).toHaveBeenCalledWith("bootstrap-token");
+    expect(mockSignUserIn).toHaveBeenCalledWith(
+      req,
+      res,
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    );
   });
 });

@@ -50,6 +50,7 @@ import type { ConatService } from "@cocalc/conat/service/typed";
 import getLogger from "@cocalc/backend/logger";
 import { getRequiresTokensDirect } from "@cocalc/server/auth/tokens/get-requires-token";
 import {
+  deleteRegistrationTokenDirect,
   disableRegistrationTokenDirect,
   redeemRegistrationTokenDirect,
   validateRegistrationTokenDirect,
@@ -328,6 +329,9 @@ async function startAuthTokenService(): Promise<void> {
       (await redeemRegistrationTokenDirect(token)) ?? null,
     disable: async ({ token }) => {
       await disableRegistrationTokenDirect(token);
+    },
+    delete: async ({ token }) => {
+      await deleteRegistrationTokenDirect(token);
     },
   };
   services.push(
