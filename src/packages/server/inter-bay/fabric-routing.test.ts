@@ -6,12 +6,40 @@
 export {};
 
 import getPort from "@cocalc/backend/get-port";
-import { connect, type Client } from "@cocalc/conat/core/client";
 import {
+  Client as StaticConatClientClass,
+  connect,
+  type Client,
+} from "@cocalc/conat/core/client";
+import {
+  ConatServer as StaticConatServerClass,
   init as createConatServer,
   type ConatServer,
 } from "@cocalc/conat/core/server";
 import { once } from "@cocalc/util/async-utils";
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value == null) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
+
+function forceCloseFabricSockets(server: ConatServer | undefined): void {
+  if (!server) return;
+  try {
+    server.io?.disconnectSockets?.(true);
+  } catch {}
+  for (const socket of Object.values((server as any).sockets ?? {})) {
+    try {
+      (socket as any)?.disconnect?.(true);
+    } catch {}
+    try {
+      (socket as any)?.conn?.close?.();
+    } catch {}
+  }
+}
 
 describe("inter-bay fabric routing", () => {
   let fabric: ConatServer | undefined;
@@ -20,31 +48,53 @@ describe("inter-bay fabric routing", () => {
     bay_id: process.env.COCALC_BAY_ID,
     server: process.env.COCALC_INTER_BAY_CONAT_SERVER,
     password: process.env.COCALC_INTER_BAY_CONAT_PASSWORD,
+    testMode: process.env.COCALC_TEST_MODE,
   };
 
   beforeEach(() => {
     jest.resetModules();
+    process.env.COCALC_TEST_MODE = "1";
     delete process.env.COCALC_BAY_ID;
     delete process.env.COCALC_INTER_BAY_CONAT_SERVER;
     delete process.env.COCALC_INTER_BAY_CONAT_PASSWORD;
   });
 
   afterEach(async () => {
+    jest.dontMock("@cocalc/database/pool");
     serviceClient?.close();
     serviceClient = undefined;
     if (fabric) {
+      forceCloseFabricSockets(fabric);
       await fabric.close();
+      forceCloseFabricSockets(fabric);
       fabric = undefined;
     }
+    const [{ Client: ConatClientClass }, { ConatServer: ConatServerClass }] =
+      await Promise.all([
+        import("@cocalc/conat/core/client"),
+        import("@cocalc/conat/core/server"),
+      ]);
+    StaticConatClientClass.closeAllForTests?.();
+    await StaticConatServerClass.closeAllForTests?.();
+    ConatClientClass.closeAllForTests?.();
+    await ConatServerClass.closeAllForTests?.();
+    await new Promise((resolve) => setTimeout(resolve, 250));
   });
 
   afterAll(() => {
-    process.env.COCALC_BAY_ID = env.bay_id;
-    process.env.COCALC_INTER_BAY_CONAT_SERVER = env.server;
-    process.env.COCALC_INTER_BAY_CONAT_PASSWORD = env.password;
+    restoreEnv("COCALC_BAY_ID", env.bay_id);
+    restoreEnv("COCALC_INTER_BAY_CONAT_SERVER", env.server);
+    restoreEnv("COCALC_INTER_BAY_CONAT_PASSWORD", env.password);
+    restoreEnv("COCALC_TEST_MODE", env.testMode);
   });
 
   it("routes directory and project-control requests over a separate fabric address", async () => {
+    const queryMock = jest.fn(async () => ({ rows: [] }));
+    jest.doMock("@cocalc/database/pool", () => ({
+      __esModule: true,
+      default: jest.fn(() => ({ query: queryMock })),
+    }));
+
     const port = await getPort();
     fabric = createConatServer({
       port,
@@ -176,9 +226,9 @@ describe("inter-bay fabric routing", () => {
       { getInterBayBridge },
       { getInterBayFabricClient },
     ] = await Promise.all([
-      import("./directory"),
-      import("./bridge"),
-      import("./fabric"),
+      import("@cocalc/server/inter-bay/directory"),
+      import("@cocalc/server/inter-bay/bridge"),
+      import("@cocalc/server/inter-bay/fabric"),
     ]);
 
     await expect(resolveProjectBay("proj-1")).resolves.toEqual({
