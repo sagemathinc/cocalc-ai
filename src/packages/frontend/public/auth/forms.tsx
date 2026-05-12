@@ -504,6 +504,16 @@ export function PublicSignUpForm({
       if (result?.error) {
         throw new Error(`${result.error}`);
       }
+      if (!result?.account_id) {
+        if (requiresToken) {
+          setIssues({
+            registrationToken:
+              "Registration token was not accepted. Check that it is active and typed correctly.",
+          });
+          return;
+        }
+        throw new Error("Sign up failed. Please try again.");
+      }
       setStoredControlPlaneOrigin(result?.home_bay_url);
       const redirectTarget =
         typeof redirectToPath === "function"

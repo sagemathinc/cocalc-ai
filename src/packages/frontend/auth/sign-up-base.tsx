@@ -116,6 +116,16 @@ export default function SignUpFormBase({
       if (result?.error) {
         throw new Error(`${result.error}`);
       }
+      if (!result?.account_id) {
+        if (requiresToken) {
+          setIssues({
+            registrationToken:
+              "Registration token was not accepted. Check that it is active and typed correctly.",
+          });
+          return;
+        }
+        throw new Error("Sign up failed. Please try again.");
+      }
       setStoredControlPlaneOrigin(result?.home_bay_url);
       window.location.href = appUrl("app?sign-in");
     } catch (err) {
@@ -205,8 +215,12 @@ export default function SignUpFormBase({
       <Button
         type="primary"
         size="large"
+        htmlType="button"
         disabled={!canSubmit}
-        onClick={signUp}
+        onClick={(e) => {
+          e.preventDefault();
+          signUp();
+        }}
       >
         {signingUp ? "Creating account..." : "Create account"}
       </Button>

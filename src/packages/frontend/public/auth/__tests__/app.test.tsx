@@ -10,6 +10,8 @@ import { getPublicAuthRedirectTargetFromSearch } from "../routes";
 jest.mock("@cocalc/frontend/client/api", () => jest.fn());
 jest.mock("@cocalc/frontend/auth/api", () => ({
   postAuthApi: jest.fn(),
+  isWrongBayAuthResponse: jest.fn(() => false),
+  retryAuthOnHomeBay: jest.fn(),
 }));
 
 const mockedApi = jest.mocked(api);
@@ -153,6 +155,87 @@ describe("PublicAuthApp", () => {
       screen.getByRole("heading", { name: "Create your Launchpad account" }),
     ).not.toBeNull();
     expect(await screen.findByText("Registration token")).not.toBeNull();
+  });
+
+  it("shows registration-token issues on sign-up", async () => {
+    mockedApi.mockResolvedValueOnce(true);
+    mockedPostAuthApi.mockResolvedValueOnce({
+      issues: {
+        registrationToken:
+          "Issue with registration token -- Registration token is wrong.",
+      },
+    } as any);
+
+    render(
+      <PublicAuthApp
+        config={config()}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+
+    fireEvent.change(
+      await screen.findByPlaceholderText("Enter your registration token"),
+      {
+        target: { value: "wrong-token" },
+      },
+    );
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "new-user@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+      target: { value: "correct horse battery staple 12345!" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("First name"), {
+      target: { value: "New" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Last name"), {
+      target: { value: "User" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(
+      await screen.findByText(
+        "Issue with registration token -- Registration token is wrong.",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("does not silently redirect when token-required sign-up returns no account", async () => {
+    mockedApi.mockResolvedValueOnce(true);
+    mockedPostAuthApi.mockResolvedValueOnce({} as any);
+
+    render(
+      <PublicAuthApp
+        config={config()}
+        initialRoute={{ kind: "auth-form", view: "sign-up" }}
+      />,
+    );
+
+    fireEvent.change(
+      await screen.findByPlaceholderText("Enter your registration token"),
+      {
+        target: { value: "wrong-token" },
+      },
+    );
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "new-user@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("At least 8 characters"), {
+      target: { value: "correct horse battery staple 12345!" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("First name"), {
+      target: { value: "New" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Last name"), {
+      target: { value: "User" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(
+      await screen.findByText(
+        "Registration token was not accepted. Check that it is active and typed correctly.",
+      ),
+    ).not.toBeNull();
   });
 
   it("shows Projects but not Settings in the shared nav for authenticated users", () => {
