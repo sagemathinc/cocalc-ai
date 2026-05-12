@@ -190,6 +190,12 @@ async function ensureAccountRehomeApiKeysSchema(): Promise<void> {
     await getPool().query(
       "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx ON api_keys(key_id)",
     );
+    await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS capabilities TEXT[] NOT NULL DEFAULT '{}'::TEXT[]",
+    );
+    await getPool().query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]",
+    );
   })();
   await accountRehomeApiKeysSchemaReady;
 }

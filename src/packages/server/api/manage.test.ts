@@ -64,7 +64,9 @@ describe("manageApiKeys local bay access", () => {
         !text.includes("ALTER TABLE api_keys ADD COLUMN") &&
         !text.includes(
           "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx",
-        )
+        ) &&
+        !text.includes("api_keys_capabilities_gin_idx") &&
+        !text.includes("api_keys_allowed_project_ids_gin_idx")
       );
     });
   }
@@ -110,6 +112,8 @@ describe("manageApiKeys local bay access", () => {
       expire: null,
       created: new Date("2026-04-22T00:00:00Z"),
       name: "test key",
+      capabilities: ["account:read"],
+      allowed_project_ids: [],
       last_active: null,
     };
     queryMock = jest.fn(async (sql) => {
@@ -127,17 +131,28 @@ describe("manageApiKeys local bay access", () => {
       account_id: ACCOUNT_ID,
       action: "create",
       name: "test key",
+      capabilities: ["account:read"],
+      allowed_project_ids: [],
     });
     const key = result?.[0];
     expect(key?.key_id).toBe("random-key-id");
-    expect(key?.secret).toMatch(
-      /^sk-cocalc-v2\.random-key-id\.[A-Za-z0-9_-]+$/,
-    );
-    expect(key?.trunc).toMatch(/^sk-co\.\.\.[A-Za-z0-9_-]{8}$/);
+    expect(key?.secret).toMatch(/^sk-cc-v2\.random-key-id\.[A-Za-z0-9_-]+$/);
+    expect(key?.trunc).toMatch(/^sk-cc\.\.\.[A-Za-z0-9_-]{8}$/);
     const update = nonSchemaQueries().find(([sql]) =>
       `${sql}`.includes("UPDATE api_keys SET trunc=$1,hash=$2"),
     );
     expect(update).toBeTruthy();
+  });
+
+  it("rejects api key creation without explicit capabilities", async () => {
+    const { default: manageApiKeys } = await import("./manage");
+    await expect(
+      manageApiKeys({
+        account_id: ACCOUNT_ID,
+        action: "create",
+        name: "test key",
+      }),
+    ).rejects.toThrow("API keys must have at least one explicit capability");
   });
 
   it("looks up v2 api keys by key_id without decoding a local id", async () => {
@@ -148,9 +163,12 @@ describe("manageApiKeys local bay access", () => {
           rows: [
             {
               id: 9,
+              key_id: "key-id-123",
               account_id: ACCOUNT_ID,
               hash: "hash",
               expire: null,
+              capabilities: ["account:read"],
+              allowed_project_ids: [],
             },
           ],
         };
@@ -160,9 +178,14 @@ describe("manageApiKeys local bay access", () => {
     const { getAccountWithApiKey } = await import("./manage");
     await expect(getAccountWithApiKey(secret)).resolves.toEqual({
       account_id: ACCOUNT_ID,
+      api_key_id: 9,
+      key_id: "key-id-123",
+      auth_method: "api_key",
+      capabilities: ["account:read"],
+      allowed_project_ids: [],
     });
     expect(nonSchemaQueries()[0]).toEqual([
-      "SELECT id,key_id,account_id,hash,expire FROM api_keys WHERE key_id=$1",
+      "SELECT id,key_id,account_id,hash,expire,capabilities,allowed_project_ids FROM api_keys WHERE key_id=$1",
       ["key-id-123"],
     ]);
   });
@@ -174,12 +197,19 @@ describe("manageApiKeys local bay access", () => {
       account_id: ACCOUNT_ID,
       home_bay_id: "bay-1",
       hash: "hash",
+      capabilities: ["project:exec"],
+      allowed_project_ids: ["22222222-2222-4222-8222-222222222222"],
       expire: null,
       last_active: null,
     }));
     const { getAccountWithApiKey } = await import("./manage");
     await expect(getAccountWithApiKey(secret)).resolves.toEqual({
       account_id: ACCOUNT_ID,
+      api_key_id: -1,
+      key_id: "key-id-remote",
+      auth_method: "api_key",
+      capabilities: ["project:exec"],
+      allowed_project_ids: ["22222222-2222-4222-8222-222222222222"],
     });
     expect(getClusterAccountApiKeyByKeyIdMock).toHaveBeenCalledWith(
       "key-id-remote",

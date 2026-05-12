@@ -97,6 +97,7 @@ export type SiteSettingsKeys =
   | "email_enabled"
   | "verify_emails"
   | "email_signup"
+  | "public_signup_without_registration_token"
   | "share_server"
   | "landing_pages"
   | "project_hosts_google-cloud_enabled"
@@ -787,6 +788,15 @@ export const site_settings_conf: SiteSettings = {
     name: "Allow email signup",
     desc: "Users can sign up via email & password. Could be subject to an 'account creation token'.",
     default: "yes",
+    valid: only_booleans,
+    to_val: to_bool,
+    group: "Access & Identity",
+    subgroup: "Signup",
+  },
+  public_signup_without_registration_token: {
+    name: "Allow public signup without registration token",
+    desc: "If enabled, users can create accounts without a registration token. This is disabled by default so deleting or disabling all registration tokens does not accidentally open public signup.",
+    default: "no",
     valid: only_booleans,
     to_val: to_bool,
     group: "Access & Identity",

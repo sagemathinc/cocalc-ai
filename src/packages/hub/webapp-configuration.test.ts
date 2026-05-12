@@ -5,7 +5,7 @@
 
 const mockGetPassportManager = jest.fn();
 const mockGetServerSettings = jest.fn();
-const mockHaveActiveRegistrationTokens = jest.fn();
+const mockRequiresRegistrationToken = jest.fn();
 const mockGetLaunchpadCloudflaredStatus = jest.fn();
 const mockGetPoolQuery = jest.fn();
 
@@ -19,8 +19,8 @@ jest.mock("./servers/server-settings", () => ({
 }));
 
 jest.mock("./utils", () => ({
-  have_active_registration_tokens: (...args) =>
-    mockHaveActiveRegistrationTokens(...args),
+  requires_registration_token: (...args) =>
+    mockRequiresRegistrationToken(...args),
 }));
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -58,7 +58,7 @@ describe("webapp configuration", () => {
       version: {},
       table: { on: jest.fn() },
     });
-    mockHaveActiveRegistrationTokens.mockReset().mockResolvedValue(true);
+    mockRequiresRegistrationToken.mockReset().mockResolvedValue(true);
     mockGetLaunchpadCloudflaredStatus.mockReset();
     mockGetPoolQuery.mockReset().mockResolvedValue({ rows: [] });
   });

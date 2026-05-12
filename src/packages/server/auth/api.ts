@@ -1,6 +1,7 @@
 import { Request } from "express";
 import { split } from "@cocalc/util/misc";
 import { getAccountWithApiKey } from "@cocalc/server/api/manage";
+import type { ApiKeyPrincipal } from "@cocalc/server/api/api-key-scope";
 
 export function getApiKey(req: Request): string {
   const h = req.header("Authorization");
@@ -19,6 +20,6 @@ export function getApiKey(req: Request): string {
 
 export async function getAccountFromApiKey(
   req: Request,
-): Promise<{ account_id: string } | undefined> {
+): Promise<ApiKeyPrincipal | undefined> {
   return await getAccountWithApiKey(getApiKey(req));
 }

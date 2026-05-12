@@ -20,6 +20,7 @@ import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import type {
   ApiKey as ApiKeyType,
   Action as ApiKeyAction,
+  ApiKeyCapability,
 } from "@cocalc/util/db-schema/api-keys";
 import isBanned from "@cocalc/server/accounts/is-banned";
 import {
@@ -29,13 +30,15 @@ import {
   upsertClusterAccountApiKeyDirectoryEntry,
   deleteClusterAccountApiKeyDirectoryEntry,
 } from "@cocalc/server/inter-bay/accounts";
+import { type ApiKeyPrincipal, normalizeApiKeyScope } from "./api-key-scope";
 
 const log = getLogger("server:api:manage");
 
 // Global per user limit to avoid abuse/bugs. Nobody should ever hit this.
 const MAX_API_KEYS = 100000;
-const API_KEY_V2_PREFIX = "sk-cocalc-v2";
-const API_KEY_ID_BYTES = 18;
+const API_KEY_V2_PREFIX = "sk-cc-v2";
+const API_KEY_V2_LEGACY_PREFIXES = new Set(["sk-cocalc-v2"]);
+const API_KEY_ID_BYTES = 12;
 const API_KEY_SECRET_BYTES = 32;
 
 let apiKeysV2SchemaReady: Promise<void> | undefined;
@@ -48,6 +51,18 @@ async function ensureApiKeysV2Schema(): Promise<void> {
     );
     await pool.query(
       "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx ON api_keys(key_id)",
+    );
+    await pool.query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS capabilities TEXT[] NOT NULL DEFAULT '{}'::TEXT[]",
+    );
+    await pool.query(
+      "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]",
+    );
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS api_keys_capabilities_gin_idx ON api_keys USING GIN(capabilities)",
+    );
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS api_keys_allowed_project_ids_gin_idx ON api_keys USING GIN(allowed_project_ids)",
     );
   })();
   return await apiKeysV2SchemaReady;
@@ -63,7 +78,11 @@ function createApiKeySecret({ key_id }: { key_id: string }): string {
 
 function parseApiKeyV2(secret: string): { key_id: string } | undefined {
   const parts = `${secret ?? ""}`.split(".");
-  if (parts.length !== 3 || parts[0] !== API_KEY_V2_PREFIX) {
+  if (
+    parts.length !== 3 ||
+    (parts[0] !== API_KEY_V2_PREFIX &&
+      !API_KEY_V2_LEGACY_PREFIXES.has(parts[0]))
+  ) {
     return undefined;
   }
   const key_id = parts[1]?.trim();
@@ -82,12 +101,16 @@ async function syncAccountApiKeyDirectory({
   key_id,
   account_id,
   hash,
+  capabilities,
+  allowed_project_ids,
   expire,
   last_active,
 }: {
   key_id?: string | null;
   account_id: string;
   hash: string;
+  capabilities: ApiKeyCapability[];
+  allowed_project_ids: string[];
   expire?: Date | null;
   last_active?: Date | null;
 }): Promise<void> {
@@ -103,6 +126,8 @@ async function syncAccountApiKeyDirectory({
     account_id,
     home_bay_id,
     hash,
+    capabilities,
+    allowed_project_ids,
     expire: expire == null ? null : new Date(expire).valueOf(),
     last_active: last_active == null ? null : new Date(last_active).valueOf(),
   });
@@ -113,6 +138,8 @@ interface Options {
   action: ApiKeyAction;
   name?: string;
   expire?: Date;
+  capabilities?: ApiKeyCapability[];
+  allowed_project_ids?: string[];
   id?: number;
 }
 
@@ -122,9 +149,19 @@ export default async function manageApiKeys({
   action,
   name,
   expire,
+  capabilities,
+  allowed_project_ids,
   id,
 }: Options): Promise<undefined | ApiKeyType[]> {
-  log.debug("manage", { account_id, action, name, expire, id });
+  log.debug("manage", {
+    account_id,
+    action,
+    name,
+    expire,
+    capabilities,
+    allowed_project_ids,
+    id,
+  });
   if (!(await isValidAccount(account_id))) {
     throw Error("account_id is not a valid account");
   }
@@ -134,6 +171,8 @@ export default async function manageApiKeys({
     account_id,
     name,
     expire,
+    capabilities,
+    allowed_project_ids,
     id,
   });
 }
@@ -145,7 +184,7 @@ async function getApiKeys(account_id: string): Promise<ApiKeyType[]> {
   const pool = getPool();
   await ensureApiKeysV2Schema();
   const { rows } = await pool.query(
-    "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE account_id=$1::UUID ORDER BY created DESC",
+    "SELECT id,key_id,account_id,expire,created,name,trunc,capabilities,allowed_project_ids,last_active FROM api_keys WHERE account_id=$1::UUID ORDER BY created DESC",
     [account_id],
   );
   return rows;
@@ -155,7 +194,7 @@ async function getApiKey({ id, account_id }) {
   const pool = getPool();
   await ensureApiKeysV2Schema();
   const { rows } = await pool.query(
-    "SELECT id,key_id,account_id,expire,created,name,trunc,last_active FROM api_keys WHERE id=$1 AND account_id=$2",
+    "SELECT id,key_id,account_id,expire,created,name,trunc,capabilities,allowed_project_ids,last_active FROM api_keys WHERE id=$1 AND account_id=$2",
     [id, account_id],
   );
   return rows[0];
@@ -188,21 +227,33 @@ async function createApiKey({
   account_id,
   expire,
   name,
+  capabilities,
+  allowed_project_ids,
 }: {
   account_id: string;
   expire?: Date;
   name: string;
+  capabilities?: ApiKeyCapability[];
+  allowed_project_ids?: string[];
 }): Promise<ApiKeyType> {
   const pool = getPool();
   await ensureApiKeysV2Schema();
+  const scope = normalizeApiKeyScope({ capabilities, allowed_project_ids });
   if ((await numKeys(account_id)) >= MAX_API_KEYS) {
     throw Error(
       `There is a limit of ${MAX_API_KEYS} per account; please delete some api keys.`,
     );
   }
   const { rows } = await pool.query(
-    "INSERT INTO api_keys(account_id,created,expire,name,key_id) VALUES($1,NOW(),$2,$3,$4) RETURNING id,key_id,account_id,expire,created,name,last_active",
-    [account_id, expire, name, randomBase64Url(API_KEY_ID_BYTES)],
+    "INSERT INTO api_keys(account_id,created,expire,name,key_id,capabilities,allowed_project_ids) VALUES($1,NOW(),$2,$3,$4,$5,$6) RETURNING id,key_id,account_id,expire,created,name,capabilities,allowed_project_ids,last_active",
+    [
+      account_id,
+      expire,
+      name,
+      randomBase64Url(API_KEY_ID_BYTES),
+      scope.capabilities,
+      scope.allowed_project_ids,
+    ],
   );
   const { id, key_id } = rows[0];
   // Note that passwordHash is NOT a "function" -- due to salt every time you call it, the output is different!
@@ -220,6 +271,8 @@ async function createApiKey({
     key_id,
     account_id,
     hash,
+    capabilities: scope.capabilities,
+    allowed_project_ids: scope.allowed_project_ids,
     expire: expire ?? null,
     last_active: null,
   });
@@ -229,10 +282,26 @@ async function createApiKey({
 async function updateApiKey({ apiKey, account_id }) {
   log.debug("udpateApiKey", apiKey);
   const pool = getPool();
-  const { id, key_id, expire, name, last_active } = apiKey;
+  const {
+    id,
+    key_id,
+    expire,
+    name,
+    capabilities,
+    allowed_project_ids,
+    last_active,
+  } = apiKey;
   await pool.query(
-    "UPDATE api_keys SET expire=$3,name=$4,last_active=$5 WHERE id=$1 AND account_id=$2",
-    [id, account_id, expire, name, last_active],
+    "UPDATE api_keys SET expire=$3,name=$4,capabilities=$5,allowed_project_ids=$6,last_active=$7 WHERE id=$1 AND account_id=$2",
+    [
+      id,
+      account_id,
+      expire,
+      name,
+      capabilities,
+      allowed_project_ids,
+      last_active,
+    ],
   );
   const { rows } = await pool.query(
     "SELECT hash FROM api_keys WHERE id=$1 AND account_id=$2",
@@ -244,6 +313,8 @@ async function updateApiKey({ apiKey, account_id }) {
       key_id,
       account_id,
       hash,
+      capabilities,
+      allowed_project_ids,
       expire: expire ?? null,
       last_active: last_active ?? null,
     });
@@ -252,7 +323,15 @@ async function updateApiKey({ apiKey, account_id }) {
 
 //api_key.slice(0, 3) + "..." + api_key.slice(-4)
 // This function does no auth checks.
-async function doManageApiKeys({ action, account_id, name, expire, id }) {
+async function doManageApiKeys({
+  action,
+  account_id,
+  name,
+  expire,
+  capabilities,
+  allowed_project_ids,
+  id,
+}) {
   switch (action) {
     case "get":
       if (!id) {
@@ -268,7 +347,15 @@ async function doManageApiKeys({ action, account_id, name, expire, id }) {
 
     case "create":
       // creates a key with given name (if given)
-      return [await createApiKey({ account_id, name, expire })];
+      return [
+        await createApiKey({
+          account_id,
+          name,
+          expire,
+          capabilities,
+          allowed_project_ids,
+        }),
+      ];
 
     case "edit": // change the name or expire time
       const apiKey = await getApiKey({ id, account_id });
@@ -282,6 +369,16 @@ async function doManageApiKeys({ action, account_id, name, expire, id }) {
       }
       if (expire !== undefined && apiKey.expire != expire) {
         apiKey.expire = expire;
+        changed = true;
+      }
+      if (capabilities !== undefined || allowed_project_ids !== undefined) {
+        const scope = normalizeApiKeyScope({
+          capabilities: capabilities ?? apiKey.capabilities,
+          allowed_project_ids:
+            allowed_project_ids ?? apiKey.allowed_project_ids,
+        });
+        apiKey.capabilities = scope.capabilities;
+        apiKey.allowed_project_ids = scope.allowed_project_ids;
         changed = true;
       }
       if (changed) {
@@ -300,7 +397,7 @@ Record that access happened by updating last_active.
 */
 export async function getAccountWithApiKey(
   secret: string,
-): Promise<{ account_id: string } | undefined> {
+): Promise<ApiKeyPrincipal | undefined> {
   log.debug("getAccountWithApiKey");
   const pool = getPool("medium");
   await ensureApiKeysV2Schema();
@@ -310,7 +407,7 @@ export async function getAccountWithApiKey(
     return undefined;
   }
   const { rows } = await pool.query(
-    "SELECT id,key_id,account_id,hash,expire FROM api_keys WHERE key_id=$1",
+    "SELECT id,key_id,account_id,hash,expire,capabilities,allowed_project_ids FROM api_keys WHERE key_id=$1",
     [v2.key_id],
   );
   return (
@@ -325,7 +422,7 @@ async function checkApiKeyRows({
 }: {
   rows: any[];
   secret: string;
-}): Promise<{ account_id: string } | undefined> {
+}): Promise<ApiKeyPrincipal | undefined> {
   if (rows.length == 0) return undefined;
   if (await isBanned(rows[0].account_id)) {
     log.debug("getAccountWithApiKey: banned api key ", rows[0]?.account_id);
@@ -350,10 +447,19 @@ async function checkApiKeyRows({
         key_id: rows[0].key_id ?? parseApiKeyV2(secret)?.key_id ?? null,
         account_id: rows[0].account_id,
         hash: rows[0].hash,
+        capabilities: rows[0].capabilities ?? [],
+        allowed_project_ids: rows[0].allowed_project_ids ?? [],
         expire: rows[0].expire ?? null,
         last_active: new Date(),
       });
-      return { account_id: rows[0].account_id };
+      return {
+        account_id: rows[0].account_id,
+        api_key_id: rows[0].id,
+        key_id: rows[0].key_id,
+        auth_method: "api_key",
+        capabilities: rows[0].capabilities ?? [],
+        allowed_project_ids: rows[0].allowed_project_ids ?? [],
+      };
     }
   }
   return undefined;
@@ -363,7 +469,7 @@ async function checkClusterAccountApiKeyDirectoryEntry({
   secret,
 }: {
   secret: string;
-}): Promise<{ account_id: string } | undefined> {
+}): Promise<ApiKeyPrincipal | undefined> {
   const v2 = parseApiKeyV2(secret);
   if (!v2) return undefined;
   const entry = await getClusterAccountApiKeyByKeyId(v2.key_id);
@@ -380,5 +486,12 @@ async function checkClusterAccountApiKeyDirectoryEntry({
     return undefined;
   }
   await touchClusterAccountApiKeyDirectoryEntry({ key_id: v2.key_id });
-  return { account_id: entry.account_id };
+  return {
+    account_id: entry.account_id,
+    api_key_id: -1,
+    key_id: entry.key_id,
+    auth_method: "api_key",
+    capabilities: (entry.capabilities ?? []) as ApiKeyCapability[],
+    allowed_project_ids: entry.allowed_project_ids ?? [],
+  };
 }

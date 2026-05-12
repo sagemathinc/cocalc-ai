@@ -25,8 +25,8 @@ Statuses:
 | SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, app proxy websockets, and raw Conat socket events; these now fast-fail above conservative active-request/message caps.                                                                                                                                      | Tune per-identity limits and production alert thresholds from telemetry.                                             |
 | SEC-BROWSER-001 | Browser exec/session automation              | guarded | critical | Browser-session async exec history was bounded, but active raw/QuickJS exec and typed action work per browser tab was not. Local per-tab caps now fast-fail excess work, `browser_raw_exec_policy` gates raw JS by admin setting, and the browser-session service now exposes a local allow/deny audit stream for raw exec, async exec, typed actions, and QuickJS sandbox host actions. | Continue QuickJS host-capability review and decide whether browser automation audit events need central persistence. |
 | SEC-CLI-001     | `cocalc-cli` authority classes               | guarded | high     | First-pass authority matrix completed. CLI auth config and daemon runtime storage now force private local permissions; ambient env auth can be disabled per invocation.                                                                                                                                                                                                                  | Audit endpoint-level freshness/2FA and API-key scope enforcement for dangerous CLI command families.                 |
-| SEC-KEY-001     | Account/project API keys                     | guarded | high     | First-pass audit completed. Legacy project-scoped CoCalc API-key management, auth, schema, UI, and project-rehome portability were removed. Account API keys remain broad account credentials.                                                                                                                                                                                           | Propagate auth method through hub dispatch and add scoped account-key capabilities/project allowlists.               |
-| SEC-REG-001     | Registration-token signup policy             | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                | Verify no-token behavior and add explicit public-signup setting.                                                     |
+| SEC-KEY-001     | Account/project API keys                     | guarded | high     | Legacy project-scoped CoCalc API-key management, auth, schema, UI, and project-rehome portability were removed. Account API keys now require explicit capabilities and project allowlists; API-key websocket hub RPC fails closed and HTTP Conat bridges deny unreviewed RPCs by default.                                                                                                | Propagate auth method through websocket hub dispatch if API-key hub RPC support is needed beyond the HTTP bridge.    |
+| SEC-REG-001     | Registration-token signup policy             | done    | high     | Public signup without a registration token is now explicit opt-in via `public_signup_without_registration_token`, default `no`. Deleting or disabling all registration tokens now blocks signup instead of making signup public, and the admin registration-token page shows the effective policy.                                                                                       | Revisit wording if SSO-specific signup policies need separate controls.                                              |
 | SEC-MASTER-001  | Master-key storage/unlock                    | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                | Inventory master-key read/storage paths and production unlock options.                                               |
 
 ## Findings
@@ -476,21 +476,59 @@ Implemented first guard/removal:
   project-key scope discriminator was removed with the project-key model.
 - The HTTP Conat project bridge now requires an account API key plus explicit
   `project_id`, then applies normal collaborator authorization.
+- Account API-key creation/editing now requires explicit capabilities and
+  explicit project allowlists for project, file, Codex, and exec access.
+- API-key websocket auth denies hub/account RPC subjects because function-level
+  API-key policy is not yet available there; allowed project subjects require
+  `project:exec` and a matching project allowlist.
+- HTTP Conat hub/project bridges enforce a small reviewed capability allowlist
+  and fail closed for unreviewed RPCs.
 
 Residual risk:
 
-- Account API keys remain broad account credentials.
 - Hub Conat API dispatch does not yet propagate whether an account principal
   came from a browser cookie, account API key, or agent bearer token into
-  endpoint transforms. That blocks a central "no API keys for dangerous
-  endpoints" policy until auth method is carried through dispatch.
+  endpoint transforms. Websocket API-key hub RPCs are therefore denied rather
+  than scoped at function granularity.
 - Installations created before this removal may need a one-time upgrade cleanup
   if they already have project-key columns or rows.
 
 Suggested next audit steps:
 
-1. Propagate auth method through hub dispatch.
-2. Reject account API-key auth on dangerous account, billing, admin, host, and
-   secret-management endpoints until scoped capabilities exist.
-3. Add `capabilities` and `allowed_project_ids` to account API keys and the
-   cluster account API-key directory.
+1. Propagate auth method through hub dispatch if websocket API-key hub RPCs are
+   needed.
+2. Add central audit events for API-key create/delete/use/deny.
+3. Expand reviewed API-key capabilities only for concrete product workflows.
+
+### SEC-REG-001: Registration-Token Signup Policy
+
+Status: `done`.
+
+Severity: high.
+
+Evidence:
+
+- The old signup policy inferred "registration token required" from whether any
+  active registration tokens existed.
+- That made an empty or all-disabled token table a fail-open state: registration
+  tokens were intended to restrict signup, but removing every token could make
+  signup public.
+
+Implemented guard:
+
+- Added the explicit admin setting
+  `public_signup_without_registration_token`, default `no`.
+- Server auth token checks now require registration tokens unless that setting
+  is explicitly enabled.
+- Hub webapp configuration now reports "registration token required" from the
+  explicit setting instead of active-token existence.
+- The admin registration-token page now has a visible public-signup toggle and
+  warns that no active tokens means email signup is blocked when public signup
+  is disabled.
+- Added focused tests for the server and hub policy helpers.
+
+Residual risk:
+
+- This pass covers the email/password registration-token policy. SSO signup
+  behavior should be reviewed separately if public SSO strategies are used to
+  create new accounts.

@@ -8,18 +8,20 @@ import { conat } from "@cocalc/backend/conat";
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import hubBridge from "@cocalc/server/api/hub-bridge";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { assertHttpHubApiKeyAllowed } from "@cocalc/server/api/http-api-key-policy";
 
 export default async function handle(req, res) {
   try {
-    const { account_id } = (await getAccountFromApiKey(req)) ?? {};
-    if (!account_id) {
+    const principal = await getAccountFromApiKey(req);
+    if (!principal?.account_id) {
       throw Error(
         "must be signed in and MUST provide an api key (cookies are not allowed)",
       );
     }
     const { name, args, timeout } = getParams(req);
+    assertHttpHubApiKeyAllowed({ principal, name, args });
     const resp = await hubBridge({
-      account_id,
+      account_id: principal.account_id,
       name,
       args,
       timeout,

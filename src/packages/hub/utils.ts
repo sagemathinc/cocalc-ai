@@ -3,23 +3,20 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { callback2 } from "@cocalc/util/async-utils";
 import type { PostgreSQL } from "@cocalc/database/postgres/types";
 import { PassportStrategyDB } from "@cocalc/database/settings/auth-sso-types";
-import { isLaunchpadProduct } from "@cocalc/server/launchpad/mode";
+import getServerSettings from "./servers/server-settings";
 
-export async function have_active_registration_tokens(
-  db: PostgreSQL,
+export async function requires_registration_token(
+  _db: PostgreSQL,
 ): Promise<boolean> {
-  if (isLaunchpadProduct()) {
-    return true;
+  const settings = await getServerSettings();
+  if (settings.all.public_signup_without_registration_token) {
+    return false;
   }
-  const resp = await callback2(db._query, {
-    query:
-      "SELECT EXISTS(SELECT 1 FROM registration_tokens WHERE disabled IS NOT true) AS have_tokens",
-    cache: true,
-  });
-  return resp.rows[0]?.have_tokens === true;
+  // Registration tokens are required by default. If there are no active tokens,
+  // signup is intentionally blocked instead of silently becoming public.
+  return true;
 }
 
 export async function get_passports(
