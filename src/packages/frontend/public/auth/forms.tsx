@@ -222,6 +222,9 @@ export function PublicSignInForm({
         setFactorCode("");
         return;
       }
+      if (!result?.account_id) {
+        throw new Error("Sign in failed. Please try again.");
+      }
       setStoredControlPlaneOrigin(result?.home_bay_url);
       const redirectTarget =
         typeof redirectToPath === "function"
@@ -250,6 +253,9 @@ export function PublicSignInForm({
           code: factorCode.trim(),
         },
       });
+      if (!result?.account_id) {
+        throw new Error("Second factor verification failed. Please try again.");
+      }
       setStoredControlPlaneOrigin(result?.home_bay_url);
       const redirectTarget =
         typeof redirectToPath === "function"

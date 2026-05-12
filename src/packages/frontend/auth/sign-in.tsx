@@ -57,6 +57,9 @@ export default function SignInForm({ onNavigate }: SignInProps) {
         setFactorCode("");
         return;
       }
+      if (!result?.account_id) {
+        throw new Error("Sign in failed. Please try again.");
+      }
       setStoredControlPlaneOrigin(result?.home_bay_url);
       window.location.href = appUrl("app?sign-in");
     } catch (err) {
@@ -78,9 +81,12 @@ export default function SignInForm({ onNavigate }: SignInProps) {
         body: {
           challenge_id: challengeId,
           method: factorMethod,
-          code: factorCode,
+          code: factorCode.trim(),
         },
       });
+      if (!result?.account_id) {
+        throw new Error("Second factor verification failed. Please try again.");
+      }
       setStoredControlPlaneOrigin(result?.home_bay_url);
       window.location.href = appUrl("app?sign-in");
     } catch (err) {

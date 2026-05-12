@@ -10,12 +10,14 @@ import os from "node:os";
 import { join } from "node:path";
 
 import { after, before } from "@cocalc/server/test";
+import getPool from "@cocalc/database/pool";
 import createAccount from "@cocalc/server/accounts/create-account";
 import { createRememberMeCookie } from "@cocalc/server/auth/remember-me";
 import { recordNewAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { base32Decode } from "@cocalc/server/auth/totp";
 import {
   confirmTwoFactorSetup,
+  createSignInSecondFactorChallenge,
   freshAuthSession,
   startTwoFactorSetup,
 } from "@cocalc/server/auth/two-factor";
@@ -117,5 +119,68 @@ describe("freshAuthSession", () => {
     ).resolves.toMatchObject({
       factor_level: "recovery_code",
     });
+  });
+});
+
+describe("sign-in second factor challenges", () => {
+  it("caps failed attempts across repeated challenges", async () => {
+    const account_id = uuid();
+    const email = `${uuid()}@test.com`;
+    const password = "cocalcrulez";
+
+    await createAccount({
+      email,
+      password,
+      firstName: "Test",
+      lastName: "User",
+      account_id,
+    });
+
+    const setup = await startTwoFactorSetup({ account_id });
+    await confirmTwoFactorSetup({
+      req: createRequest(),
+      account_id,
+      factor_id: setup.factor_id,
+      code: createTotpCode(setup.secret),
+    });
+
+    await getPool().query(
+      `
+        INSERT INTO account_auth_challenges(
+          id,
+          account_id,
+          purpose,
+          password_verified_at,
+          factor_verified_at,
+          verified_factor_type,
+          target_session_hash,
+          expire,
+          attempt_count,
+          max_attempts,
+          completed_at,
+          created,
+          metadata
+        ) VALUES(
+          $1::UUID,
+          $2::UUID,
+          'sign_in',
+          NOW(),
+          NULL,
+          NULL,
+          NULL,
+          NOW() + INTERVAL '10 minutes',
+          32,
+          8,
+          NULL,
+          NOW(),
+          '{}'::JSONB
+        )
+      `,
+      [uuid(), account_id],
+    );
+
+    await expect(
+      createSignInSecondFactorChallenge({ account_id }),
+    ).rejects.toThrow("too many recent second factor attempts");
   });
 });

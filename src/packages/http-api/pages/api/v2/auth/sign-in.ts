@@ -87,7 +87,15 @@ export default async function signIn(req: Request, res: Response) {
   }
 
   if (await hasActiveSecondFactor(account_id)) {
-    const challenge = await createSignInSecondFactorChallenge({ account_id });
+    let challenge;
+    try {
+      challenge = await createSignInSecondFactorChallenge({ account_id });
+    } catch (err) {
+      res.json({
+        error: getSecondFactorChallengeErrorMessage(err),
+      });
+      return;
+    }
     res.json({
       mfa_required: true,
       challenge_id: challenge.challenge_id,
@@ -134,6 +142,14 @@ function getSignInErrorMessage(
     return message;
   }
   return "Problem signing into account.";
+}
+
+function getSecondFactorChallengeErrorMessage(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  if (message.includes("too many recent second factor attempts")) {
+    return "Too many recent second factor attempts. Wait about an hour, then try again.";
+  }
+  return "Problem starting second factor verification.";
 }
 
 export async function getAccount(

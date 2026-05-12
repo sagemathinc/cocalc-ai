@@ -55,6 +55,8 @@ const FACTOR_STATUS_DISABLED = "disabled";
 const CHALLENGE_PURPOSE_SIGN_IN = "sign_in";
 const CHALLENGE_TTL_MS = 10 * 60_000;
 const CHALLENGE_MAX_ATTEMPTS = 8;
+const SIGN_IN_CHALLENGE_FAILED_ATTEMPT_WINDOW_MS = 60 * 60_000;
+const SIGN_IN_CHALLENGE_MAX_RECENT_FAILED_ATTEMPTS = 32;
 const RECOVERY_CODE_COUNT = 10;
 const FACTOR_SECRET_AAD = "account_second_factor_secret";
 const DEFAULT_FACTOR_LABEL = "Authenticator app";
@@ -778,6 +780,46 @@ export async function createSignInSecondFactorChallenge({
     account_id: accountId,
     action: "create sign-in second-factor challenge",
     fn: async (db) => {
+      const recentFailedAttemptsRows = (
+        await db.query(
+          `
+            SELECT coalesce(sum(attempt_count), 0)::INT AS attempts
+              FROM account_auth_challenges
+             WHERE account_id = $1::UUID
+               AND purpose = $2::VARCHAR(32)
+               AND factor_verified_at IS NULL
+               AND created > $3::TIMESTAMP
+          `,
+          [
+            accountId,
+            CHALLENGE_PURPOSE_SIGN_IN,
+            new Date(Date.now() - SIGN_IN_CHALLENGE_FAILED_ATTEMPT_WINDOW_MS),
+          ],
+        )
+      ).rows as { attempts: number }[];
+      const recentFailedAttempts = recentFailedAttemptsRows[0]?.attempts;
+      if (
+        (recentFailedAttempts ?? 0) >=
+        SIGN_IN_CHALLENGE_MAX_RECENT_FAILED_ATTEMPTS
+      ) {
+        throw new Error("too many recent second factor attempts");
+      }
+      await db.query(
+        `
+          UPDATE account_auth_challenges
+             SET completed_at = NOW(),
+                 metadata = coalesce(metadata, '{}'::JSONB) || $3::JSONB
+           WHERE account_id = $1::UUID
+             AND purpose = $2::VARCHAR(32)
+             AND completed_at IS NULL
+             AND factor_verified_at IS NULL
+        `,
+        [
+          accountId,
+          CHALLENGE_PURPOSE_SIGN_IN,
+          { superseded_by_new_sign_in_challenge: true },
+        ],
+      );
       await db.query(
         `
           INSERT INTO account_auth_challenges(
