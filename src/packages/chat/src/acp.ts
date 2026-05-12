@@ -59,20 +59,42 @@ function appendStreamMessageMutable(
     last?.type === "event" &&
     eventHasText(last.event) &&
     eventHasText(nextEvent) &&
-    last.event.type === nextEvent.type
+    last.event.type === nextEvent.type &&
+    shouldAppendStreamTextEvent(last.event, nextEvent)
   ) {
     const merged: AcpStreamMessage = {
       ...last,
       event: {
         ...last.event,
         text: joinStreamText(last.event.text, nextEvent.text),
+        ...(isDeltaTextEvent(last.event) || isDeltaTextEvent(nextEvent)
+          ? { delta: true }
+          : {}),
       },
       seq: message.seq ?? last.seq,
+      time: message.time ?? last.time,
     };
     events[events.length - 1] = merged;
     return;
   }
   events.push(message);
+}
+
+function shouldAppendStreamTextEvent(
+  previous: Extract<AcpStreamEvent, { text: string }>,
+  next: Extract<AcpStreamEvent, { text: string }>,
+): boolean {
+  if (isDeltaTextEvent(next)) return true;
+  return (
+    mergeProgressiveMessageText(previous.text, next.text, {
+      previousHasDelta: false,
+      nextIsDelta: false,
+    }) == null
+  );
+}
+
+function isDeltaTextEvent(event: Extract<AcpStreamEvent, { text: string }>) {
+  return "delta" in event && event.delta === true;
 }
 
 function joinStreamText(previousText: string, nextText: string): string {

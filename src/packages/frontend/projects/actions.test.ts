@@ -777,6 +777,51 @@ describe("ProjectsActions project metadata updates", () => {
     expect(actions.set_project_closed).toHaveBeenCalledWith(project_id);
   });
 
+  it("does not close an open project that is present in a synced table snapshot", () => {
+    const projectMap = ImmutableMap<string, any>([
+      [
+        project_id,
+        ImmutableMap({
+          title: "Local Project",
+        }),
+      ],
+    ]);
+    const incomingProjectMap = ImmutableMap<string, any>([
+      [
+        project_id,
+        ImmutableMap({
+          title: "Renamed Project",
+        }),
+      ],
+    ]);
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map"
+        ? projectMap
+        : key === "open_projects"
+          ? [project_id]
+          : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+    const { actions, redux } = makeActions();
+    actions.set_project_closed = jest.fn();
+
+    actions.applyProjectsTableSnapshot(incomingProjectMap);
+
+    expect(redux._set_state).toHaveBeenCalled();
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.getIn([
+        project_id,
+        "title",
+      ]),
+    ).toBe("Renamed Project");
+    expect(actions.set_project_closed).not.toHaveBeenCalled();
+  });
+
   it("removes a missing kiosk project while preserving unrelated local projects", () => {
     const kioskProjectId = "project-kiosk";
     const otherProjectId = "project-other";

@@ -160,8 +160,8 @@ const AUTH_FAIL_BLOCK_MS = Math.max(
 );
 
 const DEFAULT_INBOUND_EVENT_WINDOW_MS = 10_000;
-const DEFAULT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW = 2_000;
-const DEFAULT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW = 10_000;
+const DEFAULT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW = 10_000;
+const DEFAULT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW = 50_000;
 const DEFAULT_INBOUND_EVENT_BLOCK_MS = 10_000;
 
 function encodedPacketSize(encoded: any): number {
@@ -198,6 +198,15 @@ function isHubUser(user: any): boolean {
     typeof user === "object" &&
     typeof user.hub_id === "string" &&
     user.hub_id.length > 0
+  );
+}
+
+function isProjectUser(user: any): boolean {
+  return (
+    user != null &&
+    typeof user === "object" &&
+    typeof user.project_id === "string" &&
+    user.project_id.length > 0
   );
 }
 
@@ -711,6 +720,14 @@ export class ConatServer extends EventEmitter {
     return "anonymous";
   };
 
+  private inboundSocketLimit = (socket): number => {
+    const user = this.stats[socket.id]?.user;
+    if (isHubUser(user) || isProjectUser(user)) {
+      return Number.MAX_SAFE_INTEGER;
+    }
+    return this.maxInboundEventsPerSocketWindow;
+  };
+
   private pruneInboundAdmission = (now: number) => {
     if (now - this.lastInboundAdmissionPrune < this.inboundEventWindowMs) {
       return;
@@ -893,7 +910,7 @@ export class ConatServer extends EventEmitter {
         records: this.inboundAdmissionBySocket,
         key: socket.id,
         dimension: "socket",
-        limit: this.maxInboundEventsPerSocketWindow,
+        limit: this.inboundSocketLimit(socket),
         now,
         respond,
       })
