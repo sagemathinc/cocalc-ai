@@ -27,6 +27,7 @@ Statuses:
 | SEC-CLI-001     | `cocalc-cli` authority classes               | guarded | high     | First-pass authority matrix completed. CLI auth config and daemon runtime storage now force private local permissions; ambient env auth can be disabled per invocation.                                                                                                                                                                                                                  | Audit endpoint-level freshness/2FA and API-key scope enforcement for dangerous CLI command families.                 |
 | SEC-KEY-001     | Account/project API keys                     | guarded | high     | Legacy project-scoped CoCalc API-key management, auth, schema, UI, and project-rehome portability were removed. Account API keys now require explicit capabilities and project allowlists; API-key websocket hub RPC fails closed and HTTP Conat bridges deny unreviewed RPCs by default.                                                                                                | Propagate auth method through websocket hub dispatch if API-key hub RPC support is needed beyond the HTTP bridge.    |
 | SEC-REG-001     | Registration-token signup policy             | done    | high     | Public signup without a registration token is now explicit opt-in via `public_signup_without_registration_token`, default `no`. Deleting/disabling all tokens blocks signup, failed token attempts are throttled, and the admin page shows the effective policy.                                                                                                                         | Hash stored token values and review SSO-specific signup policy separately.                                           |
+| SEC-ROOTFS-001  | Root filesystem count/storage quotas         | blocked | critical | Rootfs creation/storage is a likely unbounded durable resource surface. Release policy needs membership-tier caps for rootfs count, total rootfs storage, and per-rootfs storage before hosted release.                                                                                                                                                                                  | Add membership-tier limits and enforce them server-side on rootfs create/clone/import/grow paths.                    |
 | SEC-MASTER-001  | Master-key storage/unlock                    | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                | Inventory master-key read/storage paths and production unlock options.                                               |
 
 ## Findings
@@ -540,3 +541,48 @@ Residual risk:
 - Registration-token values are still stored in the database token column. Since
   generated tokens are high entropy, hashing tokens and showing the cleartext
   only at creation time is the better follow-up than reversible encryption.
+
+### SEC-ROOTFS-001: Root Filesystem Count and Storage Quotas
+
+Status: `blocked`.
+
+Severity: critical.
+
+Evidence:
+
+- Root filesystems are durable, user-created storage resources.
+- Current audit notes indicate users may be able to create an unlimited number
+  of root filesystems with unbounded total storage.
+- This is a direct hosted storage-cost risk and can also amplify image
+  build/pull/distribution, backup, snapshot, and project-start load.
+
+Required release policy:
+
+- Add admin-editable membership-tier limits:
+  - `rootfs_count`
+  - `rootfs_total_storage_gb`
+  - `rootfs_max_storage_gb`
+- Enforce limits server-side before create, clone, import, and grow operations.
+- Preserve or re-check limits on ownership transfer, delete, restore, and
+  concurrent operations.
+- Show effective limits and current usage in user/admin UI.
+- Emit quota-denial telemetry with account, tier, effective limit, current
+  usage, operation, and requested size.
+
+Initial default policy:
+
+| Tier     | `rootfs_count` | `rootfs_total_storage_gb` | `rootfs_max_storage_gb` |
+| -------- | -------------- | ------------------------- | ----------------------- |
+| free     | 0              | 0                         | 0                       |
+| student  | 0              | 0                         | 0                       |
+| standard | 20             | 25                        | 10                      |
+| pro      | 250            | 250                       | 30                      |
+
+Suggested next audit steps:
+
+1. Inventory rootfs create/clone/import/grow/delete entrypoints and the
+   authoritative size/accounting fields.
+2. Add membership-tier schema/defaults/admin UI for the three rootfs limits.
+3. Add server-side admission checks and focused tests for create, clone, import,
+   grow, delete, and concurrent quota races.
+4. Add admin/CLI readouts for top rootfs users and near-limit users.

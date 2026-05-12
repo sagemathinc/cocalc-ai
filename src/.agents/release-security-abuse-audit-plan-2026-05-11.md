@@ -59,6 +59,7 @@ Primary release risks:
 9. Registration-token configuration where "no configured token" accidentally
    means "public signup allowed".
 10. Plaintext-on-disk master-key handling for encrypted application secrets.
+11. User-created root filesystems with unbounded count or storage size.
 
 ## Audit Rules
 
@@ -115,6 +116,8 @@ Initial inventory buckets:
     restrictions.
 14. Registration-token signup policy and public-signup configuration.
 15. Master-key loading, storage, rotation, and bay startup unlock flows.
+16. Root filesystem create/edit/publish/storage flows and image distribution
+    side effects.
 
 Inventory commands:
 
@@ -123,6 +126,7 @@ rg -n "router\\.|app\\.|async_query|rpcService|service\\(|call\\(|request\\(" sr
 rg -n "projectConat|hub\\.|account_client|webapp_client|conat_client" src/packages -g'*.ts' -g'*.tsx'
 rg -n "setInterval|queue|schedule|worker|spawn|exec|browser exec|rate|limit|quota|timeout" src/packages -g'*.ts' -g'*.tsx'
 rg -n "admin|operator|impersonat|entitlement|billing|purchase|host" src/packages -g'*.ts' -g'*.tsx'
+rg -n "rootfs|root filesystem|root filesystem|root_filesystem|root_filesystems|rootfs_images" src/packages -g'*.ts' -g'*.tsx'
 ```
 
 ## Phase 1: Central Admission Control
@@ -250,6 +254,80 @@ Audit questions:
 - Are agent sessions cleaned up if the browser disappears, project host restarts,
   or hub restarts?
 - Are token/cost-heavy model calls bounded independently from local worker time?
+
+## Phase 2b: Root Filesystem Storage Limits
+
+Goal: user-created root filesystems must be useful for paid users but bounded as
+a storage and image-distribution abuse surface.
+
+Current concern:
+
+- A user may be able to create an unlimited number of root filesystems.
+- Each root filesystem may be able to grow without a per-rootfs cap.
+- Total rootfs storage owned by one account may be unbounded.
+- This creates direct storage-cost exposure and can indirectly amplify project
+  start, image build, image pull, snapshot, backup, and distribution load.
+
+Required release policy:
+
+- Rootfs creation is controlled by admin-editable membership-tier usage limits,
+  with explicit admin overrides where the membership framework supports them.
+- Limits are enforced server-side before create/clone/import/grow operations, not
+  just hidden in the frontend.
+- Every rootfs ownership transfer, delete, clone, import, and resize path must
+  preserve or re-check limits.
+- Denials must include the effective limit, current usage, account/tier, and
+  requested operation.
+- Users and admins can see current rootfs usage and effective limits before a
+  create/grow attempt fails.
+
+Required membership-tier limit fields:
+
+- `rootfs_count`: maximum number of root filesystems owned by the account.
+- `rootfs_total_storage_gb`: maximum sum of storage across all root filesystems
+  owned by the account.
+- `rootfs_max_storage_gb`: maximum storage size of any one root filesystem.
+
+Initial default policy:
+
+| Tier     | `rootfs_count` | `rootfs_total_storage_gb` | `rootfs_max_storage_gb` |
+| -------- | -------------- | ------------------------- | ----------------------- |
+| free     | 0              | 0                         | 0                       |
+| student  | 0              | 0                         | 0                       |
+| standard | 20             | 25                        | 10                      |
+| pro      | 250            | 250                       | 30                      |
+
+Audit targets:
+
+- rootfs create/clone/import/edit/delete APIs.
+- rootfs storage accounting model and owner lookup.
+- membership-tier schema/defaults/admin UI for the three new limits.
+- project/rootfs selection UI so free/student users do not see broken create
+  affordances.
+- host/project image distribution paths that can be triggered by creating or
+  modifying root filesystems.
+- CLI/API paths that mutate rootfs state.
+
+Audit questions:
+
+- What is the authoritative byte/GB value for a rootfs size?
+- Is deleted rootfs storage reclaimed promptly, eventually, or retained in
+  snapshots/backups?
+- Can one account create rootfs objects owned by another account or organization?
+- Can project-local code create, clone, or resize root filesystems?
+- Can rootfs images be uploaded/imported from arbitrary remote URLs, and are
+  downloads bounded?
+- Are concurrent create/clone/grow operations serialized enough to prevent two
+  operations from passing quota checks simultaneously?
+- Does membership downgrade or admin override expiry prevent future growth while
+  handling existing over-limit root filesystems predictably?
+
+Release gate:
+
+- No account can create unbounded rootfs count or storage.
+- Free and student tiers cannot create root filesystems by default.
+- Standard and pro tiers have the initial bounded defaults listed above.
+- Rootfs quota denials are visible in user/admin UI and abuse telemetry.
 
 ## Phase 3: Browser Automation and Browser Exec
 
@@ -599,6 +677,7 @@ Minimum metrics/logs:
 - host create/start/stop/deprovision attempts
 - project wake/start attempts
 - membership/billing mutation attempts
+- rootfs create/clone/import/grow/delete attempts and quota denials
 - API-key creations, revocations, and dangerous-use attempts
 - registration-token signup attempts and public-signup denials
 - master-key unlock/startup mode and failures
@@ -697,7 +776,7 @@ Do not release hosted SaaS until:
   non-exploitable.
 - Installable defaults are safe for accidental LAN exposure or loudly warn.
 - Operators have at least basic abuse visibility for Codex, websockets, browser
-  automation, notifications, hosts, and project starts.
+  automation, notifications, hosts, rootfs usage, and project starts.
 
 Do not release installable CoCalc Plus until:
 
@@ -722,6 +801,9 @@ Do not release installable CoCalc Plus until:
    - top users in absolute usage,
    - users closest to their effective limit,
    - effective limits after membership tier and admin overrides.
+5. Every user-consumable durable resource must have a clear bound. Rootfs count,
+   total storage, and per-rootfs storage are release-gating membership-tier
+   limits.
 
 ## Remaining Questions
 
