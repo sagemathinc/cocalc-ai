@@ -91,6 +91,7 @@ export interface CustomizeState {
 
   openai_enabled: boolean;
   agent_openai_codex_enabled: boolean;
+  browser_raw_exec_policy?: string;
   google_vertexai_enabled: boolean;
   mistral_enabled: boolean;
   anthropic_enabled: boolean;

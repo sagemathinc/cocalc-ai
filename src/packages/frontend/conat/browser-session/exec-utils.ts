@@ -20,6 +20,8 @@ export type BrowserNotifyType =
 
 export type BrowserExecMode = "raw_js" | "quickjs_wasm";
 
+export type BrowserRawExecPolicy = "disabled" | "admin_only" | "enabled";
+
 export type BrowserBashOptions = {
   cwd?: string;
   path?: string;
@@ -49,6 +51,14 @@ export type BrowserTerminalHistoryOptions = {
 export function normalizePosture(value: unknown): BrowserAutomationPosture {
   const v = `${value ?? ""}`.trim().toLowerCase();
   return v === "prod" ? "prod" : "dev";
+}
+
+export function normalizeRawExecPolicy(value: unknown): BrowserRawExecPolicy {
+  const v = `${value ?? ""}`.trim().toLowerCase();
+  if (v === "admin_only" || v === "enabled") {
+    return v;
+  }
+  return "disabled";
 }
 
 export function normalizePolicy(
@@ -165,20 +175,28 @@ export function resolveExecMode({
   project_id,
   posture,
   policy,
+  rawExecPolicy,
+  isAdmin,
 }: {
   project_id: string;
   posture?: BrowserAutomationPosture;
   policy?: BrowserExecPolicyV1;
+  rawExecPolicy?: BrowserRawExecPolicy | string;
+  isAdmin?: boolean;
 }): {
   posture: BrowserAutomationPosture;
   policy?: BrowserExecPolicyV1;
   mode: BrowserExecMode;
 } {
   const scoped = enforceExecPolicy({ project_id, posture, policy });
+  const callerRequestedRaw =
+    scoped.posture !== "prod" || !!scoped.policy?.allow_raw_exec;
+  const normalizedRawExecPolicy = normalizeRawExecPolicy(rawExecPolicy);
+  const deploymentAllowsRaw =
+    normalizedRawExecPolicy === "enabled" ||
+    (normalizedRawExecPolicy === "admin_only" && !!isAdmin);
   const mode: BrowserExecMode =
-    scoped.posture === "prod" && !scoped.policy?.allow_raw_exec
-      ? "quickjs_wasm"
-      : "raw_js";
+    callerRequestedRaw && deploymentAllowsRaw ? "raw_js" : "quickjs_wasm";
   return { ...scoped, mode };
 }
 

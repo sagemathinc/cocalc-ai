@@ -34,6 +34,7 @@ import {
   createExecId,
   enforceActionPolicy,
   isAllowedActionName,
+  normalizeRawExecPolicy,
   resolveExecMode,
   sanitizeBashOptions,
   sanitizeCellIdList,
@@ -165,6 +166,24 @@ export function createBrowserSessionAutomation({
   let activeExecOps = 0;
   let activeActions = 0;
   let staleHeartbeatProbe: Promise<void> | undefined;
+
+  const getBrowserRawExecPolicy = () =>
+    normalizeRawExecPolicy(
+      redux.getStore("customize")?.get("browser_raw_exec_policy"),
+    );
+
+  const isBrowserRawExecAdmin = () =>
+    !!redux.getStore("account")?.get("is_admin");
+
+  const resolveExecModeForSession = (
+    args: Parameters<typeof resolveExecMode>[0],
+  ) =>
+    resolveExecMode({
+      ...args,
+      rawExecPolicy: getBrowserRawExecPolicy(),
+      isAdmin: isBrowserRawExecAdmin(),
+    });
+
   const resetAdmissionCounters = (): void => {
     activeExecOps = 0;
     activeActions = 0;
@@ -2169,7 +2188,7 @@ export function createBrowserSessionAutomation({
     execOpTtlMs: EXEC_OP_TTL_MS,
     maxExecCodeLength: MAX_EXEC_CODE_LENGTH,
     createExecId,
-    resolveExecMode,
+    resolveExecMode: resolveExecModeForSession,
     executeBrowserScript,
     claimExecutionSlot: claimExecSlot,
   });
@@ -2205,7 +2224,11 @@ export function createBrowserSessionAutomation({
     closeFile: async ({ project_id, path }) =>
       await closeFileInProject({ project_id, path }),
     exec: async ({ project_id, code, posture, policy }) => {
-      const enforced = resolveExecMode({ project_id, posture, policy });
+      const enforced = resolveExecModeForSession({
+        project_id,
+        posture,
+        policy,
+      });
       return {
         ok: true,
         result: await runBrowserScriptWithAdmission({

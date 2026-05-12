@@ -270,8 +270,8 @@ export type BrowserNetworkTraceEvent = {
 
 export type BrowserExecPolicyV1 = {
   version: 1;
-  // In prod posture, raw JS execution is disabled by default and exec runs in
-  // a constrained sandbox mode. Set this to true to permit raw JS evaluation.
+  // Request raw JS evaluation in prod posture. The browser-side service still
+  // gates this through the deployment's browser_raw_exec_policy admin setting.
   allow_raw_exec?: boolean;
   // Optional hard scope for project/workspace ids.
   allowed_project_ids?: string[];

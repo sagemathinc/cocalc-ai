@@ -477,6 +477,8 @@ Policy:
 - document false positives with package path and exploitability reason
 - avoid risky major upgrades without focused smoke tests
 
+News Item to be aware of -- [**Postmortem: TanStack NPM supply-chain compromise**](https://news.ycombinator.com/item?id=48083938)
+
 ## Phase 8: Installable CoCalc Plus Defaults
 
 Goal: local install should not become insecure when exposed to a LAN or reverse

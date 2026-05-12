@@ -26,10 +26,11 @@ export const BROWSER_EXEC_API_DECLARATION = `/**
  * Notes:
  * - paths are absolute (e.g. "/home/user/file.txt")
  * - api.projectId is the project id passed to browser exec
- * - In prod posture, if policy.allow_raw_exec is not true, exec runs in a
- *   QuickJS sandbox with a constrained API (api.navigate/click/type/...) where
- *   each api call executes immediately via policy-gated host actions and
- *   returns structured results to the script.
+ * - Raw browser JavaScript must be allowed by the site admin setting
+ *   browser_raw_exec_policy. Otherwise exec runs in a QuickJS sandbox with a
+ *   constrained API (api.navigate/click/type/...) where each api call executes
+ *   immediately via policy-gated host actions and returns structured results to
+ *   the script.
  */
 export type BrowserOpenFileInfo = {
   project_id: string;
