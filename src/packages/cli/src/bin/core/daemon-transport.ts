@@ -6,6 +6,7 @@
  */
 import { spawn } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -18,6 +19,8 @@ import { createConnection as createNetConnection } from "node:net";
 
 export const DAEMON_CONNECT_TIMEOUT_MS = 3_000;
 export const DAEMON_RPC_TIMEOUT_MS = 30_000;
+export const DAEMON_RUNTIME_DIR_MODE = 0o700;
+export const DAEMON_PRIVATE_FILE_MODE = 0o600;
 
 export type DaemonAction =
   | "ping"
@@ -99,6 +102,12 @@ export function daemonLogPath(env = process.env): string {
   const uid =
     typeof process.getuid === "function" ? String(process.getuid()) : "user";
   return join(daemonRuntimeDir(env), `cli-daemon-${uid}.log`);
+}
+
+export function ensurePrivateDaemonRuntimeDir(path: string): void {
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true, mode: DAEMON_RUNTIME_DIR_MODE });
+  chmodSync(dir, DAEMON_RUNTIME_DIR_MODE);
 }
 
 function daemonSpawnTarget(): { cmd: string; args: string[] } {
@@ -306,7 +315,7 @@ export async function startDaemonProcess({
     }
   }
 
-  mkdirSync(dirname(socketPath), { recursive: true });
+  ensurePrivateDaemonRuntimeDir(socketPath);
   const { cmd, args } = daemonSpawnTarget();
   const daemonArgs = [...args, "daemon", "serve", "--socket", socketPath];
   const child = spawn(cmd, daemonArgs, {

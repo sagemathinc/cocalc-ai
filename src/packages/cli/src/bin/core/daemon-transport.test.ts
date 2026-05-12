@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   currentDaemonFingerprint,
   daemonFingerprintMatches,
+  ensurePrivateDaemonRuntimeDir,
 } from "./daemon-transport";
 
 test("currentDaemonFingerprint tracks the CLI script path and mtime", () => {
@@ -27,4 +28,11 @@ test("daemonFingerprintMatches requires an exact fingerprint match", () => {
   assert.equal(daemonFingerprintMatches("a", "b"), false);
   assert.equal(daemonFingerprintMatches("a", null), false);
   assert.equal(daemonFingerprintMatches("a", undefined), false);
+});
+
+test("ensurePrivateDaemonRuntimeDir creates a private runtime directory", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "cocalc-cli-daemon-"));
+  const socket = path.join(dir, "runtime", "cli-daemon.sock");
+  ensurePrivateDaemonRuntimeDir(socket);
+  assert.equal(statSync(path.dirname(socket)).mode & 0o777, 0o700);
 });

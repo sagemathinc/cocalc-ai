@@ -12,7 +12,6 @@ they have no password, then the provided one is ignored.
 
 import getPool from "@cocalc/database/pool";
 import { randomBytes } from "node:crypto";
-import { getLocalProjectCollaboratorAccessStatus } from "@cocalc/server/conat/project-local-access";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import passwordHash, {
   verifyPassword,
@@ -39,6 +38,8 @@ const MAX_API_KEYS = 100000;
 const API_KEY_V2_PREFIX = "sk-cocalc-v2";
 const API_KEY_ID_BYTES = 18;
 const API_KEY_SECRET_BYTES = 32;
+export const PROJECT_API_KEYS_DISABLED_MESSAGE =
+  "Project-specific CoCalc API keys are disabled. Use account API keys instead; scoped account API keys will replace project-specific keys.";
 
 let apiKeysV2SchemaReady: Promise<void> | undefined;
 
@@ -105,6 +106,7 @@ async function syncAccountApiKeyDirectory({
     account_id,
     home_bay_id,
     hash,
+    scope: "account",
     expire: expire == null ? null : new Date(expire).valueOf(),
     last_active: last_active == null ? null : new Date(last_active).valueOf(),
   });
@@ -139,6 +141,9 @@ export default async function manageApiKeys({
       account_id,
       project_id,
     });
+    if (action === "create" || action === "edit") {
+      throw Error(PROJECT_API_KEYS_DISABLED_MESSAGE);
+    }
   }
 
   return await doManageApiKeys({
@@ -209,6 +214,9 @@ async function deleteApiKey({ account_id, project_id, id }) {
       project_id,
       id,
     ]);
+    await deleteClusterAccountApiKeyDirectoryEntry({
+      key_id: `${existing?.key_id ?? ""}`.trim(),
+    });
   } else {
     await pool.query("DELETE FROM api_keys WHERE account_id=$1 AND id=$2", [
       account_id,
@@ -242,6 +250,9 @@ async function createApiKey({
 }): Promise<ApiKeyType> {
   const pool = getPool();
   await ensureApiKeysV2Schema();
+  if (project_id) {
+    throw Error(PROJECT_API_KEYS_DISABLED_MESSAGE);
+  }
   if ((await numKeys(account_id)) >= MAX_API_KEYS) {
     throw Error(
       `There is a limit of ${MAX_API_KEYS} per account; please delete some api keys.`,
@@ -355,22 +366,15 @@ async function doManageApiKeys({
 }
 
 /*
-Get the account ({account_id} or {project_id}!) that has the given api key,
+Get the account that has the given api key,
 or returns undefined if there is no such account, or if the account
 that owns the api key is banned.
-
-If the api_key is not an account wide key, instead return the project_id
-if the key is a valid key for a project.
 
 Record that access happened by updating last_active.
 */
 export async function getAccountWithApiKey(
   secret: string,
-): Promise<
-  | { account_id: string; project_id?: undefined }
-  | { account_id?: undefined; project_id: string }
-  | undefined
-> {
+): Promise<{ account_id: string } | undefined> {
   log.debug("getAccountWithApiKey");
   const pool = getPool("medium");
   await ensureApiKeysV2Schema();
@@ -395,41 +399,19 @@ async function checkApiKeyRows({
 }: {
   rows: any[];
   secret: string;
-}): Promise<
-  | { account_id: string; project_id?: undefined }
-  | { account_id?: undefined; project_id: string }
-  | undefined
-> {
+}): Promise<{ account_id: string } | undefined> {
   if (rows.length == 0) return undefined;
   if (await isBanned(rows[0].account_id)) {
     log.debug("getAccountWithApiKey: banned api key ", rows[0]?.account_id);
     return;
   }
   if (verifyPassword(secret, rows[0].hash)) {
-    // If the creator no longer has collaborator access to the project on this bay,
-    // then this project-scoped key should not authorize here. Keys that are simply
-    // being checked on the wrong bay are rejected without being deleted.
     if (rows[0].project_id) {
-      const account_id = rows[0].account_id;
-      if (!account_id) {
-        await deleteApiKey(rows[0]);
-        return undefined;
-      }
-      const access = await getLocalProjectCollaboratorAccessStatus({
-        account_id,
+      log.debug("getAccountWithApiKey: project api key rejected", {
+        account_id: rows[0].account_id,
         project_id: rows[0].project_id,
       });
-      if (access === "wrong-bay") {
-        log.debug(
-          "getAccountWithApiKey: project api key rejected on non-owning bay",
-          { account_id, project_id: rows[0].project_id },
-        );
-        return undefined;
-      }
-      if (access !== "local-collaborator") {
-        await deleteApiKey(rows[0]);
-        return undefined;
-      }
+      return undefined;
     }
     const { expire } = rows[0];
     if (expire != null && expire.valueOf() <= Date.now()) {
@@ -444,9 +426,6 @@ async function checkApiKeyRows({
       "UPDATE api_keys SET last_active=NOW() WHERE id=$1",
       [rows[0].id],
     );
-    if (rows[0].project_id) {
-      return { project_id: rows[0].project_id };
-    }
     if (rows[0].account_id) {
       await syncAccountApiKeyDirectory({
         key_id: rows[0].key_id ?? parseApiKeyV2(secret)?.key_id ?? null,
@@ -470,6 +449,13 @@ async function checkClusterAccountApiKeyDirectoryEntry({
   if (!v2) return undefined;
   const entry = await getClusterAccountApiKeyByKeyId(v2.key_id);
   if (!entry?.account_id || !entry.hash) return undefined;
+  if (entry.scope !== "account") {
+    log.debug("getAccountWithApiKey: legacy api key directory entry rejected", {
+      key_id: v2.key_id,
+      account_id: entry.account_id,
+    });
+    return undefined;
+  }
   const account = await getClusterAccountById(entry.account_id);
   if (account?.banned) {
     return undefined;

@@ -36,6 +36,7 @@ export interface MembershipUsageLimits {
   acp_max_created_7d_per_account?: number;
   acp_max_running_per_account?: number;
   acp_max_running_per_project?: number;
+  acp_max_active_automations_per_project?: number;
 }
 
 export interface MembershipEffectiveLimits extends MembershipUsageLimits {}
@@ -97,6 +98,7 @@ export interface AccountUsageLimitOverrides {
   acp_max_created_7d_per_account?: NumericLimitRule;
   acp_max_running_per_account?: NumericLimitRule;
   acp_max_running_per_project?: NumericLimitRule;
+  acp_max_active_automations_per_project?: NumericLimitRule;
 }
 
 export interface DedicatedHostPolicyOverrides {

@@ -17,17 +17,17 @@ Statuses:
 
 ## Summary
 
-| ID              | Surface                                      | Status  | Severity | Current Result                                                                                                                                                                                                                                            | Next Action                                                                      |
-| --------------- | -------------------------------------------- | ------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                                                                             | Revisit defaults after load testing.                                             |
-| SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report. | Add actor-account limit cache if collaborator caps must differ from owner caps.  |
-| SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                                                                                                                                                                             | Add membership-backed automation-specific caps if needed.                        |
-| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, app proxy websockets, and raw Conat socket events; these now fast-fail above conservative active-request/message caps.       | Tune per-identity limits and production alert thresholds from telemetry.         |
-| SEC-BROWSER-001 | Browser exec/session automation              | guarded | critical | Browser-session async exec history was bounded, but active raw/QuickJS exec and typed action work per browser tab was not. Local per-tab caps now fast-fail excess work, and `browser_raw_exec_policy` gates raw JS by admin setting.                     | Audit browser-session credential classes and QuickJS typed-action sandbox risks. |
-| SEC-CLI-001     | `cocalc-cli` authority classes               | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Classify command families by credential type and dangerous-action requirements.  |
-| SEC-KEY-001     | Account/project API keys                     | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Inventory project-key consumers and account-key scope checks.                    |
-| SEC-REG-001     | Registration-token signup policy             | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Verify no-token behavior and add explicit public-signup setting.                 |
-| SEC-MASTER-001  | Master-key storage/unlock                    | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Inventory master-key read/storage paths and production unlock options.           |
+| ID              | Surface                                      | Status  | Severity | Current Result                                                                                                                                                                                                                                                                                                                                                                           | Next Action                                                                                                          |
+| --------------- | -------------------------------------------- | ------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                                                                                                                                                                                                            | Revisit defaults after load testing.                                                                                 |
+| SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report.                                                                                                                                | Add actor-account limit cache if collaborator caps must differ from owner caps.                                      |
+| SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                                                                                                                                                                                                                                                                                                            | Add membership-backed automation-specific caps if needed.                                                            |
+| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, app proxy websockets, and raw Conat socket events; these now fast-fail above conservative active-request/message caps.                                                                                                                                      | Tune per-identity limits and production alert thresholds from telemetry.                                             |
+| SEC-BROWSER-001 | Browser exec/session automation              | guarded | critical | Browser-session async exec history was bounded, but active raw/QuickJS exec and typed action work per browser tab was not. Local per-tab caps now fast-fail excess work, `browser_raw_exec_policy` gates raw JS by admin setting, and the browser-session service now exposes a local allow/deny audit stream for raw exec, async exec, typed actions, and QuickJS sandbox host actions. | Continue QuickJS host-capability review and decide whether browser automation audit events need central persistence. |
+| SEC-CLI-001     | `cocalc-cli` authority classes               | guarded | high     | First-pass authority matrix completed. CLI auth config and daemon runtime storage now force private local permissions; ambient env auth can be disabled per invocation.                                                                                                                                                                                                                  | Audit endpoint-level freshness/2FA and API-key scope enforcement for dangerous CLI command families.                 |
+| SEC-KEY-001     | Account/project API keys                     | guarded | high     | First-pass audit completed. Legacy project-scoped CoCalc API-key creation/editing and authentication are disabled; existing project keys remain listable/deletable for cleanup. Account API keys remain broad account credentials.                                                                                                                                                       | Propagate auth method through hub dispatch and add scoped account-key capabilities/project allowlists.               |
+| SEC-REG-001     | Registration-token signup policy             | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                | Verify no-token behavior and add explicit public-signup setting.                                                     |
+| SEC-MASTER-001  | Master-key storage/unlock                    | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                | Inventory master-key read/storage paths and production unlock options.                                               |
 
 ## Findings
 
@@ -361,6 +361,16 @@ Implemented first guard:
   - `enabled`: honor caller posture/policy requests for raw JS.
 - Caller-controlled `posture=dev` and `policy.allow_raw_exec` can request raw
   JS, but they can no longer override the deployment-level admin setting.
+- Browser-session automation now records a local per-tab allow/deny audit
+  stream for:
+  - synchronous `exec`
+  - async `start_exec`
+  - typed `action`
+  - QuickJS `sandbox_action` host calls
+- `cocalc browser audit list` and `cocalc browser audit clear` expose that
+  stream from the CLI.
+- `cocalc browser exec-api` now prints the effective raw-exec policy and local
+  active-work caps for the targeted session before the declaration.
 
 Residual risk:
 
@@ -370,11 +380,121 @@ Residual risk:
   `browser_session` agent scope, and spawned Playwright sessions.
 - The QuickJS sandbox and typed action API still need continued review, since
   disabling raw JS shifts non-admin automation into that path.
+- The browser automation audit stream is intentionally local and in-memory. It
+  is useful for incident review of the currently targeted browser session, but
+  it is not yet a central immutable audit log.
 
 Suggested next audit steps:
 
-1. Audit session spawn/list/use behavior under account auth versus agent auth.
-2. Review the QuickJS typed-action sandbox for data exfiltration and UI
+1. Review the QuickJS typed-action sandbox for data exfiltration and UI
    mutation risks under non-admin credentials.
-3. Decide whether the CLI should surface the effective raw-exec policy in
-   `browser exec-api` output or denial messages.
+2. Decide whether browser automation audit events should also be forwarded to a
+   central hub/project-host log for production incident response.
+3. Audit session spawn/list/use behavior under account auth versus agent auth
+   beyond the existing agent-auth explicit-target protections.
+
+### SEC-CLI-001: cocalc-cli Authority Classes Needed First-Pass Audit
+
+Status: `guarded`.
+
+Severity: high.
+
+Evidence:
+
+- `src/packages/cli/src/bin/main.ts` accepts several credential classes:
+  browser-approved cookies, account API keys, bearer/agent tokens,
+  project-scoped secrets, and hub passwords.
+- Command modules span ordinary account actions, project-local code/file
+  execution, browser automation, admin/site operations, host operations, load
+  tests, and local daemon acceleration.
+- The CLI forwards `auth_session_hash` to hub calls when available, but command
+  modules do not centrally declare which operations are dangerous or freshness
+  requiring. Release safety therefore depends on endpoint-level policy checks.
+- The auth profile config can store cookies, account API keys, bearer tokens,
+  and hub passwords. Before this pass, saves did not force private file modes.
+- The CLI daemon caches authenticated contexts and accepts project file actions
+  over a Unix socket. Before this pass, its runtime directory/socket/pid file
+  permissions were not explicitly tightened by the CLI.
+
+Implemented first guard:
+
+- Added `src/.agents/cli-authority-audit-2026-05-12.md`, a first-pass matrix
+  classifying command families by credential class, intended authority, and
+  dangerous-action risk.
+- `saveAuthConfig` now creates the auth config directory with `0700` and forces
+  the config file to `0600` on every save.
+- The CLI daemon now creates its runtime directory with `0700` and forces the
+  daemon socket and pid file to `0600`.
+- Added `--disable-env-auth-defaults` so callers can intentionally ignore
+  ambient `COCALC_*` auth variables for one invocation.
+
+Residual risk:
+
+- This pass classifies CLI authority and fixes local secret/daemon storage. It
+  does not prove that every dangerous hub/project-host endpoint enforces
+  freshness/2FA.
+- Account API keys are still a broad dependency for many command families; see
+  `SEC-KEY-001`.
+- Hub-password account bootstrap and `admin user issue-auth-token` should have
+  central audit coverage if not already logged server-side.
+
+Suggested next audit steps:
+
+1. Continue `SEC-KEY-001` follow-up: propagate auth method and block broad
+   account API keys from dangerous command families.
+2. Inventory endpoint-level dangerous-action checks for account deletion/rehome,
+   project hard delete/restore/public app exposure, rootfs admin mutation, host
+   mutation, membership assignment, org token lifecycle, and CLI-issued auth
+   tokens.
+3. Consider central audit events for hub-password account bootstrap, admin auth
+   token issuance, and CLI browser/session automation.
+
+### SEC-KEY-001: Account and Project API Key Scope Audit
+
+Status: `guarded`.
+
+Severity: high.
+
+Evidence:
+
+- User-managed v2 CoCalc API keys used one table for account-wide keys and
+  legacy project-scoped keys.
+- Legacy project-scoped CoCalc API keys authenticated directly as
+  `{project_id}`, which meant generic API-key auth helpers and bridge/proxy
+  paths had to handle account and project principals together.
+- Account API keys still authenticate as broad account credentials with no
+  capability list or allowed-project list.
+
+Implemented first guard:
+
+- Added `src/.agents/api-key-scope-audit-2026-05-12.md`.
+- Project-scoped CoCalc API-key creation and editing now fail server-side.
+- Project-scoped CoCalc API-key authentication now fails; API-key auth returns
+  account principals only.
+- Cluster account API-key directory fallback now requires explicit
+  `scope="account"` metadata, so legacy mirrored project-key directory entries
+  fail closed.
+- Existing project-scoped CoCalc API keys remain listable and deletable from
+  project settings for cleanup, but the UI no longer offers create/edit actions.
+- The HTTP Conat project bridge now requires an account API key plus explicit
+  `project_id`, then applies normal collaborator authorization.
+
+Residual risk:
+
+- Account API keys remain broad account credentials.
+- Hub Conat API dispatch does not yet propagate whether an account principal
+  came from a browser cookie, account API key, or agent bearer token into
+  endpoint transforms. That blocks a central "no API keys for dangerous
+  endpoints" policy until auth method is carried through dispatch.
+- The `api_keys.project_id` column remains until the scoped account-key schema
+  migration removes legacy project keys.
+- Legacy account-key directory entries without `scope="account"` may need a
+  home-bay key use or resync before they work as cross-bay account keys.
+
+Suggested next audit steps:
+
+1. Propagate auth method through hub dispatch.
+2. Reject account API-key auth on dangerous account, billing, admin, host, and
+   secret-management endpoints until scoped capabilities exist.
+3. Add `capabilities` and `allowed_project_ids` to account API keys and the
+   cluster account API-key directory.

@@ -115,7 +115,9 @@ import {
   admitAcpJobCreation,
   admitAcpJobCreationIdentity,
   admitAcpJobExecution,
+  admitActiveAcpAutomationForProject,
   acpAdmissionLimitsFromEffectiveLimits,
+  formatAcpAdmissionDenial,
   isAcpAdmissionDeniedError,
   recordAcpAdmissionDenial,
   resolveAcpAdmissionLimits,
@@ -5740,6 +5742,41 @@ async function republishAcpAutomationProjectIndexes(): Promise<void> {
   }
 }
 
+async function admitActiveAcpAutomationResponse({
+  account_id,
+  project_id,
+  path,
+  thread_id,
+  automation_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  path: string;
+  thread_id: string;
+  automation_id: string;
+}): Promise<AcpAutomationResponse | undefined> {
+  const decision = admitActiveAcpAutomationForProject(
+    { account_id, project_id, path, thread_id, automation_id },
+    await resolveAcpAdmissionLimits({
+      account_id,
+      project_id,
+      path,
+      thread_id,
+    }),
+  );
+  if (decision.ok) return undefined;
+  recordAcpAdmissionDenial(decision, "automation");
+  return {
+    ok: false,
+    error: formatAcpAdmissionDenial(decision),
+    code: "active_automation_limit",
+    limit: decision.limit,
+    current: decision.current,
+    maximum: decision.maximum,
+    project_id,
+  };
+}
+
 async function handleAcpAutomationRequest(
   request: AcpAutomationRequest,
 ): Promise<AcpAutomationResponse> {
@@ -5779,6 +5816,16 @@ async function handleAcpAutomationRequest(
       (`${config.automation_id ?? ""}`.trim() || undefined) ??
       randomUUID();
     const enabled = config.enabled !== false;
+    if (enabled) {
+      const denial = await admitActiveAcpAutomationResponse({
+        account_id: existing?.account_id ?? request.account_id,
+        project_id,
+        path,
+        thread_id,
+        automation_id,
+      });
+      if (denial) return denial;
+    }
     const now = Date.now();
     const row = upsertAcpAutomation({
       automation_id,
@@ -5865,6 +5912,14 @@ async function handleAcpAutomationRequest(
     };
   }
   if (request.action === "resume") {
+    const denial = await admitActiveAcpAutomationResponse({
+      account_id: existing.account_id ?? request.account_id,
+      project_id,
+      path,
+      thread_id,
+      automation_id: existing.automation_id,
+    });
+    if (denial) return denial;
     const row = upsertAcpAutomation({
       ...existing,
       enabled: true,

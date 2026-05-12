@@ -6,6 +6,9 @@ Register browser runtime observability commands:
 
 import { Command } from "commander";
 import type {
+  BrowserAutomationAuditDecision,
+  BrowserAutomationAuditEvent,
+  BrowserAutomationAuditKind,
   BrowserCommandDeps,
   BrowserNetworkTraceEvent,
   BrowserObservabilityRegisterUtils,
@@ -17,6 +20,73 @@ type RegisterObservabilityDeps = {
   deps: BrowserCommandDeps;
   utils: BrowserObservabilityRegisterUtils;
 };
+
+const AUTOMATION_AUDIT_KINDS: BrowserAutomationAuditKind[] = [
+  "exec",
+  "start_exec",
+  "action",
+  "sandbox_action",
+];
+
+const AUTOMATION_AUDIT_DECISIONS: BrowserAutomationAuditDecision[] = [
+  "allow",
+  "deny",
+];
+
+function parseAutomationAuditKinds(
+  value?: string,
+): BrowserAutomationAuditKind[] | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return undefined;
+  const allowed = new Set(AUTOMATION_AUDIT_KINDS);
+  const kinds = raw
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  for (const kind of kinds) {
+    if (!allowed.has(kind as BrowserAutomationAuditKind)) {
+      throw new Error(
+        `invalid browser automation audit kind '${kind}'; expected one of ${AUTOMATION_AUDIT_KINDS.join(",")}`,
+      );
+    }
+  }
+  return kinds as BrowserAutomationAuditKind[];
+}
+
+function parseAutomationAuditDecisions(
+  value?: string,
+): BrowserAutomationAuditDecision[] | undefined {
+  const raw = `${value ?? ""}`.trim();
+  if (!raw) return undefined;
+  const allowed = new Set(AUTOMATION_AUDIT_DECISIONS);
+  const decisions = raw
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  for (const decision of decisions) {
+    if (!allowed.has(decision as BrowserAutomationAuditDecision)) {
+      throw new Error(
+        `invalid browser automation audit decision '${decision}'; expected allow,deny`,
+      );
+    }
+  }
+  return decisions as BrowserAutomationAuditDecision[];
+}
+
+function formatAutomationAuditLine(event: BrowserAutomationAuditEvent): string {
+  const parts = [
+    `#${event.seq}`,
+    event.ts,
+    event.decision.toUpperCase(),
+    event.kind,
+  ];
+  if (event.project_id) parts.push(`project=${event.project_id}`);
+  if (event.posture) parts.push(`posture=${event.posture}`);
+  if (event.mode) parts.push(`mode=${event.mode}`);
+  if (event.action_name) parts.push(`action=${event.action_name}`);
+  if (event.reason) parts.push(`reason=${JSON.stringify(event.reason)}`);
+  return parts.join(" ");
+}
 
 type NetworkTrafficCounter = {
   events: number;
@@ -531,6 +601,153 @@ export function registerBrowserObservabilityCommands({
             return base;
           },
         );
+      },
+    );
+
+  const audit = browser
+    .command("audit")
+    .description("browser automation allow/deny audit events");
+
+  audit
+    .command("list")
+    .description("list recent browser automation allow/deny decisions")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .option("--lines <n>", "number of events to fetch", "200")
+    .option("--since-seq <n>", "fetch events after this sequence number")
+    .option(
+      "--kind <csv>",
+      "optional kind filter: exec,start_exec,action,sandbox_action",
+    )
+    .option("--decision <csv>", "optional decision filter: allow,deny")
+    .action(
+      async (
+        opts: {
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+          lines?: string;
+          sinceSeq?: string;
+          kind?: string;
+          decision?: string;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser audit list", async (ctx) => {
+          const globals = deps.globalsFrom(command);
+          const wantsJson = !!globals.json || globals.output === "json";
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: browserHintFromOption(opts.browser),
+            fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const lines = Number(opts.lines ?? "200");
+          if (!Number.isFinite(lines) || lines <= 0) {
+            throw new Error("--lines must be a positive integer");
+          }
+          const sinceSeqRaw = `${opts.sinceSeq ?? ""}`.trim();
+          let afterSeq: number | undefined;
+          if (sinceSeqRaw) {
+            const parsed = Number(sinceSeqRaw);
+            if (!Number.isFinite(parsed) || parsed < 0) {
+              throw new Error("--since-seq must be a non-negative integer");
+            }
+            afterSeq = Math.floor(parsed);
+          }
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+          });
+          const result = await browserClient.listAutomationAudit({
+            ...(afterSeq != null ? { after_seq: afterSeq } : {}),
+            limit: Math.min(5_000, Math.max(1, Math.floor(lines))),
+            ...(opts.kind
+              ? { kinds: parseAutomationAuditKinds(opts.kind) }
+              : {}),
+            ...(opts.decision
+              ? { decisions: parseAutomationAuditDecisions(opts.decision) }
+              : {}),
+          });
+          const events = Array.isArray(result?.events) ? result.events : [];
+          if (wantsJson) {
+            return {
+              browser_id: sessionInfo.browser_id,
+              next_seq: Number(result?.next_seq ?? 0),
+              dropped: Number(result?.dropped ?? 0),
+              total_buffered: Number(result?.total_buffered ?? 0),
+              events,
+              ...sessionTargetContext(ctx, sessionInfo),
+            };
+          }
+          for (const event of events) {
+            process.stdout.write(`${formatAutomationAuditLine(event)}\n`);
+          }
+          return {
+            browser_id: sessionInfo.browser_id,
+            printed: events.length,
+            next_seq: Number(result?.next_seq ?? 0),
+            dropped: Number(result?.dropped ?? 0),
+            total_buffered: Number(result?.total_buffered ?? 0),
+            ...sessionTargetContext(ctx, sessionInfo),
+          };
+        });
+      },
+    );
+
+  audit
+    .command("clear")
+    .description("clear buffered browser automation audit events")
+    .option(
+      "--browser <id>",
+      "browser id (or unique prefix); defaults to COCALC_BROWSER_ID when set",
+    )
+    .option(
+      "--session-project-id <id>",
+      "prefer browser sessions with this active/open project id",
+    )
+    .option("--active-only", "only target active (non-stale) sessions")
+    .action(
+      async (
+        opts: {
+          browser?: string;
+          sessionProjectId?: string;
+          activeOnly?: boolean;
+        },
+        command: Command,
+      ) => {
+        await deps.withContext(command, "browser audit clear", async (ctx) => {
+          const profileSelection = loadProfileSelection(deps, command);
+          const sessionInfo = await chooseBrowserSession({
+            ctx,
+            browserHint: browserHintFromOption(opts.browser),
+            fallbackBrowserId: profileSelection.browser_id,
+            sessionProjectId:
+              `${opts.sessionProjectId ?? ""}`.trim() || undefined,
+            activeOnly: !!opts.activeOnly,
+          });
+          const browserClient = deps.createBrowserSessionClient({
+            account_id: ctx.accountId,
+            browser_id: sessionInfo.browser_id,
+            client: ctx.remote.client,
+          });
+          return {
+            browser_id: sessionInfo.browser_id,
+            ...(await browserClient.clearAutomationAudit()),
+            ...sessionTargetContext(ctx, sessionInfo),
+          };
+        });
       },
     );
 

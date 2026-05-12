@@ -253,6 +253,13 @@ export function buildEntitlementOverrideSchemaDoc() {
           descriptions.usage_limits.acp_max_running_per_project
             .adminDescription,
       }),
+      fieldDoc({
+        path: "usage_limits.acp_max_active_automations_per_project",
+        ...descriptions.usage_limits.acp_max_active_automations_per_project,
+        description:
+          descriptions.usage_limits.acp_max_active_automations_per_project
+            .adminDescription,
+      }),
       {
         path: "dedicated_hosts.funding_mode",
         kind: "enum_rule",

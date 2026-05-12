@@ -99,6 +99,27 @@ export function normalizeMembershipEffectiveLimits(
     notification_email_send_limit_7d: normalizeNonNegativeInteger(
       usageLimits?.notification_email_send_limit_7d,
     ),
+    acp_max_queued_per_account: normalizeNonNegativeInteger(
+      usageLimits?.acp_max_queued_per_account,
+    ),
+    acp_max_queued_per_thread: normalizeNonNegativeInteger(
+      usageLimits?.acp_max_queued_per_thread,
+    ),
+    acp_max_created_5h_per_account: normalizeNonNegativeInteger(
+      usageLimits?.acp_max_created_5h_per_account,
+    ),
+    acp_max_created_7d_per_account: normalizeNonNegativeInteger(
+      usageLimits?.acp_max_created_7d_per_account,
+    ),
+    acp_max_running_per_account: normalizeNonNegativeInteger(
+      usageLimits?.acp_max_running_per_account,
+    ),
+    acp_max_running_per_project: normalizeNonNegativeInteger(
+      usageLimits?.acp_max_running_per_project,
+    ),
+    acp_max_active_automations_per_project: normalizeNonNegativeInteger(
+      usageLimits?.acp_max_active_automations_per_project,
+    ),
   };
 }
 

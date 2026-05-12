@@ -196,7 +196,7 @@ export async function getUser(
   }
 
   if (cookies[API_COOKIE_NAME]) {
-    // project or account
+    // account API key
     const user = await getAccountWithApiKey(cookies[API_COOKIE_NAME]!);
     if (!user) {
       throw Error("api key no longer valid");

@@ -197,6 +197,28 @@ export type BrowserActionResult = {
   [key: string]: unknown;
 };
 
+export type BrowserAutomationAuditKind =
+  | "exec"
+  | "start_exec"
+  | "action"
+  | "sandbox_action";
+
+export type BrowserAutomationAuditDecision = "allow" | "deny";
+
+export type BrowserAutomationAuditEvent = {
+  seq: number;
+  ts: string;
+  kind: BrowserAutomationAuditKind;
+  decision: BrowserAutomationAuditDecision;
+  project_id?: string;
+  posture?: BrowserAutomationPosture;
+  mode?: "raw_js" | "quickjs_wasm";
+  action_name?: BrowserActionName;
+  reason?: string;
+  page_url?: string;
+  origin?: string;
+};
+
 export type BrowserRuntimeEventKind =
   | "console"
   | "uncaught_error"
@@ -283,6 +305,15 @@ export type BrowserExecPolicyV1 = {
 
 export interface BrowserSessionServiceApi {
   getExecApiDeclaration: () => Promise<string>;
+  getAutomationPolicyInfo: () => Promise<{
+    raw_exec_policy: "disabled" | "admin_only" | "enabled";
+    raw_exec_admin: boolean;
+    max_active_exec_ops: number;
+    max_active_actions: number;
+    max_async_exec_ops: number;
+    max_exec_code_length: number;
+    max_sandbox_actions: number;
+  }>;
   getSessionInfo: () => Promise<{
     browser_id: string;
     session_name?: string;
@@ -343,6 +374,22 @@ export interface BrowserSessionServiceApi {
     next_seq: number;
     dropped: number;
     total_buffered: number;
+  }>;
+  listAutomationAudit: (opts?: {
+    after_seq?: number;
+    limit?: number;
+    kinds?: BrowserAutomationAuditKind[];
+    decisions?: BrowserAutomationAuditDecision[];
+  }) => Promise<{
+    events: BrowserAutomationAuditEvent[];
+    next_seq: number;
+    dropped: number;
+    total_buffered: number;
+  }>;
+  clearAutomationAudit: () => Promise<{
+    ok: true;
+    cleared: number;
+    next_seq: number;
   }>;
   listOpenFiles: () => Promise<BrowserOpenFileInfo[]>;
   getWorkspaceSelection: (opts: {

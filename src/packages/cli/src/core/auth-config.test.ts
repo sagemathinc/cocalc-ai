@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -56,6 +56,30 @@ test("loadAuthConfig/saveAuthConfig round-trip", () => {
   const loaded = loadAuthConfig(file);
   assert.deepEqual(loaded, config);
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("saveAuthConfig stores credentials in a private config file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-config-"));
+  const file = join(dir, "config.json");
+  try {
+    saveAuthConfig(
+      {
+        current_profile: "dev",
+        profiles: {
+          dev: {
+            api: "https://cocalc.example.test",
+            cookie: "remember_me=secret-cookie",
+            bearer: "secret-bearer",
+            hub_password: "secret-hub-password",
+          },
+        },
+      },
+      file,
+    );
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("selectedProfileName uses globals then env then current", () => {

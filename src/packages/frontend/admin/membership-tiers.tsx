@@ -243,6 +243,10 @@ function useMembershipTiers() {
         usage_limit_acp_max_running_per_project: normalizedOptionalNumber(
           editing.usage_limits?.acp_max_running_per_project,
         ),
+        usage_limit_acp_max_active_automations_per_project:
+          normalizedOptionalNumber(
+            editing.usage_limits?.acp_max_active_automations_per_project,
+          ),
         active: !editing.disabled,
       });
     }
@@ -356,6 +360,11 @@ function useMembershipTiers() {
         usage_limits,
         "acp_max_running_per_project",
         values.usage_limit_acp_max_running_per_project,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "acp_max_active_automations_per_project",
+        values.usage_limit_acp_max_active_automations_per_project,
       );
 
       const payload = pick(
@@ -730,6 +739,12 @@ export function MembershipTiers() {
           <Form.Item
             name="usage_limit_acp_max_running_per_project"
             label="Running ACP turns / project"
+          >
+            <InputNumber min={0} step={1} precision={0} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_acp_max_active_automations_per_project"
+            label="Active ACP automations / project"
           >
             <InputNumber min={0} step={1} precision={0} />
           </Form.Item>

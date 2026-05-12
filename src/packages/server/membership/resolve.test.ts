@@ -153,6 +153,13 @@ describe("resolveMembershipForAccount", () => {
       prepaid_host_usage_limit_7d_usd: undefined,
       notification_email_send_limit_5h: undefined,
       notification_email_send_limit_7d: undefined,
+      acp_max_queued_per_account: undefined,
+      acp_max_queued_per_thread: undefined,
+      acp_max_created_5h_per_account: undefined,
+      acp_max_created_7d_per_account: undefined,
+      acp_max_running_per_account: undefined,
+      acp_max_running_per_project: undefined,
+      acp_max_active_automations_per_project: undefined,
     });
   });
 

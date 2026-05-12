@@ -44,6 +44,7 @@ import {
   formatAutomationPausedReason,
   shouldShowAutomationNextRun,
 } from "@cocalc/frontend/chat/automation-form";
+import { showActiveAutomationLimitModal } from "@cocalc/frontend/chat/automation-limit";
 import { watchAutomationsForProject } from "@cocalc/frontend/chat/automation-index";
 import {
   initChat,
@@ -795,12 +796,13 @@ export function AgentsPanel({ project_id, layout = "page" }: AgentsPanelProps) {
     record: AcpAutomationRecord,
     action: "run_now" | "pause" | "resume" | "acknowledge" | "delete",
   ): Promise<void> {
-    await webapp_client.conat_client.automationAcp({
+    const response = await webapp_client.conat_client.automationAcp({
       project_id,
       path: record.path,
       thread_id: record.thread_id,
       action,
     });
+    showActiveAutomationLimitModal({ project_id, response });
   }
 
   function recordMetaLine(record: AgentSessionRecord): string {

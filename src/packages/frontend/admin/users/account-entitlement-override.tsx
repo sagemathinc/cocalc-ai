@@ -367,6 +367,19 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
       MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
         .acp_max_running_per_project.adminDescription,
   },
+  {
+    id: "acp_active_automations_per_project",
+    section: "usage_limits",
+    key: "acp_max_active_automations_per_project",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_active_automations_per_project.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_active_automations_per_project.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .acp_max_active_automations_per_project.adminDescription,
+  },
 ];
 
 const PROJECT_FIELD_IDS = new Set([

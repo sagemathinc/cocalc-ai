@@ -57,6 +57,7 @@ import {
   skipNextThreadAutomationRun,
   upsertThreadAutomation,
 } from "./acp-api";
+import { showActiveAutomationLimitModal } from "./automation-limit";
 import {
   AutomationConfigFields,
   buildAutomationDraft,
@@ -882,10 +883,14 @@ export function ChatPanel({
       config: AcpAutomationConfig;
     }) => {
       if (!threadId) return;
-      await upsertThreadAutomation({
+      const response = await upsertThreadAutomation({
         actions,
         threadId,
         config,
+      });
+      showActiveAutomationLimitModal({
+        project_id: actions.store?.get("project_id") ?? "",
+        response,
       });
     },
     [actions],
@@ -898,7 +903,14 @@ export function ChatPanel({
 
   const handleAutomationResume = useCallback(async () => {
     if (!selectedThreadId) return;
-    await resumeThreadAutomation({ actions, threadId: selectedThreadId });
+    const response = await resumeThreadAutomation({
+      actions,
+      threadId: selectedThreadId,
+    });
+    showActiveAutomationLimitModal({
+      project_id: actions.store?.get("project_id") ?? "",
+      response,
+    });
   }, [actions, selectedThreadId]);
 
   const handleAutomationRunNow = useCallback(async () => {

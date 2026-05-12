@@ -32,6 +32,7 @@ function acpUsageLimits({
   created7dPerAccount,
   runningPerAccount,
   runningPerProject,
+  activeAutomationsPerProject,
 }: {
   queuedPerAccount: number;
   queuedPerThread: number;
@@ -39,6 +40,7 @@ function acpUsageLimits({
   created7dPerAccount: number;
   runningPerAccount: number;
   runningPerProject: number;
+  activeAutomationsPerProject: number;
 }) {
   return {
     acp_max_queued_per_account: queuedPerAccount,
@@ -47,6 +49,7 @@ function acpUsageLimits({
     acp_max_created_7d_per_account: created7dPerAccount,
     acp_max_running_per_account: runningPerAccount,
     acp_max_running_per_project: runningPerProject,
+    acp_max_active_automations_per_project: activeAutomationsPerProject,
   };
 }
 
@@ -93,6 +96,7 @@ export const TIER_TEMPLATES = {
         created7dPerAccount: 100,
         runningPerAccount: 1,
         runningPerProject: 1,
+        activeAutomationsPerProject: 0,
       }),
     }),
   },
@@ -129,6 +133,7 @@ export const TIER_TEMPLATES = {
         created7dPerAccount: 500,
         runningPerAccount: 10,
         runningPerProject: 10,
+        activeAutomationsPerProject: 3,
       }),
     }),
   },
@@ -168,6 +173,7 @@ export const TIER_TEMPLATES = {
         created7dPerAccount: 500,
         runningPerAccount: 10,
         runningPerProject: 10,
+        activeAutomationsPerProject: 3,
       }),
     }),
   },
@@ -209,6 +215,7 @@ export const TIER_TEMPLATES = {
         created7dPerAccount: 2000,
         runningPerAccount: 50,
         runningPerProject: 50,
+        activeAutomationsPerProject: 20,
       }),
     }),
   },

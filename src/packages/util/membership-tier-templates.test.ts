@@ -58,6 +58,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
         prepaid_host_usage_limit_5h_usd: 300,
         prepaid_host_usage_limit_7d_usd: 1000,
         acp_max_running_per_account: 10,
+        acp_max_active_automations_per_project: 3,
       }),
     );
   });

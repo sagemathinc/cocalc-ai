@@ -1,5 +1,6 @@
 import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
+import { countActiveAcpAutomationsForProject } from "../sqlite/acp-automations";
 import {
   countCreatedAcpJobsForAccountSince,
   countQueuedAcpJobsForAccount,
@@ -25,7 +26,8 @@ export type AcpAdmissionLimitName =
   | "created_5h_per_account"
   | "created_7d_per_account"
   | "running_per_account"
-  | "running_per_project";
+  | "running_per_project"
+  | "active_automations_per_project";
 
 export type AcpAdmissionLimits = {
   queuedPerAccount: number;
@@ -34,6 +36,7 @@ export type AcpAdmissionLimits = {
   created7dPerAccount: number;
   runningPerAccount: number;
   runningPerProject: number;
+  activeAutomationsPerProject: number;
 };
 
 export type AcpAdmissionLimitContext = {
@@ -130,6 +133,10 @@ export function getDefaultAcpAdmissionLimits(): AcpAdmissionLimits {
     ),
     runningPerAccount: envLimit("COCALC_ACP_MAX_RUNNING_PER_ACCOUNT", 50),
     runningPerProject: envLimit("COCALC_ACP_MAX_RUNNING_PER_PROJECT", 50),
+    activeAutomationsPerProject: envLimit(
+      "COCALC_ACP_MAX_ACTIVE_AUTOMATIONS_PER_PROJECT",
+      20,
+    ),
   };
 }
 
@@ -160,6 +167,9 @@ export function mergeAcpAdmissionLimits(
       normalizedLimit(overrides.runningPerAccount) ?? base.runningPerAccount,
     runningPerProject:
       normalizedLimit(overrides.runningPerProject) ?? base.runningPerProject,
+    activeAutomationsPerProject:
+      normalizedLimit(overrides.activeAutomationsPerProject) ??
+      base.activeAutomationsPerProject,
   };
 }
 
@@ -196,6 +206,12 @@ export function acpAdmissionLimitsFromEffectiveLimits(
     effectiveLimits.acp_max_running_per_project,
   );
   if (runningPerProject != null) limits.runningPerProject = runningPerProject;
+  const activeAutomationsPerProject = normalizedLimit(
+    effectiveLimits.acp_max_active_automations_per_project,
+  );
+  if (activeAutomationsPerProject != null) {
+    limits.activeAutomationsPerProject = activeAutomationsPerProject;
+  }
   return limits;
 }
 
@@ -390,6 +406,48 @@ export function admitAcpJobExecution(
     }
   }
 
+  return { ok: true };
+}
+
+export function admitActiveAcpAutomationForProject(
+  {
+    account_id,
+    project_id,
+    path,
+    thread_id,
+    automation_id,
+  }: {
+    account_id?: string;
+    project_id?: string;
+    path?: string;
+    thread_id?: string;
+    automation_id?: string;
+  },
+  limits: AcpAdmissionLimits = getDefaultAcpAdmissionLimits(),
+): AcpAdmissionDecision {
+  const accountId = `${account_id ?? ""}`.trim();
+  const projectId = `${project_id ?? ""}`.trim();
+  const normalizedPath = `${path ?? ""}`.trim();
+  const threadId = `${thread_id ?? ""}`.trim();
+  if (!projectId) return { ok: true };
+  const maximum = finiteLimit(limits.activeAutomationsPerProject);
+  if (maximum == null) return { ok: true };
+  const current = countActiveAcpAutomationsForProject({
+    project_id: projectId,
+    exclude_automation_id: automation_id,
+  });
+  if (current >= maximum) {
+    return denied({
+      ok: false,
+      limit: "active_automations_per_project",
+      current,
+      maximum,
+      account_id: accountId,
+      project_id: projectId,
+      path: normalizedPath,
+      thread_id: threadId,
+    });
+  }
   return { ok: true };
 }
 

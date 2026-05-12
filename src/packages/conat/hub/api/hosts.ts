@@ -47,7 +47,8 @@ export type AcpAdmissionDenialLimit =
   | "created_5h_per_account"
   | "created_7d_per_account"
   | "running_per_account"
-  | "running_per_project";
+  | "running_per_project"
+  | "active_automations_per_project";
 
 export type AcpAdmissionDenialSource =
   | "automation"

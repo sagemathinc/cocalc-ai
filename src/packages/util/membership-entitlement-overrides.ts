@@ -194,5 +194,13 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       userDescription:
         "Maximum concurrently running durable Codex/ACP turns in one project.",
     },
+    acp_max_active_automations_per_project: {
+      label: "ACP active automations per project",
+      unit: "automations",
+      adminDescription:
+        "Maximum enabled scheduled Codex/ACP automations allowed for one project.",
+      userDescription:
+        "Maximum enabled scheduled Codex/ACP automations in one project.",
+    },
   },
 } as const;
