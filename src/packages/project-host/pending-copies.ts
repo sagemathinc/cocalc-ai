@@ -17,7 +17,10 @@ import {
 } from "./file-server";
 import { getRootfsMountpoint } from "@cocalc/project-runner/run/rootfs";
 import type { ProjectCopyRow } from "@cocalc/conat/hub/api/projects";
-import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
+import {
+  PROJECT_RUNTIME_HOME_ALIASES,
+  projectRuntimeHomeRelativePath,
+} from "@cocalc/util/project-runtime";
 
 const logger = getLogger("project-host:pending-copies");
 
@@ -66,6 +69,10 @@ async function pathExists(p: string): Promise<boolean> {
 async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
   const srcPath = normalizeBackupPath(row.src_path);
   let destPath = normalizeCopyPath(row.dest_path, "dest_path");
+  const destHomeRelative = projectRuntimeHomeRelativePath(destPath);
+  if (destHomeRelative != null) {
+    destPath = destHomeRelative;
+  }
   if (!destPath) {
     if (!srcPath) {
       throw new Error("dest_path cannot be empty when src_path is empty");
@@ -80,6 +87,7 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
   const destFs = new SandboxedFilesystem(projectRoot, {
     rootfs: getRootfsMountpoint(row.dest_project_id),
     scratch: getScratchMountpoint(row.dest_project_id),
+    homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
   });
   const destAbs = await destFs.safeAbsPath(destPath);
   if (destAbs === projectRoot) {
@@ -110,6 +118,7 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
   const restoreFs = new SandboxedFilesystem(projectRoot, {
     rusticRepo: repo,
     host: `project-${row.src_project_id}`,
+    homeAliases: [...PROJECT_RUNTIME_HOME_ALIASES],
   });
 
   try {

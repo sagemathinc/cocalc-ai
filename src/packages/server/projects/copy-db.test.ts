@@ -2,11 +2,18 @@ export {};
 
 import { before, after, getPool } from "@cocalc/server/test";
 
+jest.setTimeout(15000);
+
 jest.mock("@cocalc/server/conat/file-server-client", () => ({
   __esModule: true,
   getProjectFileServerClient: jest.fn(async () => ({
     deleteBackup: jest.fn(async () => undefined),
   })),
+}));
+
+jest.mock("@cocalc/server/lro/stream", () => ({
+  __esModule: true,
+  publishLroSummary: jest.fn(async () => undefined),
 }));
 
 const HOST_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -21,9 +28,12 @@ afterAll(after);
 
 beforeEach(async () => {
   const { ensureCopySchema } = await import("./copy-db");
+  const { ensureLroSchema } = await import("@cocalc/server/lro/lro-db");
   await ensureCopySchema();
+  await ensureLroSchema();
   const pool = getPool();
   await pool.query("DELETE FROM project_copies");
+  await pool.query("DELETE FROM long_running_operations");
   await pool.query("DELETE FROM projects WHERE project_id = ANY($1::uuid[])", [
     [SRC_PROJECT_ID, DEST_PROJECT_ID],
   ]);
@@ -148,5 +158,200 @@ describe("projects.copy-db", () => {
     const listed = await listCopiesByOpId({ op_id: row.op_id });
     expect(listed).toHaveLength(1);
     expect(listed[0].snapshot_id).toBe("snap-3");
+  });
+
+  it("reclaims stale applying copies before later conflicting copies", async () => {
+    const { claimPendingCopies, ensureCopySchema, upsertCopyRow } =
+      await import("./copy-db");
+    await ensureCopySchema();
+
+    const first = await upsertCopyRow({
+      op_id: "44444444-4444-4444-8444-444444444444",
+      src_project_id: SRC_PROJECT_ID,
+      src_path: "a.txt",
+      dest_project_id: DEST_PROJECT_ID,
+      dest_path: "/root/a.txt",
+      snapshot_id: "snap-4",
+      expires_at: new Date(Date.now() + 60_000),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const second = await upsertCopyRow({
+      op_id: "55555555-5555-4555-8555-555555555555",
+      src_project_id: SRC_PROJECT_ID,
+      src_path: "a.txt",
+      dest_project_id: DEST_PROJECT_ID,
+      dest_path: "/root/a.txt",
+      snapshot_id: "snap-5",
+      expires_at: new Date(Date.now() + 60_000),
+    });
+
+    const claimed1 = await claimPendingCopies({ host_id: HOST_ID, limit: 10 });
+    expect(claimed1).toHaveLength(1);
+    expect(claimed1[0].copy_id).toBe(first.copy_id);
+
+    await getPool().query(
+      `
+        UPDATE project_copies
+        SET last_attempt_at = now() - interval '36 minutes',
+            updated_at = now() - interval '36 minutes',
+            last_error = 'previous failure'
+        WHERE copy_id=$1
+      `,
+      [first.copy_id],
+    );
+
+    const claimed2 = await claimPendingCopies({ host_id: HOST_ID, limit: 10 });
+    expect(claimed2).toHaveLength(1);
+    expect(claimed2[0].copy_id).toBe(first.copy_id);
+
+    const rows = await getPool().query<{
+      copy_id: string;
+      status: string;
+      attempt: number;
+      last_error: string | null;
+    }>(
+      `
+        SELECT copy_id, status, attempt, last_error
+        FROM project_copies
+        ORDER BY created_at
+      `,
+    );
+    expect(rows.rows).toEqual([
+      {
+        copy_id: first.copy_id,
+        status: "applying",
+        attempt: 2,
+        last_error: null,
+      },
+      {
+        copy_id: second.copy_id,
+        status: "queued",
+        attempt: 0,
+        last_error: null,
+      },
+    ]);
+  });
+
+  it("does not move terminal copy LROs back to running", async () => {
+    const { ensureLroSchema } = await import("@cocalc/server/lro/lro-db");
+    const { ensureCopySchema, updateCopyStatus, upsertCopyRow } =
+      await import("./copy-db");
+    await ensureLroSchema();
+    await ensureCopySchema();
+    const op_id = "66666666-6666-4666-8666-666666666666";
+    await getPool().query(
+      `
+        INSERT INTO long_running_operations
+          (op_id, kind, scope_type, scope_id, status, input, result, progress_summary, finished_at, expires_at)
+        VALUES
+          ($1, 'copy-path-between-projects', 'project', $2, 'succeeded', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, now(), now() + interval '1 hour')
+      `,
+      [op_id, SRC_PROJECT_ID],
+    );
+
+    const row = await upsertCopyRow({
+      op_id,
+      src_project_id: SRC_PROJECT_ID,
+      src_path: "a.txt",
+      dest_project_id: DEST_PROJECT_ID,
+      dest_path: "/root/a.txt",
+      snapshot_id: "snap-6",
+      expires_at: new Date(Date.now() + 60_000),
+    });
+
+    await updateCopyStatus({
+      copy_id: row.copy_id,
+      key: {
+        src_project_id: SRC_PROJECT_ID,
+        src_path: "a.txt",
+        dest_project_id: DEST_PROJECT_ID,
+        dest_path: "/root/a.txt",
+      },
+      status: "failed",
+      last_error: "copy failed later",
+    });
+
+    const rows = await getPool().query<{
+      status: string;
+      finished_at: Date | null;
+    }>(
+      "SELECT status, finished_at FROM long_running_operations WHERE op_id=$1",
+      [op_id],
+    );
+    expect(rows.rows[0]).toEqual({
+      status: "succeeded",
+      finished_at: expect.any(Date),
+    });
+  });
+
+  it("does not let terminal parent LRO copy rows block later copies", async () => {
+    const { ensureLroSchema } = await import("@cocalc/server/lro/lro-db");
+    const { claimPendingCopies, ensureCopySchema, upsertCopyRow } =
+      await import("./copy-db");
+    await ensureLroSchema();
+    await ensureCopySchema();
+
+    const canceledOp = "77777777-7777-4777-8777-777777777777";
+    await getPool().query(
+      `
+        INSERT INTO long_running_operations
+          (op_id, kind, scope_type, scope_id, status, input, result, progress_summary, finished_at, expires_at)
+        VALUES
+          ($1, 'copy-path-between-projects', 'project', $2, 'canceled', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, now(), now() + interval '1 hour')
+      `,
+      [canceledOp, SRC_PROJECT_ID],
+    );
+    const blocker = await upsertCopyRow({
+      op_id: canceledOp,
+      src_project_id: SRC_PROJECT_ID,
+      src_path: "a.txt",
+      dest_project_id: DEST_PROJECT_ID,
+      dest_path: "/root/a.txt",
+      snapshot_id: "snap-7",
+      expires_at: new Date(Date.now() + 60_000),
+    });
+    await getPool().query(
+      "UPDATE project_copies SET status='applying', last_attempt_at=now(), updated_at=now() WHERE copy_id=$1",
+      [blocker.copy_id],
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const next = await upsertCopyRow({
+      op_id: "88888888-8888-4888-8888-888888888888",
+      src_project_id: SRC_PROJECT_ID,
+      src_path: "a.txt",
+      dest_project_id: DEST_PROJECT_ID,
+      dest_path: "/root/a.txt",
+      snapshot_id: "snap-8",
+      expires_at: new Date(Date.now() + 60_000),
+    });
+
+    const claimed = await claimPendingCopies({ host_id: HOST_ID, limit: 10 });
+    expect(claimed).toHaveLength(1);
+    expect(claimed[0].copy_id).toBe(next.copy_id);
+
+    const rows = await getPool().query<{
+      copy_id: string;
+      status: string;
+      last_error: string | null;
+    }>(
+      `
+        SELECT copy_id, status, last_error
+        FROM project_copies
+        ORDER BY created_at
+      `,
+    );
+    expect(rows.rows).toEqual([
+      {
+        copy_id: blocker.copy_id,
+        status: "canceled",
+        last_error: "parent operation canceled",
+      },
+      {
+        copy_id: next.copy_id,
+        status: "applying",
+        last_error: null,
+      },
+    ]);
   });
 });

@@ -306,14 +306,14 @@ describe("project-backup", () => {
       if (sql.startsWith("INSERT INTO project_backup_repos")) {
         const nextIndex = repoStateRows().length;
         const repo = repoRow({
-          id: REPO_IDS[nextIndex] ?? REPO_ID,
-          region: params?.[0] ?? settings.project_region ?? "wnam",
-          bucket_id: params?.[1] ?? BUCKET_ID,
+          id: params?.[0] ?? REPO_IDS[nextIndex] ?? REPO_ID,
+          region: params?.[1] ?? settings.project_region ?? "wnam",
+          bucket_id: params?.[2] ?? BUCKET_ID,
           root:
-            params?.[2] ??
-            `rustic/shared-${settings.project_region ?? "wnam"}-${String(nextIndex + 1).padStart(4, "0")}`,
-          secret: params?.[3] ?? settings.repo_secret ?? "repo-secret",
-          status: params?.[4] ?? "active",
+            params?.[3] ??
+            `rustic/shared-${settings.project_region ?? "wnam"}-${String(nextIndex + 1).padStart(4, "0")}-${params?.[0] ?? REPO_IDS[nextIndex] ?? REPO_ID}`,
+          secret: params?.[4] ?? settings.repo_secret ?? "repo-secret",
+          status: params?.[5] ?? "active",
         });
         repoStateRows().push(repo);
         settings.backup_repo_id = repo.id;
@@ -469,6 +469,49 @@ describe("project-backup", () => {
     expect(result.ttl_seconds).toBeGreaterThan(0);
   });
 
+  it("moves an existing assignment away from a disabled repo", async () => {
+    settings = {
+      r2_account_id: "account",
+      r2_api_token: "token",
+      r2_access_key_id: "access",
+      r2_secret_access_key: "secret",
+      r2_bucket_prefix: "cocalc-backups",
+      project_region: "wnam",
+      backup_repo_id: REPO_ID,
+      repos: [
+        repoRow({
+          id: REPO_ID,
+          root: "rustic/shared-wnam-0001",
+          status: "disabled",
+        }),
+        repoRow({
+          id: REPO_IDS[1],
+          root: "rustic/shared-wnam-0002-clean",
+          status: "active",
+        }),
+      ],
+      project_backup_assignments: {
+        [PROJECT_ID]: {
+          project_id: PROJECT_ID,
+          region: "wnam",
+          backup_repo_id: REPO_ID,
+          created: new Date("2026-01-01T00:00:00Z"),
+          updated: new Date("2026-01-01T00:00:00Z"),
+        },
+      },
+    };
+    const { getBackupConfig } = await import("./index");
+    const result = await getBackupConfig({
+      host_id: HOST_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(result.toml).toContain('root = "rustic/shared-wnam-0002-clean"');
+    expect(settings.backup_repo_id).toBe(REPO_IDS[1]);
+    expect(settings.project_backup_assignments[PROJECT_ID].backup_repo_id).toBe(
+      REPO_IDS[1],
+    );
+  });
+
   it("creates the first shared repo and bucket on first use", async () => {
     settings = {
       r2_account_id: "account",
@@ -502,12 +545,12 @@ describe("project-backup", () => {
     ).toBe(true);
     expect(settings.repos).toHaveLength(4);
     expect(settings.repos.map((repo: any) => repo.root)).toEqual([
-      "rustic/shared-wnam-0001",
-      "rustic/shared-wnam-0002",
-      "rustic/shared-wnam-0003",
-      "rustic/shared-wnam-0004",
+      expect.stringMatching(/^rustic\/shared-wnam-0001-[0-9a-f-]{36}$/),
+      expect.stringMatching(/^rustic\/shared-wnam-0002-[0-9a-f-]{36}$/),
+      expect.stringMatching(/^rustic\/shared-wnam-0003-[0-9a-f-]{36}$/),
+      expect.stringMatching(/^rustic\/shared-wnam-0004-[0-9a-f-]{36}$/),
     ]);
-    expect(result.toml).toContain('root = "rustic/shared-wnam-0001"');
+    expect(result.toml).toContain('root = "rustic/shared-wnam-0001-');
   });
 
   it("delegates project backup config to the seed bay from attached bays", async () => {

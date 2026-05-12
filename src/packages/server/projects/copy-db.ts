@@ -5,7 +5,7 @@ import type {
   ProjectCopyState,
 } from "@cocalc/conat/hub/api/projects";
 import type { LroStatus } from "@cocalc/conat/hub/api/lro";
-import { getLro, updateLro } from "@cocalc/server/lro/lro-db";
+import { ensureLroSchema, getLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroSummary } from "@cocalc/server/lro/stream";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
 
@@ -13,14 +13,52 @@ const logger = getLogger("server:projects:copy-db");
 
 const ACTIVE_STATUSES: ProjectCopyState[] = ["queued", "applying", "failed"];
 const TERMINAL_STATUSES: ProjectCopyState[] = ["done", "canceled", "expired"];
+const TERMINAL_LRO_STATUSES: LroStatus[] = [
+  "succeeded",
+  "failed",
+  "canceled",
+  "expired",
+];
+const STALE_APPLYING_MS = 35 * 60 * 1000;
+
+function staleApplyingIntervalSql(param: number): string {
+  return `now() - ($${param}::text || ' milliseconds')::interval`;
+}
+
+async function reconcileTerminalParentCopyRows(): Promise<ProjectCopyRow[]> {
+  await ensureCopySchema();
+  await ensureLroSchema();
+  const { rows } = await pool().query(
+    `
+      UPDATE project_copies pc
+      SET status=CASE
+            WHEN l.status = 'expired' THEN 'expired'
+            ELSE 'canceled'
+          END,
+          last_error=COALESCE(pc.last_error, 'parent operation ' || l.status),
+          updated_at=now()
+      FROM long_running_operations l
+      WHERE pc.op_id = l.op_id
+        AND pc.status = ANY($1::text[])
+        AND l.status = ANY($2::text[])
+      RETURNING pc.*
+    `,
+    [ACTIVE_STATUSES, TERMINAL_LRO_STATUSES],
+  );
+  return rows as ProjectCopyRow[];
+}
 
 async function refreshCopyOperation(op_id: string): Promise<void> {
   try {
     const lro = await getLro(op_id);
-    const frozenStatus =
-      lro?.status === "canceled" || lro?.status === "expired"
-        ? lro.status
-        : undefined;
+    if (lro?.status && TERMINAL_LRO_STATUSES.includes(lro.status)) {
+      await publishLroSummary({
+        scope_type: lro.scope_type,
+        scope_id: lro.scope_id,
+        summary: lro,
+      });
+      return;
+    }
     const { rows } = await pool().query(
       `
         SELECT status, COUNT(*)::int AS count, MAX(last_error) AS last_error
@@ -67,20 +105,10 @@ async function refreshCopyOperation(op_id: string): Promise<void> {
     };
     const updated = await updateLro({
       op_id,
-      status: frozenStatus ?? status,
+      status,
       progress_summary,
-      error:
-        frozenStatus != null
-          ? undefined
-          : status === "failed"
-            ? lastError
-            : null,
-      result:
-        frozenStatus != null
-          ? undefined
-          : status === "succeeded"
-            ? progress_summary
-            : undefined,
+      error: status === "failed" ? lastError : null,
+      result: status === "succeeded" ? progress_summary : undefined,
     });
     if (updated) {
       await publishLroSummary({
@@ -227,6 +255,7 @@ async function maybeCleanupSnapshot({
 
 export async function expireCopies(): Promise<ProjectCopyRow[]> {
   await ensureCopySchema();
+  const terminalParentRows = await reconcileTerminalParentCopyRows();
   const { rows } = await pool().query(
     `
       UPDATE project_copies
@@ -239,7 +268,7 @@ export async function expireCopies(): Promise<ProjectCopyRow[]> {
     `,
     [TERMINAL_STATUSES],
   );
-  const expired = rows as ProjectCopyRow[];
+  const expired = [...terminalParentRows, ...(rows as ProjectCopyRow[])];
   const seen = new Set<string>();
   const opIds = new Set<string>();
   for (const row of expired) {
@@ -498,15 +527,16 @@ export async function claimPendingCopies({
   const client = await pool().connect();
   try {
     await client.query("BEGIN");
-    const values: any[] = [host_id, ["queued", "failed"]];
+    const values: any[] = [host_id, ["queued", "failed"], STALE_APPLYING_MS];
     let projectFilter = "";
-    let limitIndex = 3;
+    let limitIndex = 4;
     if (project_id) {
       values.push(project_id);
-      projectFilter = "AND pc.dest_project_id=$3";
-      limitIndex = 4;
+      projectFilter = "AND pc.dest_project_id=$4";
+      limitIndex = 5;
     }
     values.push(limit);
+    const staleApplying = staleApplyingIntervalSql(3);
     const { rows } = await client.query(
       `
         WITH candidates AS (
@@ -514,7 +544,13 @@ export async function claimPendingCopies({
           FROM project_copies pc
           JOIN projects p ON p.project_id = pc.dest_project_id
           WHERE p.host_id=$1
-            AND pc.status = ANY($2::text[])
+            AND (
+              pc.status = ANY($2::text[])
+              OR (
+                pc.status = 'applying'
+                AND COALESCE(pc.last_attempt_at, pc.updated_at, pc.created_at) < ${staleApplying}
+              )
+            )
             AND pc.expires_at > now()
             ${projectFilter}
             AND NOT EXISTS (
@@ -523,13 +559,20 @@ export async function claimPendingCopies({
               WHERE blocker.dest_project_id = pc.dest_project_id
                 AND blocker.dest_path = pc.dest_path
                 AND blocker.status = 'applying'
+                AND COALESCE(blocker.last_attempt_at, blocker.updated_at, blocker.created_at) >= ${staleApplying}
             )
             AND NOT EXISTS (
               SELECT 1
               FROM project_copies earlier
               WHERE earlier.dest_project_id = pc.dest_project_id
                 AND earlier.dest_path = pc.dest_path
-                AND earlier.status = ANY($2::text[])
+                AND (
+                  earlier.status = ANY($2::text[])
+                  OR (
+                    earlier.status = 'applying'
+                    AND COALESCE(earlier.last_attempt_at, earlier.updated_at, earlier.created_at) < ${staleApplying}
+                  )
+                )
                 AND earlier.expires_at > now()
                 AND (
                   earlier.created_at < pc.created_at
@@ -546,6 +589,7 @@ export async function claimPendingCopies({
         UPDATE project_copies pc
         SET status='applying',
             attempt=attempt+1,
+            last_error=NULL,
             last_attempt_at=now(),
             updated_at=now()
         FROM candidates

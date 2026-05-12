@@ -134,4 +134,33 @@ describe("lro host authorization", () => {
 
     expect(updateLroMock).not.toHaveBeenCalled();
   });
+
+  it("cancels applying copy rows when canceling a copy operation", async () => {
+    getLroMock = jest.fn(async () => ({
+      op_id: "op-copy",
+      kind: "copy-path-between-projects",
+      scope_type: "project",
+      scope_id: "project-1",
+      status: "running",
+    }));
+    updateLroMock = jest.fn(async () => ({
+      op_id: "op-copy",
+      kind: "copy-path-between-projects",
+      scope_type: "project",
+      scope_id: "project-1",
+      status: "canceled",
+      error: "canceled",
+    }));
+
+    const { cancel } = await import("./lro");
+    await cancel({
+      account_id: "project-user",
+      op_id: "op-copy",
+    });
+
+    expect(cancelCopiesByOpIdMock).toHaveBeenCalledWith({
+      op_id: "op-copy",
+      include_applying: true,
+    });
+  });
 });
