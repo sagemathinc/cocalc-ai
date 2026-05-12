@@ -36,6 +36,7 @@ import type {
   HostRehomeOperationSummary,
   HostRehomeResponse,
   HostCloudRefreshResult,
+  HostCloudOrphansResult,
   ProjectBackupConfig,
   ProjectBackupIndexRecord,
   HostAccessRole,
@@ -86,6 +87,7 @@ import {
   hasDns,
   runReconcileOnce,
   bumpReconcile,
+  listCloudOrphanInstances,
 } from "@cocalc/server/cloud";
 import { sendSelfHostCommand } from "@cocalc/server/self-host/commands";
 import isAdmin from "@cocalc/server/accounts/is-admin";
@@ -4743,6 +4745,36 @@ export async function refreshHostCloudState({
     runtime_observed_at:
       typeof runtime.observed_at === "string" ? runtime.observed_at : null,
     public_ip: typeof runtime.public_ip === "string" ? runtime.public_ip : null,
+  };
+}
+
+export async function listHostCloudOrphans({
+  account_id,
+  provider,
+}: {
+  account_id?: string;
+  provider: string;
+}): Promise<HostCloudOrphansResult> {
+  const owner = requireAccount(account_id);
+  if (!(await isAdmin(owner))) {
+    throw new Error("not authorized");
+  }
+  const normalizedProvider = normalizeProviderId(provider);
+  if (
+    !normalizedProvider ||
+    normalizedProvider === "local" ||
+    normalizedProvider === "self-host"
+  ) {
+    throw new Error(
+      "cloud orphan inspection is only supported for cloud hosts",
+    );
+  }
+  const instances = await listCloudOrphanInstances(normalizedProvider);
+  return {
+    provider: normalizedProvider,
+    refreshed_at: new Date().toISOString(),
+    count: instances.length,
+    instances,
   };
 }
 

@@ -79,6 +79,7 @@ let deleteProjectBackupIndexLocalInternalMock: jest.Mock;
 let refreshCloudCatalogNowMock: jest.Mock;
 let bumpReconcileMock: jest.Mock;
 let runReconcileOnceMock: jest.Mock;
+let listCloudOrphanInstancesMock: jest.Mock;
 let getBrowserAuthSessionHashMock: jest.Mock;
 let requireFreshAuthForSessionHashMock: jest.Mock;
 let hasActiveSecondFactorMock: jest.Mock;
@@ -140,6 +141,8 @@ jest.mock("@cocalc/server/cloud", () => {
       refreshCloudCatalogNowMock(...args),
     bumpReconcile: (...args: any[]) => bumpReconcileMock(...args),
     runReconcileOnce: (...args: any[]) => runReconcileOnceMock(...args),
+    listCloudOrphanInstances: (...args: any[]) =>
+      listCloudOrphanInstancesMock(...args),
   };
 });
 
@@ -679,6 +682,7 @@ beforeEach(() => {
     ran: true,
     next_at: new Date("2026-01-01T00:00:00Z"),
   }));
+  listCloudOrphanInstancesMock = jest.fn(async () => []);
 });
 
 afterAll(() => {
@@ -4705,6 +4709,64 @@ describe("hosts.refreshHostCloudState", () => {
     ).rejects.toThrow("cloud refresh is only supported for cloud hosts");
     expect(bumpReconcileMock).not.toHaveBeenCalled();
     expect(runReconcileOnceMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("hosts.listHostCloudOrphans", () => {
+  beforeEach(() => {
+    isAdminMock = jest.fn(async () => true);
+    listCloudOrphanInstancesMock = jest.fn(async () => [
+      {
+        provider: "gcp",
+        category: "deleted-host",
+        instance_id: "vm-deleted",
+        matched_host_id: HOST_ID,
+      },
+    ]);
+  });
+
+  it("lists cloud provider instances without an active host row", async () => {
+    const { listHostCloudOrphans } = await import("./hosts");
+    await expect(
+      listHostCloudOrphans({
+        account_id: ACCOUNT_ID,
+        provider: "gcp",
+      }),
+    ).resolves.toMatchObject({
+      provider: "gcp",
+      count: 1,
+      instances: [
+        {
+          category: "deleted-host",
+          instance_id: "vm-deleted",
+          matched_host_id: HOST_ID,
+        },
+      ],
+    });
+    expect(listCloudOrphanInstancesMock).toHaveBeenCalledWith("gcp");
+  });
+
+  it("rejects non-admin users", async () => {
+    isAdminMock = jest.fn(async () => false);
+    const { listHostCloudOrphans } = await import("./hosts");
+    await expect(
+      listHostCloudOrphans({
+        account_id: ACCOUNT_ID,
+        provider: "gcp",
+      }),
+    ).rejects.toThrow("not authorized");
+    expect(listCloudOrphanInstancesMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-cloud providers", async () => {
+    const { listHostCloudOrphans } = await import("./hosts");
+    await expect(
+      listHostCloudOrphans({
+        account_id: ACCOUNT_ID,
+        provider: "self-host",
+      }),
+    ).rejects.toThrow("cloud orphan inspection is only supported");
+    expect(listCloudOrphanInstancesMock).not.toHaveBeenCalled();
   });
 });
 

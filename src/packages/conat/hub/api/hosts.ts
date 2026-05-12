@@ -280,6 +280,27 @@ export interface HostCloudRefreshResult {
   public_ip?: string | null;
 }
 
+export interface HostCloudOrphanInstance {
+  provider: string;
+  category: "untracked" | "deleted-host" | "deprovisioned-host";
+  instance_id: string;
+  name?: string;
+  status?: string;
+  zone?: string;
+  public_ip?: string;
+  matched_host_id?: string;
+  matched_host_name?: string;
+  matched_host_status?: string;
+  matched_host_deleted?: string | Date | null;
+}
+
+export interface HostCloudOrphansResult {
+  provider: string;
+  refreshed_at: string;
+  count: number;
+  instances: HostCloudOrphanInstance[];
+}
+
 export interface ProjectBackupIndexStoreConfig {
   kind: "r2-object-store";
   endpoint: string;
@@ -1088,6 +1109,7 @@ export const hosts = {
   getHostRehomeOperation: authFirstRequireAccount,
   reconcileHostRehome: authFirstRequireAccount,
   refreshHostCloudState: authFirstRequireAccount,
+  listHostCloudOrphans: authFirstRequireAccount,
   removeSelfHostConnector: authFirstRequireAccount,
   renameHost: authFirstRequireAccount,
   updateHostMachine: authFirstRequireAccount,
@@ -1543,6 +1565,10 @@ export interface Hosts {
     id: string;
     confirm_missing?: boolean;
   }) => Promise<HostCloudRefreshResult>;
+  listHostCloudOrphans: (opts: {
+    account_id?: string;
+    provider: string;
+  }) => Promise<HostCloudOrphansResult>;
   removeSelfHostConnector: (opts: {
     account_id?: string;
     id: string;

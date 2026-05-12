@@ -24,5 +24,8 @@ export {
   DEFAULT_INTERVALS,
   shouldAutoRestoreInterruptedSpotHost,
   type ReconcileRunResult,
+  classifyCloudOrphanInstances,
+  listCloudOrphanInstances,
+  type CloudOrphanInstance,
   bumpReconcile,
 } from "./reconcile";

@@ -1,4 +1,7 @@
-import { runReconcileOnce } from "@cocalc/server/cloud";
+import {
+  classifyCloudOrphanInstances,
+  runReconcileOnce,
+} from "@cocalc/server/cloud";
 import { before, after, getPool } from "@cocalc/server/test";
 
 beforeAll(async () => {
@@ -134,5 +137,60 @@ describe("cloud reconcile state gating", () => {
     expect(new Date(rows[0].next_run_at).getTime()).toBe(
       now.getTime() + intervals.idle_ms,
     );
+  });
+});
+
+describe("cloud orphan classification", () => {
+  it("reports provider instances without an active host owner", () => {
+    const result = classifyCloudOrphanInstances({
+      provider: "gcp",
+      instances: [
+        { instance_id: "vm-active", name: "active" },
+        { instance_id: "vm-deleted", name: "deleted" },
+        { instance_id: "vm-deprovisioned", name: "deprovisioned" },
+        { instance_id: "vm-untracked", name: "untracked" },
+      ],
+      hosts: [
+        {
+          id: "host-active",
+          name: "active-host",
+          status: "running",
+          deleted: null,
+          metadata: { runtime: { instance_id: "vm-active" } },
+        },
+        {
+          id: "host-deleted",
+          name: "deleted-host",
+          status: "deprovisioning",
+          deleted: "2026-05-12T12:00:00Z",
+          metadata: { runtime: { instance_id: "vm-deleted" } },
+        },
+        {
+          id: "host-deprovisioned",
+          name: "deprovisioned-host",
+          status: "deprovisioned",
+          deleted: null,
+          metadata: { runtime: { instance_id: "vm-deprovisioned" } },
+        },
+      ],
+    });
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        category: "deleted-host",
+        instance_id: "vm-deleted",
+        matched_host_id: "host-deleted",
+      }),
+      expect.objectContaining({
+        category: "deprovisioned-host",
+        instance_id: "vm-deprovisioned",
+        matched_host_id: "host-deprovisioned",
+      }),
+      expect.objectContaining({
+        category: "untracked",
+        instance_id: "vm-untracked",
+        matched_host_id: undefined,
+      }),
+    ]);
   });
 });

@@ -1595,6 +1595,23 @@ export function registerHostCommand(
     );
 
   host
+    .command("cloud-orphans")
+    .description("list provider VMs that are not owned by an active host row")
+    .option(
+      "--provider <provider>",
+      "provider id: gcp, nebius, hyperstack, lambda",
+      "gcp",
+    )
+    .action(async (opts: { provider?: string }, command: Command) => {
+      await withContext(command, "host cloud-orphans", async (ctx) => {
+        const provider = normalizeHostProviderValue(
+          `${opts.provider ?? "gcp"}`,
+        );
+        return await ctx.hub.hosts.listHostCloudOrphans({ provider });
+      });
+    });
+
+  host
     .command("ssh-trust <host>")
     .description("ensure the host trusts its owning bay SSH key")
     .action(async (hostIdentifier: string, command: Command) => {

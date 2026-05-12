@@ -66,6 +66,28 @@ const RECONCILE_GRACE_MS = 2 * 60 * 1000;
 
 type DiskStatus = "present" | "missing" | "unknown";
 
+export type CloudOrphanInstance = {
+  provider: Provider;
+  category: "untracked" | "deleted-host" | "deprovisioned-host";
+  instance_id: string;
+  name?: string;
+  status?: string;
+  zone?: string;
+  public_ip?: string;
+  matched_host_id?: string;
+  matched_host_name?: string;
+  matched_host_status?: string;
+  matched_host_deleted?: string | Date | null;
+};
+
+type KnownCloudHost = {
+  id: string;
+  name?: string;
+  status?: string;
+  deleted?: string | Date | null;
+  metadata?: Record<string, any>;
+};
+
 async function loadHosts(provider: Provider): Promise<HostRow[]> {
   const { rows } = await pool().query(
     `
@@ -73,6 +95,20 @@ async function loadHosts(provider: Provider): Promise<HostRow[]> {
       FROM project_hosts
       WHERE metadata->'machine'->>'cloud' = $1
         AND deleted IS NULL
+    `,
+    [provider],
+  );
+  return rows;
+}
+
+async function loadKnownCloudHosts(
+  provider: Provider,
+): Promise<KnownCloudHost[]> {
+  const { rows } = await pool().query(
+    `
+      SELECT id, name, status, deleted, metadata
+      FROM project_hosts
+      WHERE metadata->'machine'->>'cloud' = $1
     `,
     [provider],
   );
@@ -262,6 +298,61 @@ function setMissingCount(
       },
     },
   };
+}
+
+export function classifyCloudOrphanInstances({
+  provider,
+  instances,
+  hosts,
+}: {
+  provider: Provider;
+  instances: RemoteInstance[];
+  hosts: KnownCloudHost[];
+}): CloudOrphanInstance[] {
+  const hostByInstanceId = new Map<string, KnownCloudHost>();
+  for (const host of hosts) {
+    const instanceId = `${host.metadata?.runtime?.instance_id ?? ""}`.trim();
+    if (instanceId) {
+      hostByInstanceId.set(instanceId, host);
+    }
+  }
+  const orphans: CloudOrphanInstance[] = [];
+  for (const instance of instances) {
+    const host = hostByInstanceId.get(instance.instance_id);
+    let category: CloudOrphanInstance["category"] | undefined;
+    if (!host) {
+      category = "untracked";
+    } else if (host.deleted) {
+      category = "deleted-host";
+    } else if (host.status === "deprovisioned") {
+      category = "deprovisioned-host";
+    }
+    if (!category) continue;
+    orphans.push({
+      provider,
+      category,
+      instance_id: instance.instance_id,
+      name: instance.name,
+      status: instance.status,
+      zone: instance.zone,
+      public_ip: instance.public_ip,
+      matched_host_id: host?.id,
+      matched_host_name: host?.name,
+      matched_host_status: host?.status,
+      matched_host_deleted: host?.deleted ?? null,
+    });
+  }
+  return orphans;
+}
+
+export async function listCloudOrphanInstances(
+  provider: Provider,
+): Promise<CloudOrphanInstance[]> {
+  const { prefix } = await getProviderContext(provider);
+  const instances = await listProviderInstances(provider, prefix);
+  if (!instances) return [];
+  const hosts = await loadKnownCloudHosts(provider);
+  return classifyCloudOrphanInstances({ provider, instances, hosts });
 }
 
 async function hasPendingWork(vmId: string): Promise<boolean> {
