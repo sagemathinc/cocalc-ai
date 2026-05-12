@@ -106,6 +106,9 @@ async function applyCopyRow(row: ProjectCopyRow): Promise<void> {
     });
     return;
   }
+  if (destExists && force) {
+    await rm(destAbs, { recursive: true, force: true });
+  }
 
   await mkdir(path.dirname(destAbs), { recursive: true });
 

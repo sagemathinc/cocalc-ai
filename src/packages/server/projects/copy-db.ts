@@ -12,6 +12,7 @@ import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-cli
 const logger = getLogger("server:projects:copy-db");
 
 const ACTIVE_STATUSES: ProjectCopyState[] = ["queued", "applying", "failed"];
+const CLAIMABLE_STATUSES: ProjectCopyState[] = ["queued"];
 const TERMINAL_STATUSES: ProjectCopyState[] = ["done", "canceled", "expired"];
 const TERMINAL_LRO_STATUSES: LroStatus[] = [
   "succeeded",
@@ -527,7 +528,7 @@ export async function claimPendingCopies({
   const client = await pool().connect();
   try {
     await client.query("BEGIN");
-    const values: any[] = [host_id, ["queued", "failed"], STALE_APPLYING_MS];
+    const values: any[] = [host_id, CLAIMABLE_STATUSES, STALE_APPLYING_MS];
     let projectFilter = "";
     let limitIndex = 4;
     if (project_id) {
