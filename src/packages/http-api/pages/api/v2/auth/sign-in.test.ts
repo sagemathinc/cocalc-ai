@@ -8,14 +8,16 @@
 import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
 
 const mockSignInCheck = jest.fn();
+const mockRecordFail = jest.fn();
 const mockGetRequiresToken = jest.fn();
 const mockGetClusterAccountByEmail = jest.fn();
+const mockVerifyClusterAccountSignInPassword = jest.fn();
 const mockHasActiveSecondFactor = jest.fn();
 const mockCreateSignInSecondFactorChallenge = jest.fn();
 
 jest.mock("@cocalc/server/auth/throttle", () => ({
   signInCheck: (...args) => mockSignInCheck(...args),
-  recordFail: jest.fn(),
+  recordFail: (...args) => mockRecordFail(...args),
 }));
 
 jest.mock("@cocalc/server/auth/tokens/get-requires-token", () => ({
@@ -43,6 +45,8 @@ jest.mock("@cocalc/server/bay-public-origin", () => ({
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   getClusterAccountByEmail: (...args) => mockGetClusterAccountByEmail(...args),
+  verifyClusterAccountSignInPassword: (...args) =>
+    mockVerifyClusterAccountSignInPassword(...args),
 }));
 
 jest.mock("@cocalc/server/auth/two-factor", () => ({
@@ -61,8 +65,13 @@ jest.mock("@cocalc/database/pool", () => ({
 describe("/api/v2/auth/sign-in", () => {
   beforeEach(() => {
     mockSignInCheck.mockReset().mockResolvedValue(undefined);
+    mockRecordFail.mockReset();
     mockGetRequiresToken.mockReset().mockResolvedValue(false);
     mockGetClusterAccountByEmail.mockReset().mockResolvedValue(undefined);
+    mockVerifyClusterAccountSignInPassword.mockReset().mockResolvedValue({
+      account_id: "11111111-1111-1111-1111-111111111111",
+      home_bay_id: "bay-1",
+    });
     mockHasActiveSecondFactor.mockReset().mockResolvedValue(false);
     mockCreateSignInSecondFactorChallenge.mockReset().mockResolvedValue({
       challenge_id: "challenge-1",
@@ -105,8 +114,8 @@ describe("/api/v2/auth/sign-in", () => {
   it("returns an MFA challenge when the account has an active second factor", async () => {
     jest.resetModules();
     mockHasActiveSecondFactor.mockResolvedValue(true);
-    jest.doMock("password-hash", () => ({
-      verify: jest.fn().mockReturnValue(true),
+    jest.doMock("@cocalc/backend/auth/password-hash", () => ({
+      verifyPassword: jest.fn().mockReturnValue(true),
     }));
     jest.doMock("@cocalc/server/bay-public-origin", () => ({
       getBayPublicOriginForRequest: jest
@@ -154,8 +163,8 @@ describe("/api/v2/auth/sign-in", () => {
     mockCreateSignInSecondFactorChallenge.mockRejectedValue(
       new Error("too many recent second factor attempts"),
     );
-    jest.doMock("password-hash", () => ({
-      verify: jest.fn().mockReturnValue(true),
+    jest.doMock("@cocalc/backend/auth/password-hash", () => ({
+      verifyPassword: jest.fn().mockReturnValue(true),
     }));
     jest.doMock("@cocalc/database/pool", () => ({
       __esModule: true,
@@ -187,5 +196,38 @@ describe("/api/v2/auth/sign-in", () => {
       error:
         "Too many recent second factor attempts. Wait about an hour, then try again.",
     });
+  });
+
+  it("does not return wrong-bay routing before the home bay verifies the password", async () => {
+    mockGetClusterAccountByEmail.mockResolvedValue({
+      account_id: "11111111-1111-1111-1111-111111111111",
+      email_address: "user@example.com",
+      home_bay_id: "bay-1",
+    });
+    mockVerifyClusterAccountSignInPassword.mockRejectedValue(
+      new Error("password for 'user@example.com' is incorrect"),
+    );
+
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-in",
+      body: {
+        email: "user@example.com",
+        password: "wrong password",
+      },
+    });
+    const { default: handler } = await import("./sign-in");
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      error: "Invalid email address or password.",
+    });
+    expect(mockVerifyClusterAccountSignInPassword).toHaveBeenCalledWith({
+      home_bay_id: "bay-1",
+      email_address: "user@example.com",
+      password: "wrong password",
+    });
+    expect(mockRecordFail).toHaveBeenCalledWith("user@example.com", req.ip);
   });
 });

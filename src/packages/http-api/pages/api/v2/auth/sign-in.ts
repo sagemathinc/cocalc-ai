@@ -17,7 +17,6 @@ Sign in works as follows:
 */
 import { Request, Response } from "express";
 
-import getPool from "@cocalc/database/pool";
 import { recordFail, signInCheck } from "@cocalc/server/auth/throttle";
 import type { AuthSessionFactorLevel } from "@cocalc/server/auth/auth-sessions";
 import getRequiresToken from "@cocalc/server/auth/tokens/get-requires-token";
@@ -26,8 +25,6 @@ import {
   hasActiveSecondFactor,
 } from "@cocalc/server/auth/two-factor";
 import getParams from "@cocalc/http-api/lib/api/get-params";
-import { verify } from "password-hash";
-import { MAX_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -36,7 +33,11 @@ import {
   issueHomeBayRetryToken,
   verifyHomeBayRetryToken,
 } from "@cocalc/server/auth/home-bay-retry-token";
-import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
+import {
+  getClusterAccountByEmail,
+  verifyClusterAccountSignInPassword,
+} from "@cocalc/server/inter-bay/accounts";
+import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
 
 export default async function signIn(req: Request, res: Response) {
   let { email, password, retry_token } = getParams(req);
@@ -122,6 +123,9 @@ function getSignInErrorMessage(
   opts: { requiresToken: boolean },
 ): string {
   const message = err instanceof Error ? err.message : String(err ?? "");
+  if (message === "invalid email address or password") {
+    return "Invalid email address or password.";
+  }
   if (opts.requiresToken) {
     // In registration-token deployments, avoid leaking account existence/state.
     return "Invalid email address or password.";
@@ -158,11 +162,6 @@ export async function getAccount(
   retry_token?: string,
 ): Promise<string> {
   const email = `${email_address ?? ""}`.trim().toLowerCase();
-  if (password.length > MAX_PASSWORD_LENGTH) {
-    throw new Error(
-      `The password must be shorter than ${MAX_PASSWORD_LENGTH} characters.`,
-    );
-  }
 
   const global = await getClusterAccountByEmail(email);
   if (retry_token) {
@@ -177,6 +176,22 @@ export async function getAccount(
     global.home_bay_id !== getConfiguredBayId()
   ) {
     const home_bay_id = global.home_bay_id;
+    try {
+      await verifyClusterAccountSignInPassword({
+        home_bay_id,
+        email_address: email,
+        password,
+      });
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        (err.message.includes("is banned") ||
+          err.message.startsWith("The password must be shorter than"))
+      ) {
+        throw err;
+      }
+      throw new Error("invalid email address or password");
+    }
     const retry = issueHomeBayRetryToken({
       email,
       home_bay_id,
@@ -194,24 +209,12 @@ export async function getAccount(
     throw err;
   }
 
-  const pool = getPool();
-  const { rows } = await pool.query(
-    "SELECT account_id, password_hash, banned FROM accounts WHERE email_address=$1",
-    [email],
-  );
-  if (rows.length == 0) {
-    throw Error(`no account with email address '${email}'`);
-  }
-  const { account_id, password_hash, banned } = rows[0];
-  if (banned) {
-    throw Error(
-      `'${email}' is banned -- if you think this is a mistake, please email help@cocalc.com and explain.`,
-    );
-  }
-  if (!verify(password, password_hash)) {
-    throw Error(`password for '${email}' is incorrect`);
-  }
-  return account_id;
+  return (
+    await verifyLocalSignInPassword({
+      email_address: email,
+      password,
+    })
+  ).account_id;
 }
 
 export async function signUserIn(

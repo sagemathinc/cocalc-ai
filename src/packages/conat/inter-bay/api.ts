@@ -656,6 +656,16 @@ export interface AccountLocalVerifyFreshAuthCredentialsResult {
   factor_level: "none" | "totp" | "recovery_code";
 }
 
+export interface AccountLocalVerifySignInPasswordRequest {
+  email_address: string;
+  password: string;
+}
+
+export interface AccountLocalVerifySignInPasswordResult {
+  account_id: string;
+  home_bay_id: string;
+}
+
 export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
 }
@@ -993,6 +1003,7 @@ export type AccountLocalMethod =
   | "get-rehome-operation"
   | "reconcile-rehome"
   | "create-impersonation-grant"
+  | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
   | "reconcile-dedicated-host-purchase-session"
   | "close-dedicated-host-purchase-session"
@@ -1615,6 +1626,9 @@ export interface InterBayAccountLocalApi {
   verifyFreshAuthCredentials: (
     opts: AccountLocalVerifyFreshAuthCredentialsRequest,
   ) => Promise<AccountLocalVerifyFreshAuthCredentialsResult>;
+  verifySignInPassword: (
+    opts: AccountLocalVerifySignInPasswordRequest,
+  ) => Promise<AccountLocalVerifySignInPasswordResult>;
   reconcileDedicatedHostPurchaseSession: (
     opts: AccountLocalReconcileDedicatedHostPurchaseSessionRequest,
   ) => Promise<void>;
@@ -2828,6 +2842,15 @@ export function createInterBayAccountLocalClient({
       method: "verify-fresh-auth-credentials",
     }),
   });
+  const verifySignInPasswordClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "verifySignInPassword">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "verify-sign-in-password",
+    }),
+  });
   const reconcileDedicatedHostPurchaseSessionClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "reconcileDedicatedHostPurchaseSession">
   >({
@@ -2996,6 +3019,8 @@ export function createInterBayAccountLocalClient({
       await createImpersonationGrantClient.createImpersonationGrant(opts),
     verifyFreshAuthCredentials: async (opts) =>
       await verifyFreshAuthCredentialsClient.verifyFreshAuthCredentials(opts),
+    verifySignInPassword: async (opts) =>
+      await verifySignInPasswordClient.verifySignInPassword(opts),
     reconcileDedicatedHostPurchaseSession: async (opts) =>
       await reconcileDedicatedHostPurchaseSessionClient.reconcileDedicatedHostPurchaseSession(
         opts,
@@ -3156,6 +3181,20 @@ export function createInterBayAccountLocalHandler({
           await impl.verifyFreshAuthCredentials(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "verifySignInPassword">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "verify-sign-in-password",
+        }),
+        impl: {
+          verifySignInPassword: async (opts) =>
+            await impl.verifySignInPassword(opts),
+        },
+      },
+    ),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "reconcileDedicatedHostPurchaseSession">
     >({

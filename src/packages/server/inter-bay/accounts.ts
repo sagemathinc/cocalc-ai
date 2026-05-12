@@ -12,6 +12,8 @@ import {
   type AccountApiKeyDirectoryTouchRequest,
   type AccountApiKeyDirectoryUpdateHomeBayRequest,
   type AccountApiKeyDirectoryUpsertRequest,
+  type AccountLocalVerifySignInPasswordRequest,
+  type AccountLocalVerifySignInPasswordResult,
   type AccountDirectoryCreateRequest,
   type AccountDirectoryDeleteRequest,
   type AccountDirectoryDeleteResult,
@@ -20,6 +22,7 @@ import {
 import getPool from "@cocalc/database/pool";
 import createAccountLocal from "@cocalc/server/accounts/create-account";
 import deleteAccountLocal from "@cocalc/server/accounts/delete";
+import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
 import {
   deleteClusterAccountApiKeyDirectoryEntryDirect,
   deleteClusterAccountDirectoryEntry,
@@ -190,6 +193,23 @@ export async function touchClusterAccountApiKeyDirectoryEntry(
   await createInterBayAccountDirectoryClient({
     client: getInterBayFabricClient(),
   }).touchApiKey(opts);
+}
+
+export async function verifyClusterAccountSignInPassword({
+  home_bay_id,
+  email_address,
+  password,
+}: AccountLocalVerifySignInPasswordRequest & {
+  home_bay_id: string;
+}): Promise<AccountLocalVerifySignInPasswordResult> {
+  const targetBay = `${home_bay_id ?? ""}`.trim();
+  if (!targetBay || targetBay === currentBayId()) {
+    return await verifyLocalSignInPassword({ email_address, password });
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: targetBay,
+  }).verifySignInPassword({ email_address, password });
 }
 
 export async function provisionLocalClusterAccount(
