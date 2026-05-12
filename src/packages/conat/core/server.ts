@@ -123,6 +123,7 @@ import { type SysConatServer, sysApiSubject, sysApi } from "./sys";
 import { forkedConatServer } from "./start-server";
 import { EventEmitter } from "events";
 import { Metrics } from "../types";
+import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 
 const logger = getLogger("conat:core:server");
 
@@ -760,6 +761,24 @@ export class ConatServer extends EventEmitter {
       this.inboundAdmissionDeniedCount += 1;
     }
     const retryMs = Math.max(1_000, record.blockedUntil - now);
+    const user = this.stats[socket.id]?.user;
+    recordServiceAdmissionDenial({
+      surface: "conat-socket",
+      source: dimension,
+      limit:
+        dimension === "identity"
+          ? "COCALC_CONAT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW"
+          : "COCALC_CONAT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW",
+      current: record.count,
+      maximum: limit,
+      reason: "high-rate Conat socket event stream",
+      account_id:
+        typeof user?.account_id === "string" ? user.account_id : undefined,
+      project_id:
+        typeof user?.project_id === "string" ? user.project_id : undefined,
+      subject: event,
+      key,
+    });
     if (now - record.lastLogged >= this.inboundEventBlockMs) {
       record.lastLogged = now;
       logger.warn("rejecting high-rate Conat socket event stream", {

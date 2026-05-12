@@ -8,6 +8,7 @@ import {
   type ServerSocket,
 } from "@cocalc/conat/socket";
 import { getLogger } from "@cocalc/conat/logger";
+import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 import {
   createAdaptiveTerminalOutputThrottle,
   createTerminalFlowControl,
@@ -370,6 +371,16 @@ export function terminalServer({
 
   server.on("connection", (socket: ServerSocket) => {
     if (activeSockets >= maxActiveSockets) {
+      recordServiceAdmissionDenial({
+        surface: "terminal",
+        source: "project-service",
+        limit: "COCALC_TERMINAL_MAX_ACTIVE_SOCKETS",
+        current: activeSockets,
+        maximum: maxActiveSockets,
+        reason: "terminal socket active cap reached",
+        subject,
+        project_id,
+      });
       logger.warn("rejecting terminal socket; active socket cap reached", {
         active: activeSockets,
         max: maxActiveSockets,
@@ -642,6 +653,17 @@ export function terminalServer({
             setPty(sessions[id]);
           } else {
             if (id && Object.keys(sessions).length >= maxSessions) {
+              recordServiceAdmissionDenial({
+                surface: "terminal",
+                source: "project-service",
+                limit: "COCALC_TERMINAL_MAX_SESSIONS",
+                current: Object.keys(sessions).length,
+                maximum: maxSessions,
+                reason: "terminal session limit reached",
+                subject,
+                project_id,
+                key: id,
+              });
               throw Error("terminal session limit reached");
             }
             if (preHook != null) {

@@ -17,6 +17,7 @@ import { EventEmitter } from "events";
 import { encodeBase64 } from "@cocalc/conat/util";
 import { type Client } from "@cocalc/conat/core/client";
 import { until } from "@cocalc/util/async-utils";
+import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 
 const DEFAULT_TIMEOUT = 10 * 1000;
 
@@ -272,12 +273,24 @@ export class ConatService extends EventEmitter {
 
   private respondBusy = (mesg): void => {
     const message = `service '${this.name}' is busy`;
+    const maximum =
+      this.options.maxParallelHandlers ?? DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS;
+    recordServiceAdmissionDenial({
+      surface: "conat-service",
+      source: "parallel-handler",
+      limit: "COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE",
+      current: this.activeHandlers.size,
+      maximum,
+      reason: message,
+      subject: this.subject,
+      project_id: this.options.project_id,
+      account_id: this.options.account_id,
+      key: this.name,
+    });
     logger.warn(message, {
       subject: this.subject,
       active: this.activeHandlers.size,
-      max:
-        this.options.maxParallelHandlers ??
-        DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS,
+      max: maximum,
     });
     void mesg.respond(
       { error: message, code: 503 },

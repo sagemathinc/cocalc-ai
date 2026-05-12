@@ -291,6 +291,16 @@ Implemented first guard:
   - Denials return normal 429-style responses for acked events. Per-socket
     denials increment `inbound-deny:count`; per-account/project/hub identity
     denials increment `inbound-identity-deny:count` in Conat usage metrics.
+- Busy/admission guard denials now also record centralized
+  `service_admission_denied` telemetry in `central_log` for:
+  - Hub Conat API active-request cap.
+  - Generic Conat service and typed fast-RPC handler caps.
+  - Raw Conat/socket.io protocol message caps.
+  - Project exec-stream, file read/write, Jupyter, terminal, and app-proxy
+    websocket caps.
+  - Admins can query grouped events with `system.getServiceAdmissionDenialReport`
+    or `cocalc admin service-denials`; `--prometheus` emits command-scrapeable
+    metrics.
 
 Residual risk:
 
@@ -303,7 +313,7 @@ Residual risk:
 
 Suggested next audit steps:
 
-1. Add central denial telemetry for hub/service busy rejections if operational
-   monitoring shows these caps are hit in production.
-2. Decide whether any Conat protocol budgets need cross-cluster aggregation
+1. Decide whether any Conat protocol budgets need cross-cluster aggregation
    after production telemetry is available.
+2. Add dashboards/alerts once production baselines for
+   `service_admission_denied` are known.

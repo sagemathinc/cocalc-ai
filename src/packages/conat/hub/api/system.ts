@@ -40,6 +40,7 @@ export const system = {
   getBayLoad: authFirst,
   getBayBackups: authFirst,
   getAcpAdmissionDenialReport: authFirstRequireAccount,
+  getServiceAdmissionDenialReport: authFirstRequireAccount,
   getProjectBackupShards: authFirst,
   runBayBackup: authFirst,
   runBayRestore: authFirst,
@@ -240,6 +241,32 @@ export interface AcpAdmissionDenialReport {
   window_minutes: number;
   min_count: number;
   groups: AcpAdmissionDenialSummary[];
+}
+
+export interface ServiceAdmissionDenialSummary {
+  host_id: string | null;
+  account_id: string | null;
+  project_id: string | null;
+  surface: string;
+  limit: string;
+  source: string;
+  count: number;
+  first_time: string;
+  last_time: string;
+  max_current: number;
+  max_maximum: number;
+  sample_subject?: string | null;
+  sample_path?: string | null;
+  sample_key?: string | null;
+  sample_reason?: string | null;
+}
+
+export interface ServiceAdmissionDenialReport {
+  checked_at: string;
+  since: string;
+  window_minutes: number;
+  min_count: number;
+  groups: ServiceAdmissionDenialSummary[];
 }
 
 export interface BrowserSignInCookieInfo {
@@ -1051,6 +1078,18 @@ export interface System {
     denial_limit?: string | null;
     source?: string | null;
   }) => Promise<AcpAdmissionDenialReport>;
+
+  getServiceAdmissionDenialReport: (opts?: {
+    account_id?: string;
+    window_minutes?: number;
+    min_count?: number;
+    limit?: number;
+    user_account_id?: string | null;
+    project_id?: string | null;
+    surface?: string | null;
+    denial_limit?: string | null;
+    source?: string | null;
+  }) => Promise<ServiceAdmissionDenialReport>;
 
   getProjectBackupShards: (opts?: {
     account_id?: string;
