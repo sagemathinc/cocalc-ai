@@ -22,7 +22,7 @@ Statuses:
 | SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                                                                             | Revisit defaults after load testing.                                            |
 | SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report. | Add actor-account limit cache if collaborator caps must differ from owner caps. |
 | SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                                                                                                                                                                             | Add membership-backed automation-specific caps if needed.                       |
-| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, and several raw project-host stream/socket services; these now fast-fail above conservative active-request caps.                                                      | Continue low-level socket.io and app websocket proxy review.                    |
+| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, and app proxy websockets; these now fast-fail above conservative active-request caps.                                        | Continue low-level socket.io admission review.                                  |
 | SEC-BROWSER-001 | Browser exec/session automation              | unknown | critical | Not audited in this pass.                                                                                                                                                                                                                                 | Audit QuickJS sandbox defaults and raw exec production policy.                  |
 | SEC-CLI-001     | `cocalc-cli` authority classes               | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Classify command families by credential type and dangerous-action requirements. |
 | SEC-KEY-001     | Account/project API keys                     | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Inventory project-key consumers and account-key scope checks.                   |
@@ -279,6 +279,9 @@ Implemented first guard:
   - `COCALC_JUPYTER_MAX_ACTIVE_SOCKETS`, default `64`.
   - `COCALC_TERMINAL_MAX_ACTIVE_SOCKETS`, default `64`.
   - `COCALC_TERMINAL_MAX_SESSIONS`, default `32`.
+- App-server websocket proxying now has local active websocket caps:
+  - `COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_PER_TARGET`, default `64`.
+  - `COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_TOTAL`, default `256`.
 
 Residual risk:
 
@@ -286,7 +289,6 @@ Residual risk:
   messages. The Conat/socket.io layer may still need lower-level per-connection
   admission for malformed, unauthenticated, or high-rate message streams before
   they reach a service handler.
-- App-server websocket proxying still needs focused review.
 - Raw Conat/socket.io still needs per-connection and per-auth-identity
   admission below the service layer.
 - Defaults are intentionally broad and should be tuned with production load
@@ -294,9 +296,7 @@ Residual risk:
 
 Suggested next audit steps:
 
-1. Audit app-server websocket proxying and add caps for active websocket
-   upgrades per app/project if missing.
-2. Add lower-level Conat/socket.io per-connection message admission for
+1. Add lower-level Conat/socket.io per-connection message admission for
    malformed, unauthenticated, or high-rate traffic before service dispatch.
-3. Add central denial telemetry for hub/service busy rejections if operational
+2. Add central denial telemetry for hub/service busy rejections if operational
    monitoring shows these caps are hit in production.

@@ -70,6 +70,25 @@ import { getProjectHubApi } from "../../conat/hub";
 const logger = getLogger("project:servers:proxy");
 const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=300";
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = parseInt(value ?? "", 10);
+  if (Number.isFinite(n) && n > 0) {
+    return n;
+  }
+  return fallback;
+}
+
+const MAX_ACTIVE_WEBSOCKETS_PER_TARGET = parsePositiveInt(
+  process.env.COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_PER_TARGET,
+  64,
+);
+const MAX_ACTIVE_WEBSOCKETS_TOTAL = parsePositiveInt(
+  process.env.COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_TOTAL,
+  256,
+);
+const activeWebsocketsByTarget = new Map<string, number>();
+let activeWebsocketsTotal = 0;
+
 const MIME_BY_EXT: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".htm": "text/html; charset=utf-8",
@@ -114,6 +133,97 @@ type AppMetricsContext = {
 };
 
 const APP_METRICS_CONTEXT = Symbol("cocalc-app-metrics-context");
+
+function websocketAdmissionKey({
+  context,
+  target,
+}: {
+  context?: AppMetricsContext;
+  target: { port: number; host: string };
+}): string {
+  return context?.app_id ?? `${target.host}:${target.port}`;
+}
+
+function claimProxyWebsocket({ key }: { key: string }):
+  | {
+      allowed: true;
+    }
+  | {
+      allowed: false;
+      reason: string;
+      active: number;
+      max: number;
+    } {
+  if (activeWebsocketsTotal >= MAX_ACTIVE_WEBSOCKETS_TOTAL) {
+    return {
+      allowed: false,
+      reason: "app proxy websocket total limit reached",
+      active: activeWebsocketsTotal,
+      max: MAX_ACTIVE_WEBSOCKETS_TOTAL,
+    };
+  }
+  const activeForTarget = activeWebsocketsByTarget.get(key) ?? 0;
+  if (activeForTarget >= MAX_ACTIVE_WEBSOCKETS_PER_TARGET) {
+    return {
+      allowed: false,
+      reason: "app proxy websocket target limit reached",
+      active: activeForTarget,
+      max: MAX_ACTIVE_WEBSOCKETS_PER_TARGET,
+    };
+  }
+  activeWebsocketsTotal += 1;
+  activeWebsocketsByTarget.set(key, activeForTarget + 1);
+  return { allowed: true };
+}
+
+function releaseProxyWebsocket(key: string): void {
+  activeWebsocketsTotal = Math.max(0, activeWebsocketsTotal - 1);
+  const activeForTarget = activeWebsocketsByTarget.get(key) ?? 0;
+  if (activeForTarget <= 1) {
+    activeWebsocketsByTarget.delete(key);
+  } else {
+    activeWebsocketsByTarget.set(key, activeForTarget - 1);
+  }
+}
+
+function rejectWebsocket({
+  socket,
+  key,
+  admission,
+}: {
+  socket: { write: (data: string) => void; destroy: () => void };
+  key: string;
+  admission: Exclude<ReturnType<typeof claimProxyWebsocket>, { allowed: true }>;
+}): void {
+  logger.warn(admission.reason, {
+    key,
+    active: admission.active,
+    max: admission.max,
+    total: activeWebsocketsTotal,
+  });
+  socket.write(
+    "HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Type: text/plain\r\n\r\nToo many websocket connections\n",
+  );
+  socket.destroy();
+}
+
+function claimOrRejectWebsocket({
+  socket,
+  target,
+  context,
+}: {
+  socket: { write: (data: string) => void; destroy: () => void };
+  target: { port: number; host: string };
+  context?: AppMetricsContext;
+}): string | undefined {
+  const key = websocketAdmissionKey({ context, target });
+  const admission = claimProxyWebsocket({ key });
+  if (!admission.allowed) {
+    rejectWebsocket({ socket, key, admission });
+    return;
+  }
+  return key;
+}
 
 function isExplicitDownloadRequest(req: http.IncomingMessage): boolean {
   try {
@@ -389,6 +499,15 @@ export async function startProxyServer({
         const context = (req as any)[APP_METRICS_CONTEXT] as
           | AppMetricsContext
           | undefined;
+        const admissionKey = claimOrRejectWebsocket({
+          socket,
+          target,
+          context,
+        });
+        if (admissionKey == null) {
+          return;
+        }
+        socket.once("close", () => releaseProxyWebsocket(admissionKey));
         if (context) {
           recordAppWebsocketOpened({ app_id: context.app_id });
           socket.once("close", () => recordAppWebsocketClosed(context.app_id));
@@ -469,6 +588,15 @@ export function attachProxyServer({
           const context = (req as any)[APP_METRICS_CONTEXT] as
             | AppMetricsContext
             | undefined;
+          const admissionKey = claimOrRejectWebsocket({
+            socket,
+            target,
+            context,
+          });
+          if (admissionKey == null) {
+            return;
+          }
+          socket.once("close", () => releaseProxyWebsocket(admissionKey));
           if (context) {
             recordAppWebsocketOpened({ app_id: context.app_id });
             socket.once("close", () =>
