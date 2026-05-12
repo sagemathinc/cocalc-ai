@@ -268,6 +268,37 @@ describe("project host start ACP rehydrate ordering", () => {
     );
   });
 
+  it("does not restart a project that the runner already reports as running", async () => {
+    const runnerApi = {
+      status: jest.fn(async () => ({ state: "running" })),
+      start: jest.fn(),
+      stop: jest.fn(),
+    } as any;
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await hubApi.projects.start({ project_id });
+
+    expect(runnerApi.status).toHaveBeenCalledWith({ project_id });
+    expect(runnerApi.start).not.toHaveBeenCalled();
+    expect(applyPendingCopies).not.toHaveBeenCalled();
+    expect(acquireProjectPortLease).not.toHaveBeenCalled();
+    expect(upsertProjectStopState).not.toHaveBeenCalled();
+    expect(upsertProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id,
+        state: "running",
+      }),
+    );
+    expect(upsertProject).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id,
+        state: "starting",
+      }),
+    );
+  });
+
   it("verifies stop convergence before marking a project opened", async () => {
     const runnerApi = {
       start: jest.fn(),

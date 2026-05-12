@@ -55,6 +55,7 @@ import {
 } from "../file-server";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import type { Configuration } from "@cocalc/conat/project/runner/types";
+import type { ProjectStatus } from "@cocalc/conat/project/runner/state";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import {
   client as fileServerClient,
@@ -904,6 +905,32 @@ function publishStartProgress({
   }).catch(() => {});
 }
 
+async function getAlreadyRunningProjectStatus({
+  runnerApi,
+  project_id,
+  restore,
+  restore_backup_id,
+}: {
+  runnerApi: RunnerApi;
+  project_id: string;
+  restore?: "none" | "auto" | "required";
+  restore_backup_id?: string;
+}): Promise<ProjectStatus | undefined> {
+  if (restore && restore !== "none") return undefined;
+  if (restore_backup_id) return undefined;
+  if (typeof (runnerApi as any).status !== "function") return undefined;
+  try {
+    const status = await runnerApi.status({ project_id });
+    return status?.state === "running" ? status : undefined;
+  } catch (err) {
+    logger.debug("unable to check existing project runtime before start", {
+      project_id,
+      err: `${err}`,
+    });
+    return undefined;
+  }
+}
+
 function scaleStartCacheProgress(progress?: number): number {
   if (!Number.isFinite(progress)) {
     return 25;
@@ -1212,6 +1239,58 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         image,
       });
       const startMetadata = resolved;
+      const alreadyRunning = await getAlreadyRunningProjectStatus({
+        runnerApi,
+        project_id,
+        restore,
+        restore_backup_id,
+      });
+      if (alreadyRunning) {
+        logger.info(
+          "start requested for already-running project; preserving runtime",
+          {
+            project_id,
+          },
+        );
+        ensureProjectRow({
+          project_id,
+          opts: {
+            title: startMetadata.title,
+            users: startMetadata.users,
+            authorized_keys: startMetadata.authorized_keys,
+            run_quota: startMetadata.run_quota,
+            image: startMetadata.image,
+          },
+          state: "running",
+        });
+        publishStartProgress({
+          activity_id,
+          project_id,
+          op_id,
+          phase: "refresh_authorized_keys",
+          progress: 96,
+          message: "refreshing project access",
+        });
+        await timings.measure("refresh_authorized_keys", async () => {
+          await refreshAuthorizedKeys(project_id, authorized_keys);
+        });
+        publishStartProgress({
+          activity_id,
+          project_id,
+          op_id,
+          phase: "done",
+          progress: 100,
+          message: "project already running",
+        });
+        return {
+          op_id,
+          scope_type: "project",
+          scope_id: project_id,
+          service: PERSIST_SERVICE,
+          stream_name: lroStreamName(op_id),
+          phase_timings_ms: timings.phase_timings_ms,
+        };
+      }
       upsertProjectStopState({
         project_id,
         last_started_ms: Date.now(),
