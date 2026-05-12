@@ -9,7 +9,8 @@ export COCALC_USERNAME=`echo $COCALC_PROJECT_ID | tr -d '-'`
 export HOME="/projects/6b851643-360e-435e-b87e-f9a6ab64a8b1/cocalc/src/data/projects/$COCALC_PROJECT_ID"
 export DATA=$HOME/.smc
 
-# optional for more flexibility
+# optional for more flexibility, if the account API key has an explicit
+# project capability and this project is in its allowed project list
 
 export API_KEY=sk-OUwxAN8d0n7Ecd48000055
 
@@ -19,9 +20,9 @@ export DEBUG=cocalc:\*
 export DEBUG_CONSOLE=yes
 ```
 
-If API_KEY is a project-wide API key, then you can change COCALC_PROJECT_ID however you want
-and don't have to worry about whether the project is running or the project secret key changing
-when the project is restarted.
+Account API keys are scoped. They only work here when the key has the required
+project capability, such as `project:exec`, and the selected `COCALC_PROJECT_ID`
+is in the key's allowed project list.
 
 2. Then do this:
 

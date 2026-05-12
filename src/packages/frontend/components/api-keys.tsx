@@ -9,6 +9,7 @@ Applications:
 import {
   Alert,
   Button,
+  Checkbox,
   DatePicker,
   Form,
   Input,
@@ -23,7 +24,11 @@ import dayjs from "dayjs";
 import { useEffect, useState } from "react";
 const { Text, Paragraph } = Typography; // so can use from nextjs
 import { CancelText } from "@cocalc/frontend/i18n/components";
-import type { ApiKey } from "@cocalc/util/db-schema/api-keys";
+import {
+  API_KEY_CAPABILITIES,
+  type ApiKey,
+  type ApiKeyCapability,
+} from "@cocalc/util/db-schema/api-keys";
 import { A } from "./A";
 import CopyToClipBoard from "./copy-to-clipboard";
 import { Icon } from "./icon";
@@ -48,6 +53,8 @@ interface Props {
     id?: number;
     name?: string;
     expire?: Date;
+    capabilities?: ApiKeyCapability[];
+    allowed_project_ids?: string[];
   }) => Promise<ApiKey[] | undefined>;
   mode?: "page" | "flyout";
 }
@@ -95,21 +102,41 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
     }
   };
 
-  const editApiKey = async (id: number, name: string, expire?: Date) => {
+  const editApiKey = async (
+    id: number,
+    name: string,
+    expire?: Date,
+    capabilities?: ApiKeyCapability[],
+    allowed_project_ids?: string[],
+  ) => {
     try {
-      await manage({ action: "edit", id, name, expire });
+      await manage({
+        action: "edit",
+        id,
+        name,
+        expire,
+        capabilities,
+        allowed_project_ids,
+      });
       getAllApiKeys();
     } catch (err) {
       setError(`${err}`);
     }
   };
 
-  const createApiKey = async (name: string, expire?: Date) => {
+  const createApiKey = async (
+    name: string,
+    expire?: Date,
+    capabilities?: ApiKeyCapability[],
+    allowed_project_ids?: string[],
+  ) => {
     try {
       const response = await manage({
         action: "create",
         name,
         expire,
+        capabilities,
+        allowed_project_ids,
       });
       setAddModalVisible(false);
       getAllApiKeys();
@@ -155,6 +182,18 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
       },
     },
     {
+      dataIndex: "capabilities",
+      title: "Capabilities",
+      render: (capabilities: string[]) =>
+        capabilities?.length ? capabilities.join(", ") : "None",
+    },
+    {
+      dataIndex: "allowed_project_ids",
+      title: "Allowed Projects",
+      render: (projectIds: string[]) =>
+        projectIds?.length ? projectIds.join(", ") : "None",
+    },
+    {
       dataIndex: "last_active",
       title: "Last Used",
       render: (last_active) =>
@@ -180,7 +219,14 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
           <a
             onClick={() => {
               // Set the initial form value as the current key name
-              form.setFieldsValue({ name: record.name });
+              form.setFieldsValue({
+                name: record.name,
+                expire: record.expire ? dayjs(record.expire) : undefined,
+                capabilities: record.capabilities ?? [],
+                allowed_project_ids: (record.allowed_project_ids ?? []).join(
+                  "\n",
+                ),
+              });
               setEditModalVisible(true);
               setEditingKey(record.id);
             }}
@@ -198,19 +244,32 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
   }
 
   const handleAdd = () => {
+    form.resetFields();
+    form.setFieldsValue({ capabilities: [], allowed_project_ids: "" });
     setAddModalVisible(true);
   };
 
-  const handleModalOK = () => {
-    const name = form.getFieldValue("name");
-    const expire = form.getFieldValue("expire")?.toDate();
+  const handleModalOK = async () => {
+    let values;
+    try {
+      values = await form.validateFields();
+    } catch {
+      return;
+    }
+    const name = values.name;
+    const expire = values.expire?.toDate();
+    const capabilities = (values.capabilities ?? []) as ApiKeyCapability[];
+    const allowed_project_ids = `${values.allowed_project_ids ?? ""}`
+      .split(/[\s,]+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
     if (editingKey != null) {
-      editApiKey(editingKey, name, expire);
+      editApiKey(editingKey, name, expire, capabilities, allowed_project_ids);
       setEditModalVisible(false);
       setEditingKey(undefined);
       form.resetFields();
     } else {
-      createApiKey(name, expire);
+      createApiKey(name, expire, capabilities, allowed_project_ids);
       form.resetFields();
     }
   };
@@ -302,6 +361,30 @@ export default function ApiKeys({ manage, mode = "page" }: Props) {
                   return current && current < dayjs();
                 }}
               />
+            </Form.Item>
+            <Form.Item
+              name="capabilities"
+              label="Capabilities"
+              rules={[
+                {
+                  required: true,
+                  message: "Select at least one explicit capability",
+                },
+              ]}
+            >
+              <Checkbox.Group
+                options={API_KEY_CAPABILITIES.map((capability) => ({
+                  label: capability,
+                  value: capability,
+                }))}
+              />
+            </Form.Item>
+            <Form.Item
+              name="allowed_project_ids"
+              label="Allowed project IDs"
+              extra="Required for project, file, Codex, and exec capabilities. Use one UUID per line or comma-separated."
+            >
+              <Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} />
             </Form.Item>
           </Form>
         </Modal>

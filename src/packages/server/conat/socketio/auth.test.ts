@@ -358,6 +358,57 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
   });
 });
 
+describe("test isAllowed for account API keys", () => {
+  beforeEach(() => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockReset();
+  });
+
+  const apiKeyUser = {
+    account_id,
+    auth_method: "api_key" as const,
+    api_key_id: 1,
+    key_id: "key-1",
+    capabilities: ["project:exec" as const],
+    allowed_project_ids: [project_id],
+  };
+
+  it("denies hub account API subjects because function-level policy is required", async () => {
+    expect(
+      await isAllowed({
+        user: apiKeyUser,
+        type: "pub",
+        subject: `hub.account.${account_id}.api`,
+      }),
+    ).toBe(false);
+  });
+
+  it("allows allowed project subjects with project:exec and collaborator access", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
+    expect(
+      await isAllowed({
+        user: apiKeyUser,
+        type: "pub",
+        subject: `project.${project_id}.api`,
+      }),
+    ).toBe(true);
+  });
+
+  it("denies project subjects outside the API key project allowlist", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
+    expect(
+      await isAllowed({
+        user: apiKeyUser,
+        type: "pub",
+        subject: `project.${project_id2}.api`,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("tests system accounts", () => {
   it("verifies a system user is not authenticated when there is no system account specified", async () => {
     const socket = { handshake: { headers: { cookie: "Foo=bar;" } } };

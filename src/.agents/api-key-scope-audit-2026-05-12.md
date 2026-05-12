@@ -2,14 +2,15 @@
 
 Date: 2026-05-12
 
-Status: project-key model removed; scoped account-key follow-up remains guarded.
+Status: project-key model removed; first scoped account-key guard implemented.
 
 ## Findings
 
 - User-managed v2 CoCalc API keys now use one account-owned model:
-  `api_keys(account_id, key_id, hash, expire, name, trunc, last_active)`.
-- Account API keys authenticate as the owning account and are currently broad.
-  They do not yet carry capability restrictions or an allowed-project list.
+  `api_keys(account_id, key_id, hash, expire, name, trunc, capabilities,
+allowed_project_ids, last_active)`.
+- Account API keys authenticate as the owning account plus API-key metadata:
+  key id, capabilities, and allowed project IDs.
 - Legacy project-scoped CoCalc API keys used to authenticate directly as
   `{project_id}`. That special principal shape leaked into generic auth helpers,
   the hub proxy, the Conat socket auth adapter, and the HTTP Conat project
@@ -36,29 +37,31 @@ Status: project-key model removed; scoped account-key follow-up remains guarded.
 - Generic API-key HTTP auth no longer mixes account IDs and project IDs.
 - The HTTP Conat project bridge now requires an account API key plus an explicit
   `project_id`, then checks normal collaborator access.
+- API-key creation and editing require explicit capabilities. Project, file,
+  Codex, and exec capabilities require explicit project allowlists.
+- API-key Conat websocket auth now fails closed for hub/account RPC subjects and
+  only permits allowed project subjects when the key has `project:exec`.
+- The HTTP Conat hub bridge now has a small reviewed allowlist and denies API
+  keys by default for unreviewed RPCs.
 
 ## Residual Risk
 
-- Account API keys remain equivalent to broad account credentials. That is too
-  powerful for automation, CLI, billing, account security, and admin-adjacent
-  operations.
-- Hub Conat API dispatch currently derives `account_id` from the request
-  subject. After the socket is authorized, endpoint argument transforms do not
-  know whether the account principal came from a browser cookie, account API key,
-  or agent bearer token. This prevents a clean central "API keys cannot call
-  dangerous endpoints" guard until auth method is propagated into dispatch.
+- The Conat hub API dispatch still derives `account_id` from the request subject
+  and cannot currently apply per-RPC API-key capability policy for websocket
+  callers. The websocket path therefore denies API-key hub/account RPC subjects
+  entirely.
 - Account API-key creation, deletion, and use on dangerous endpoints still need
   central audit events.
+- The reviewed HTTP hub allowlist is intentionally tiny and must be extended
+  deliberately as real use cases emerge.
 
 ## Recommended Next Work
 
 1. Propagate auth method through Conat hub dispatch, e.g. `auth_method:
-"cookie" | "api_key" | "agent" | "project_secret" | "hub_password"`.
-2. Add a dangerous-endpoint transform that rejects `auth_method="api_key"` until
-   scoped API-key capabilities exist.
-3. Extend `api_keys` and the cluster account API-key directory with
-   `capabilities` and `allowed_project_ids`.
-4. Update account API-key UI/CLI creation to require explicit scopes instead of
-   silently creating unrestricted keys.
-5. Add migration/upgrade handling for installations created before the
+"cookie" | "api_key" | "agent" | "project_secret" | "hub_password"`, so
+   websocket hub RPCs can eventually use endpoint metadata instead of blanket
+   API-key denial.
+2. Expand the reviewed API-key HTTP allowlist only for concrete use cases.
+3. Add audit events for API-key creation, deletion, denial, and successful use.
+4. Add migration/upgrade handling for installations created before the
    project-key model was removed, if any such database needs to be preserved.

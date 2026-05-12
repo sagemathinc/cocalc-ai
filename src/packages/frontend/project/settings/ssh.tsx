@@ -129,6 +129,8 @@ export function SSHPanel({ project, mode = "project" }: Props) {
         action: "create",
         name: `SSH setup for ${title}`,
         expire: new Date(Date.now() + SETUP_KEY_EXPIRE_MS),
+        capabilities: ["project:exec"],
+        allowed_project_ids: [projectId],
       });
       const secret = response?.[0]?.secret;
       if (!secret) {

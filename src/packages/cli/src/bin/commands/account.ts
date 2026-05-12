@@ -6,6 +6,7 @@ import type {
   ManagedEgressHistory,
   MembershipDetails,
 } from "@cocalc/conat/hub/api/purchases";
+import type { ApiKeyCapability } from "@cocalc/util/db-schema/api-keys";
 
 export type AccountCommandDeps = {
   withContext: any;
@@ -500,20 +501,22 @@ export function registerAccountCommand(
           key_id?: string;
           name?: string;
           trunc?: string;
+          capabilities?: string[];
+          allowed_project_ids?: string[];
           created?: string | Date | null;
           expire?: string | Date | null;
           last_active?: string | Date | null;
-          project_id?: string | null;
         }>;
         return (rows ?? []).map((row) => ({
           id: row.id,
           key_id: row.key_id ?? null,
           name: row.name ?? "",
           trunc: row.trunc ?? "",
+          capabilities: row.capabilities ?? [],
+          allowed_project_ids: row.allowed_project_ids ?? [],
           created: toIso(row.created),
           expire: toIso(row.expire),
           last_active: toIso(row.last_active),
-          project_id: row.project_id ?? null,
         }));
       });
     });
@@ -527,11 +530,21 @@ export function registerAccountCommand(
       `cocalc-cli-${Date.now().toString(36)}`,
     )
     .option("--expire-seconds <n>", "expire in n seconds")
+    .option(
+      "--capability <capability...>",
+      "explicit capability to grant; repeat or pass multiple values",
+    )
+    .option(
+      "--project-id <project_id...>",
+      "allowed project id for project/file/Codex/exec capabilities",
+    )
     .action(
       async (
         opts: {
           name?: string;
           expireSeconds?: string;
+          capability?: string[];
+          projectId?: string[];
         },
         command: Command,
       ) => {
@@ -551,15 +564,18 @@ export function registerAccountCommand(
             action: "create",
             name: opts.name,
             expire,
+            capabilities: opts.capability as ApiKeyCapability[] | undefined,
+            allowed_project_ids: opts.projectId,
           })) as Array<{
             id?: number;
             key_id?: string;
             name?: string;
             trunc?: string;
             secret?: string;
+            capabilities?: string[];
+            allowed_project_ids?: string[];
             created?: string | Date | null;
             expire?: string | Date | null;
-            project_id?: string | null;
           }>;
           const key = rows?.[0];
           if (!key?.id) {
@@ -571,9 +587,10 @@ export function registerAccountCommand(
             name: key.name ?? opts.name ?? "",
             trunc: key.trunc ?? "",
             secret: key.secret ?? null,
+            capabilities: key.capabilities ?? [],
+            allowed_project_ids: key.allowed_project_ids ?? [],
             created: toIso(key.created),
             expire: toIso(key.expire),
-            project_id: key.project_id ?? null,
           };
         });
       },

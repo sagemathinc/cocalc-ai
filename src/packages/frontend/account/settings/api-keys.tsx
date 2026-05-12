@@ -25,8 +25,9 @@ export default function ApiKeys() {
       <Paragraph>
         <FormattedMessage
           id="account.settings.api-keys.explanation"
-          defaultMessage={`Account API keys currently authenticate as your account.
-          Scoped account API keys will add least-privilege access controls.`}
+          defaultMessage={`Account API keys are least-privilege credentials.
+          Select explicit capabilities and, for project/file/Codex/exec access,
+          the exact allowed project IDs.`}
         />
       </Paragraph>
     </SettingBox>

@@ -85,16 +85,18 @@ project-host endpoint enforces its own dangerous-action policy. The next audit
 step should inventory endpoint-level checks for the dangerous rows in the matrix
 above.
 
-### API key scope remains the next high-value dependency
+### API key scope is now fail-closed by default
 
-Several command families are safe only if account API keys can be scoped to the
-right projects/actions. Until `SEC-KEY-001` is done, a broad account API key
-should be treated as equivalent to a long-lived account session.
+Account API keys now require explicit capabilities and project allowlists.
+HTTP bridge calls have a small reviewed allowlist, and API-key websocket hub RPC
+is denied until function-level auth metadata is propagated through dispatch.
+Treat future CLI/API-key support as opt-in per command family, not as full
+account login.
 
 ## Recommended Follow-Ups
 
-1. Do `SEC-KEY-001`: classify account/project API key scopes and block broad
-   keys from admin/dangerous CLI command families.
+1. Extend API-key support only where there is a concrete use case, starting
+   with audited project/file/Codex operations on explicitly allowed projects.
 2. Add or verify server-side freshness/2FA checks for dangerous command
    families: account deletion/rehome, project hard delete/restore/public app
    exposure, rootfs admin mutation, host mutation, membership assignment, org

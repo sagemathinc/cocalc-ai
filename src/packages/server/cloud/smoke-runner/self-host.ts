@@ -1534,6 +1534,7 @@ export async function runSelfHostMultipassBackupSmoke(
 
     if (verifyWorkspaceProxy) {
       await runStep("create_account_api_key_for_proxy", async () => {
+        if (!project_id) throw new Error("missing project_id");
         const key = await runCli<{
           id?: number;
           secret?: string;
@@ -1545,6 +1546,10 @@ export async function runSelfHostMultipassBackupSmoke(
           `smoke-proxy-${vmName}`,
           "--expire-seconds",
           "1800",
+          "--capability",
+          "project:exec",
+          "--project-id",
+          project_id,
         ]);
         const id = Number(key.id);
         const secret = `${key.secret ?? ""}`.trim();

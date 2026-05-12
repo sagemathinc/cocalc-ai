@@ -167,6 +167,8 @@ describe("SSHPanel", () => {
         action: "create",
         name: "SSH setup for project-1",
         expire: expect.any(Date),
+        capabilities: ["project:exec"],
+        allowed_project_ids: ["project-1"],
       });
     });
     expect(

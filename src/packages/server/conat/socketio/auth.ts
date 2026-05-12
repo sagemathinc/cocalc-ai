@@ -26,6 +26,10 @@ import {
 import { getProjectHostAuthTokenPublicKey } from "@cocalc/backend/data";
 import { verifyProjectHostAuthToken } from "@cocalc/conat/auth/project-host-token";
 import { isValidUUID } from "@cocalc/util/misc";
+import {
+  hasApiKeyProjectCapability,
+  type ApiKeyPrincipal,
+} from "@cocalc/server/api/api-key-scope";
 import { getHubManagedEgressBlockedMessage } from "./managed-egress-runtime";
 import { recordBrowserAuthSession } from "./browser-auth-sessions";
 import {
@@ -77,6 +81,8 @@ type CoCalcUserWithAgent = CoCalcUser & {
   auth_scopes?: string[];
   auth_project_id?: string;
 };
+
+type CoCalcUserWithApiKey = CoCalcUser & Partial<ApiKeyPrincipal>;
 
 function readAgentProjectId(socket): string | undefined {
   const value = socket?.handshake?.auth?.project_id;
@@ -348,6 +354,14 @@ export async function isAllowed({
     // right now hubs have full permissions.
     return true;
   }
+  const apiKeyUser = user as CoCalcUserWithApiKey;
+  if (apiKeyUser.auth_method === "api_key") {
+    return await isApiKeyAllowed({
+      user: apiKeyUser,
+      subject,
+      type,
+    });
+  }
   const userId = getCoCalcUserId(user);
   const key = `${userType}-${userId}-${subject}-${type}`;
   if (isAllowedCache.has(key)) {
@@ -378,6 +392,52 @@ export async function isAllowed({
   }
   isAllowedCache.set(key, allowed);
   return allowed;
+}
+
+async function isApiKeyAllowed({
+  user,
+  subject,
+  type,
+}: {
+  user: CoCalcUserWithApiKey;
+  subject: string;
+  type: "sub" | "pub";
+}): Promise<boolean> {
+  const account_id = user.account_id;
+  if (!account_id || user.auth_method !== "api_key") return false;
+  if (type === "pub" && subject.startsWith("_INBOX.")) {
+    return true;
+  }
+  const common = checkCommonPermissions({
+    userId: account_id,
+    userType: "account",
+    user,
+    subject,
+    type,
+  });
+  if (common != null && !subject.startsWith(`hub.account.${account_id}.`)) {
+    return common;
+  }
+  const project_id = extractProjectSubject(subject);
+  if (!project_id) {
+    return false;
+  }
+  if (
+    !hasApiKeyProjectCapability(
+      {
+        capabilities: user.capabilities ?? [],
+        allowed_project_ids: user.allowed_project_ids ?? [],
+      },
+      "project:exec",
+      project_id,
+    )
+  ) {
+    return false;
+  }
+  return await hasProjectCollaboratorAccessAllowRemote({
+    account_id,
+    project_id,
+  });
 }
 
 function isHostServiceAllowed({

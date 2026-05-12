@@ -105,7 +105,7 @@ predictable and least-privilege by default.
 
 Current table:
 
-- `api_keys(id, account_id, expire, created, hash, key_id, name, trunc, last_active)`
+- `api_keys(id, account_id, expire, created, hash, key_id, name, trunc, capabilities, allowed_project_ids, last_active)`
 
 Target table:
 
@@ -137,13 +137,15 @@ Suggested invariant checks in application code:
 - no `project:*` implies `allowed_project_ids` empty
 
 Because the product is unreleased, project-key CRUD/auth/schema branches have
-been removed instead of supported through a compatibility layer.
+been removed instead of supported through a compatibility layer. The first
+account-key scoped schema is now in place.
 
 ## Exact Auth Contract Changes
 
 Current auth path:
 
-- API key auth returns `{ account_id }`
+- API key auth returns `{ account_id, api_key_id, key_id, capabilities,
+allowed_project_ids }`
 
 Target auth path:
 
@@ -185,8 +187,8 @@ Project authorization becomes:
 
 ## Exact Manage API Changes
 
-Current manage flow is account-owned only. It still needs explicit capability
-and project-allowlist fields.
+Current manage flow is account-owned only and requires explicit capability and
+project-allowlist fields.
 
 Target manage flow:
 
@@ -236,13 +238,14 @@ No separate project-key UI should remain.
 
 ## Migration Plan
 
-Because CoCalc-ai is unreleased, the project-key removal part is already done.
-The remaining scoped-account-key migration is:
+Because CoCalc-ai is unreleased, project-key removal and the first
+scoped-account-key schema are already done. The remaining work is:
 
-1. Add `capabilities` and `allowed_project_ids`.
-2. Update the cluster account API-key directory to carry scope fields.
-3. Update callers to use scoped account-key authorization.
-4. Add upgrade cleanup only if a pre-removal database must be preserved.
+1. Propagate auth method/key metadata into websocket hub RPC dispatch if that
+   path needs API-key support.
+2. Update additional callers to use scoped account-key authorization only when
+   there is a concrete product use case.
+3. Add upgrade cleanup only if a pre-removal database must be preserved.
 
 No backward compatibility for project keys is required.
 
@@ -260,10 +263,9 @@ Those can come later if there is a real product need.
 
 ## Recommended Next Implementation Order
 
-1. Extend `api_keys` and the cluster account API-key directory with scope data.
-2. Change API-key auth to always return account-scoped principals.
-3. Update manage API and UI to create/edit scoped account keys only.
-4. Add focused tests for:
+1. Add endpoint metadata for any additional reviewed API-key RPCs.
+2. Add central audit logging for API-key create/delete/use/deny.
+3. Add focused tests for:
    - account-only keys
    - project-allowlisted keys
    - wrong-project rejection

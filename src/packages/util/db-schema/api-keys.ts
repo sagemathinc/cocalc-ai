@@ -3,6 +3,20 @@ import { CREATED_BY, ID } from "./crm";
 
 export type Action = "get" | "delete" | "create" | "edit";
 
+export const API_KEY_CAPABILITIES = [
+  "account:read",
+  "project:create",
+  "project:list",
+  "project:read",
+  "project:write",
+  "file:read",
+  "file:write",
+  "project:exec",
+  "codex:run",
+] as const;
+
+export type ApiKeyCapability = (typeof API_KEY_CAPABILITIES)[number];
+
 export interface ApiKey {
   id: number;
   key_id?: string;
@@ -12,6 +26,8 @@ export interface ApiKey {
   trunc: string;
   expire?: Date;
   name: string;
+  capabilities: ApiKeyCapability[];
+  allowed_project_ids: string[];
   last_active?: Date;
   secret?: string; // only when initially creating the key (and never in database)
 }
@@ -48,6 +64,16 @@ Table({
       type: "string",
       pg_type: "VARCHAR(16)",
       desc: "Truncated version of the actual api key, suitable for display to remind user which key it is.",
+    },
+    capabilities: {
+      type: "array",
+      pg_type: "TEXT[]",
+      desc: "Explicit allow-list of capabilities granted to this API key.",
+    },
+    allowed_project_ids: {
+      type: "array",
+      pg_type: "UUID[]",
+      desc: "Explicit allow-list of project IDs this API key can access for project-scoped capabilities.",
     },
     last_active: {
       type: "timestamp",

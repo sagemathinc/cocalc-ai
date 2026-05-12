@@ -62,8 +62,8 @@ class System:
             Any: JSON object containing the current server time.
 
         Examples:
-            Ping a project.  The api_key can be either an account api key or a project
-            specific api key (in which case the project_id option is optional):
+            Ping a project. The api_key must be an account API key with an
+            explicit project capability for the given project_id:
 
             >>> import cocalc_api;  project = cocalc_api.Project(api_key="sk-...", project_id='...')
             >>> project.ping()

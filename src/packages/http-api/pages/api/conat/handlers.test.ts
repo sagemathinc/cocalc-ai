@@ -50,7 +50,14 @@ describe("/api/conat/hub", () => {
   });
 
   test("bridges hub rpc calls for an authenticated account", async () => {
-    mockGetAccountFromApiKey.mockResolvedValue({ account_id: "acc-1" } as any);
+    mockGetAccountFromApiKey.mockResolvedValue({
+      account_id: "acc-1",
+      api_key_id: 1,
+      key_id: "key-1",
+      auth_method: "api_key",
+      capabilities: ["account:read"],
+      allowed_project_ids: [],
+    } as any);
     mockHubBridge.mockResolvedValue({ ok: true } as any);
 
     const { req, res } = createMocks({
@@ -68,6 +75,29 @@ describe("/api/conat/hub", () => {
       timeout: 5000,
     });
     expect(res._getJSONData()).toEqual({ ok: true });
+  });
+
+  test("denies unreviewed hub rpc calls for api keys", async () => {
+    mockGetAccountFromApiKey.mockResolvedValue({
+      account_id: "acc-1",
+      api_key_id: 1,
+      key_id: "key-1",
+      auth_method: "api_key",
+      capabilities: ["account:read"],
+      allowed_project_ids: [],
+    } as any);
+
+    const { req, res } = createMocks({
+      body: { args: [], name: "system.deleteAccount" },
+      method: "POST",
+      url: "/api/conat/hub",
+    });
+
+    await hubHandler(req, res);
+    expect(mockHubBridge).not.toHaveBeenCalled();
+    expect(res._getJSONData()).toEqual({
+      error: "API keys are not allowed to call hub RPC 'system.deleteAccount'",
+    });
   });
 });
 
@@ -93,7 +123,14 @@ describe("/api/conat/project", () => {
   });
 
   test("requires account callers to be collaborators", async () => {
-    mockGetAccountFromApiKey.mockResolvedValue({ account_id: "acc-1" } as any);
+    mockGetAccountFromApiKey.mockResolvedValue({
+      account_id: "acc-1",
+      api_key_id: 1,
+      key_id: "key-1",
+      auth_method: "api_key",
+      capabilities: ["project:exec"],
+      allowed_project_ids: ["proj-1"],
+    } as any);
     mockIsCollaborator.mockResolvedValue(false as any);
 
     const { req, res } = createMocks({
@@ -113,7 +150,14 @@ describe("/api/conat/project", () => {
   });
 
   test("bridges project rpc calls for account collaborators", async () => {
-    mockGetAccountFromApiKey.mockResolvedValue({ account_id: "acc-1" } as any);
+    mockGetAccountFromApiKey.mockResolvedValue({
+      account_id: "acc-1",
+      api_key_id: 1,
+      key_id: "key-1",
+      auth_method: "api_key",
+      capabilities: ["project:exec"],
+      allowed_project_ids: ["proj-1"],
+    } as any);
     mockIsCollaborator.mockResolvedValue(true as any);
     mockProjectBridge.mockResolvedValue({ pong: true } as any);
 
@@ -136,5 +180,30 @@ describe("/api/conat/project", () => {
       timeout: undefined,
     });
     expect(res._getJSONData()).toEqual({ pong: true });
+  });
+
+  test("requires project exec capability for project bridge calls", async () => {
+    mockGetAccountFromApiKey.mockResolvedValue({
+      account_id: "acc-1",
+      api_key_id: 1,
+      key_id: "key-1",
+      auth_method: "api_key",
+      capabilities: ["project:read"],
+      allowed_project_ids: ["proj-1"],
+    } as any);
+
+    const { req, res } = createMocks({
+      body: { args: [], name: "system.ping", project_id: "proj-1" },
+      method: "POST",
+      url: "/api/conat/project",
+    });
+
+    await projectHandler(req, res);
+    expect(mockIsCollaborator).not.toHaveBeenCalled();
+    expect(mockProjectBridge).not.toHaveBeenCalled();
+    expect(res._getJSONData()).toEqual({
+      error:
+        "API key lacks required capability 'project:exec' for project proj-1",
+    });
   });
 });

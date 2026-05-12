@@ -8,6 +8,7 @@ import type { Customize } from "@cocalc/util/db-schema/server-settings";
 import type {
   ApiKey,
   Action as ApiKeyAction,
+  ApiKeyCapability,
 } from "@cocalc/util/db-schema/api-keys";
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { AccountEntitlementOverride } from "./purchases";
@@ -1187,6 +1188,8 @@ export interface System {
     action: ApiKeyAction;
     name?: string;
     expire?: Date;
+    capabilities?: ApiKeyCapability[];
+    allowed_project_ids?: string[];
     id?: number;
   }) => Promise<ApiKey[] | undefined>;
 

@@ -388,6 +388,8 @@ export interface AccountApiKeyDirectoryEntry {
   account_id: string;
   home_bay_id: string;
   hash: string;
+  capabilities?: string[];
+  allowed_project_ids?: string[];
   expire?: number | null;
   last_active?: number | null;
 }
@@ -401,6 +403,8 @@ export interface AccountApiKeyDirectoryUpsertRequest {
   account_id: string;
   home_bay_id: string;
   hash: string;
+  capabilities?: string[];
+  allowed_project_ids?: string[];
   expire?: number | null;
   last_active?: number | null;
 }

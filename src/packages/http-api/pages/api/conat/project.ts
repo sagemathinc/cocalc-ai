@@ -10,17 +10,20 @@ import { getAccountFromApiKey } from "@cocalc/server/auth/api";
 import projectBridge from "@cocalc/server/api/project-bridge";
 import isCollaborator from "@cocalc/server/projects/is-collaborator";
 import getParams from "@cocalc/http-api/lib/api/get-params";
+import { assertHttpProjectApiKeyAllowed } from "@cocalc/server/api/http-api-key-policy";
 
 export default async function handle(req, res) {
   try {
-    const { account_id } = (await getAccountFromApiKey(req)) ?? {};
-    if (!account_id) {
+    const principal = await getAccountFromApiKey(req);
+    const account_id = principal?.account_id;
+    if (!account_id || !principal) {
       throw Error("must sign in with an account API key");
     }
     const { project_id, name, args, timeout } = getParams(req);
     if (!project_id) {
       throw Error("must specify project_id");
     }
+    assertHttpProjectApiKeyAllowed({ principal, project_id });
     if (!(await isCollaborator({ account_id, project_id }))) {
       throw Error("user must be a collaborator on the project");
     }

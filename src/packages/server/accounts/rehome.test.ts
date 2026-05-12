@@ -135,9 +135,7 @@ describe("account rehome", () => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_rehome_operations") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_rehome_operations") ||
-        sql.includes(
-          "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
-        ) ||
+        sql.includes("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS") ||
         sql.includes(
           "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx",
         )
@@ -374,9 +372,7 @@ describe("account rehome", () => {
       if (
         sql.includes("CREATE TABLE IF NOT EXISTS account_rehome_operations") ||
         sql.includes("CREATE INDEX IF NOT EXISTS account_rehome_operations") ||
-        sql.includes(
-          "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
-        ) ||
+        sql.includes("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS") ||
         sql.includes(
           "CREATE UNIQUE INDEX IF NOT EXISTS api_keys_key_id_unique_idx",
         )

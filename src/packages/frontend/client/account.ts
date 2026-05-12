@@ -7,6 +7,7 @@ import { callback } from "awaiting";
 declare const $: any; // jQuery
 import { WebappClient } from "./client";
 import type { ApiKey } from "@cocalc/util/db-schema/api-keys";
+import type { ApiKeyCapability } from "@cocalc/util/db-schema/api-keys";
 import api from "./api";
 
 export class AccountClient {
@@ -80,6 +81,8 @@ export class AccountClient {
     action: "get" | "delete" | "create" | "edit";
     password?: string;
     name?: string;
+    capabilities?: ApiKeyCapability[];
+    allowed_project_ids?: string[];
     id?: number;
     expire?: Date;
   }): Promise<ApiKey[] | undefined> => {
