@@ -1101,11 +1101,13 @@ export async function getRuntimeLog({
     found: response.found,
     running: response.running,
     available: response.found && response.running,
-    reason: response.found
-      ? response.running
-        ? undefined
-        : "workspace is not running"
-      : "workspace container not found",
+    reason:
+      response.reason ??
+      (response.found
+        ? response.running
+          ? undefined
+          : "workspace is not running"
+        : "workspace container not found"),
   };
 }
 

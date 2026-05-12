@@ -49,9 +49,9 @@ describe("parseConmonContainerProcesses", () => {
       lists.get("project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
     ).toHaveLength(2);
     expect(
-      lists.get("project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")?.map(
-        (entry) => entry.conmon_pid,
-      ),
+      lists
+        .get("project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        ?.map((entry) => entry.conmon_pid),
     ).toEqual([100, 300]);
 
     expect(
@@ -62,5 +62,25 @@ describe("parseConmonContainerProcesses", () => {
       conmon_pid: 300,
       child_pids: [301],
     });
+  });
+
+  it("parses conmon runtime log paths", () => {
+    const output = [
+      "100 1 /usr/bin/conmon --api-version 1 -n project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa --runtime-arg=/mnt/cocalc/data/containers/rootless/cocalc-host/run/overlay-containers/abc/userdata/oci-log --full-attach",
+      "101 100 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init project_init.sh",
+      "200 1 /usr/bin/conmon --api-version 1 -n project-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb --log-path /tmp/project-b.log --full-attach",
+      "201 200 /run/podman-init -- /opt/cocalc/bin/node /opt/cocalc/project-bundle/bundle/index.js --init project_init.sh",
+    ].join("\n");
+
+    const containers = parseConmonContainerProcesses(output);
+
+    expect(
+      containers.get("project-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")?.log_path,
+    ).toBe(
+      "/mnt/cocalc/data/containers/rootless/cocalc-host/run/overlay-containers/abc/userdata/oci-log",
+    );
+    expect(
+      containers.get("project-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")?.log_path,
+    ).toBe("/tmp/project-b.log");
   });
 });
