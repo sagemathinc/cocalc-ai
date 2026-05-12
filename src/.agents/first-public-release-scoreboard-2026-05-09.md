@@ -47,6 +47,20 @@ The remaining release risk has shifted from "build the model" to:
 - tighten operator support docs and remaining deploy/rollback polish
 - fix only correctness/trust issues found during soak
 
+Latest 2026-05-12 live soak update:
+
+- `lite4b` hub was rebuilt/restarted and `host1` was upgraded to project-host
+  `20260512T163202Z-3d4ce000f522`.
+- Existing project exec on `host1` continued to work after the project-host
+  upgrade.
+- The conmon-only `project logs` case found during soak was fixed so the CLI no
+  longer reports a live workspace as "container not found"; this old pre-fix
+  runtime still has no readable OCI log because its deleted runroot path is gone.
+- Bounded stress passed with zero failures:
+  `load three-bay --iterations 100 --concurrency 5`,
+  `load projects --iterations 200 --concurrency 10`, and
+  `load mentions --iterations 100 --concurrency 5`.
+
 The right strategy is still:
 
 - do not expand product scope
@@ -55,31 +69,31 @@ The right strategy is still:
 
 ## Scoreboard
 
-| Area                                                         | Status                     | Read                                                                                                                  | Immediate Next Step                                                          |
-| ------------------------------------------------------------ | -------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Multibay routing / stable URL / home-bay auth                | Done                       | Real strength                                                                                                         | Keep fixing only correctness bugs found in soak                              |
-| Browser 2FA / fresh-auth / CLI auth elevation                | Done                       | Strong enough to dogfood and ship                                                                                     | Maintenance only                                                             |
-| Email verification                                           | Done                       | Verify link encoding, completion UX, address-change verification reset, and feed updates work                         | Maintenance only                                                             |
-| Project move between regions                                 | Done enough                | Release-credible path exists                                                                                          | Soak and document semantics                                                  |
-| Shared-host protection / eviction / stopping                 | Done enough                | One of the stronger release areas                                                                                     | Keep policy/docs coherent                                                    |
-| Managed spot recovery                                        | Done enough                | Real system on the supported path                                                                                     | Final provider-matrix smoke                                                  |
-| Hosted backup sharding / direct R2 backup indexes            | Done enough                | Major risk reduced materially                                                                                         | Soak under ordinary churn                                                    |
-| Dedicated-host pricing UX                                    | Done enough, bug-fix only  | Pricing breakdown, price sorting, CoreMark/value metadata, and unavailable handling are credible                      | Fix correctness bugs only                                                    |
-| Dedicated-host product definition                            | Done enough                | GCP/Nebius release catalog is intentionally narrow and frozen enough for first release                                | Keep SKU/region/support docs aligned                                         |
-| Dedicated-host billing enforcement / failed-payment handling | Done enough, soak target   | Backend drain/backup/stop/deprovision state, recovery surfaces, and notifications exist                               | Keep under soak; fix correctness bugs only                                   |
-| Dedicated-host owner access control                          | Done enough, soak target   | Owner/manager/user grants, placement enforcement, RAM caps, spend caps, manager controls, and fresh-auth gating exist | Keep under soak; fix correctness bugs only                                   |
-| Dedicated-host provider/funding-lane final smoke             | Done enough, soak target   | Supported paths have been smoke-tested enough for soak                                                                | Keep provider matrix narrow and watch during soak                            |
-| Admin entitlement overrides                                  | Done enough, bug-fix only  | Backend, multibay routing, audit trail, CLI, admin UI, user summary, and live save path work                          | Keep wording/UX precise; only fix correctness bugs                           |
-| Notification delivery controls / outbound email              | Done enough, abuse-review  | Preferences, outbox, SMTP/SendGrid-style delivery, daily digest, and live sends work                                  | Abuse/rate-limit review; Cloudflare adapter can follow unless policy changes |
-| Minimal site license                                         | Done enough, soak target   | Simplified site licenses, verified-domain claim path, admin provisioning/edit UI, and domain edit smoke exist         | Keep under soak; improve admin usage display if time permits                 |
-| Student pay                                                  | Done enough, soak target   | Membership-based model, direct student purchase, instructor workflow, seats, and site-license defaulting smoke passed | Keep under soak; polish wording only                                         |
-| Stale/deleted host convergence across bays                   | Done enough, soak target   | Duplicate/stale host selection and soft-delete follow-ups have been fixed and tested                                  | Keep under soak; inspect any lying-state bug immediately                     |
-| VM/provider/db orphan healing                                | Done enough, operator-safe | `host cloud-refresh` and `host cloud-orphans` give explicit no-DB-surgery inspection/reconcile paths                  | Decide later whether guarded destructive orphan cleanup is needed            |
-| Deployment / packaging / rollback reproducibility            | Done enough, polish        | Rollback dry-run, rollback/forward restore, combined restore command, project-log fix, and bootstrap hardening landed | Keep under soak; document operator workflow                                  |
-| Real 3-bay hosted soak                                       | Blocker                    | Needed to convert "promising" into "trustworthy"                                                                      | Run soak and fix only correctness/trust issues                               |
-| Self-hosted provider bootstrap UX                            | Post-release for SaaS      | Important for Launchpad, not SaaS launch-critical                                                                     | Resume after hosted release                                                  |
-| Cloudflare bootstrap redesign                                | Post-release for SaaS      | Important but not launch-critical                                                                                     | Treat as Launchpad workstream                                                |
-| Benchmark metadata / CoreMark selector work                  | Post-release               | Valuable differentiation, not a blocker                                                                               | Revisit after trust/commercial blockers                                      |
+| Area                                                         | Status                     | Read                                                                                                                              | Immediate Next Step                                                          |
+| ------------------------------------------------------------ | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Multibay routing / stable URL / home-bay auth                | Done                       | Real strength                                                                                                                     | Keep fixing only correctness bugs found in soak                              |
+| Browser 2FA / fresh-auth / CLI auth elevation                | Done                       | Strong enough to dogfood and ship                                                                                                 | Maintenance only                                                             |
+| Email verification                                           | Done                       | Verify link encoding, completion UX, address-change verification reset, and feed updates work                                     | Maintenance only                                                             |
+| Project move between regions                                 | Done enough                | Release-credible path exists                                                                                                      | Soak and document semantics                                                  |
+| Shared-host protection / eviction / stopping                 | Done enough                | One of the stronger release areas                                                                                                 | Keep policy/docs coherent                                                    |
+| Managed spot recovery                                        | Done enough                | Real system on the supported path                                                                                                 | Final provider-matrix smoke                                                  |
+| Hosted backup sharding / direct R2 backup indexes            | Done enough                | Major risk reduced materially                                                                                                     | Soak under ordinary churn                                                    |
+| Dedicated-host pricing UX                                    | Done enough, bug-fix only  | Pricing breakdown, price sorting, CoreMark/value metadata, and unavailable handling are credible                                  | Fix correctness bugs only                                                    |
+| Dedicated-host product definition                            | Done enough                | GCP/Nebius release catalog is intentionally narrow and frozen enough for first release                                            | Keep SKU/region/support docs aligned                                         |
+| Dedicated-host billing enforcement / failed-payment handling | Done enough, soak target   | Backend drain/backup/stop/deprovision state, recovery surfaces, and notifications exist                                           | Keep under soak; fix correctness bugs only                                   |
+| Dedicated-host owner access control                          | Done enough, soak target   | Owner/manager/user grants, placement enforcement, RAM caps, spend caps, manager controls, and fresh-auth gating exist             | Keep under soak; fix correctness bugs only                                   |
+| Dedicated-host provider/funding-lane final smoke             | Done enough, soak target   | Supported paths have been smoke-tested enough for soak                                                                            | Keep provider matrix narrow and watch during soak                            |
+| Admin entitlement overrides                                  | Done enough, bug-fix only  | Backend, multibay routing, audit trail, CLI, admin UI, user summary, and live save path work                                      | Keep wording/UX precise; only fix correctness bugs                           |
+| Notification delivery controls / outbound email              | Done enough, abuse-review  | Preferences, outbox, SMTP/SendGrid-style delivery, daily digest, and live sends work                                              | Abuse/rate-limit review; Cloudflare adapter can follow unless policy changes |
+| Minimal site license                                         | Done enough, soak target   | Simplified site licenses, verified-domain claim path, admin provisioning/edit UI, and domain edit smoke exist                     | Keep under soak; improve admin usage display if time permits                 |
+| Student pay                                                  | Done enough, soak target   | Membership-based model, direct student purchase, instructor workflow, seats, and site-license defaulting smoke passed             | Keep under soak; polish wording only                                         |
+| Stale/deleted host convergence across bays                   | Done enough, soak target   | Duplicate/stale host selection and soft-delete follow-ups have been fixed and tested                                              | Keep under soak; inspect any lying-state bug immediately                     |
+| VM/provider/db orphan healing                                | Done enough, operator-safe | `host cloud-refresh` and `host cloud-orphans` give explicit no-DB-surgery inspection/reconcile paths                              | Decide later whether guarded destructive orphan cleanup is needed            |
+| Deployment / packaging / rollback reproducibility            | Done enough, polish        | Rollback dry-run, rollback/forward restore, combined restore command, project-log/conmon fallback, and bootstrap hardening landed | Keep under soak; document operator workflow                                  |
+| Real 3-bay hosted soak                                       | In progress blocker        | Initial `lite4b` 3-bay stress probes passed with zero failures; soak still needs time and churn coverage                          | Continue soak and fix only correctness/trust issues                          |
+| Self-hosted provider bootstrap UX                            | Post-release for SaaS      | Important for Launchpad, not SaaS launch-critical                                                                                 | Resume after hosted release                                                  |
+| Cloudflare bootstrap redesign                                | Post-release for SaaS      | Important but not launch-critical                                                                                                 | Treat as Launchpad workstream                                                |
+| Benchmark metadata / CoreMark selector work                  | Post-release               | Valuable differentiation, not a blocker                                                                                           | Revisit after trust/commercial blockers                                      |
 
 ## What Is Now Good Enough To Build On
 
@@ -239,6 +253,11 @@ Implemented:
 - `cocalc host cloud-orphans --provider <provider>`
 - rootless Podman bootstrap fix that avoids deleting live Podman metadata
 - live lite4b smoke for GCP/Nebius orphan listing and host refresh
+- conmon-only runtime log fallback so an old live workspace is not reported as a
+  missing container after prior Podman metadata damage
+- initial bounded 3-bay control-plane stress on `lite4b`:
+  100/100 three-bay iterations, 200/200 project-list iterations, and 100/100
+  mentions iterations with zero failures
 
 Why this is a blocker:
 
@@ -278,6 +297,19 @@ Why this is a blocker:
   observability, not the core rollback path
 
 ### 7. Real hosted soak
+
+Current status:
+
+- started on `lite4b` after the 2026-05-12 hub rebuild/restart and `host1`
+  project-host upgrade
+- confirmed all three bays are visible and accepting project ownership
+- confirmed `host1` bootstrap/software lifecycle is in sync and project-host is
+  running the latest deployed bundle
+- confirmed a live project on `host1` still accepts `project exec` after upgrade
+- fixed the first soak trust issue found: `project logs` now reports conmon-only
+  live runtimes as running instead of missing
+- passed bounded stress probes for 3-bay routing, project listing, and mentions
+  reads with zero failures
 
 Required:
 
