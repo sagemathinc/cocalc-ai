@@ -7,6 +7,11 @@ const setConatPasswordMock = jest.fn();
 const setConatClientMock = jest.fn();
 const disposeAcpAgentsMock = jest.fn(async () => {});
 const runDetachedAcpQueueWorkerMock = jest.fn(async () => {});
+const setAcpAdmissionLimitsProviderMock = jest.fn();
+const acpAdmissionLimitsFromEffectiveLimitsMock = jest.fn((limits) => ({
+  converted: limits,
+}));
+const setAcpAdmissionDenialRecorderMock = jest.fn();
 const setContainerExecMock = jest.fn();
 const setPreferContainerExecutorMock = jest.fn();
 const projectRunnerClientMock = jest.fn(() => ({ kind: "runner-client" }));
@@ -20,6 +25,10 @@ const wireHostsApiMock = jest.fn();
 const wireNotificationsApiMock = jest.fn();
 const wireSystemApiMock = jest.fn();
 const wireProjectsApiMock = jest.fn();
+const getProjectOwnerEffectiveLimitsMock = jest.fn(async (project_id) => ({
+  project_id,
+  acp_max_queued_per_account: 10,
+}));
 const resolveProjectHostPreferredMasterConatServerMock = jest.fn(
   () => "http://master.example",
 );
@@ -60,9 +69,15 @@ jest.mock("@cocalc/conat/client", () => ({
 }));
 
 jest.mock("@cocalc/lite/hub/acp", () => ({
+  acpAdmissionLimitsFromEffectiveLimits: (...args: any[]) =>
+    acpAdmissionLimitsFromEffectiveLimitsMock(...args),
   disposeAcpAgents: (...args: any[]) => disposeAcpAgentsMock(...args),
   runDetachedAcpQueueWorker: (...args: any[]) =>
     runDetachedAcpQueueWorkerMock(...args),
+  setAcpAdmissionDenialRecorder: (...args: any[]) =>
+    setAcpAdmissionDenialRecorderMock(...args),
+  setAcpAdmissionLimitsProvider: (...args: any[]) =>
+    setAcpAdmissionLimitsProviderMock(...args),
 }));
 
 jest.mock("@cocalc/lite/hub/acp/executor/container", () => ({
@@ -119,6 +134,8 @@ jest.mock("./hub/system", () => ({
 }));
 
 jest.mock("./hub/projects", () => ({
+  getProjectOwnerEffectiveLimits: (...args: any[]) =>
+    getProjectOwnerEffectiveLimitsMock(...args),
   PROJECT_RUNNER_RPC_TIMEOUT_MS: 1234,
   wireProjectsApi: (...args: any[]) => wireProjectsApiMock(...args),
 }));
@@ -182,7 +199,33 @@ describe("project-host ACP worker runtime wiring", () => {
     expect(wireSystemApiMock).toHaveBeenCalledTimes(1);
     expect(wireHostsApiMock).toHaveBeenCalledTimes(1);
     expect(wireNotificationsApiMock).toHaveBeenCalledTimes(1);
+    expect(setAcpAdmissionLimitsProviderMock).toHaveBeenCalledTimes(1);
+    expect(setAcpAdmissionDenialRecorderMock).toHaveBeenCalledTimes(1);
     expect(wireProjectsApiMock).toHaveBeenCalledTimes(1);
     expect(runDetachedAcpQueueWorkerMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("installs ACP admission limit lookup backed by project-owner effective limits", async () => {
+    const { main } = await import("./acp-worker");
+
+    await main();
+
+    const provider = setAcpAdmissionLimitsProviderMock.mock.calls[0][0];
+    await expect(
+      provider({ project_id: "00000000-0000-4000-8000-000000000123" }),
+    ).resolves.toEqual({
+      converted: {
+        project_id: "00000000-0000-4000-8000-000000000123",
+        acp_max_queued_per_account: 10,
+      },
+    });
+    expect(getProjectOwnerEffectiveLimitsMock).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000123",
+    );
+    expect(acpAdmissionLimitsFromEffectiveLimitsMock).toHaveBeenCalledWith({
+      project_id: "00000000-0000-4000-8000-000000000123",
+      acp_max_queued_per_account: 10,
+    });
+    await expect(provider({ project_id: " " })).resolves.toBeUndefined();
   });
 });

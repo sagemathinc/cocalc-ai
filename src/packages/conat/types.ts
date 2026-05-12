@@ -11,5 +11,11 @@ export interface Location {
 
 type EventType = "total" | "add" | "delete" | "deny";
 type ValueType = "count" | "limit";
-type MetricKey = `${EventType}:${ValueType}`;
+type MetricKey =
+  | `${EventType}:${ValueType}`
+  | "inbound-deny:count"
+  | "inbound-identity-deny:count"
+  | "inbound-event-window:limit"
+  | "inbound-identity-event-window:limit"
+  | "inbound-event-window:ms";
 export type Metrics = { [K in MetricKey]?: number };
