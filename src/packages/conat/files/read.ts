@@ -46,6 +46,20 @@ import { getLogger } from "@cocalc/conat/logger";
 
 const logger = getLogger("conat:files:read");
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = parseInt(value ?? "", 10);
+  if (Number.isFinite(n) && n > 0) {
+    return n;
+  }
+  return fallback;
+}
+
+const MAX_ACTIVE_READ_STREAMS = parsePositiveInt(
+  process.env.COCALC_PROJECT_FILE_READ_MAX_ACTIVE,
+  16,
+);
+let activeReadStreams = 0;
+
 let subs: { [name: string]: Subscription } = {};
 export async function close({
   project_id,
@@ -88,11 +102,13 @@ export async function createServer({
   project_id,
   name = "",
   client,
+  maxActiveStreams,
 }: {
   createReadStream;
   project_id: string;
   name?: string;
   client?: ConatClient;
+  maxActiveStreams?: number;
 }) {
   const subject = getSubject({ project_id, name });
   logger.debug("createServer", { subject });
@@ -102,16 +118,29 @@ export async function createServer({
   const cn = requireExplicitConatClient(client);
   const sub = await cn.subscribe(subject);
   subs[subject] = sub;
-  listen({ sub, createReadStream });
+  listen({
+    sub,
+    createReadStream,
+    maxActiveStreams: maxActiveStreams ?? MAX_ACTIVE_READ_STREAMS,
+  });
 }
 
-async function listen({ sub, createReadStream }) {
-  // NOTE: we just handle as many messages as we get in parallel, so this
-  // could be a large number of simultaneous downloads. These are all by
-  // authenticated users of the project, and the load is on the project,
-  // so I think that makes sense.
+async function listen({ sub, createReadStream, maxActiveStreams }) {
   for await (const mesg of sub) {
-    handleMessage(mesg, createReadStream);
+    if (activeReadStreams >= maxActiveStreams) {
+      const error = "project file read service is busy";
+      logger.warn(error, {
+        active: activeReadStreams,
+        max: maxActiveStreams,
+        subject: mesg.subject,
+      });
+      mesg.respondSync(null, { headers: { error } });
+      continue;
+    }
+    activeReadStreams += 1;
+    void handleMessage(mesg, createReadStream).finally(() => {
+      activeReadStreams -= 1;
+    });
   }
 }
 

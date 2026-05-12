@@ -80,6 +80,24 @@ const FLOW_CONTROL_MAX_EVENTS_PER_SECOND = parseInt(
   process.env.COCALC_TERMINAL_FLOW_CONTROL_MAX_EVENTS_PER_SECOND ?? "3500",
 );
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = parseInt(value ?? "", 10);
+  if (Number.isFinite(n) && n > 0) {
+    return n;
+  }
+  return fallback;
+}
+
+const MAX_ACTIVE_SOCKETS = parsePositiveInt(
+  process.env.COCALC_TERMINAL_MAX_ACTIVE_SOCKETS,
+  64,
+);
+
+const MAX_SESSIONS = parsePositiveInt(
+  process.env.COCALC_TERMINAL_MAX_SESSIONS,
+  32,
+);
+
 const DEFAULT_SIZE_WAIT = 2000;
 
 import { EventEmitter } from "events";
@@ -315,6 +333,8 @@ export function terminalServer({
   cwd,
   preHook,
   postHook,
+  maxActiveSockets = MAX_ACTIVE_SOCKETS,
+  maxSessions = MAX_SESSIONS,
 }: {
   client: ConatClient;
   project_id: string;
@@ -337,6 +357,8 @@ export function terminalServer({
     options?: Options;
     pty;
   }) => Promise<void>;
+  maxActiveSockets?: number;
+  maxSessions?: number;
 }) {
   const subject = getSubject({ project_id });
   const server: ConatSocketServer = client.socket.listen(subject, {
@@ -344,8 +366,19 @@ export function terminalServer({
     keepAliveTimeout: 5000,
   });
   logger.debug("server: listening on ", { subject });
+  let activeSockets = 0;
 
   server.on("connection", (socket: ServerSocket) => {
+    if (activeSockets >= maxActiveSockets) {
+      logger.warn("rejecting terminal socket; active socket cap reached", {
+        active: activeSockets,
+        max: maxActiveSockets,
+        subject,
+      });
+      socket.end();
+      return;
+    }
+    activeSockets += 1;
     logger.debug("server: got new connection", {
       id: socket.id,
       subject: socket.subject,
@@ -608,6 +641,9 @@ export function terminalServer({
           if (id && sessions[id] != null) {
             setPty(sessions[id]);
           } else {
+            if (id && Object.keys(sessions).length >= maxSessions) {
+              throw Error("terminal session limit reached");
+            }
             if (preHook != null) {
               const opts = { command, args, options };
               await preHook(opts);
@@ -692,6 +728,7 @@ export function terminalServer({
 
     socket.on("closed", () => {
       logger.debug("socket closed", { id: socket.id });
+      activeSockets -= 1;
       updateSessionId(null);
     });
   });

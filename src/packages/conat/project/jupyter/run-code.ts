@@ -32,6 +32,14 @@ const SOCKET_KEEP_ALIVE_TIMEOUT = parsePositiveInt(
   process.env.COCALC_JUPYTER_SOCKET_KEEP_ALIVE_TIMEOUT,
   10_000,
 );
+const MAX_ACTIVE_RUNS = parsePositiveInt(
+  process.env.COCALC_JUPYTER_MAX_ACTIVE_RUNS,
+  8,
+);
+const MAX_ACTIVE_SOCKETS = parsePositiveInt(
+  process.env.COCALC_JUPYTER_MAX_ACTIVE_SOCKETS,
+  64,
+);
 const logger = getLogger("conat:project:jupyter:run-code");
 const LIVE_RUN_REPLAY_GRACE_MS = 60_000;
 
@@ -236,6 +244,8 @@ export function jupyterServer({
   outputHandler,
   mirrorOutputHandler = false,
   getKernelStatus,
+  maxActiveRuns = MAX_ACTIVE_RUNS,
+  maxActiveSockets = MAX_ACTIVE_SOCKETS,
 }: {
   client: ConatClient;
   project_id: string;
@@ -252,6 +262,8 @@ export function jupyterServer({
       | "closed";
     kernel_state: "idle" | "busy" | "running";
   }>;
+  maxActiveRuns?: number;
+  maxActiveSockets?: number;
 }) {
   const subject = getSubject({ project_id });
   const server: ConatSocketServer = client.socket.listen(subject, {
@@ -260,8 +272,20 @@ export function jupyterServer({
   });
   logger.debug("server: listening on ", { subject });
   const moreOutput: { [path: string]: { [id: string]: any[] } } = {};
+  let activeRuns = 0;
+  let activeSockets = 0;
 
   server.on("connection", (socket: ServerSocket) => {
+    if (activeSockets >= maxActiveSockets) {
+      logger.warn("rejecting jupyter socket; active socket cap reached", {
+        active: activeSockets,
+        max: maxActiveSockets,
+        subject,
+      });
+      socket.end();
+      return;
+    }
+    activeSockets += 1;
     logger.debug("server: got new connection", {
       id: socket.id,
       subject: socket.subject,
@@ -279,7 +303,19 @@ export function jupyterServer({
         const { cells, noHalt, limit } = data;
         const run_id =
           typeof data.run_id == "string" ? data.run_id : nextRunId();
+        if (activeRuns >= maxActiveRuns) {
+          const error = "jupyter run service is busy";
+          logger.warn(error, {
+            active: activeRuns,
+            max: maxActiveRuns,
+            path,
+            socket_id: socket.id,
+          });
+          mesg.respondSync(null, { headers: { error } });
+          return;
+        }
         try {
+          activeRuns += 1;
           mesg.respondSync({
             run_id,
             server_received_at_ms: Date.now(),
@@ -322,6 +358,8 @@ export function jupyterServer({
               logger.debug("WARNING: unable to send error to client", err);
             }
           }
+        } finally {
+          activeRuns -= 1;
         }
       } else {
         const error = `Unknown command '${cmd}'`;
@@ -332,6 +370,7 @@ export function jupyterServer({
 
     socket.on("closed", () => {
       logger.debug("socket closed", { id: socket.id });
+      activeSockets -= 1;
     });
   });
 

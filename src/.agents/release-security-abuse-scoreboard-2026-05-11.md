@@ -22,7 +22,7 @@ Statuses:
 | SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                                                                             | Revisit defaults after load testing.                                            |
 | SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report. | Add actor-account limit cache if collaborator caps must differ from owner caps. |
 | SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                                                                                                                                                                             | Add membership-backed automation-specific caps if needed.                       |
-| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch and unbounded generic parallel Conat service handlers; both now fast-fail above conservative active-request caps.                                                                                       | Continue inventory of raw project-host streaming/socket services.               |
+| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, and several raw project-host stream/socket services; these now fast-fail above conservative active-request caps.                                                      | Continue low-level socket.io and app websocket proxy review.                    |
 | SEC-BROWSER-001 | Browser exec/session automation              | unknown | critical | Not audited in this pass.                                                                                                                                                                                                                                 | Audit QuickJS sandbox defaults and raw exec production policy.                  |
 | SEC-CLI-001     | `cocalc-cli` authority classes               | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Classify command families by credential type and dangerous-action requirements. |
 | SEC-KEY-001     | Account/project API keys                     | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                 | Inventory project-key consumers and account-key scope checks.                   |
@@ -249,6 +249,16 @@ Evidence:
 - Typed fast-RPC services in `src/packages/conat/service/typed.ts` bypass the
   legacy request transport and therefore needed an explicit active-handler cap
   as well.
+- Project-host raw services also had unbounded concurrent work:
+  - `src/packages/project/exec-stream.ts` started every execute-stream request
+    concurrently.
+  - `src/packages/conat/files/read.ts` and
+    `src/packages/conat/files/write.ts` started every file stream request
+    concurrently.
+  - `src/packages/conat/project/jupyter/run-code.ts` accepted unlimited active
+    sockets and concurrent notebook runs.
+  - `src/packages/conat/project/terminal/index.ts` accepted unlimited active
+    sockets and persisted terminal sessions.
 
 Implemented first guard:
 
@@ -261,6 +271,14 @@ Implemented first guard:
 - Typed fast-RPC service handlers use the same
   `COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE` default unless a service passes an
   explicit `maxParallelHandlers`.
+- Raw project-host service caps now fast-fail above:
+  - `COCALC_PROJECT_EXEC_STREAM_MAX_ACTIVE`, default `16`.
+  - `COCALC_PROJECT_FILE_READ_MAX_ACTIVE`, default `16`.
+  - `COCALC_PROJECT_FILE_WRITE_MAX_ACTIVE`, default `8`.
+  - `COCALC_JUPYTER_MAX_ACTIVE_RUNS`, default `8`.
+  - `COCALC_JUPYTER_MAX_ACTIVE_SOCKETS`, default `64`.
+  - `COCALC_TERMINAL_MAX_ACTIVE_SOCKETS`, default `64`.
+  - `COCALC_TERMINAL_MAX_SESSIONS`, default `32`.
 
 Residual risk:
 
@@ -268,17 +286,17 @@ Residual risk:
   messages. The Conat/socket.io layer may still need lower-level per-connection
   admission for malformed, unauthenticated, or high-rate message streams before
   they reach a service handler.
-- Several raw project-host services still need focused review, especially file
-  write/read streaming, exec-stream, terminal sockets, Jupyter run-code streams,
-  and app-server websocket proxying.
+- App-server websocket proxying still needs focused review.
+- Raw Conat/socket.io still needs per-connection and per-auth-identity
+  admission below the service layer.
 - Defaults are intentionally broad and should be tuned with production load
   testing and observability.
 
 Suggested next audit steps:
 
-1. Inventory raw project-host streaming services and classify which can create
-   long-lived subprocesses, filesystem streams, or websocket proxies.
-2. Add per-project or per-account caps for exec-stream/Jupyter/terminal/app
-   websocket creation if existing membership limits do not already cover them.
+1. Audit app-server websocket proxying and add caps for active websocket
+   upgrades per app/project if missing.
+2. Add lower-level Conat/socket.io per-connection message admission for
+   malformed, unauthenticated, or high-rate traffic before service dispatch.
 3. Add central denial telemetry for hub/service busy rejections if operational
    monitoring shows these caps are hit in production.

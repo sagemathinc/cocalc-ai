@@ -13,13 +13,34 @@ import type { Client as ConatClient } from "@cocalc/conat/core/client";
 
 const logger = getLogger("project:exec-stream");
 
-export function init(opts?: { client?: ConatClient }) {
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = parseInt(value ?? "", 10);
+  if (Number.isFinite(n) && n > 0) {
+    return n;
+  }
+  return fallback;
+}
+
+const MAX_ACTIVE_EXEC_STREAMS = parsePositiveInt(
+  process.env.COCALC_PROJECT_EXEC_STREAM_MAX_ACTIVE,
+  16,
+);
+
+let activeExecStreams = 0;
+
+export function init(opts?: {
+  client?: ConatClient;
+  maxActiveExecStreams?: number;
+}) {
   void serve(opts).catch((err) => {
     logger.warn("exec-stream service failed during startup", err);
   });
 }
 
-async function serve(opts?: { client?: ConatClient }) {
+async function serve(opts?: {
+  client?: ConatClient;
+  maxActiveExecStreams?: number;
+}) {
   logger.debug("serve: create project exec-stream service");
   const cn = opts?.client ?? getProjectConatClient();
   const subject = projectSubject({
@@ -31,14 +52,36 @@ async function serve(opts?: { client?: ConatClient }) {
     `serve: creating exec-stream service for project ${project_id} and subject='${subject}'`,
   );
   const api = await cn.subscribe(subject, { queue: "q" });
-  await listen(api, subject);
+  await listen(
+    api,
+    subject,
+    opts?.maxActiveExecStreams ?? MAX_ACTIVE_EXEC_STREAMS,
+  );
 }
 
-async function listen(api: Subscription, subject: string) {
+async function listen(
+  api: Subscription,
+  subject: string,
+  maxActiveExecStreams: number,
+) {
   logger.debug(`Listening on subject='${subject}'`);
 
   for await (const mesg of api) {
-    handleMessage(mesg);
+    if (activeExecStreams >= maxActiveExecStreams) {
+      const error = "project exec-stream service is busy";
+      logger.warn(error, {
+        active: activeExecStreams,
+        max: maxActiveExecStreams,
+        subject,
+      });
+      mesg.respondSync({ error });
+      mesg.respondSync(null);
+      continue;
+    }
+    activeExecStreams += 1;
+    void handleMessage(mesg).finally(() => {
+      activeExecStreams -= 1;
+    });
   }
 }
 

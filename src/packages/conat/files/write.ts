@@ -77,6 +77,20 @@ import { type Readable } from "node:stream";
 import { getLogger } from "@cocalc/conat/logger";
 const logger = getLogger("conat:files:write");
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const n = parseInt(value ?? "", 10);
+  if (Number.isFinite(n) && n > 0) {
+    return n;
+  }
+  return fallback;
+}
+
+const MAX_ACTIVE_WRITE_STREAMS = parsePositiveInt(
+  process.env.COCALC_PROJECT_FILE_WRITE_MAX_ACTIVE,
+  8,
+);
+let activeWriteStreams = 0;
+
 function requireExplicitConatClient(client?: ConatClient): ConatClient {
   if (client != null) {
     return client;
@@ -106,6 +120,7 @@ export async function createServer({
   client,
   project_id,
   createWriteStream,
+  maxActiveStreams,
 }: {
   client?: ConatClient;
   project_id: string;
@@ -113,6 +128,7 @@ export async function createServer({
   // for writing the specified path to disk.  It
   // can be an async function.
   createWriteStream: (path: string) => any;
+  maxActiveStreams?: number;
 }) {
   const subject = getWriteSubject({ project_id });
   logger.debug("createServer", { subject });
@@ -123,16 +139,39 @@ export async function createServer({
   }
   sub = await cn.subscribe(subject);
   subs[subject] = sub;
-  listen({ sub, createWriteStream, project_id, client: cn });
+  listen({
+    sub,
+    createWriteStream,
+    project_id,
+    client: cn,
+    maxActiveStreams: maxActiveStreams ?? MAX_ACTIVE_WRITE_STREAMS,
+  });
 }
 
-async function listen({ sub, createWriteStream, project_id, client }) {
-  // NOTE: we just handle as many messages as we get in parallel, so this
-  // could be a large number of simultaneous downloads. These are all by
-  // authenticated users of the project, and the load is on the project,
-  // so I think that makes sense.
+async function listen({
+  sub,
+  createWriteStream,
+  project_id,
+  client,
+  maxActiveStreams,
+}) {
   for await (const mesg of sub) {
-    handleMessage({ mesg, createWriteStream, project_id, client });
+    if (activeWriteStreams >= maxActiveStreams) {
+      const error = "project file write service is busy";
+      logger.warn(error, {
+        active: activeWriteStreams,
+        max: maxActiveStreams,
+        subject: mesg.subject,
+      });
+      mesg.respondSync({ error, status: "error" });
+      continue;
+    }
+    activeWriteStreams += 1;
+    void handleMessage({ mesg, createWriteStream, project_id, client }).finally(
+      () => {
+        activeWriteStreams -= 1;
+      },
+    );
   }
 }
 
