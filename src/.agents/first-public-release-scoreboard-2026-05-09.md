@@ -60,6 +60,13 @@ Latest 2026-05-12 live soak update:
   `load three-bay --iterations 100 --concurrency 5`,
   `load projects --iterations 200 --concurrency 10`, and
   `load mentions --iterations 100 --concurrency 5`.
+- Additional bounded control-plane probes also passed with zero failures:
+  `load bootstrap --iterations 200 --concurrency 10`,
+  `load my-collaborators --iterations 200 --concurrency 10`, and
+  `load collaborators --iterations 200 --concurrency 10` against the active
+  `host1` project.
+- `host1` health stayed normal after the stress batch: 4 running projects, no
+  starting/stopping projects, memory around 36%, and disk/admission healthy.
 
 The right strategy is still:
 
@@ -258,6 +265,11 @@ Implemented:
 - initial bounded 3-bay control-plane stress on `lite4b`:
   100/100 three-bay iterations, 200/200 project-list iterations, and 100/100
   mentions iterations with zero failures
+- additional bootstrap, account-collaborator, and project-collaborator stress
+  probes passed with zero failures
+- `host1` metrics after the stress batch stayed healthy, but all four live
+  running projects are still conmon-only old runtimes from the pre-fix bootstrap
+  damage and should be allowed to restart cleanly during ordinary churn
 
 Why this is a blocker:
 
@@ -310,6 +322,10 @@ Current status:
   live runtimes as running instead of missing
 - passed bounded stress probes for 3-bay routing, project listing, and mentions
   reads with zero failures
+- passed bootstrap and collaborator-query stress probes with zero failures
+- observed that existing pre-fix `host1` running projects remain conmon-only:
+  this is acceptable for continuity but should disappear naturally after clean
+  project restarts
 
 Required:
 
