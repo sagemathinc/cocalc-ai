@@ -12,10 +12,10 @@ import type { CourseStore, HandoutRecord } from "../store";
 import { webapp_client } from "../../webapp-client";
 import { redux } from "../../app-framework";
 import { uuid } from "@cocalc/util/misc";
-import { map } from "awaiting";
 import type { SyncDBRecordHandout } from "../types";
 import { exec } from "../../frame-editors/generic/client";
 import { export_student_file_use_times } from "../export/file-use-times";
+import type { ProjectCopyDestination } from "@cocalc/conat/hub/api/projects";
 
 export class HandoutsActions {
   private course_actions: CourseActions;
@@ -293,22 +293,76 @@ export class HandoutsActions {
     if (!handout) return;
 
     let errors = "";
-    const f = async (student_id: string): Promise<void> => {
+    const dests: ProjectCopyDestination[] = [];
+    const startedStudentIds: string[] = [];
+    const studentIds = store.get_student_ids({ deleted: false });
+    for (const student_id of studentIds) {
+      if (this.course_actions.is_closed()) return;
       if (new_only && store.handout_last_copied(handout_id, student_id)) {
-        return;
+        continue;
       }
+      if (this.handout_start_copy(handout_id, student_id)) {
+        continue;
+      }
+      const { student } = this.course_actions.resolve({
+        student_id,
+        handout_id,
+      });
+      if (!student) {
+        continue;
+      }
+      const student_name = store.get_student_name(student_id);
       try {
-        await this.copy_handout_to_student(handout_id, student_id, overwrite);
+        let student_project_id: string | undefined = student.get("project_id");
+        if (student_project_id == null) {
+          this.course_actions.set_activity({
+            id,
+            desc: `${student_name}'s project doesn't exist, so creating it.`,
+          });
+          student_project_id =
+            await this.course_actions.student_projects.create_student_project(
+              student_id,
+            );
+        }
+        if (student_project_id == null) {
+          throw Error("bug -- student project should have been created");
+        }
+        startedStudentIds.push(student_id);
+        dests.push({
+          project_id: student_project_id,
+          path: handout.get("target_path"),
+          metadata: { student_id, course_item_id: handout_id },
+        });
       } catch (err) {
+        this.handout_finish_copy(handout_id, student_id, `${err}`);
         errors += `\n ${err}`;
       }
-    };
+    }
 
-    await map(
-      store.get_student_ids({ deleted: false }),
-      store.get_copy_parallel(),
-      f,
-    );
+    if (dests.length) {
+      try {
+        this.course_actions.set_activity({
+          id,
+          desc: `Copying handout to ${dests.length} students`,
+        });
+        await webapp_client.project_client.copyPathBetweenProjects({
+          src: {
+            project_id: store.get("course_project_id"),
+            path: handout.get("path"),
+          },
+          dests,
+          options: { force: !!overwrite },
+        });
+        for (const student_id of startedStudentIds) {
+          this.handout_finish_copy(handout_id, student_id, "");
+        }
+      } catch (err) {
+        for (const student_id of startedStudentIds) {
+          this.handout_finish_copy(handout_id, student_id, `${err}`);
+        }
+        errors += `\n ${err}`;
+      }
+    }
 
     finish(errors);
   };

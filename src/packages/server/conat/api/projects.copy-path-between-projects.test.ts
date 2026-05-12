@@ -262,15 +262,6 @@ describe("projects.copyPathBetweenProjects", () => {
           ],
           options: { recursive: true, force: true },
         },
-        progress_summary: {
-          total: 2,
-          queued: 2,
-          applying: 0,
-          done: 0,
-          failed: 0,
-          canceled: 0,
-          expired: 0,
-        },
       }),
     );
     expect(getProjectOwnerAccountIdMock).toHaveBeenCalledTimes(2);
@@ -297,7 +288,6 @@ describe("projects.copyPathBetweenProjects", () => {
           dests: [{ project_id: "dest-project", path: "/root/assignment" }],
           options: undefined,
         },
-        progress_summary: expect.objectContaining({ total: 1, queued: 1 }),
       }),
     );
   });

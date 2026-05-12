@@ -71,6 +71,7 @@ import {
   STUDENT_SUBDIR,
 } from "./consts";
 import { DUE_DATE_FILENAME } from "../common/consts";
+import type { ProjectCopyDestination } from "@cocalc/conat/hub/api/projects";
 
 const UPDATE_DUE_DATE_FILENAME_DEBOUNCE_MS = 3000;
 
@@ -970,16 +971,102 @@ ${details}
     if (this.course_actions.is_closed()) return;
     await this.copy_assignment_create_due_date_file(assignment_id);
     if (this.course_actions.is_closed()) return;
-    // by default, doesn't create the due file
-    await this.assignment_action_all_students({
+    const id = this.course_actions.set_activity({ desc });
+    const finish = (err) => {
+      this.course_actions.clear_activity(id);
+      if (err) {
+        err = `${short_desc}: ${err}`;
+        this.course_actions.set_error(err);
+      }
+    };
+    const { store, assignment } = this.course_actions.resolve({
       assignment_id,
-      new_only,
-      action: this.copy_assignment_to_student,
-      step: "assignment",
-      desc,
-      short_desc,
-      overwrite,
     });
+    if (!assignment) return;
+    if (assignment.get("nbgrader") && !assignment.get("has_student_subdir")) {
+      finish(
+        "Assignment contains Jupyter notebooks with nbgrader metadata but there is no student/ subdirectory. The student/ subdirectory gets created when you generate the student version of the assignment. Please generate the student versions of your notebooks, or remove any nbgrader metadata.",
+      );
+      return;
+    }
+
+    let errors = "";
+    const dests: ProjectCopyDestination[] = [];
+    const startedStudentIds: string[] = [];
+    const src_path = this.assignment_src_path(assignment);
+    const studentIds = store.get_student_ids({ deleted: false });
+    for (const student_id of studentIds) {
+      if (this.course_actions.is_closed()) return;
+      const alreadyCopied = !!store.last_copied(
+        "assignment",
+        assignment_id,
+        student_id,
+        true,
+      );
+      if (new_only && alreadyCopied) {
+        continue;
+      }
+      if (this.start_copy(assignment_id, student_id, "last_assignment")) {
+        continue;
+      }
+      const { student } = this.course_actions.resolve({
+        student_id,
+        assignment_id,
+      });
+      if (!student) {
+        continue;
+      }
+      const student_name = store.get_student_name(student_id);
+      try {
+        let student_project_id: string | undefined = student.get("project_id");
+        if (student_project_id == null) {
+          this.course_actions.set_activity({
+            id,
+            desc: `${student_name}'s project doesn't exist, so creating it.`,
+          });
+          student_project_id =
+            await this.course_actions.student_projects.create_student_project(
+              student_id,
+            );
+          if (!student_project_id) {
+            throw Error("failed to create project");
+          }
+        }
+        startedStudentIds.push(student_id);
+        dests.push({
+          project_id: student_project_id,
+          path: assignment.get("target_path"),
+          metadata: { student_id, course_item_id: assignment_id },
+        });
+      } catch (err) {
+        this.finish_copy(assignment_id, student_id, "last_assignment", err);
+        errors += `\n ${err}`;
+      }
+    }
+
+    if (dests.length) {
+      try {
+        this.course_actions.set_activity({
+          id,
+          desc: `Copying assignment to ${dests.length} students`,
+        });
+        await webapp_client.project_client.copyPathBetweenProjects({
+          src: { project_id: store.get("course_project_id"), path: src_path },
+          dests,
+          options: { recursive: true, force: !!overwrite },
+        });
+        for (const student_id of startedStudentIds) {
+          this.finish_copy(assignment_id, student_id, "last_assignment", "");
+        }
+      } catch (err) {
+        for (const student_id of startedStudentIds) {
+          this.finish_copy(assignment_id, student_id, "last_assignment", err);
+        }
+        errors += `\n ${err}`;
+      }
+    }
+
+    finish(errors);
   };
 
   // Copy the given assignment to from all non-deleted students, doing several copies in parallel at once.

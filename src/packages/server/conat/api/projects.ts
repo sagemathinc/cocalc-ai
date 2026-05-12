@@ -225,15 +225,6 @@ export async function copyPathBetweenProjects({
       dests: normalizedDests,
       options,
     },
-    progress_summary: {
-      total: normalizedDests.length,
-      queued: normalizedDests.length,
-      applying: 0,
-      done: 0,
-      failed: 0,
-      canceled: 0,
-      expired: 0,
-    },
     status: "queued",
   });
   try {
