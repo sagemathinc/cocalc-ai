@@ -265,6 +265,8 @@ Current concern:
 - A user may be able to create an unlimited number of root filesystems.
 - Each root filesystem may be able to grow without a per-rootfs cap.
 - Total rootfs storage owned by one account may be unbounded.
+- A user may be able to request remote OCI images that are arbitrarily large or
+  expensive to pull, unpack, store, and distribute.
 - This creates direct storage-cost exposure and can indirectly amplify project
   start, image build, image pull, snapshot, backup, and distribution load.
 
@@ -280,6 +282,8 @@ Required release policy:
   requested operation.
 - Users and admins can see current rootfs usage and effective limits before a
   create/grow attempt fails.
+- OCI-image-backed rootfs creation/import must either be disabled by membership
+  tier or pass the same quota checks with bounded pull/unpack behavior.
 
 Required membership-tier limit fields:
 
@@ -287,15 +291,17 @@ Required membership-tier limit fields:
 - `rootfs_total_storage_gb`: maximum sum of storage across all root filesystems
   owned by the account.
 - `rootfs_max_storage_gb`: maximum storage size of any one root filesystem.
+- `rootfs_oci_images`: whether the account may create root filesystems from
+  remote OCI images.
 
 Initial default policy:
 
-| Tier     | `rootfs_count` | `rootfs_total_storage_gb` | `rootfs_max_storage_gb` |
-| -------- | -------------- | ------------------------- | ----------------------- |
-| free     | 0              | 0                         | 0                       |
-| student  | 0              | 0                         | 0                       |
-| standard | 20             | 25                        | 10                      |
-| pro      | 250            | 250                       | 30                      |
+| Tier     | `rootfs_count` | `rootfs_total_storage_gb` | `rootfs_max_storage_gb` | `rootfs_oci_images` |
+| -------- | -------------- | ------------------------- | ----------------------- | ------------------- |
+| free     | 0              | 0                         | 0                       | false               |
+| student  | 0              | 0                         | 0                       | false               |
+| standard | 20             | 25                        | 10                      | false               |
+| pro      | 250            | 250                       | 30                      | true                |
 
 Audit targets:
 
@@ -306,27 +312,54 @@ Audit targets:
   affordances.
 - host/project image distribution paths that can be triggered by creating or
   modifying root filesystems.
+- OCI image pull/import path, including owner attribution for the resulting
+  rootfs, maximum accepted image size, download timeout, unpack timeout, and
+  temporary-disk cleanup.
 - CLI/API paths that mutate rootfs state.
 
 Audit questions:
 
 - What is the authoritative byte/GB value for a rootfs size?
+  - Working answer: use the existing rootfs database size value that is already
+    displayed in project-host storage UI, or the underlying Rustic-reported size
+    if that is more authoritative. Pick one source and use it consistently for
+    quota checks and display.
 - Is deleted rootfs storage reclaimed promptly, eventually, or retained in
   snapshots/backups?
+  - Working answer: rootfs deletion is blocked while projects still use it; once
+    deleted, cleanup appears to be eventual across Rustic and project hosts.
+    Quota semantics should count active/non-deleted rootfs rows, not historical
+    backups, unless retained data remains user-addressable.
 - Can one account create rootfs objects owned by another account or organization?
+  - Current understanding: no. Verify and add regression coverage around owner
+    attribution for create/clone/import paths.
 - Can project-local code create, clone, or resize root filesystems?
+  - Current understanding: probably no. Verify project-local permissions anyway
+    because this is an important privilege boundary.
 - Can rootfs images be uploaded/imported from arbitrary remote URLs, and are
   downloads bounded?
+  - Current understanding: users can specify OCI images that result in rootfs
+    creation. This is a major abuse risk because remote OCI images can be huge.
+    Mitigate with a membership-tier `rootfs_oci_images` flag, size/time bounds,
+    and clear owner attribution.
 - Are concurrent create/clone/grow operations serialized enough to prevent two
   operations from passing quota checks simultaneously?
+  - Current understanding: no. Exact accounting is less important than blocking
+    egregious abuse, so small race slack is acceptable initially; free/student
+    defaults of zero provide the most important protection.
 - Does membership downgrade or admin override expiry prevent future growth while
   handling existing over-limit root filesystems predictably?
+  - Desired behavior: existing over-limit rootfs objects may remain available,
+    but the user cannot create, clone, import, or grow root filesystems until
+    usage is back under the effective limit.
 
 Release gate:
 
 - No account can create unbounded rootfs count or storage.
 - Free and student tiers cannot create root filesystems by default.
 - Standard and pro tiers have the initial bounded defaults listed above.
+- Remote OCI image rootfs creation is disabled unless the effective membership
+  tier explicitly allows it.
 - Rootfs quota denials are visible in user/admin UI and abuse telemetry.
 
 ## Phase 3: Browser Automation and Browser Exec
