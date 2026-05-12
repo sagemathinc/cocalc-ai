@@ -282,25 +282,28 @@ Implemented first guard:
 - App-server websocket proxying now has local active websocket caps:
   - `COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_PER_TARGET`, default `64`.
   - `COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_TOTAL`, default `256`.
-- Raw Conat/socket.io protocol events now have a per-socket sliding-window
-  admission guard before publish/RPC/subscription handler work:
+- Raw Conat/socket.io protocol events now have sliding-window admission guards
+  before publish/RPC/subscription handler work:
   - `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW`, default `2000`.
+  - `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW`, default `10000`.
   - `COCALC_CONAT_INBOUND_EVENT_WINDOW_MS`, default `10000`.
   - `COCALC_CONAT_INBOUND_EVENT_BLOCK_MS`, default `10000`.
-  - Denials return normal 429-style responses for acked events and increment
-    `inbound-deny:count` in Conat usage metrics.
+  - Denials return normal 429-style responses for acked events. Per-socket
+    denials increment `inbound-deny:count`; per-account/project/hub identity
+    denials increment `inbound-identity-deny:count` in Conat usage metrics.
 
 Residual risk:
 
 - This pass now bounds active handler count and high-rate raw Conat socket
-  messages per connection. It does not yet enforce a shared per-account or
-  per-project message budget across many simultaneous sockets.
+  messages both per connection and per authenticated identity across multiple
+  simultaneous sockets. These are local process budgets, not global
+  cross-cluster budgets.
 - Defaults are intentionally broad and should be tuned with production load
   testing and observability.
 
 Suggested next audit steps:
 
-1. Add per-auth-identity Conat/socket.io message admission across multiple
-   simultaneous sockets.
-2. Add central denial telemetry for hub/service busy rejections if operational
+1. Add central denial telemetry for hub/service busy rejections if operational
    monitoring shows these caps are hit in production.
+2. Decide whether any Conat protocol budgets need cross-cluster aggregation
+   after production telemetry is available.

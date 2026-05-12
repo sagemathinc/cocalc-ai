@@ -160,6 +160,7 @@ const AUTH_FAIL_BLOCK_MS = Math.max(
 
 const DEFAULT_INBOUND_EVENT_WINDOW_MS = 10_000;
 const DEFAULT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW = 2_000;
+const DEFAULT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW = 10_000;
 const DEFAULT_INBOUND_EVENT_BLOCK_MS = 10_000;
 
 function encodedPacketSize(encoded: any): number {
@@ -277,6 +278,7 @@ export interface Options {
   // Lower-level socket.io admission guard. This caps inbound Conat protocol
   // events per socket before they reach publish/RPC/subscription handlers.
   maxInboundEventsPerSocketWindow?: number;
+  maxInboundEventsPerIdentityWindow?: number;
   inboundEventWindowMs?: number;
   inboundEventBlockMs?: number;
 }
@@ -315,11 +317,16 @@ export class ConatServer extends EventEmitter {
   private usage: UsageMonitor;
   public state: State = "init";
   private readonly maxInboundEventsPerSocketWindow: number;
+  private readonly maxInboundEventsPerIdentityWindow: number;
   private readonly inboundEventWindowMs: number;
   private readonly inboundEventBlockMs: number;
   private inboundAdmissionBySocket: Map<string, InboundAdmissionRecord> =
     new Map();
+  private inboundAdmissionByIdentity: Map<string, InboundAdmissionRecord> =
+    new Map();
   private inboundAdmissionDeniedCount = 0;
+  private inboundIdentityAdmissionDeniedCount = 0;
+  private lastInboundAdmissionPrune = 0;
 
   private authFailuresByAddress: Map<
     string,
@@ -371,6 +378,13 @@ export class ConatServer extends EventEmitter {
           DEFAULT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW,
         ),
       ),
+      maxInboundEventsPerIdentityWindow = Math.max(
+        1,
+        envNumber(
+          "COCALC_CONAT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW",
+          DEFAULT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW,
+        ),
+      ),
       inboundEventWindowMs = Math.max(
         1_000,
         envNumber(
@@ -388,6 +402,7 @@ export class ConatServer extends EventEmitter {
     } = options;
     this.clusterName = clusterName;
     this.maxInboundEventsPerSocketWindow = maxInboundEventsPerSocketWindow;
+    this.maxInboundEventsPerIdentityWindow = maxInboundEventsPerIdentityWindow;
     this.inboundEventWindowMs = inboundEventWindowMs;
     this.inboundEventBlockMs = inboundEventBlockMs;
     this.options = {
@@ -406,6 +421,7 @@ export class ConatServer extends EventEmitter {
       clusterIpAddress,
       strictCloudflareProxy,
       maxInboundEventsPerSocketWindow,
+      maxInboundEventsPerIdentityWindow,
       inboundEventWindowMs,
       inboundEventBlockMs,
     };
@@ -512,7 +528,10 @@ export class ConatServer extends EventEmitter {
     return {
       ...this.usage.getMetrics(),
       "inbound-deny:count": this.inboundAdmissionDeniedCount,
+      "inbound-identity-deny:count": this.inboundIdentityAdmissionDeniedCount,
       "inbound-event-window:limit": this.maxInboundEventsPerSocketWindow,
+      "inbound-identity-event-window:limit":
+        this.maxInboundEventsPerIdentityWindow,
       "inbound-event-window:ms": this.inboundEventWindowMs,
     };
   };
@@ -602,6 +621,7 @@ export class ConatServer extends EventEmitter {
     this.sockets = {};
     this.authFailuresByAddress.clear();
     this.inboundAdmissionBySocket.clear();
+    this.inboundAdmissionByIdentity.clear();
     ConatServer.testInstances.delete(this);
   };
 
@@ -674,44 +694,162 @@ export class ConatServer extends EventEmitter {
     this.authFailuresByAddress.delete(address);
   };
 
+  private inboundIdentityKey = (socket): string => {
+    const user = this.stats[socket.id]?.user;
+    if (user != null && typeof user === "object") {
+      if (typeof user.account_id === "string" && user.account_id.length > 0) {
+        return `account:${user.account_id}`;
+      }
+      if (typeof user.project_id === "string" && user.project_id.length > 0) {
+        return `project:${user.project_id}`;
+      }
+      if (typeof user.hub_id === "string" && user.hub_id.length > 0) {
+        return `hub:${user.hub_id}`;
+      }
+    }
+    return "anonymous";
+  };
+
+  private pruneInboundAdmission = (now: number) => {
+    if (now - this.lastInboundAdmissionPrune < this.inboundEventWindowMs) {
+      return;
+    }
+    this.lastInboundAdmissionPrune = now;
+    const maxAge = this.inboundEventWindowMs + this.inboundEventBlockMs;
+    const prune = (records: Map<string, InboundAdmissionRecord>) => {
+      for (const [key, record] of records) {
+        if (record.blockedUntil > now) {
+          continue;
+        }
+        if (now - record.windowStart <= maxAge) {
+          continue;
+        }
+        records.delete(key);
+      }
+    };
+    prune(this.inboundAdmissionBySocket);
+    prune(this.inboundAdmissionByIdentity);
+  };
+
   private denyInboundEvent = ({
     socket,
     event,
     record,
     now,
+    dimension,
+    key,
+    limit,
     respond,
   }: {
     socket: any;
     event: string;
     record: InboundAdmissionRecord;
     now: number;
+    dimension: "socket" | "identity";
+    key: string;
+    limit: number;
     respond?: (response: {
       error: string;
       code: number;
       retryMs: number;
     }) => void;
   }): false => {
-    this.inboundAdmissionDeniedCount += 1;
+    if (dimension === "identity") {
+      this.inboundIdentityAdmissionDeniedCount += 1;
+    } else {
+      this.inboundAdmissionDeniedCount += 1;
+    }
     const retryMs = Math.max(1_000, record.blockedUntil - now);
     if (now - record.lastLogged >= this.inboundEventBlockMs) {
       record.lastLogged = now;
       logger.warn("rejecting high-rate Conat socket event stream", {
         id: this.id,
         socket_id: socket.id,
+        dimension,
+        key,
         event,
         count: record.count,
-        limit: this.maxInboundEventsPerSocketWindow,
+        limit,
         windowMs: this.inboundEventWindowMs,
         retryMs,
         user: this.stats[socket.id]?.user,
       });
     }
     respond?.({
-      error: `too many Conat socket messages from this connection; retry later`,
+      error:
+        dimension === "identity"
+          ? `too many Conat socket messages from this authenticated identity; retry later`
+          : `too many Conat socket messages from this connection; retry later`,
       code: 429,
       retryMs,
     });
     return false;
+  };
+
+  private admitInboundRecord = ({
+    socket,
+    event,
+    records,
+    key,
+    dimension,
+    limit,
+    now,
+    respond,
+  }: {
+    socket: any;
+    event: string;
+    records: Map<string, InboundAdmissionRecord>;
+    key: string;
+    dimension: "socket" | "identity";
+    limit: number;
+    now: number;
+    respond?: (response: {
+      error: string;
+      code: number;
+      retryMs: number;
+    }) => void;
+  }): boolean => {
+    let record = records.get(key);
+    if (
+      record == null ||
+      now - record.windowStart > this.inboundEventWindowMs ||
+      (record.blockedUntil > 0 && record.blockedUntil <= now)
+    ) {
+      records.set(key, {
+        windowStart: now,
+        count: 1,
+        blockedUntil: 0,
+        lastLogged: 0,
+      });
+      return true;
+    }
+    if (record.blockedUntil > now) {
+      return this.denyInboundEvent({
+        socket,
+        event,
+        record,
+        now,
+        dimension,
+        key,
+        limit,
+        respond,
+      });
+    }
+    record.count += 1;
+    if (record.count <= limit) {
+      return true;
+    }
+    record.blockedUntil = now + this.inboundEventBlockMs;
+    return this.denyInboundEvent({
+      socket,
+      event,
+      record,
+      now,
+      dimension,
+      key,
+      limit,
+      respond,
+    });
   };
 
   private admitInboundEvent = ({
@@ -728,30 +866,31 @@ export class ConatServer extends EventEmitter {
     }) => void;
   }): boolean => {
     const now = Date.now();
-    const socketId = socket.id;
-    let record = this.inboundAdmissionBySocket.get(socketId);
+    this.pruneInboundAdmission(now);
     if (
-      record == null ||
-      now - record.windowStart > this.inboundEventWindowMs ||
-      (record.blockedUntil > 0 && record.blockedUntil <= now)
+      !this.admitInboundRecord({
+        socket,
+        event,
+        records: this.inboundAdmissionBySocket,
+        key: socket.id,
+        dimension: "socket",
+        limit: this.maxInboundEventsPerSocketWindow,
+        now,
+        respond,
+      })
     ) {
-      this.inboundAdmissionBySocket.set(socketId, {
-        windowStart: now,
-        count: 1,
-        blockedUntil: 0,
-        lastLogged: 0,
-      });
-      return true;
+      return false;
     }
-    if (record.blockedUntil > now) {
-      return this.denyInboundEvent({ socket, event, record, now, respond });
-    }
-    record.count += 1;
-    if (record.count <= this.maxInboundEventsPerSocketWindow) {
-      return true;
-    }
-    record.blockedUntil = now + this.inboundEventBlockMs;
-    return this.denyInboundEvent({ socket, event, record, now, respond });
+    return this.admitInboundRecord({
+      socket,
+      event,
+      records: this.inboundAdmissionByIdentity,
+      key: this.inboundIdentityKey(socket),
+      dimension: "identity",
+      limit: this.maxInboundEventsPerIdentityWindow,
+      now,
+      respond,
+    });
   };
 
   private unsubscribe = async ({ socket, subject }) => {
