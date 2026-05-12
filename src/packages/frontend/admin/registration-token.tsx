@@ -54,10 +54,6 @@ interface Token {
   limit?: number;
   counter?: number; // readonly
   expires?: dayjs.Dayjs; // DB uses Date objects, watch out!
-  customize?: {
-    disableCollaborators?: boolean;
-    disableAI?: boolean;
-  };
 }
 
 function useRegistrationTokens() {
@@ -92,7 +88,6 @@ function useRegistrationTokens() {
             expires: null,
             limit: null,
             disabled: null,
-            customize: null,
           },
         },
       });
@@ -149,18 +144,11 @@ function useRegistrationTokens() {
       "expires",
       "limit",
       "descr",
-      "customize",
     ] as RegistrationTokenSetFields[]);
     // set optional field to undefined (to get rid of it)
     ["descr", "limit", "expires"].forEach(
       (k: RegistrationTokenSetFields) => (val[k] = val[k] ?? undefined),
     );
-    if (val.customize != null) {
-      const { disableCollaborators, disableAI } = val.customize;
-      if (!disableCollaborators && !disableAI) {
-        val.customize = undefined;
-      }
-    }
     try {
       set_saving(true);
       await query({
@@ -355,24 +343,6 @@ export function RegistrationToken() {
         <Form.Item name="limit" label="Limit" rules={[{ required: false }]}>
           <InputNumber min={limit_min} step={1} />
         </Form.Item>
-        <Form.Item label="Restrictions">
-          <Space orientation="vertical">
-            <Form.Item
-              name={["customize", "disableCollaborators"]}
-              valuePropName="checked"
-              noStyle
-            >
-              <Checkbox>Disable configuring collaborators</Checkbox>
-            </Form.Item>
-            <Form.Item
-              name={["customize", "disableAI"]}
-              valuePropName="checked"
-              noStyle
-            >
-              <Checkbox>Disable artificial intelligence</Checkbox>
-            </Form.Item>
-          </Space>
-        </Form.Item>
         <Form.Item name="active" label="Active" valuePropName="checked">
           <Switch />
         </Form.Item>
@@ -479,16 +449,6 @@ export function RegistrationToken() {
             title="Limit"
             dataIndex="limit"
             render={(text) => (text != null ? text : "∞")}
-          />
-          <Table.Column<Token>
-            title="Restrict collaborators"
-            render={(_, token) =>
-              token.customize?.disableCollaborators ? "Yes" : ""
-            }
-          />
-          <Table.Column<Token>
-            title="Disable AI"
-            render={(_, token) => (token.customize?.disableAI ? "Yes" : "")}
           />
           <Table.Column<Token>
             title="% Used"
@@ -609,7 +569,7 @@ export function RegistrationToken() {
   function render_no_active_token_warning(): Rendered {
     if (no_or_all_inactive && !publicSignupWithoutToken) {
       return (
-        <Alert bsStyle="warning">
+        <Alert bsStyle="warning" style={{ marginTop: "10px" }}>
           No active registration tokens. Email signup is currently blocked.
           <br />
           Create at least one active token to allow invite-only signup.

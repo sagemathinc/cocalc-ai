@@ -21,6 +21,22 @@ const ipLongCache = new LRU<string, number>({
   max: 20000,
   ttl: 1000 * 60 * 60,
 });
+const signupTokenEmailShortCache = new LRU<string, number>({
+  max: 10000,
+  ttl: 1000 * 60,
+});
+const signupTokenEmailLongCache = new LRU<string, number>({
+  max: 20000,
+  ttl: 1000 * 60 * 60,
+});
+const signupTokenIpShortCache = new LRU<string, number>({
+  max: 10000,
+  ttl: 1000 * 60,
+});
+const signupTokenIpLongCache = new LRU<string, number>({
+  max: 20000,
+  ttl: 1000 * 60 * 60,
+});
 
 async function isExclusiveEmail(email: string) {
   const strategies = await getStrategies();
@@ -65,5 +81,38 @@ export function recordFail(email: string, ip?: string): void {
   if (ip != null) {
     ipShortCache.set(ip, (ipShortCache.get(ip) ?? 0) + 1);
     ipLongCache.set(ip, (ipLongCache.get(ip) ?? 0) + 1);
+  }
+}
+
+export function signUpTokenCheck(
+  email: string,
+  ip?: string,
+): string | undefined {
+  if ((signupTokenEmailShortCache.get(email) ?? 0) > 5) {
+    return `Too many failed registration-token attempts for "${email}". Wait one minute, then try again.`;
+  }
+  if ((signupTokenEmailLongCache.get(email) ?? 0) > 50) {
+    return `Too many failed registration-token attempts for "${email}". Wait about an hour, then try again.`;
+  }
+  if (ip != null && (signupTokenIpShortCache.get(ip) ?? 0) > 20) {
+    return "Too many failed registration-token attempts from your computer. Wait one minute, then try again.";
+  }
+  if (ip != null && (signupTokenIpLongCache.get(ip) ?? 0) > 100) {
+    return "Too many failed registration-token attempts from your computer. Wait about an hour, then try again.";
+  }
+}
+
+export function recordSignUpTokenFail(email: string, ip?: string): void {
+  signupTokenEmailShortCache.set(
+    email,
+    (signupTokenEmailShortCache.get(email) ?? 0) + 1,
+  );
+  signupTokenEmailLongCache.set(
+    email,
+    (signupTokenEmailLongCache.get(email) ?? 0) + 1,
+  );
+  if (ip != null) {
+    signupTokenIpShortCache.set(ip, (signupTokenIpShortCache.get(ip) ?? 0) + 1);
+    signupTokenIpLongCache.set(ip, (signupTokenIpLongCache.get(ip) ?? 0) + 1);
   }
 }

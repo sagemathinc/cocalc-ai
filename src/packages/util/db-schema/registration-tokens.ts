@@ -41,7 +41,6 @@ Table({
           limit: null,
           disabled: null,
           ephemeral: null,
-          customize: null,
         } as { [key in RegistrationTokenSetFields]: null },
       },
       get: {
@@ -56,7 +55,6 @@ Table({
           limit: null,
           disabled: null,
           ephemeral: null,
-          customize: null,
         } as { [key in RegistrationTokenGetFields]: null },
       },
     },
@@ -77,7 +75,7 @@ Table({
     },
     customize: {
       type: "map",
-      desc: "Optional account customization overrides applied when redeeming this token.",
+      desc: "Internal bootstrap-token metadata. Not exposed through admin registration-token management.",
     },
   },
 });

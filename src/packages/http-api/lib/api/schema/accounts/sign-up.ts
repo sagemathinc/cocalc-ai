@@ -42,6 +42,10 @@ const IssuesSchema = z.object({
   terms: z.string().optional().describe("Problem with ToS"),
   email: z.string().optional().describe("Problem with the email address"),
   password: z.string().optional().describe("Problem with the password"),
+  registrationToken: z
+    .string()
+    .optional()
+    .describe("Problem with the registration token"),
   api: z.string().optional().describe("Problem with the API"),
 });
 

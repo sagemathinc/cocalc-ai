@@ -137,6 +137,7 @@ function TextInput(props: {
       onChange={(e) => props.onChange(e.currentTarget.value)}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
+          e.preventDefault();
           props.onPressEnter?.();
         }
       }}
@@ -152,6 +153,7 @@ function ActionButton(props: {
   return (
     <button
       disabled={props.disabled}
+      type="button"
       style={{
         ...BUTTON_STYLE,
         opacity: props.disabled ? 0.65 : 1,

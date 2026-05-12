@@ -41,6 +41,14 @@ export default async function registrationTokensQuery(
     // upsert an existing one
     const { token, descr, expires, limit, disabled, ephemeral, customize } =
       query;
+    const hasEphemeral = Object.prototype.hasOwnProperty.call(
+      query,
+      "ephemeral",
+    );
+    const hasCustomize = Object.prototype.hasOwnProperty.call(
+      query,
+      "customize",
+    );
     const { rows } = await callback2(db._query, {
       query: `INSERT INTO registration_tokens ("token","descr","expires","limit","disabled","ephemeral","customize")
                 VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (token)
@@ -50,8 +58,8 @@ export default async function registrationTokensQuery(
                   "expires"  = EXCLUDED.expires,
                   "limit"    = EXCLUDED.limit,
                   "disabled" = EXCLUDED.disabled,
-                  "ephemeral" = EXCLUDED.ephemeral,
-                  "customize" = EXCLUDED.customize`,
+                  "ephemeral" = CASE WHEN $8 THEN EXCLUDED.ephemeral ELSE registration_tokens.ephemeral END,
+                  "customize" = CASE WHEN $9 THEN EXCLUDED.customize ELSE registration_tokens.customize END`,
       params: [
         token,
         descr ? descr : null,
@@ -60,6 +68,8 @@ export default async function registrationTokensQuery(
         disabled != null ? disabled : false,
         ephemeral == null ? null : ephemeral,
         customize == null ? null : customize,
+        hasEphemeral,
+        hasCustomize,
       ],
     });
     return rows;

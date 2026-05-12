@@ -325,8 +325,7 @@ export type RegistrationTokenSetFields =
   | "expires"
   | "limit"
   | "disabled"
-  | "ephemeral"
-  | "customize";
+  | "ephemeral";
 
 export type RegistrationTokenGetFields = RegistrationTokenSetFields | "counter";
 

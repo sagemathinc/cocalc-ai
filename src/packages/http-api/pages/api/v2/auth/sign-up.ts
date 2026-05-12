@@ -38,6 +38,10 @@ import isAccountAvailable from "@cocalc/server/auth/is-account-available";
 import isDomainExclusiveSSO from "@cocalc/server/auth/is-domain-exclusive-sso";
 import passwordStrength from "@cocalc/server/auth/password-strength";
 import reCaptcha from "@cocalc/server/auth/recaptcha";
+import {
+  recordSignUpTokenFail,
+  signUpTokenCheck,
+} from "@cocalc/server/auth/throttle";
 import redeemRegistrationToken, {
   disableRegistrationToken,
 } from "@cocalc/server/auth/tokens/redeem";
@@ -195,9 +199,21 @@ export async function signUp(req, res) {
   }
 
   let tokenInfo;
+  if (registrationToken) {
+    const tokenThrottle = signUpTokenCheck(email, req.ip);
+    if (tokenThrottle) {
+      res.json({
+        issues: {
+          registrationToken: tokenThrottle,
+        },
+      });
+      return;
+    }
+  }
   try {
     tokenInfo = await redeemRegistrationToken(registrationToken);
   } catch (err) {
+    recordSignUpTokenFail(email, req.ip);
     res.json({
       issues: {
         registrationToken: `Issue with registration token -- ${err.message}`,
@@ -232,7 +248,6 @@ export async function signUp(req, res) {
       signup_reason: signupReason,
       owner_id,
       ephemeral: tokenInfo?.ephemeral,
-      customize: tokenInfo?.customize,
     });
     const account_id = created.account_id;
     const home_bay_id =
