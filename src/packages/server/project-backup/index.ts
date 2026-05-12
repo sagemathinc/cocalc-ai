@@ -1,4 +1,9 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  randomUUID,
+} from "crypto";
 import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { secrets } from "@cocalc/backend/data";
@@ -378,9 +383,18 @@ function normalizeBackupRegion(region?: string | null): string {
   );
 }
 
-function nextSharedRepoRoot(region: string, existingCount: number): string {
+function nextSharedRepoRoot({
+  region,
+  existingCount,
+  repoId,
+}: {
+  region: string;
+  existingCount: number;
+  repoId: string;
+}): string {
   const serial = String(existingCount + 1).padStart(4, "0");
-  return `${DEFAULT_SHARED_REPO_ROOT_PREFIX}-${region}-${serial}`;
+  // Include the repo id so a rebuilt DB never reuses an old object-store repo.
+  return `${DEFAULT_SHARED_REPO_ROOT_PREFIX}-${region}-${serial}-${repoId}`;
 }
 
 async function loadProjectBackupRepoAssignmentTx(
@@ -486,16 +500,21 @@ async function createProjectBackupRepoTx({
   const masterKey = await getBackupMasterKey();
   const sharedSecret = randomBytes(32).toString("base64url");
   const encryptedSecret = encryptBackupSecret(sharedSecret, masterKey);
+  const repoId = randomUUID();
   const { rows: existing } = await client.query<{ count: number }>(
     "SELECT COUNT(*)::INTEGER AS count FROM project_backup_repos WHERE region=$1",
     [region],
   );
-  const root = nextSharedRepoRoot(region, existing[0]?.count ?? 0);
+  const root = nextSharedRepoRoot({
+    region,
+    existingCount: existing[0]?.count ?? 0,
+    repoId,
+  });
   const { rows } = await client.query<ProjectBackupRepoRow>(
     `INSERT INTO project_backup_repos
       (id, region, bucket_id, root, secret, status, created, updated)
     VALUES
-      (gen_random_uuid(), $1, $2, $3, $4, $5, NOW(), NOW())
+      ($1, $2, $3, $4, $5, $6, NOW(), NOW())
     RETURNING
       id,
       region,
@@ -506,6 +525,7 @@ async function createProjectBackupRepoTx({
       created,
       updated`,
     [
+      repoId,
       region,
       bucket.id,
       root,

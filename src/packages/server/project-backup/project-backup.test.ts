@@ -306,14 +306,14 @@ describe("project-backup", () => {
       if (sql.startsWith("INSERT INTO project_backup_repos")) {
         const nextIndex = repoStateRows().length;
         const repo = repoRow({
-          id: REPO_IDS[nextIndex] ?? REPO_ID,
-          region: params?.[0] ?? settings.project_region ?? "wnam",
-          bucket_id: params?.[1] ?? BUCKET_ID,
+          id: params?.[0] ?? REPO_IDS[nextIndex] ?? REPO_ID,
+          region: params?.[1] ?? settings.project_region ?? "wnam",
+          bucket_id: params?.[2] ?? BUCKET_ID,
           root:
-            params?.[2] ??
-            `rustic/shared-${settings.project_region ?? "wnam"}-${String(nextIndex + 1).padStart(4, "0")}`,
-          secret: params?.[3] ?? settings.repo_secret ?? "repo-secret",
-          status: params?.[4] ?? "active",
+            params?.[3] ??
+            `rustic/shared-${settings.project_region ?? "wnam"}-${String(nextIndex + 1).padStart(4, "0")}-${params?.[0] ?? REPO_IDS[nextIndex] ?? REPO_ID}`,
+          secret: params?.[4] ?? settings.repo_secret ?? "repo-secret",
+          status: params?.[5] ?? "active",
         });
         repoStateRows().push(repo);
         settings.backup_repo_id = repo.id;
@@ -502,12 +502,12 @@ describe("project-backup", () => {
     ).toBe(true);
     expect(settings.repos).toHaveLength(4);
     expect(settings.repos.map((repo: any) => repo.root)).toEqual([
-      "rustic/shared-wnam-0001",
-      "rustic/shared-wnam-0002",
-      "rustic/shared-wnam-0003",
-      "rustic/shared-wnam-0004",
+      expect.stringMatching(/^rustic\/shared-wnam-0001-[0-9a-f-]{36}$/),
+      expect.stringMatching(/^rustic\/shared-wnam-0002-[0-9a-f-]{36}$/),
+      expect.stringMatching(/^rustic\/shared-wnam-0003-[0-9a-f-]{36}$/),
+      expect.stringMatching(/^rustic\/shared-wnam-0004-[0-9a-f-]{36}$/),
     ]);
-    expect(result.toml).toContain('root = "rustic/shared-wnam-0001"');
+    expect(result.toml).toContain('root = "rustic/shared-wnam-0001-');
   });
 
   it("delegates project backup config to the seed bay from attached bays", async () => {
