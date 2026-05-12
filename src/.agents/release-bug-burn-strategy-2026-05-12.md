@@ -102,8 +102,7 @@ Work here:
      the host dialog or matching CLI/API path.
 
 2. Cross-host project file copy is broken with `/root` path permission error.
-   - Symptom: `EACCES: permission denied, realpath
-'/mnt/cocalc/data/cache/project-roots/.../root/docs'`.
+   - Symptom: `EACCES: permission denied, realpath '/mnt/cocalc/data/cache/project-roots/.../root/docs'`.
    - Release risk: data movement between hosts is a core trust boundary.
    - First hypothesis: restore/copy path assumes rootfs `/root` instead of the
      project user home path.
@@ -112,7 +111,7 @@ Work here:
 
 3. Jupyter agent-button turns can silently not start.
    - Symptom: pressing the agent button creates chat messages, but no turn runs;
-     manual chat works.
+     manual chat works. (This was the install kernel via agent button.)
    - Release risk: visible stuck workflow in a core onboarding path.
    - First hypothesis: expired Codex auth or ACP admission denial is not being
      projected back into the Jupyter/kernel-install agent UI.
@@ -122,7 +121,7 @@ Work here:
 4. Chat live running log drops activity chunks.
    - Symptom: main chat log omits output that is visible in the activity-log
      drawer; browser refresh restores it.
-   - Release risk: users lose trust in agents and logs.
+   - Release risk: users lose trust in agents and logs. (very high risk)
    - First hypothesis: live projection/rendering state drops or coalesces
      activity deltas while the persistent activity log is correct.
    - Validation: reproduce with a long streaming turn and confirm main chat log
@@ -135,37 +134,59 @@ Work here:
    - Validation: non-admin API/UI attempts to create or select self-hosted
      dedicated hosts are rejected; admin path still works for development.
 
+6. Project appearance title save can close/break the active project tab.
+   - Symptom: saving a project title from Settings -> Appearance succeeds on the
+     backend, but the frontend removes the open project and leaves the tab
+     broken.
+   - Release risk: visible dogfood-critical project settings workflow breakage.
+   - Status: fixed in `e5819088e1`; needs live confirmation after frontend
+     rebuild/restart.
+
 ### P1: Fix Before May 31, Pull Forward If Easy
 
-6. Jupyter kernel selector/add-kernel UX regresses after one kernel exists.
+7. Nebius H200 GPU is visible to `nvidia-smi` but not TensorFlow/PyTorch.
+   - Symptom: on a Nebius H200 host in the US, `pip install` of TensorFlow and
+     PyTorch works and `nvidia-smi` sees the GPU, but Python frameworks do not
+     see CUDA devices.
+   - Release risk: dedicated GPU trust and first-run GPU usability.
+   - First hypothesis: rootfs image CUDA/runtime libraries do not match the
+     host driver, or bootstrap is missing the container GPU runtime/device
+     exposure required by these wheels.
+   - Validation: reproduce on the same H200 rootfs, record `nvidia-smi`, CUDA
+     library visibility, `torch.cuda.is_available()`, and TensorFlow GPU device
+     listing; distinguish rootfs-image problem from host bootstrap problem.
+
+8. Jupyter kernel selector/add-kernel UX regresses after one kernel exists.
    - Keep an obvious "add/install kernel" path even when kernels already exist.
    - Keep the top Jupyter bar and red no-kernel warning visible when no kernel
      is selected.
 
-7. Notification toast timing is wrong.
+9. Notification toast timing is wrong.
    - Toasts should appear when notifications arrive, not when notifications are
      marked read.
 
-8. Tiny forever-loading UI after backend component upgrade.
-   - Likely stale session/reconnect edge case after project-host/backend
-     restart. Needs browser-console and network evidence.
+10. Tiny forever-loading UI after backend component upgrade.
 
-9. Backup time display appears random.
-   - Project storage overview and backup tooltip should use the actual most
-     recent relevant backup timestamp.
+- Likely stale session/reconnect edge case after project-host/backend
+  restart. Needs browser-console and network evidence.
 
-10. Project quota/memory should be recalculated on stopped-project start.
+11. Backup time display appears random.
+
+- Project storage overview and backup tooltip should use the actual most
+  recent relevant backup timestamp.
+
+12. Project quota/memory should be recalculated on stopped-project start.
     - Verify first; this may already be fixed.
     - If stale, make start/restart refresh effective project run quota from the
       current membership/default state.
 
 ### P2: After Known Bugs, Before Public Launch If Time Allows
 
-11. Launchpad Cloudflare/gcloud bootstrap UX.
-12. Full SSH-tunnel self-hosted Launchpad smoke.
-13. Operator runbooks for rollback, host refresh, orphan inspection, and
+13. Launchpad Cloudflare/gcloud bootstrap UX.
+14. Full SSH-tunnel self-hosted Launchpad smoke.
+15. Operator runbooks for rollback, host refresh, orphan inspection, and
     self-hosted security boundary.
-14. UI/UX polish from end-to-end human testing.
+16. UI/UX polish from end-to-end human testing.
 
 ## May 14 Checkpoint Target
 
