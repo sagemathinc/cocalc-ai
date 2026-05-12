@@ -53,6 +53,13 @@ const NUMERIC_USAGE_LIMIT_KEYS = new Set<keyof MembershipUsageLimits>([
   "prepaid_host_usage_limit_7d_usd",
   "notification_email_send_limit_5h",
   "notification_email_send_limit_7d",
+  "acp_max_queued_per_account",
+  "acp_max_queued_per_thread",
+  "acp_max_created_5h_per_account",
+  "acp_max_created_7d_per_account",
+  "acp_max_running_per_account",
+  "acp_max_running_per_project",
+  "acp_max_active_automations_per_project",
 ]);
 const USAGE_ENUM_VALUES = {
   egress_policy: new Set([
@@ -191,6 +198,48 @@ const OVERRIDE_EFFECT_FIELDS = [
     key: "notification_email_send_limit_7d",
     ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
       .notification_email_send_limit_7d,
+  },
+  {
+    section: "usage_limits",
+    key: "acp_max_queued_per_account",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_queued_per_account,
+  },
+  {
+    section: "usage_limits",
+    key: "acp_max_queued_per_thread",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_queued_per_thread,
+  },
+  {
+    section: "usage_limits",
+    key: "acp_max_created_5h_per_account",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_created_5h_per_account,
+  },
+  {
+    section: "usage_limits",
+    key: "acp_max_created_7d_per_account",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_created_7d_per_account,
+  },
+  {
+    section: "usage_limits",
+    key: "acp_max_running_per_account",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_running_per_account,
+  },
+  {
+    section: "usage_limits",
+    key: "acp_max_running_per_project",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_running_per_project,
+  },
+  {
+    section: "usage_limits",
+    key: "acp_max_active_automations_per_project",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .acp_max_active_automations_per_project,
   },
 ] as const satisfies readonly OverrideEffectField[];
 

@@ -5,6 +5,7 @@
 
 import { getAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
 import {
+  countActiveAcpAutomationsForProject,
   deleteAcpAutomationsForProject,
   listAcpAutomationProjectIds,
   listAcpAutomationsForProject,
@@ -220,6 +221,43 @@ describe("ACP automation sqlite lifecycle", () => {
 
     expect(listAcpAutomationsForProject("project-1")).toEqual([]);
     expect(listAcpAutomationsForProject("project-2")).toHaveLength(1);
+  });
+
+  it("counts active enabled automations for project caps", () => {
+    for (const [automation_id, enabled, status] of [
+      ["automation-active", true, "active"],
+      ["automation-running", true, "running"],
+      ["automation-error", true, "error"],
+      ["automation-paused", true, "paused"],
+      ["automation-disabled", false, "active"],
+    ] as const) {
+      upsertAcpAutomation({
+        automation_id,
+        project_id: "project-1",
+        path: `/root/${automation_id}.chat`,
+        thread_id: `${automation_id}-thread`,
+        account_id: "account-1",
+        enabled,
+        title: null,
+        prompt: null,
+        schedule_type: "daily",
+        status,
+        next_run_at: 101,
+        unacknowledged_runs: 0,
+        created_at: 10,
+        updated_at: 20,
+      });
+    }
+
+    expect(
+      countActiveAcpAutomationsForProject({ project_id: "project-1" }),
+    ).toBe(3);
+    expect(
+      countActiveAcpAutomationsForProject({
+        project_id: "project-1",
+        exclude_automation_id: "automation-running",
+      }),
+    ).toBe(2);
   });
 
   it("lists distinct projects with local automation rows", () => {

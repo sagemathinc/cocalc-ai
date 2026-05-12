@@ -7,12 +7,17 @@ import {
 } from "../../sqlite/acp-database";
 import {
   acpAdmissionLimitsFromEffectiveLimits,
+  admitActiveAcpAutomationForProject,
   admitAcpJobCreation,
   mergeAcpAdmissionLimits,
   setAcpAdmissionDenialRecorder,
   throwIfAcpAdmissionDenied,
   type AcpAdmissionDenialEvent,
 } from "../admission";
+import {
+  listAcpAutomationsForProject,
+  upsertAcpAutomation,
+} from "../../sqlite/acp-automations";
 import {
   claimNextQueuedAcpJobForThread,
   cancelQueuedAcpJob,
@@ -71,11 +76,13 @@ beforeAll(() => {
   closeAcpDatabase();
   initAcpDatabase({ filename: ":memory:" });
   listQueuedAcpJobs();
+  listAcpAutomationsForProject("project-init");
 });
 
 beforeEach(() => {
   setAcpAdmissionDenialRecorder(undefined);
   getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
+  getAcpDatabase().prepare("DELETE FROM acp_automations").run();
 });
 
 afterAll(() => {
@@ -398,6 +405,7 @@ describe("acp job queue ordering", () => {
       created7dPerAccount: 100,
       runningPerAccount: 100,
       runningPerProject: 100,
+      activeAutomationsPerProject: 100,
     });
     expect(decision).toMatchObject({
       ok: false,
@@ -467,6 +475,7 @@ describe("acp job queue ordering", () => {
         created7dPerAccount: 0,
         runningPerAccount: 0,
         runningPerProject: 0,
+        activeAutomationsPerProject: 0,
       }),
     ).toEqual({ ok: true });
   });
@@ -479,6 +488,7 @@ describe("acp job queue ordering", () => {
       created7dPerAccount: 2000,
       runningPerAccount: 50,
       runningPerProject: 50,
+      activeAutomationsPerProject: 20,
     };
 
     expect(
@@ -491,6 +501,7 @@ describe("acp job queue ordering", () => {
           acp_max_created_7d_per_account: 70,
           acp_max_running_per_account: 4,
           acp_max_running_per_project: 2,
+          acp_max_active_automations_per_project: 3,
         }),
       ),
     ).toEqual({
@@ -500,7 +511,63 @@ describe("acp job queue ordering", () => {
       created7dPerAccount: 70,
       runningPerAccount: 4,
       runningPerProject: 2,
+      activeAutomationsPerProject: 3,
     });
+  });
+
+  it("denies active automations when a project reaches its cap", () => {
+    upsertAcpAutomation({
+      automation_id: "automation-1",
+      project_id: "project-1",
+      path: "/root/a.chat",
+      thread_id: "thread-1",
+      account_id: "account-1",
+      enabled: true,
+      status: "active",
+      next_run_at: 101,
+      unacknowledged_runs: 0,
+      created_at: 10,
+      updated_at: 20,
+    });
+
+    expect(
+      admitActiveAcpAutomationForProject(
+        { project_id: "project-1", automation_id: "automation-2" },
+        {
+          queuedPerAccount: 1000,
+          queuedPerThread: 100,
+          created5hPerAccount: 500,
+          created7dPerAccount: 2000,
+          runningPerAccount: 50,
+          runningPerProject: 50,
+          activeAutomationsPerProject: 1,
+        },
+      ),
+    ).toEqual({
+      ok: false,
+      limit: "active_automations_per_project",
+      current: 1,
+      maximum: 1,
+      account_id: "",
+      project_id: "project-1",
+      path: "",
+      thread_id: "",
+    });
+
+    expect(
+      admitActiveAcpAutomationForProject(
+        { project_id: "project-1", automation_id: "automation-1" },
+        {
+          queuedPerAccount: 1000,
+          queuedPerThread: 100,
+          created5hPerAccount: 500,
+          created7dPerAccount: 2000,
+          runningPerAccount: 50,
+          runningPerProject: 50,
+          activeAutomationsPerProject: 1,
+        },
+      ),
+    ).toEqual({ ok: true });
   });
 
   it("stores recovery metadata for resumed codex turns", () => {

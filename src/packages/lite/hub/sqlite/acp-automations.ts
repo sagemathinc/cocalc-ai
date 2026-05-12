@@ -365,6 +365,41 @@ export function listAcpAutomationsForProject(
     .filter(Boolean);
 }
 
+export function countActiveAcpAutomationsForProject({
+  project_id,
+  exclude_automation_id,
+}: {
+  project_id: string;
+  exclude_automation_id?: string;
+}): number {
+  ensureInit();
+  const projectId = `${project_id ?? ""}`.trim();
+  if (!projectId) return 0;
+  const excludeAutomationId = `${exclude_automation_id ?? ""}`.trim();
+  const db = getAcpDatabase();
+  const row = (
+    excludeAutomationId
+      ? db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM ${TABLE}
+             WHERE project_id = ?
+               AND enabled = 1
+               AND status IN ('active', 'running', 'error')
+               AND automation_id != ?`,
+          )
+          .get(projectId, excludeAutomationId)
+      : db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM ${TABLE}
+             WHERE project_id = ?
+               AND enabled = 1
+               AND status IN ('active', 'running', 'error')`,
+          )
+          .get(projectId)
+  ) as { count?: number } | undefined;
+  return Number(row?.count ?? 0);
+}
+
 export function listAcpAutomationProjectIds(): string[] {
   ensureInit();
   const db = getAcpDatabase();

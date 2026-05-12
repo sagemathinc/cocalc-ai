@@ -214,6 +214,12 @@ export type AcpAutomationResponse = {
   config?: AcpAutomationConfig | null;
   state?: AcpAutomationState | null;
   record?: AcpAutomationRecord | null;
+  error?: string;
+  code?: "active_automation_limit" | string;
+  limit?: string;
+  current?: number;
+  maximum?: number;
+  project_id?: string;
 };
 
 export type AcpStreamUsage = {
