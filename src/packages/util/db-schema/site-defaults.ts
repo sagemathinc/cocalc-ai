@@ -117,6 +117,7 @@ export type SiteSettingsKeys =
   | "project_rootfs_default_image_gpu"
   | "project_rootfs_prepull_images"
   | "samesite_remember_me"
+  | "browser_raw_exec_policy"
   | "user_tracking";
 
 type Mapping = { [key: string]: string | number | boolean };
@@ -1058,6 +1059,25 @@ export const site_settings_conf: SiteSettings = {
     tags: ["Security"],
     group: "Access & Identity",
     subgroup: "Security",
+  },
+  browser_raw_exec_policy: {
+    name: "Browser raw JavaScript exec policy",
+    desc: "Controls whether browser-session automation may run raw JavaScript in a live browser tab. The constrained QuickJS typed-action sandbox is used when raw JavaScript is not allowed. Raw JavaScript execution is intended mainly for development and debugging.",
+    default: "admin_only",
+    valid: ["disabled", "admin_only", "enabled"],
+    valid_labels: {
+      disabled: "Disabled for all accounts",
+      admin_only: "Admins only",
+      enabled: "Enabled when caller requests it",
+    },
+    to_val: (x) => {
+      const value = `${x ?? ""}`.trim().toLowerCase();
+      return value === "disabled" || value === "enabled" ? value : "admin_only";
+    },
+    tags: ["Security"],
+    group: "Access & Identity",
+    subgroup: "Security",
+    advanced: true,
   },
   user_tracking: {
     name: "User Tracking",
