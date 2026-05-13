@@ -438,6 +438,7 @@ export const projects = {
   importPublicUrl: authFirstRequireAccount,
   importPublicPath: authFirstRequireAccount,
   listPendingCopies: authFirstRequireAccount,
+  listCopyRowsByOpId: authFirstRequireAccount,
   cancelPendingCopy: authFirstRequireAccount,
   removeCollaborator: authFirstRequireAccount,
   addCollaborator: authFirstRequireAccount,
@@ -583,6 +584,11 @@ export interface Projects {
     account_id?: string;
     project_id: string;
     include_completed?: boolean;
+  }) => Promise<ProjectCopyRow[]>;
+
+  listCopyRowsByOpId: (opts: {
+    account_id?: string;
+    op_id: string;
   }) => Promise<ProjectCopyRow[]>;
 
   getProjectLauncher: (opts: {

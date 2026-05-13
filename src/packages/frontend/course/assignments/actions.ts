@@ -72,6 +72,7 @@ import {
 } from "./consts";
 import { DUE_DATE_FILENAME } from "../common/consts";
 import type { ProjectCopyDestination } from "@cocalc/conat/hub/api/projects";
+import { type CourseCopyDestination, waitForCourseCopyLro } from "../copy-lro";
 
 const UPDATE_DUE_DATE_FILENAME_DEBOUNCE_MS = 3000;
 
@@ -456,7 +457,7 @@ export class AssignmentsActions {
       desc: `Copying assignment from ${student_name}`,
     });
     try {
-      await webapp_client.project_client.copyPathBetweenProjects({
+      const op = await webapp_client.project_client.copyPathBetweenProjects({
         src: {
           project_id: student_project_id,
           path: assignment.get("target_path"),
@@ -464,6 +465,27 @@ export class AssignmentsActions {
         dest: { project_id: store.get("course_project_id"), path: target_path },
         options: { recursive: true },
       });
+      const result = await waitForCourseCopyLro({
+        op,
+        dests: [
+          {
+            student_id,
+            project_id: store.get("course_project_id"),
+          },
+        ],
+        onSummary: (summary) => {
+          const progress = summary.progress_summary;
+          if (progress?.total) {
+            this.course_actions.set_activity({
+              id,
+              desc: `Copying assignment from ${student_name} (${progress.done ?? 0}/${progress.total} done)`,
+            });
+          }
+        },
+      });
+      if (result[student_id]) {
+        throw new Error(result[student_id]);
+      }
       // write their name to a file
       const name = store.get_student_name_extra(student_id);
       await this.write_text_file_to_course_project({
@@ -865,7 +887,24 @@ ${details}
         },
         options: { recursive: true, force: !!overwrite },
       };
-      await webapp_client.project_client.copyPathBetweenProjects(opts);
+      const op =
+        await webapp_client.project_client.copyPathBetweenProjects(opts);
+      const result = await waitForCourseCopyLro({
+        op,
+        dests: [{ student_id, project_id: student_project_id }],
+        onSummary: (summary) => {
+          const progress = summary.progress_summary;
+          if (progress?.total) {
+            this.course_actions.set_activity({
+              id,
+              desc: `Copying files to ${student_name}'s project (${progress.done ?? 0}/${progress.total} done)`,
+            });
+          }
+        },
+      });
+      if (result[student_id]) {
+        throw new Error(result[student_id]);
+      }
 
       // successful finish
       finish();
@@ -992,6 +1031,7 @@ ${details}
 
     let errors = "";
     const dests: ProjectCopyDestination[] = [];
+    const courseCopyDests: CourseCopyDestination[] = [];
     const startedStudentIds: string[] = [];
     const src_path = this.assignment_src_path(assignment);
     const studentIds = store.get_student_ids({ deleted: false });
@@ -1038,6 +1078,10 @@ ${details}
           path: assignment.get("target_path"),
           metadata: { student_id, course_item_id: assignment_id },
         });
+        courseCopyDests.push({
+          student_id,
+          project_id: student_project_id,
+        });
       } catch (err) {
         this.finish_copy(assignment_id, student_id, "last_assignment", err);
         errors += `\n ${err}`;
@@ -1050,13 +1094,31 @@ ${details}
           id,
           desc: `Copying assignment to ${dests.length} students`,
         });
-        await webapp_client.project_client.copyPathBetweenProjects({
+        const op = await webapp_client.project_client.copyPathBetweenProjects({
           src: { project_id: store.get("course_project_id"), path: src_path },
           dests,
           options: { recursive: true, force: !!overwrite },
         });
+        const result = await waitForCourseCopyLro({
+          op,
+          dests: courseCopyDests,
+          onSummary: (summary) => {
+            const progress = summary.progress_summary;
+            if (progress?.total) {
+              this.course_actions.set_activity({
+                id,
+                desc: `Copying assignment to ${dests.length} students (${progress.done ?? 0}/${progress.total} done)`,
+              });
+            }
+          },
+        });
         for (const student_id of startedStudentIds) {
-          this.finish_copy(assignment_id, student_id, "last_assignment", "");
+          this.finish_copy(
+            assignment_id,
+            student_id,
+            "last_assignment",
+            result[student_id] ?? "",
+          );
         }
       } catch (err) {
         for (const student_id of startedStudentIds) {
