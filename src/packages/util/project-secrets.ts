@@ -5,18 +5,28 @@
 
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
-export const PROJECT_SECRETS_MOUNT_PATH = "/run/secrets/cocalc";
-export const PROJECT_SECRETS_ENV = "COCALC_SECRETS";
-export const PROJECT_SECRETS_PURPOSE = "project-secrets:v1";
-export const PROJECT_SECRETS_KEY_ID = "site-master-key-v1";
-export const PROJECT_SECRETS_MAX_COUNT = 20;
-export const PROJECT_SECRET_NAME_MAX_LENGTH = 128;
-export const PROJECT_SECRET_VALUE_MAX_BYTES = 64 * 1024;
-
-export const PROJECT_ENV_MAX_COUNT = 50;
-export const PROJECT_ENV_KEY_MAX_LENGTH = 128;
-export const PROJECT_ENV_VALUE_MAX_BYTES = 16 * 1024;
-export const PROJECT_ENV_TOTAL_MAX_BYTES = 128 * 1024;
+export {
+  PROJECT_ENV_KEY_MAX_LENGTH,
+  PROJECT_ENV_MAX_COUNT,
+  PROJECT_ENV_TOTAL_MAX_BYTES,
+  PROJECT_ENV_VALUE_MAX_BYTES,
+  PROJECT_SECRETS_ENV,
+  PROJECT_SECRETS_KEY_ID,
+  PROJECT_SECRETS_MAX_COUNT,
+  PROJECT_SECRETS_MOUNT_PATH,
+  PROJECT_SECRETS_PURPOSE,
+  PROJECT_SECRET_NAME_MAX_LENGTH,
+  PROJECT_SECRET_VALUE_MAX_BYTES,
+} from "./project-secrets-constants";
+import {
+  PROJECT_ENV_MAX_COUNT,
+  PROJECT_ENV_TOTAL_MAX_BYTES,
+  PROJECT_ENV_VALUE_MAX_BYTES,
+  PROJECT_SECRETS_ENV,
+  PROJECT_SECRETS_KEY_ID,
+  PROJECT_SECRETS_PURPOSE,
+  PROJECT_SECRET_VALUE_MAX_BYTES,
+} from "./project-secrets-constants";
 
 const SECRET_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;

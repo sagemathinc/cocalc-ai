@@ -102,7 +102,8 @@ function Description({
       A clone is a copy of a {projectLabelLower}, both the HOME directory and
       customizations to the root filesystem /. Cloning a {projectLabelLower}{" "}
       allows you to make changes without affecting the original{" "}
-      {projectLabelLower}. Snapshots and collaborators are not included.
+      {projectLabelLower}. Project secrets are copied to the clone. Snapshots
+      and collaborators are not included.
       <Input
         placeholder="Title of clone... (you can change this later)"
         allowClear

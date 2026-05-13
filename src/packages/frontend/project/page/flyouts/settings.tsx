@@ -30,6 +30,10 @@ import {
   ENV_VARS_ICON,
   Environment,
 } from "@cocalc/frontend/project/settings/environment";
+import {
+  PROJECT_SECRETS_ICON,
+  ProjectSecrets,
+} from "@cocalc/frontend/project/settings/secrets";
 import { HideDeleteBox } from "@cocalc/frontend/project/settings/hide-delete-box";
 import { ManagedEgress } from "@cocalc/frontend/project/settings/managed-egress";
 import { ProjectCapabilities } from "@cocalc/frontend/project/settings/project-capabilites";
@@ -311,6 +315,17 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
       ),
       className: "cc-project-flyout-settings-panel",
       children: <Environment project_id={project_id} mode="flyout" />,
+    });
+
+    items.push({
+      key: "secrets",
+      label: (
+        <>
+          <Icon name={PROJECT_SECRETS_ICON} /> Project Secrets
+        </>
+      ),
+      className: "cc-project-flyout-settings-panel",
+      children: <ProjectSecrets project_id={project_id} mode="flyout" />,
     });
 
     if (showDatastore) {

@@ -18,6 +18,7 @@ import {
 import { ErrorDisplay, Gap, SettingBox } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
+import { PROJECT_SECRETS_ENV } from "@cocalc/util/project-secrets-constants";
 
 export const ENV_VARS_ICON = "bars";
 
@@ -185,6 +186,10 @@ export const Environment: React.FC<Props> = ({
           Empty values are treated as deleted variables. For <code>PATH</code>,
           values are prepended to the existing <code>PATH</code> unless they
           include <code>$PATH</code>, which is replaced by the current path.
+          <br />
+          Do not store API keys, private keys, or tokens here. Use Project
+          Secrets instead; CoCalc manages <code>{PROJECT_SECRETS_ENV}</code> to
+          point at the mounted secrets directory.
         </>
       }
     />
