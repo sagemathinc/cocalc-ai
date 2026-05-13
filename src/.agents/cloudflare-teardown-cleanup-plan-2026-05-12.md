@@ -1,6 +1,17 @@
 # Cloudflare Teardown And Cleanup Plan
 
-Status: proposed plan, 2026-05-12.
+Status: in progress, 2026-05-13.
+
+Current implementation status:
+
+- Phase 1 read-only planning and review is implemented.
+- Phase 2 safe-owned DNS/tunnel apply is implemented via a saved-plan LRO and
+  requires fresh admin two-factor authentication plus exact confirmation.
+- R2 bucket deletion remains intentionally blocked in teardown apply. Targeted
+  direct `bay-backups/*` cleanup exists as a separate guarded command, but full
+  bucket empty/delete still requires archived-project safety work.
+- API token cleanup, optional local settings reset, and UI integration remain
+  unimplemented.
 
 Goal: make Launchpad Cloudflare teardown trustworthy, auditable, and safe
 enough for customer use. This is not a casual cleanup button. It is a staged

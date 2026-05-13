@@ -43,6 +43,28 @@ function summarizeResources(plan: any) {
   }));
 }
 
+function summarizeApplyResult(result: any) {
+  return {
+    plan_id: result?.plan_id ?? "",
+    applied_at: result?.applied_at ?? "",
+    deleted_dns_records: result?.deleted_dns_records ?? 0,
+    deleted_tunnels: result?.deleted_tunnels ?? 0,
+    skipped_r2_buckets: result?.skipped_r2_buckets ?? 0,
+    notes: (result?.notes ?? []).join(" "),
+  };
+}
+
+function summarizeApplyActions(result: any) {
+  return (result?.actions ?? []).map((action: any) => ({
+    kind: action.kind ?? "",
+    status: action.status ?? "",
+    id: action.id ?? "",
+    name: action.name ?? "",
+    reason: action.reason ?? "",
+    error: action.error ?? "",
+  }));
+}
+
 function bytes(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "";
   return humanSize(value, { binary: true });
@@ -353,6 +375,19 @@ function formatR2BayBackupCleanupProgress(progress: any): string | undefined {
   return `${phase} ${bucket}/${prefix}: ${deleted}/${total} objects deleted, ${deletedBytes}${rateText}`;
 }
 
+function formatTeardownApplyProgress(progress: any): string | undefined {
+  if (!progress || typeof progress !== "object") return undefined;
+  if (!progress.plan_id && !progress.phase) return undefined;
+  const phase = progress.phase ?? "applying";
+  const dnsDeleted = Number(progress.deleted_dns_records ?? 0);
+  const dnsTotal = Number(progress.total_dns_records ?? 0);
+  const tunnelDeleted = Number(progress.deleted_tunnels ?? 0);
+  const tunnelTotal = Number(progress.total_tunnels ?? 0);
+  const r2Total = Number(progress.total_r2_buckets ?? 0);
+  const r2Text = r2Total > 0 ? `, ${r2Total} R2 buckets skipped` : "";
+  return `${phase}: DNS ${dnsDeleted}/${dnsTotal}, tunnels ${tunnelDeleted}/${tunnelTotal}${r2Text}`;
+}
+
 async function withScanTimeout<T>(
   ctx: any,
   timeoutMinutes: number | undefined,
@@ -442,6 +477,43 @@ async function runR2BayBackupCleanup(ctx: any, bucket: string, options: any) {
     throw new Error(
       waited.error ||
         `R2 bay backup cleanup operation ${op.op_id} finished with status ${waited.status}`,
+    );
+  }
+  return waited.result;
+}
+
+async function runTeardownApply(ctx: any, planId: string, options: any) {
+  const timeoutMinutes = Math.max(1, options.timeoutMinutes ?? 30);
+  const timeoutMs = timeoutMinutes * 60 * 1000;
+  const op = await ctx.hub.system.startCloudflareTeardownApply({
+    plan_id: planId,
+    confirm: options.confirm,
+    delete_r2_contents: !!options.deleteR2Contents,
+  });
+  reportProgress(
+    ctx,
+    `applying Cloudflare teardown plan ${planId}; timeout is ${timeoutMinutes} minutes; op_id=${op.op_id}`,
+  );
+  const waited = await waitForLro({
+    hub: ctx.hub,
+    opId: op.op_id,
+    timeoutMs,
+    pollMs: Math.max(1000, ctx.pollMs ?? 1000),
+    terminalStatuses: new Set(["succeeded", "failed", "canceled", "expired"]),
+    onUpdate: async (update) => {
+      const message = formatTeardownApplyProgress(update.progress_summary);
+      if (message) reportProgress(ctx, message);
+    },
+  });
+  if (waited.timedOut) {
+    throw new Error(
+      `timeout waiting for Cloudflare teardown apply operation ${op.op_id} (${timeoutMinutes} minutes)`,
+    );
+  }
+  if (waited.status !== "succeeded") {
+    throw new Error(
+      waited.error ||
+        `Cloudflare teardown apply operation ${op.op_id} finished with status ${waited.status}`,
     );
   }
   return waited.result;
@@ -575,6 +647,39 @@ export function registerCloudflareCommand(
           return options.resources
             ? summarizeResources(plan)
             : summarizePlan(plan);
+        },
+      );
+    });
+
+  teardown
+    .command("apply <plan-id>")
+    .description(
+      "Apply a saved Cloudflare teardown plan for safe-owned DNS records and tunnels",
+    )
+    .requiredOption(
+      "--confirm <text>",
+      "Exact confirmation_text from 'cocalc cloudflare teardown plan'",
+    )
+    .option(
+      "--delete-r2-contents",
+      "Request destructive R2 bucket deletion; currently refused until full R2 teardown is implemented",
+    )
+    .option("--actions", "Show per-resource apply actions")
+    .option(
+      "--timeout-minutes <minutes>",
+      "Maximum time to wait for teardown apply",
+      parseNonNegativeInt,
+      30,
+    )
+    .action(async (planId, options, command) => {
+      await deps.withContext(
+        command,
+        "cloudflare teardown apply",
+        async (ctx) => {
+          const result = await runTeardownApply(ctx, planId, options);
+          return options.actions
+            ? summarizeApplyActions(result)
+            : summarizeApplyResult(result);
         },
       );
     });

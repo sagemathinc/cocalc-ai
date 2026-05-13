@@ -109,6 +109,7 @@ export const system = {
   bootstrapCloudflareConfiguration: authFirst,
   createCloudflareTeardownPlan: authFirst,
   getCloudflareTeardownPlan: authFirst,
+  startCloudflareTeardownApply: authFirst,
   getCloudflareR2Usage: authFirst,
   auditCloudflareR2Bucket: authFirst,
   startCloudflareR2Audit: authFirst,
@@ -1795,6 +1796,14 @@ export interface System {
     account_id?: string;
     plan_id: string;
   }) => Promise<CloudflareTeardownPlan>;
+
+  startCloudflareTeardownApply: (opts: {
+    account_id?: string;
+    session_hash?: string;
+    plan_id: string;
+    confirm: string;
+    delete_r2_contents?: boolean;
+  }) => Promise<CloudflareR2AuditLroRef>;
 
   getCloudflareR2Usage: (opts: {
     account_id?: string;

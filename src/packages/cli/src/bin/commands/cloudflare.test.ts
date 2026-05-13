@@ -115,6 +115,70 @@ test("cloudflare teardown review fetches saved plan", async () => {
   assert.deepEqual(capturedArgs, { plan_id: "plan-1" });
 });
 
+test("cloudflare teardown apply starts LRO", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        startCloudflareTeardownApply: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            op_id: "teardown-apply-1",
+            scope_type: "account",
+            scope_id: "acct",
+            service: "persist",
+            stream_name: "lro:teardown-apply-1",
+          };
+        },
+      },
+      lro: {
+        get: async () => ({
+          op_id: "teardown-apply-1",
+          status: "succeeded",
+          result: {
+            plan_id: "plan-1",
+            applied_at: "2026-05-13T00:00:00.000Z",
+            deleted_dns_records: 2,
+            deleted_tunnels: 1,
+            skipped_r2_buckets: 0,
+            actions: [],
+            notes: [],
+          },
+          progress_summary: {
+            phase: "done",
+            plan_id: "plan-1",
+            deleted_dns_records: 2,
+            total_dns_records: 2,
+            deleted_tunnels: 1,
+            total_tunnels: 1,
+            skipped_r2_buckets: 0,
+            total_r2_buckets: 0,
+          },
+        }),
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "teardown",
+    "apply",
+    "plan-1",
+    "--confirm",
+    "delete 1 tunnels, 2 dns records, 0 r2 buckets",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    plan_id: "plan-1",
+    confirm: "delete 1 tunnels, 2 dns records, 0 r2 buckets",
+    delete_r2_contents: false,
+  });
+});
+
 test("cloudflare r2 usage requests usage summary", async () => {
   let capturedArgs: any;
   const program = new Command();
