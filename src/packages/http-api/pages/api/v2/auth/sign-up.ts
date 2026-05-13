@@ -41,6 +41,7 @@ import {
   recordSignUpTokenFail,
   signUpTokenCheck,
 } from "@cocalc/server/auth/throttle";
+import { evaluateAccountCreationPolicy } from "@cocalc/server/auth/account-creation-policy";
 import redeemRegistrationToken, {
   deleteRegistrationToken,
   validateRegistrationToken,
@@ -151,10 +152,15 @@ export async function signUp(req, res) {
     return;
   }
   const exclusive = await isDomainExclusiveSSO(email);
-  if (exclusive) {
+  const domainPolicy = evaluateAccountCreationPolicy({
+    auth_method: "password",
+    email,
+    sso_required_domain: exclusive,
+  });
+  if (domainPolicy.type === "deny_use_sso") {
     res.json({
       issues: {
-        email: `To sign up with "@${exclusive}", you have to use the corresponding single sign on mechanism.  Delete your email address above, then click the SSO icon.`,
+        email: `To sign up with "@${domainPolicy.domain}", you have to use the corresponding single sign on mechanism.  Delete your email address above, then click the SSO icon.`,
       },
     });
     return;
@@ -184,7 +190,15 @@ export async function signUp(req, res) {
     }
   }
 
-  if (!(await isAccountAvailable(email))) {
+  const accountAvailable = await isAccountAvailable(email);
+  const creationPolicy = evaluateAccountCreationPolicy({
+    auth_method: "password",
+    email,
+    requires_registration_token: requiresRegistrationToken,
+    registration_token_validated: requiresRegistrationToken,
+    existing_account: !accountAvailable,
+  });
+  if (creationPolicy.type === "deny_existing_account") {
     res.json({
       issues: { email: `Email address "${email}" already in use.` },
     });

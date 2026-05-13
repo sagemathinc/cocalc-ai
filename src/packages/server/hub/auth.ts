@@ -95,18 +95,21 @@ import {
   DEFAULT_LOGIN_INFO,
   SSO_API_KEY_COOKIE_NAME,
 } from "@cocalc/server/auth/sso/consts";
-import {
-  FacebookStrategyConf,
-  GithubStrategyConf,
-  GoogleStrategyConf,
-  TwitterStrategyConf,
-} from "@cocalc/server/auth/sso/public-strategies";
+import { GoogleStrategyConf } from "@cocalc/server/auth/sso/public-strategies";
 import siteUrl from "@cocalc/server/hub/site-url";
 
 const logger = getLogger("server:hub:auth");
 
 // primary strategies -- all other ones are "extra"
 const PRIMARY_STRATEGIES = ["email", "site_conf", ...PRIMARY_SSO] as const;
+const SUPPORTED_PUBLIC_SSO = ["google"] as const;
+const UNSUPPORTED_PUBLIC_SSO = PRIMARY_SSO.filter(
+  (name) => !(SUPPORTED_PUBLIC_SSO as readonly string[]).includes(name),
+);
+
+function isUnsupportedPublicStrategy(name: string): boolean {
+  return UNSUPPORTED_PUBLIC_SSO.includes(name as any);
+}
 
 // root for authentication related endpoints -- will be prefixed with the base_path
 const AUTH_BASE = "/auth";
@@ -238,7 +241,7 @@ export class PassportManager {
   // it only returns a string[] array of the legacy authentication strategies
   private strategies_v1(res): void {
     const data: string[] = [];
-    const known = ["email", ...PRIMARY_SSO];
+    const known = ["email", ...SUPPORTED_PUBLIC_SSO];
     for (const name in this.passports) {
       if (name === "site_conf") continue;
       if (known.indexOf(name) >= 0) {
@@ -261,6 +264,9 @@ export class PassportManager {
     ] as const;
     for (const name in this.passports) {
       if (name === "site_conf") continue;
+      if (isUnsupportedPublicStrategy(name)) {
+        continue;
+      }
       // this is sent to the web client → do not include any secret info!
       const info: PassportStrategyFrontend = {
         name,
@@ -318,9 +324,6 @@ export class PassportManager {
 
     await Promise.all([
       this.initStrategy(GoogleStrategyConf),
-      this.initStrategy(GithubStrategyConf),
-      this.initStrategy(FacebookStrategyConf),
-      this.initStrategy(TwitterStrategyConf),
       this.init_extra_strategies(),
     ]);
   }

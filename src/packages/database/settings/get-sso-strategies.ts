@@ -5,9 +5,11 @@
 
 import getPool from "@cocalc/database/pool";
 import type { Strategy } from "@cocalc/util/types/sso";
+import { PRIMARY_SSO } from "@cocalc/util/types/passport-types";
 import { ssoDispayedName } from "@cocalc/util/auth";
 
 const CACHE_TTL_MS = process.env.NODE_ENV === "development" ? 3_000 : 15_000;
+const SUPPORTED_PUBLIC_SSO = ["google"] as const;
 let cachedStrategies:
   | {
       expires: number;
@@ -36,22 +38,24 @@ export default async function getStrategies(): Promise<Strategy[]> {
     WHERE strategy != 'site_conf'
       AND COALESCE(info ->> 'disabled', conf ->> 'disabled', 'false') != 'true'`);
 
-  const strategies = rows.map((row) => {
-    const display = ssoDispayedName({
-      display: row.display,
-      name: row.strategy,
-    });
+  const strategies = rows
+    .filter((row) => isSupportedSSOStrategy(row.strategy, row.public))
+    .map((row) => {
+      const display = ssoDispayedName({
+        display: row.display,
+        name: row.strategy,
+      });
 
-    return {
-      name: row.strategy,
-      display,
-      icon: row.icon, // don't use row.strategy as a fallback icon, since that icon likely does not exist
-      backgroundColor: COLORS[row.strategy] ?? "",
-      public: row.public ?? true,
-      exclusiveDomains: row.exclusive_domains ?? [],
-      doNotHide: row.do_not_hide ?? false,
-    };
-  });
+      return {
+        name: row.strategy,
+        display,
+        icon: row.icon, // don't use row.strategy as a fallback icon, since that icon likely does not exist
+        backgroundColor: COLORS[row.strategy] ?? "",
+        public: row.public ?? true,
+        exclusiveDomains: row.exclusive_domains ?? [],
+        doNotHide: row.do_not_hide ?? false,
+      };
+    });
   cachedStrategies = {
     expires: Date.now() + CACHE_TTL_MS,
     value: strategies,
@@ -65,3 +69,16 @@ export const COLORS = {
   google: "#dc4857",
   twitter: "#55acee",
 } as const;
+
+export function isSupportedSSOStrategy(
+  name: string,
+  _publicStrategy: boolean | null | undefined,
+): boolean {
+  if (SUPPORTED_PUBLIC_SSO.includes(name as any)) {
+    return true;
+  }
+  if (PRIMARY_SSO.includes(name as any)) {
+    return false;
+  }
+  return true;
+}
