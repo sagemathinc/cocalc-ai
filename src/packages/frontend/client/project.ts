@@ -43,6 +43,8 @@ import { throttle } from "lodash";
 import { type ProjectApi } from "@cocalc/conat/project/api";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 import type {
+  CourseCollectAssignmentItem,
+  CourseCollectAssignmentResult,
   ProjectCopyDestination,
   ProjectCopyRow,
 } from "@cocalc/conat/hub/api/projects";
@@ -154,6 +156,15 @@ export class ProjectClient {
     op_id: string;
   }): Promise<ProjectCopyRow[]> => {
     return await this.client.conat_client.hub.projects.listCopyRowsByOpId(opts);
+  };
+
+  collectAssignment = async (opts: {
+    course_project_id: string;
+    assignment_id: string;
+    items: CourseCollectAssignmentItem[];
+    options?: CopyOptions;
+  }): Promise<CourseCollectAssignmentResult> => {
+    return await this.client.conat_client.hub.projects.collectAssignment(opts);
   };
 
   // Set a quota parameter for a given project.

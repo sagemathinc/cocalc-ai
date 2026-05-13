@@ -71,8 +71,15 @@ import {
   STUDENT_SUBDIR,
 } from "./consts";
 import { DUE_DATE_FILENAME } from "../common/consts";
-import type { ProjectCopyDestination } from "@cocalc/conat/hub/api/projects";
-import { type CourseCopyDestination, waitForCourseCopyLro } from "../copy-lro";
+import type {
+  CourseCollectAssignmentItem,
+  ProjectCopyDestination,
+} from "@cocalc/conat/hub/api/projects";
+import {
+  courseCollectResultByStudent,
+  type CourseCopyDestination,
+  waitForCourseCopyLro,
+} from "../copy-lro";
 
 const UPDATE_DUE_DATE_FILENAME_DEBOUNCE_MS = 3000;
 
@@ -1141,14 +1148,103 @@ ${details}
       desc += " from whom we have not already copied it";
     }
     const short_desc = "copy from student";
-    await this.assignment_action_all_students({
+    const id = this.course_actions.set_activity({ desc });
+    const finish = (err) => {
+      this.course_actions.clear_activity(id);
+      if (err) {
+        this.course_actions.set_error(`${short_desc}: ${err}`);
+      }
+    };
+    const { store, assignment } = this.course_actions.resolve({
       assignment_id,
-      new_only,
-      action: this.copy_assignment_from_student,
-      step: "collect",
-      desc,
-      short_desc,
     });
+    if (!assignment) return;
+    const items: CourseCollectAssignmentItem[] = [];
+    const startedStudentIds: string[] = [];
+    const peer: boolean = assignment.getIn(["peer_grade", "enabled"], false);
+    const prev_step = previous_step("collect", peer);
+    for (const student_id of store.get_student_ids({ deleted: false })) {
+      if (this.course_actions.is_closed()) return;
+      if (!store.last_copied(prev_step, assignment_id, student_id, true)) {
+        continue;
+      }
+      if (
+        new_only &&
+        store.last_copied("collect", assignment_id, student_id, true)
+      ) {
+        continue;
+      }
+      if (this.start_copy(assignment_id, student_id, "last_collect")) {
+        continue;
+      }
+      const { student } = this.course_actions.resolve({
+        assignment_id,
+        student_id,
+      });
+      if (!student) continue;
+      const student_project_id = student.get("project_id");
+      if (student_project_id == null) {
+        this.stop_copy(assignment_id, student_id, "last_collect");
+        continue;
+      }
+      startedStudentIds.push(student_id);
+      items.push({
+        student_id,
+        student_project_id,
+        student_name: store.get_student_name_extra(student_id).simple,
+        src_path: assignment.get("target_path"),
+        dest_path: join(assignment.get("collect_path"), student_id),
+      });
+    }
+    if (!items.length) {
+      finish("");
+      return;
+    }
+    try {
+      const op = await webapp_client.project_client.collectAssignment({
+        course_project_id: store.get("course_project_id"),
+        assignment_id,
+        items,
+        options: { recursive: true },
+      });
+      const summary = await webapp_client.conat_client.lroWait({
+        op_id: op.op_id,
+        scope_type: op.scope_type,
+        scope_id: op.scope_id,
+        timeout_ms: 2 * 60 * 60 * 1000,
+        onSummary: (summary) => {
+          const progress = summary.progress_summary;
+          if (progress?.total) {
+            this.course_actions.set_activity({
+              id,
+              desc: `Copying assignment from ${items.length} students (${progress.done ?? 0}/${progress.total} done)`,
+            });
+          }
+        },
+      });
+      const result = courseCollectResultByStudent(summary);
+      for (const student_id of startedStudentIds) {
+        this.finish_copy(
+          assignment_id,
+          student_id,
+          "last_collect",
+          result[student_id] ??
+            (summary.status === "succeeded"
+              ? ""
+              : (summary.error ?? summary.status)),
+        );
+      }
+      finish(
+        summary.status === "failed"
+          ? (summary.error ?? "collection failed")
+          : "",
+      );
+    } catch (err) {
+      for (const student_id of startedStudentIds) {
+        this.finish_copy(assignment_id, student_id, "last_collect", err);
+      }
+      finish(err);
+    }
   };
 
   async peer_copy_to_all_students(

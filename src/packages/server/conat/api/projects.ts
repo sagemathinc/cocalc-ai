@@ -46,6 +46,11 @@ import {
   listCopiesForProject,
 } from "@cocalc/server/projects/copy-db";
 import { triggerCopyLroWorker } from "@cocalc/server/projects/copy-worker";
+import {
+  COURSE_COLLECT_ASSIGNMENT_LRO_KIND,
+  courseCollectLroResponse,
+  triggerCourseCollectLroWorker,
+} from "@cocalc/server/projects/course-collect-worker";
 import { createLro, getLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
@@ -81,6 +86,8 @@ import {
 import type {
   ChatStoreScope,
   CourseStudentAccessStatus,
+  CourseCollectAssignmentItem,
+  CourseCollectAssignmentResult,
   ImportPublicUrlResult,
   ImportPublicPathResult,
   PublicPathInspectionResult,
@@ -270,6 +277,92 @@ export async function copyPathBetweenProjects({
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
   };
+}
+
+const MAX_COURSE_COLLECT_ITEMS = 500;
+
+function normalizeCourseCollectItems(
+  items: CourseCollectAssignmentItem[],
+): CourseCollectAssignmentItem[] {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("at least one student is required");
+  }
+  if (items.length > MAX_COURSE_COLLECT_ITEMS) {
+    throw new Error(
+      `too many students; maximum is ${MAX_COURSE_COLLECT_ITEMS}`,
+    );
+  }
+  return items.map((item) => {
+    const student_id = `${item?.student_id ?? ""}`.trim();
+    const student_project_id = `${item?.student_project_id ?? ""}`.trim();
+    const src_path = `${item?.src_path ?? ""}`.trim();
+    const dest_path = `${item?.dest_path ?? ""}`.trim();
+    if (!student_id) throw new Error("student_id is required");
+    if (!student_project_id) throw new Error("student_project_id is required");
+    if (!src_path) throw new Error("src_path is required");
+    if (!dest_path) throw new Error("dest_path is required");
+    return {
+      student_id,
+      student_project_id,
+      src_path,
+      dest_path,
+      ...(item.student_name ? { student_name: `${item.student_name}` } : {}),
+    };
+  });
+}
+
+export async function collectAssignment({
+  account_id,
+  course_project_id,
+  assignment_id,
+  items,
+  options,
+}: {
+  account_id?: string;
+  course_project_id: string;
+  assignment_id: string;
+  items: CourseCollectAssignmentItem[];
+  options?: CopyOptions;
+}): Promise<CourseCollectAssignmentResult> {
+  if (!account_id) {
+    throw new Error("user must be signed in");
+  }
+  const normalizedItems = normalizeCourseCollectItems(items);
+  await assertCollab({ account_id, project_id: course_project_id });
+  for (const project_id of new Set(
+    normalizedItems.map((item) => item.student_project_id),
+  )) {
+    await assertCollab({ account_id, project_id });
+  }
+  const op = await createLro({
+    kind: COURSE_COLLECT_ASSIGNMENT_LRO_KIND,
+    scope_type: "project",
+    scope_id: course_project_id,
+    created_by: account_id,
+    routing: "hub",
+    input: {
+      course_project_id,
+      assignment_id,
+      items: normalizedItems,
+      options: options ?? { recursive: true },
+    },
+    status: "queued",
+  });
+  try {
+    await publishLroSummary({
+      scope_type: op.scope_type,
+      scope_id: op.scope_id,
+      summary: op,
+    });
+  } catch (err) {
+    log.warn("collectAssignment: unable to publish initial LRO summary", {
+      op_id: op.op_id,
+      course_project_id,
+      err,
+    });
+  }
+  triggerCourseCollectLroWorker();
+  return courseCollectLroResponse(op);
 }
 
 const MAX_COPY_DESTINATIONS = 500;
