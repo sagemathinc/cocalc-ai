@@ -109,6 +109,8 @@ export const system = {
   bootstrapCloudflareConfiguration: authFirst,
   createCloudflareTeardownPlan: authFirst,
   getCloudflareTeardownPlan: authFirst,
+  getCloudflareR2Usage: authFirst,
+  auditCloudflareR2Bucket: authFirst,
   createProviderSetupChallenge: authFirst,
   getProviderSetupChallenge: authFirst,
   clearProviderSetupChallenge: authFirst,
@@ -237,6 +239,85 @@ export interface CloudflareTeardownPlan {
   expires_at: string;
   applied_at?: string;
   summary: CloudflareTeardownPlanSummary;
+}
+
+export interface CloudflareR2BucketUsage {
+  bucket: string;
+  location?: string;
+  jurisdiction?: string;
+  storage_class?: string;
+  creation_date?: string;
+  object_count?: number;
+  payload_bytes?: number;
+  metadata_bytes?: number;
+  total_bytes?: number;
+  upload_count?: number;
+  measured_at?: string;
+  metrics_source?: "graphql" | "unavailable";
+  database?: {
+    known: boolean;
+    provider?: string;
+    purpose?: string;
+    region?: string;
+    status?: string;
+    project_backup_repos?: number;
+    assigned_projects?: number;
+  };
+}
+
+export interface CloudflareR2UsageResult {
+  checked_at: string;
+  account_id: string;
+  bucket_prefix?: string;
+  bucket_count: number;
+  totals: {
+    object_count?: number;
+    payload_bytes?: number;
+    metadata_bytes?: number;
+    total_bytes?: number;
+    upload_count?: number;
+  };
+  buckets: CloudflareR2BucketUsage[];
+  warnings: string[];
+  notes: string[];
+}
+
+export interface CloudflareR2AuditCategory {
+  category: string;
+  object_count: number;
+  total_bytes: number;
+  examples: string[];
+}
+
+export interface CloudflareR2AuditPrefix {
+  prefix: string;
+  object_count: number;
+  total_bytes: number;
+}
+
+export interface CloudflareR2AuditObject {
+  key: string;
+  size: number;
+}
+
+export interface CloudflareR2AuditResult {
+  account_id: string;
+  bucket: string;
+  prefix?: string;
+  scanned_at: string;
+  cache: {
+    hit: boolean;
+    max_age_minutes: number;
+    expires_at: string;
+  };
+  object_count: number;
+  total_bytes: number;
+  categories: CloudflareR2AuditCategory[];
+  top_prefixes: CloudflareR2AuditPrefix[];
+  top_objects: CloudflareR2AuditObject[];
+  database?: CloudflareR2BucketUsage["database"];
+  warnings: string[];
+  notes: string[];
 }
 
 export interface AccountMembershipPortabilityRepairCounts {

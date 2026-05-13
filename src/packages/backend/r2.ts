@@ -709,6 +709,81 @@ export async function listR2ObjectKeys({
   }
 }
 
+export type R2ObjectListEntry = {
+  key: string;
+  size: number;
+  lastModified?: string;
+  etag?: string;
+  storageClass?: string;
+};
+
+function extractR2ObjectListEntries(xml: string): R2ObjectListEntry[] {
+  const entries: R2ObjectListEntry[] = [];
+  const matches = xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g);
+  for (const match of matches) {
+    const scope = match[1] ?? "";
+    const rawKey = extractXmlTag(scope, "Key");
+    if (!rawKey) continue;
+    const size = Number(extractXmlTag(scope, "Size") ?? 0);
+    entries.push({
+      key: decodeURIComponent(rawKey),
+      size: Number.isFinite(size) && size > 0 ? size : 0,
+      lastModified: extractXmlTag(scope, "LastModified") ?? undefined,
+      etag: extractXmlTag(scope, "ETag") ?? undefined,
+      storageClass: extractXmlTag(scope, "StorageClass") ?? undefined,
+    });
+  }
+  return entries;
+}
+
+export async function scanR2Objects({
+  auth,
+  prefix,
+  onPage,
+}: {
+  auth: R2ObjectStoreAuth;
+  prefix?: string;
+  onPage: (entries: R2ObjectListEntry[]) => void | Promise<void>;
+}): Promise<{ objectCount: number; totalSize: number }> {
+  let objectCount = 0;
+  let totalSize = 0;
+  let continuationToken: string | undefined;
+  while (true) {
+    const response = await sendR2Request({
+      auth,
+      method: "GET",
+      key: "",
+      query: {
+        "list-type": "2",
+        "encoding-type": "url",
+        ...(prefix ? { prefix } : {}),
+        ...(continuationToken
+          ? { "continuation-token": continuationToken }
+          : {}),
+      },
+      payloadSha256: sha256Hex(""),
+      label: `R2 LIST ${prefix ?? ""}`,
+    });
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw createHttpStatusError(response.statusCode, response.body);
+    }
+    const xml = response.body.toString("utf8");
+    const entries = extractR2ObjectListEntries(xml);
+    objectCount += entries.length;
+    totalSize += entries.reduce((sum, entry) => sum + entry.size, 0);
+    await onPage(entries);
+    const isTruncated = extractXmlTag(xml, "IsTruncated") === "true";
+    if (!isTruncated) {
+      return { objectCount, totalSize };
+    }
+    continuationToken =
+      extractXmlTag(xml, "NextContinuationToken") ?? undefined;
+    if (!continuationToken) {
+      throw new Error("R2 object list truncated without continuation token");
+    }
+  }
+}
+
 export async function deleteR2Object({
   auth,
   key,

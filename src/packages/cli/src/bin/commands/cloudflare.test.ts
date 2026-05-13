@@ -108,3 +108,101 @@ test("cloudflare teardown review fetches saved plan", async () => {
 
   assert.deepEqual(capturedArgs, { plan_id: "plan-1" });
 });
+
+test("cloudflare r2 usage requests usage summary", async () => {
+  let called = false;
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        getCloudflareR2Usage: async () => {
+          called = true;
+          return {
+            checked_at: "2026-05-12T00:00:00.000Z",
+            account_id: "acct",
+            bucket_count: 1,
+            totals: { object_count: 2, total_bytes: 1024 },
+            buckets: [
+              {
+                bucket: "alpha-wnam",
+                object_count: 2,
+                total_bytes: 1024,
+                metrics_source: "graphql",
+                database: { known: true, purpose: "project-backups" },
+              },
+            ],
+            warnings: [],
+            notes: [],
+          };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync(["node", "test", "cloudflare", "r2", "usage"]);
+
+  assert.equal(called, true);
+});
+
+test("cloudflare r2 audit passes cache controls", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        auditCloudflareR2Bucket: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            account_id: "acct",
+            bucket: opts.bucket,
+            prefix: opts.prefix,
+            scanned_at: "2026-05-12T00:00:00.000Z",
+            cache: {
+              hit: false,
+              max_age_minutes: opts.max_age_minutes,
+              expires_at: "2026-05-12T01:00:00.000Z",
+            },
+            object_count: 1,
+            total_bytes: 2048,
+            categories: [
+              {
+                category: "project_backup_rustic_repo",
+                object_count: 1,
+                total_bytes: 2048,
+                examples: ["rustic/shared-wnam-0001/config"],
+              },
+            ],
+            top_prefixes: [],
+            top_objects: [],
+            warnings: [],
+            notes: [],
+          };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "r2",
+    "audit",
+    "alpha-wnam",
+    "--prefix",
+    "rustic/",
+    "--refresh",
+    "--max-age-minutes",
+    "5",
+    "--categories",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bucket: "alpha-wnam",
+    prefix: "rustic/",
+    refresh: true,
+    max_age_minutes: 5,
+  });
+});

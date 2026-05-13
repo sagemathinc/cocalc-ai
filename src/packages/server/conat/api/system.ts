@@ -88,6 +88,12 @@ import {
   type CloudflareTeardownPlan,
 } from "@cocalc/server/cloud/cloudflare-teardown";
 import {
+  auditCloudflareR2Bucket as auditCloudflareR2Bucket0,
+  getCloudflareR2Usage as getCloudflareR2Usage0,
+  type CloudflareR2AuditResult,
+  type CloudflareR2UsageResult,
+} from "@cocalc/server/cloud/cloudflare-r2-usage";
+import {
   clearProviderSetupChallenge as clearProviderSetupChallenge0,
   createProviderSetupChallenge as createProviderSetupChallenge0,
   getProviderSetupChallenge as getProviderSetupChallenge0,
@@ -3241,6 +3247,41 @@ export async function getCloudflareTeardownPlan({
     throw Error("must be an admin");
   }
   return await getCloudflareTeardownPlan0({ account_id, plan_id });
+}
+
+export async function getCloudflareR2Usage({
+  account_id,
+}: {
+  account_id?: string;
+}): Promise<CloudflareR2UsageResult> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await getCloudflareR2Usage0();
+}
+
+export async function auditCloudflareR2Bucket({
+  account_id,
+  bucket,
+  prefix,
+  refresh,
+  max_age_minutes,
+}: {
+  account_id?: string;
+  bucket: string;
+  prefix?: string;
+  refresh?: boolean;
+  max_age_minutes?: number;
+}): Promise<CloudflareR2AuditResult> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await auditCloudflareR2Bucket0({
+    bucket,
+    prefix,
+    refresh,
+    max_age_minutes,
+  });
 }
 
 export async function createProviderSetupChallenge({
