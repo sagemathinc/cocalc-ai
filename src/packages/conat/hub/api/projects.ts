@@ -60,7 +60,9 @@ export interface CourseCollectAssignmentItem {
   student_project_id: string;
   src_path: string;
   dest_path: string;
+  student_account_id?: string;
   student_name?: string;
+  assignment_title?: string;
 }
 
 export interface CourseCollectAssignmentResult {

@@ -1377,7 +1377,9 @@ ${details}
       items.push({
         student_id,
         student_project_id,
+        student_account_id: student.get("account_id"),
         student_name: store.get_student_name_extra(student_id).simple,
+        assignment_title: assignment.get("title") ?? assignment.get("path"),
         src_path: assignment.get("target_path"),
         dest_path: join(assignment.get("collect_path"), student_id),
       });

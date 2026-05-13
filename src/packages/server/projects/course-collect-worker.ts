@@ -5,7 +5,12 @@ import type { LroStatus, LroSummary } from "@cocalc/conat/hub/api/lro";
 import type { CourseCollectAssignmentItem } from "@cocalc/conat/hub/api/projects";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getExplicitProjectRoutedClient } from "@cocalc/server/conat/route-client";
+import {
+  createNotificationEventGraph,
+  resolveNotificationTargetHomeBays,
+} from "@cocalc/database/postgres/notifications-core";
 import {
   claimLroOps,
   createLro,
@@ -213,6 +218,68 @@ async function writeStudentMarker({
   );
 }
 
+async function notifyStudentAssignmentCollected({
+  op,
+  item,
+}: {
+  op: LroSummary;
+  item: CourseCollectAssignmentItem;
+}): Promise<void> {
+  const target_account_id = `${item.student_account_id ?? ""}`.trim();
+  if (!target_account_id) return;
+  const source_bay_id = getConfiguredBayId();
+  const targetHomeBays = await resolveNotificationTargetHomeBays({
+    account_ids: [target_account_id],
+    default_bay_id: source_bay_id,
+  });
+  const assignmentTitle =
+    `${item.assignment_title ?? ""}`.trim() || item.src_path;
+  const body_markdown = `Your work for **${assignmentTitle}** has been collected by your instructor.`;
+  await createNotificationEventGraph({
+    kind: "account_notice",
+    source_bay_id,
+    source_project_id: item.student_project_id,
+    source_path: item.src_path,
+    actor_account_id: op.created_by,
+    origin_kind: "project",
+    payload_json: {
+      severity: "info",
+      title: "Assignment collected",
+      body_markdown,
+      origin_label: "Course",
+      action_label: "Open assignment",
+      notice_type: "course_assignment_collected",
+      assignment_id: op.input?.assignment_id ?? null,
+      course_project_id: op.input?.course_project_id ?? op.scope_id,
+      collection_op_id: op.op_id,
+    },
+    targets: [
+      {
+        target_account_id,
+        target_home_bay_id: targetHomeBays[target_account_id],
+        dedupe_key: [
+          "course_assignment_collected",
+          op.op_id,
+          item.student_id,
+          target_account_id,
+        ].join(":"),
+        summary_json: {
+          title: "Assignment collected",
+          body_markdown,
+          severity: "info",
+          origin_label: "Course",
+          action_label: "Open assignment",
+          notice_type: "course_assignment_collected",
+          path: item.src_path,
+          assignment_id: op.input?.assignment_id ?? null,
+          course_project_id: op.input?.course_project_id ?? op.scope_id,
+          collection_op_id: op.op_id,
+        },
+      },
+    ],
+  });
+}
+
 async function collectOne({
   op,
   item,
@@ -263,6 +330,13 @@ async function collectOne({
       dest_path: item.dest_path,
       student_name: item.student_name,
     });
+    await notifyStudentAssignmentCollected({ op, item }).catch((err) =>
+      logger.warn("course collect notification failed", {
+        op_id: op.op_id,
+        student_id: item.student_id,
+        err: `${err}`,
+      }),
+    );
     return {
       student_id: item.student_id,
       status: "done",

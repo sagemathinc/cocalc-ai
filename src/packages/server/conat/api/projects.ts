@@ -306,7 +306,13 @@ function normalizeCourseCollectItems(
       student_project_id,
       src_path,
       dest_path,
+      ...(item.student_account_id
+        ? { student_account_id: `${item.student_account_id}`.trim() }
+        : {}),
       ...(item.student_name ? { student_name: `${item.student_name}` } : {}),
+      ...(item.assignment_title
+        ? { assignment_title: `${item.assignment_title}` }
+        : {}),
     };
   });
 }
