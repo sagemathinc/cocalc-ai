@@ -521,26 +521,47 @@ export async function getCloudflareR2Usage({
     })
     .sort((a, b) => (b.total_bytes ?? -1) - (a.total_bytes ?? -1));
 
-  const shouldScan = scan ?? filteredByPrefix;
-  if (shouldScan && rows.length > 0) {
+  const maxAgeMinutes = cacheMaxAgeMinutes(max_age_minutes);
+  const shouldScan = !!scan;
+  const shouldUseS3Cache =
+    scan === false ? false : shouldScan || filteredByPrefix;
+  if (shouldUseS3Cache && rows.length > 0) {
     notes.push(
-      "Per-bucket totals are filled from cached S3 listings when Cloudflare GraphQL analytics is unavailable.",
+      shouldScan
+        ? "Per-bucket totals are filled from exact S3 listings and cached for later fast usage checks."
+        : "Per-bucket totals use recent cached S3 listings when Cloudflare GraphQL analytics is unavailable.",
     );
+    await ensureAuditCacheTable();
     for (const row of rows) {
       if (row.total_bytes != null && row.object_count != null) continue;
       try {
-        const audit = await auditCloudflareR2Bucket({
-          bucket: row.bucket,
-          refresh,
-          max_age_minutes,
-        });
+        const audit = shouldScan
+          ? await auditCloudflareR2Bucket({
+              bucket: row.bucket,
+              refresh,
+              max_age_minutes,
+            })
+          : await getCachedAudit({
+              accountId,
+              bucket: row.bucket,
+              prefix: "",
+              maxAgeMinutes,
+            });
+        if (!audit) {
+          warnings.push(
+            `no recent S3 usage cache for R2 bucket '${row.bucket}'; run 'cocalc cloudflare r2 usage --scan' to populate exact usage`,
+          );
+          continue;
+        }
         row.object_count = audit.object_count;
         row.payload_bytes = audit.total_bytes;
         row.total_bytes = audit.total_bytes;
         row.measured_at = audit.scanned_at;
         row.metrics_source = audit.cache.hit ? "s3-cache" : "s3-scan";
       } catch (err) {
-        warnings.push(`could not scan R2 bucket '${row.bucket}': ${err}`);
+        warnings.push(
+          `could not read R2 usage for bucket '${row.bucket}': ${err}`,
+        );
       }
     }
     rows.sort((a, b) => (b.total_bytes ?? -1) - (a.total_bytes ?? -1));

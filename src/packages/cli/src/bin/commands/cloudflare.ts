@@ -69,7 +69,8 @@ function r2UsageRows(result: any) {
   if ((result.buckets ?? []).length === 0) {
     return [summarizeR2Usage(result)];
   }
-  return (result.buckets ?? []).map((bucket: any) => ({
+  const warnings = (result.warnings ?? []).join(" ");
+  return (result.buckets ?? []).map((bucket: any, i: number) => ({
     bucket: bucket.bucket,
     objects: bucket.object_count ?? "",
     total: bytes(bucket.total_bytes),
@@ -81,6 +82,7 @@ function r2UsageRows(result: any) {
     db_purpose: bucket.database?.purpose ?? "",
     db_region: bucket.database?.region ?? "",
     db_projects: bucket.database?.assigned_projects ?? "",
+    warnings: i === 0 ? warnings : "",
   }));
 }
 
