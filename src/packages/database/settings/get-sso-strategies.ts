@@ -4,10 +4,12 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { isSAML } from "@cocalc/database/settings/auth-sso-types";
 import type { Strategy } from "@cocalc/util/types/sso";
 import { PRIMARY_SSO } from "@cocalc/util/types/passport-types";
 import { ssoDispayedName } from "@cocalc/util/auth";
 import { GOOGLE_SSO_STRATEGY, getGoogleSsoSettingsState } from "./google-sso";
+import { getEnabledSsoProviders, ssoProviderToStrategy } from "./sso-providers";
 import {
   applyDomainPoliciesToStrategyList,
   getEnabledSsoDomainPolicies,
@@ -34,10 +36,12 @@ export default async function getStrategies(): Promise<Strategy[]> {
     getGoogleSsoSettingsState(),
     getEnabledSsoDomainPolicies(),
   ]);
+  const ssoProviders = await getEnabledSsoProviders();
   const pool = getPool();
   // entries in "conf" were used before the "info" col existed. this is only for backwards compatibility.
   const { rows } = await pool.query(`
     SELECT strategy,
+           conf ->> 'type'                                                as type,
            COALESCE(info -> 'icon',              conf -> 'icon')              as icon,
            COALESCE(info -> 'display',           conf -> 'display')           as display,
            COALESCE(info -> 'public',            conf -> 'public')            as public,
@@ -48,8 +52,9 @@ export default async function getStrategies(): Promise<Strategy[]> {
     WHERE strategy != 'site_conf'
       AND COALESCE(info ->> 'disabled', conf ->> 'disabled', 'false') != 'true'`);
 
-  const strategies = rows
+  const strategies: Strategy[] = rows
     .filter((row) => row.strategy !== GOOGLE_SSO_STRATEGY)
+    .filter((row) => !isSAML(row.type))
     .filter((row) => isSupportedSSOStrategy(row.strategy, row.public))
     .map((row) => {
       const display = ssoDispayedName({
@@ -67,6 +72,14 @@ export default async function getStrategies(): Promise<Strategy[]> {
         doNotHide: row.do_not_hide ?? false,
       };
     });
+  for (const strategy of ssoProviders.flatMap((provider) => {
+    const strategy = ssoProviderToStrategy(provider);
+    return strategy == null ? [] : [strategy];
+  })) {
+    if (!strategies.some((existing) => existing.name === strategy.name)) {
+      strategies.push(strategy);
+    }
+  }
   if (googleSso.strategy != null) {
     strategies.push({
       name: GOOGLE_SSO_STRATEGY,
