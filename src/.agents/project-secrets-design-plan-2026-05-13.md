@@ -189,6 +189,7 @@ Add Conat hub API methods:
 - `listProjectSecrets({ account_id, project_id })`
 - `setProjectSecret({ account_id, project_id, name, value })`
 - `deleteProjectSecret({ account_id, project_id, name })`
+- `copyProjectSecrets({ account_id, source_project_id, target_project_id, names?, overwrite? })`
 
 Optional later:
 
@@ -198,6 +199,7 @@ Optional later:
 Permissions:
 
 - require project collaborator for list/set/delete initially.
+- require project collaborator on both source and target for copy.
 - consider requiring owner/admin for set/delete before public release if
   collaborator write access is too broad.
 - admins may list metadata without project membership only through admin paths.
@@ -206,6 +208,7 @@ Return values:
 
 - list returns names and metadata only.
 - set/delete return success and updated metadata.
+- copy returns copied names and skipped/conflicting names, but no values.
 - no API returns plaintext secret values to browsers.
 
 Audit events:
@@ -213,11 +216,65 @@ Audit events:
 - `project_secret_created`
 - `project_secret_updated`
 - `project_secret_deleted`
+- `project_secret_copied_out`
+- `project_secret_copied_in`
 - `project_secret_sync_to_host_failed`
 - `project_secret_mount_failed`
 
 Audit payloads include project_id, actor account_id, name, and host_id when
 applicable. They never include values.
+
+## Copying Secrets Between Projects
+
+Copying secrets between projects is a first-class feature. It reduces dangerous
+manual copy/paste and does not weaken the security model because a collaborator
+with runtime access to the source project can already read the mounted secret
+files.
+
+The copy operation must be server-side. Do not reveal values to the browser and
+ask the user to paste them back into another project.
+
+API shape:
+
+```ts
+copyProjectSecrets({
+  account_id,
+  source_project_id,
+  target_project_id,
+  names, // optional; omitted means all source secrets
+  overwrite = false,
+});
+```
+
+Rules:
+
+- caller must be a collaborator on the source project.
+- caller must be a collaborator on the target project.
+- omitted `names` copies all source secrets.
+- default `overwrite=false`; same-name target secrets produce conflicts.
+- enforce target count cap after copy.
+- enforce name/value limits even though source rows should already be valid.
+- copy should be transactional for the selected set.
+- audit both projects.
+
+Crypto rule:
+
+- decrypt the source encrypted payload with `project-secrets:v1`.
+- re-encrypt for the target using the target `project_id` and same secret name
+  in authenticated metadata.
+
+Do not copy encrypted blobs byte-for-byte. The encrypted payload is intentionally
+bound to `(purpose, project_id, name)`, so moving the raw ciphertext across
+projects should fail integrity checks.
+
+Suggested UI:
+
+- `Copy from another project...`
+- choose source project from projects where the current user is a collaborator.
+- list source secret names only.
+- select all or selected names.
+- choose conflict behavior: skip existing or overwrite existing.
+- show restart-required notice for the target project.
 
 ## Project-Host Cache
 
@@ -352,8 +409,9 @@ Project Settings:
 - include a help popover with the explicit runtime access warning.
 - list rows: name, path, updated time, updated by, actions.
 - actions: add, replace, delete.
+- copy secrets from another project by name, without revealing values.
 - no reveal button.
-- after add/replace/delete, show “restart project to apply”.
+- after add/replace/delete/copy, show “restart project to apply”.
 
 Suggested copy:
 
@@ -370,6 +428,7 @@ Optional but useful:
 cocalc project secrets list <project>
 cocalc project secrets set <project> NAME --file path
 cocalc project secrets set <project> NAME --stdin
+cocalc project secrets copy --from <source-project> --to <target-project> [NAME...]
 cocalc project secrets delete <project> NAME
 ```
 
@@ -388,10 +447,12 @@ Do not print values.
 
 - Add `project_secrets` schema/migration.
 - Implement list/set/delete helpers in server/database code.
+- Implement copy helpers that re-encrypt under the target project metadata.
 - Add Conat hub API methods.
 - Enforce count and value-size limits transactionally.
 - Add audit events.
-- Unit-test permissions, count caps, invalid names, and no plaintext returns.
+- Unit-test permissions, count caps, invalid names, copy conflicts,
+  re-encryption, and no plaintext returns.
 
 ### Phase 3: Environment Variable Caps
 
@@ -429,6 +490,7 @@ Recommended first policy:
 - Add Project Settings `Secrets` section.
 - Add help popover.
 - Add add/replace/delete flows.
+- Add copy-from-project flow.
 - Ensure no secret value reveal path.
 - Show restart-required notice.
 
@@ -440,6 +502,7 @@ Recommended first policy:
 - Verify project backups exclude secrets.
 - Verify logs and audit events do not include values.
 - Verify project restart applies changes.
+- Verify copied secrets materialize only in the target after restart.
 - Verify central hub outage behavior.
 
 ## Open Questions
