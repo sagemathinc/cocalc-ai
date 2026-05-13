@@ -328,6 +328,7 @@ export interface CloudflareR2AuditResult {
   total_bytes: number;
   rustic_repos?: CloudflareR2AuditRusticRepo[];
   project_backup_index?: CloudflareR2AuditUsageGroup;
+  rootfs_images?: CloudflareR2AuditUsageGroup;
   other?: CloudflareR2AuditUsageGroup;
   other_prefixes?: CloudflareR2AuditPrefix[];
   categories: CloudflareR2AuditCategory[];

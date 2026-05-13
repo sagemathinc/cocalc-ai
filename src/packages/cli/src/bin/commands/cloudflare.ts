@@ -90,6 +90,7 @@ function summarizeR2Audit(result: any) {
   const hasRefinedBreakdown =
     Array.isArray(result.rustic_repos) &&
     result.project_backup_index != null &&
+    result.rootfs_images != null &&
     result.other != null;
   const rusticRepos = result.rustic_repos ?? [];
   const rusticObjectCount = rusticRepos.reduce(
@@ -101,10 +102,13 @@ function summarizeR2Audit(result: any) {
     0,
   );
   const index = result.project_backup_index ?? {};
+  const rootfsImages = result.rootfs_images ?? {};
   const other = result.other ?? {};
   const indexBytes = index.total_bytes ?? 0;
+  const rootfsBytes = rootfsImages.total_bytes ?? 0;
   const otherBytes = other.total_bytes ?? 0;
-  const breakdownTotalBytes = rusticTotalBytes + indexBytes + otherBytes;
+  const breakdownTotalBytes =
+    rusticTotalBytes + indexBytes + rootfsBytes + otherBytes;
   const breakdownDeltaBytes =
     typeof result.total_bytes === "number"
       ? result.total_bytes - breakdownTotalBytes
@@ -129,6 +133,8 @@ function summarizeR2Audit(result: any) {
     rustic_total: bytes(rusticTotalBytes),
     index_files: index.object_count ?? 0,
     index_total: bytes(indexBytes),
+    rootfs_image_objects: rootfsImages.object_count ?? 0,
+    rootfs_image_total: bytes(rootfsBytes),
     other_objects: other.object_count ?? 0,
     other_total: bytes(otherBytes),
     breakdown_total: hasRefinedBreakdown ? bytes(breakdownTotalBytes) : "",

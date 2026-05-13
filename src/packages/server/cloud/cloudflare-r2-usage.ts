@@ -12,7 +12,7 @@ const DEFAULT_AUDIT_CACHE_TTL_MS = 60 * 60 * 1000;
 const MAX_EXAMPLES_PER_CATEGORY = 3;
 const MAX_TOP_OBJECTS = 20;
 const MAX_TOP_PREFIXES = 30;
-const R2_AUDIT_SCHEMA_VERSION = 2;
+const R2_AUDIT_SCHEMA_VERSION = 3;
 
 type CloudflareResponse<T> = {
   success?: boolean;
@@ -151,6 +151,7 @@ export type CloudflareR2AuditResult = {
   total_bytes: number;
   rustic_repos?: CloudflareR2AuditRusticRepo[];
   project_backup_index?: CloudflareR2AuditUsageGroup;
+  rootfs_images?: CloudflareR2AuditUsageGroup;
   other?: CloudflareR2AuditUsageGroup;
   other_prefixes?: CloudflareR2AuditPrefix[];
   categories: CloudflareR2AuditCategory[];
@@ -750,6 +751,7 @@ async function getCachedAudit(opts: {
     cached.audit_schema_version !== R2_AUDIT_SCHEMA_VERSION ||
     !Array.isArray(cached.rustic_repos) ||
     cached.project_backup_index == null ||
+    cached.rootfs_images == null ||
     cached.other == null ||
     !Array.isArray(cached.other_prefixes)
   ) {
@@ -838,6 +840,11 @@ export async function auditCloudflareR2Bucket({
     total_bytes: 0,
     examples: [],
   };
+  const rootfsImages: CloudflareR2AuditUsageGroup = {
+    object_count: 0,
+    total_bytes: 0,
+    examples: [],
+  };
   const other: CloudflareR2AuditUsageGroup = {
     object_count: 0,
     total_bytes: 0,
@@ -885,6 +892,8 @@ export async function auditCloudflareR2Bucket({
           rusticRepos.set(rusticRepo.repo, currentRepo);
         } else if (entry.key.startsWith("project-backup-index/v1/")) {
           addToUsageGroup(projectBackupIndex, entry);
+        } else if (entry.key.startsWith("rootfs-images/")) {
+          addToUsageGroup(rootfsImages, entry);
         } else {
           addToUsageGroup(other, entry);
           addToMap(otherPrefixes, prefixForKey(entry.key), entry.size);
@@ -914,6 +923,7 @@ export async function auditCloudflareR2Bucket({
       (a, b) => b.total_bytes - a.total_bytes,
     ),
     project_backup_index: projectBackupIndex,
+    rootfs_images: rootfsImages,
     other,
     other_prefixes: [...otherPrefixes.entries()]
       .map(([prefixName, value]) => ({ prefix: prefixName, ...value }))
@@ -931,7 +941,7 @@ export async function auditCloudflareR2Bucket({
     warnings: [],
     notes: [
       "This audit is based on live S3 ListObjectsV2 metadata and is exact for objects visible to the configured R2 S3 credentials.",
-      "The refined breakdown treats rustic/* as rustic repositories, project-backup-index/v1/* as backup index files, and everything else as other bucket usage.",
+      "The refined breakdown treats rustic/* as rustic repositories, project-backup-index/v1/* as backup index files, rootfs-images/* as rootfs image artifacts, and everything else as other bucket usage.",
     ],
   };
   await saveCachedAudit(result);
