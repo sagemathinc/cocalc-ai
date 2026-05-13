@@ -53,6 +53,12 @@ import {
   createSignInSecondFactorChallenge,
   hasActiveSecondFactor,
 } from "@cocalc/server/auth/two-factor";
+import {
+  logSsoAuditEvent,
+  sanitizeSsoAuditReason,
+  ssoAuditEmailDomain,
+  ssoAuditProviderType,
+} from "./audit";
 
 const logger = getLogger("server:auth:sso:passport-login");
 
@@ -203,6 +209,7 @@ export class PassportLogin {
       //  last step: set remember me cookie (for a  new sign in)
       await this.handleNewSignIn(this.opts, locals);
       // no exceptions → we're all good
+      await this.logSsoSignInAllowed(locals);
 
       L(`redirect the client to '${locals.target}'`);
       // Doing a 302 redirect does NOT work because it doesn't send the cookie, due to
@@ -218,6 +225,7 @@ export class PassportLogin {
           : this.opts.site_url;
       clientSideRedirect({ res: this.opts.res, target });
     } catch (err) {
+      await this.logSsoSignInDenied(locals, err);
       // this error is used to signal that the user has done something wrong (in a general sense)
       // and it shouldn't be the code or how it handles the returned data.
       // this is used to improve the feedback sent back to the user if there is a problem...
@@ -386,6 +394,48 @@ export class PassportLogin {
       return "saml";
     }
     return "google_oidc";
+  }
+
+  private ssoAuditBaseValue(
+    locals: PassportLoginLocals,
+  ): Record<string, unknown> {
+    const email = locals.email_address ?? this.opts.emails?.[0];
+    return {
+      strategy: this.opts.strategyName,
+      provider_type: ssoAuditProviderType(
+        this.opts.passports[this.opts.strategyName],
+      ),
+      account_id: locals.account_id,
+      email_domain: ssoAuditEmailDomain(email),
+      new_account_created: locals.new_account_created,
+      remembered_session: locals.has_valid_remember_me,
+      second_factor_challenge: locals.target.includes("/auth/second-factor"),
+      ip_address: this.opts.req.ip,
+    };
+  }
+
+  private async logSsoSignInAllowed(
+    locals: PassportLoginLocals,
+  ): Promise<void> {
+    await logSsoAuditEvent({
+      database: this.database,
+      event: "sso_sign_in_allowed",
+      value: this.ssoAuditBaseValue(locals),
+    });
+  }
+
+  private async logSsoSignInDenied(
+    locals: PassportLoginLocals,
+    err: unknown,
+  ): Promise<void> {
+    await logSsoAuditEvent({
+      database: this.database,
+      event: "sso_sign_in_denied",
+      value: {
+        ...this.ssoAuditBaseValue(locals),
+        reason: sanitizeSsoAuditReason(err),
+      },
+    });
   }
 
   private isTrustedSsoEmail(

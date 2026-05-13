@@ -356,6 +356,9 @@ site secret encryption mechanism, not plaintext config rows.
 4. Add provider-specific sign-in links and error diagnostics for admins. Status:
    provider links and metadata URLs exist; richer test-configuration diagnostics
    remain open.
+5. Add a minimal local SAML dev IdP launcher. Status: `pnpm dev:saml:idp`
+   prints a matching CoCalc provider config, creates a disposable test IdP
+   certificate under `src/.saml-dev`, and starts `saml-idp` via `pnpm dlx`.
 
 ### Phase 6: Passport Removal
 
@@ -397,10 +400,16 @@ Sign-in UX should:
 
 Record audit events for:
 
-- provider create/edit/delete,
-- domain policy create/edit/delete,
-- SSO signup allowed/denied,
-- SSO sign-in allowed/denied,
+- provider create/edit/delete. Status: implemented via sanitized
+  `sso_provider_config_changed` central-log events; secret values, cert bodies,
+  and metadata XML are not logged,
+- domain policy create/edit/delete. Status: implemented via sanitized
+  `sso_domain_policy_changed` central-log events,
+- SSO signup allowed/denied. Status: covered by the shared SSO sign-in audit
+  path with `new_account_created`,
+- SSO sign-in allowed/denied. Status: implemented via
+  `sso_sign_in_allowed` / `sso_sign_in_denied`, including direct Google/SAML
+  callback failures before `PassportLogin`,
 - account identity linked/unlinked,
 - password attempt blocked because domain requires SSO,
 - SSO result rejected because email was missing or unverified.

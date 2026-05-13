@@ -111,6 +111,11 @@ import {
   directSamlConfig,
   passportProfileFromSamlProfile,
 } from "@cocalc/server/auth/sso/direct-saml";
+import {
+  logSsoAuditEvent,
+  sanitizeSsoAuditReason,
+  ssoAuditProviderType,
+} from "@cocalc/server/auth/sso/audit";
 import siteUrl from "@cocalc/server/hub/site-url";
 
 const logger = getLogger("server:hub:auth");
@@ -699,6 +704,12 @@ export class PassportManager {
           : profile_raw) as any as passport.Profile;
       } catch (err) {
         Lret(`error parsing profile: ${err} -- ${profile_raw}`);
+        await this.logSsoReturnDenied({
+          name,
+          phase: "profile_parse",
+          err,
+          req,
+        });
         const { help_email } = await cb2(
           this.database.get_server_settings_cached,
         );
@@ -798,6 +809,30 @@ export class PassportManager {
     }
     logger.debug(`sending error "${err_msg}"`);
     res.send(err_msg);
+  }
+
+  private async logSsoReturnDenied({
+    name,
+    phase,
+    err,
+    req,
+  }: {
+    name: string;
+    phase: string;
+    err: unknown;
+    req: express.Request;
+  }): Promise<void> {
+    await logSsoAuditEvent({
+      database: this.database,
+      event: "sso_sign_in_denied",
+      value: {
+        strategy: name,
+        provider_type: ssoAuditProviderType(this.passports?.[name]),
+        phase,
+        reason: sanitizeSsoAuditReason(err),
+        ip_address: req.ip,
+      },
+    });
   }
 
   private googleOidcRedirectURI(): string {
@@ -908,6 +943,12 @@ export class PassportManager {
       } catch (err) {
         if (err.name !== "PassportLoginError") {
           logger.warn(`Google OIDC sign-in failed: ${err}`);
+          await this.logSsoReturnDenied({
+            name: GOOGLE_SSO_STRATEGY,
+            phase: "google_oidc_return",
+            err,
+            req,
+          });
         }
         await this.sendPassportLoginError({
           name: GOOGLE_SSO_STRATEGY,
@@ -1009,6 +1050,12 @@ export class PassportManager {
           } catch (err) {
             if (err.name !== "PassportLoginError") {
               logger.warn(`Direct SAML sign-in failed for '${name}': ${err}`);
+              await this.logSsoReturnDenied({
+                name,
+                phase: "saml_return",
+                err,
+                req,
+              });
             }
             await this.sendPassportLoginError({
               name,
