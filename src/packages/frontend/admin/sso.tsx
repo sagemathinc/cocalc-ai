@@ -20,6 +20,7 @@ import {
 
 import { React } from "@cocalc/frontend/app-framework";
 import { ErrorDisplay, Loading } from "@cocalc/frontend/components";
+import { HelpIcon } from "@cocalc/frontend/components/help-icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import type {
@@ -285,6 +286,27 @@ function GenericProviderFields() {
   );
 }
 
+function FieldHelp({
+  label,
+  title,
+  children,
+}: {
+  label: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Space size={4}>
+      <span>{label}</span>
+      <HelpIcon title={title} maxWidth="360px">
+        <Typography.Paragraph style={{ marginBottom: 0 }}>
+          {children}
+        </Typography.Paragraph>
+      </HelpIcon>
+    </Space>
+  );
+}
+
 function SsoUrlHelp({ providerID }: { providerID: unknown }) {
   const metadataUrl = authUrl(providerID, "/metadata");
   const returnUrl = authUrl(providerID, "/return");
@@ -336,14 +358,27 @@ function SamlProviderFields() {
       </Form.Item>
       <Space wrap align="start">
         <Form.Item
-          label="IdP metadata XML"
+          label={
+            <FieldHelp label="IdP metadata XML" title="What is IdP metadata?">
+              Metadata is the XML file from your identity provider. It usually
+              contains the IdP entity ID, SSO URL, and signing certificate.
+              Paste it here to fill those fields; CoCalc stores only the
+              extracted values.
+            </FieldHelp>
+          }
           name="metadata_xml"
           extra="Optional. Used only to fill fields on save; the raw XML is not stored."
         >
           <Input.TextArea rows={6} style={{ width: 520 }} />
         </Form.Item>
         <Form.Item
-          label="SAML SSO URL"
+          label={
+            <FieldHelp label="SAML SSO URL" title="What is the SSO URL?">
+              This is where CoCalc sends users to start signing in at your IdP.
+              In SAML metadata it is the SingleSignOnService Location, usually
+              HTTP-Redirect or HTTP-POST binding.
+            </FieldHelp>
+          }
           name="entryPoint"
           extra="IdP SingleSignOnService Location."
         >
@@ -353,14 +388,29 @@ function SamlProviderFields() {
           />
         </Form.Item>
         <Form.Item
-          label="IdP certificate"
+          label={
+            <FieldHelp
+              label="IdP certificate"
+              title="Why does CoCalc need this?"
+            >
+              The IdP signs SAML assertions. CoCalc uses this public certificate
+              to verify that a login response really came from your IdP and was
+              not modified.
+            </FieldHelp>
+          }
           name="idpCert"
           extra="Paste the IdP signing certificate. PEM or bare base64 is accepted."
         >
           <Input.TextArea rows={6} style={{ width: 520 }} />
         </Form.Item>
         <Form.Item
-          label="IdP entity ID"
+          label={
+            <FieldHelp label="IdP entity ID" title="What is an entity ID?">
+              The entity ID is the stable name of the identity provider in SAML.
+              It is often a URL from the IdP metadata and helps ensure responses
+              are from the expected provider.
+            </FieldHelp>
+          }
           name="idpIssuer"
           extra="Optional but recommended if present in IdP metadata."
         >
@@ -370,28 +420,55 @@ function SamlProviderFields() {
           />
         </Form.Item>
         <Form.Item
-          label="SP entity ID override"
+          label={
+            <FieldHelp label="SP entity ID override" title="What is the SP?">
+              CoCalc is the Service Provider. By default CoCalc uses its
+              metadata URL as the SP entity ID. Only override this if your IdP
+              requires a specific entity ID.
+            </FieldHelp>
+          }
           name="issuer"
           extra="Optional. Defaults to the CoCalc metadata URL above."
         >
           <Input style={{ width: 420 }} />
         </Form.Item>
         <Form.Item
-          label="Audience override"
+          label={
+            <FieldHelp label="Audience override" title="What is audience?">
+              Audience is the SP identifier the IdP puts in assertions. CoCalc
+              checks it to make sure the assertion was intended for this CoCalc
+              site.
+            </FieldHelp>
+          }
           name="audience"
           extra="Optional. Defaults to the SP entity ID."
         >
           <Input style={{ width: 420 }} />
         </Form.Item>
         <Form.Item
-          label="NameID format"
+          label={
+            <FieldHelp label="NameID format" title="What is NameID?">
+              NameID is the user's stable SAML identifier. Persistent NameID is
+              preferred because it avoids using email as the primary identity
+              key when an institution later changes email addresses.
+            </FieldHelp>
+          }
           name="identifierFormat"
           extra="Optional. Defaults to persistent NameID."
         >
           <Input style={{ width: 420 }} />
         </Form.Item>
         <Form.Item
-          label="Allowed email domains"
+          label={
+            <FieldHelp
+              label="Allowed email domains"
+              title="Why restrict domains?"
+            >
+              These domains limit which email addresses this IdP may
+              authenticate into CoCalc. This is a safety boundary: a SAML
+              response outside these domains is rejected.
+            </FieldHelp>
+          }
           name="allowed_domains"
           extra="Comma-separated domains this IdP may authenticate."
         >
@@ -401,13 +478,34 @@ function SamlProviderFields() {
           />
         </Form.Item>
         <Form.Item
-          label="Required SSO domains"
+          label={
+            <FieldHelp
+              label="Required SSO domains"
+              title="What does required mean?"
+            >
+              Users with these email domains should sign in through this SSO
+              provider instead of password auth. Prefer Domain Policies below
+              for this rule because they are clearer and easier to audit.
+            </FieldHelp>
+          }
           name="exclusive_domains"
           extra="Usually prefer Domain Policies below; this is provider-local fallback metadata."
         >
           <Input placeholder="example.edu" style={{ width: 360 }} />
         </Form.Item>
-        <Form.Item label="Account creation" name="account_creation">
+        <Form.Item
+          label={
+            <FieldHelp
+              label="Account creation"
+              title="Can SAML create accounts?"
+            >
+              This controls whether a successful SAML login can create a new
+              CoCalc account. The safer default requires users to first create
+              an account using a registration token, then link SSO.
+            </FieldHelp>
+          }
+          name="account_creation"
+        >
           <Select
             style={{ width: 260 }}
             options={signupModes
@@ -436,14 +534,31 @@ function SamlProviderFields() {
           <Switch />
         </Form.Item>
         <Form.Item
-          label="Require signed assertions"
+          label={
+            <FieldHelp
+              label="Require signed assertions"
+              title="What should be signed?"
+            >
+              CoCalc should normally require signed assertions. The assertion is
+              the part of the SAML response that says who the user is.
+            </FieldHelp>
+          }
           name="wantAssertionsSigned"
           valuePropName="checked"
         >
           <Switch />
         </Form.Item>
         <Form.Item
-          label="Require signed response"
+          label={
+            <FieldHelp
+              label="Require signed response"
+              title="Response vs assertion signatures"
+            >
+              Some IdPs sign the whole response, some sign only the assertion.
+              Requiring the whole response is stricter but may not work with all
+              IdPs. Signed assertions remain required by default.
+            </FieldHelp>
+          }
           name="wantAuthnResponseSigned"
           valuePropName="checked"
         >
