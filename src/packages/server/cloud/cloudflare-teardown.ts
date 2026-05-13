@@ -6,7 +6,10 @@
 import { randomUUID } from "crypto";
 
 import getPool from "@cocalc/database/pool";
-import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import {
+  getServerSettings,
+  resetServerSettingsCache,
+} from "@cocalc/database/settings/server-settings";
 import { deleteR2ObjectsConcurrently, scanR2Objects } from "@cocalc/backend/r2";
 import { listBuckets as listR2Buckets } from "@cocalc/server/project-backup/r2";
 import { updateLro } from "@cocalc/server/lro/lro-db";
@@ -23,6 +26,21 @@ const PLAN_TTL_MS = 10 * 60 * 1000;
 const R2_AUDIT_CACHE_MAX_AGE_MINUTES = 24 * 60;
 const R2_DELETE_PROGRESS_INTERVAL_MS = 2000;
 const R2_DELETE_CONCURRENCY = 32;
+const LOCAL_CLOUDFLARE_SETTING_KEYS = [
+  "cloudflare_mode",
+  "project_hosts_cloudflare_tunnel_enabled",
+  "project_hosts_cloudflare_tunnel_account_id",
+  "project_hosts_cloudflare_tunnel_api_token",
+  "project_hosts_cloudflare_tunnel_prefix",
+  "project_hosts_cloudflare_tunnel_host_suffix",
+  "project_hosts_dns",
+  "r2_account_id",
+  "r2_api_token",
+  "r2_access_key_id",
+  "r2_secret_access_key",
+  "r2_bucket_prefix",
+  "r2_endpoint",
+];
 
 type CloudflareResponse<T> = {
   success?: boolean;
@@ -136,6 +154,7 @@ export type CloudflareTeardownApplyProgress = {
     | "deleting_tunnels"
     | "deleting_r2_objects"
     | "deleting_r2_buckets"
+    | "resetting_local_settings"
     | "done";
   plan_id: string;
   deleted_dns_records: number;
@@ -163,6 +182,7 @@ export type CloudflareTeardownApplyResult = {
   deleted_r2_objects: number;
   deleted_r2_bytes: number;
   deleted_r2_buckets: number;
+  reset_local_settings: boolean;
   notes: string[];
 };
 
@@ -903,11 +923,13 @@ function makeApplyProgress({
           ? "deleting empty Cloudflare R2 buckets"
           : phase === "deleting_r2_objects"
             ? "deleting Cloudflare R2 bucket contents"
-            : phase === "deleting_tunnels"
-              ? "deleting Cloudflare tunnels"
-              : phase === "deleting_dns"
-                ? "deleting Cloudflare DNS records"
-                : "starting Cloudflare teardown apply",
+            : phase === "resetting_local_settings"
+              ? "clearing local Cloudflare/R2 site settings"
+              : phase === "deleting_tunnels"
+                ? "deleting Cloudflare tunnels"
+                : phase === "deleting_dns"
+                  ? "deleting Cloudflare DNS records"
+                  : "starting Cloudflare teardown apply",
   };
 }
 
@@ -1071,18 +1093,34 @@ async function deleteR2BucketContents({
   });
 }
 
+async function resetLocalCloudflareSettings(): Promise<void> {
+  await pool().query(
+    "DELETE FROM server_settings WHERE name = ANY($1::text[])",
+    [LOCAL_CLOUDFLARE_SETTING_KEYS],
+  );
+  await pool().query(
+    `INSERT INTO server_settings (name, value)
+     VALUES ('_last_update', $1)
+     ON CONFLICT (name) DO UPDATE SET value=EXCLUDED.value`,
+    [new Date().toISOString()],
+  );
+  resetServerSettingsCache();
+}
+
 export async function runCloudflareTeardownApplyLro({
   op_id,
   account_id,
   plan_id,
   confirm,
   delete_r2_contents,
+  reset_local_settings,
 }: {
   op_id: string;
   account_id: string;
   plan_id: string;
   confirm: string;
   delete_r2_contents?: boolean;
+  reset_local_settings?: boolean;
 }): Promise<void> {
   let plan: CloudflareTeardownPlan | undefined;
   let deletedDnsRecords = 0;
@@ -1274,6 +1312,24 @@ export async function runCloudflareTeardownApplyLro({
       }
     }
 
+    if (reset_local_settings) {
+      await updateApplyLro({
+        op_id,
+        status: "running",
+        progress_summary: makeApplyProgress({
+          phase: "resetting_local_settings",
+          plan,
+          deletedDnsRecords,
+          deletedTunnels,
+          skippedR2Buckets,
+          deletedR2Objects: deletedR2Objects.value,
+          deletedR2Bytes: deletedR2Bytes.value,
+          deletedR2Buckets,
+        }),
+      });
+      await resetLocalCloudflareSettings();
+    }
+
     const result: CloudflareTeardownApplyResult = {
       plan_id,
       applied_at: new Date().toISOString(),
@@ -1284,11 +1340,14 @@ export async function runCloudflareTeardownApplyLro({
       deleted_r2_objects: deletedR2Objects.value,
       deleted_r2_bytes: deletedR2Bytes.value,
       deleted_r2_buckets: deletedR2Buckets,
+      reset_local_settings: !!reset_local_settings,
       notes: [
         delete_r2_contents
           ? "Safe-owned R2 bucket contents and empty buckets were deleted from the saved plan."
           : "R2 buckets were not modified; pass --delete-r2-contents to delete safe-owned bucket contents and buckets.",
-        "API tokens, local database rows, local site settings, and active project-host storage are not modified.",
+        reset_local_settings
+          ? "Local Cloudflare/R2 site settings were cleared after successful Cloudflare-side teardown; the primary site dns setting was left unchanged."
+          : "API tokens, local database rows, local site settings, and active project-host storage are not modified.",
       ],
     };
     await pool().query(

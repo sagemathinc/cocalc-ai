@@ -3260,12 +3260,14 @@ export async function startCloudflareTeardownApply({
   plan_id,
   confirm,
   delete_r2_contents,
+  reset_local_settings,
 }: {
   account_id?: string;
   session_hash?: string;
   plan_id: string;
   confirm: string;
   delete_r2_contents?: boolean;
+  reset_local_settings?: boolean;
 }): Promise<{
   op_id: string;
   scope_type: "account";
@@ -3310,6 +3312,7 @@ export async function startCloudflareTeardownApply({
       plan_id,
       confirm,
       delete_r2_contents: !!delete_r2_contents,
+      reset_local_settings: !!reset_local_settings,
     },
     status: "queued",
   });
@@ -3320,6 +3323,7 @@ export async function startCloudflareTeardownApply({
     plan_id,
     confirm,
     delete_r2_contents,
+    reset_local_settings,
   }).catch((err) =>
     logger.warn("failed to run Cloudflare teardown apply LRO", {
       op_id: op.op_id,

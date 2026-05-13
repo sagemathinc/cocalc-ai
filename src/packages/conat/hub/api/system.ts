@@ -1807,6 +1807,7 @@ export interface System {
     plan_id: string;
     confirm: string;
     delete_r2_contents?: boolean;
+    reset_local_settings?: boolean;
   }) => Promise<CloudflareR2AuditLroRef>;
 
   getCloudflareR2Usage: (opts: {

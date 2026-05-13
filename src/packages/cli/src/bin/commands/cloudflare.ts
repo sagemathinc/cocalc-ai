@@ -60,6 +60,7 @@ function summarizeApplyResult(result: any) {
     deleted_r2_buckets: result?.deleted_r2_buckets ?? 0,
     deleted_r2_objects: result?.deleted_r2_objects ?? 0,
     deleted_r2_bytes: bytes(result?.deleted_r2_bytes),
+    reset_local_settings: result?.reset_local_settings ?? false,
     notes: (result?.notes ?? []).join(" "),
   };
 }
@@ -511,6 +512,7 @@ async function runTeardownApply(ctx: any, planId: string, options: any) {
     plan_id: planId,
     confirm: options.confirm,
     delete_r2_contents: !!options.deleteR2Contents,
+    reset_local_settings: !!options.resetLocalSettings,
   });
   reportProgress(
     ctx,
@@ -685,6 +687,10 @@ export function registerCloudflareCommand(
     .option(
       "--delete-r2-contents",
       "Delete safe-owned R2 bucket contents and buckets from the saved plan",
+    )
+    .option(
+      "--reset-local-settings",
+      "Clear local Cloudflare/R2 site settings after successful Cloudflare-side teardown",
     )
     .option("--actions", "Show per-resource apply actions")
     .option(

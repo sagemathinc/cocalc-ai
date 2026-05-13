@@ -176,6 +176,7 @@ test("cloudflare teardown apply starts LRO", async () => {
     plan_id: "plan-1",
     confirm: "delete 1 tunnels, 2 dns records, 0 r2 buckets",
     delete_r2_contents: false,
+    reset_local_settings: false,
   });
 });
 

@@ -13,7 +13,9 @@ Current implementation status:
   project counting in the plan, exact confirmation, and streams LRO progress
   while deleting objects concurrently.
 - Targeted direct `bay-backups/*` cleanup exists as a separate guarded command.
-- API token cleanup, optional local settings reset, and UI integration remain
+- Optional local Cloudflare/R2 site setting reset is implemented for CLI
+  teardown apply with `--reset-local-settings`.
+- Cloudflare API token resource deletion and UI integration remain
   unimplemented.
 
 Goal: make Launchpad Cloudflare teardown trustworthy, auditable, and safe
@@ -398,6 +400,13 @@ empty bucket. Unknown/probably-owned buckets are still reported but not deleted.
 - Delete CoCalc-created Cloudflare API tokens where possible.
 - Add optional local settings reset after successful teardown.
 - Keep managed transforms untouched by default.
+
+Implementation status: local settings reset is implemented as a CLI-only
+post-success option. It clears CoCalc's Cloudflare tunnel and R2 credentials and
+configuration from `server_settings`, while leaving the primary `dns` setting
+unchanged. Cloudflare API token deletion remains intentionally unimplemented
+because current durable tokens may not have token-management permissions and a
+manually pasted token may be shared outside this CoCalc deployment.
 
 ### Phase 5: UI Surface
 
