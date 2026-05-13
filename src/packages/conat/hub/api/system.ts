@@ -110,6 +110,7 @@ export const system = {
   listBrowserSessions: authFirst,
   removeBrowserSession: authFirst,
   issueBrowserSignInCookie: requireSignedIn,
+  assertProjectPublicSharingAllowed: authFirst,
   getProjectAppPublicPolicy: authFirst,
   tracePublicAppHostname: authFirst,
   reserveProjectAppPublicSubdomain: authFirst,
@@ -1573,6 +1574,15 @@ export interface System {
     account_id?: string;
     max_age_ms?: number;
   }) => Promise<BrowserSignInCookieInfo>;
+
+  assertProjectPublicSharingAllowed: (opts?: {
+    account_id?: string;
+    project_id?: string;
+  }) => Promise<{
+    allowed: true;
+    project_id: string;
+    checked_account_ids: string[];
+  }>;
 
   getProjectAppPublicPolicy: (opts?: {
     account_id?: string;

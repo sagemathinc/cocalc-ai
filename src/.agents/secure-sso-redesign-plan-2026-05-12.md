@@ -451,7 +451,8 @@ Focused verification on 2026-05-12:
   ACP admission limits now enforce verified email or trusted creation when
   email verification is configured. Membership purchase/seat/package mutation
   flows and collaboration invitation/acceptance flows now enforce the same
-  gate. Public sharing still needs a separate pass.
+  gate. Public app exposure/public viewer sharing now checks the same gate
+  before any project-local public exposure state is written.
 - Sites without an email backend need an explicit exception model. If
   `verify_emails` is disabled or email sending is unavailable, email
   verification cannot be the release gate; registration-token-created accounts

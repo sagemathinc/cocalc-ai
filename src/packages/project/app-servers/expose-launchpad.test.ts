@@ -34,6 +34,11 @@ describe("app expose launchpad reservation", () => {
       enabled: true,
       warnings: [],
     }));
+    const assertPublicSharingAllowed = jest.fn(async () => ({
+      allowed: true,
+      project_id: "project-1",
+      checked_account_ids: ["owner-1"],
+    }));
     const reserve = jest.fn(async () => ({
       hostname: "abcd-app.host-123.dev.cocalc.ai",
       label: "abcd",
@@ -51,6 +56,7 @@ describe("app expose launchpad reservation", () => {
     jest.doMock("@cocalc/project/conat/hub", () => ({
       hubApi: jest.fn(() => ({
         system: {
+          assertProjectPublicSharingAllowed: assertPublicSharingAllowed,
           getProjectAppPublicPolicy: getPolicy,
           reserveProjectAppPublicSubdomain: reserve,
           releaseProjectAppPublicSubdomain: jest.fn(async () => ({
@@ -85,6 +91,9 @@ describe("app expose launchpad reservation", () => {
       random_subdomain: true,
     });
 
+    expect(assertPublicSharingAllowed).toHaveBeenCalledWith({
+      project_id: expect.any(String),
+    });
     expect(getPolicy).toHaveBeenCalled();
     expect(getPolicy).toHaveBeenCalledWith({ project_id: expect.any(String) });
     expect(reserve).toHaveBeenCalledWith({
@@ -101,5 +110,71 @@ describe("app expose launchpad reservation", () => {
 
     await deleteApp(id);
     await statusApp(id).catch(() => undefined);
+  });
+
+  test("does not write public exposure state when product-access gate rejects sharing", async () => {
+    process.env.HOME = testHome;
+    delete process.env.COCALC_PRODUCT;
+
+    const assertPublicSharingAllowed = jest.fn(async () => {
+      throw new Error("verify");
+    });
+    const getPolicy = jest.fn();
+    const reserve = jest.fn();
+
+    jest.resetModules();
+    jest.doMock("@cocalc/conat/client", () => ({
+      conat: jest.fn(() => ({})),
+      getClient: jest.fn(() => ({
+        conat: jest.fn(() => ({})),
+      })),
+    }));
+    jest.doMock("@cocalc/project/conat/hub", () => ({
+      hubApi: jest.fn(() => ({
+        system: {
+          assertProjectPublicSharingAllowed: assertPublicSharingAllowed,
+          getProjectAppPublicPolicy: getPolicy,
+          reserveProjectAppPublicSubdomain: reserve,
+          releaseProjectAppPublicSubdomain: jest.fn(async () => ({
+            released: true,
+          })),
+        },
+      })),
+    }));
+
+    const { exposeApp, upsertAppSpec, deleteApp, statusApp } =
+      await import("./control");
+
+    const id = `blocked-${Date.now()}`;
+    await upsertAppSpec({
+      version: 1,
+      id,
+      kind: "service",
+      title: "Blocked public exposure test",
+      command: {
+        exec: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1000)"],
+      },
+      network: { listen_host: "127.0.0.1", port: 6124, protocol: "http" },
+      proxy: { base_path: `/apps/${id}`, strip_prefix: true, websocket: false },
+      wake: { enabled: false, keep_warm_s: 1, startup_timeout_s: 15 },
+    });
+
+    await expect(
+      exposeApp({
+        id,
+        ttl_s: 600,
+        auth_front: "none",
+        random_subdomain: true,
+      }),
+    ).rejects.toThrow("verify");
+
+    expect(getPolicy).not.toHaveBeenCalled();
+    expect(reserve).not.toHaveBeenCalled();
+    await expect(statusApp(id)).resolves.toEqual(
+      expect.objectContaining({ exposure: undefined }),
+    );
+
+    await deleteApp(id);
   });
 });

@@ -17,6 +17,8 @@ let getProjectBackupInfrastructureStatusMock: jest.Mock;
 let getBayBackupStatusMock: jest.Mock;
 let runBayBackupMock: jest.Mock;
 let runBayRestoreMock: jest.Mock;
+let assertAccountTrustedForProductAccessMock: jest.Mock;
+let reserveProjectAppPublicSubdomainMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -138,6 +140,28 @@ jest.mock("@cocalc/server/bay-backup", () => ({
   getBayBackupStatus: (...args: any[]) => getBayBackupStatusMock(...args),
   runBayBackup: (...args: any[]) => runBayBackupMock(...args),
   runBayRestore: (...args: any[]) => runBayRestoreMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/trusted-product-access", () => ({
+  __esModule: true,
+  assertAccountTrustedForProductAccess: (...args: any[]) =>
+    assertAccountTrustedForProductAccessMock(...args),
+}));
+
+jest.mock("@cocalc/server/app-public-subdomains", () => ({
+  __esModule: true,
+  getProjectAppPublicPolicy: jest.fn(async () => ({
+    enabled: true,
+    launchpad: true,
+    subdomain_suffix: "app",
+    metered_egress: false,
+    warnings: [],
+  })),
+  getPublicAppRouteByHostname: jest.fn(),
+  releaseProjectAppPublicSubdomain: jest.fn(async () => ({ released: true })),
+  resolvePublicAppDnsTarget: jest.fn(async (hostname: string) => hostname),
+  reserveProjectAppPublicSubdomain: (...args: any[]) =>
+    reserveProjectAppPublicSubdomainMock(...args),
 }));
 
 describe("getBayLoad", () => {
@@ -489,6 +513,14 @@ describe("getBayLoad", () => {
       recovery_ready: true,
       notes: ["Dry run only; no restore files were written."],
     }));
+    assertAccountTrustedForProductAccessMock = jest.fn(async () => undefined);
+    reserveProjectAppPublicSubdomainMock = jest.fn(async () => ({
+      hostname: "host.example.com",
+      label: "app",
+      base_path: "/apps/demo",
+      url_public: "https://host.example.com/project/apps/demo",
+      warnings: [],
+    }));
   });
 
   it("requires admin auth for public bay load reads", async () => {
@@ -694,5 +726,90 @@ describe("getBayLoad", () => {
       remote_only: false,
       target_time: undefined,
     });
+  });
+});
+
+describe("project public sharing product-access gate", () => {
+  const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
+  const OWNER_ID = "11111111-1111-4111-8111-111111111111";
+
+  beforeEach(() => {
+    jest.resetModules();
+    isAdminMock = jest.fn(async () => true);
+    getSingleBayInfoMock = jest.fn();
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("jsonb_each(projects.users)")) {
+        return { rows: [{ account_id: OWNER_ID }] };
+      }
+      return { rows: [] };
+    });
+    getPoolMock = jest.fn(() => ({ query: queryMock }));
+    getParallelOpsStatusMock = jest.fn();
+    getAccountProjectIndexProjectionBacklogStatusMock = jest.fn();
+    getAccountCollaboratorIndexProjectionBacklogStatusMock = jest.fn();
+    getAccountNotificationIndexProjectionBacklogStatusMock = jest.fn();
+    getAccountProjectIndexProjectionMaintenanceStatusMock = jest.fn();
+    getAccountCollaboratorIndexProjectionMaintenanceStatusMock = jest.fn();
+    getAccountNotificationIndexProjectionMaintenanceStatusMock = jest.fn();
+    conatMock = jest.fn();
+    sysApiManyMock = jest.fn();
+    getProjectBackupInfrastructureStatusMock = jest.fn();
+    getBayBackupStatusMock = jest.fn();
+    runBayBackupMock = jest.fn();
+    runBayRestoreMock = jest.fn();
+    assertAccountTrustedForProductAccessMock = jest.fn(async () => undefined);
+    reserveProjectAppPublicSubdomainMock = jest.fn(async () => ({
+      hostname: "host.example.com",
+      label: "demo",
+      base_path: "/apps/demo",
+      url_public: "https://host.example.com/project/apps/demo",
+      warnings: [],
+    }));
+  });
+
+  it("checks project owners before host-scoped public app reservation", async () => {
+    const { reserveProjectAppPublicSubdomain } = await import("./system");
+
+    await expect(
+      reserveProjectAppPublicSubdomain({
+        project_id: PROJECT_ID,
+        app_id: "demo",
+        base_path: "/apps/demo",
+        ttl_s: 600,
+      }),
+    ).resolves.toMatchObject({
+      url_public: "https://host.example.com/project/apps/demo",
+    });
+
+    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
+      OWNER_ID,
+      "publicly share project content",
+    );
+    expect(reserveProjectAppPublicSubdomainMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      app_id: "demo",
+      base_path: "/apps/demo",
+      ttl_s: 600,
+      preferred_label: undefined,
+      random_subdomain: undefined,
+    });
+  });
+
+  it("blocks public app reservation before writing exposure state", async () => {
+    assertAccountTrustedForProductAccessMock = jest.fn(async () => {
+      throw new Error("verify");
+    });
+    const { reserveProjectAppPublicSubdomain } = await import("./system");
+
+    await expect(
+      reserveProjectAppPublicSubdomain({
+        project_id: PROJECT_ID,
+        app_id: "demo",
+        base_path: "/apps/demo",
+        ttl_s: 600,
+      }),
+    ).rejects.toThrow("verify");
+
+    expect(reserveProjectAppPublicSubdomainMock).not.toHaveBeenCalled();
   });
 });
