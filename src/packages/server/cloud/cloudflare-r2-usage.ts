@@ -23,6 +23,7 @@ const MAX_TOP_PREFIXES = 30;
 const R2_AUDIT_SCHEMA_VERSION = 4;
 const R2_AUDIT_PROGRESS_INTERVAL_MS = 2000;
 const BAY_BACKUP_CLEANUP_PROGRESS_INTERVAL_MS = 2000;
+const BAY_BACKUP_CLEANUP_DELETE_CONCURRENCY = 32;
 
 const logger = getLogger("server:cloud:cloudflare-r2-usage");
 
@@ -1545,6 +1546,31 @@ async function updateBayBackupCleanupLro({
   return summary;
 }
 
+async function deleteR2ObjectsConcurrently({
+  auth,
+  entries,
+  concurrency,
+  onDeleted,
+}: {
+  auth: Awaited<ReturnType<typeof getR2S3Auth>>["auth"];
+  entries: R2ObjectListEntry[];
+  concurrency: number;
+  onDeleted: (entry: R2ObjectListEntry) => void | Promise<void>;
+}): Promise<void> {
+  let next = 0;
+  const workerCount = Math.min(concurrency, entries.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = next++;
+      const entry = entries[index];
+      if (!entry) return;
+      await deleteR2Object({ auth, key: entry.key, acceptMissing: true });
+      await onDeleted(entry);
+    }
+  });
+  await Promise.all(workers);
+}
+
 export async function runCloudflareR2BayBackupCleanupLro({
   op_id,
   bucket,
@@ -1603,11 +1629,16 @@ export async function runCloudflareR2BayBackupCleanupLro({
         objectsSeen += entries.length;
         bytesSeen += entries.reduce((sum, entry) => sum + entry.size, 0);
         await publishProgress("scanning");
-        for (const entry of entries) {
-          await deleteR2Object({ auth, key: entry.key, acceptMissing: true });
-          objectsDeleted += 1;
-          bytesDeleted += entry.size;
-        }
+        await deleteR2ObjectsConcurrently({
+          auth,
+          entries,
+          concurrency: BAY_BACKUP_CLEANUP_DELETE_CONCURRENCY,
+          onDeleted: async (entry) => {
+            objectsDeleted += 1;
+            bytesDeleted += entry.size;
+            await publishProgress("deleting");
+          },
+        });
         await publishProgress("deleting");
       },
     });
