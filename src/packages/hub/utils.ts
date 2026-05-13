@@ -4,7 +4,6 @@
  */
 
 import type { PostgreSQL } from "@cocalc/database/postgres/types";
-import { PassportStrategyDB } from "@cocalc/database/settings/auth-sso-types";
 import getServerSettings from "./servers/server-settings";
 
 export async function requires_registration_token(
@@ -17,10 +16,4 @@ export async function requires_registration_token(
   // Registration tokens are required by default. If there are no active tokens,
   // signup is intentionally blocked instead of silently becoming public.
   return true;
-}
-
-export async function get_passports(
-  db: PostgreSQL,
-): Promise<PassportStrategyDB[]> {
-  return await db.get_all_passport_settings_cached();
 }

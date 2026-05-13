@@ -120,11 +120,7 @@ import { get_personal_user } from "./postgres/account/personal";
 
 import {
   create_passport,
-  get_all_passport_settings,
-  get_all_passport_settings_cached,
-  get_passport_settings,
   passport_exists,
-  set_passport_settings,
   update_account_and_passport,
 } from "./postgres/account/passport";
 
@@ -1090,22 +1086,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
 
   async get_site_settings(opts: PgMethodOpts<"get_site_settings">) {
     return runWithCbResultValue(opts.cb, () => get_site_settings(this));
-  }
-
-  async set_passport_settings(opts: PgMethodOpts<"set_passport_settings">) {
-    return await set_passport_settings(this, opts);
-  }
-
-  async get_passport_settings(opts: PgMethodOpts<"get_passport_settings">) {
-    return await get_passport_settings(this, opts);
-  }
-
-  async get_all_passport_settings() {
-    return await get_all_passport_settings(this);
-  }
-
-  async get_all_passport_settings_cached() {
-    return await get_all_passport_settings_cached(this);
   }
 
   async create_passport(opts: PgMethodOpts<"create_passport">) {

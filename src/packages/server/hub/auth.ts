@@ -3,28 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// Passport Authentication (oauth, etc.)
+// Authentication routes.
 //
-// Server-side setup
-// -----------------
-//
-// In order to get this running, you have to manually setup each service.
-// That requires to register with the authentication provider, telling them about CoCalc,
-// the domain you use, the return path for the response, and adding the client identification
-// and corresponding secret keys to the database.
-// Then, the service is active and will be presented to the user on the sign up page.
-// The following is an example for setting up google oauth.
-// The other services are similar.
-//
-// 1. background: https://developers.google.com/identity/sign-in/web/devconsole-project
-// 2. https://console.cloud.google.com/apis/credentials/consent
-// 3. https://console.developers.google.com/apis/credentials → create credentials → oauth, ...
-// 4. The return path for google is https://{DOMAIN_NAME}/auth/google/return
-// 5. When done, there should be an entry under "OAuth 2.0 client IDs"
-// 6. Configure Google SSO client ID and secret in admin site settings.
-//
-// Custom organization SAML strategies live in sso_providers. The old DB-only
-// Google setup and legacy Passport SAML rows are intentionally ignored by this runtime.
+// SSO is intentionally limited to admin-configured Google OIDC and SAML
+// providers. Legacy DB-only Passport strategy loading is not supported.
 
 import Cookies from "cookies";
 import dot from "dot-object";
@@ -34,7 +16,7 @@ import express_session from "express-session";
 import * as _ from "lodash";
 import ms from "ms";
 import { SAML } from "@node-saml/passport-saml";
-import passport, { AuthenticateOptions } from "passport";
+import passport from "passport";
 import { join as path_join } from "path";
 import safeJsonStringify from "safe-json-stringify";
 import { v4 as uuidv4, v4 } from "uuid";
@@ -43,24 +25,17 @@ import passwordHash, {
 } from "@cocalc/backend/auth/password-hash";
 import base_path from "@cocalc/backend/base-path";
 import { getLogger } from "@cocalc/backend/logger";
-import { loadSSOConf } from "@cocalc/database/postgres/auth/load-sso-conf";
 import type { PostgreSQL } from "@cocalc/database/postgres/types";
-import { getExtraStrategyConstructor } from "@cocalc/server/auth/sso/extra-strategies";
-import { addUserProfileCallback } from "@cocalc/server/auth/sso/oauth2-user-profile-callback";
 import { PassportLogin } from "@cocalc/server/auth/sso/passport-login";
 import {
   InitPassport,
+  LoginInfo,
   PassportManagerOpts,
-  StrategyConf,
-  StrategyInstanceOpts,
 } from "@cocalc/server/auth/sso/types";
 import { callback2 as cb2 } from "@cocalc/util/async-utils";
 import * as misc from "@cocalc/util/misc";
 import { DNS } from "@cocalc/util/theme";
-import {
-  PRIMARY_SSO,
-  PassportStrategyFrontend,
-} from "@cocalc/util/types/passport-types";
+import { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
 import {
   email_verification_problem,
   email_verified_successfully,
@@ -90,10 +65,7 @@ import {
 import {
   PassportLoginOpts,
   PassportStrategyDB,
-  PassportStrategyDBConfig,
   PassportTypes,
-  isOAuth2,
-  isSAML,
 } from "@cocalc/database/settings/auth-sso-types";
 import { signInUsingImpersonateToken } from "@cocalc/server/auth/impersonate";
 import {
@@ -120,14 +92,7 @@ import siteUrl from "@cocalc/server/hub/site-url";
 
 const logger = getLogger("server:hub:auth");
 
-// primary strategies -- all other ones are "extra"
-const PRIMARY_STRATEGIES = ["email", "site_conf", ...PRIMARY_SSO] as const;
 const SUPPORTED_PUBLIC_SSO = ["google"] as const;
-const DELETED_PUBLIC_SSO = ["facebook", "github", "twitter"] as const;
-
-function isUnsupportedPublicStrategy(name: string): boolean {
-  return DELETED_PUBLIC_SSO.includes(name as any);
-}
 
 // root for authentication related endpoints -- will be prefixed with the base_path
 const AUTH_BASE = "/auth";
@@ -166,7 +131,7 @@ interface HandleReturnOpts {
   type: PassportTypes;
   update_on_login: boolean;
   cookie_ttl_s: number | undefined;
-  login_info: StrategyConf["login_info"];
+  login_info: LoginInfo;
 }
 
 interface GoogleOidcState {
@@ -196,7 +161,7 @@ export class PassportManager {
     this.host = host;
   }
 
-  private async init_passport_settings(): Promise<{
+  private async initAuthStrategies(): Promise<{
     [k: string]: PassportStrategyDB;
   }> {
     if (this.passports != null) {
@@ -216,52 +181,6 @@ export class PassportManager {
       const googleSso = await getGoogleSsoSettingsState();
       if (googleSso.strategy != null) {
         this.passports[GOOGLE_SSO_STRATEGY] = googleSso.strategy;
-      }
-      const settings = await this.database.get_all_passport_settings();
-      for (const setting of settings) {
-        const name = setting.strategy;
-        if (name === GOOGLE_SSO_STRATEGY) {
-          logger.warn(
-            "Ignoring legacy Google SSO passport_settings row. Configure Google SSO through admin site settings instead.",
-          );
-          continue;
-        }
-        if (BLACKLISTED_STRATEGIES.includes(name as any)) {
-          throw new Error(
-            `It is not allowed to name a strategy endpoint "${name}", because it is used by the next.js /auth/* endpoint. See next/pages/auth/ROUTING.md for more information.`,
-          );
-        }
-        if (isUnsupportedPublicStrategy(name)) {
-          logger.warn(
-            `Ignoring deleted public SSO provider '${name}'. Supported built-in public SSO providers: ${SUPPORTED_PUBLIC_SSO.join(
-              ", ",
-            )}.`,
-          );
-          continue;
-        }
-        // backwards compatibility
-        const conf = setting.conf as any;
-        if (isSAML(conf?.type)) {
-          logger.warn(
-            `Ignoring legacy SAML passport_settings row '${name}'. Configure organization SAML through admin SSO providers instead.`,
-          );
-          continue;
-        }
-        setting.info = setting.info ?? {};
-        if (setting.info.disabled ?? conf?.disabled ?? false) {
-          continue;
-        }
-        for (const deprecated of [
-          "public",
-          "display",
-          "icon",
-          "exclusive_domains",
-        ]) {
-          if (setting.info[deprecated] == null) {
-            setting.info[deprecated] = conf?.[deprecated];
-          }
-        }
-        this.passports[setting.strategy] = setting;
       }
       const directSamlProviders = await getEnabledSamlSsoProviders();
       for (const provider of directSamlProviders) {
@@ -337,9 +256,6 @@ export class PassportManager {
     ] as const;
     for (const name in this.passports) {
       if (name === "site_conf") continue;
-      if (isUnsupportedPublicStrategy(name)) {
-        continue;
-      }
       // this is sent to the web client → do not include any secret info!
       const info: PassportStrategyFrontend = {
         name,
@@ -379,8 +295,6 @@ export class PassportManager {
     passport.serializeUser((user, done) => done(null, user));
     passport.deserializeUser((user: Express.User, done) => done(null, user));
 
-    await loadSSOConf(this.database);
-
     // this.router endpoints setup
     this.init_strategies_endpoint();
     this.initImpersonate();
@@ -388,18 +302,14 @@ export class PassportManager {
     this.init_password_reset_token();
 
     // prerequisite for setting up any SSO endpoints
-    await this.init_passport_settings();
+    await this.initAuthStrategies();
     this.check_exclusive_domains_unique();
 
     this.site_url = await siteUrl();
     this.auth_url = await siteUrl(AUTH_BASE);
     logger.debug(`auth_url='${this.auth_url}'`);
 
-    await Promise.all([
-      this.initGoogleOidc(),
-      this.initDirectSamlStrategies(),
-      this.init_extra_strategies(),
-    ]);
+    await Promise.all([this.initGoogleOidc(), this.initDirectSamlStrategies()]);
   }
 
   // check if exclusive domains are unique
@@ -494,181 +404,6 @@ export class PassportManager {
     });
   }
 
-  /**
-   * Default configuration options for certain authentication types.
-   * Any one of these can be overridden by what's in "conf" in the database.
-   */
-  private get_extra_default_opts({
-    name,
-    type,
-  }: {
-    name: string;
-    type: PassportTypes;
-  }) {
-    switch (type) {
-      case "saml":
-      case "saml-v3":
-      case "saml-v4":
-        // see https://github.com/node-saml/passport-saml#config-parameter-details
-        const cachedMS = ms("8 hours");
-        // Upgrading from SAML 3 to node-saml version 4 needs some extra config options.
-        // They're not backwards compatible, so we need to check which version we're using!
-        // 2024-02: we only have v4 now, so these addiitonal default values are always set.
-        const patch = {
-          audience: false, // Starting with version 4, this must be set (a string) or false.
-          wantAuthnResponseSigned: false, // if not disabled, got an error with Google's Workspace SAML
-        };
-        return {
-          acceptedClockSkewMs: ms("5 minutes"),
-          cacheProvider: getPassportCache(name, cachedMS),
-          digestAlgorithm: "sha256", // better than default sha1
-          // if "*:persistent" doesn't work, use *:emailAddress
-          identifierFormat:
-            "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
-          issuer: this.auth_url,
-          requestIdExpirationPeriodMs: cachedMS,
-          signatureAlgorithm: "sha256", // better than default sha1
-          validateInResponseTo: "never", // default
-          wantAssertionsSigned: true,
-          ...patch,
-        };
-    }
-  }
-
-  private get_extra_opts(name: string, conf: PassportStrategyDBConfig) {
-    // "extra_opts" is passed to the passport.js "Strategy" constructor!
-    // e.g. arbitrary fields like a tokenURL will be extracted here, and then passed to the constructor
-    const { type } = conf;
-    const extracted = _.omit(conf, [
-      "type", // not needed, we use it to pick the constructor
-      "name", // deprecated, this is in the metadata "info" now
-      "display", // --*--
-      "icon", // --*--
-      "login_info", // already extracted, see init_extra_strategies
-      "clientID", // passed directly, follow opts in initStrategy
-      "clientSecret", // --*--
-      "userinfoURL", // --*--
-      "public", // we don't need that info for initializing them
-      "auth_opts", // we pass them as a separate parameter
-    ]);
-
-    const opts = {
-      ...this.get_extra_default_opts({ name, type: conf.type }),
-      ...extracted,
-    };
-
-    // node-saml>=5 renamed cert to idpCert (passport-saml dependency)
-    // https://github.com/node-saml/node-saml/pull/343
-    if (type === "saml" || type === "saml-v3" || type === "saml-v4") {
-      // https://github.com/node-saml/node-saml/blob/master/README.md#security-and-signatures
-      if (typeof opts.cert === "string") {
-        opts.idpCert = opts.cert;
-        delete opts.cert;
-      }
-      // https://github.com/node-saml/node-saml/blob/master/README.md
-      // default is "never"
-      if (typeof opts.validateInResponseTo === "boolean") {
-        opts.validateInResponseTo = opts.validateInResponseTo
-          ? "ifPresent"
-          : "never";
-      }
-    }
-
-    return opts;
-  }
-
-  // this maps additional strategy configurations to a list of StrategyConf objects
-  // the overall goal is to support custom OAuth2 and LDAP endpoints, where additional
-  // info is sent to the webapp client to properly present them. Google&co are "primary" configurations.
-  //
-  // here is one example what can be saved in the DB to make this work for a general OAuth2
-  // if this SSO is not public (e.g. uni campus, company specific, ...) mark it as {"public":false}!
-  //
-  // insert into passport_settings (strategy, conf, info ) VALUES ( '[unique, e.g. "wowtech"]', '{"type": "oauth2next", "clientID": "CoCalc_Client", "scope": ["email", "cocalc", "profile", ... depends on the config], "clientSecret": "[a password]", "authorizationURL": "https://domain.edu/.../oauth2/authorize", "userinfoURL" :"https://domain.edu/.../oauth2/userinfo",  "tokenURL":"https://domain.edu/.../oauth2/...extras.../access_token",  "login_info" : {"emails" :"emails[0].value"}}'::JSONB, {"display": "[user visible, e.g. "WOW Tech"]", "icon": "https://storage.googleapis.com/square.svg", "public": false}::JSONB);
-  //
-  // note, the login_info.emails string extracts from the profile object constructed by parse_openid_profile,
-  // which is only triggered if there is such a "userinfoURL", which is OAuth2 specific.
-  // other auth mechanisms might already provide the profile in passport.js's structure!
-  private async init_extra_strategies(): Promise<void> {
-    if (this.passports == null) throw Error("strategies not initalized!");
-    const inits: Promise<void>[] = [];
-    for (const [name, strategy] of Object.entries(this.passports)) {
-      if (PRIMARY_STRATEGIES.indexOf(name as any) >= 0) {
-        continue;
-      }
-      if (this.directSamlStrategies.has(name)) {
-        continue;
-      }
-      if (strategy.conf.type == null) {
-        throw new Error(
-          `all "extra" strategies must define their type, in particular also "${name}"`,
-        );
-      }
-
-      const type: PassportTypes = strategy.conf.type;
-
-      // the constructor
-      const PassportStrategyConstructor = getExtraStrategyConstructor(type);
-
-      const config: StrategyConf = {
-        name,
-        type,
-        PassportStrategyConstructor,
-        login_info: { ...DEFAULT_LOGIN_INFO, ...strategy.conf.login_info },
-        userinfoURL: strategy.conf.userinfoURL,
-        extra_opts: this.get_extra_opts(name, strategy.conf) as any, // TODO!
-        update_on_login: strategy.info?.update_on_login ?? false,
-        cookie_ttl_s: strategy.info?.cookie_ttl_s, // could be undefined, that's OK
-        auth_opts: strategy.conf.auth_opts ?? {},
-      } as const;
-
-      inits.push(this.initStrategy(config));
-    }
-    await Promise.all(inits);
-  }
-
-  // this is the 2nd entry for the strategy, just a basic callback
-  private getVerify(type: StrategyConf["type"]) {
-    switch (type) {
-      case "saml":
-      case "saml-v3":
-      case "saml-v4":
-        return (profile, done) => {
-          done(undefined, profile);
-        };
-
-      case "oidc":
-        return (_issuer, profile, done) => {
-          return done(undefined, profile);
-        };
-
-      default:
-        return (_accessToken, _refreshToken, params, profile, done) => {
-          done(undefined, { params, profile });
-        };
-    }
-  }
-
-  private getStrategyInstance(args: StrategyInstanceOpts) {
-    const { type, opts, userinfoURL, PassportStrategyConstructor } = args;
-    const L1 = logger.extend("getStrategyInstance");
-    const L2 = L1.extend("userProfile").debug;
-
-    const verify = this.getVerify(type);
-    L1.silly({ type, opts, userinfoURL });
-    const strategy_instance = new (PassportStrategyConstructor as any)(
-      opts,
-      verify,
-    );
-
-    // for OAuth2, set the userinfoURL to get the profile
-    if (userinfoURL != null) {
-      addUserProfileCallback({ strategy_instance, userinfoURL, L2, type });
-    }
-
-    return strategy_instance;
-  }
-
   private getHandleReturn(opts: HandleReturnOpts) {
     const { Linit, name, type, update_on_login, cookie_ttl_s, login_info } =
       opts;
@@ -696,7 +431,7 @@ export class PassportManager {
             ? req.user.attributes
             : req.user;
 
-      // there are cases, where profile is a JSON string (e.g. oauth2next)
+      // Be defensive in case a provider returns a serialized profile.
       let profile: passport.Profile;
       try {
         profile = (typeof profile_raw === "string"
@@ -719,7 +454,7 @@ export class PassportManager {
         return;
       }
 
-      if (isSAML(type)) {
+      if (type === "saml") {
         // the nameID is set via the conf.identifierFormat parameter – even if we set it to
         // persistent, we might still just get an email address, though
         Lret(`nameID format we actually got is ${req.user.nameIDFormat}`);
@@ -1084,164 +819,6 @@ export class PassportManager {
         `direct SAML initialization of '${name}' at '${strategyUrl}' successful`,
       );
     }
-  }
-
-  // right now, we only set this for OAauth2 (SAML knows what to do on its own)
-  // This does not encode any information for now.
-  private setState(
-    name: string,
-    type: PassportTypes,
-    auth_opts: AuthenticateOptions,
-  ) {
-    return async (_req: Request, _res: Response, next: NextFunction) => {
-      if (isOAuth2(type)) {
-        const oauthcache = getOauthCache(name);
-        const state = uuidv4();
-        await oauthcache.saveAsync(state, `${Date.now()}`);
-        auth_opts.state = state;
-        logger.debug("session: " + auth_opts.state);
-      }
-      next();
-    };
-  }
-
-  // corresponding check to setState above:
-  // checks if the state data (w/ expiration) is still available.
-  private checkState(name: string, type: PassportTypes) {
-    const W = logger.extend(`checkState:${name}`).warn;
-    return async (req: Request, _res: Response, next: NextFunction) => {
-      if (isOAuth2(type)) {
-        const oauthcache = getOauthCache(name);
-        const state = req.query.state;
-        if (typeof state !== "string") {
-          const msg = `OAuth2 return error: 'state' is not a string: ${state}`;
-          W(msg);
-          return next(new Error(msg));
-        }
-        const saved_state = await oauthcache.getAsync(state);
-        if (saved_state == null) {
-          const msg = `OAuth2 return error: invalid state: ${state}`;
-          W(msg);
-          return next(new Error(msg));
-        }
-        await oauthcache.removeAsync(state);
-      }
-      next();
-    };
-  }
-
-  // a generalized strategy initizalier
-  private async initStrategy(strategy_config: StrategyConf): Promise<void> {
-    const {
-      name, // our "name" of the strategy, set in the DB
-      type, // the "type", which is the key in the k
-      PassportStrategyConstructor,
-      extra_opts,
-      auth_opts = {},
-      login_info,
-      userinfoURL,
-      cookie_ttl_s,
-      update_on_login = false,
-    } = strategy_config;
-    const Linit = logger.extend("init_strategy");
-    const L = Linit.debug;
-
-    L(`init_strategy ${name}`);
-    if (this.passports == null) throw Error("strategies not initalized!");
-    if (name == null) {
-      L(`strategy name is null -- aborting initialization`);
-      return;
-    }
-
-    const confDB = this.passports[name];
-    if (confDB == null) {
-      L(`no conf for strategy='${name}' in DB -- aborting initialization`);
-      return;
-    }
-
-    // under the same name, we make it accessible
-    const strategyUrl = `${AUTH_BASE}/${name}`;
-    const returnUrl = `${strategyUrl}/return`;
-
-    if (confDB.conf == null) {
-      // This happened on *all* of my dev servers, etc.  -- William
-      L(
-        `strategy='${name}' is not properly configured -- aborting initialization`,
-      );
-      return;
-    }
-
-    const opts = {
-      clientID: confDB.conf.clientID,
-      clientSecret: confDB.conf.clientSecret,
-      callbackURL: `${base_path.length > 1 ? base_path : ""}${returnUrl}`,
-      // node-saml v5 needs this as well
-      // https://github.com/node-saml/node-saml/blob/master/src/saml.ts#L95
-      callbackUrl: `${base_path.length > 1 ? base_path : ""}${returnUrl}`,
-      ...extra_opts,
-    } as const;
-
-    // attn: this log line shows secrets
-    // logger.debug(`opts = ${safeJsonStringify(opts)}`);
-
-    const strategy_instance = this.getStrategyInstance({
-      type,
-      opts,
-      userinfoURL,
-      PassportStrategyConstructor,
-    });
-
-    // this ties the name (our name set in the DB) to the strategy instance
-    passport.use(name, strategy_instance as any);
-
-    this.router.get(
-      strategyUrl,
-      this.handle_get_api_key,
-      this.setState(name, type, auth_opts),
-      passport.authenticate(name, auth_opts),
-    );
-
-    // this will hopefully do new PassportLogin().login()
-    const handleReturn = this.getHandleReturn({
-      Linit,
-      name,
-      type,
-      update_on_login,
-      cookie_ttl_s,
-      login_info,
-    });
-
-    if (isSAML(type)) {
-      this.router.post(
-        returnUrl,
-        // External use of the body-parser package is deprecated, so we are using express directly.
-        // More precisely, body-parser is superseded by the version included inside express.
-        express.urlencoded({ extended: false }),
-        express.json(),
-        passport.authenticate(name),
-        async (req, res) => {
-          // block below: boilerplate-code to parse the response from the SAML provider – could become helpful some day!
-          //const xmlResponse = req.body.SAMLResponse;
-          //if (xmlResponse == null) {
-          //  throw new Error("SAML xmlResponse is null");
-          //}
-          //const samlRes = new Saml2js(xmlResponse);
-          //if (req.user == null) req.user = {};
-          //req.user["profile"] = samlRes.toObject();
-          await handleReturn(req, res);
-        },
-      );
-    } else if (isOAuth2(type)) {
-      this.router.get(
-        returnUrl,
-        this.checkState(name, type),
-        passport.authenticate(name),
-        handleReturn,
-      );
-    } else {
-      this.router.get(returnUrl, passport.authenticate(name), handleReturn);
-    }
-    L(`initialization of '${name}' at '${strategyUrl}' successful`);
   }
 
   // This is not really SSO, but we treat it in a similar way.
