@@ -14,6 +14,7 @@ const mockGetClusterAccountByEmail = jest.fn();
 const mockVerifyClusterAccountSignInPassword = jest.fn();
 const mockHasActiveSecondFactor = jest.fn();
 const mockCreateSignInSecondFactorChallenge = jest.fn();
+const mockEmailRequiresCocalc2fa = jest.fn();
 
 jest.mock("@cocalc/server/auth/throttle", () => ({
   signInCheck: (...args) => mockSignInCheck(...args),
@@ -55,6 +56,11 @@ jest.mock("@cocalc/server/auth/two-factor", () => ({
     mockCreateSignInSecondFactorChallenge(...args),
 }));
 
+jest.mock("@cocalc/database/settings/sso-policies", () => ({
+  ...jest.requireActual("@cocalc/database/settings/sso-policies"),
+  emailRequiresCocalc2fa: (...args) => mockEmailRequiresCocalc2fa(...args),
+}));
+
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({
@@ -77,6 +83,7 @@ describe("/api/v2/auth/sign-in", () => {
       challenge_id: "challenge-1",
       methods: ["totp", "recovery_code"],
     });
+    mockEmailRequiresCocalc2fa.mockReset().mockResolvedValue(false);
   });
 
   it("returns a normal auth error when email and password are missing", async () => {
@@ -195,6 +202,44 @@ describe("/api/v2/auth/sign-in", () => {
     expect(res._getJSONData()).toEqual({
       error:
         "Too many recent second factor attempts. Wait about an hour, then try again.",
+    });
+  });
+
+  it("denies sign-in for a 2FA-required domain when the account has no second factor", async () => {
+    jest.resetModules();
+    mockEmailRequiresCocalc2fa.mockResolvedValue(true);
+    jest.doMock("@cocalc/backend/auth/password-hash", () => ({
+      verifyPassword: jest.fn().mockReturnValue(true),
+    }));
+    jest.doMock("@cocalc/database/pool", () => ({
+      __esModule: true,
+      default: () => ({
+        query: jest.fn().mockResolvedValue({
+          rows: [
+            {
+              account_id: "11111111-1111-1111-1111-111111111111",
+              password_hash:
+                "sha512$1000$12345678901234567890123456789012$sh6uWxxW8qfN5OeWs5IWmIh0L8mMxd0bqFGzJvqOK6NhQeR9CPGK8HBXHiY/VuxwxLBzME2YkdE+5EYXPLkZXA==",
+              banned: false,
+            },
+          ],
+        }),
+      }),
+    }));
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-in",
+      body: {
+        email: "user@example.com",
+        password: "correct horse battery staple",
+      },
+    });
+    const { default: handler } = await import("./sign-in");
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      error:
+        "This email domain requires CoCalc two-factor authentication. Contact your site administrator to enable 2FA before signing in.",
     });
   });
 

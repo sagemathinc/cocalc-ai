@@ -17,6 +17,10 @@ export type AccountCreationPolicyDecision =
       type: "deny_registration_token_required";
     }
   | {
+      type: "deny_signup_disabled";
+      domain?: string;
+    }
+  | {
       type: "deny_email_unverified";
     }
   | {
@@ -33,6 +37,7 @@ export interface AccountCreationPolicyInput {
   domain_sso_validated?: boolean;
   existing_account?: boolean;
   sso_required_domain?: string;
+  signup_disabled_domain?: string;
 }
 
 function normalizedDomain(domain?: string): string | undefined {
@@ -48,7 +53,16 @@ export function evaluateAccountCreationPolicy({
   domain_sso_validated = false,
   existing_account = false,
   sso_required_domain,
+  signup_disabled_domain,
 }: AccountCreationPolicyInput): AccountCreationPolicyDecision {
+  const disabledDomain = normalizedDomain(signup_disabled_domain);
+  if (disabledDomain) {
+    return {
+      type: "deny_signup_disabled",
+      domain: disabledDomain,
+    };
+  }
+
   const requiredDomain = normalizedDomain(sso_required_domain);
   if (auth_method === "password" && requiredDomain) {
     return {

@@ -60,6 +60,8 @@ function titleForRoute(route: PublicAuthRoute, siteName: string): string {
       return `Approve CLI sign-in for ${siteName}`;
     case "auth-cli-elevate":
       return `Approve CLI security action for ${siteName}`;
+    case "auth-second-factor":
+      return "Verify your second factor";
     case "auth-password-reset-done":
       return `${siteName} password updated`;
     case "auth-password-reset-redeem":
@@ -85,6 +87,8 @@ function subtitleForRoute(route: PublicAuthRoute, siteName: string): string {
       return `Approve a terminal sign-in request for ${siteName}`;
     case "auth-cli-elevate":
       return `Verify a terminal security action for ${siteName}`;
+    case "auth-second-factor":
+      return `Finish signing in to ${siteName}`;
     case "auth-password-reset-done":
       return siteName;
     case "redeem":
@@ -156,6 +160,14 @@ export default function PublicAuthApp({
               redirectToPath ??
               (() => window.location.pathname + window.location.search)
             }
+          />
+        )}
+        {route.kind === "auth-second-factor" && (
+          <PublicSignInForm
+            initialChallengeId={route.challengeId}
+            initialInfo="Single sign-on succeeded. Enter your CoCalc second factor to finish signing in."
+            onNavigate={onNavigate}
+            redirectToPath={redirectToPath}
           />
         )}
         {route.kind === "auth-form" && route.view === "sign-up" && (

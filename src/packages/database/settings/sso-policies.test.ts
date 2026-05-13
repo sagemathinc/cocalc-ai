@@ -6,8 +6,10 @@
 import {
   applyDomainPoliciesToPassports,
   applyDomainPoliciesToStrategyList,
+  mostSpecificSsoDomainPolicyForEmail,
   normalizeSsoDomain,
   normalizeSsoDomainPolicy,
+  passwordSignupBlockedBySsoPolicy,
 } from "./sso-policies";
 
 describe("SSO domain policy normalization", () => {
@@ -98,5 +100,54 @@ describe("SSO domain policy application", () => {
       "example.edu",
       "existing.edu",
     ]);
+  });
+
+  it("finds the most specific enabled policy for an email", () => {
+    expect(
+      mostSpecificSsoDomainPolicyForEmail(
+        [
+          {
+            domain: "example.edu",
+            provider_id: "google",
+            mode: "sso_required",
+            enabled: true,
+            require_cocalc_2fa: false,
+            signup_mode: "inherit",
+          },
+          {
+            domain: "dept.example.edu",
+            provider_id: "dept",
+            mode: "sso_signup_only",
+            enabled: true,
+            require_cocalc_2fa: true,
+            signup_mode: "disabled",
+          },
+        ],
+        "ada@sub.dept.example.edu",
+      )?.provider_id,
+    ).toBe("dept");
+  });
+
+  it("knows which domain modes block password signup", () => {
+    expect(
+      passwordSignupBlockedBySsoPolicy({
+        domain: "example.edu",
+        provider_id: "google",
+        mode: "sso_signup_only",
+        enabled: true,
+        require_cocalc_2fa: false,
+        signup_mode: "inherit",
+      }),
+    ).toBe(true);
+    expect(
+      passwordSignupBlockedBySsoPolicy({
+        domain: "example.edu",
+        provider_id: "google",
+        mode: "password_allowed",
+        enabled: true,
+        require_cocalc_2fa: false,
+        signup_mode: "inherit",
+      }),
+    ).toBe(false);
   });
 });

@@ -328,12 +328,17 @@ site secret encryption mechanism, not plaintext config rows.
 2. Add sign-in UI support for "Use SSO for this email/domain." Status:
    implemented for enabled `sso_required` domain policies that point at a
    configured provider.
-3. Add optional domain policy for requiring CoCalc-native 2FA. Status: stored
-   in the policy model, not enforced yet.
+3. Add optional domain policy for requiring CoCalc-native 2FA. Status:
+   enforced for password sign-in and SSO sign-in. Password sign-in is denied if
+   the matching domain requires CoCalc 2FA and the account has no active second
+   factor; SSO sign-in creates a public second-factor challenge before setting
+   sign-in cookies. New account creation is denied for matching domains because
+   a newly created account cannot already have an active CoCalc second factor.
 4. Add clear error/redirect responses for password attempts on SSO-required
    domains.
 5. Add tests for domain normalization, SSO precedence, and domain-level CoCalc
-   2FA requirements.
+   2FA requirements. Status: focused policy, auth API, and public auth route
+   tests cover the implemented paths.
 
 ### Phase 5: Organization SAML
 
@@ -421,5 +426,6 @@ Recommended order:
 1. Finish `SEC-ROOTFS-001`.
 2. Return to SSO as `SEC-SSO-001`.
 3. Implement Phase 1 policy boundary and provider deletion first.
-4. Enforce domain-level CoCalc 2FA/signup mode next; Google no longer depends
-   on Passport.js and the provider/domain UI skeleton is in place.
+4. Replace remaining non-Google organization Passport paths with direct
+   SAML/OIDC next; Google no longer depends on Passport.js and the
+   provider/domain policy skeleton is in place.

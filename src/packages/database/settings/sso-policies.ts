@@ -47,6 +47,13 @@ export function normalizeSsoDomain(value: unknown): string {
   return `${value ?? ""}`.trim().toLowerCase().replace(/^@+/, "");
 }
 
+export function emailDomain(value: unknown): string | undefined {
+  const email = `${value ?? ""}`.trim().toLowerCase();
+  const index = email.lastIndexOf("@");
+  if (index < 0) return undefined;
+  return normalizeSsoDomain(email.slice(index + 1)) || undefined;
+}
+
 export function normalizeSsoDomainPolicy(row: any): SsoDomainPolicy {
   return {
     domain: normalizeSsoDomain(row?.domain),
@@ -75,6 +82,36 @@ export function requiredSsoDomainsForProvider(
     }
   }
   return [...domains].sort();
+}
+
+export function policyAppliesToEmail(
+  policy: SsoDomainPolicy,
+  email: unknown,
+): boolean {
+  const domain = emailDomain(email);
+  if (!domain || !policy.domain) return false;
+  return domain === policy.domain || domain.endsWith(`.${policy.domain}`);
+}
+
+export function mostSpecificSsoDomainPolicyForEmail(
+  policies: SsoDomainPolicy[],
+  email: unknown,
+  providerID?: string,
+): SsoDomainPolicy | undefined {
+  const matches = policies.filter(
+    (policy) =>
+      policy.enabled &&
+      (!providerID || policy.provider_id === providerID) &&
+      policyAppliesToEmail(policy, email),
+  );
+  matches.sort((a, b) => b.domain.length - a.domain.length);
+  return matches[0];
+}
+
+export function passwordSignupBlockedBySsoPolicy(
+  policy: SsoDomainPolicy | undefined,
+): boolean {
+  return policy?.mode === "sso_required" || policy?.mode === "sso_signup_only";
 }
 
 function mergeDomains(
@@ -124,4 +161,22 @@ export async function getEnabledSsoDomainPolicies(): Promise<
   return rows
     .map(normalizeSsoDomainPolicy)
     .filter((policy) => policy.domain && policy.provider_id);
+}
+
+export async function getEnabledSsoDomainPolicyForEmail(
+  email: unknown,
+  providerID?: string,
+): Promise<SsoDomainPolicy | undefined> {
+  return mostSpecificSsoDomainPolicyForEmail(
+    await getEnabledSsoDomainPolicies(),
+    email,
+    providerID,
+  );
+}
+
+export async function emailRequiresCocalc2fa(email: unknown): Promise<boolean> {
+  return (
+    (await getEnabledSsoDomainPolicyForEmail(email))?.require_cocalc_2fa ===
+    true
+  );
 }

@@ -105,6 +105,12 @@ describe("getPublicAuthRouteFromPath", () => {
       challengeId: "challenge-2",
       kind: "auth-cli-elevate",
     });
+    expect(
+      getPublicAuthRouteFromPath("/base/auth/second-factor/challenge-3"),
+    ).toEqual({
+      challengeId: "challenge-3",
+      kind: "auth-second-factor",
+    });
   });
 });
 
@@ -287,6 +293,51 @@ describe("PublicAuthApp", () => {
       true,
     );
     expect(mockedPostAuthApi).not.toHaveBeenCalled();
+  });
+
+  it("renders an SSO second-factor challenge route", async () => {
+    mockedPostAuthApi.mockResolvedValueOnce({
+      account_id: "account-1",
+      home_bay_url: "https://bay.example.test",
+    } as any);
+
+    render(
+      <PublicAuthApp
+        config={config()}
+        initialRoute={{
+          challengeId: "challenge-3",
+          kind: "auth-second-factor",
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Verify your second factor" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Single sign-on succeeded. Enter your CoCalc second factor to finish signing in.",
+      ),
+    ).not.toBeNull();
+    fireEvent.change(screen.getByPlaceholderText("123456"), {
+      target: { value: "123456" },
+    });
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {
+      // jsdom does not implement full-page reloads.
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
+
+    await waitFor(() =>
+      expect(mockedPostAuthApi).toHaveBeenCalledWith({
+        endpoint: "auth/verify-second-factor",
+        body: {
+          challenge_id: "challenge-3",
+          method: "totp",
+          code: "123456",
+        },
+      }),
+    );
+    consoleError.mockRestore();
   });
 
   it("renders the password reset done screen", () => {

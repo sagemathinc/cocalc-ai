@@ -27,6 +27,19 @@ describe("account creation policy", () => {
     ).toEqual({ type: "deny_registration_token_required" });
   });
 
+  it("blocks account creation when a domain signup policy disables it", () => {
+    expect(
+      evaluateAccountCreationPolicy({
+        auth_method: "google_oidc",
+        email_verified: true,
+        signup_disabled_domain: "Example.edu",
+      }),
+    ).toEqual({
+      type: "deny_signup_disabled",
+      domain: "example.edu",
+    });
+  });
+
   it("allows validated domain SSO to be the registration gate", () => {
     expect(
       evaluateAccountCreationPolicy({

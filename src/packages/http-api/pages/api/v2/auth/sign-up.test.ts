@@ -20,6 +20,7 @@ const mockCreateClusterAccount = jest.fn();
 const mockSignUserIn = jest.fn();
 const mockRecordSignUpTokenFail = jest.fn();
 const mockSignUpTokenCheck = jest.fn();
+const mockGetEnabledSsoDomainPolicyForEmail = jest.fn();
 const mockPoolQuery = jest.fn();
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
@@ -57,6 +58,13 @@ jest.mock("@cocalc/server/auth/tokens/redeem", () => ({
 jest.mock("@cocalc/server/auth/tokens/get-requires-token", () => ({
   __esModule: true,
   default: (...args) => mockGetRequiresRegistrationToken(...args),
+}));
+
+jest.mock("@cocalc/database/settings/sso-policies", () => ({
+  getEnabledSsoDomainPolicyForEmail: (...args) =>
+    mockGetEnabledSsoDomainPolicyForEmail(...args),
+  passwordSignupBlockedBySsoPolicy: (policy) =>
+    policy?.mode === "sso_required" || policy?.mode === "sso_signup_only",
 }));
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
@@ -120,6 +128,9 @@ describe("/api/v2/auth/sign-up", () => {
     mockSignUserIn.mockReset();
     mockRecordSignUpTokenFail.mockReset();
     mockSignUpTokenCheck.mockReset().mockReturnValue(undefined);
+    mockGetEnabledSsoDomainPolicyForEmail
+      .mockReset()
+      .mockResolvedValue(undefined);
     mockPoolQuery.mockReset().mockResolvedValue({ rows: [] });
   });
 
@@ -218,6 +229,113 @@ describe("/api/v2/auth/sign-up", () => {
     });
     expect(mockValidateRegistrationToken).not.toHaveBeenCalled();
     expect(mockIsAccountAvailable).not.toHaveBeenCalled();
+    expect(mockCreateClusterAccount).not.toHaveBeenCalled();
+  });
+
+  it("blocks password signup when a domain policy disables account creation", async () => {
+    mockGetEnabledSsoDomainPolicyForEmail.mockResolvedValue({
+      domain: "example.com",
+      provider_id: "google",
+      mode: "password_allowed",
+      enabled: true,
+      require_cocalc_2fa: false,
+      signup_mode: "disabled",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      issues: {
+        email: 'Account creation is disabled for "@example.com".',
+      },
+    });
+    expect(mockValidateRegistrationToken).not.toHaveBeenCalled();
+    expect(mockCreateClusterAccount).not.toHaveBeenCalled();
+  });
+
+  it("allows domain policy to require a token even when global public signup is enabled", async () => {
+    mockGetRequiresRegistrationToken.mockResolvedValue(false);
+    mockValidateRegistrationToken.mockRejectedValue(
+      new Error("no registration token provided"),
+    );
+    mockGetEnabledSsoDomainPolicyForEmail.mockResolvedValue({
+      domain: "example.com",
+      provider_id: "google",
+      mode: "password_allowed",
+      enabled: true,
+      require_cocalc_2fa: false,
+      signup_mode: "registration_token_required",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      issues: {
+        registrationToken:
+          "Issue with registration token -- no registration token provided",
+      },
+    });
+    expect(mockValidateRegistrationToken).toHaveBeenCalledWith("");
+    expect(mockCreateClusterAccount).not.toHaveBeenCalled();
+  });
+
+  it("does not create new password accounts for domains requiring CoCalc 2FA", async () => {
+    mockGetEnabledSsoDomainPolicyForEmail.mockResolvedValue({
+      domain: "example.com",
+      provider_id: "google",
+      mode: "password_allowed",
+      enabled: true,
+      require_cocalc_2fa: true,
+      signup_mode: "public_allowed",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      issues: {
+        email:
+          'Account creation is disabled for "@example.com" because that domain requires CoCalc two-factor authentication. Contact your site administrator to create or prepare your account.',
+      },
+    });
     expect(mockCreateClusterAccount).not.toHaveBeenCalled();
   });
 
