@@ -15,7 +15,12 @@ import {
   useRef,
   useState,
 } from "@cocalc/frontend/app-framework";
-import { ErrorDisplay, Gap, SettingBox } from "@cocalc/frontend/components";
+import {
+  ErrorDisplay,
+  Gap,
+  HelpIcon,
+  SettingBox,
+} from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
 import { PROJECT_SECRETS_ENV } from "@cocalc/util/project-secrets-constants";
@@ -173,33 +178,39 @@ export const Environment: React.FC<Props> = ({
   }
 
   const help = (
-    <Alert
-      banner
-      showIcon={false}
-      type="info"
-      message={
-        <>
-          These variables are available to terminals, Jupyter kernels, and other
-          processes in your {projectLabelLower}. Restart the {projectLabelLower}{" "}
-          for changes to take effect.
-          <br />
-          Empty values are treated as deleted variables. For <code>PATH</code>,
-          values are prepended to the existing <code>PATH</code> unless they
-          include <code>$PATH</code>, which is replaced by the current path.
-          <br />
-          Do not store API keys, private keys, or tokens here. Use Project
-          Secrets instead; CoCalc manages <code>{PROJECT_SECRETS_ENV}</code> to
-          point at the mounted secrets directory.
-        </>
-      }
-    />
+    <HelpIcon
+      title="Custom Environment Variables"
+      placement="right"
+      maxWidth="520px"
+    >
+      <p style={{ marginTop: 0 }}>
+        These variables are available to terminals, Jupyter kernels, and other
+        processes in your {projectLabelLower}. Restart the {projectLabelLower}{" "}
+        for changes to take effect.
+      </p>
+      <p>
+        Empty values are treated as deleted variables. For <code>PATH</code>,
+        values are prepended to the existing <code>PATH</code> unless they
+        include <code>$PATH</code>, which is replaced by the current path.
+      </p>
+      <p style={{ marginBottom: 0 }}>
+        Do not store API keys, private keys, or tokens here. Use Project Secrets
+        instead; CoCalc manages the environment variable{" "}
+        <code>{PROJECT_SECRETS_ENV}</code> to point at the mounted secrets
+        directory.
+      </p>
+    </HelpIcon>
   );
+
+  const title = <>Custom Environment Variables {help}</>;
 
   function renderBody() {
     return (
       <div style={{ padding: "10px" }}>
         <Space direction="vertical" style={{ width: "100%" }} size="middle">
-          {help}
+          {isFlyout ? (
+            <Typography.Text strong>{title}</Typography.Text>
+          ) : undefined}
           {error ? <ErrorDisplay banner error={error} /> : undefined}
           {current.error ? (
             <ErrorDisplay banner error={current.error} />
@@ -296,7 +307,7 @@ export const Environment: React.FC<Props> = ({
   }
 
   return (
-    <SettingBox title="Custom Environment Variables" icon={ENV_VARS_ICON}>
+    <SettingBox title={title} icon={ENV_VARS_ICON}>
       {renderBody()}
     </SettingBox>
   );

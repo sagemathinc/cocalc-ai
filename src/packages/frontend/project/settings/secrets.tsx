@@ -23,7 +23,12 @@ import {
   useMemo,
   useState,
 } from "@cocalc/frontend/app-framework";
-import { ErrorDisplay, Gap, SettingBox } from "@cocalc/frontend/components";
+import {
+  ErrorDisplay,
+  Gap,
+  HelpIcon,
+  SettingBox,
+} from "@cocalc/frontend/components";
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { humanSize } from "@cocalc/util/misc";
@@ -248,22 +253,23 @@ export const ProjectSecrets: React.FC<Props> = ({
   }
 
   const help = (
-    <Alert
-      banner
-      showIcon
-      type="info"
-      message={
-        <>
-          Project secrets are encrypted at rest and mounted as read-only files
-          at <code>{PROJECT_SECRETS_MOUNT_PATH}/&lt;name&gt;</code>. They are
-          not stored in project files, backups, rootfs images, downloads, or
-          public shares. Any code or collaborator with access to the running
-          project can read these files. Use <code>{PROJECT_SECRETS_ENV}</code>{" "}
-          in scripts instead of hardcoding the directory.
-        </>
-      }
-    />
+    <HelpIcon title="Project Secrets" placement="right" maxWidth="540px">
+      <p style={{ marginTop: 0 }}>
+        Project secrets are encrypted at rest and mounted as read-only files at{" "}
+        <code>{PROJECT_SECRETS_MOUNT_PATH}/&lt;name&gt;</code>. They are not
+        stored in project files, backups, rootfs images, downloads, or public
+        shares.
+      </p>
+      <p style={{ marginBottom: 0 }}>
+        Any code or collaborator with access to the running project can read
+        these files. Use the environment variable{" "}
+        <code>{PROJECT_SECRETS_ENV}</code> in scripts instead of hardcoding the
+        directory.
+      </p>
+    </HelpIcon>
   );
+
+  const title = <>Project Secrets {help}</>;
 
   function renderRows(): React.JSX.Element {
     if (sortedSecrets.length === 0) {
@@ -345,7 +351,9 @@ export const ProjectSecrets: React.FC<Props> = ({
     return (
       <div style={{ padding: "10px" }}>
         <Space direction="vertical" style={{ width: "100%" }} size="middle">
-          {help}
+          {isFlyout ? (
+            <Typography.Text strong>{title}</Typography.Text>
+          ) : undefined}
           {error ? <ErrorDisplay banner error={error} /> : undefined}
           {nameError ? <ErrorDisplay banner error={nameError} /> : undefined}
           {valueTooLarge ? (
@@ -451,7 +459,7 @@ export const ProjectSecrets: React.FC<Props> = ({
   }
 
   return (
-    <SettingBox title="Project Secrets" icon={PROJECT_SECRETS_ICON}>
+    <SettingBox title={title} icon={PROJECT_SECRETS_ICON}>
       {renderBody()}
     </SettingBox>
   );
