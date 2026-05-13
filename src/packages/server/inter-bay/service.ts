@@ -12,6 +12,7 @@ import {
   createInterBayAccountLocalHandler,
   createInterBayProjectCollabInviteHandlers,
   createInterBayProjectDetailsHandler,
+  createInterBayProjectSecretsHandlers,
   createInterBayHostConnectionHandler,
   createInterBayHostControlHandler,
   createInterBayProjectHostAuthTokenHandler,
@@ -39,6 +40,7 @@ import {
   type InterBayDirectoryApi,
   type InterBayProjectCollabInviteApi,
   type InterBayProjectDetailsApi,
+  type InterBayProjectSecretsApi,
   type InterBayHostConnectionApi,
   type InterBayHostControlApi,
   type InterBayProjectHostAuthTokenApi,
@@ -152,6 +154,14 @@ import {
   handleProjectControlStop,
 } from "@cocalc/server/inter-bay/project-control";
 import {
+  handleProjectSecretsCopy,
+  handleProjectSecretsDelete,
+  handleProjectSecretsExportForCopy,
+  handleProjectSecretsImportForCopy,
+  handleProjectSecretsList,
+  handleProjectSecretsSet,
+} from "@cocalc/server/inter-bay/project-secrets";
+import {
   deleteHost,
   deleteHostRootfsImage,
   drainHost,
@@ -258,6 +268,7 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectControlStartService();
     await startProjectReferenceService();
     await startProjectDetailsService();
+    await startProjectSecretsService();
     await startHostConnectionService();
     await startHostControlService();
     await startProjectHostAuthTokenService();
@@ -779,6 +790,28 @@ async function startProjectDetailsService(): Promise<void> {
   };
   services.push(
     createInterBayProjectDetailsHandler({
+      client,
+      bay_id: getConfiguredBayId(),
+      parallel: true,
+      impl,
+    }),
+  );
+}
+
+async function startProjectSecretsService(): Promise<void> {
+  const client = getInterBayFabricClient({ noCache: true });
+  const impl: InterBayProjectSecretsApi = {
+    list: async (opts) => await handleProjectSecretsList(opts),
+    set: async (opts) => await handleProjectSecretsSet(opts),
+    delete: async (opts) => await handleProjectSecretsDelete(opts),
+    copy: async (opts) => await handleProjectSecretsCopy(opts),
+    exportForCopy: async (opts) =>
+      await handleProjectSecretsExportForCopy(opts),
+    importForCopy: async (opts) =>
+      await handleProjectSecretsImportForCopy(opts),
+  };
+  services.push(
+    ...createInterBayProjectSecretsHandlers({
       client,
       bay_id: getConfiguredBayId(),
       parallel: true,

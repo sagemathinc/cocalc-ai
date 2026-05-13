@@ -19,7 +19,9 @@ jest.mock("@cocalc/util/master-key-lifecycle", () => ({
 import {
   copyProjectSecrets,
   deleteProjectSecret,
+  exportProjectSecretsForCopy,
   getProjectSecretsForRuntime,
+  importProjectSecretsForCopy,
   listProjectSecrets,
   setProjectSecret,
 } from "./project-secrets";
@@ -151,5 +153,43 @@ describe("project secrets database helpers", () => {
       conflicts: ["DEPLOY_KEY"],
       missing: [],
     });
+  });
+
+  it("exports plaintext for trusted inter-bay copy and imports re-encrypted values", async () => {
+    await insertAccountAndProject(SOURCE_PROJECT_ID);
+    await insertAccountAndProject(TARGET_PROJECT_ID);
+
+    await setProjectSecret({
+      project_id: SOURCE_PROJECT_ID,
+      name: "API_KEY",
+      value: "secret",
+      account_id: ACCOUNT_ID,
+    });
+
+    await expect(
+      exportProjectSecretsForCopy({
+        project_id: SOURCE_PROJECT_ID,
+        names: ["API_KEY", "MISSING"],
+      }),
+    ).resolves.toEqual({
+      secrets: { API_KEY: "secret" },
+      missing: ["MISSING"],
+    });
+
+    await expect(
+      importProjectSecretsForCopy({
+        project_id: TARGET_PROJECT_ID,
+        secrets: { API_KEY: "secret" },
+        account_id: ACCOUNT_ID,
+      }),
+    ).resolves.toEqual({
+      copied: ["API_KEY"],
+      conflicts: [],
+      missing: [],
+    });
+
+    await expect(
+      getProjectSecretsForRuntime({ project_id: TARGET_PROJECT_ID }),
+    ).resolves.toEqual({ API_KEY: "secret" });
   });
 });

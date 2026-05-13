@@ -45,6 +45,11 @@ export interface CopyProjectSecretsResult {
   missing: string[];
 }
 
+export interface ExportProjectSecretsForCopyResult {
+  secrets: Record<string, string>;
+  missing: string[];
+}
+
 let cachedProjectSecretsKey: Buffer | undefined;
 
 function pool(): Queryable {
@@ -171,6 +176,132 @@ export async function getProjectSecretsForRuntime({
       }),
     ]),
   );
+}
+
+export async function exportProjectSecretsForCopy({
+  project_id,
+  names,
+  db = pool(),
+}: {
+  project_id: string;
+  names?: string[];
+  db?: Queryable;
+}): Promise<ExportProjectSecretsForCopyResult> {
+  await ensureProjectSecretsSchema(db);
+  const selectedNames = normalizeNames(names);
+  const key = await getProjectSecretsKey();
+  const params: any[] = [project_id];
+  let nameSql = "";
+  if (selectedNames) {
+    params.push(selectedNames);
+    nameSql = "AND name = ANY($2::TEXT[])";
+  }
+  const { rows } = await db.query(
+    `SELECT name, encrypted_value
+     FROM project_secrets
+     WHERE project_id=$1 ${nameSql}
+     ORDER BY name`,
+    params,
+  );
+  const sourceByName = new Map(rows.map((row) => [row.name, row]));
+  const missing = (selectedNames ?? []).filter(
+    (name) => !sourceByName.has(name),
+  );
+  return {
+    missing,
+    secrets: Object.fromEntries(
+      rows.map((row) => [
+        row.name,
+        decryptProjectSecretValue({
+          project_id,
+          name: row.name,
+          encrypted: encryptedValue(row.encrypted_value),
+          key,
+        }),
+      ]),
+    ),
+  };
+}
+
+export async function importProjectSecretsForCopy({
+  project_id,
+  secrets,
+  overwrite = false,
+  account_id,
+}: {
+  project_id: string;
+  secrets: Record<string, string>;
+  overwrite?: boolean;
+  account_id: string;
+}): Promise<CopyProjectSecretsResult> {
+  const entries = Object.entries(secrets ?? {}).map(([name, value]) => {
+    const normalizedName = normalizeProjectSecretName(name);
+    return {
+      name: normalizedName,
+      value,
+      valueBytes: validateProjectSecretValue(value),
+    };
+  });
+  const uniqueNames = new Set(entries.map(({ name }) => name));
+  if (uniqueNames.size !== entries.length) {
+    throw new Error("duplicate project secret names");
+  }
+  if (entries.length === 0) {
+    return { copied: [], conflicts: [], missing: [] };
+  }
+  const key = await getProjectSecretsKey();
+  return await withTransaction(async (db) => {
+    await ensureProjectSecretsSchema(db);
+    const { rows: targetRows } = await db.query(
+      "SELECT name FROM project_secrets WHERE project_id=$1",
+      [project_id],
+    );
+    const targetNames = new Set(targetRows.map((row) => row.name));
+    const conflicts = overwrite
+      ? []
+      : entries.map(({ name }) => name).filter((name) => targetNames.has(name));
+    if (conflicts.length > 0) {
+      return { copied: [], conflicts, missing: [] };
+    }
+    const newNames = entries
+      .map(({ name }) => name)
+      .filter((name) => !targetNames.has(name));
+    if (targetNames.size + newNames.length > PROJECT_SECRETS_MAX_COUNT) {
+      throw new Error(
+        `project secret limit reached (${targetNames.size + newNames.length}/${PROJECT_SECRETS_MAX_COUNT})`,
+      );
+    }
+    for (const { name, value, valueBytes } of entries) {
+      const encrypted = encryptProjectSecretValue({
+        project_id,
+        name,
+        value,
+        key,
+      });
+      await db.query(
+        `INSERT INTO project_secrets
+           (project_id, name, encrypted_value, value_bytes, created_by, updated_by, created_at, updated_at)
+         VALUES ($1, $2, $3::JSONB, $4, $5, $5, NOW(), NOW())
+         ON CONFLICT (project_id, name) DO UPDATE SET
+           encrypted_value=EXCLUDED.encrypted_value,
+           value_bytes=EXCLUDED.value_bytes,
+           updated_by=EXCLUDED.updated_by,
+           updated_at=NOW()`,
+        [project_id, name, JSON.stringify(encrypted), valueBytes, account_id],
+      );
+    }
+    logger.info("project secrets imported", {
+      project_id,
+      account_id,
+      count: entries.length,
+      overwrite,
+    });
+    return {
+      copied: entries.map(({ name }) => name),
+      conflicts: [],
+      missing: [],
+    };
+  });
 }
 
 export async function setProjectSecret({

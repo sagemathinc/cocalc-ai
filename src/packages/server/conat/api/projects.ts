@@ -117,6 +117,8 @@ import { validateProjectEnv } from "@cocalc/util/project-secrets";
 import {
   copyProjectSecrets as copyProjectSecretsInDb,
   deleteProjectSecret as deleteProjectSecretInDb,
+  exportProjectSecretsForCopy,
+  importProjectSecretsForCopy,
   listProjectSecrets as listProjectSecretsInDb,
   setProjectSecret as setProjectSecretInDb,
 } from "@cocalc/server/projects/project-secrets";
@@ -915,6 +917,14 @@ function requireAccountId(account_id?: string): string {
   return value;
 }
 
+async function resolveRequiredProjectBay(project_id: string) {
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership == null) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  return ownership;
+}
+
 export async function listProjectSecrets({
   account_id,
   project_id,
@@ -923,6 +933,14 @@ export async function listProjectSecrets({
   project_id: string;
 }): Promise<ProjectSecretMetadata[]> {
   const actor = requireAccountId(account_id);
+  const ownership = await resolveRequiredProjectBay(project_id);
+  if (ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge().projectSecrets(ownership.bay_id).list({
+      account_id: actor,
+      project_id,
+      epoch: ownership.epoch,
+    });
+  }
   await assertCollab({ account_id: actor, project_id });
   return await listProjectSecretsInDb({ project_id });
 }
@@ -939,6 +957,19 @@ export async function setProjectSecret({
   value: string;
 }): Promise<ProjectSecretMetadata> {
   const actor = requireAccountId(account_id);
+  const ownership = await resolveRequiredProjectBay(project_id);
+  if (ownership.bay_id !== getConfiguredBayId()) {
+    const result = await getInterBayBridge()
+      .projectSecrets(ownership.bay_id)
+      .set({
+        account_id: actor,
+        project_id,
+        name,
+        value,
+        epoch: ownership.epoch,
+      });
+    return result;
+  }
   await assertCollab({ account_id: actor, project_id });
   const result = await setProjectSecretInDb({
     project_id,
@@ -963,6 +994,15 @@ export async function deleteProjectSecret({
   name: string;
 }): Promise<{ deleted: boolean }> {
   const actor = requireAccountId(account_id);
+  const ownership = await resolveRequiredProjectBay(project_id);
+  if (ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge().projectSecrets(ownership.bay_id).delete({
+      account_id: actor,
+      project_id,
+      name,
+      epoch: ownership.epoch,
+    });
+  }
   await assertCollab({ account_id: actor, project_id });
   const deleted = await deleteProjectSecretInDb({
     project_id,
@@ -990,15 +1030,80 @@ export async function copyProjectSecrets({
   overwrite?: boolean;
 }): Promise<CopyProjectSecretsResult> {
   const actor = requireAccountId(account_id);
-  await assertCollab({ account_id: actor, project_id: source_project_id });
-  await assertCollab({ account_id: actor, project_id: target_project_id });
-  const result = await copyProjectSecretsInDb({
-    source_project_id,
-    target_project_id,
-    names,
-    overwrite,
-    account_id: actor,
-  });
+  const sourceOwnership = await resolveRequiredProjectBay(source_project_id);
+  const targetOwnership = await resolveRequiredProjectBay(target_project_id);
+  let result: CopyProjectSecretsResult;
+  if (sourceOwnership.bay_id === targetOwnership.bay_id) {
+    if (sourceOwnership.bay_id !== getConfiguredBayId()) {
+      result = await getInterBayBridge()
+        .projectSecrets(sourceOwnership.bay_id)
+        .copy({
+          account_id: actor,
+          source_project_id,
+          target_project_id,
+          names,
+          overwrite,
+          source_epoch: sourceOwnership.epoch,
+          target_epoch: targetOwnership.epoch,
+        });
+    } else {
+      await assertCollab({ account_id: actor, project_id: source_project_id });
+      await assertCollab({ account_id: actor, project_id: target_project_id });
+      result = await copyProjectSecretsInDb({
+        source_project_id,
+        target_project_id,
+        names,
+        overwrite,
+        account_id: actor,
+      });
+    }
+  } else {
+    let exported: Awaited<ReturnType<typeof exportProjectSecretsForCopy>>;
+    if (sourceOwnership.bay_id === getConfiguredBayId()) {
+      await assertCollab({
+        account_id: actor,
+        project_id: source_project_id,
+      });
+      exported = await exportProjectSecretsForCopy({
+        project_id: source_project_id,
+        names,
+      });
+    } else {
+      exported = await getInterBayBridge()
+        .projectSecrets(sourceOwnership.bay_id)
+        .exportForCopy({
+          account_id: actor,
+          project_id: source_project_id,
+          names,
+          epoch: sourceOwnership.epoch,
+        });
+    }
+    if (exported.missing.length > 0) {
+      return { copied: [], conflicts: [], missing: exported.missing };
+    }
+    if (targetOwnership.bay_id === getConfiguredBayId()) {
+      await assertCollab({
+        account_id: actor,
+        project_id: target_project_id,
+      });
+      result = await importProjectSecretsForCopy({
+        account_id: actor,
+        project_id: target_project_id,
+        secrets: exported.secrets,
+        overwrite,
+      });
+    } else {
+      result = await getInterBayBridge()
+        .projectSecrets(targetOwnership.bay_id)
+        .importForCopy({
+          account_id: actor,
+          project_id: target_project_id,
+          secrets: exported.secrets,
+          overwrite,
+          epoch: targetOwnership.epoch,
+        });
+    }
+  }
   if (result.copied.length > 0) {
     await Promise.all([
       publishProjectDetailInvalidationBestEffort({

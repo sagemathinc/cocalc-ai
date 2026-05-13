@@ -219,6 +219,29 @@ describe("inter-bay fabric routing", () => {
         return mesg.data;
       }
     })();
+    const projectSecretsListSub = await serviceClient.subscribe(
+      "bay.bay-1.rpc.project-secrets.list",
+      { queue: "0" },
+    );
+    const projectSecretsListPromise = (async () => {
+      for await (const mesg of projectSecretsListSub) {
+        mesg.respond(
+          [
+            {
+              project_id: "proj-1",
+              name: "API_TOKEN",
+              value_bytes: 12,
+              created_by: "acct-1",
+              updated_by: "acct-1",
+              created_at: "2026-05-13T00:00:00.000Z",
+              updated_at: "2026-05-13T00:00:00.000Z",
+            },
+          ],
+          { noThrow: true },
+        );
+        return mesg.data;
+      }
+    })();
 
     process.env.COCALC_BAY_ID = "bay-0";
     const [
@@ -282,6 +305,23 @@ describe("inter-bay fabric routing", () => {
           progress: 86,
         },
       });
+    await expect(
+      getInterBayBridge().projectSecrets("bay-1").list({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        epoch: 3,
+      }),
+    ).resolves.toEqual([
+      {
+        project_id: "proj-1",
+        name: "API_TOKEN",
+        value_bytes: 12,
+        created_by: "acct-1",
+        updated_by: "acct-1",
+        created_at: "2026-05-13T00:00:00.000Z",
+        updated_at: "2026-05-13T00:00:00.000Z",
+      },
+    ]);
 
     await expect(directoryPromise).resolves.toEqual({
       name: "resolveProjectBay",
@@ -327,6 +367,10 @@ describe("inter-bay fabric routing", () => {
         },
       ],
     });
+    await expect(projectSecretsListPromise).resolves.toEqual({
+      name: "list",
+      args: [{ account_id: "acct-1", project_id: "proj-1", epoch: 3 }],
+    });
     getInterBayFabricClient().close();
     projectControlSub.close();
     projectControlStopSub.close();
@@ -335,6 +379,7 @@ describe("inter-bay fabric routing", () => {
     projectControlAddressSub.close();
     projectControlActiveOpSub.close();
     projectLroSub.close();
+    projectSecretsListSub.close();
     directorySub.close();
   });
 });
