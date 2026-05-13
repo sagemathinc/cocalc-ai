@@ -35,6 +35,7 @@ import {
   reserveClusterAccountDirectoryEntry,
   searchClusterAccountsDirect,
   touchClusterAccountApiKeyDirectoryEntryDirect,
+  updateClusterAccountEmailAddressDirect,
   updateClusterAccountApiKeysHomeBayDirect,
   updateClusterAccountHomeBayDirect,
   upsertClusterAccountApiKeyDirectoryEntryDirect,
@@ -134,6 +135,22 @@ export async function updateClusterAccountHomeBay(opts: {
   return await createInterBayAccountDirectoryClient({
     client: getInterBayFabricClient(),
   }).updateHomeBay(opts);
+}
+
+export async function updateClusterAccountEmailAddress(opts: {
+  account_id: string;
+  email_address: string;
+}): Promise<AccountDirectoryEntry> {
+  const normalized = {
+    ...opts,
+    email_address: `${opts.email_address ?? ""}`.trim().toLowerCase(),
+  };
+  if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
+    return await updateClusterAccountEmailAddressDirect(normalized);
+  }
+  return await createInterBayAccountDirectoryClient({
+    client: getInterBayFabricClient(),
+  }).updateEmailAddress(normalized);
 }
 
 export async function getClusterAccountApiKeyByKeyId(

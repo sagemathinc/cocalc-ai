@@ -25,6 +25,7 @@ import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fenc
 import { publishAccountRowFeedEventsBestEffort } from "@cocalc/server/account/account-row-feed";
 import { checkRequiredSSO } from "@cocalc/server/auth/sso/check-required-sso";
 import getStrategies from "@cocalc/database/settings/get-sso-strategies";
+import { updateClusterAccountEmailAddress } from "@cocalc/server/inter-bay/accounts";
 import { MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import {
   isValidUUID,
@@ -38,6 +39,31 @@ import sendEmailVerification from "./send-email-verification";
 import { getLogger } from "@cocalc/backend/logger";
 
 const log = getLogger("server:accounts:email-address");
+
+async function rollbackClusterEmailAddress({
+  account_id,
+  old_email_address,
+  new_email_address,
+}: {
+  account_id: string;
+  old_email_address?: string | null;
+  new_email_address: string;
+}): Promise<void> {
+  if (!old_email_address || old_email_address === new_email_address) return;
+  try {
+    await updateClusterAccountEmailAddress({
+      account_id,
+      email_address: old_email_address,
+    });
+  } catch (err) {
+    log.warn("failed to roll back cluster account email address", {
+      account_id,
+      old_email_address,
+      new_email_address,
+      err,
+    });
+  }
+}
 
 export interface SetEmailAddressResult {
   already_verified: boolean;
@@ -113,16 +139,26 @@ export default async function setEmailAddress({
 
   if (!password_hash) {
     // setting both the email_address *and* password at once.
-    await withAccountRehomeWriteFence({
-      account_id,
-      action: "set email address",
-      fn: async (db) => {
-        await db.query(
-          "UPDATE accounts SET password_hash=$1, email_address=$2 WHERE account_id=$3",
-          [passwordHash(password), email_address, account_id],
-        );
-      },
-    });
+    await updateClusterAccountEmailAddress({ account_id, email_address });
+    try {
+      await withAccountRehomeWriteFence({
+        account_id,
+        action: "set email address",
+        fn: async (db) => {
+          await db.query(
+            "UPDATE accounts SET password_hash=$1, email_address=$2 WHERE account_id=$3",
+            [passwordHash(password), email_address, account_id],
+          );
+        },
+      });
+    } catch (err) {
+      await rollbackClusterEmailAddress({
+        account_id,
+        old_email_address,
+        new_email_address: email_address,
+      });
+      throw err;
+    }
     const verification_email_error = already_verified
       ? undefined
       : await sendEmailVerification(account_id);
@@ -147,31 +183,26 @@ export default async function setEmailAddress({
     throw Error("password is incorrect");
   }
 
-  // Is the email address available?
-  if (
-    (
-      await pool.query(
-        "SELECT COUNT(*)::INT FROM accounts WHERE email_address=$1",
-        [email_address],
-      )
-    ).rows[0].count > 0
-  ) {
-    throw Error(
-      `email address "${email_address}" is already in use by another account`,
-    );
+  await updateClusterAccountEmailAddress({ account_id, email_address });
+  try {
+    await withAccountRehomeWriteFence({
+      account_id,
+      action: "set email address",
+      fn: async (db) => {
+        await db.query(
+          "UPDATE accounts SET email_address=$1 WHERE account_id=$2",
+          [email_address, account_id],
+        );
+      },
+    });
+  } catch (err) {
+    await rollbackClusterEmailAddress({
+      account_id,
+      old_email_address,
+      new_email_address: email_address,
+    });
+    throw err;
   }
-
-  // Set the email address:
-  await withAccountRehomeWriteFence({
-    account_id,
-    action: "set email address",
-    fn: async (db) => {
-      await db.query(
-        "UPDATE accounts SET email_address=$1 WHERE account_id=$2",
-        [email_address, account_id],
-      );
-    },
-  });
 
   // Do any pending account creation actions for this email.
   await accountCreationActions({ email_address, account_id });

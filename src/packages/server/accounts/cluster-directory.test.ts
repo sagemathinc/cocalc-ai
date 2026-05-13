@@ -34,6 +34,24 @@ describe("accounts.cluster-directory", () => {
       if (sql.includes("CREATE TABLE") || sql.includes("CREATE INDEX")) {
         return { rows: [], rowCount: 0 };
       }
+      if (sql.includes("INSERT INTO cluster_account_directory")) {
+        return {
+          rows: [
+            {
+              account_id: "11111111-1111-4111-8111-111111111111",
+              email_address: "new@example.com",
+              first_name: "QA",
+              last_name: "Directory",
+              name: null,
+              home_bay_id: "bay-2",
+              created: null,
+              last_active: null,
+              banned: false,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
       if (sql.includes("FROM accounts")) {
         return {
           rows: [
@@ -85,5 +103,27 @@ describe("accounts.cluster-directory", () => {
       last_name: "Directory",
       home_bay_id: "bay-2",
     });
+  });
+
+  it("upserts email address reservations through the directory", async () => {
+    const { updateClusterAccountEmailAddressDirect } =
+      await import("./cluster-directory");
+    const account = await updateClusterAccountEmailAddressDirect({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      email_address: "NEW@example.com",
+    });
+
+    expect(account.email_address).toBe("new@example.com");
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining("ON CONFLICT (account_id) DO UPDATE"),
+      [
+        "11111111-1111-4111-8111-111111111111",
+        "new@example.com",
+        "QA",
+        "Directory",
+        null,
+        "bay-2",
+      ],
+    );
   });
 });

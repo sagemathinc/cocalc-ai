@@ -367,6 +367,11 @@ export interface AccountDirectoryUpdateHomeBayRequest {
   home_bay_id: string;
 }
 
+export interface AccountDirectoryUpdateEmailAddressRequest {
+  account_id: string;
+  email_address: string;
+}
+
 export interface AccountDirectoryDeleteRequest {
   account_id: string;
   only_if_tag?: string;
@@ -987,6 +992,7 @@ export type AccountDirectoryMethod =
   | "create"
   | "delete"
   | "update-home-bay"
+  | "update-email-address"
   | "get-api-key"
   | "upsert-api-key"
   | "delete-api-key"
@@ -1572,6 +1578,9 @@ export interface InterBayAccountDirectoryApi {
   ) => Promise<Record<string, number>>;
   updateHomeBay: (
     opts: AccountDirectoryUpdateHomeBayRequest,
+  ) => Promise<AccountDirectoryEntry>;
+  updateEmailAddress: (
+    opts: AccountDirectoryUpdateEmailAddressRequest,
   ) => Promise<AccountDirectoryEntry>;
   create: (
     opts: AccountDirectoryCreateRequest,
@@ -2496,6 +2505,12 @@ export function createInterBayAccountDirectoryClient({
     ...serviceClientOptions({ client, timeout }),
     subject: accountDirectorySubject({ method: "update-home-bay" }),
   });
+  const updateEmailAddressClient = createServiceClient<
+    Pick<InterBayAccountDirectoryApi, "updateEmailAddress">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountDirectorySubject({ method: "update-email-address" }),
+  });
   const createClient = createServiceClient<
     Pick<InterBayAccountDirectoryApi, "create">
   >({
@@ -2579,6 +2594,8 @@ export function createInterBayAccountDirectoryClient({
       await homeBayCountsClient.getHomeBayCounts(opts),
     updateHomeBay: async (opts) =>
       await updateHomeBayClient.updateHomeBay(opts),
+    updateEmailAddress: async (opts) =>
+      await updateEmailAddressClient.updateEmailAddress(opts),
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
     getApiKey: async (opts) => await getApiKeyClient.getApiKey(opts),
@@ -2659,6 +2676,16 @@ export function createInterBayAccountDirectoryHandlers({
       subject: accountDirectorySubject({ method: "update-home-bay" }),
       impl: {
         updateHomeBay: async (opts) => await impl.updateHomeBay(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountDirectoryApi, "updateEmailAddress">
+    >({
+      ...options,
+      service: "inter-bay-account-directory",
+      subject: accountDirectorySubject({ method: "update-email-address" }),
+      impl: {
+        updateEmailAddress: async (opts) => await impl.updateEmailAddress(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountDirectoryApi, "create">>({

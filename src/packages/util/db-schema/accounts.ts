@@ -466,6 +466,7 @@ Table({
       "last_active DESC NULLS LAST",
     ],
     pg_unique_indexes: [
+      "email_address", // enforce uniqueness on existing databases; nullable so deleted/legacy rows can omit it
       "api_key", // we use the map api_key --> account_id, so it better be unique
       "LOWER(name)", // ensure user-assigned name is case sensitive globally unique
     ], // note that we actually require uniqueness across accounts and organizations

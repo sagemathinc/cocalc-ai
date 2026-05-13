@@ -81,6 +81,7 @@ import {
   provisionLocalClusterAccount,
   searchClusterAccounts,
   touchClusterAccountApiKeyDirectoryEntry,
+  updateClusterAccountEmailAddress,
   updateClusterAccountApiKeysHomeBay,
   updateClusterAccountHomeBay,
   upsertClusterAccountApiKeyDirectoryEntry,
@@ -406,6 +407,8 @@ async function startAccountDirectoryService(): Promise<void> {
       }),
     getHomeBayCounts: async () => await getClusterAccountHomeBayCounts(),
     updateHomeBay: async (opts) => await updateClusterAccountHomeBay(opts),
+    updateEmailAddress: async (opts) =>
+      await updateClusterAccountEmailAddress(opts),
     create: async (opts) => await createClusterAccount(opts),
     delete: async (opts) => await deleteClusterAccount(opts),
     getApiKey: async ({ key_id }) =>
