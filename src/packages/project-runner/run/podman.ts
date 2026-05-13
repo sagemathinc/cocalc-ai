@@ -155,6 +155,21 @@ export async function writeProjectSecretsHostPath({
   return path;
 }
 
+export function redactConfigurationForLog(
+  config: Configuration,
+): Configuration {
+  return {
+    ...config,
+    secret: config.secret == null ? config.secret : "[redacted]",
+    secrets:
+      config.secrets == null
+        ? config.secrets
+        : Object.fromEntries(
+            Object.keys(config.secrets).map((name) => [name, "[redacted]"]),
+          ),
+  };
+}
+
 type ProgressEvent = {
   type: string;
   progress?: number;
@@ -952,7 +967,10 @@ export async function start({
   if (!isValidUUID(project_id)) {
     throw Error("start: project_id must be valid");
   }
-  logger.debug("start", { project_id, config: { ...config, secret: "xxx" } });
+  logger.debug("start", {
+    project_id,
+    config: redactConfigurationForLog(config),
+  });
 
   if (starting.has(project_id) || stopping.has(project_id)) {
     logger.debug("starting/stopping -- already running");

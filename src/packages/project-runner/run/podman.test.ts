@@ -98,6 +98,7 @@ import {
   cleanupProjectSecretsHostPath,
   getAll,
   projectSecretsHostPath,
+  redactConfigurationForLog,
   start,
   state,
   stop,
@@ -461,6 +462,20 @@ describe("project-runner podman orphan fallback", () => {
 
     await cleanupProjectSecretsHostPath(project1);
     await expect(stat(`${path}/API_KEY`)).rejects.toThrow();
+  });
+
+  it("redacts runtime secrets before logging project start config", () => {
+    expect(
+      redactConfigurationForLog({
+        secret: "project-token",
+        secrets: { API_KEY: "secret", SSH_KEY: "private" },
+        env: { PUBLIC: "ok" },
+      }),
+    ).toEqual({
+      secret: "[redacted]",
+      secrets: { API_KEY: "[redacted]", SSH_KEY: "[redacted]" },
+      env: { PUBLIC: "ok" },
+    });
   });
 
   it("falls back to indexed backups when full rustic backup listing is truncated", async () => {
