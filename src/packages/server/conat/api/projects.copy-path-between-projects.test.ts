@@ -460,4 +460,32 @@ describe("projects.copyPathBetweenProjects", () => {
       stream_name: "stream:collect-op-1",
     });
   });
+
+  it("stores scheduled course collection run time and dedupe key", async () => {
+    const { collectAssignment } = await import("./projects");
+    await collectAssignment({
+      account_id: "acct-1",
+      course_project_id: "course-project",
+      assignment_id: "assignment-1",
+      run_at: "2026-05-14T17:00:00.000Z",
+      items: [
+        {
+          student_id: "student-1",
+          student_project_id: "student-project-1",
+          src_path: "Homework 1",
+          dest_path: "course-collect/Homework 1/student-1",
+        },
+      ],
+    });
+
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dedupe_key:
+          "course-collect:course-project:assignment-1:2026-05-14T17:00:00.000Z",
+        input: expect.objectContaining({
+          run_at: "2026-05-14T17:00:00.000Z",
+        }),
+      }),
+    );
+  });
 });

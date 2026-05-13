@@ -389,6 +389,7 @@ export function startCourseCollectLroWorker({
       owner_id: WORKER_ID,
       limit: Math.max(1, maxParallel - inFlight),
       lease_ms: LEASE_MS,
+      input_not_before_key: "run_at",
     });
     for (const op of ops) {
       inFlight += 1;

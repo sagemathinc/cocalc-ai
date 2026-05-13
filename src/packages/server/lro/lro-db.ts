@@ -325,12 +325,14 @@ export async function claimLroOps({
   owner_id,
   limit = 10,
   lease_ms = 120_000,
+  input_not_before_key,
 }: {
   kind: string;
   owner_type: "hub" | "host";
   owner_id: string;
   limit?: number;
   lease_ms?: number;
+  input_not_before_key?: string;
 }): Promise<LroSummary[]> {
   await expireDueLros({ kind });
   await ensureLroSchema();
@@ -345,6 +347,11 @@ export async function claimLroOps({
           WHERE kind=$1
             AND dismissed_at IS NULL
             AND expires_at > now()
+            AND (
+              $6::text IS NULL
+              OR input ->> $6 IS NULL
+              OR (input ->> $6)::timestamptz <= now()
+            )
             AND (
               status='queued'
               OR (
@@ -369,7 +376,14 @@ export async function claimLroOps({
         WHERE op_id IN (SELECT op_id FROM candidate)
         RETURNING *
       `,
-      [kind, lease_ms, limit, owner_type, owner_id],
+      [
+        kind,
+        lease_ms,
+        limit,
+        owner_type,
+        owner_id,
+        input_not_before_key ?? null,
+      ],
     );
     await client.query("COMMIT");
     return rows as LroSummary[];

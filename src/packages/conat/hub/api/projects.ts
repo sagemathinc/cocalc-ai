@@ -583,6 +583,7 @@ export interface Projects {
     assignment_id: string;
     items: CourseCollectAssignmentItem[];
     options?: CopyOptions;
+    run_at?: string;
   }) => Promise<CourseCollectAssignmentResult>;
 
   inspectPublicPath: (opts: {

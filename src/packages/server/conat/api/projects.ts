@@ -317,12 +317,14 @@ export async function collectAssignment({
   assignment_id,
   items,
   options,
+  run_at,
 }: {
   account_id?: string;
   course_project_id: string;
   assignment_id: string;
   items: CourseCollectAssignmentItem[];
   options?: CopyOptions;
+  run_at?: string;
 }): Promise<CourseCollectAssignmentResult> {
   if (!account_id) {
     throw new Error("user must be signed in");
@@ -333,6 +335,14 @@ export async function collectAssignment({
     normalizedItems.map((item) => item.student_project_id),
   )) {
     await assertCollab({ account_id, project_id });
+  }
+  let normalizedRunAt: string | undefined;
+  if (run_at != null) {
+    const date = new Date(run_at);
+    if (!Number.isFinite(date.getTime())) {
+      throw new Error("run_at must be a valid date");
+    }
+    normalizedRunAt = date.toISOString();
   }
   const op = await createLro({
     kind: COURSE_COLLECT_ASSIGNMENT_LRO_KIND,
@@ -345,7 +355,11 @@ export async function collectAssignment({
       assignment_id,
       items: normalizedItems,
       options: options ?? { recursive: true },
+      ...(normalizedRunAt ? { run_at: normalizedRunAt } : {}),
     },
+    dedupe_key: normalizedRunAt
+      ? `course-collect:${course_project_id}:${assignment_id}:${normalizedRunAt}`
+      : undefined,
     status: "queued",
   });
   try {

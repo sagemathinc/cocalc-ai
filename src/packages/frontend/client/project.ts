@@ -163,6 +163,7 @@ export class ProjectClient {
     assignment_id: string;
     items: CourseCollectAssignmentItem[];
     options?: CopyOptions;
+    run_at?: string;
   }): Promise<CourseCollectAssignmentResult> => {
     return await this.client.conat_client.hub.projects.collectAssignment(opts);
   };
