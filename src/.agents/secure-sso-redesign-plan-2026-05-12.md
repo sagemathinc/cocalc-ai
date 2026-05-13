@@ -438,6 +438,22 @@ Do not ship the new SSO implementation until:
 - provider secrets are encrypted at rest,
 - focused tests cover the main account-creation and sign-in policy decisions.
 
+Focused verification on 2026-05-12:
+
+- Product-access gating for unverified password accounts is not complete.
+  Signup policy computes whether an account-creation path is trusted, but that
+  trust result is not persisted as an account fact and is not centrally enforced
+  by project creation, API-key creation, Codex/ACP, billing, invitations, or
+  public-sharing paths.
+- Sites without an email backend need an explicit exception model. If
+  `verify_emails` is disabled or email sending is unavailable, email
+  verification cannot be the release gate; registration-token-created accounts
+  and admin-created accounts should satisfy the trusted-account requirement.
+- SSO provider secrets are release-safe only if provider rows stay non-secret.
+  Public Google OIDC client secrets belong in encrypted site settings; SAML
+  provider rows should store public IdP metadata/certificates only and reject
+  private keys, OAuth client secrets, passwords, and tokens.
+
 ## Relationship To Current Security Audit
 
 This is a follow-up to `SEC-REG-001`, but it should run after
