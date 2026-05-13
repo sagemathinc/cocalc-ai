@@ -59,6 +59,28 @@ test("emitSuccess wraps oversized key-value cells into continuation rows", () =>
   assert.ok(!output.includes("x".repeat(120)));
 });
 
+test("emitSuccess left-aligns numeric-looking key-value cells", () => {
+  const output = withStdoutColumns(60, () =>
+    withConsoleCapture(() => {
+      emitSuccess(
+        {
+          globals: { output: "table" },
+          apiBaseUrl: "http://localhost:13004",
+          accountId: "acct-1",
+        },
+        "demo",
+        {
+          objects: "882",
+          db_projects: "7",
+        },
+      );
+    }),
+  );
+
+  assert.match(output, /│ objects\s+│ 882\s+│/);
+  assert.match(output, /│ db_projects\s+│ 7\s+│/);
+});
+
 test("printArrayTable wraps oversized multi-column cells generically", () => {
   const output = withStdoutColumns(70, () =>
     withConsoleCapture(() => {

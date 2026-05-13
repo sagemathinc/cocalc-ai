@@ -93,14 +93,11 @@ function summarizeR2Audit(result: any) {
     scanned_at: result.scanned_at,
     cache_hit: result.cache?.hit ?? false,
     cache_expires_at: result.cache?.expires_at ?? "",
-    objects: `${result.object_count ?? 0}`,
+    objects: result.object_count ?? 0,
     total: bytes(result.total_bytes),
     db_purpose: result.database?.purpose ?? "",
     db_region: result.database?.region ?? "",
-    db_projects:
-      result.database?.assigned_projects == null
-        ? ""
-        : `${result.database.assigned_projects}`,
+    db_projects: result.database?.assigned_projects ?? "",
     warnings: (result.warnings ?? []).join(" "),
     notes: (result.notes ?? []).join(" "),
   };

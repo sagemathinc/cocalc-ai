@@ -161,6 +161,7 @@ function printKeyValueTable(data: Record<string, unknown>): void {
   const table = new AsciiTable3("Result");
   table.setStyle("unicode-round");
   table.setHeading("Field", "Value");
+  table.setAlignLeft(1).setAlignLeft(2);
   const keyWidth = Math.min(
     MAX_KEY_COLUMN_WIDTH,
     Math.max(5, ...Object.keys(data).map((key) => key.length)),
