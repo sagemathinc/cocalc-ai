@@ -1229,6 +1229,25 @@ export async function auditCloudflareR2Bucket({
   return result;
 }
 
+export async function getCachedCloudflareR2Audit({
+  bucket,
+  prefix,
+  max_age_minutes,
+}: {
+  bucket: string;
+  prefix?: string;
+  max_age_minutes?: number;
+}): Promise<CloudflareR2AuditResult | undefined> {
+  const { bucketName, accountId } = await getR2S3Auth(bucket);
+  await ensureAuditCacheTable();
+  return await getCachedAudit({
+    accountId,
+    bucket: bucketName,
+    prefix: normalizePrefix(prefix) ?? "",
+    maxAgeMinutes: cacheMaxAgeMinutes(max_age_minutes),
+  });
+}
+
 async function publishAuditLroSummary(summary?: LroSummary): Promise<void> {
   if (!summary) return;
   await publishLroSummary({

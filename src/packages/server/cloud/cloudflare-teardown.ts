@@ -11,9 +11,14 @@ import { listBuckets as listR2Buckets } from "@cocalc/server/project-backup/r2";
 import { updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import {
+  getCachedCloudflareR2Audit,
+  type CloudflareR2AuditResult,
+} from "@cocalc/server/cloud/cloudflare-r2-usage";
 
 const TABLE = "cloudflare_teardown_plans";
 const PLAN_TTL_MS = 10 * 60 * 1000;
+const R2_AUDIT_CACHE_MAX_AGE_MINUTES = 24 * 60;
 
 type CloudflareResponse<T> = {
   success?: boolean;
@@ -81,6 +86,10 @@ export type CloudflareTeardownPlanSummary = {
     projects_with_backups: number;
     r2_bucket_records: number;
     cloudflare_r2_buckets: number;
+    r2_buckets_with_usage?: number;
+    r2_buckets_missing_usage?: number;
+    r2_objects?: number;
+    r2_total_bytes?: number;
   };
   warnings: string[];
   notes: string[];
@@ -490,6 +499,7 @@ async function classifyR2Buckets(opts: {
   names: string[];
   includeR2: boolean;
   bucketPrefix?: string;
+  warnings: string[];
 }): Promise<CloudflareTeardownResource[]> {
   if (!opts.includeR2) return [];
   const dbBuckets = await pool().query<{ name: string }>(
@@ -497,30 +507,89 @@ async function classifyR2Buckets(opts: {
   );
   const known = new Set(dbBuckets.rows.map((row) => row.name));
   const prefix = clean(opts.bucketPrefix);
-  return opts.names.map((name) => {
+  const resources: CloudflareTeardownResource[] = [];
+  for (const name of opts.names) {
+    let audit: CloudflareR2AuditResult | undefined;
+    try {
+      audit = await getCachedCloudflareR2Audit({
+        bucket: name,
+        max_age_minutes: R2_AUDIT_CACHE_MAX_AGE_MINUTES,
+      });
+    } catch (err) {
+      opts.warnings.push(`could not read R2 audit cache for '${name}': ${err}`);
+    }
+    const details = audit ? r2AuditDetails(audit) : { usage_cache: "missing" };
+    if (!audit) {
+      opts.warnings.push(
+        `no recent R2 audit cache for '${name}'; run 'cocalc cloudflare r2 audit ${name} --refresh' before full R2 teardown`,
+      );
+    }
     if (known.has(name)) {
-      return {
+      resources.push({
         kind: "r2_bucket",
         classification: "safe_owned",
         name,
         reason: "bucket is referenced by CoCalc bucket metadata",
-      };
+        details,
+      });
+      continue;
     }
     if (prefix && name.startsWith(`${prefix}-`)) {
-      return {
+      resources.push({
         kind: "r2_bucket",
         classification: "probably_owned",
         name,
         reason: `bucket name starts with configured prefix '${prefix}-'`,
-      };
+        details,
+      });
+      continue;
     }
-    return {
+    resources.push({
       kind: "r2_bucket",
       classification: "unknown",
       name,
       reason: "bucket is not referenced by CoCalc metadata",
-    };
-  });
+      details,
+    });
+  }
+  return resources;
+}
+
+function usageGroupObjects(group?: { object_count?: number }): number {
+  return Number(group?.object_count ?? 0);
+}
+
+function usageGroupBytes(group?: { total_bytes?: number }): number {
+  return Number(group?.total_bytes ?? 0);
+}
+
+function r2AuditDetails(
+  audit: CloudflareR2AuditResult,
+): Record<string, unknown> {
+  const rusticRepos = audit.rustic_repos ?? [];
+  return {
+    usage_cache: audit.cache?.hit ? "hit" : "scan",
+    scanned_at: audit.scanned_at,
+    object_count: audit.object_count,
+    total_bytes: audit.total_bytes,
+    rustic_repos: rusticRepos.length,
+    rustic_objects: rusticRepos.reduce(
+      (total, repo) => total + usageGroupObjects(repo),
+      0,
+    ),
+    rustic_total_bytes: rusticRepos.reduce(
+      (total, repo) => total + usageGroupBytes(repo),
+      0,
+    ),
+    project_backup_index_objects: usageGroupObjects(audit.project_backup_index),
+    project_backup_index_bytes: usageGroupBytes(audit.project_backup_index),
+    rootfs_image_objects: usageGroupObjects(audit.rootfs_images),
+    rootfs_image_bytes: usageGroupBytes(audit.rootfs_images),
+    bay_backup_objects: usageGroupObjects(audit.bay_backup_files),
+    bay_backup_bytes: usageGroupBytes(audit.bay_backup_files),
+    other_objects: usageGroupObjects(audit.other),
+    other_bytes: usageGroupBytes(audit.other),
+  };
 }
 
 function summarizePlan(args: {
@@ -590,6 +659,10 @@ function rowToPlan(row: any): CloudflareTeardownPlan {
       projects_with_backups: 0,
       r2_bucket_records: 0,
       cloudflare_r2_buckets: 0,
+      r2_buckets_with_usage: 0,
+      r2_buckets_missing_usage: 0,
+      r2_objects: 0,
+      r2_total_bytes: 0,
     },
     warnings: planJson.warnings ?? [],
     notes: planJson.notes ?? [],
@@ -675,11 +748,28 @@ export async function createCloudflareTeardownPlan(opts: {
       names: r2.names,
       includeR2,
       bucketPrefix: clean(settings.r2_bucket_prefix),
+      warnings,
     })),
   ];
   if (includeR2) {
+    const r2Resources = resources.filter(
+      (resource) => resource.kind === "r2_bucket",
+    );
+    counts.r2_buckets_with_usage = r2Resources.filter(
+      (resource) => resource.details?.usage_cache !== "missing",
+    ).length;
+    counts.r2_buckets_missing_usage =
+      r2Resources.length - counts.r2_buckets_with_usage;
+    counts.r2_objects = r2Resources.reduce(
+      (total, resource) => total + Number(resource.details?.object_count ?? 0),
+      0,
+    );
+    counts.r2_total_bytes = r2Resources.reduce(
+      (total, resource) => total + Number(resource.details?.total_bytes ?? 0),
+      0,
+    );
     notes.push(
-      "R2 bucket object counts are not computed in Phase 1; R2 apply remains unavailable.",
+      "R2 bucket usage comes from recent cached S3 audit data; missing buckets must be audited before full R2 teardown.",
     );
   }
   const safe = resources.filter(

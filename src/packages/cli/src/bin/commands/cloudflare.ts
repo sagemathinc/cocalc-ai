@@ -26,6 +26,10 @@ function summarizePlan(plan: any) {
     projects_with_backups: summary.counts?.projects_with_backups ?? 0,
     r2_bucket_records: summary.counts?.r2_bucket_records ?? 0,
     cloudflare_r2_buckets: summary.counts?.cloudflare_r2_buckets ?? 0,
+    r2_buckets_with_usage: summary.counts?.r2_buckets_with_usage ?? "",
+    r2_buckets_missing_usage: summary.counts?.r2_buckets_missing_usage ?? "",
+    r2_objects: summary.counts?.r2_objects ?? "",
+    r2_total: bytes(summary.counts?.r2_total_bytes),
     confirmation_text: plan.confirmation_text ?? summary.confirmation_text,
     warnings: (summary.warnings ?? []).join(" "),
     notes: (summary.notes ?? []).join(" "),
@@ -39,6 +43,9 @@ function summarizeResources(plan: any) {
     classification: resource.classification,
     id: resource.id ?? "",
     name: resource.name ?? "",
+    objects: resource.details?.object_count ?? "",
+    total: bytes(resource.details?.total_bytes),
+    scanned_at: resource.details?.scanned_at ?? "",
     reason: resource.reason ?? "",
   }));
 }

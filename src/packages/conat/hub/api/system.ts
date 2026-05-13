@@ -219,6 +219,10 @@ export interface CloudflareTeardownPlanSummary {
     projects_with_backups: number;
     r2_bucket_records: number;
     cloudflare_r2_buckets: number;
+    r2_buckets_with_usage?: number;
+    r2_buckets_missing_usage?: number;
+    r2_objects?: number;
+    r2_total_bytes?: number;
   };
   warnings: string[];
   notes: string[];
