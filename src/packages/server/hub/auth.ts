@@ -78,6 +78,10 @@ import {
   getGoogleSsoSettingsState,
 } from "@cocalc/database/settings/google-sso";
 import {
+  applyDomainPoliciesToPassports,
+  getEnabledSsoDomainPolicies,
+} from "@cocalc/database/settings/sso-policies";
+import {
   PassportLoginOpts,
   PassportStrategyDB,
   PassportStrategyDBConfig,
@@ -237,6 +241,10 @@ export class PassportManager {
         }
         this.passports[setting.strategy] = setting;
       }
+      applyDomainPoliciesToPassports(
+        this.passports,
+        await getEnabledSsoDomainPolicies(),
+      );
       return this.passports;
     } catch (err) {
       logger.debug(`error getting passport settings -- ${err}`);

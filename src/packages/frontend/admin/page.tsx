@@ -17,6 +17,7 @@ import { NewsAdminPage } from "./news/page";
 import { BayOpsAdmin } from "./bay-ops";
 import { ManagedEgressAdminOverview } from "./managed-egress-overview";
 import { ProjectBackupShardsAdmin } from "./project-backup-shards";
+import { SsoAdmin } from "./sso";
 import {
   getAdminUrlPath,
   normalizeAdminRoute,
@@ -196,6 +197,16 @@ export function AdminPage({
         </div>
       ),
       children: <RegistrationToken />,
+    },
+    {
+      key: "sso",
+      label: (
+        <div style={headerStyle}>
+          <Icon name="sign-in" style={{ marginRight: "8px" }} /> SSO Providers &
+          Domains
+        </div>
+      ),
+      children: <SsoAdmin />,
     },
     {
       key: "membership-tiers",

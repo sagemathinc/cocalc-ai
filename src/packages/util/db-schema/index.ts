@@ -88,6 +88,7 @@ import "./shopping-cart-items";
 import "./site-settings";
 import "./site-whitelabeling";
 import "./software-licenses";
+import "./sso";
 import "./statements";
 import "./stats";
 import "./subscriptions";

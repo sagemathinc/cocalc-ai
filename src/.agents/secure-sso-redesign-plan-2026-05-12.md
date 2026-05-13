@@ -322,9 +322,14 @@ site secret encryption mechanism, not plaintext config rows.
 
 ### Phase 4: Domain Policy UI
 
-1. Add admin UI for domain auth policies.
-2. Add sign-in UI support for "Use SSO for this email/domain."
-3. Add optional domain policy for requiring CoCalc-native 2FA.
+1. Add admin UI for domain auth policies. Status: first-class
+   `sso_providers` and `sso_domain_policies` tables plus an Administration
+   panel exist.
+2. Add sign-in UI support for "Use SSO for this email/domain." Status:
+   implemented for enabled `sso_required` domain policies that point at a
+   configured provider.
+3. Add optional domain policy for requiring CoCalc-native 2FA. Status: stored
+   in the policy model, not enforced yet.
 4. Add clear error/redirect responses for password attempts on SSO-required
    domains.
 5. Add tests for domain normalization, SSO precedence, and domain-level CoCalc
@@ -416,5 +421,5 @@ Recommended order:
 1. Finish `SEC-ROOTFS-001`.
 2. Return to SSO as `SEC-SSO-001`.
 3. Implement Phase 1 policy boundary and provider deletion first.
-4. Add first-class domain/provider admin UI next; Google no longer depends on
-   Passport.js.
+4. Enforce domain-level CoCalc 2FA/signup mode next; Google no longer depends
+   on Passport.js and the provider/domain UI skeleton is in place.

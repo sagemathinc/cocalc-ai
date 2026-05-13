@@ -8,6 +8,10 @@ import type { Strategy } from "@cocalc/util/types/sso";
 import { PRIMARY_SSO } from "@cocalc/util/types/passport-types";
 import { ssoDispayedName } from "@cocalc/util/auth";
 import { GOOGLE_SSO_STRATEGY, getGoogleSsoSettingsState } from "./google-sso";
+import {
+  applyDomainPoliciesToStrategyList,
+  getEnabledSsoDomainPolicies,
+} from "./sso-policies";
 
 const CACHE_TTL_MS = process.env.NODE_ENV === "development" ? 3_000 : 15_000;
 const SUPPORTED_PUBLIC_SSO = ["google"] as const;
@@ -26,7 +30,10 @@ export default async function getStrategies(): Promise<Strategy[]> {
   if (cachedStrategies && cachedStrategies.expires > Date.now()) {
     return cachedStrategies.value;
   }
-  const googleSso = await getGoogleSsoSettingsState();
+  const [googleSso, domainPolicies] = await Promise.all([
+    getGoogleSsoSettingsState(),
+    getEnabledSsoDomainPolicies(),
+  ]);
   const pool = getPool();
   // entries in "conf" were used before the "info" col existed. this is only for backwards compatibility.
   const { rows } = await pool.query(`
@@ -71,11 +78,12 @@ export default async function getStrategies(): Promise<Strategy[]> {
       doNotHide: false,
     });
   }
+  const value = applyDomainPoliciesToStrategyList(strategies, domainPolicies);
   cachedStrategies = {
     expires: Date.now() + CACHE_TTL_MS,
-    value: strategies,
+    value,
   };
-  return strategies;
+  return value;
 }
 
 export const COLORS = {
