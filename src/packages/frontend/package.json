@@ -160,7 +160,6 @@
     "use-debounce": "^7.0.1",
     "use-resize-observer": "^9.1.0",
     "video-extensions": "^1.2.0",
-    "webpack": "^5.106.2",
     "zlibjs": "^0.3.1"
   },
   "scripts": {
