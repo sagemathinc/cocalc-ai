@@ -30,9 +30,11 @@ import {
   mkdir,
   readFile,
   readdir,
+  rm,
   stat,
   realpath,
   writeFile,
+  chmod,
 } from "node:fs/promises";
 import { getCoCalcMounts, COCALC_SRC } from "./mounts";
 import { fileServerClient, setQuota } from "./filesystem";
@@ -70,6 +72,11 @@ import {
   DEFAULT_PROJECT_RUNTIME_UID,
 } from "@cocalc/util/project-runtime";
 import { getConatClient } from "./conat-client";
+import {
+  normalizeProjectSecretName,
+  PROJECT_SECRETS_MOUNT_PATH,
+} from "@cocalc/util/project-secrets";
+import { tmpdir } from "node:os";
 
 const logger = getLogger("project-runner:podman");
 // Restores can be large; allow the RPC to stay open while rustic runs.
@@ -89,6 +96,7 @@ const PROJECT_BUNDLE_ENTRY_CANDIDATES = [
   ["bundle", "bundle", "index.js"],
 ] as const;
 const DEFAULT_PROJECT_BUNDLES_ROOT = "/opt/cocalc/project-bundles";
+const PROJECT_SECRETS_HOST_ROOT = join(tmpdir(), "cocalc-project-secrets");
 
 // if computing status of a project shows pod is
 // somehow messed up, this will cleanly kill it.  It's
@@ -99,6 +107,41 @@ const STOP_ON_STATUS_ERROR = false;
 
 // projects we are definitely starting right now
 export const starting = new Set<string>();
+
+function projectSecretsHostPath(project_id: string): string {
+  return join(PROJECT_SECRETS_HOST_ROOT, project_id);
+}
+
+async function cleanupProjectSecretsHostPath(
+  project_id: string,
+): Promise<void> {
+  await rm(projectSecretsHostPath(project_id), {
+    recursive: true,
+    force: true,
+  });
+}
+
+async function writeProjectSecretsHostPath({
+  project_id,
+  secrets,
+}: {
+  project_id: string;
+  secrets?: Record<string, string>;
+}): Promise<string> {
+  const path = projectSecretsHostPath(project_id);
+  await mkdir(PROJECT_SECRETS_HOST_ROOT, { recursive: true, mode: 0o700 });
+  await chmod(PROJECT_SECRETS_HOST_ROOT, 0o700);
+  await cleanupProjectSecretsHostPath(project_id);
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  await chmod(path, 0o700);
+  for (const [rawName, value] of Object.entries(secrets ?? {})) {
+    const name = normalizeProjectSecretName(rawName);
+    const file = join(path, name);
+    await writeFile(file, value, { mode: 0o400 });
+    await chmod(file, 0o400);
+  }
+  return path;
+}
 
 type ProgressEvent = {
   type: string;
@@ -1116,6 +1159,14 @@ export async function start({
       progress: 80,
       desc: "configured quotas",
     });
+    const projectSecretsPath = await timings.measure(
+      "prepare_project_secrets",
+      async () =>
+        await writeProjectSecretsHostPath({
+          project_id,
+          secrets: config?.secrets,
+        }),
+    );
     const configuredSshPort =
       Number.isInteger(config?.ssh_port) && (config?.ssh_port ?? 0) > 0
         ? Number(config?.ssh_port)
@@ -1267,6 +1318,13 @@ export async function start({
         `type=tmpfs,tmpfs-size=${config.tmp},tmpfs-mode=1777,destination=/tmp`,
       );
     }
+    args.push(
+      mountArg({
+        source: projectSecretsPath,
+        target: PROJECT_SECRETS_MOUNT_PATH,
+        readOnly: true,
+      }),
+    );
 
     for (const key in env) {
       args.push("-e", `${key}=${env[key]}`);
@@ -1312,6 +1370,12 @@ export async function start({
     };
   } catch (err) {
     report({ type: "start-project", error: err });
+    await cleanupProjectSecretsHostPath(project_id).catch((cleanupErr) => {
+      logger.warn("start: failed to clean up project secrets after error", {
+        project_id,
+        err: `${cleanupErr}`,
+      });
+    });
     await unmountAllRootFs(project_id).catch((unmountErr) => {
       logger.warn("start: failed to unmount rootfs after startup error", {
         project_id,
@@ -1412,6 +1476,7 @@ export async function stop({
       // stale merged mount can survive a failed start or snapshot restore and
       // mask the correct lowerdir on the next start.
       await unmountAllRootFs(project_id);
+      await cleanupProjectSecretsHostPath(project_id);
     } catch (err) {
       logger.debug("stop", { err });
       throw err;

@@ -40,6 +40,8 @@ export interface Configuration {
   authorized_keys?: string;
   // extra variables that get merged into the environment of the project.
   env?: { [key: string]: string };
+  // Project secrets mounted read-only at COCALC_SECRETS in the runtime.
+  secrets?: { [key: string]: string };
   // cpu priority: 1, 2 or 3, with 3 being highest
   cpu?: number;
   // memory limit in BYTES

@@ -441,6 +441,20 @@ export type ProjectLauncherSettings = Record<string, any> | null;
 export type ProjectRegion = string | null;
 export type ProjectCreated = Date | string | null;
 export type ProjectEnv = Record<string, string> | null;
+export interface ProjectSecretMetadata {
+  project_id: string;
+  name: string;
+  value_bytes: number;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+export interface CopyProjectSecretsResult {
+  copied: string[];
+  conflicts: string[];
+  missing: string[];
+}
 export interface ProjectRootfsConfig {
   image: string;
   image_id?: string | null;
@@ -474,6 +488,10 @@ export const projects = {
   getProjectCreated: authFirstRequireAccount,
   getProjectEnv: authFirstRequireAccount,
   setProjectEnv: authFirstRequireAccount,
+  listProjectSecrets: authFirstRequireAccount,
+  setProjectSecret: authFirstRequireAccount,
+  deleteProjectSecret: authFirstRequireAccount,
+  copyProjectSecrets: authFirstRequireAccount,
   getProjectRootfs: authFirstRequireAccount,
   getProjectSettings: authFirstRequireAccount,
   getProjectCourseInfo: authFirstRequireAccount,
@@ -650,6 +668,32 @@ export interface Projects {
     project_id: string;
     env: ProjectEnv;
   }) => Promise<void>;
+
+  listProjectSecrets: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectSecretMetadata[]>;
+
+  setProjectSecret: (opts: {
+    account_id?: string;
+    project_id: string;
+    name: string;
+    value: string;
+  }) => Promise<ProjectSecretMetadata>;
+
+  deleteProjectSecret: (opts: {
+    account_id?: string;
+    project_id: string;
+    name: string;
+  }) => Promise<{ deleted: boolean }>;
+
+  copyProjectSecrets: (opts: {
+    account_id?: string;
+    source_project_id: string;
+    target_project_id: string;
+    names?: string[];
+    overwrite?: boolean;
+  }) => Promise<CopyProjectSecretsResult>;
 
   getProjectRootfs: (opts: {
     account_id?: string;

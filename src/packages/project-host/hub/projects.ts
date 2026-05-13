@@ -547,6 +547,7 @@ type StartMetadata = {
   authorized_keys?: string;
   run_quota?: any;
   env?: ProjectEnv;
+  secrets?: Record<string, string>;
 };
 
 type LocalProjectOptions = CreateProjectOptions & {
@@ -605,12 +606,14 @@ async function resolveStartMetadata({
     run_quota: run_quota ?? (existing as any)?.run_quota,
     image: image ?? existing?.image ?? undefined,
     env: (existing as any)?.env,
+    secrets: (existing as any)?.secrets,
   };
   const needsMaster =
     !resolved.image ||
     resolved.authorized_keys == null ||
     resolved.run_quota == null ||
     resolved.env == null ||
+    resolved.secrets == null ||
     !existing?.title;
   if (needsMaster) {
     try {
@@ -625,6 +628,7 @@ async function resolveStartMetadata({
             resolved.authorized_keys ?? authoritative.authorized_keys,
           run_quota: resolved.run_quota ?? authoritative.run_quota,
           env: resolved.env ?? authoritative.env,
+          secrets: resolved.secrets ?? authoritative.secrets,
         };
       }
     } catch (err) {
@@ -769,7 +773,7 @@ async function getRunnerConfig(
   project_id: string,
   resolved: Pick<
     StartMetadata,
-    "image" | "authorized_keys" | "run_quota" | "env"
+    "image" | "authorized_keys" | "run_quota" | "env" | "secrets"
   >,
   opts?: {
     restore?: "none" | "auto" | "required";
@@ -808,6 +812,7 @@ async function getRunnerConfig(
     ssh_proxy_public_key,
     run_quota,
     env: resolved.env ?? undefined,
+    secrets: resolved.secrets ?? undefined,
     restore: opts?.restore,
     restore_backup_id: opts?.restore_backup_id,
     lro_op_id: opts?.lro_op_id,
@@ -1255,6 +1260,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
             authorized_keys: startMetadata.authorized_keys,
             run_quota: startMetadata.run_quota,
             env: startMetadata.env,
+            secrets: startMetadata.secrets,
           },
           {
             restore,
@@ -1306,6 +1312,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
                 authorized_keys: startMetadata.authorized_keys,
                 run_quota: startMetadata.run_quota,
                 env: startMetadata.env,
+                secrets: startMetadata.secrets,
               },
               {
                 restore,

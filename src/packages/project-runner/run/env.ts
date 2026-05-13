@@ -10,6 +10,10 @@ import {
   DEFAULT_PROJECT_RUNTIME_UID,
   DEFAULT_PROJECT_RUNTIME_USER,
 } from "@cocalc/util/project-runtime";
+import {
+  PROJECT_SECRETS_ENV,
+  PROJECT_SECRETS_MOUNT_PATH,
+} from "@cocalc/util/project-secrets";
 
 // where the project places all its data, relative to HOME. This used by ".smc"
 export const COCALC_PROJECT_CACHE = ".cache/cocalc/project";
@@ -158,6 +162,7 @@ export async function getEnvironment({
     // is selected in run/podman.ts.
     CONAT_SERVER: normalizeProjectContainerConatServer(conatServer),
     COCALC_SECRET_TOKEN: secretTokenPath(HOME),
+    [PROJECT_SECRETS_ENV]: PROJECT_SECRETS_MOUNT_PATH,
     BASE_PATH: base_path,
     DEBIAN_FRONTEND: "noninteractive",
     COCALC_PROXY_HOST: "0.0.0.0",

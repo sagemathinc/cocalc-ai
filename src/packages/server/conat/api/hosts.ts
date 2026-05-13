@@ -59,6 +59,7 @@ import type {
   ProjectCopyState,
   ProjectEnv,
 } from "@cocalc/conat/hub/api/projects";
+import { getProjectSecretsForRuntime } from "@cocalc/server/projects/project-secrets";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import centralLog from "@cocalc/database/postgres/central-log";
@@ -1808,6 +1809,7 @@ export async function getProjectStartMetadata({
   authorized_keys?: string;
   run_quota?: any;
   env?: ProjectEnv;
+  secrets?: Record<string, string>;
 }> {
   if (!host_id) {
     throw new Error("host_id must be specified");
@@ -1849,6 +1851,7 @@ export async function getProjectStartMetadataLocal({
   authorized_keys?: string;
   run_quota?: any;
   env?: ProjectEnv;
+  secrets?: Record<string, string>;
 } | null> {
   if (!host_id) {
     throw new Error("host_id must be specified");
@@ -1886,6 +1889,7 @@ export async function getProjectStartMetadataLocal({
     authorized_keys: authorized_keys || undefined,
     run_quota: row.run_quota ?? undefined,
     env: row.env ?? undefined,
+    secrets: await getProjectSecretsForRuntime({ project_id }),
   };
 }
 

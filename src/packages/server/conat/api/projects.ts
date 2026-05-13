@@ -100,6 +100,8 @@ import type {
   ProjectRegion,
   ProjectCreated,
   ProjectEnv,
+  ProjectSecretMetadata,
+  CopyProjectSecretsResult,
   ProjectCourseInfo,
   ProjectRootfsConfig,
   ProjectQuotaSettings,
@@ -111,6 +113,13 @@ import type {
   ProjectRunQuota,
   WorkspaceSshConnectionInfo,
 } from "@cocalc/conat/hub/api/projects";
+import { validateProjectEnv } from "@cocalc/util/project-secrets";
+import {
+  copyProjectSecrets as copyProjectSecretsInDb,
+  deleteProjectSecret as deleteProjectSecretInDb,
+  listProjectSecrets as listProjectSecretsInDb,
+  setProjectSecret as setProjectSecretInDb,
+} from "@cocalc/server/projects/project-secrets";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getMembershipTierById } from "@cocalc/server/membership/tiers";
 import { listClaimableMembershipPackagesForAccount } from "@cocalc/server/membership/packages";
@@ -880,6 +889,7 @@ export async function setProjectEnv({
   project_id: string;
   env: ProjectEnv;
 }): Promise<void> {
+  validateProjectEnv(env);
   await assertCollab({ account_id, project_id });
   await withProjectRehomeWriteFence({
     project_id,
@@ -895,6 +905,113 @@ export async function setProjectEnv({
     project_id,
     fields: ["env"],
   });
+}
+
+function requireAccountId(account_id?: string): string {
+  const value = `${account_id ?? ""}`.trim();
+  if (!value) {
+    throw new Error("must be signed in");
+  }
+  return value;
+}
+
+export async function listProjectSecrets({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<ProjectSecretMetadata[]> {
+  const actor = requireAccountId(account_id);
+  await assertCollab({ account_id: actor, project_id });
+  return await listProjectSecretsInDb({ project_id });
+}
+
+export async function setProjectSecret({
+  account_id,
+  project_id,
+  name,
+  value,
+}: {
+  account_id?: string;
+  project_id: string;
+  name: string;
+  value: string;
+}): Promise<ProjectSecretMetadata> {
+  const actor = requireAccountId(account_id);
+  await assertCollab({ account_id: actor, project_id });
+  const result = await setProjectSecretInDb({
+    project_id,
+    name,
+    value,
+    account_id: actor,
+  });
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["secrets"],
+  });
+  return result;
+}
+
+export async function deleteProjectSecret({
+  account_id,
+  project_id,
+  name,
+}: {
+  account_id?: string;
+  project_id: string;
+  name: string;
+}): Promise<{ deleted: boolean }> {
+  const actor = requireAccountId(account_id);
+  await assertCollab({ account_id: actor, project_id });
+  const deleted = await deleteProjectSecretInDb({
+    project_id,
+    name,
+    account_id: actor,
+  });
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["secrets"],
+  });
+  return { deleted };
+}
+
+export async function copyProjectSecrets({
+  account_id,
+  source_project_id,
+  target_project_id,
+  names,
+  overwrite,
+}: {
+  account_id?: string;
+  source_project_id: string;
+  target_project_id: string;
+  names?: string[];
+  overwrite?: boolean;
+}): Promise<CopyProjectSecretsResult> {
+  const actor = requireAccountId(account_id);
+  await assertCollab({ account_id: actor, project_id: source_project_id });
+  await assertCollab({ account_id: actor, project_id: target_project_id });
+  const result = await copyProjectSecretsInDb({
+    source_project_id,
+    target_project_id,
+    names,
+    overwrite,
+    account_id: actor,
+  });
+  if (result.copied.length > 0) {
+    await Promise.all([
+      publishProjectDetailInvalidationBestEffort({
+        project_id: source_project_id,
+        fields: ["secrets"],
+      }),
+      publishProjectDetailInvalidationBestEffort({
+        project_id: target_project_id,
+        fields: ["secrets"],
+      }),
+    ]);
+  }
+  return result;
 }
 
 export async function getProjectSnapshotSchedule({
