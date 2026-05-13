@@ -457,7 +457,7 @@ export class AssignmentsActions {
       desc: `Copying assignment from ${student_name}`,
     });
     try {
-      await webapp_client.project_client.copyPathBetweenProjects({
+      const op = await webapp_client.project_client.copyPathBetweenProjects({
         src: {
           project_id: student_project_id,
           path: assignment.get("target_path"),
@@ -465,6 +465,27 @@ export class AssignmentsActions {
         dest: { project_id: store.get("course_project_id"), path: target_path },
         options: { recursive: true },
       });
+      const result = await waitForCourseCopyLro({
+        op,
+        dests: [
+          {
+            student_id,
+            project_id: store.get("course_project_id"),
+          },
+        ],
+        onSummary: (summary) => {
+          const progress = summary.progress_summary;
+          if (progress?.total) {
+            this.course_actions.set_activity({
+              id,
+              desc: `Copying assignment from ${student_name} (${progress.done ?? 0}/${progress.total} done)`,
+            });
+          }
+        },
+      });
+      if (result[student_id]) {
+        throw new Error(result[student_id]);
+      }
       // write their name to a file
       const name = store.get_student_name_extra(student_id);
       await this.write_text_file_to_course_project({
