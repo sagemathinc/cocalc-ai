@@ -13,6 +13,10 @@ import {
 } from "@cocalc/server/lro/lro-db";
 import { publishLroSummary } from "@cocalc/server/lro/stream";
 import { cancelCopiesByOpId } from "@cocalc/server/projects/copy-db";
+import {
+  cancelCourseCollectChildren,
+  COURSE_COLLECT_ASSIGNMENT_LRO_KIND,
+} from "@cocalc/server/projects/course-collect-worker";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getHostAccessForAccount,
@@ -149,6 +153,8 @@ export async function cancel({
   }
   if (row.kind === "copy-path-between-projects") {
     await cancelCopiesByOpId({ op_id, include_applying: true });
+  } else if (row.kind === COURSE_COLLECT_ASSIGNMENT_LRO_KIND) {
+    await cancelCourseCollectChildren({ op_id });
   }
 }
 

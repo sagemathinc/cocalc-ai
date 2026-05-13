@@ -10,11 +10,13 @@ import {
   claimLroOps,
   createLro,
   getLro,
+  listChildLro,
   touchLro,
   updateLro,
 } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { triggerCopyLroWorker } from "./copy-worker";
+import { cancelCopiesByOpId } from "./copy-db";
 
 const logger = getLogger("server:projects:course-collect-worker");
 
@@ -87,6 +89,10 @@ async function publishSummarySafe(
   }
 }
 
+function isTerminal(status?: string | null): status is LroStatus {
+  return TERMINAL_STATUSES.has(status as LroStatus);
+}
+
 async function updateParentProgress({
   op,
   results,
@@ -94,6 +100,10 @@ async function updateParentProgress({
   op: LroSummary;
   results: CourseCollectItemResult[];
 }): Promise<LroSummary | undefined> {
+  const current = await getLro(op.op_id);
+  if (isTerminal(current?.status)) {
+    return current;
+  }
   const input = op.input ?? {};
   const total = Array.isArray(input.items) ? input.items.length : 0;
   const progress_summary = {
@@ -130,10 +140,50 @@ async function updateParentProgress({
   return updated;
 }
 
-async function waitForChildCopy(op_id: string): Promise<LroSummary> {
+async function cancelChildCopy(op_id: string): Promise<LroSummary | undefined> {
+  await cancelCopiesByOpId({ op_id, include_applying: true });
+  const updated = await updateLro({
+    op_id,
+    status: "canceled",
+    error: "parent collection canceled",
+  });
+  await publishSummarySafe(updated, {
+    op_id,
+    when: "child-canceled",
+  });
+  return updated;
+}
+
+export async function cancelCourseCollectChildren({
+  op_id,
+}: {
+  op_id: string;
+}): Promise<void> {
+  const children = await listChildLro({ parent_id: op_id });
+  await Promise.all(
+    children
+      .filter((child) => child.kind === "copy-path-between-projects")
+      .filter((child) => !isTerminal(child.status))
+      .map((child) => cancelChildCopy(child.op_id)),
+  );
+}
+
+async function waitForChildCopy({
+  parent_op_id,
+  child_op_id,
+}: {
+  parent_op_id: string;
+  child_op_id: string;
+}): Promise<LroSummary> {
   const deadline = Date.now() + CHILD_COPY_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const summary = await getLro(op_id);
+    const parent = await getLro(parent_op_id);
+    if (parent?.status === "canceled" || parent?.status === "expired") {
+      const canceled = await cancelChildCopy(child_op_id);
+      if (canceled) return canceled;
+      throw new Error("parent collection canceled");
+    }
+    const summary = await getLro(child_op_id);
     if (summary && TERMINAL_STATUSES.has(summary.status)) {
       return summary;
     }
@@ -178,6 +228,7 @@ async function collectOne({
     scope_id: item.student_project_id,
     created_by: op.created_by ?? undefined,
     routing: "hub",
+    parent_id: op.op_id,
     input: {
       src: {
         project_id: item.student_project_id,
@@ -202,7 +253,10 @@ async function collectOne({
     when: "child-created",
   });
   triggerCopyLroWorker();
-  const summary = await waitForChildCopy(child.op_id);
+  const summary = await waitForChildCopy({
+    parent_op_id: op.op_id,
+    child_op_id: child.op_id,
+  });
   if (summary.status === "succeeded") {
     await writeStudentMarker({
       course_project_id,
@@ -282,6 +336,16 @@ async function handleCourseCollectOp(op: LroSummary): Promise<void> {
     }
     const parallel = Math.max(1, Math.min(DEFAULT_ITEM_PARALLEL, items.length));
     await Promise.all(Array.from({ length: parallel }, () => worker()));
+
+    const current = await getLro(op.op_id);
+    if (current?.status === "canceled" || current?.status === "expired") {
+      await cancelCourseCollectChildren({ op_id: op.op_id });
+      await publishSummarySafe(current, {
+        op_id: op.op_id,
+        when: "preserve-terminal-status",
+      });
+      return;
+    }
 
     const progress_summary = summarize(results, items.length);
     const failed =
