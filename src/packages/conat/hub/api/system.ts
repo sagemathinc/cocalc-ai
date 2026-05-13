@@ -112,6 +112,8 @@ export const system = {
   getCloudflareR2Usage: authFirst,
   auditCloudflareR2Bucket: authFirst,
   startCloudflareR2Audit: authFirst,
+  getCloudflareR2BayBackupCleanupPlan: authFirst,
+  startCloudflareR2BayBackupCleanup: authFirst,
   createProviderSetupChallenge: authFirst,
   getProviderSetupChallenge: authFirst,
   clearProviderSetupChallenge: authFirst,
@@ -348,6 +350,24 @@ export interface CloudflareR2AuditLroRef {
   scope_id: string;
   service: string;
   stream_name: string;
+}
+
+export interface CloudflareR2BayBackupCleanupPlan {
+  bucket: string;
+  prefix: string;
+  checked_at: string;
+  object_count: number;
+  total_bytes: number;
+  wal_object_count: number;
+  wal_total_bytes: number;
+  manifest_object_count: number;
+  manifest_total_bytes: number;
+  other_object_count: number;
+  other_total_bytes: number;
+  bay_prefixes: CloudflareR2AuditPrefix[];
+  confirmation_text: string;
+  warnings: string[];
+  notes: string[];
 }
 
 export interface AccountMembershipPortabilityRepairCounts {
@@ -1799,6 +1819,19 @@ export interface System {
     prefix?: string;
     refresh?: boolean;
     max_age_minutes?: number;
+  }) => Promise<CloudflareR2AuditLroRef>;
+
+  getCloudflareR2BayBackupCleanupPlan: (opts: {
+    account_id?: string;
+    bucket: string;
+    prefix?: string;
+  }) => Promise<CloudflareR2BayBackupCleanupPlan>;
+
+  startCloudflareR2BayBackupCleanup: (opts: {
+    account_id?: string;
+    bucket: string;
+    prefix?: string;
+    confirm: string;
   }) => Promise<CloudflareR2AuditLroRef>;
 
   createProviderSetupChallenge: (opts: {

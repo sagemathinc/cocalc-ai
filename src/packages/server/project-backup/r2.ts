@@ -1,6 +1,7 @@
 import getLogger from "@cocalc/backend/logger";
 import {
   deleteR2Object,
+  deleteR2ObjectsConcurrently,
   listR2BucketsViaS3,
   listR2ObjectKeys,
   putR2ObjectFromBuffer,
@@ -342,6 +343,38 @@ export async function deleteObject({
     },
     key,
     acceptMissing: true,
+  });
+}
+
+export async function deleteObjects({
+  endpoint,
+  accessKey,
+  secretKey,
+  bucket,
+  keys,
+  concurrency = 32,
+  onDeleted,
+}: {
+  endpoint: string;
+  accessKey: string;
+  secretKey: string;
+  bucket: string;
+  keys: string[];
+  concurrency?: number;
+  onDeleted?: (key: string) => void | Promise<void>;
+}): Promise<void> {
+  await deleteR2ObjectsConcurrently({
+    auth: {
+      endpoint,
+      accessKey,
+      secretKey,
+      bucket,
+      region: "auto",
+    },
+    keys,
+    concurrency,
+    acceptMissing: true,
+    onDeleted,
   });
 }
 

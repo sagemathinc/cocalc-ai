@@ -179,6 +179,52 @@ function r2AuditRusticRepoRows(result: any) {
   }));
 }
 
+function r2AuditRusticKindRows(result: any) {
+  const byKind = new Map<
+    string,
+    {
+      repos: number;
+      object_count: number;
+      total_bytes: number;
+      largest_repo: string;
+      largest_repo_bytes: number;
+    }
+  >();
+  for (const repo of result.rustic_repos ?? []) {
+    const kind = `${repo.kind ?? "unknown"}`;
+    const current = byKind.get(kind) ?? {
+      repos: 0,
+      object_count: 0,
+      total_bytes: 0,
+      largest_repo: "",
+      largest_repo_bytes: 0,
+    };
+    const totalBytes = Number(repo.total_bytes ?? 0);
+    current.repos += 1;
+    current.object_count += Number(repo.object_count ?? 0);
+    current.total_bytes += totalBytes;
+    if (totalBytes > current.largest_repo_bytes) {
+      current.largest_repo = `${repo.repo ?? ""}`;
+      current.largest_repo_bytes = totalBytes;
+    }
+    byKind.set(kind, current);
+  }
+  return [...byKind.entries()]
+    .map(([kind, row]) => ({
+      kind,
+      repos: row.repos,
+      objects: row.object_count,
+      total: bytes(row.total_bytes),
+      largest_repo: row.largest_repo,
+      largest_repo_total: bytes(row.largest_repo_bytes),
+    }))
+    .sort((a, b) => {
+      const aBytes = byKind.get(a.kind)?.total_bytes ?? 0;
+      const bBytes = byKind.get(b.kind)?.total_bytes ?? 0;
+      return bBytes - aBytes;
+    });
+}
+
 function r2AuditCategoryRows(result: any) {
   return (result.categories ?? []).map((row: any) => ({
     category: row.category,
@@ -205,6 +251,33 @@ function r2AuditObjectRows(result: any) {
 
 function r2AuditOtherPrefixRows(result: any) {
   return (result.other_prefixes ?? []).map((row: any) => ({
+    prefix: row.prefix,
+    objects: row.object_count,
+    total: bytes(row.total_bytes),
+  }));
+}
+
+function summarizeR2BayBackupCleanupPlan(plan: any) {
+  return {
+    bucket: plan.bucket,
+    prefix: plan.prefix,
+    checked_at: plan.checked_at,
+    objects: plan.object_count ?? 0,
+    total: bytes(plan.total_bytes),
+    wal_objects: plan.wal_object_count ?? 0,
+    wal_total: bytes(plan.wal_total_bytes),
+    manifest_objects: plan.manifest_object_count ?? 0,
+    manifest_total: bytes(plan.manifest_total_bytes),
+    other_objects: plan.other_object_count ?? 0,
+    other_total: bytes(plan.other_total_bytes),
+    confirmation_text: plan.confirmation_text ?? "",
+    warnings: (plan.warnings ?? []).join(" "),
+    notes: (plan.notes ?? []).join(" "),
+  };
+}
+
+function r2BayBackupCleanupPrefixRows(plan: any) {
+  return (plan.bay_prefixes ?? []).map((row: any) => ({
     prefix: row.prefix,
     objects: row.object_count,
     total: bytes(row.total_bytes),
@@ -263,6 +336,23 @@ function formatR2AuditProgress(progress: any): string | undefined {
   return `${phase} ${bucket}: ${objectLabel}, ${seen}${expected}${percent}, ${pages} pages${rate}${eta}`;
 }
 
+function formatR2BayBackupCleanupProgress(progress: any): string | undefined {
+  if (!progress || typeof progress !== "object") return undefined;
+  if (!progress.bucket && !progress.objects_seen && !progress.objects_deleted) {
+    return undefined;
+  }
+  const bucket = progress.bucket ? `${progress.bucket}` : "R2 bucket";
+  const prefix = progress.prefix ? `${progress.prefix}` : "bay-backups/";
+  const phase = progress.phase ?? "deleting";
+  const seen = Number(progress.objects_seen ?? 0);
+  const total = Number(progress.objects_total ?? seen);
+  const deleted = Number(progress.objects_deleted ?? 0);
+  const deletedBytes = bytes(Number(progress.bytes_deleted ?? 0)) || "0 B";
+  const rate = Number(progress.objects_per_second);
+  const rateText = Number.isFinite(rate) && rate > 0 ? `, ${rate}/s` : "";
+  return `${phase} ${bucket}/${prefix}: ${deleted}/${total} objects deleted, ${deletedBytes}${rateText}`;
+}
+
 async function withScanTimeout<T>(
   ctx: any,
   timeoutMinutes: number | undefined,
@@ -315,6 +405,43 @@ async function runR2AuditRefresh(ctx: any, bucket: string, options: any) {
     throw new Error(
       waited.error ||
         `R2 audit operation ${op.op_id} finished with status ${waited.status}`,
+    );
+  }
+  return waited.result;
+}
+
+async function runR2BayBackupCleanup(ctx: any, bucket: string, options: any) {
+  const timeoutMinutes = Math.max(1, options.timeoutMinutes ?? 360);
+  const timeoutMs = timeoutMinutes * 60 * 1000;
+  const op = await ctx.hub.system.startCloudflareR2BayBackupCleanup({
+    bucket,
+    prefix: options.prefix,
+    confirm: options.confirm,
+  });
+  reportProgress(
+    ctx,
+    `deleting direct bay backup objects from ${bucket}; timeout is ${timeoutMinutes} minutes; op_id=${op.op_id}`,
+  );
+  const waited = await waitForLro({
+    hub: ctx.hub,
+    opId: op.op_id,
+    timeoutMs,
+    pollMs: Math.max(1000, ctx.pollMs ?? 1000),
+    terminalStatuses: new Set(["succeeded", "failed", "canceled", "expired"]),
+    onUpdate: async (update) => {
+      const message = formatR2BayBackupCleanupProgress(update.progress_summary);
+      if (message) reportProgress(ctx, message);
+    },
+  });
+  if (waited.timedOut) {
+    throw new Error(
+      `timeout waiting for R2 bay backup cleanup operation ${op.op_id} (${timeoutMinutes} minutes)`,
+    );
+  }
+  if (waited.status !== "succeeded") {
+    throw new Error(
+      waited.error ||
+        `R2 bay backup cleanup operation ${op.op_id} finished with status ${waited.status}`,
     );
   }
   return waited.result;
@@ -513,6 +640,7 @@ export function registerCloudflareCommand(
       360,
     )
     .option("--categories", "Show category rows instead of the summary")
+    .option("--rustic-kinds", "Show rustic repository usage grouped by kind")
     .option("--rustic-repos", "Show per-rustic-repository usage rows")
     .option("--other-prefixes", "Show top non-rustic, non-index prefix rows")
     .option("--top-prefixes", "Show top object-key prefix rows")
@@ -533,11 +661,76 @@ export function registerCloudflareCommand(
                 }),
             );
         if (options.categories) return r2AuditCategoryRows(result);
+        if (options.rusticKinds) return r2AuditRusticKindRows(result);
         if (options.rusticRepos) return r2AuditRusticRepoRows(result);
         if (options.otherPrefixes) return r2AuditOtherPrefixRows(result);
         if (options.topPrefixes) return r2AuditPrefixRows(result);
         if (options.topObjects) return r2AuditObjectRows(result);
         return summarizeR2Audit(result);
       });
+    });
+
+  const bayBackups = r2
+    .command("bay-backups")
+    .description("Plan or delete direct R2 bay database backup objects");
+
+  bayBackups
+    .command("plan <bucket>")
+    .description(
+      "Scan direct bay-backups/* objects and print the required delete confirmation",
+    )
+    .option(
+      "--prefix <prefix>",
+      "Direct bay backup prefix to scan",
+      "bay-backups/",
+    )
+    .option("--prefixes", "Show per-bay-prefix rows")
+    .action(async (bucket, options, command) => {
+      await deps.withContext(
+        command,
+        "cloudflare r2 bay-backups plan",
+        async (ctx) => {
+          const plan = await ctx.hub.system.getCloudflareR2BayBackupCleanupPlan(
+            {
+              bucket,
+              prefix: options.prefix,
+            },
+          );
+          return options.prefixes
+            ? r2BayBackupCleanupPrefixRows(plan)
+            : summarizeR2BayBackupCleanupPlan(plan);
+        },
+      );
+    });
+
+  bayBackups
+    .command("delete <bucket>")
+    .description(
+      "Delete direct bay-backups/* objects after exact confirmation; does not touch rustic repositories",
+    )
+    .requiredOption(
+      "--confirm <text>",
+      "Exact confirmation_text from 'cocalc cloudflare r2 bay-backups plan'",
+    )
+    .option(
+      "--prefix <prefix>",
+      "Direct bay backup prefix to delete",
+      "bay-backups/",
+    )
+    .option(
+      "--timeout-minutes <minutes>",
+      "Maximum time to wait for deletion",
+      parseNonNegativeInt,
+      360,
+    )
+    .action(async (bucket, options, command) => {
+      await deps.withContext(
+        command,
+        "cloudflare r2 bay-backups delete",
+        async (ctx) =>
+          summarizeR2BayBackupCleanupPlan(
+            await runR2BayBackupCleanup(ctx, bucket, options),
+          ),
+      );
     });
 }

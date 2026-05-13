@@ -89,8 +89,11 @@ import {
 } from "@cocalc/server/cloud/cloudflare-teardown";
 import {
   auditCloudflareR2Bucket as auditCloudflareR2Bucket0,
+  getCloudflareR2BayBackupCleanupPlan as getCloudflareR2BayBackupCleanupPlan0,
   getCloudflareR2Usage as getCloudflareR2Usage0,
+  runCloudflareR2BayBackupCleanupLro,
   runCloudflareR2AuditLro,
+  type CloudflareR2BayBackupCleanupPlan,
   type CloudflareR2AuditResult,
   type CloudflareR2UsageResult,
 } from "@cocalc/server/cloud/cloudflare-r2-usage";
@@ -3364,6 +3367,8 @@ export async function auditCloudflareR2Bucket({
 }
 
 const CLOUDFLARE_R2_AUDIT_LRO_KIND = "cloudflare-r2-audit";
+const CLOUDFLARE_R2_BAY_BACKUP_CLEANUP_LRO_KIND =
+  "cloudflare-r2-bay-backup-cleanup";
 
 export async function startCloudflareR2Audit({
   account_id,
@@ -3410,6 +3415,75 @@ export async function startCloudflareR2Audit({
     max_age_minutes,
   }).catch((err) =>
     logger.warn("failed to run Cloudflare R2 audit LRO", {
+      op_id: op.op_id,
+      err,
+    }),
+  );
+  return {
+    op_id: op.op_id,
+    scope_type: "account",
+    scope_id: account_id,
+    service: PERSIST_SERVICE,
+    stream_name: lroStreamName(op.op_id),
+  };
+}
+
+export async function getCloudflareR2BayBackupCleanupPlan({
+  account_id,
+  bucket,
+  prefix,
+}: {
+  account_id?: string;
+  bucket: string;
+  prefix?: string;
+}): Promise<CloudflareR2BayBackupCleanupPlan> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await getCloudflareR2BayBackupCleanupPlan0({ bucket, prefix });
+}
+
+export async function startCloudflareR2BayBackupCleanup({
+  account_id,
+  bucket,
+  prefix,
+  confirm,
+}: {
+  account_id?: string;
+  bucket: string;
+  prefix?: string;
+  confirm: string;
+}): Promise<{
+  op_id: string;
+  scope_type: "account";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const op = await createLro({
+    kind: CLOUDFLARE_R2_BAY_BACKUP_CLEANUP_LRO_KIND,
+    scope_type: "account",
+    scope_id: account_id,
+    created_by: account_id,
+    routing: "hub",
+    input: {
+      bucket,
+      prefix,
+      confirm,
+    },
+    status: "queued",
+  });
+  await publishQueuedLroSafe({ op });
+  void runCloudflareR2BayBackupCleanupLro({
+    op_id: op.op_id,
+    bucket,
+    prefix,
+    confirm,
+  }).catch((err) =>
+    logger.warn("failed to run Cloudflare R2 bay backup cleanup LRO", {
       op_id: op.op_id,
       err,
     }),
