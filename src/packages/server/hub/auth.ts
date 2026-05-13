@@ -103,12 +103,10 @@ const logger = getLogger("server:hub:auth");
 // primary strategies -- all other ones are "extra"
 const PRIMARY_STRATEGIES = ["email", "site_conf", ...PRIMARY_SSO] as const;
 const SUPPORTED_PUBLIC_SSO = ["google"] as const;
-const UNSUPPORTED_PUBLIC_SSO = PRIMARY_SSO.filter(
-  (name) => !(SUPPORTED_PUBLIC_SSO as readonly string[]).includes(name),
-);
+const DELETED_PUBLIC_SSO = ["facebook", "github", "twitter"] as const;
 
 function isUnsupportedPublicStrategy(name: string): boolean {
-  return UNSUPPORTED_PUBLIC_SSO.includes(name as any);
+  return DELETED_PUBLIC_SSO.includes(name as any);
 }
 
 // root for authentication related endpoints -- will be prefixed with the base_path
@@ -197,6 +195,14 @@ export class PassportManager {
           throw new Error(
             `It is not allowed to name a strategy endpoint "${name}", because it is used by the next.js /auth/* endpoint. See next/pages/auth/ROUTING.md for more information.`,
           );
+        }
+        if (isUnsupportedPublicStrategy(name)) {
+          logger.warn(
+            `Ignoring deleted public SSO provider '${name}'. Supported built-in public SSO providers: ${SUPPORTED_PUBLIC_SSO.join(
+              ", ",
+            )}.`,
+          );
+          continue;
         }
         // backwards compatibility
         const conf = setting.conf as any;

@@ -1572,9 +1572,6 @@ importers:
       '@node-saml/passport-saml':
         specifier: ^5.1.0
         version: 5.1.0
-      '@passport-js/passport-twitter':
-        specifier: ^1.0.8
-        version: 1.0.10
       '@passport-next/passport-google-oauth2':
         specifier: ^1.0.0
         version: 1.0.0
@@ -1656,12 +1653,6 @@ importers:
       passport-activedirectory:
         specifier: ^1.0.4
         version: 1.4.0
-      passport-facebook:
-        specifier: ^3.0.0
-        version: 3.0.0
-      passport-github2:
-        specifier: ^0.1.12
-        version: 0.1.12
       passport-gitlab2:
         specifier: ^5.0.0
         version: 5.0.0
@@ -3894,14 +3885,6 @@ packages:
     resolution: {integrity: sha512-dfUnCxiN9H4ap84DvD2ubjw+3vUNpstxa0TneY/Paat8a3R4uQZDLSvWjmznAY/DoahqTHl9V46HF/Zs3F29pg==}
     engines: {node: '>= 10.0.0'}
 
-  '@passport-js/passport-twitter@1.0.10':
-    resolution: {integrity: sha512-hirIwjs29OIw8Gt/unt7QyjbpekM/JwmjK8jlzhlpxBOCCa7MtGYMwQY6t2bhGevuXrxqORR2s4ShN78Sn4OMQ==}
-    engines: {node: '>= 0.4.0'}
-
-  '@passport-js/xtraverse@0.1.4':
-    resolution: {integrity: sha512-onVnYnmOQ/wd3nWeKh109j2Vbb4MHBFhD6ewHx4rnmGzjqhQAdGu8oEw7Rm+/5zHT/9o54ClSeFfJHZl9WLvBw==}
-    engines: {node: '>= 0.4.0'}
-
   '@passport-next/passport-google-oauth2@1.0.0':
     resolution: {integrity: sha512-rbAtK0eGgjQhT/MqMSuN7Mxy4XTr1/LINk5rYPVezP3MfkVYuK20V0XW9fg1ikFMvyxSdmfLTyYduud7SfFSqw==}
     engines: {node: '>=6'}
@@ -5144,10 +5127,6 @@ packages:
   '@xmldom/xmldom@0.8.11':
     resolution: {integrity: sha512-cQzWCtO6C8TQiYl1ruKNn2U6Ao4o4WBBcbL61yJl84x+j5sOWWFU9X7DpND8XZG3daDppSsigMdfAIl2upQBRw==}
     engines: {node: '>=10.0.0'}
-
-  '@xmldom/xmldom@0.9.8':
-    resolution: {integrity: sha512-p96FSY54r+WJ50FIOsCOjyj/wavs8921hG5+kVMmZgKcvIKxMXHTrjNJvRgWa/zuX3B6t2lijLNFaOyuxUH+2A==}
-    engines: {node: '>=14.6'}
 
   '@xterm/addon-fit@0.10.0':
     resolution: {integrity: sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==}
@@ -9365,14 +9344,6 @@ packages:
 
   passport-activedirectory@1.4.0:
     resolution: {integrity: sha512-Ud723nDYAJsO9kjzAhtFzW+QDAAARIEfRKu4ILjuJ3Ke2+ntzQU3rVIu2kwJAUtf4MFS/q87pD6MEghLwdqqew==}
-
-  passport-facebook@3.0.0:
-    resolution: {integrity: sha512-K/qNzuFsFISYAyC1Nma4qgY/12V3RSLFdFVsPKXiKZt434wOvthFW1p7zKa1iQihQMRhaWorVE1o3Vi1o+ZgeQ==}
-    engines: {node: '>= 0.4.0'}
-
-  passport-github2@0.1.12:
-    resolution: {integrity: sha512-3nPUCc7ttF/3HSP/k9sAXjz3SkGv5Nki84I05kSQPo01Jqq1NzJACgMblCK0fGcv9pKCG/KXU3AJRDGLqHLoIw==}
-    engines: {node: '>= 0.8.0'}
 
   passport-gitlab2@5.0.0:
     resolution: {integrity: sha512-cXQMgM6JQx9wHVh7JLH30D8fplfwjsDwRz+zS0pqC8JS+4bNmc1J04NGp5g2M4yfwylH9kQRrMN98GxMw7q7cg==}
@@ -13812,15 +13783,6 @@ snapshots:
       '@parcel/watcher-win32-x64': 2.5.1
     optional: true
 
-  '@passport-js/passport-twitter@1.0.10':
-    dependencies:
-      '@passport-js/xtraverse': 0.1.4
-      passport-oauth1: 1.3.0
-
-  '@passport-js/xtraverse@0.1.4':
-    dependencies:
-      '@xmldom/xmldom': 0.9.8
-
   '@passport-next/passport-google-oauth2@1.0.0':
     dependencies:
       '@passport-next/passport-oauth2': 1.7.1
@@ -15267,8 +15229,6 @@ snapshots:
   '@xmldom/is-dom-node@1.0.1': {}
 
   '@xmldom/xmldom@0.8.11': {}
-
-  '@xmldom/xmldom@0.9.8': {}
 
   '@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0)':
     dependencies:
@@ -20835,14 +20795,6 @@ snapshots:
     dependencies:
       activedirectory2: 2.2.0
       passport: 0.6.0
-
-  passport-facebook@3.0.0:
-    dependencies:
-      passport-oauth2: 1.8.0
-
-  passport-github2@0.1.12:
-    dependencies:
-      passport-oauth2: 1.8.0
 
   passport-gitlab2@5.0.0:
     dependencies:

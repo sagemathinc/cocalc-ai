@@ -1,4 +1,4 @@
-export const PRIMARY_SSO = ["google", "facebook", "github", "twitter"] as const;
+export const PRIMARY_SSO = ["google"] as const;
 
 // this is frontend!
 export interface PassportStrategyFrontend {

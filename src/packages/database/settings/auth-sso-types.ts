@@ -43,7 +43,7 @@ export type LoginInfoDerivator<T> = (profile: any) => T;
 
 export type LoginInfoKeys = "id" | "first_name" | "last_name" | "emails";
 
-// google, facebook, etc ... are not included, they're hardcoded
+// Google is the only built-in public SSO provider. It is hardcoded separately.
 export const PassportTypesList = [
   "email", // special case, always included by default, not a passport strategy
   "activedirectory",
@@ -56,7 +56,7 @@ export const PassportTypesList = [
   "saml",
   "saml-v3",
   "saml-v4",
-  // the 4 types for google, twitter, github and facebook are not included here – they're hardcoded special cases
+  // Google is not included here because it is a hardcoded special case.
 ] as const;
 
 export type PassportTypes = (typeof PassportTypesList)[number];

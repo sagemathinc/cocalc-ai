@@ -10,6 +10,7 @@ import { ssoDispayedName } from "@cocalc/util/auth";
 
 const CACHE_TTL_MS = process.env.NODE_ENV === "development" ? 3_000 : 15_000;
 const SUPPORTED_PUBLIC_SSO = ["google"] as const;
+const DELETED_PUBLIC_SSO = ["facebook", "github", "twitter"] as const;
 let cachedStrategies:
   | {
       expires: number;
@@ -64,10 +65,7 @@ export default async function getStrategies(): Promise<Strategy[]> {
 }
 
 export const COLORS = {
-  github: "#000000",
-  facebook: "#428bca",
   google: "#dc4857",
-  twitter: "#55acee",
 } as const;
 
 export function isSupportedSSOStrategy(
@@ -77,7 +75,10 @@ export function isSupportedSSOStrategy(
   if (SUPPORTED_PUBLIC_SSO.includes(name as any)) {
     return true;
   }
-  if (PRIMARY_SSO.includes(name as any)) {
+  if (
+    PRIMARY_SSO.includes(name as any) ||
+    DELETED_PUBLIC_SSO.includes(name as any)
+  ) {
     return false;
   }
   return true;

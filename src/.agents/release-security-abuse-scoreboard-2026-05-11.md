@@ -27,7 +27,7 @@ Statuses:
 | SEC-CLI-001     | `cocalc-cli` authority classes               | guarded | high     | First-pass authority matrix completed. CLI auth config and daemon runtime storage now force private local permissions; ambient env auth can be disabled per invocation.                                                                                                                                                                                                                                                                                                                                                                                                             | Audit endpoint-level freshness/2FA and API-key scope enforcement for dangerous CLI command families.                                         |
 | SEC-KEY-001     | Account/project API keys                     | guarded | high     | Legacy project-scoped CoCalc API-key management, auth, schema, UI, and project-rehome portability were removed. Account API keys now require explicit capabilities and project allowlists; API-key websocket hub RPC fails closed and HTTP Conat bridges deny unreviewed RPCs by default.                                                                                                                                                                                                                                                                                           | Propagate auth method through websocket hub dispatch if API-key hub RPC support is needed beyond the HTTP bridge.                            |
 | SEC-REG-001     | Registration-token signup policy             | guarded | high     | Public signup without a registration token is explicit opt-in via `public_signup_without_registration_token`, default `no`. Deleting/disabling all tokens blocks signup, failed token attempts are throttled, and the admin page shows the effective policy. Signup no longer signs in existing accounts, accepts signup tags, accepts signup reason, or returns account-specific errors before token validation. Normal token rows are encrypted for admin redisplay; bootstrap-admin token rows are hash-only, hidden from admin token listing, and deleted after successful use. | Review SSO-specific signup policy separately and add direct regression coverage for registration-token protected-at-rest behavior if needed. |
-| SEC-SSO-001     | SSO signup/sign-in policy                    | guarded | high     | Shared account-creation policy now covers password signup and legacy Passport SSO account creation. Public SSO creation on token-gated sites no longer bypasses registration tokens; admin-configured exclusive/domain SSO can act as the signup gate for matching domains. SSO-created accounts require verified/trusted email before creation and before marking the email verified. Legacy public SSO discovery/initialization now keeps Google as the only built-in public provider while reserving old strategy names to avoid startup crashes from stale rows.                | Add email-first/domain-policy UI routing and continue replacing/deleting legacy Passport/provider surface.                                   |
+| SEC-SSO-001     | SSO signup/sign-in policy                    | guarded | high     | Shared account-creation policy now covers password signup and legacy Passport SSO account creation. Public SSO creation on token-gated sites no longer bypasses registration tokens; admin-configured exclusive/domain SSO can act as the signup gate for matching domains. SSO-created accounts require verified/trusted email before creation and before marking the email verified. Google is now the only built-in public SSO provider; Facebook, GitHub, and Twitter strategy implementations and package dependencies were removed. Legacy rows for those names are ignored.  | Add email-first/domain-policy UI routing, then replace Google Passport configuration with admin-managed Google OIDC settings.                |
 | SEC-ROOTFS-001  | Root filesystem count/storage quotas         | guarded | critical | Rootfs creation/storage is now guarded by membership-tier caps for active count, total storage, per-rootfs storage, and arbitrary remote OCI-image usage. Denials are logged as `rootfs_quota_denied`.                                                                                                                                                                                                                                                                                                                                                                              | Add top-user/near-limit admin or CLI reporting and continue auditing clone/import/grow edge paths.                                           |
 | SEC-MASTER-001  | Master-key storage/unlock                    | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Inventory master-key read/storage paths and production unlock options.                                                                       |
 
@@ -533,11 +533,11 @@ Implemented first guard:
 - Focused tests cover registration-token requirements, trusted
   registration-token signup, existing-account denial, SSO-required domain
   denial, and unverified SSO email denial.
-- Public SSO strategy discovery now keeps Google as the only supported built-in
-  public provider. Facebook, GitHub, and Twitter are not advertised.
-- Hub Passport startup no longer initializes Facebook, GitHub, or Twitter
-  endpoints. Their legacy strategy names remain reserved so stale DB rows do not
-  get treated as malformed custom organization providers.
+- Google is now the only built-in public SSO provider. Facebook, GitHub, and
+  Twitter strategy implementations, frontend primary-provider treatment, and
+  package dependencies were removed.
+- Legacy `facebook`, `github`, and `twitter` `passport_settings` rows are
+  ignored instead of being treated as custom organization providers.
 - Legacy Passport SSO account creation now calls the shared policy before
   creating an account.
 - Public SSO account creation on token-gated sites is denied unless the SSO
@@ -551,8 +551,8 @@ Residual risk:
 - Provider secrets and domain policy are still legacy `passport_settings`
   concepts, not the planned admin-managed identity-provider/domain-policy data
   model.
-- Passport dependencies and legacy provider code still exist; they are no longer
-  public built-in providers, but the full deletion is not complete.
+- Passport dependencies and legacy organization-provider machinery still exist
+  until Google OIDC and SAML are implemented directly.
 
 Suggested next audit steps:
 
