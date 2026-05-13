@@ -128,7 +128,7 @@ async function withTransaction<T>(
 
 function normalizeNames(names?: string[]): string[] | undefined {
   if (names == null) return undefined;
-  return [...new Set(names.map(normalizeProjectSecretName))];
+  return Array.from(new Set<string>(names.map(normalizeProjectSecretName)));
 }
 
 export async function listProjectSecrets({
