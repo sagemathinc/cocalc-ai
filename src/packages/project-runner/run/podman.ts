@@ -35,6 +35,8 @@ import {
   realpath,
   writeFile,
   chmod,
+  mkdtemp,
+  rename,
 } from "node:fs/promises";
 import { getCoCalcMounts, COCALC_SRC } from "./mounts";
 import { fileServerClient, setQuota } from "./filesystem";
@@ -96,7 +98,10 @@ const PROJECT_BUNDLE_ENTRY_CANDIDATES = [
   ["bundle", "bundle", "index.js"],
 ] as const;
 const DEFAULT_PROJECT_BUNDLES_ROOT = "/opt/cocalc/project-bundles";
-const PROJECT_SECRETS_HOST_ROOT = join(tmpdir(), "cocalc-project-secrets");
+export const PROJECT_SECRETS_HOST_ROOT = join(
+  tmpdir(),
+  "cocalc-project-secrets",
+);
 
 // if computing status of a project shows pod is
 // somehow messed up, this will cleanly kill it.  It's
@@ -108,11 +113,11 @@ const STOP_ON_STATUS_ERROR = false;
 // projects we are definitely starting right now
 export const starting = new Set<string>();
 
-function projectSecretsHostPath(project_id: string): string {
+export function projectSecretsHostPath(project_id: string): string {
   return join(PROJECT_SECRETS_HOST_ROOT, project_id);
 }
 
-async function cleanupProjectSecretsHostPath(
+export async function cleanupProjectSecretsHostPath(
   project_id: string,
 ): Promise<void> {
   await rm(projectSecretsHostPath(project_id), {
@@ -121,7 +126,7 @@ async function cleanupProjectSecretsHostPath(
   });
 }
 
-async function writeProjectSecretsHostPath({
+export async function writeProjectSecretsHostPath({
   project_id,
   secrets,
 }: {
@@ -131,15 +136,22 @@ async function writeProjectSecretsHostPath({
   const path = projectSecretsHostPath(project_id);
   await mkdir(PROJECT_SECRETS_HOST_ROOT, { recursive: true, mode: 0o700 });
   await chmod(PROJECT_SECRETS_HOST_ROOT, 0o700);
-  await cleanupProjectSecretsHostPath(project_id);
-  await mkdir(path, { recursive: true, mode: 0o700 });
-  await chmod(path, 0o700);
-  for (const [rawName, value] of Object.entries(secrets ?? {})) {
-    const name = normalizeProjectSecretName(rawName);
-    const file = join(path, name);
-    await writeFile(file, value, { mode: 0o400 });
-    await chmod(file, 0o400);
+  const tmpPath = await mkdtemp(join(PROJECT_SECRETS_HOST_ROOT, ".tmp-"));
+  try {
+    await chmod(tmpPath, 0o700);
+    for (const [rawName, value] of Object.entries(secrets ?? {})) {
+      const name = normalizeProjectSecretName(rawName);
+      const file = join(tmpPath, name);
+      await writeFile(file, value, { mode: 0o400 });
+      await chmod(file, 0o400);
+    }
+    await cleanupProjectSecretsHostPath(project_id);
+    await rename(tmpPath, path);
+  } catch (err) {
+    await rm(tmpPath, { recursive: true, force: true }).catch(() => {});
+    throw err;
   }
+  await chmod(path, 0o700);
   return path;
 }
 

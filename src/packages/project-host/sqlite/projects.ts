@@ -34,6 +34,30 @@ function serializeRunQuota(run_quota?: any): string | null {
   }
 }
 
+function parseStringArray(value?: any): string[] | undefined {
+  if (value == null) return undefined;
+  if (Array.isArray(value)) {
+    return value.filter((x) => typeof x === "string");
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed)
+        ? parsed.filter((x) => typeof x === "string")
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function serializeStringArray(value?: string[]): string | null {
+  const parsed = parseStringArray(value);
+  if (parsed == null) return null;
+  return JSON.stringify(parsed);
+}
+
 // Local cache of project metadata on a project-host. This mirrors the
 // minimal information we need when the master is unreachable.
 //
@@ -59,6 +83,9 @@ function serializeRunQuota(run_quota?: any): string | null {
 // - authorized_keys: concatenated SSH keys from master (account + project keys); the project’s own
 //   ~/.ssh/authorized_keys is read directly from the filesystem at auth time.
 // - run_quota: resource limits/settings passed from the master (mirrors projects.run_quota in Postgres)
+// - secret_names: names of project secrets seen in authoritative metadata.
+//   Values are not persisted locally; this lets project start fail closed when
+//   the master is unavailable but the project is known to require secrets.
 export interface ProjectRow {
   project_id: string;
   title?: string;
@@ -77,6 +104,7 @@ export interface ProjectRow {
   secret_token?: string | null;
   authorized_keys?: string | null;
   run_quota?: any;
+  secret_names?: string[];
 }
 
 export interface ProjectRuntimeArtifactReference {
@@ -105,7 +133,8 @@ function ensureProjectsTable() {
       tools_version TEXT,
       secret_token TEXT,
       authorized_keys TEXT,
-      run_quota TEXT
+      run_quota TEXT,
+      secret_names TEXT
     )
   `);
   // Older tables won't have state_reported; add it if missing.
@@ -135,6 +164,9 @@ function ensureProjectsTable() {
   try {
     db.exec("ALTER TABLE projects ADD COLUMN run_quota TEXT");
   } catch {}
+  try {
+    db.exec("ALTER TABLE projects ADD COLUMN secret_names TEXT");
+  } catch {}
   db.exec(
     "CREATE INDEX IF NOT EXISTS projects_state_idx ON projects(state, updated_at)",
   );
@@ -150,7 +182,7 @@ export function upsertProject(row: ProjectRow) {
   const existingProjectsRow =
     db
       .prepare(
-        "SELECT state, state_reported, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota FROM projects WHERE project_id=?",
+        "SELECT state, state_reported, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota, secret_names FROM projects WHERE project_id=?",
       )
       .get(row.project_id) || {};
   const existing = getRow("projects", pk) || {};
@@ -211,6 +243,14 @@ export function upsertProject(row: ProjectRow) {
     (existingProjectsRow as any).authorized_keys ??
     null;
   const run_quota_json = serializeRunQuota(run_quota);
+  const hasSecretNames = Object.prototype.hasOwnProperty.call(
+    row,
+    "secret_names",
+  );
+  const secret_names = hasSecretNames
+    ? (parseStringArray(row.secret_names) ?? [])
+    : parseStringArray((existingProjectsRow as any).secret_names);
+  const secret_names_json = serializeStringArray(secret_names);
 
   // Track whether the latest state has been reported to the master.
   // If a state is explicitly provided and differs from the current one,
@@ -232,8 +272,8 @@ export function upsertProject(row: ProjectRow) {
   }
 
   const stmt = db.prepare(`
-    INSERT INTO projects(project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota)
-    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects(project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota, secret_names)
+    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(project_id) DO UPDATE SET
       title=excluded.title,
       state=excluded.state,
@@ -249,7 +289,8 @@ export function upsertProject(row: ProjectRow) {
       tools_version=excluded.tools_version,
       secret_token=excluded.secret_token,
       authorized_keys=excluded.authorized_keys,
-      run_quota=excluded.run_quota
+      run_quota=excluded.run_quota,
+      secret_names=excluded.secret_names
   `);
   stmt.run(
     row.project_id,
@@ -268,6 +309,7 @@ export function upsertProject(row: ProjectRow) {
     secret_token,
     authorized_keys,
     run_quota_json,
+    secret_names_json,
   );
 
   // Also mirror into the generic data table for changefeeds/UI.
@@ -298,20 +340,27 @@ export function listProjects(): ProjectRow[] {
   ensureProjectsTable();
   const db = getDatabase();
   const stmt = db.prepare(
-    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, run_quota FROM projects",
+    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, run_quota, secret_names FROM projects",
   );
-  return stmt.all() as ProjectRow[];
+  return stmt.all().map((row: any) => ({
+    ...row,
+    run_quota: parseRunQuota(row.run_quota),
+    secret_names: parseStringArray(row.secret_names),
+  })) as ProjectRow[];
 }
 
 export function getProject(project_id: string): ProjectRow | undefined {
   ensureProjectsTable();
   const db = getDatabase();
   const stmt = db.prepare(
-    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota FROM projects WHERE project_id=?",
+    "SELECT project_id, title, state, state_reported, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota, secret_names FROM projects WHERE project_id=?",
   );
   const row = stmt.get(project_id) as any;
   if (row?.run_quota) {
     row.run_quota = parseRunQuota(row.run_quota);
+  }
+  if (row?.secret_names) {
+    row.secret_names = parseStringArray(row.secret_names);
   }
   return row as ProjectRow | undefined;
 }

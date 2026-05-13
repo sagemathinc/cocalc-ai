@@ -548,6 +548,7 @@ type StartMetadata = {
   run_quota?: any;
   env?: ProjectEnv;
   secrets?: Record<string, string>;
+  secret_names?: string[];
 };
 
 type LocalProjectOptions = CreateProjectOptions & {
@@ -620,6 +621,10 @@ async function resolveStartMetadata({
       const authoritative =
         await loadProjectStartMetadataFromMaster(project_id);
       if (authoritative) {
+        const secret_names =
+          authoritative.secrets == null
+            ? undefined
+            : Object.keys(authoritative.secrets).sort();
         resolved = {
           title: authoritative.title ?? existing?.title,
           users: authoritative.users,
@@ -629,6 +634,7 @@ async function resolveStartMetadata({
           run_quota: resolved.run_quota ?? authoritative.run_quota,
           env: resolved.env ?? authoritative.env,
           secrets: resolved.secrets ?? authoritative.secrets,
+          secret_names,
         };
       }
     } catch (err) {
@@ -652,6 +658,16 @@ async function resolveStartMetadata({
       `unable to determine project image for ${project_id}; refusing to fall back to the default image`,
     );
   }
+  const cachedSecretNames = (existing as any)?.secret_names;
+  if (
+    resolved.secrets == null &&
+    Array.isArray(cachedSecretNames) &&
+    cachedSecretNames.length > 0
+  ) {
+    throw new Error(
+      `unable to load project secrets for ${project_id}; refusing to start without configured secrets`,
+    );
+  }
   resolved.image = normalizeImage(resolved.image);
   return resolved;
 }
@@ -665,6 +681,7 @@ export function ensureProjectRow({
   project_bundle_version,
   tools_version,
   authorized_keys,
+  secret_names,
 }: {
   project_id: string;
   opts?: LocalProjectOptions;
@@ -674,6 +691,7 @@ export function ensureProjectRow({
   project_bundle_version?: string | null;
   tools_version?: string | null;
   authorized_keys?: string;
+  secret_names?: string[];
 }) {
   logger.debug("ensureProjectRow", {
     project_id,
@@ -737,6 +755,9 @@ export function ensureProjectRow({
   }
   if (authorized_keys !== undefined) {
     row.authorized_keys = authorized_keys;
+  }
+  if (secret_names !== undefined) {
+    row.secret_names = secret_names;
   }
   if (opts) {
     const title = opts.title?.trim();
@@ -1123,6 +1144,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         opts,
         state: "starting",
         authorized_keys: (opts as any).authorized_keys,
+        secret_names: resolved.secret_names,
       });
       beginProjectHostActivity(activity_id, "start");
       try {
@@ -1162,6 +1184,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           ssh_port: (status as any)?.ssh_port,
           project_bundle_version: (status as any)?.project_bundle_version,
           tools_version: (status as any)?.tools_version,
+          secret_names: resolved.secret_names,
         });
         kickOffAcpRehydrate(project_id, "createProject: post-start");
       } finally {
@@ -1232,6 +1255,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           image: startMetadata.image,
         },
         state: "starting",
+        secret_names: startMetadata.secret_names,
       });
       publishStartProgress({
         activity_id,
@@ -1361,6 +1385,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         ssh_port: (status as any)?.ssh_port,
         project_bundle_version: (status as any)?.project_bundle_version,
         tools_version: (status as any)?.tools_version,
+        secret_names: startMetadata.secret_names,
       });
       // During move/restore the destination project root may not exist until
       // runnerApi.start has created or restored it, so ACP rehydrate must wait.
@@ -1408,6 +1433,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           image: resolved?.image,
         },
         state: "opened",
+        secret_names: resolved?.secret_names,
       });
       publishStartProgress({
         activity_id,

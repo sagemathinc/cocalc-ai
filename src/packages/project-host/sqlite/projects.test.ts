@@ -73,4 +73,32 @@ describe("project sqlite runtime ports", () => {
       ],
     });
   });
+
+  it("persists project secret names without storing values", () => {
+    upsertProject({
+      project_id,
+      state: "running",
+      secret_names: ["API_KEY", "SSH_KEY"],
+    });
+    expect(getProject(project_id)?.secret_names).toEqual([
+      "API_KEY",
+      "SSH_KEY",
+    ]);
+
+    upsertProject({
+      project_id,
+      state: "opened",
+    });
+    expect(getProject(project_id)?.secret_names).toEqual([
+      "API_KEY",
+      "SSH_KEY",
+    ]);
+
+    upsertProject({
+      project_id,
+      state: "opened",
+      secret_names: [],
+    });
+    expect(getProject(project_id)?.secret_names).toEqual([]);
+  });
 });
