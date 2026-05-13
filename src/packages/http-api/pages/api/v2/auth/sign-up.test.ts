@@ -11,7 +11,6 @@ const mockGetServerSettings = jest.fn();
 const mockIsAccountAvailable = jest.fn();
 const mockReCaptcha = jest.fn();
 const mockGetAccountId = jest.fn();
-const mockIsDomainExclusiveSSO = jest.fn();
 const mockRedeemRegistrationToken = jest.fn();
 const mockValidateRegistrationToken = jest.fn();
 const mockDeleteRegistrationToken = jest.fn();
@@ -30,11 +29,6 @@ jest.mock("@cocalc/database/settings/server-settings", () => ({
 jest.mock("@cocalc/server/auth/is-account-available", () => ({
   __esModule: true,
   default: (...args) => mockIsAccountAvailable(...args),
-}));
-
-jest.mock("@cocalc/server/auth/is-domain-exclusive-sso", () => ({
-  __esModule: true,
-  default: (...args) => mockIsDomainExclusiveSSO(...args),
 }));
 
 jest.mock("@cocalc/server/auth/recaptcha", () => ({
@@ -119,7 +113,6 @@ describe("/api/v2/auth/sign-up", () => {
     mockIsAccountAvailable.mockReset().mockResolvedValue(true);
     mockReCaptcha.mockReset().mockResolvedValue(null);
     mockGetAccountId.mockReset().mockResolvedValue(undefined);
-    mockIsDomainExclusiveSSO.mockReset().mockResolvedValue(undefined);
     mockGetRequiresRegistrationToken.mockReset().mockResolvedValue(true);
     mockValidateRegistrationToken.mockReset().mockResolvedValue({});
     mockDeleteRegistrationToken.mockReset().mockResolvedValue(undefined);
@@ -260,6 +253,41 @@ describe("/api/v2/auth/sign-up", () => {
     expect(res._getJSONData()).toEqual({
       issues: {
         email: 'Account creation is disabled for "@example.com".',
+      },
+    });
+    expect(mockValidateRegistrationToken).not.toHaveBeenCalled();
+    expect(mockCreateClusterAccount).not.toHaveBeenCalled();
+  });
+
+  it("blocks password signup when a domain policy requires SSO", async () => {
+    mockGetEnabledSsoDomainPolicyForEmail.mockResolvedValue({
+      domain: "example.com",
+      provider_id: "google",
+      mode: "sso_required",
+      enabled: true,
+      require_cocalc_2fa: false,
+      signup_mode: "inherit",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      issues: {
+        email:
+          'To sign up with "@example.com", you have to use the corresponding single sign on mechanism.  Delete your email address above, then click the SSO icon.',
       },
     });
     expect(mockValidateRegistrationToken).not.toHaveBeenCalled();
