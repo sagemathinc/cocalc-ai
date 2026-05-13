@@ -907,10 +907,6 @@ export function Kernel({
     );
   }
 
-  if (!no_kernel && kernel == null && !kernelDrawerOpen) {
-    return null;
-  }
-
   const info = (
     <div
       style={{

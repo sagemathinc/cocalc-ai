@@ -141,6 +141,55 @@ describe("Kernel", () => {
     expect(screen.queryByText(/\(halt/i)).toBeNull();
   });
 
+  it("keeps the kernel header visible while kernel selection is undecided", () => {
+    const actions = {
+      name: "jupyter-test",
+      project_id: "project-1",
+      show_select_kernel: jest.fn(),
+      hide_select_kernel: jest.fn(),
+      kernel_dont_ask_again: jest.fn(),
+      set_kernel: jest.fn(),
+    } as any;
+
+    useRedux.mockImplementation(([name, key]) => {
+      if (name !== "jupyter-test") {
+        return;
+      }
+      switch (key) {
+        case "trust":
+          return true;
+        case "read_only":
+          return false;
+        case "kernel":
+          return undefined;
+        case "kernels":
+          return immutable.List();
+        case "runProgress":
+          return 0;
+        case "project_id":
+          return "project-1";
+        case "kernel_info":
+          return undefined;
+        case "show_kernel_selector":
+          return false;
+        case "backend_state":
+          return "off";
+        case "kernel_state":
+          return undefined;
+      }
+    });
+
+    getProjectActions.mockReturnValue({ project_id: "project-1" });
+
+    render(
+      <IntlProvider locale="en" messages={{}}>
+        <Kernel actions={actions} />
+      </IntlProvider>,
+    );
+
+    expect(screen.getByText("No Kernel")).toBeTruthy();
+  });
+
   it("smooths brief busy and idle transitions for kernel display state", async () => {
     jest.useFakeTimers();
     try {
