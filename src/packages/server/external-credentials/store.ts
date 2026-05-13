@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
-import { getSecretSettingsKey } from "@cocalc/database/settings/secret-settings";
 import {
-  decryptSecretSettingValue,
-  encryptSecretSettingValue,
-} from "@cocalc/util/secret-settings-crypto";
+  decryptSecretStorageValue,
+  encryptSecretStorageValue,
+} from "@cocalc/database/settings/secret-settings";
 
 const MAX_PAYLOAD_BYTES = 2_000_000;
 
@@ -84,25 +83,18 @@ async function encryptPayload(
   selector: ExternalCredentialSelector,
   payload: string,
 ): Promise<string> {
-  const key = await getSecretSettingsKey();
-  return encryptSecretSettingValue(
-    credentialAadName(selector),
-    payload,
-    key,
-    "default",
-  );
+  return await encryptSecretStorageValue(credentialAadName(selector), payload);
 }
 
 async function decryptPayload(
   selector: ExternalCredentialSelector,
   encrypted_payload: string,
 ): Promise<string> {
-  const key = await getSecretSettingsKey();
-  return decryptSecretSettingValue(
+  const result = await decryptSecretStorageValue(
     credentialAadName(selector),
     encrypted_payload,
-    key,
   );
+  return result.value;
 }
 
 export async function upsertExternalCredential({

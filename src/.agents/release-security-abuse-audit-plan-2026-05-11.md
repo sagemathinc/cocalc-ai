@@ -621,15 +621,21 @@ Required release artifacts:
 
 ## Phase 8b: Master-Key and Secret Unlock Model
 
-Goal: avoid treating a plaintext master-key file on disk as the final
+Goal: avoid treating an unmanaged plaintext master-key file on disk as the final
 production answer.
 
 Current model:
 
-- most application secrets are stored in Postgres encrypted with a master key.
-- the master key itself is stored as a plaintext file on disk.
-- this is operationally simple but uncomfortable for hosted SaaS and Launchpad
-  installs.
+- application secrets are stored in Postgres encrypted under purpose-specific
+  keys derived from one local `site-master-key`.
+- the site master key is stored once at `$SECRETS/site-master-key` by default;
+  `COCALC_SITE_MASTER_KEY_PATH` can override it.
+- the raw site master key is not used directly for AES-GCM payload encryption.
+- `cocalc admin master-key status|init|export|import` provides the first
+  operator lifecycle for checking, creating, passphrase-exporting, and restoring
+  the key.
+- legacy `server-settings-key` and `backup-master-key` files are read only as
+  migration fallbacks, not as new root keys.
 
 Audit questions:
 
@@ -659,8 +665,11 @@ Potential directions:
 
 Release target:
 
-- document the current residual risk if plaintext remains for first release.
+- document the current residual risk if local plaintext-at-rest remains for first
+  release.
 - ensure file permissions are strict and checked.
+- ensure operators have a documented backup/restore path; R2/database backups
+  are not sufficient without the `site-master-key`.
 - keep the door open for KMS/keystore/manual-unlock implementation without
   changing every secret consumer.
 - add the master-key state to `cocalc doctor security` or equivalent.

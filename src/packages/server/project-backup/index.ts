@@ -16,6 +16,12 @@ import {
   mapCloudRegionToR2Region,
   parseR2Region,
 } from "@cocalc/util/consts";
+import {
+  deriveSiteMasterKey,
+  getOrCreateSiteMasterKey,
+  readOptionalMasterKeyFile,
+  resolveLegacyMasterKeyFiles,
+} from "@cocalc/util/master-key-lifecycle";
 import { createBucket, deleteObject, listBuckets, R2BucketInfo } from "./r2";
 import { ensureCopySchema } from "@cocalc/server/projects/copy-db";
 import type {
@@ -122,6 +128,11 @@ type ProjectBackupRepoRow = {
   created: Date | null;
   updated: Date | null;
   assigned_project_count?: number | null;
+};
+
+type ProjectBackupRepoWithSecret = {
+  id: string;
+  secret: string;
 };
 
 type ProjectBackupRepoAssignmentRow = {
@@ -1256,7 +1267,10 @@ async function getProjectBackupRepoSecret(
   if (!repo.secret) {
     throw new Error(`project backup repo ${repo.id} has no secret`);
   }
-  return decryptBackupSecret(repo.secret, await getBackupMasterKey());
+  return await decryptBackupSecretWithMigration({
+    repo: { id: repo.id, secret: repo.secret },
+    masterKey: await getBackupMasterKey(),
+  });
 }
 
 export async function getProjectBackupConfigForRepo({
@@ -1286,31 +1300,30 @@ export async function getProjectBackupConfigForRepo({
   return { toml: config.toml };
 }
 
-const backupMasterKeyPath = join(secrets, "backup-master-key");
 const backupSharedSecretPath = join(secrets, "backup-shared-secret");
 let backupMasterKey: Buffer | undefined;
+let legacyBackupMasterKey: Buffer | undefined;
+let legacyBackupMasterKeyLoaded = false;
 let backupSharedSecret: string | undefined;
 
 async function getBackupMasterKey(): Promise<Buffer> {
   if (backupMasterKey) return backupMasterKey;
-  let encoded = "";
-  try {
-    encoded = (await readFile(backupMasterKeyPath, "utf8")).trim();
-  } catch {}
-  if (!encoded) {
-    encoded = randomBytes(32).toString("base64");
-    try {
-      await writeFile(backupMasterKeyPath, encoded, { mode: 0o600 });
-    } catch (err) {
-      throw new Error(`failed to write backup master key: ${err}`);
-    }
-  }
-  const key = Buffer.from(encoded, "base64");
-  if (key.length !== 32) {
-    throw new Error("invalid backup master key length");
-  }
-  backupMasterKey = key;
-  return key;
+  backupMasterKey = deriveSiteMasterKey(
+    await getOrCreateSiteMasterKey({ secretsDir: secrets }),
+    "project-backup-repo-secrets:v1",
+  );
+  return backupMasterKey;
+}
+
+async function getLegacyBackupMasterKey(): Promise<Buffer | undefined> {
+  if (legacyBackupMasterKeyLoaded) return legacyBackupMasterKey;
+  legacyBackupMasterKeyLoaded = true;
+  const legacyFile = resolveLegacyMasterKeyFiles({ secretsDir: secrets }).find(
+    (file) => file.id === "legacy-project-backups",
+  );
+  if (!legacyFile) return undefined;
+  legacyBackupMasterKey = await readOptionalMasterKeyFile(legacyFile.path);
+  return legacyBackupMasterKey;
 }
 
 async function getSharedBackupSecret(): Promise<string> {
@@ -1356,6 +1369,57 @@ function decryptBackupSecret(encoded: string, key: Buffer): string {
   return Buffer.concat([decipher.update(data), decipher.final()]).toString(
     "utf8",
   );
+}
+
+async function storeMigratedBackupRepoSecret({
+  repo,
+  secret,
+  masterKey,
+}: {
+  repo: ProjectBackupRepoWithSecret;
+  secret: string;
+  masterKey: Buffer;
+}): Promise<void> {
+  await pool().query(
+    `
+      UPDATE project_backup_repos
+         SET secret = $2,
+             updated = NOW()
+       WHERE id = $1::UUID
+         AND secret = $3
+    `,
+    [repo.id, encryptBackupSecret(secret, masterKey), repo.secret],
+  );
+}
+
+async function decryptBackupSecretWithMigration({
+  repo,
+  masterKey,
+}: {
+  repo: ProjectBackupRepoWithSecret;
+  masterKey: Buffer;
+}): Promise<string> {
+  if (!repo.secret.startsWith("v1:")) {
+    await storeMigratedBackupRepoSecret({
+      repo,
+      secret: repo.secret,
+      masterKey,
+    });
+    return repo.secret;
+  }
+  try {
+    return decryptBackupSecret(repo.secret, masterKey);
+  } catch (err) {
+    const legacyKey = await getLegacyBackupMasterKey();
+    if (!legacyKey) throw err;
+    try {
+      const secret = decryptBackupSecret(repo.secret, legacyKey);
+      await storeMigratedBackupRepoSecret({ repo, secret, masterKey });
+      return secret;
+    } catch {
+      throw err;
+    }
+  }
 }
 
 export async function recordProjectBackup({

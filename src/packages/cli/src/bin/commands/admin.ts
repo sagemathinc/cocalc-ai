@@ -1,7 +1,14 @@
 import { Command } from "commander";
 import { ADMIN_SEARCH_LIMIT } from "@cocalc/util/db-schema/accounts";
 import { MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS } from "@cocalc/util/membership-entitlement-overrides";
-import { readFile } from "node:fs/promises";
+import {
+  createSiteMasterKeyBackup,
+  getOrCreateSiteMasterKey,
+  getSiteMasterKeyStatus,
+  readSiteMasterKeyBackupFile,
+  restoreSiteMasterKeyBackup,
+} from "@cocalc/util/master-key-lifecycle";
+import { readFile, writeFile } from "node:fs/promises";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
 
 export type AdminCommandDeps = {
@@ -357,6 +364,38 @@ async function readOverrideFile(
   return parseOverrideJson(await readFile(filename, "utf8"));
 }
 
+async function resolvePassphraseOption(opts: {
+  passphraseEnv?: string;
+  passphraseFile?: string;
+}): Promise<string | undefined> {
+  const envName = `${opts.passphraseEnv ?? ""}`.trim();
+  const file = `${opts.passphraseFile ?? ""}`.trim();
+  if (envName && file) {
+    throw new Error("use exactly one of --passphrase-env or --passphrase-file");
+  }
+  if (envName) {
+    const value = process.env[envName];
+    if (!value) {
+      throw new Error(`environment variable ${envName} is not set`);
+    }
+    return value;
+  }
+  if (file) {
+    return (await readFile(file, "utf8")).trim();
+  }
+}
+
+async function requirePassphraseOption(opts: {
+  passphraseEnv?: string;
+  passphraseFile?: string;
+}): Promise<string> {
+  const passphrase = await resolvePassphraseOption(opts);
+  if (!passphrase) {
+    throw new Error("one of --passphrase-env or --passphrase-file is required");
+  }
+  return passphrase;
+}
+
 function parseExpiresAtOption(value: string | undefined): string | null | void {
   const trimmed = `${value ?? ""}`.trim();
   if (!trimmed) return;
@@ -504,6 +543,9 @@ export function registerAdminCommand(
     .command("entitlement-override")
     .description("admin account entitlement override operations")
     .addHelpText("after", ENTITLEMENT_OVERRIDE_HELP);
+  const adminMasterKey = admin
+    .command("master-key")
+    .description("local site master key lifecycle operations");
 
   async function resolveTargetAccountId(
     ctx: any,
@@ -587,6 +629,112 @@ export function registerAdminCommand(
             created: row.created ?? null,
           }));
         });
+      },
+    );
+
+  adminMasterKey
+    .command("status")
+    .description(
+      "show local site master key status without printing the secret key",
+    )
+    .action(async () => {
+      console.log(JSON.stringify(await getSiteMasterKeyStatus(), null, 2));
+    });
+
+  adminMasterKey
+    .command("init")
+    .description("create the local site master key if it does not exist")
+    .action(async () => {
+      await getOrCreateSiteMasterKey();
+      console.log(JSON.stringify(await getSiteMasterKeyStatus(), null, 2));
+    });
+
+  adminMasterKey
+    .command("export <path>")
+    .description(
+      "write a backup of the one site master key; encrypted unless --plaintext is set",
+    )
+    .option(
+      "--passphrase-env <name>",
+      "read backup encryption passphrase from this environment variable",
+    )
+    .option(
+      "--passphrase-file <path>",
+      "read backup encryption passphrase from this file",
+    )
+    .option("--plaintext", "write an unencrypted backup file")
+    .action(
+      async (
+        path: string,
+        opts: {
+          passphraseEnv?: string;
+          passphraseFile?: string;
+          plaintext?: boolean;
+        },
+      ) => {
+        const backup = await createSiteMasterKeyBackup({
+          passphrase: opts.plaintext
+            ? undefined
+            : await requirePassphraseOption(opts),
+          plaintext: !!opts.plaintext,
+        });
+        await writeFile(path, `${JSON.stringify(backup, null, 2)}\n`, {
+          mode: 0o600,
+        });
+        console.log(
+          JSON.stringify(
+            {
+              path,
+              encrypted: backup.encrypted,
+              created_at: backup.created_at,
+              site_master_key_sha256: backup.encrypted
+                ? null
+                : backup.key.sha256,
+            },
+            null,
+            2,
+          ),
+        );
+      },
+    );
+
+  adminMasterKey
+    .command("import <path>")
+    .description(
+      "restore the site master key from a backup; refuses to overwrite by default",
+    )
+    .option(
+      "--passphrase-env <name>",
+      "read backup decryption passphrase from this environment variable",
+    )
+    .option(
+      "--passphrase-file <path>",
+      "read backup decryption passphrase from this file",
+    )
+    .option("--force", "overwrite a different existing local site master key")
+    .action(
+      async (
+        path: string,
+        opts: {
+          passphraseEnv?: string;
+          passphraseFile?: string;
+          force?: boolean;
+        },
+      ) => {
+        const backup = await readSiteMasterKeyBackupFile({
+          path,
+          passphrase: await resolvePassphraseOption(opts),
+        });
+        console.log(
+          JSON.stringify(
+            await restoreSiteMasterKeyBackup({
+              backup,
+              force: !!opts.force,
+            }),
+            null,
+            2,
+          ),
+        );
       },
     );
 

@@ -319,7 +319,16 @@ describe("project-backup", () => {
         settings.backup_repo_id = repo.id;
         return { rows: [repo] };
       }
-      if (sql.startsWith("UPDATE project_backup_repos")) {
+      if (sql.includes("UPDATE project_backup_repos")) {
+        if (sql.includes("SET secret = $2")) {
+          const row = repoStateRows().find(
+            (row: any) => row.id === params?.[0],
+          );
+          if (row && row.secret === params?.[2]) {
+            row.secret = params?.[1] ?? row.secret;
+          }
+          return { rows: [] };
+        }
         const ids = new Set(params?.[0] ?? []);
         for (const row of repoStateRows()) {
           if (ids.has(row.id)) {

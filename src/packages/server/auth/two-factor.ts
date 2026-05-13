@@ -9,7 +9,10 @@ import passwordHash, {
   verifyPassword,
 } from "@cocalc/backend/auth/password-hash";
 import getCustomize from "@cocalc/database/settings/customize";
-import { getSecretSettingsKey } from "@cocalc/database/settings/secret-settings";
+import {
+  decryptSecretStorageValue,
+  encryptSecretStorageValue,
+} from "@cocalc/database/settings/secret-settings";
 import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
@@ -44,8 +47,6 @@ import {
 } from "@cocalc/server/auth/remember-me";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
-import { decryptSecretSettingValue } from "@cocalc/util/secret-settings-crypto";
-import { encryptSecretSettingValue } from "@cocalc/util/secret-settings-crypto";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const FACTOR_TYPE_TOTP = "totp";
@@ -102,10 +103,6 @@ function ensureAccountId(account_id: string): string {
   return value;
 }
 
-async function getEncryptionKey(): Promise<Buffer> {
-  return await getSecretSettingsKey();
-}
-
 function factorSecretName(factor_id: string): string {
   return `${FACTOR_SECRET_AAD}:${factor_id}`;
 }
@@ -114,22 +111,30 @@ async function encryptFactorSecret(
   factor_id: string,
   secret: string,
 ): Promise<string> {
-  return encryptSecretSettingValue(
-    factorSecretName(factor_id),
-    secret,
-    await getEncryptionKey(),
-  );
+  return await encryptSecretStorageValue(factorSecretName(factor_id), secret);
 }
 
 async function decryptFactorSecret(
   factor_id: string,
   encrypted: string,
 ): Promise<string> {
-  return decryptSecretSettingValue(
+  const result = await decryptSecretStorageValue(
     factorSecretName(factor_id),
     encrypted,
-    await getEncryptionKey(),
   );
+  if (result.needsMigration) {
+    const migrated = await encryptFactorSecret(factor_id, result.value);
+    await getPool().query(
+      `
+        UPDATE account_second_factors
+           SET secret_encrypted = $2
+         WHERE id = $1::UUID
+           AND secret_encrypted = $3
+      `,
+      [factor_id, migrated, encrypted],
+    );
+  }
+  return result.value;
 }
 
 async function getActiveFactor(account_id: string): Promise<FactorRow | null> {

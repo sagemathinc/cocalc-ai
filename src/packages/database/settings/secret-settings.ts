@@ -1,45 +1,83 @@
-import { randomBytes } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import { secrets } from "@cocalc/backend/data";
-import getLogger from "@cocalc/backend/logger";
+import {
+  deriveSiteMasterKey,
+  getOrCreateSiteMasterKey,
+  readOptionalMasterKeyFile,
+  resolveLegacyMasterKeyFiles,
+} from "@cocalc/util/master-key-lifecycle";
 import { isSecretSetting } from "@cocalc/util/secret-settings";
 import {
-  decryptSecretSettingValue,
-  encryptSecretSettingValue,
+  decryptSecretSettingValue as decryptWithKey,
+  encryptSecretSettingValue as encryptWithKey,
   isEncryptedSecretSettingValue,
 } from "@cocalc/util/secret-settings-crypto";
 
-const logger = getLogger("server:secret-settings");
-
-const DEFAULT_KEY_PATH = join(secrets, "server-settings-key");
+const SECRET_SETTINGS_PURPOSE = "secret-settings:v1";
+const SECRET_SETTINGS_KEY_ID = "site-master-key-v1";
 
 let cachedKey: Buffer | undefined;
+let cachedLegacyKey: Buffer | undefined;
+let cachedLegacyKeyLoaded = false;
 
 export async function getSecretSettingsKey(): Promise<Buffer> {
   if (cachedKey) return cachedKey;
-  const keyPath =
-    process.env.COCALC_SECRET_SETTINGS_KEY_PATH ?? DEFAULT_KEY_PATH;
-  let encoded = "";
+  cachedKey = deriveSiteMasterKey(
+    await getOrCreateSiteMasterKey({ secretsDir: secrets }),
+    SECRET_SETTINGS_PURPOSE,
+  );
+  return cachedKey;
+}
+
+async function getLegacySecretSettingsKey(): Promise<Buffer | undefined> {
+  if (cachedLegacyKeyLoaded) return cachedLegacyKey;
+  cachedLegacyKeyLoaded = true;
+  const legacyFile = resolveLegacyMasterKeyFiles({ secretsDir: secrets }).find(
+    (file) => file.id === "legacy-secret-settings",
+  );
+  if (!legacyFile) return undefined;
+  cachedLegacyKey = await readOptionalMasterKeyFile(legacyFile.path);
+  return cachedLegacyKey;
+}
+
+export async function encryptSecretStorageValue(
+  name: string,
+  value: string,
+): Promise<string> {
+  if (!value) return "";
+  if (isEncryptedSecretSettingValue(value)) return value;
+  return encryptWithKey(
+    name,
+    value,
+    await getSecretSettingsKey(),
+    SECRET_SETTINGS_KEY_ID,
+  );
+}
+
+export async function decryptSecretStorageValue(
+  name: string,
+  value: string,
+): Promise<{ value: string; needsMigration: boolean }> {
+  if (!value) {
+    return { value: "", needsMigration: false };
+  }
+  if (!isEncryptedSecretSettingValue(value)) {
+    return { value, needsMigration: true };
+  }
+  const key = await getSecretSettingsKey();
   try {
-    encoded = (await readFile(keyPath, "utf8")).trim();
-  } catch {}
-  if (!encoded) {
-    encoded = randomBytes(32).toString("base64");
+    return { value: decryptWithKey(name, value, key), needsMigration: false };
+  } catch (err) {
+    const legacyKey = await getLegacySecretSettingsKey();
+    if (!legacyKey) throw err;
     try {
-      await writeFile(keyPath, encoded, { mode: 0o600 });
-    } catch (err) {
-      throw new Error(`failed to write secret settings key: ${err}`);
+      return {
+        value: decryptWithKey(name, value, legacyKey),
+        needsMigration: true,
+      };
+    } catch {
+      throw err;
     }
-    logger.info(`created secret settings key at ${keyPath}`);
   }
-  const key = Buffer.from(encoded, "base64");
-  if (key.length !== 32) {
-    throw new Error(`invalid secret settings key length at ${keyPath}`);
-  }
-  cachedKey = key;
-  return key;
 }
 
 export async function encryptSettingValue(
@@ -49,8 +87,7 @@ export async function encryptSettingValue(
   if (!isSecretSetting(name)) return value;
   if (!value) return "";
   if (isEncryptedSecretSettingValue(value)) return value;
-  const key = await getSecretSettingsKey();
-  return encryptSecretSettingValue(name, value, key);
+  return await encryptSecretStorageValue(name, value);
 }
 
 export async function decryptSettingValue(
@@ -63,12 +100,5 @@ export async function decryptSettingValue(
   if (!value) {
     return { value: "", needsMigration: false };
   }
-  if (isEncryptedSecretSettingValue(value)) {
-    const key = await getSecretSettingsKey();
-    return {
-      value: decryptSecretSettingValue(name, value, key),
-      needsMigration: false,
-    };
-  }
-  return { value, needsMigration: true };
+  return await decryptSecretStorageValue(name, value);
 }
