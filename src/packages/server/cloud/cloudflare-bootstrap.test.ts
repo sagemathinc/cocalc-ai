@@ -61,6 +61,11 @@ describe("bootstrapCloudflareConfiguration", () => {
             name: "Workers R2 Storage Write",
             scopes: ["com.cloudflare.api.account"],
           },
+          {
+            id: "account-analytics-read",
+            name: "Account Analytics Read",
+            scopes: ["com.cloudflare.api.account"],
+          },
         ]),
       )
       .mockResolvedValueOnce(
@@ -102,6 +107,13 @@ describe("bootstrapCloudflareConfiguration", () => {
     expect(result.values.r2_api_token).toBe("durable-token");
     expect(result.visitor_location_headers.ok).toBe(true);
     expect(result.bootstrap_token_invalidated).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.cloudflare.com/client/v4/user/tokens",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("account-analytics-read"),
+      }),
+    );
     expect(fetchMock).toHaveBeenLastCalledWith(
       "https://api.cloudflare.com/client/v4/user/tokens/bootstrap-id",
       expect.objectContaining({ method: "DELETE" }),

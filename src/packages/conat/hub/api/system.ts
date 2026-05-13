@@ -109,6 +109,9 @@ export const system = {
   bootstrapCloudflareConfiguration: authFirst,
   createCloudflareTeardownPlan: authFirst,
   getCloudflareTeardownPlan: authFirst,
+  getCloudflareR2Usage: authFirst,
+  auditCloudflareR2Bucket: authFirst,
+  startCloudflareR2Audit: authFirst,
   createProviderSetupChallenge: authFirst,
   getProviderSetupChallenge: authFirst,
   clearProviderSetupChallenge: authFirst,
@@ -238,6 +241,113 @@ export interface CloudflareTeardownPlan {
   expires_at: string;
   applied_at?: string;
   summary: CloudflareTeardownPlanSummary;
+}
+
+export interface CloudflareR2BucketUsage {
+  bucket: string;
+  location?: string;
+  jurisdiction?: string;
+  storage_class?: string;
+  creation_date?: string;
+  object_count?: number;
+  payload_bytes?: number;
+  metadata_bytes?: number;
+  total_bytes?: number;
+  upload_count?: number;
+  measured_at?: string;
+  metrics_source?: "graphql" | "s3-scan" | "s3-cache" | "unavailable";
+  database?: {
+    known: boolean;
+    provider?: string;
+    purpose?: string;
+    region?: string;
+    status?: string;
+    project_backup_repos?: number;
+    assigned_projects?: number;
+  };
+}
+
+export interface CloudflareR2UsageResult {
+  checked_at: string;
+  account_id: string;
+  bucket_prefix?: string;
+  filtered_by_prefix: boolean;
+  bucket_count: number;
+  cloudflare_bucket_count: number;
+  totals: {
+    object_count?: number;
+    payload_bytes?: number;
+    metadata_bytes?: number;
+    total_bytes?: number;
+    upload_count?: number;
+  };
+  buckets: CloudflareR2BucketUsage[];
+  warnings: string[];
+  notes: string[];
+}
+
+export interface CloudflareR2AuditCategory {
+  category: string;
+  object_count: number;
+  total_bytes: number;
+  examples: string[];
+}
+
+export interface CloudflareR2AuditPrefix {
+  prefix: string;
+  object_count: number;
+  total_bytes: number;
+}
+
+export interface CloudflareR2AuditObject {
+  key: string;
+  size: number;
+}
+
+export interface CloudflareR2AuditUsageGroup {
+  object_count: number;
+  total_bytes: number;
+  examples: string[];
+}
+
+export interface CloudflareR2AuditRusticRepo extends CloudflareR2AuditUsageGroup {
+  repo: string;
+  kind: "project-backup" | "bay-backup" | "rootfs" | "other";
+}
+
+export interface CloudflareR2AuditResult {
+  audit_schema_version?: number;
+  account_id: string;
+  bucket: string;
+  prefix?: string;
+  scanned_at: string;
+  cache: {
+    hit: boolean;
+    max_age_minutes: number;
+    expires_at: string;
+  };
+  object_count: number;
+  total_bytes: number;
+  rustic_repos?: CloudflareR2AuditRusticRepo[];
+  project_backup_index?: CloudflareR2AuditUsageGroup;
+  rootfs_images?: CloudflareR2AuditUsageGroup;
+  bay_backup_files?: CloudflareR2AuditUsageGroup;
+  other?: CloudflareR2AuditUsageGroup;
+  other_prefixes?: CloudflareR2AuditPrefix[];
+  categories: CloudflareR2AuditCategory[];
+  top_prefixes: CloudflareR2AuditPrefix[];
+  top_objects: CloudflareR2AuditObject[];
+  database?: CloudflareR2BucketUsage["database"];
+  warnings: string[];
+  notes: string[];
+}
+
+export interface CloudflareR2AuditLroRef {
+  op_id: string;
+  scope_type: "account";
+  scope_id: string;
+  service: string;
+  stream_name: string;
 }
 
 export interface AccountMembershipPortabilityRepairCounts {
@@ -1666,6 +1776,30 @@ export interface System {
     account_id?: string;
     plan_id: string;
   }) => Promise<CloudflareTeardownPlan>;
+
+  getCloudflareR2Usage: (opts: {
+    account_id?: string;
+    all_buckets?: boolean;
+    scan?: boolean;
+    refresh?: boolean;
+    max_age_minutes?: number;
+  }) => Promise<CloudflareR2UsageResult>;
+
+  auditCloudflareR2Bucket: (opts: {
+    account_id?: string;
+    bucket: string;
+    prefix?: string;
+    refresh?: boolean;
+    max_age_minutes?: number;
+  }) => Promise<CloudflareR2AuditResult>;
+
+  startCloudflareR2Audit: (opts: {
+    account_id?: string;
+    bucket: string;
+    prefix?: string;
+    refresh?: boolean;
+    max_age_minutes?: number;
+  }) => Promise<CloudflareR2AuditLroRef>;
 
   createProviderSetupChallenge: (opts: {
     account_id?: string;

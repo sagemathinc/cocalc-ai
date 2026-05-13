@@ -217,6 +217,14 @@ async function createDurableTunnelToken(opts: {
   if (r2Group?.id) {
     accountGroups.push(r2Group);
   }
+  const analyticsGroup = findPermissionGroup(
+    groups,
+    ["Account Analytics Read", "Analytics Read"],
+    accountScope,
+  );
+  if (analyticsGroup?.id) {
+    accountGroups.push(analyticsGroup);
+  }
   const created = await cloudflareRequest<CreatedToken>(
     opts.bootstrapToken,
     "POST",

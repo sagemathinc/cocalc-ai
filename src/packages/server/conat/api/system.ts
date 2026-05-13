@@ -88,6 +88,13 @@ import {
   type CloudflareTeardownPlan,
 } from "@cocalc/server/cloud/cloudflare-teardown";
 import {
+  auditCloudflareR2Bucket as auditCloudflareR2Bucket0,
+  getCloudflareR2Usage as getCloudflareR2Usage0,
+  runCloudflareR2AuditLro,
+  type CloudflareR2AuditResult,
+  type CloudflareR2UsageResult,
+} from "@cocalc/server/cloud/cloudflare-r2-usage";
+import {
   clearProviderSetupChallenge as clearProviderSetupChallenge0,
   createProviderSetupChallenge as createProviderSetupChallenge0,
   getProviderSetupChallenge as getProviderSetupChallenge0,
@@ -3306,6 +3313,114 @@ export async function getCloudflareTeardownPlan({
     throw Error("must be an admin");
   }
   return await getCloudflareTeardownPlan0({ account_id, plan_id });
+}
+
+export async function getCloudflareR2Usage({
+  account_id,
+  all_buckets,
+  scan,
+  refresh,
+  max_age_minutes,
+}: {
+  account_id?: string;
+  all_buckets?: boolean;
+  scan?: boolean;
+  refresh?: boolean;
+  max_age_minutes?: number;
+}): Promise<CloudflareR2UsageResult> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await getCloudflareR2Usage0({
+    all_buckets,
+    scan,
+    refresh,
+    max_age_minutes,
+  });
+}
+
+export async function auditCloudflareR2Bucket({
+  account_id,
+  bucket,
+  prefix,
+  refresh,
+  max_age_minutes,
+}: {
+  account_id?: string;
+  bucket: string;
+  prefix?: string;
+  refresh?: boolean;
+  max_age_minutes?: number;
+}): Promise<CloudflareR2AuditResult> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await auditCloudflareR2Bucket0({
+    bucket,
+    prefix,
+    refresh,
+    max_age_minutes,
+  });
+}
+
+const CLOUDFLARE_R2_AUDIT_LRO_KIND = "cloudflare-r2-audit";
+
+export async function startCloudflareR2Audit({
+  account_id,
+  bucket,
+  prefix,
+  refresh,
+  max_age_minutes,
+}: {
+  account_id?: string;
+  bucket: string;
+  prefix?: string;
+  refresh?: boolean;
+  max_age_minutes?: number;
+}): Promise<{
+  op_id: string;
+  scope_type: "account";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const op = await createLro({
+    kind: CLOUDFLARE_R2_AUDIT_LRO_KIND,
+    scope_type: "account",
+    scope_id: account_id,
+    created_by: account_id,
+    routing: "hub",
+    input: {
+      bucket,
+      prefix,
+      refresh: !!refresh,
+      max_age_minutes,
+    },
+    status: "queued",
+  });
+  await publishQueuedLroSafe({ op });
+  void runCloudflareR2AuditLro({
+    op_id: op.op_id,
+    bucket,
+    prefix,
+    refresh,
+    max_age_minutes,
+  }).catch((err) =>
+    logger.warn("failed to run Cloudflare R2 audit LRO", {
+      op_id: op.op_id,
+      err,
+    }),
+  );
+  return {
+    op_id: op.op_id,
+    scope_type: "account",
+    scope_id: account_id,
+    service: PERSIST_SERVICE,
+    stream_name: lroStreamName(op.op_id),
+  };
 }
 
 export async function createProviderSetupChallenge({
