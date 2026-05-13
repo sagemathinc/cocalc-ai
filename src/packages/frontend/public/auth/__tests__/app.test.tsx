@@ -250,6 +250,45 @@ describe("PublicAuthApp", () => {
     expect(screen.queryByRole("link", { name: "Settings" })).toBeNull();
   });
 
+  it("routes domain-managed sign-in to the required SSO provider", async () => {
+    mockedApi.mockResolvedValueOnce({
+      email: "ada@cornell.edu",
+      password_allowed: false,
+      sso_required: true,
+      sso_strategy: {
+        name: "cornell",
+        display: "Cornell SSO",
+      },
+      reason: "domain_sso_required",
+    });
+
+    render(
+      <PublicAuthApp
+        config={config()}
+        initialRoute={{ kind: "auth-form", view: "sign-in" }}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "ada@cornell.edu" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Password"), {
+      target: { value: "correct horse battery staple" },
+    });
+
+    expect(
+      await screen.findByText("This email domain uses single sign-on."),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Continue with Cornell SSO" }),
+    ).toHaveProperty("href", "http://localhost/auth/cornell");
+    expect(screen.getByRole("button", { name: "Sign In" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(mockedPostAuthApi).not.toHaveBeenCalled();
+  });
+
   it("renders the password reset done screen", () => {
     render(
       <PublicAuthApp
