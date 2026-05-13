@@ -79,7 +79,7 @@ register({
         alt={alt}
         title={title}
         style={{
-          height: node.height,
+          height: node.width == null ? node.height : undefined,
           width: node.width,
           maxWidth: "100%",
           maxHeight: "100%",
