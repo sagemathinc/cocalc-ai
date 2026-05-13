@@ -415,3 +415,128 @@ test("cloudflare r2 audit refresh starts LRO", async () => {
     max_age_minutes: 5,
   });
 });
+
+test("cloudflare r2 bay-backups plan forwards bucket and prefix", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        getCloudflareR2BayBackupCleanupPlan: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            bucket: opts.bucket,
+            prefix: opts.prefix,
+            checked_at: "2026-05-13T00:00:00.000Z",
+            object_count: 2,
+            total_bytes: 4096,
+            wal_object_count: 2,
+            wal_total_bytes: 4096,
+            manifest_object_count: 0,
+            manifest_total_bytes: 0,
+            other_object_count: 0,
+            other_total_bytes: 0,
+            bay_prefixes: [],
+            confirmation_text:
+              "delete direct bay backups from lite4b-wnam/bay-backups/: 2 objects 4096 bytes",
+            warnings: [],
+            notes: [],
+          };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "r2",
+    "bay-backups",
+    "plan",
+    "lite4b-wnam",
+    "--prefix",
+    "bay-backups/bay-0/",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bucket: "lite4b-wnam",
+    prefix: "bay-backups/bay-0/",
+  });
+});
+
+test("cloudflare r2 bay-backups delete starts LRO", async () => {
+  let capturedArgs: any;
+  const confirm =
+    "delete direct bay backups from lite4b-wnam/bay-backups/: 2 objects 4096 bytes";
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        startCloudflareR2BayBackupCleanup: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            op_id: "cleanup-op-1",
+            scope_type: "account",
+            scope_id: "acct",
+            service: "persist",
+            stream_name: "lro:cleanup-op-1",
+          };
+        },
+      },
+      lro: {
+        get: async () => ({
+          op_id: "cleanup-op-1",
+          status: "succeeded",
+          result: {
+            bucket: "lite4b-wnam",
+            prefix: "bay-backups/",
+            checked_at: "2026-05-13T00:00:00.000Z",
+            object_count: 2,
+            total_bytes: 4096,
+            wal_object_count: 2,
+            wal_total_bytes: 4096,
+            manifest_object_count: 0,
+            manifest_total_bytes: 0,
+            other_object_count: 0,
+            other_total_bytes: 0,
+            bay_prefixes: [],
+            confirmation_text: confirm,
+            warnings: [],
+            notes: [],
+            deleted_object_count: 2,
+            deleted_total_bytes: 4096,
+          },
+          progress_summary: {
+            phase: "done",
+            bucket: "lite4b-wnam",
+            prefix: "bay-backups/",
+            objects_seen: 2,
+            objects_deleted: 2,
+            bytes_deleted: 4096,
+          },
+        }),
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "r2",
+    "bay-backups",
+    "delete",
+    "lite4b-wnam",
+    "--confirm",
+    confirm,
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bucket: "lite4b-wnam",
+    prefix: "bay-backups/",
+    confirm,
+  });
+});

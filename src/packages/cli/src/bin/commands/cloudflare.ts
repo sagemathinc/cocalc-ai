@@ -211,6 +211,33 @@ function r2AuditOtherPrefixRows(result: any) {
   }));
 }
 
+function summarizeR2BayBackupCleanupPlan(plan: any) {
+  return {
+    bucket: plan.bucket,
+    prefix: plan.prefix,
+    checked_at: plan.checked_at,
+    objects: plan.object_count ?? 0,
+    total: bytes(plan.total_bytes),
+    wal_objects: plan.wal_object_count ?? 0,
+    wal_total: bytes(plan.wal_total_bytes),
+    manifest_objects: plan.manifest_object_count ?? 0,
+    manifest_total: bytes(plan.manifest_total_bytes),
+    other_objects: plan.other_object_count ?? 0,
+    other_total: bytes(plan.other_total_bytes),
+    confirmation_text: plan.confirmation_text ?? "",
+    warnings: (plan.warnings ?? []).join(" "),
+    notes: (plan.notes ?? []).join(" "),
+  };
+}
+
+function r2BayBackupCleanupPrefixRows(plan: any) {
+  return (plan.bay_prefixes ?? []).map((row: any) => ({
+    prefix: row.prefix,
+    objects: row.object_count,
+    total: bytes(row.total_bytes),
+  }));
+}
+
 function parseNonNegativeInt(value: string): number {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0) {
@@ -261,6 +288,22 @@ function formatR2AuditProgress(progress: any): string | undefined {
   const etaValue = duration(Number(progress.eta_seconds));
   const eta = etaValue ? `, eta ${etaValue}` : "";
   return `${phase} ${bucket}: ${objectLabel}, ${seen}${expected}${percent}, ${pages} pages${rate}${eta}`;
+}
+
+function formatR2BayBackupCleanupProgress(progress: any): string | undefined {
+  if (!progress || typeof progress !== "object") return undefined;
+  if (!progress.bucket && !progress.objects_seen && !progress.objects_deleted) {
+    return undefined;
+  }
+  const bucket = progress.bucket ? `${progress.bucket}` : "R2 bucket";
+  const prefix = progress.prefix ? `${progress.prefix}` : "bay-backups/";
+  const phase = progress.phase ?? "deleting";
+  const seen = Number(progress.objects_seen ?? 0);
+  const deleted = Number(progress.objects_deleted ?? 0);
+  const deletedBytes = bytes(Number(progress.bytes_deleted ?? 0)) || "0 B";
+  const rate = Number(progress.objects_per_second);
+  const rateText = Number.isFinite(rate) && rate > 0 ? `, ${rate}/s` : "";
+  return `${phase} ${bucket}/${prefix}: ${deleted}/${seen} objects deleted, ${deletedBytes}${rateText}`;
 }
 
 async function withScanTimeout<T>(
@@ -315,6 +358,43 @@ async function runR2AuditRefresh(ctx: any, bucket: string, options: any) {
     throw new Error(
       waited.error ||
         `R2 audit operation ${op.op_id} finished with status ${waited.status}`,
+    );
+  }
+  return waited.result;
+}
+
+async function runR2BayBackupCleanup(ctx: any, bucket: string, options: any) {
+  const timeoutMinutes = Math.max(1, options.timeoutMinutes ?? 360);
+  const timeoutMs = timeoutMinutes * 60 * 1000;
+  const op = await ctx.hub.system.startCloudflareR2BayBackupCleanup({
+    bucket,
+    prefix: options.prefix,
+    confirm: options.confirm,
+  });
+  reportProgress(
+    ctx,
+    `deleting direct bay backup objects from ${bucket}; timeout is ${timeoutMinutes} minutes; op_id=${op.op_id}`,
+  );
+  const waited = await waitForLro({
+    hub: ctx.hub,
+    opId: op.op_id,
+    timeoutMs,
+    pollMs: Math.max(1000, ctx.pollMs ?? 1000),
+    terminalStatuses: new Set(["succeeded", "failed", "canceled", "expired"]),
+    onUpdate: async (update) => {
+      const message = formatR2BayBackupCleanupProgress(update.progress_summary);
+      if (message) reportProgress(ctx, message);
+    },
+  });
+  if (waited.timedOut) {
+    throw new Error(
+      `timeout waiting for R2 bay backup cleanup operation ${op.op_id} (${timeoutMinutes} minutes)`,
+    );
+  }
+  if (waited.status !== "succeeded") {
+    throw new Error(
+      waited.error ||
+        `R2 bay backup cleanup operation ${op.op_id} finished with status ${waited.status}`,
     );
   }
   return waited.result;
@@ -539,5 +619,69 @@ export function registerCloudflareCommand(
         if (options.topObjects) return r2AuditObjectRows(result);
         return summarizeR2Audit(result);
       });
+    });
+
+  const bayBackups = r2
+    .command("bay-backups")
+    .description("Plan or delete direct R2 bay database backup objects");
+
+  bayBackups
+    .command("plan <bucket>")
+    .description(
+      "Scan direct bay-backups/* objects and print the required delete confirmation",
+    )
+    .option(
+      "--prefix <prefix>",
+      "Direct bay backup prefix to scan",
+      "bay-backups/",
+    )
+    .option("--prefixes", "Show per-bay-prefix rows")
+    .action(async (bucket, options, command) => {
+      await deps.withContext(
+        command,
+        "cloudflare r2 bay-backups plan",
+        async (ctx) => {
+          const plan = await ctx.hub.system.getCloudflareR2BayBackupCleanupPlan(
+            {
+              bucket,
+              prefix: options.prefix,
+            },
+          );
+          return options.prefixes
+            ? r2BayBackupCleanupPrefixRows(plan)
+            : summarizeR2BayBackupCleanupPlan(plan);
+        },
+      );
+    });
+
+  bayBackups
+    .command("delete <bucket>")
+    .description(
+      "Delete direct bay-backups/* objects after exact confirmation; does not touch rustic repositories",
+    )
+    .requiredOption(
+      "--confirm <text>",
+      "Exact confirmation_text from 'cocalc cloudflare r2 bay-backups plan'",
+    )
+    .option(
+      "--prefix <prefix>",
+      "Direct bay backup prefix to delete",
+      "bay-backups/",
+    )
+    .option(
+      "--timeout-minutes <minutes>",
+      "Maximum time to wait for deletion",
+      parseNonNegativeInt,
+      360,
+    )
+    .action(async (bucket, options, command) => {
+      await deps.withContext(
+        command,
+        "cloudflare r2 bay-backups delete",
+        async (ctx) =>
+          summarizeR2BayBackupCleanupPlan(
+            await runR2BayBackupCleanup(ctx, bucket, options),
+          ),
+      );
     });
 }
