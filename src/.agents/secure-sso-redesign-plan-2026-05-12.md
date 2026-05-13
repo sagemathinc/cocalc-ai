@@ -342,10 +342,20 @@ site secret encryption mechanism, not plaintext config rows.
 
 ### Phase 5: Organization SAML
 
-1. Add admin UI for SAML provider config.
-2. Implement direct SAML flow using a focused maintained library.
-3. Require trusted email mapping and allowed-domain checks.
-4. Add provider-specific sign-in links and error diagnostics for admins.
+1. Add admin UI for SAML provider config. Status: implemented with structured
+   provider fields for IdP metadata XML, IdP entity ID, SSO URL, signing
+   certificate, allowed domains, account-creation mode, and copyable SP
+   metadata/ACS URLs.
+2. Implement direct SAML flow using a focused maintained library. Status:
+   implemented using `@node-saml/passport-saml`'s direct `SAML` API, not
+   Passport strategy routing.
+3. Require trusted email mapping and allowed-domain checks. Status: SAML
+   profiles are normalized into the existing `PassportLogin` path, which
+   applies allowed-domain checks, domain policy, registration-token signup
+   policy, and CoCalc 2FA requirements.
+4. Add provider-specific sign-in links and error diagnostics for admins. Status:
+   provider links and metadata URLs exist; richer test-configuration diagnostics
+   remain open.
 
 ### Phase 6: Passport Removal
 
@@ -428,4 +438,6 @@ Recommended order:
 3. Implement Phase 1 policy boundary and provider deletion first.
 4. Replace remaining non-Google organization Passport paths with direct
    SAML/OIDC next; Google no longer depends on Passport.js and the
-   provider/domain policy skeleton is in place.
+   provider/domain policy skeleton is in place. Status: direct SAML is
+   implemented; generic non-Google OIDC remains deferred until there is a
+   concrete customer requirement.

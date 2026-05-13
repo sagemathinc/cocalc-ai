@@ -582,17 +582,22 @@ Implemented first guard:
   challenge route before setting sign-in cookies. New password/SSO account
   creation is fail-closed for matching domains because a new account cannot
   already satisfy the CoCalc 2FA requirement.
+- Organization SAML now uses admin-managed `sso_providers` rows with direct
+  node-saml runtime routing instead of Passport strategy routing. The admin SSO
+  panel has structured SAML fields, copyable SP metadata/ACS URLs, IdP metadata
+  parsing, and avoids storing raw pasted metadata XML.
 
 Residual risk:
 
 - Passport dependencies and legacy organization-provider machinery still exist
-  for non-Google organization providers until SAML/OIDC are implemented
-  directly.
+  for non-Google non-SAML organization providers until those are deleted or a
+  concrete direct OIDC replacement is required.
 
 Suggested next audit steps:
 
-1. Replace remaining non-Google organization Passport paths with direct SAML/OIDC
-   where needed.
+1. Add SSO audit events for provider/domain-policy mutations and SSO allow/deny
+   outcomes without logging assertions, authorization codes, or provider
+   secrets.
 
 ### SEC-REG-001: Registration-Token Signup Policy
 

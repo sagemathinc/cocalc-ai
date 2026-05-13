@@ -160,6 +160,7 @@ export function directSamlConfig({
         ? null
         : (stringOrUndefined(config.identifierFormat) ??
           DEFAULT_NAME_ID_FORMAT),
+    idpIssuer: stringOrUndefined(config.idpIssuer),
     idpCert: idpCert(config.idpCert ?? config.cert),
     issuer,
     requestIdExpirationPeriodMs: numberOrDefault(

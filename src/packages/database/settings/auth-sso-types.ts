@@ -104,6 +104,7 @@ export interface PassportStrategyDBConfig {
   auth_opts?: { [key: string]: string }; // auth options, typed as AuthenticateOptions but OAuth2 has one which isn't part of the type – hence we keep it general
   cert?: string; // passport-saml<5
   idpCert?: string; // passport-saml>=5  https://github.com/node-saml/node-saml/pull/343
+  idpIssuer?: string; // SAML IdP entity ID, when known
   entryPoint?: string; // SAML IdP sign-in URL
   issuer?: string; // SAML SP entity ID
   callbackUrl?: string; // SAML ACS callback URL

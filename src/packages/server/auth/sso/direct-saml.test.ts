@@ -28,6 +28,7 @@ describe("directSamlConfig", () => {
         type: "saml",
         entryPoint: "https://idp.example/sso",
         idpCert: "CERT",
+        idpIssuer: "https://idp.example/metadata",
       },
     });
 
@@ -37,6 +38,7 @@ describe("directSamlConfig", () => {
       "https://cocalc.example/auth/cornell/return",
     );
     expect(config.issuer).toBe("https://cocalc.example/auth/cornell/metadata");
+    expect(config.idpIssuer).toBe("https://idp.example/metadata");
     expect(config.audience).toBe(config.issuer);
     expect(config.validateInResponseTo).toBe(ValidateInResponseTo.always);
     expect(config.wantAssertionsSigned).toBe(true);
