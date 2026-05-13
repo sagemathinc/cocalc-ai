@@ -144,7 +144,12 @@ test("cloudflare r2 usage requests usage summary", async () => {
 
   await program.parseAsync(["node", "test", "cloudflare", "r2", "usage"]);
 
-  assert.deepEqual(capturedArgs, { all_buckets: false });
+  assert.deepEqual(capturedArgs, {
+    all_buckets: false,
+    scan: undefined,
+    refresh: false,
+    max_age_minutes: undefined,
+  });
 });
 
 test("cloudflare r2 usage can request all visible buckets", async () => {
@@ -182,7 +187,57 @@ test("cloudflare r2 usage can request all visible buckets", async () => {
     "--all",
   ]);
 
-  assert.deepEqual(capturedArgs, { all_buckets: true });
+  assert.deepEqual(capturedArgs, {
+    all_buckets: true,
+    scan: undefined,
+    refresh: false,
+    max_age_minutes: undefined,
+  });
+});
+
+test("cloudflare r2 usage passes S3 scan controls", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        getCloudflareR2Usage: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            checked_at: "2026-05-12T00:00:00.000Z",
+            account_id: "acct",
+            filtered_by_prefix: true,
+            bucket_count: 1,
+            cloudflare_bucket_count: 1,
+            totals: {},
+            buckets: [],
+            warnings: [],
+            notes: [],
+          };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "r2",
+    "usage",
+    "--scan",
+    "--refresh",
+    "--max-age-minutes",
+    "10",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    all_buckets: false,
+    scan: true,
+    refresh: true,
+    max_age_minutes: 10,
+  });
 });
 
 test("cloudflare r2 audit passes cache controls", async () => {

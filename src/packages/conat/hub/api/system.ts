@@ -253,7 +253,7 @@ export interface CloudflareR2BucketUsage {
   total_bytes?: number;
   upload_count?: number;
   measured_at?: string;
-  metrics_source?: "graphql" | "unavailable";
+  metrics_source?: "graphql" | "s3-scan" | "s3-cache" | "unavailable";
   database?: {
     known: boolean;
     provider?: string;

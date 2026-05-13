@@ -197,11 +197,32 @@ export function registerCloudflareCommand(
       "--all",
       "Show all visible R2 buckets instead of only buckets matching configured r2_bucket_prefix",
     )
+    .option(
+      "--scan",
+      "Force exact S3 listing totals; useful with --all when GraphQL analytics is unavailable",
+    )
+    .option(
+      "--no-s3-scan",
+      "Disable the default exact S3 listing fallback for prefix-filtered usage",
+    )
+    .option("--refresh", "Ignore cached S3 usage data and rescan buckets")
+    .option(
+      "--max-age-minutes <minutes>",
+      "Use cached S3 usage data if it is this many minutes old or newer",
+      parseNonNegativeInt,
+    )
     .option("--summary", "Show account-level summary instead of bucket rows")
     .action(async (options, command) => {
       await deps.withContext(command, "cloudflare r2 usage", async (ctx) => {
         const result = await ctx.hub.system.getCloudflareR2Usage({
           all_buckets: !!options.all,
+          scan: options.scan
+            ? true
+            : options.s3Scan === false
+              ? false
+              : undefined,
+          refresh: !!options.refresh,
+          max_age_minutes: options.maxAgeMinutes,
         });
         return options.summary ? summarizeR2Usage(result) : r2UsageRows(result);
       });

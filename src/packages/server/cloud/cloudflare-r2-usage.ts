@@ -75,7 +75,7 @@ export type CloudflareR2BucketUsage = {
   total_bytes?: number;
   upload_count?: number;
   measured_at?: string;
-  metrics_source?: "graphql" | "unavailable";
+  metrics_source?: "graphql" | "s3-scan" | "s3-cache" | "unavailable";
   database?: {
     known: boolean;
     provider?: string;
@@ -419,8 +419,14 @@ function bucketNameForMetricAliases(bucket: CloudflareBucket): string[] {
 
 export async function getCloudflareR2Usage({
   all_buckets,
+  scan,
+  refresh,
+  max_age_minutes,
 }: {
   all_buckets?: boolean;
+  scan?: boolean;
+  refresh?: boolean;
+  max_age_minutes?: number;
 } = {}): Promise<CloudflareR2UsageResult> {
   const settings = await getServerSettings();
   const accountId =
@@ -463,7 +469,7 @@ export async function getCloudflareR2Usage({
     });
   } catch (err) {
     warnings.push(
-      `could not query per-bucket R2 GraphQL metrics: ${err}. Run 'cocalc cloudflare r2 audit <bucket>' for exact S3-listing totals.`,
+      `could not query per-bucket R2 GraphQL metrics: ${err}. The configured token likely needs Cloudflare account analytics permission; cached S3 listing fallback is used when enabled.`,
     );
     if (!filteredByPrefix) {
       try {
@@ -514,6 +520,31 @@ export async function getCloudflareR2Usage({
       };
     })
     .sort((a, b) => (b.total_bytes ?? -1) - (a.total_bytes ?? -1));
+
+  const shouldScan = scan ?? filteredByPrefix;
+  if (shouldScan && rows.length > 0) {
+    notes.push(
+      "Per-bucket totals are filled from cached S3 listings when Cloudflare GraphQL analytics is unavailable.",
+    );
+    for (const row of rows) {
+      if (row.total_bytes != null && row.object_count != null) continue;
+      try {
+        const audit = await auditCloudflareR2Bucket({
+          bucket: row.bucket,
+          refresh,
+          max_age_minutes,
+        });
+        row.object_count = audit.object_count;
+        row.payload_bytes = audit.total_bytes;
+        row.total_bytes = audit.total_bytes;
+        row.measured_at = audit.scanned_at;
+        row.metrics_source = audit.cache.hit ? "s3-cache" : "s3-scan";
+      } catch (err) {
+        warnings.push(`could not scan R2 bucket '${row.bucket}': ${err}`);
+      }
+    }
+    rows.sort((a, b) => (b.total_bytes ?? -1) - (a.total_bytes ?? -1));
+  }
 
   const sum = (field: keyof CloudflareR2BucketUsage) => {
     let total = 0;

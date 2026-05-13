@@ -3252,14 +3252,25 @@ export async function getCloudflareTeardownPlan({
 export async function getCloudflareR2Usage({
   account_id,
   all_buckets,
+  scan,
+  refresh,
+  max_age_minutes,
 }: {
   account_id?: string;
   all_buckets?: boolean;
+  scan?: boolean;
+  refresh?: boolean;
+  max_age_minutes?: number;
 }): Promise<CloudflareR2UsageResult> {
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
-  return await getCloudflareR2Usage0({ all_buckets });
+  return await getCloudflareR2Usage0({
+    all_buckets,
+    scan,
+    refresh,
+    max_age_minutes,
+  });
 }
 
 export async function auditCloudflareR2Bucket({
