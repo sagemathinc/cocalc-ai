@@ -60,6 +60,9 @@ const NUMERIC_USAGE_LIMIT_KEYS = new Set<keyof MembershipUsageLimits>([
   "acp_max_running_per_account",
   "acp_max_running_per_project",
   "acp_max_active_automations_per_project",
+  "rootfs_count",
+  "rootfs_total_storage_gb",
+  "rootfs_max_storage_gb",
 ]);
 const USAGE_ENUM_VALUES = {
   egress_policy: new Set([
@@ -240,6 +243,23 @@ const OVERRIDE_EFFECT_FIELDS = [
     key: "acp_max_active_automations_per_project",
     ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
       .acp_max_active_automations_per_project,
+  },
+  {
+    section: "usage_limits",
+    key: "rootfs_count",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.rootfs_count,
+  },
+  {
+    section: "usage_limits",
+    key: "rootfs_total_storage_gb",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .rootfs_total_storage_gb,
+  },
+  {
+    section: "usage_limits",
+    key: "rootfs_max_storage_gb",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .rootfs_max_storage_gb,
   },
 ] as const satisfies readonly OverrideEffectField[];
 

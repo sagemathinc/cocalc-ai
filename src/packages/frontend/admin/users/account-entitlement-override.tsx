@@ -380,6 +380,45 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
       MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
         .acp_max_active_automations_per_project.adminDescription,
   },
+  {
+    id: "rootfs_count",
+    section: "usage_limits",
+    key: "rootfs_count",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.rootfs_count
+        .label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.rootfs_count
+      .unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits.rootfs_count
+        .adminDescription,
+  },
+  {
+    id: "rootfs_total_storage",
+    section: "usage_limits",
+    key: "rootfs_total_storage_gb",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .rootfs_total_storage_gb.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .rootfs_total_storage_gb.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .rootfs_total_storage_gb.adminDescription,
+  },
+  {
+    id: "rootfs_max_storage",
+    section: "usage_limits",
+    key: "rootfs_max_storage_gb",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .rootfs_max_storage_gb.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .rootfs_max_storage_gb.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .rootfs_max_storage_gb.adminDescription,
+  },
 ];
 
 const PROJECT_FIELD_IDS = new Set([
@@ -411,6 +450,13 @@ const ACP_FIELD_IDS = new Set([
   "acp_created_7d_per_account",
   "acp_running_per_account",
   "acp_running_per_project",
+  "acp_active_automations_per_project",
+]);
+
+const ROOTFS_FIELD_IDS = new Set([
+  "rootfs_count",
+  "rootfs_total_storage",
+  "rootfs_max_storage",
 ]);
 
 const SPEND_FIELD_IDS = new Set([
@@ -1044,6 +1090,15 @@ export function AccountEntitlementOverridePanel({
                     form={form}
                     fields={NUMERIC_FIELDS.filter((field) =>
                       ACP_FIELD_IDS.has(field.id),
+                    )}
+                  />
+                </Collapse.Panel>
+                <Collapse.Panel header="Root filesystems" key="rootfs">
+                  <NumericFieldGroup
+                    details={details}
+                    form={form}
+                    fields={NUMERIC_FIELDS.filter((field) =>
+                      ROOTFS_FIELD_IDS.has(field.id),
                     )}
                   />
                 </Collapse.Panel>

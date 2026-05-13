@@ -260,6 +260,23 @@ export function buildEntitlementOverrideSchemaDoc() {
           descriptions.usage_limits.acp_max_active_automations_per_project
             .adminDescription,
       }),
+      fieldDoc({
+        path: "usage_limits.rootfs_count",
+        ...descriptions.usage_limits.rootfs_count,
+        description: descriptions.usage_limits.rootfs_count.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.rootfs_total_storage_gb",
+        ...descriptions.usage_limits.rootfs_total_storage_gb,
+        description:
+          descriptions.usage_limits.rootfs_total_storage_gb.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.rootfs_max_storage_gb",
+        ...descriptions.usage_limits.rootfs_max_storage_gb,
+        description:
+          descriptions.usage_limits.rootfs_max_storage_gb.adminDescription,
+      }),
       {
         path: "dedicated_hosts.funding_mode",
         kind: "enum_rule",

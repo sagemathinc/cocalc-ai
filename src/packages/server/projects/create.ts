@@ -22,6 +22,7 @@ import {
   assertCanIncreaseAccountStorage,
   assertCanOwnAdditionalProject,
 } from "@cocalc/server/membership/project-limits";
+import { assertCanSelectProjectRootfsImage } from "@cocalc/server/membership/rootfs-limits";
 import {
   cloneProjectRootfsStates,
   initializeProjectRootfsStates,
@@ -353,6 +354,16 @@ export default async function createProject(opts: CreateProjectOptions) {
     await client.clone({ project_id, src_project_id });
   }
 
+  const projectRootfsImage = opts.rootfs_image ?? rootfs_image;
+  const projectRootfsImageId = opts.rootfs_image_id ?? rootfs_image_id ?? null;
+  if (account_id && projectRootfsImage) {
+    await assertCanSelectProjectRootfsImage({
+      account_id,
+      image: projectRootfsImage,
+      image_id: projectRootfsImageId ?? undefined,
+    });
+  }
+
   const requestedRegion = parseR2Region(requested_region_raw);
   if (requested_region_raw && !requestedRegion) {
     throw Error("invalid region");
@@ -386,8 +397,8 @@ export default async function createProject(opts: CreateProjectOptions) {
         title ?? "No Title",
         description ?? "",
         users != null ? JSON.stringify(users) : users,
-        rootfs_image,
-        opts.rootfs_image_id ?? rootfs_image_id ?? null,
+        projectRootfsImage,
+        projectRootfsImageId,
         ephemeral ?? null,
         host_id ?? null,
         projectRegion,
@@ -420,8 +431,8 @@ export default async function createProject(opts: CreateProjectOptions) {
   } else {
     await initializeProjectRootfsStates({
       project_id,
-      image: rootfs_image,
-      image_id: opts.rootfs_image_id ?? rootfs_image_id ?? null,
+      image: projectRootfsImage,
+      image_id: projectRootfsImageId,
       set_by_account_id: account_id,
     });
   }
@@ -437,7 +448,7 @@ export default async function createProject(opts: CreateProjectOptions) {
             project_id,
             title,
             users,
-            image: rootfs_image,
+            image: projectRootfsImage,
             start: false,
           };
           if (assignedHostBayId !== getConfiguredBayId()) {

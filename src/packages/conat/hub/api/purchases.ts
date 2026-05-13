@@ -37,6 +37,10 @@ export interface MembershipUsageLimits {
   acp_max_running_per_account?: number;
   acp_max_running_per_project?: number;
   acp_max_active_automations_per_project?: number;
+  rootfs_count?: number;
+  rootfs_total_storage_gb?: number;
+  rootfs_max_storage_gb?: number;
+  rootfs_oci_images?: boolean;
 }
 
 export interface MembershipEffectiveLimits extends MembershipUsageLimits {}
@@ -99,6 +103,9 @@ export interface AccountUsageLimitOverrides {
   acp_max_running_per_account?: NumericLimitRule;
   acp_max_running_per_project?: NumericLimitRule;
   acp_max_active_automations_per_project?: NumericLimitRule;
+  rootfs_count?: NumericLimitRule;
+  rootfs_total_storage_gb?: NumericLimitRule;
+  rootfs_max_storage_gb?: NumericLimitRule;
 }
 
 export interface DedicatedHostPolicyOverrides {

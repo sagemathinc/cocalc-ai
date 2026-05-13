@@ -55,6 +55,10 @@ function normalizeDedicatedHostEgressPolicy(
     : undefined;
 }
 
+function normalizeBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
 export function normalizeMembershipEffectiveLimits(
   usageLimits?: MembershipUsageLimits | null,
 ): MembershipEffectiveLimits {
@@ -120,6 +124,14 @@ export function normalizeMembershipEffectiveLimits(
     acp_max_active_automations_per_project: normalizeNonNegativeInteger(
       usageLimits?.acp_max_active_automations_per_project,
     ),
+    rootfs_count: normalizeNonNegativeInteger(usageLimits?.rootfs_count),
+    rootfs_total_storage_gb: normalizeNonNegativeNumber(
+      usageLimits?.rootfs_total_storage_gb,
+    ),
+    rootfs_max_storage_gb: normalizeNonNegativeNumber(
+      usageLimits?.rootfs_max_storage_gb,
+    ),
+    rootfs_oci_images: normalizeBoolean(usageLimits?.rootfs_oci_images),
   };
 }
 

@@ -28,6 +28,12 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(
       (tier.usage_limits as Record<string, unknown>)?.shared_compute_priority,
     ).toBeGreaterThan(0);
+    expect((tier.usage_limits as Record<string, unknown>)?.rootfs_count).toBe(
+      250,
+    );
+    expect(
+      (tier.usage_limits as Record<string, unknown>)?.rootfs_oci_images,
+    ).toBe(true);
   });
 
   it("preserves explicit entitlements instead of overwriting them", () => {
@@ -59,6 +65,10 @@ describe("applyMembershipTierTemplateFallbacks", () => {
         prepaid_host_usage_limit_7d_usd: 1000,
         acp_max_running_per_account: 10,
         acp_max_active_automations_per_project: 3,
+        rootfs_count: 20,
+        rootfs_total_storage_gb: 25,
+        rootfs_max_storage_gb: 10,
+        rootfs_oci_images: false,
       }),
     );
   });

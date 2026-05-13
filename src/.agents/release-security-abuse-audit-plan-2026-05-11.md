@@ -260,6 +260,12 @@ Audit questions:
 Goal: user-created root filesystems must be useful for paid users but bounded as
 a storage and image-distribution abuse surface.
 
+Current status: guarded. Membership-tier rootfs limits and server-side
+admission checks now cover catalog save, project rootfs publish, project rootfs
+image selection, and project creation with a selected/cloned rootfs image.
+Remaining work is focused on top-user/near-limit reporting, current-usage UI,
+and continued edge-path review.
+
 Current concern:
 
 - A user may be able to create an unlimited number of root filesystems.

@@ -15,7 +15,7 @@ const MIN_AI_LIMIT = 50;
 
 function usageLimitsTemplate(
   shared_compute_priority: number,
-  overrides: Record<string, number> = {},
+  overrides: Record<string, number | boolean> = {},
 ) {
   return {
     shared_compute_priority,
@@ -50,6 +50,25 @@ function acpUsageLimits({
     acp_max_running_per_account: runningPerAccount,
     acp_max_running_per_project: runningPerProject,
     acp_max_active_automations_per_project: activeAutomationsPerProject,
+  };
+}
+
+function rootfsUsageLimits({
+  count,
+  totalStorageGb,
+  maxStorageGb,
+  ociImages,
+}: {
+  count: number;
+  totalStorageGb: number;
+  maxStorageGb: number;
+  ociImages: boolean;
+}) {
+  return {
+    rootfs_count: count,
+    rootfs_total_storage_gb: totalStorageGb,
+    rootfs_max_storage_gb: maxStorageGb,
+    rootfs_oci_images: ociImages,
   };
 }
 
@@ -98,6 +117,12 @@ export const TIER_TEMPLATES = {
         runningPerProject: 1,
         activeAutomationsPerProject: 0,
       }),
+      ...rootfsUsageLimits({
+        count: 0,
+        totalStorageGb: 0,
+        maxStorageGb: 0,
+        ociImages: false,
+      }),
     }),
   },
   student: {
@@ -134,6 +159,12 @@ export const TIER_TEMPLATES = {
         runningPerAccount: 10,
         runningPerProject: 10,
         activeAutomationsPerProject: 3,
+      }),
+      ...rootfsUsageLimits({
+        count: 0,
+        totalStorageGb: 0,
+        maxStorageGb: 0,
+        ociImages: false,
       }),
     }),
   },
@@ -174,6 +205,12 @@ export const TIER_TEMPLATES = {
         runningPerAccount: 10,
         runningPerProject: 10,
         activeAutomationsPerProject: 3,
+      }),
+      ...rootfsUsageLimits({
+        count: 20,
+        totalStorageGb: 25,
+        maxStorageGb: 10,
+        ociImages: false,
       }),
     }),
   },
@@ -216,6 +253,12 @@ export const TIER_TEMPLATES = {
         runningPerAccount: 50,
         runningPerProject: 50,
         activeAutomationsPerProject: 20,
+      }),
+      ...rootfsUsageLimits({
+        count: 250,
+        totalStorageGb: 250,
+        maxStorageGb: 30,
+        ociImages: true,
       }),
     }),
   },

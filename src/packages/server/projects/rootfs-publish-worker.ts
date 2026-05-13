@@ -19,6 +19,7 @@ import {
 import { getProjectHostDefaultParallelLimits } from "@cocalc/server/lro/project-host-defaults";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { publishProjectRootfsCatalogEntry } from "@cocalc/server/rootfs/catalog";
+import { assertCanCreateOrUpdateRootfs } from "@cocalc/server/membership/rootfs-limits";
 import { withTimeout } from "@cocalc/util/async-utils";
 import {
   computeAvailableRootfsPublishHostSlots,
@@ -464,19 +465,24 @@ async function handleRootfsPublishOp(op: LroSummary): Promise<void> {
       detail: { project_id },
     });
     const host_id = await loadProjectHostId(project_id);
-    const publishUpload = await issueRootfsReleaseArtifactUpload({
-      host_id,
-      artifact_kind: "full",
-    });
     const artifact = await timings.measure("publish", async () => {
       return await withTimeout(
         client.publishRootfsImage({
           project_id,
-          upload: publishUpload,
           lro: { op_id, scope_type: op.scope_type, scope_id: op.scope_id },
         }),
         ROOTFS_PUBLISH_TIMEOUT_MS,
       );
+    });
+    await assertCanCreateOrUpdateRootfs({
+      account_id: created_by,
+      image: artifact.image,
+      requested_size_bytes: artifact.size_bytes,
+      operation: "publish",
+    });
+    const publishUpload = await issueRootfsReleaseArtifactUpload({
+      host_id,
+      artifact_kind: "full",
     });
 
     let uploadResult:

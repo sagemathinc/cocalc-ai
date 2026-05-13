@@ -202,5 +202,36 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       userDescription:
         "Maximum enabled scheduled Codex/ACP automations in one project.",
     },
+    rootfs_count: {
+      label: "Root filesystems",
+      unit: "rootfs",
+      adminDescription:
+        "Maximum number of active user-created RootFS catalog entries this account may own.",
+      userDescription:
+        "Maximum number of active root filesystems this account may own.",
+    },
+    rootfs_total_storage_gb: {
+      label: "RootFS total storage",
+      unit: "GB",
+      adminDescription:
+        "Maximum total stored RootFS data this account may own across active user-created root filesystems.",
+      userDescription:
+        "Maximum total stored RootFS data across root filesystems you own.",
+    },
+    rootfs_max_storage_gb: {
+      label: "RootFS per-image storage",
+      unit: "GB",
+      adminDescription:
+        "Maximum stored size of any one user-created RootFS image owned by this account.",
+      userDescription: "Maximum stored size of any one root filesystem.",
+    },
+    rootfs_oci_images: {
+      label: "Remote OCI RootFS images",
+      unit: "boolean",
+      adminDescription:
+        "Whether this account may create or select arbitrary remote OCI images outside the managed/official RootFS catalog.",
+      userDescription:
+        "Whether arbitrary remote OCI root filesystem images are enabled.",
+    },
   },
 } as const;

@@ -255,6 +255,44 @@ function getUsageLimitsItems(
       value: `${maxBackups}`,
     });
   }
+  const rootfsCount = usageLimits.rootfs_count;
+  if (typeof rootfsCount === "number" && Number.isFinite(rootfsCount)) {
+    items.push({
+      key: "rootfs_count",
+      label: "Max root filesystems",
+      value: `${rootfsCount}`,
+    });
+  }
+  const rootfsTotalStorage = usageLimits.rootfs_total_storage_gb;
+  if (
+    typeof rootfsTotalStorage === "number" &&
+    Number.isFinite(rootfsTotalStorage)
+  ) {
+    items.push({
+      key: "rootfs_total_storage_gb",
+      label: "RootFS total storage cap",
+      value: `${rootfsTotalStorage} GB`,
+    });
+  }
+  const rootfsMaxStorage = usageLimits.rootfs_max_storage_gb;
+  if (
+    typeof rootfsMaxStorage === "number" &&
+    Number.isFinite(rootfsMaxStorage)
+  ) {
+    items.push({
+      key: "rootfs_max_storage_gb",
+      label: "RootFS per-image cap",
+      value: `${rootfsMaxStorage} GB`,
+    });
+  }
+  const rootfsOciImages = usageLimits.rootfs_oci_images;
+  if (typeof rootfsOciImages === "boolean") {
+    items.push({
+      key: "rootfs_oci_images",
+      label: "Remote OCI rootfs images",
+      value: rootfsOciImages ? "Enabled" : "Disabled",
+    });
+  }
   const egress5h = usageLimits.egress_5h_bytes;
   if (typeof egress5h === "number" && Number.isFinite(egress5h)) {
     items.push({

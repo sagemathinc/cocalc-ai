@@ -105,6 +105,10 @@ import {
   getProjectRootfsStates as getProjectRootfsStates0,
   setProjectRootfsImageWithRollback,
 } from "@cocalc/server/projects/rootfs-state";
+import {
+  assertCanCreateOrUpdateRootfs,
+  assertCanSelectProjectRootfsImage,
+} from "@cocalc/server/membership/rootfs-limits";
 import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { lroStreamName } from "@cocalc/conat/lro/names";
@@ -1682,6 +1686,10 @@ export async function publishProjectRootfsImage(
     throw Error("user must be signed in");
   }
   await assertProjectCollaboratorAccessAllowRemote({ account_id, project_id });
+  await assertCanCreateOrUpdateRootfs({
+    account_id,
+    operation: "publish",
+  });
   const op = await createLro({
     kind: ROOTFS_PUBLISH_LRO_KIND,
     scope_type: "project",
@@ -1728,6 +1736,11 @@ export async function setProjectRootfsImage(opts: {
     throw Error("user must be signed in");
   }
   await assertProjectCollaboratorAccessAllowRemote({ account_id, project_id });
+  await assertCanSelectProjectRootfsImage({
+    account_id,
+    image,
+    image_id,
+  });
   return await setProjectRootfsImageWithRollback({
     project_id,
     image,

@@ -160,6 +160,10 @@ describe("resolveMembershipForAccount", () => {
       acp_max_running_per_account: undefined,
       acp_max_running_per_project: undefined,
       acp_max_active_automations_per_project: undefined,
+      rootfs_count: undefined,
+      rootfs_total_storage_gb: undefined,
+      rootfs_max_storage_gb: undefined,
+      rootfs_oci_images: undefined,
     });
   });
 

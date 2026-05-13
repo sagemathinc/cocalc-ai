@@ -37,6 +37,7 @@ import {
   normalizeRootfsEntry,
   ROOTFS_IMAGE_MANIFEST_VERSION,
 } from "@cocalc/util/rootfs-images";
+import { assertCanCreateOrUpdateRootfs } from "@cocalc/server/membership/rootfs-limits";
 
 type RootfsImageRow = {
   image_id: string;
@@ -737,6 +738,18 @@ async function upsertRootfsRow({
   const hidden = admin && body.hidden === true;
   const blocked = admin && body.blocked === true;
   const blocked_reason = trimString(body.blocked_reason) ?? null;
+  const requested_size_bytes =
+    typeof size_gb === "number" && Number.isFinite(size_gb)
+      ? Math.floor(size_gb * 1_000_000_000)
+      : undefined;
+
+  await assertCanCreateOrUpdateRootfs({
+    account_id,
+    image_id,
+    image,
+    requested_size_bytes,
+    operation: "save",
+  });
 
   await pool.query(
     `INSERT INTO rootfs_images
@@ -969,6 +982,12 @@ export async function publishProjectRootfsCatalogEntry({
     artifact.size_bytes != null
       ? Number((artifact.size_bytes / 1_000_000_000).toFixed(3))
       : undefined;
+  await assertCanCreateOrUpdateRootfs({
+    account_id,
+    image: artifact.image,
+    requested_size_bytes: artifact.size_bytes,
+    operation: "publish",
+  });
   const { image_id, entry } = await upsertRootfsRow({
     account_id,
     body: {
