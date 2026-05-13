@@ -29,9 +29,11 @@ rules.
    users who sign in through Google or SAML.
 6. Allow admins to require SSO for selected email domains, such as
    `cornell.edu`.
-7. Make all normal configuration available from admin UI/settings, not by
+7. Allow admins to require 2FA for selected email domains, such as
+   `sagemath.com`.
+8. Make all normal configuration available from admin UI/settings, not by
    manually editing Postgres rows.
-8. Keep signup policy integrated with registration-token and public-signup
+9. Keep signup policy integrated with registration-token and public-signup
    settings.
 
 ## Non-Goals
@@ -93,7 +95,7 @@ Admin settings should include:
 
 - `google_sso_enabled`
 - `google_sso_client_id`
-- `google_sso_client_secret`
+- `google_sso_client_secret`, encrypted at rest
 - `google_sso_allowed_domains`, optional comma-separated domain allowlist
 - `google_sso_signup_mode`: `disabled`, `registration_token_required`,
   `public_allowed`
@@ -162,6 +164,7 @@ type DomainAuthPolicy = {
   mode: DomainAuthMode;
   provider_id?: string;
   provider_kind?: "google_oidc" | "saml";
+  require_cocalc_2fa?: boolean;
   enabled: boolean;
 };
 ```
@@ -176,6 +179,9 @@ Behavior:
 - SSO signup for a domain must still obey registration-token/public-signup
   policy unless the admin explicitly configures that provider/domain as allowed
   to create accounts.
+- Domain policy may additionally require CoCalc-native 2FA for matching
+  accounts. This is independent of whether the external SSO provider also
+  enforces MFA.
 - Domain matching must normalize case and reject ambiguous malformed emails.
 
 ## Signup Policy Integration
@@ -210,13 +216,13 @@ Rules:
 - Token-gated signup validates the registration token before returning
   account-specific errors.
 - SSO account creation requires verified/trusted email.
-- Password account creation requires email verification before meaningful app
-  use.
+- Password account creation requires email verification or a redeemed
+  registration token before meaningful app use.
 - Public signup without a token remains explicit opt-in.
 - SSO public signup is not automatically enabled just because Google SSO is
   configured.
 
-## Password Accounts And Email Verification
+## Password Accounts, Registration Tokens, And Email Verification
 
 For password-created accounts, email verification should become a product-level
 gate.
@@ -227,11 +233,19 @@ Recommended first release behavior:
 - create account in `email_unverified` state,
 - allow only minimal account settings and verification resend,
 - block project creation, Codex/ACP, API keys, billing mutations, invitations,
-  and public sharing until email is verified.
+  and public sharing until email is verified or the account was created using a
+  valid registration token.
 
 This prevents throwaway unverified email accounts from using expensive resources
 while avoiding a hard dependency on email delivery for simply creating the
 account row.
+
+Registration-token exception: small private sites may not have outbound email
+configured, and a valid registration token is already an explicit trust grant.
+For product-access gates, "verified email" and "account created through a valid
+registration token" should both satisfy the trusted-account requirement. This
+does not mean registration tokens should bypass domain SSO requirements or
+CoCalc 2FA requirements.
 
 ## Data Model Direction
 
@@ -277,6 +291,8 @@ site secret encryption mechanism, not plaintext config rows.
 4. Add tests for:
    - public signup disabled,
    - registration token required,
+   - registration-token-created account can pass product-access gates without
+     email delivery,
    - existing account cannot be signed in through signup,
    - SSO without verified email denied,
    - SSO-required domain blocks password signup/sign-in.
@@ -303,9 +319,11 @@ site secret encryption mechanism, not plaintext config rows.
 
 1. Add admin UI for domain auth policies.
 2. Add sign-in UI support for "Use SSO for this email/domain."
-3. Add clear error/redirect responses for password attempts on SSO-required
+3. Add optional domain policy for requiring CoCalc-native 2FA.
+4. Add clear error/redirect responses for password attempts on SSO-required
    domains.
-4. Add tests for domain normalization and precedence.
+5. Add tests for domain normalization, SSO precedence, and domain-level CoCalc
+   2FA requirements.
 
 ### Phase 5: Organization SAML
 
@@ -341,8 +359,12 @@ Admin SSO page should show:
 Sign-in UX should:
 
 - show Google only if configured and enabled,
-- show organization SSO when an email/domain maps to a provider,
-- avoid listing internal SAML providers publicly unless appropriate,
+- ask for email first when domain policy might affect the available auth
+  methods,
+- show organization SSO only when an email/domain maps to a provider or the
+  provider is intentionally public,
+- avoid listing internal SAML providers publicly by default,
+- stop showing long-tail legacy provider buttons,
 - clearly explain "this domain requires SSO" instead of generic password
   failure.
 
@@ -370,8 +392,11 @@ Do not ship the new SSO implementation until:
 - every SSO account creation requires verified/trusted email,
 - public signup and registration-token policy applies consistently to SSO
   account creation,
+- product-access gates accept either verified email or valid registration-token
+  signup, so private sites without outbound email can still operate,
 - password signup/sign-in cannot bypass domain SSO-required policy,
 - CoCalc 2FA remains enforceable for SSO users,
+- domain policy can require CoCalc-native 2FA independent of provider MFA,
 - admin UI can configure Google without database edits,
 - provider secrets are encrypted at rest,
 - focused tests cover the main account-creation and sign-in policy decisions.
