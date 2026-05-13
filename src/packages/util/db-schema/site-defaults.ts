@@ -47,6 +47,7 @@ export const TAGS = [
   "Security",
   "SSH",
   "Support",
+  "SSO",
 ] as const;
 
 export type Tag = (typeof TAGS)[number];

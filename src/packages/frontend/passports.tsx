@@ -67,21 +67,9 @@ const TEXT_ICON_STYLE: CSS = {
 } as const;
 
 const PASSPORT_ICON_STYLES = {
-  facebook: {
-    backgroundColor: "#395996",
-    color: "white",
-  },
   google: {
     backgroundColor: "#DC4839",
     color: "white",
-  },
-  twitter: {
-    backgroundColor: "#55ACEE",
-    color: "white",
-  },
-  github: {
-    backgroundColor: "white",
-    color: "black",
   },
   sso: {
     backgroundColor: "black",
@@ -104,7 +92,7 @@ export const PassportStrategyIcon: React.FC<StrategyIconProps> = (
 ) => {
   const { strategy, small = false } = props;
   const defaultIconStyle = {
-    ...PASSPORT_ICON_STYLES.github,
+    ...PASSPORT_ICON_STYLES.sso,
     ...props.defaultIconStyle,
   };
   const { name, display, icon } = strategy;

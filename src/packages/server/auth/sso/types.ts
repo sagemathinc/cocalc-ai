@@ -6,11 +6,8 @@
 import { Router } from "express";
 
 import { Strategy as SAMLStrategyNew } from "@node-saml/passport-saml";
-import { Strategy as TwitterStrategy } from "@passport-js/passport-twitter";
 import { Strategy as GoogleStrategyOld } from "@passport-next/passport-google-oauth2";
 import { AuthenticateOptions, Strategy as PassportStrategy } from "passport";
-import { Strategy as FacebookStrategy } from "passport-facebook";
-import { Strategy as GithubStrategy } from "passport-github2";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 
 import { PostgreSQL } from "@cocalc/database/postgres/types";
@@ -32,21 +29,9 @@ export interface PassportManagerOpts {
   host: string;
 }
 
-export class TwitterWrapper extends TwitterStrategy {
-  constructor(
-    { clientID: consumerKey, clientSecret: consumerSecret, callbackURL },
-    verify,
-  ) {
-    super({ consumerKey, consumerSecret, callbackURL }, verify);
-  }
-}
-
 export type PassportStrategyConstructorType =
   | typeof PassportStrategy
   | typeof SAMLStrategyNew
-  | typeof TwitterWrapper
-  | typeof FacebookStrategy
-  | typeof GithubStrategy
   | typeof GoogleStrategy
   | typeof GoogleStrategyOld;
 
@@ -62,9 +47,7 @@ export interface StrategyConf {
   type: PassportTypes; // e.g. "saml"
   PassportStrategyConstructor: PassportStrategyConstructorType;
   extra_opts?: {
-    enableProof?: boolean; // facebook
-    profileFields?: string[]; // facebook
-    includeEmail?: boolean; // twitter
+    [key: string]: unknown;
   };
   auth_opts?: AuthenticateOptions;
   // return type has to partially fit with passport_login

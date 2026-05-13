@@ -5,9 +5,13 @@
 
 import getPool from "@cocalc/database/pool";
 import type { Strategy } from "@cocalc/util/types/sso";
+import { PRIMARY_SSO } from "@cocalc/util/types/passport-types";
 import { ssoDispayedName } from "@cocalc/util/auth";
+import { GOOGLE_SSO_STRATEGY, getGoogleSsoSettingsState } from "./google-sso";
 
 const CACHE_TTL_MS = process.env.NODE_ENV === "development" ? 3_000 : 15_000;
+const SUPPORTED_PUBLIC_SSO = ["google"] as const;
+const DELETED_PUBLIC_SSO = ["facebook", "github", "twitter"] as const;
 let cachedStrategies:
   | {
       expires: number;
@@ -22,6 +26,7 @@ export default async function getStrategies(): Promise<Strategy[]> {
   if (cachedStrategies && cachedStrategies.expires > Date.now()) {
     return cachedStrategies.value;
   }
+  const googleSso = await getGoogleSsoSettingsState();
   const pool = getPool();
   // entries in "conf" were used before the "info" col existed. this is only for backwards compatibility.
   const { rows } = await pool.query(`
@@ -36,22 +41,36 @@ export default async function getStrategies(): Promise<Strategy[]> {
     WHERE strategy != 'site_conf'
       AND COALESCE(info ->> 'disabled', conf ->> 'disabled', 'false') != 'true'`);
 
-  const strategies = rows.map((row) => {
-    const display = ssoDispayedName({
-      display: row.display,
-      name: row.strategy,
-    });
+  const strategies = rows
+    .filter((row) => row.strategy !== GOOGLE_SSO_STRATEGY)
+    .filter((row) => isSupportedSSOStrategy(row.strategy, row.public))
+    .map((row) => {
+      const display = ssoDispayedName({
+        display: row.display,
+        name: row.strategy,
+      });
 
-    return {
-      name: row.strategy,
-      display,
-      icon: row.icon, // don't use row.strategy as a fallback icon, since that icon likely does not exist
-      backgroundColor: COLORS[row.strategy] ?? "",
-      public: row.public ?? true,
-      exclusiveDomains: row.exclusive_domains ?? [],
-      doNotHide: row.do_not_hide ?? false,
-    };
-  });
+      return {
+        name: row.strategy,
+        display,
+        icon: row.icon, // don't use row.strategy as a fallback icon, since that icon likely does not exist
+        backgroundColor: COLORS[row.strategy] ?? "",
+        public: row.public ?? true,
+        exclusiveDomains: row.exclusive_domains ?? [],
+        doNotHide: row.do_not_hide ?? false,
+      };
+    });
+  if (googleSso.strategy != null) {
+    strategies.push({
+      name: GOOGLE_SSO_STRATEGY,
+      display: "Google",
+      icon: "google",
+      backgroundColor: COLORS.google,
+      public: true,
+      exclusiveDomains: googleSso.allowedDomains,
+      doNotHide: false,
+    });
+  }
   cachedStrategies = {
     expires: Date.now() + CACHE_TTL_MS,
     value: strategies,
@@ -60,8 +79,21 @@ export default async function getStrategies(): Promise<Strategy[]> {
 }
 
 export const COLORS = {
-  github: "#000000",
-  facebook: "#428bca",
   google: "#dc4857",
-  twitter: "#55acee",
 } as const;
+
+export function isSupportedSSOStrategy(
+  name: string,
+  _publicStrategy: boolean | null | undefined,
+): boolean {
+  if (SUPPORTED_PUBLIC_SSO.includes(name as any)) {
+    return true;
+  }
+  if (
+    PRIMARY_SSO.includes(name as any) ||
+    DELETED_PUBLIC_SSO.includes(name as any)
+  ) {
+    return false;
+  }
+  return true;
+}

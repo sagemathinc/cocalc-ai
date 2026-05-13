@@ -17,18 +17,19 @@ Statuses:
 
 ## Summary
 
-| ID              | Surface                                      | Status  | Severity | Current Result                                                                                                                                                                                                                                                                                                                                                                                                        | Next Action                                                                                                                                         |
-| --------------- | -------------------------------------------- | ------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                                                                                                                                                                                                                                         | Revisit defaults after load testing.                                                                                                                |
-| SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report.                                                                                                                                                             | Add actor-account limit cache if collaborator caps must differ from owner caps.                                                                     |
-| SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                                                                                                                                                                                                                                                                                                                                         | Add membership-backed automation-specific caps if needed.                                                                                           |
-| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, app proxy websockets, and raw Conat socket events; these now fast-fail above conservative active-request/message caps.                                                                                                                                                                   | Tune per-identity limits and production alert thresholds from telemetry.                                                                            |
-| SEC-BROWSER-001 | Browser exec/session automation              | guarded | critical | Browser-session async exec history was bounded, but active raw/QuickJS exec and typed action work per browser tab was not. Local per-tab caps now fast-fail excess work, `browser_raw_exec_policy` gates raw JS by admin setting, and the browser-session service now exposes a local allow/deny audit stream for raw exec, async exec, typed actions, and QuickJS sandbox host actions.                              | Continue QuickJS host-capability review and decide whether browser automation audit events need central persistence.                                |
-| SEC-CLI-001     | `cocalc-cli` authority classes               | guarded | high     | First-pass authority matrix completed. CLI auth config and daemon runtime storage now force private local permissions; ambient env auth can be disabled per invocation.                                                                                                                                                                                                                                               | Audit endpoint-level freshness/2FA and API-key scope enforcement for dangerous CLI command families.                                                |
-| SEC-KEY-001     | Account/project API keys                     | guarded | high     | Legacy project-scoped CoCalc API-key management, auth, schema, UI, and project-rehome portability were removed. Account API keys now require explicit capabilities and project allowlists; API-key websocket hub RPC fails closed and HTTP Conat bridges deny unreviewed RPCs by default.                                                                                                                             | Propagate auth method through websocket hub dispatch if API-key hub RPC support is needed beyond the HTTP bridge.                                   |
-| SEC-REG-001     | Registration-token signup policy             | active  | high     | Public signup without a registration token is now explicit opt-in via `public_signup_without_registration_token`, default `no`. Deleting/disabling all tokens blocks signup, failed token attempts are throttled, and the admin page shows the effective policy. Signup no longer signs in existing accounts, accepts signup tags, accepts signup reason, or returns account-specific errors before token validation. | Hash stored token values, remove remaining legacy signup metadata outside the public signup path, and review SSO-specific signup policy separately. |
-| SEC-ROOTFS-001  | Root filesystem count/storage quotas         | guarded | critical | Rootfs creation/storage is now guarded by membership-tier caps for active count, total storage, per-rootfs storage, and arbitrary remote OCI-image usage. Denials are logged as `rootfs_quota_denied`.                                                                                                                                                                                                                | Add top-user/near-limit admin or CLI reporting and continue auditing clone/import/grow edge paths.                                                  |
-| SEC-MASTER-001  | Master-key storage/unlock                    | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                                             | Inventory master-key read/storage paths and production unlock options.                                                                              |
+| ID              | Surface                                      | Status  | Severity | Current Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Next Action                                                                                                                                  |
+| --------------- | -------------------------------------------- | ------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Revisit defaults after load testing.                                                                                                         |
+| SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Add actor-account limit cache if collaborator caps must differ from owner caps.                                                              |
+| SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Add membership-backed automation-specific caps if needed.                                                                                    |
+| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, app proxy websockets, and raw Conat socket events; these now fast-fail above conservative active-request/message caps.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Tune per-identity limits and production alert thresholds from telemetry.                                                                     |
+| SEC-BROWSER-001 | Browser exec/session automation              | guarded | critical | Browser-session async exec history was bounded, but active raw/QuickJS exec and typed action work per browser tab was not. Local per-tab caps now fast-fail excess work, `browser_raw_exec_policy` gates raw JS by admin setting, and the browser-session service now exposes a local allow/deny audit stream for raw exec, async exec, typed actions, and QuickJS sandbox host actions.                                                                                                                                                                                                                                                                                                                                                             | Continue QuickJS host-capability review and decide whether browser automation audit events need central persistence.                         |
+| SEC-CLI-001     | `cocalc-cli` authority classes               | guarded | high     | First-pass authority matrix completed. CLI auth config and daemon runtime storage now force private local permissions; ambient env auth can be disabled per invocation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Audit endpoint-level freshness/2FA and API-key scope enforcement for dangerous CLI command families.                                         |
+| SEC-KEY-001     | Account/project API keys                     | guarded | high     | Legacy project-scoped CoCalc API-key management, auth, schema, UI, and project-rehome portability were removed. Account API keys now require explicit capabilities and project allowlists; API-key websocket hub RPC fails closed and HTTP Conat bridges deny unreviewed RPCs by default.                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Propagate auth method through websocket hub dispatch if API-key hub RPC support is needed beyond the HTTP bridge.                            |
+| SEC-REG-001     | Registration-token signup policy             | guarded | high     | Public signup without a registration token is explicit opt-in via `public_signup_without_registration_token`, default `no`. Deleting/disabling all tokens blocks signup, failed token attempts are throttled, and the admin page shows the effective policy. Signup no longer signs in existing accounts, accepts signup tags, accepts signup reason, or returns account-specific errors before token validation. Normal token rows are encrypted for admin redisplay; bootstrap-admin token rows are hash-only, hidden from admin token listing, and deleted after successful use.                                                                                                                                                                  | Review SSO-specific signup policy separately and add direct regression coverage for registration-token protected-at-rest behavior if needed. |
+| SEC-SSO-001     | SSO signup/sign-in policy                    | guarded | high     | Shared account-creation policy now covers password signup and legacy Passport SSO account creation. Public SSO creation on token-gated sites no longer bypasses registration tokens; admin-configured exclusive/domain SSO can act as the signup gate for matching domains. SSO-created accounts require verified/trusted email before creation and before marking the email verified. Google is now the only built-in public SSO provider; Facebook, GitHub, and Twitter implementations/dependencies were removed. Public sign-in now queries domain SSO policy from the email field. Google SSO client configuration is now admin-managed with encrypted secret storage, optional domain restriction/routing, and explicit account-creation mode. | Replace the remaining Google Passport runtime with direct OIDC, then add first-class domain/provider admin UI.                               |
+| SEC-ROOTFS-001  | Root filesystem count/storage quotas         | guarded | critical | Rootfs creation/storage is now guarded by membership-tier caps for active count, total storage, per-rootfs storage, and arbitrary remote OCI-image usage. Denials are logged as `rootfs_quota_denied`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Add top-user/near-limit admin or CLI reporting and continue auditing clone/import/grow edge paths.                                           |
+| SEC-MASTER-001  | Master-key storage/unlock                    | unknown | high     | Not audited in this pass.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Inventory master-key read/storage paths and production unlock options.                                                                       |
 
 ## Findings
 
@@ -501,9 +502,89 @@ Suggested next audit steps:
 2. Add central audit events for API-key create/delete/use/deny.
 3. Expand reviewed API-key capabilities only for concrete product workflows.
 
+### SEC-SSO-001: SSO Signup and Sign-In Policy
+
+Status: `guarded`.
+
+Severity: high.
+
+Evidence:
+
+- Legacy SSO is still Passport.js based and historically supported Google,
+  Facebook, GitHub, Twitter, and manually configured organization providers.
+- `cocalc-ai` only wants Google as the built-in public provider plus explicit
+  organization SSO later.
+- SSO account creation must share the same signup policy as password signup:
+  no existing-account sign-in through signup, no public signup unless explicitly
+  allowed, registration-token policy applies consistently, and SSO-created
+  accounts require verified or trusted email.
+
+Implemented first guard:
+
+- Added a shared `evaluateAccountCreationPolicy` helper with explicit decisions
+  for:
+  - `allow_create`
+  - `deny_existing_account`
+  - `deny_registration_token_required`
+  - `deny_email_unverified`
+  - `deny_use_sso`
+- Password signup now uses the shared policy for SSO-required-domain denial and
+  existing-account denial.
+- Focused tests cover registration-token requirements, trusted
+  registration-token signup, existing-account denial, SSO-required domain
+  denial, and unverified SSO email denial.
+- Google is now the only built-in public SSO provider. Facebook, GitHub, and
+  Twitter strategy implementations, frontend primary-provider treatment, and
+  package dependencies were removed.
+- Legacy `facebook`, `github`, and `twitter` `passport_settings` rows are
+  ignored instead of being treated as custom organization providers.
+- Legacy Passport SSO account creation now calls the shared policy before
+  creating an account.
+- Public SSO account creation on token-gated sites is denied unless the SSO
+  provider is configured as the exclusive/domain gate for the returned email.
+- SSO-created accounts require a verified/trusted email signal before account
+  creation, and the email is only marked verified when that trust signal is
+  present.
+- Added `auth/sign-in-method`, a public email-first domain-policy query that
+  reports whether password sign-in is allowed or a configured domain SSO
+  strategy is required. It reads only SSO strategy policy, not account rows, so
+  it does not reveal whether the email has an account.
+- The public sign-in form now calls `auth/sign-in-method` for valid emails and
+  shows a direct SSO provider link when the domain requires SSO, disabling
+  password submission for that email. Password submission also rechecks the
+  method server-side before posting credentials.
+- Google SSO client configuration is now available through admin site settings:
+  enabled flag, client ID, encrypted client secret, allowed domains, and
+  account-creation mode.
+- Legacy DB-only Google rows in `passport_settings` are ignored. Custom
+  organization providers still use `passport_settings` until the first-class
+  provider model exists.
+- Google allowed domains are enforced against verified SSO email addresses and
+  also feed the existing domain SSO routing policy. If no domains are listed,
+  Google can be shown as a public provider when enabled/configured.
+- Google SSO account creation now has an explicit mode:
+  `disabled`, `registration_token_required`, or `public_allowed`.
+
+Residual risk:
+
+- Google SSO still uses Passport.js at runtime. The admin settings now provide
+  the configuration and encrypted secret storage, but the actual protocol flow
+  should still be replaced with direct OIDC.
+- Domain policy is still derived from strategy metadata, not the planned
+  first-class domain-policy table/admin UI.
+- Passport dependencies and legacy organization-provider machinery still exist
+  until Google OIDC and SAML are implemented directly.
+
+Suggested next audit steps:
+
+1. Replace the remaining Google Passport runtime with direct OIDC while keeping
+   the new admin-managed settings.
+2. Add first-class domain/provider admin UI instead of relying on legacy
+   `passport_settings`.
+
 ### SEC-REG-001: Registration-Token Signup Policy
 
-Status: `active`.
+Status: `guarded`.
 
 Severity: high.
 
@@ -544,6 +625,12 @@ Implemented guard:
   availability, have passed.
 - Account creation failures are logged server-side and returned as a generic
   signup failure.
+- Normal registration-token values are stored encrypted at rest so admins can
+  redisplay them without leaving cleartext in database backups.
+- Bootstrap-admin registration tokens are stored hash-only, skipped by admin
+  token listing, and deleted after successful bootstrap signup. If a stale
+  hash-only bootstrap row is encountered after process restart, it is deleted
+  and replaced with a fresh one instead of being displayed.
 - Added focused tests for the server and hub policy helpers.
 
 Residual risk:
@@ -551,12 +638,13 @@ Residual risk:
 - This pass covers the email/password registration-token policy. SSO signup
   behavior should be reviewed separately if public SSO strategies are used to
   create new accounts.
-- Registration-token values are still stored in the database token column. This
-  is now classified as high severity: database backup access should not grant
-  active signup or admin-bootstrap token access. Hash token values before
-  release, showing cleartext only at creation time.
-- Remove remaining legacy signup metadata outside the public signup path if it
-  is no longer useful.
+- The registration-token database column remains the primary key, so lookup is
+  currently table-scan based for protected values. This is acceptable for the
+  expected small admin-managed token set, but direct regression tests for
+  encrypted normal tokens, hash-only bootstrap tokens, and legacy plaintext
+  opportunistic protection would reduce future regression risk.
+- SSO account-creation behavior still needs its own policy pass before public
+  SSO signup is enabled.
 
 ### SEC-ROOTFS-001: Root Filesystem Count and Storage Quotas
 

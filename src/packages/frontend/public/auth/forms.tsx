@@ -20,12 +20,14 @@ import {
   inferSecondFactorInputMethod,
 } from "@cocalc/frontend/auth/second-factor-input";
 import { appUrl } from "@cocalc/frontend/auth/util";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@cocalc/util/auth";
 import {
   is_valid_email_address as isValidEmailAddress,
   len,
 } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
+import { joinUrlPath } from "@cocalc/util/url-path";
 
 const STACK_STYLE: CSSProperties = {
   display: "flex",
@@ -83,6 +85,17 @@ const ALERT_STYLE: CSSProperties = {
   padding: "10px 12px",
   fontSize: "14px",
 } as const;
+
+type SignInMethod = {
+  email: string;
+  password_allowed: boolean;
+  sso_required: boolean;
+  sso_strategy?: {
+    name: string;
+    display: string;
+  };
+  reason?: "domain_sso_required";
+};
 
 function Alert({
   children,
@@ -179,6 +192,10 @@ function NavLink(props: { children: ReactNode; onClick: () => void }) {
   );
 }
 
+function ssoLoginHref(strategyName: string): string {
+  return joinUrlPath(appBasePath, "auth", strategyName);
+}
+
 export function PublicSignInForm({
   onNavigate,
   redirectToPath,
@@ -191,12 +208,63 @@ export function PublicSignInForm({
   const [challengeId, setChallengeId] = useState("");
   const [factorCode, setFactorCode] = useState("");
   const [signingIn, setSigningIn] = useState(false);
+  const [checkingSignInMethod, setCheckingSignInMethod] = useState(false);
+  const [signInMethod, setSignInMethod] = useState<SignInMethod>();
   const [error, setError] = useState("");
   const factorMethod = inferSecondFactorInputMethod(factorCode);
+  const ssoStrategy =
+    !challengeId && signInMethod?.sso_required
+      ? signInMethod.sso_strategy
+      : undefined;
 
   const canSubmit = challengeId
     ? factorCode.trim().length > 0 && !signingIn
-    : isValidEmailAddress(email) && password.length > 0 && !signingIn;
+    : isValidEmailAddress(email) &&
+      password.length > 0 &&
+      !ssoStrategy &&
+      !signingIn;
+
+  useEffect(() => {
+    if (challengeId) return;
+
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!isValidEmailAddress(normalizedEmail)) {
+      setSignInMethod(undefined);
+      setCheckingSignInMethod(false);
+      return;
+    }
+
+    let cancelled = false;
+    setCheckingSignInMethod(true);
+    const timer = setTimeout(() => {
+      (async () => {
+        try {
+          const result = (await api("auth/sign-in-method", {
+            email: normalizedEmail,
+          })) as SignInMethod;
+          if (!cancelled) {
+            setSignInMethod(
+              result?.email === normalizedEmail ? result : undefined,
+            );
+          }
+        } catch {
+          if (!cancelled) {
+            // Do not make a transient policy-query failure block password sign-in.
+            setSignInMethod(undefined);
+          }
+        } finally {
+          if (!cancelled) {
+            setCheckingSignInMethod(false);
+          }
+        }
+      })();
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [challengeId, email]);
 
   async function signIn() {
     if (!canSubmit) {
@@ -205,6 +273,19 @@ export function PublicSignInForm({
     setError("");
     setSigningIn(true);
     try {
+      let method: SignInMethod | undefined;
+      try {
+        method = (await api("auth/sign-in-method", {
+          email: email.trim().toLowerCase(),
+        })) as SignInMethod;
+      } catch {
+        // Keep password sign-in available if the advisory policy query fails.
+      }
+      if (method?.sso_required && method.sso_strategy?.name) {
+        setSignInMethod(method);
+        return;
+      }
+
       let result = await postAuthApi<any>({
         endpoint: "auth/sign-in",
         body: { email, password },
@@ -281,10 +362,37 @@ export function PublicSignInForm({
               autoFocus
               placeholder="you@example.com"
               value={email}
-              onChange={setEmail}
+              onChange={(value) => {
+                setEmail(value);
+                setError("");
+              }}
               onPressEnter={signIn}
             />
           </div>
+          {checkingSignInMethod && (
+            <Alert kind="info">Checking sign-in policy...</Alert>
+          )}
+          {ssoStrategy && (
+            <Alert kind="info">
+              <div style={{ fontWeight: 600, marginBottom: "6px" }}>
+                This email domain uses single sign-on.
+              </div>
+              <div style={{ marginBottom: "10px" }}>
+                Continue with {ssoStrategy.display} instead of using a password.
+              </div>
+              <a
+                href={ssoLoginHref(ssoStrategy.name)}
+                style={{
+                  ...BUTTON_STYLE,
+                  display: "block",
+                  textAlign: "center",
+                  textDecoration: "none",
+                }}
+              >
+                Continue with {ssoStrategy.display}
+              </a>
+            </Alert>
+          )}
           <div style={FIELD_STYLE}>
             <div style={LABEL_STYLE}>Password</div>
             <TextInput
