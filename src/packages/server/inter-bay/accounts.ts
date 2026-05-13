@@ -228,6 +228,8 @@ export async function provisionLocalClusterAccount(
     signupReason: opts.signup_reason,
     ephemeral: opts.ephemeral,
     customize: opts.customize,
+    trusted_product_access: opts.trusted_product_access,
+    trusted_product_access_reason: opts.trusted_product_access_reason,
   });
   return (
     (await getClusterAccountByIdDirect(account_id)) ?? {

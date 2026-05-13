@@ -32,6 +32,7 @@ import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
+import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import type {
   MembershipClass,
   MembershipPackageDetails,
@@ -267,6 +268,10 @@ export async function purchaseMembershipPackage({
   if (!account_id) {
     throw Error("account_id required");
   }
+  await assertAccountTrustedForProductAccess(
+    account_id,
+    "purchase memberships",
+  );
   await maybeRequireFreshAuthForBrowserPurchaseAction({
     account_id,
     browser_id,
@@ -430,6 +435,10 @@ export async function updateMembershipPackage({
   allowed_domains?: string[];
 } = {}): Promise<MembershipPackageDetails> {
   const actorId = requireAccount(account_id);
+  await assertAccountTrustedForProductAccess(
+    actorId,
+    "update membership packages",
+  );
   if (!package_id) {
     throw Error("package_id required");
   }
@@ -506,6 +515,10 @@ export async function assignMembershipPackageSeat({
   if (target_account_id && target_email_address) {
     throw Error("specify only one target");
   }
+  await assertAccountTrustedForProductAccess(
+    account_id,
+    "assign membership seats",
+  );
   const pkg = await getMembershipPackage({ package_id });
   if (!pkg) {
     throw Error("membership package not found");
@@ -545,6 +558,10 @@ export async function revokeMembershipPackageSeat({
   if (target_account_id && target_email_address) {
     throw Error("specify only one target");
   }
+  await assertAccountTrustedForProductAccess(
+    account_id,
+    "revoke membership seats",
+  );
   const pkg = await getMembershipPackage({ package_id });
   if (!pkg) {
     throw Error("membership package not found");
@@ -587,6 +604,10 @@ export async function claimMembershipPackageSeat({
   if (!package_id) {
     throw Error("package_id required");
   }
+  await assertAccountTrustedForProductAccess(
+    account_id,
+    "claim membership seats",
+  );
   return await claimMembershipPackageSeat0({
     package_id,
     account_id,

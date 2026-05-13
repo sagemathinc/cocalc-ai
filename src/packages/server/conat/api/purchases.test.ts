@@ -26,6 +26,7 @@ const interBayAdminProvisionMembershipPackageMock = jest.fn();
 const interBayUpdateMembershipPackageMock = jest.fn();
 const getBrowserAuthSessionHashMock = jest.fn();
 const requireFreshAuthForSessionHashMock = jest.fn();
+const assertAccountTrustedForProductAccessMock = jest.fn();
 
 jest.mock("@cocalc/server/purchases/get-balance", () => ({
   __esModule: true,
@@ -106,6 +107,11 @@ jest.mock("@cocalc/server/auth/auth-sessions", () => ({
     requireFreshAuthForSessionHashMock(...args),
 }));
 
+jest.mock("@cocalc/server/accounts/trusted-product-access", () => ({
+  assertAccountTrustedForProductAccess: (...args: any[]) =>
+    assertAccountTrustedForProductAccessMock(...args),
+}));
+
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: jest.fn(() => ({ kind: "fabric-client" })),
 }));
@@ -127,8 +133,10 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
 beforeEach(() => {
   getBrowserAuthSessionHashMock.mockReset();
   requireFreshAuthForSessionHashMock.mockReset();
+  assertAccountTrustedForProductAccessMock.mockReset();
   getBrowserAuthSessionHashMock.mockReturnValue(undefined);
   requireFreshAuthForSessionHashMock.mockResolvedValue(undefined);
+  assertAccountTrustedForProductAccessMock.mockResolvedValue(undefined);
 });
 
 describe("purchases.getManagedEgressHistory", () => {
@@ -610,7 +618,29 @@ describe("purchases membership packages", () => {
       assigned_by_account_id: "owner-1",
       metadata: null,
     });
+    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
+      "owner-1",
+      "assign membership seats",
+    );
     expect(result.id).toBe("assignment-1");
+  });
+
+  it("blocks untrusted accounts from assigning package seats", async () => {
+    assertAccountTrustedForProductAccessMock.mockRejectedValue(
+      new Error("verify"),
+    );
+
+    const { assignMembershipPackageSeat } = await import("./purchases");
+    await expect(
+      assignMembershipPackageSeat({
+        account_id: "owner-1",
+        package_id: "package-1",
+        target_account_id: "student-1",
+      }),
+    ).rejects.toThrow("verify");
+
+    expect(getMembershipPackageMock).not.toHaveBeenCalled();
+    expect(assignMembershipPackageSeatMock).not.toHaveBeenCalled();
   });
 
   it("assigns a package seat by reserved email for the owner", async () => {
@@ -674,10 +704,32 @@ describe("purchases membership packages", () => {
         metadata: undefined,
       },
     });
+    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
+      "owner-1",
+      "purchase memberships",
+    );
     expect(result).toEqual({
       package_id: "package-1",
       purchase_id: 17,
     });
+  });
+
+  it("blocks untrusted accounts from purchasing membership packages", async () => {
+    assertAccountTrustedForProductAccessMock.mockRejectedValue(
+      new Error("verify"),
+    );
+
+    const { purchaseMembershipPackage } = await import("./purchases");
+    await expect(
+      purchaseMembershipPackage({
+        account_id: "owner-1",
+        kind: "team",
+        seat_count: 2,
+      }),
+    ).rejects.toThrow("verify");
+
+    expect(requireFreshAuthForSessionHashMock).not.toHaveBeenCalled();
+    expect(purchaseMembershipPackageMock).not.toHaveBeenCalled();
   });
 
   it("requires fresh auth for browser membership-package purchases", async () => {
@@ -800,7 +852,27 @@ describe("purchases membership packages", () => {
       package_id: "package-1",
       account_id: "account-1",
     });
+    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
+      "account-1",
+      "claim membership seats",
+    );
     expect(result.account_id).toBe("account-1");
+  });
+
+  it("blocks untrusted accounts from claiming membership seats", async () => {
+    assertAccountTrustedForProductAccessMock.mockRejectedValue(
+      new Error("verify"),
+    );
+
+    const { claimMembershipPackageSeat } = await import("./purchases");
+    await expect(
+      claimMembershipPackageSeat({
+        account_id: "account-1",
+        package_id: "package-1",
+      }),
+    ).rejects.toThrow("verify");
+
+    expect(claimMembershipPackageSeatMock).not.toHaveBeenCalled();
   });
 });
 

@@ -3,15 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-// DEVELOPMENT: use scripts/auth/gen-sso.py to generate some test data
-
-import { PassportStrategyDB } from "@cocalc/database/settings/auth-sso-types";
-import {
-  getPassportsCached,
-  setPassportsCached,
-} from "@cocalc/database/settings/server-settings";
+import { createHash } from "crypto";
 import { to_json } from "@cocalc/util/misc";
-import { CB } from "@cocalc/util/types/database";
 import {
   set_account_info_if_different,
   set_account_info_if_not_set,
@@ -25,64 +18,28 @@ import {
 } from "../types";
 import { _passport_key } from "./passport-key";
 
-export async function set_passport_settings(
-  db: PostgreSQL,
-  opts: PassportStrategyDB & { cb?: CB },
-): Promise<void> {
-  const { strategy, conf, info } = opts;
-  let err = null;
+function passportKeyHash(key: string): string {
+  return createHash("sha256").update(key).digest("hex").slice(0, 32);
+}
+
+async function logPassportLink(db: PostgreSQL, opts: CreatePassportOpts) {
+  const key = _passport_key(opts);
   try {
-    await db.async_query({
-      query: "INSERT INTO passport_settings",
-      values: {
-        "strategy::TEXT ": strategy,
-        "conf    ::JSONB": conf,
-        "info    ::JSONB": info,
+    await (db.log({
+      event: "sso_passport_linked",
+      value: {
+        account_id: opts.account_id,
+        strategy: opts.strategy,
+        passport_key_hash: passportKeyHash(key),
+        email_domain: `${opts.email_address ?? ""}`
+          .trim()
+          .toLowerCase()
+          .split("@")[1],
       },
-      conflict: "strategy",
-    });
+    }) as any);
   } catch (err) {
-    err = err;
+    db._dbg("create_passport")(`failed to log passport link: ${err}`);
   }
-  if (typeof opts.cb === "function") {
-    opts.cb(err);
-  }
-}
-
-export async function get_passport_settings(
-  db: PostgreSQL,
-  opts: { strategy: string; cb?: (data: object) => void },
-): Promise<any> {
-  const { rows } = await db.async_query({
-    query: "SELECT conf, info FROM passport_settings",
-    where: { "strategy = $::TEXT": opts.strategy },
-  });
-  if (typeof opts.cb === "function") {
-    opts.cb(rows[0]);
-  }
-  return rows[0];
-}
-
-export async function get_all_passport_settings(
-  db: PostgreSQL,
-): Promise<PassportStrategyDB[]> {
-  return (
-    await db.async_query<PassportStrategyDB>({
-      query: "SELECT strategy, conf, info FROM passport_settings",
-    })
-  ).rows;
-}
-
-export async function get_all_passport_settings_cached(
-  db: PostgreSQL,
-): Promise<PassportStrategyDB[]> {
-  const passports = getPassportsCached();
-  if (passports != null) {
-    return passports;
-  }
-  const res = await get_all_passport_settings(db);
-  setPassportsCached(res);
-  return res;
 }
 
 export async function create_passport(
@@ -122,6 +79,7 @@ export async function create_passport(
         email_address: opts.email_address,
       });
     }
+    await logPassportLink(db, opts);
     opts.cb?.(undefined); // all good
   } catch (err) {
     if (opts.cb != null) {

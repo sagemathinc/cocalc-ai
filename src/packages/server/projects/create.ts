@@ -22,6 +22,7 @@ import {
   assertCanIncreaseAccountStorage,
   assertCanOwnAdditionalProject,
 } from "@cocalc/server/membership/project-limits";
+import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { assertCanSelectProjectRootfsImage } from "@cocalc/server/membership/rootfs-limits";
 import {
   cloneProjectRootfsStates,
@@ -152,6 +153,7 @@ export default async function createProject(opts: CreateProjectOptions) {
     region: requested_region_raw_input,
   } = opts;
   if (account_id) {
+    await assertAccountTrustedForProductAccess(account_id, "create projects");
     await assertCanOwnAdditionalProject({ account_id });
     // Creating an empty project should not block on a fresh full-account
     // storage sweep across every provisioned project. If we already have a

@@ -45,6 +45,7 @@ import type {
   AcpAdmissionDenialRecord,
   ServiceAdmissionDenialRecord,
 } from "@cocalc/conat/hub/api/hosts";
+import { getAccountProductAccessTrust } from "@cocalc/server/accounts/trusted-product-access";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import type {
@@ -1250,6 +1251,18 @@ export async function getProjectOwnerEffectiveLimitsLocal({
     `${(await getProjectUsageAccountId(project_id)) ?? ""}`.trim();
   if (!account_id) {
     return {};
+  }
+  const trust = await getAccountProductAccessTrust(account_id);
+  if (!trust.trusted) {
+    return {
+      acp_max_queued_per_account: 0,
+      acp_max_queued_per_thread: 0,
+      acp_max_created_5h_per_account: 0,
+      acp_max_created_7d_per_account: 0,
+      acp_max_running_per_account: 0,
+      acp_max_running_per_project: 0,
+      acp_max_active_automations_per_project: 0,
+    };
   }
   const resolution = await resolveMembershipForAccount(account_id);
   return resolution.effective_limits ?? {};

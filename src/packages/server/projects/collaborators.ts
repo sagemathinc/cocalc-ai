@@ -47,6 +47,7 @@ import {
   respondProjectedInboundCollabInvite,
   syncProjectedInboundCollabInvite,
 } from "@cocalc/server/projects/collab-invite-inbox";
+import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 
 const logger = getLogger("project:collaborators");
 const COLLAB_GROUPS = ["owner", "collaborator"] as const;
@@ -590,6 +591,10 @@ export async function addCollaborator({
   if (!account_id) {
     throw Error("user must be signed in");
   }
+  await assertAccountTrustedForProductAccess(
+    account_id,
+    "accept collaboration invites",
+  );
   let projects: undefined | string | string[] = opts.project_id;
   let accounts: undefined | string | string[] = opts.account_id;
   let tokens: undefined | string | string[] = opts.token_id;
@@ -664,6 +669,10 @@ export async function createCollabInvite({
   if (!account_id) {
     throw new Error("user must be signed in");
   }
+  await assertAccountTrustedForProductAccess(
+    account_id,
+    "invite collaborators",
+  );
   ensureUuid(project_id, "project_id");
   ensureUuid(invitee_account_id, "invitee_account_id");
   if (invitee_account_id === account_id) {
@@ -1022,6 +1031,10 @@ export async function respondCollabInviteCanonical({
 
   let nextStatus: ProjectCollabInviteStatus = "declined";
   if (normalizedAction === "accept") {
+    await assertAccountTrustedForProductAccess(
+      account_id,
+      "accept collaboration invites",
+    );
     const { rows: collabRows } = await pool.query<{ already: boolean }>(
       `SELECT EXISTS(
          SELECT 1
@@ -1137,6 +1150,12 @@ export async function respondCollabInvite({
       action: normalizedAction,
       includeEmail,
     });
+  }
+  if (normalizedAction === "accept") {
+    await assertAccountTrustedForProductAccess(
+      account_id,
+      "accept collaboration invites",
+    );
   }
   const projected = await respondProjectedInboundCollabInvite({
     account_id,
@@ -1461,6 +1480,10 @@ export async function inviteCollaboratorWithoutAccount({
     account_id,
     project_id: opts.project_id,
   });
+  await assertAccountTrustedForProductAccess(
+    account_id,
+    "invite collaborators",
+  );
   const dbg = (...args) =>
     logger.debug("inviteCollaboratorWithoutAccount", ...args);
   const database = db();

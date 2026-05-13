@@ -38,7 +38,6 @@ import {
 } from "@cocalc/database/settings/sso-policies";
 import getPool from "@cocalc/database/pool";
 import isAccountAvailable from "@cocalc/server/auth/is-account-available";
-import isDomainExclusiveSSO from "@cocalc/server/auth/is-domain-exclusive-sso";
 import passwordStrength from "@cocalc/server/auth/password-strength";
 import reCaptcha from "@cocalc/server/auth/recaptcha";
 import {
@@ -158,7 +157,7 @@ export async function signUp(req, res) {
   const ssoDomainPolicy = await getEnabledSsoDomainPolicyForEmail(email);
   const exclusive = passwordSignupBlockedBySsoPolicy(ssoDomainPolicy)
     ? ssoDomainPolicy?.domain
-    : await isDomainExclusiveSSO(email);
+    : undefined;
   const domainPolicy = evaluateAccountCreationPolicy({
     auth_method: "password",
     email,
@@ -276,6 +275,10 @@ export async function signUp(req, res) {
       home_bay_id: selected_home_bay_id,
       owner_id,
       ephemeral: tokenInfo?.ephemeral,
+      trusted_product_access: requiresRegistrationToken,
+      trusted_product_access_reason: requiresRegistrationToken
+        ? "registration_token"
+        : undefined,
     });
     const account_id = created.account_id;
     const home_bay_id =

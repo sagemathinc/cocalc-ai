@@ -205,6 +205,14 @@ Table({
       type: "map",
       desc: 'Verified email addresses as { "email@addre.ss" : <timestamp>, ... }',
     },
+    trusted_product_access: {
+      type: "boolean",
+      desc: "Server-owned trust marker that allows product access before email verification, e.g. when the account was created using a valid registration token.",
+    },
+    trusted_product_access_reason: {
+      type: "string",
+      desc: "Reason trusted_product_access was granted, e.g. registration_token.",
+    },
     email_address_challenge: {
       type: "map",
       desc: 'Contains random token for verification of an address: {"email": "...", "token": <random>, "time" : <timestamp for timeout>}',

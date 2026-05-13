@@ -46,6 +46,12 @@ jest.mock("@cocalc/server/inter-bay/accounts", () => ({
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
+  default: jest.fn(() => ({
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  })),
   getLogger: jest.fn(() => ({
     debug: jest.fn(),
     info: jest.fn(),

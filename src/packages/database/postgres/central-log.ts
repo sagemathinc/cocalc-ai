@@ -13,9 +13,13 @@ const PII_EVENTS = new Set([
   "webapp-email_sign_up",
   "create_account_registration_token",
   "sso_domain_policy_changed",
+  "sso_passport_linked",
+  "sso_passport_unlink_blocked",
+  "sso_passport_unlinked",
   "sso_provider_config_changed",
   "sso_sign_in_allowed",
   "sso_sign_in_denied",
+  "sso_required_password_sign_in_blocked",
 ]);
 
 export default async function centralLog({

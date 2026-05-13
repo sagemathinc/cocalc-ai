@@ -28,7 +28,7 @@ import type {
   SsoProviderSetFields,
 } from "@cocalc/util/db-schema/types";
 
-type ProviderKind = "google_oidc" | "saml" | "oidc";
+type ProviderKind = "saml";
 type DomainMode = "password_allowed" | "sso_required" | "sso_signup_only";
 type SignupMode =
   | "inherit"
@@ -56,7 +56,7 @@ interface SsoDomainPolicy {
   notes?: string;
 }
 
-const providerKinds: ProviderKind[] = ["saml", "google_oidc", "oidc"];
+const providerKinds: ProviderKind[] = ["saml"];
 const domainModes: DomainMode[] = [
   "sso_required",
   "sso_signup_only",
@@ -272,18 +272,6 @@ function providerFormValues(provider: SsoProvider): Record<string, unknown> {
     metadata_xml: "",
     advanced_config: stringifyConfig(omitKnownSamlConfig(config)),
   };
-}
-
-function GenericProviderFields() {
-  return (
-    <Form.Item
-      label="Advanced provider config JSON"
-      name="advanced_config"
-      extra="Only use this for future/non-SAML provider kinds. Google client ID and secret are configured in Site Settings."
-    >
-      <Input.TextArea rows={4} style={{ maxWidth: 720 }} />
-    </Form.Item>
-  );
 }
 
 function FieldHelp({
@@ -643,10 +631,7 @@ export function SsoAdmin() {
         display: raw.display?.trim() || provider_id,
         enabled: raw.enabled !== false,
         public: raw.public === true,
-        config:
-          raw.kind === "saml"
-            ? buildSamlConfig(raw)
-            : parseConfig(raw.advanced_config),
+        config: buildSamlConfig(raw),
         notes: raw.notes?.trim() || undefined,
       };
       await query({
@@ -761,7 +746,7 @@ export function SsoAdmin() {
             name="provider_id"
             rules={[{ required: true }]}
           >
-            <Input placeholder="google or cornell" style={{ width: 180 }} />
+            <Input placeholder="cornell" style={{ width: 180 }} />
           </Form.Item>
           <Form.Item label="Kind" name="kind" rules={[{ required: true }]}>
             <Select
@@ -770,7 +755,7 @@ export function SsoAdmin() {
             />
           </Form.Item>
           <Form.Item label="Display" name="display">
-            <Input placeholder="Google" style={{ width: 220 }} />
+            <Input placeholder="Cornell SSO" style={{ width: 220 }} />
           </Form.Item>
           <Form.Item label="Enabled" name="enabled" valuePropName="checked">
             <Switch />
@@ -787,15 +772,7 @@ export function SsoAdmin() {
             </Button>
           </Form.Item>
         </Space>
-        <Form.Item shouldUpdate noStyle>
-          {({ getFieldValue }) =>
-            getFieldValue("kind") === "saml" ? (
-              <SamlProviderFields />
-            ) : (
-              <GenericProviderFields />
-            )
-          }
-        </Form.Item>
+        <SamlProviderFields />
       </Form>
 
       <Table

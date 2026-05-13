@@ -43,9 +43,8 @@ export function sanitizeProfile(opts: PassportLoginOpts, L: Function): void {
       .map((x) => x.toLowerCase());
   }
 
-  // Heuristic: even though there is this "parseOpenIdProfile" function,
-  // in some cases it isn't called properly or there is just an error querying the userinfo endpoint.
-  // In any case, this tries to extract the name from the email address.
+  // If the SSO provider did not supply a usable name, try to extract one from
+  // the email address.
   if (!opts.first_name && !opts.last_name) {
     const email = opts.emails?.[0]; // from the above, we know this is valid or there is no email at all
     L(`No name, trying to extract from email address '${email}'`);

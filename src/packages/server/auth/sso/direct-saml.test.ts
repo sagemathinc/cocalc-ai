@@ -95,6 +95,23 @@ describe("passportProfileFromSamlProfile", () => {
     ]);
   });
 
+  it("normalizes saml-idp dev helper attribute names", () => {
+    const profile = passportProfileFromSamlProfile({
+      issuer: "urn:cocalc:dev:saml-idp",
+      userName: "dev-saml-user",
+      nameIDFormat: "emailAddress",
+      email: "dev-saml@example.com",
+      firstName: "Dev",
+      lastName: "SAML",
+    });
+
+    expect(profile.id).toBe("dev-saml-user");
+    expect(profile.name).toEqual({
+      givenName: "Dev",
+      familyName: "SAML",
+    });
+  });
+
   it("rejects profiles without a stable id", () => {
     expect(() =>
       passportProfileFromSamlProfile({

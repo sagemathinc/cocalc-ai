@@ -13,6 +13,7 @@ let syncProjectedInboundCollabInviteMock: jest.Mock;
 let listProjectedInboundCollabInvitesMock: jest.Mock;
 let respondProjectedInboundCollabInviteMock: jest.Mock;
 let deleteProjectedInboundCollabInviteMock: jest.Mock;
+let assertAccountTrustedForProductAccessMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -69,6 +70,12 @@ jest.mock("@cocalc/server/projects/collab-invite-inbox", () => ({
     respondProjectedInboundCollabInviteMock(...args),
   deleteProjectedInboundCollabInvite: (...args: any[]) =>
     deleteProjectedInboundCollabInviteMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/trusted-product-access", () => ({
+  __esModule: true,
+  assertAccountTrustedForProductAccess: (...args: any[]) =>
+    assertAccountTrustedForProductAccessMock(...args),
 }));
 
 jest.mock("@cocalc/backend/logger", () => ({
@@ -154,6 +161,7 @@ describe("project collaborators local bay access", () => {
     listProjectedInboundCollabInvitesMock = jest.fn(async () => []);
     respondProjectedInboundCollabInviteMock = jest.fn(async () => undefined);
     deleteProjectedInboundCollabInviteMock = jest.fn(async () => undefined);
+    assertAccountTrustedForProductAccessMock = jest.fn(async () => undefined);
     removeCollaboratorFromProject.mockClear();
     accountCreationActions.mockClear();
     whenSentProjectInvite.mockClear();
@@ -517,6 +525,28 @@ describe("project collaborators local bay access", () => {
       action: "accept",
       includeEmail: false,
     });
+    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      "accept collaboration invites",
+    );
+  });
+
+  it("blocks untrusted accounts from accepting projected invites", async () => {
+    queryMock = jest.fn(async () => ({ rows: [] }));
+    assertAccountTrustedForProductAccessMock = jest.fn(async () => {
+      throw new Error("verify");
+    });
+
+    const { respondCollabInvite } = await import("./collaborators");
+    await expect(
+      respondCollabInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: "66666666-6666-4666-8666-666666666666",
+        action: "accept",
+      }),
+    ).rejects.toThrow("verify");
+
+    expect(respondProjectedInboundCollabInviteMock).not.toHaveBeenCalled();
   });
 
   it("stores inviter metadata for email-only invites", async () => {
@@ -545,5 +575,32 @@ describe("project collaborators local bay access", () => {
         }),
       }),
     );
+    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      "invite collaborators",
+    );
+  });
+
+  it("blocks untrusted accounts from creating email-only invites", async () => {
+    assertAccountTrustedForProductAccessMock = jest.fn(async () => {
+      throw new Error("verify");
+    });
+    const { inviteCollaboratorWithoutAccount } =
+      await import("./collaborators");
+
+    await expect(
+      inviteCollaboratorWithoutAccount({
+        account_id: ACCOUNT_ID,
+        opts: {
+          project_id: PROJECT_ID,
+          title: "Test Project",
+          link2proj: "https://example.com/project",
+          to: "nobody@example.com",
+          email: "<p>Hello</p>",
+        },
+      }),
+    ).rejects.toThrow("verify");
+
+    expect(accountCreationActions).not.toHaveBeenCalled();
   });
 });

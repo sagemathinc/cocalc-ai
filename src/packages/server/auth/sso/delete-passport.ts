@@ -1,4 +1,7 @@
-import { isBlockedUnlinkStrategy } from "@cocalc/server/auth/sso/unlink-strategy";
+import {
+  isBlockedUnlinkStrategy,
+  logPassportUnlink,
+} from "@cocalc/server/auth/sso/unlink-strategy";
 import type {
   DeletePassportOpts,
   PostgreSQL,
@@ -18,6 +21,13 @@ export async function delete_passport(
       account_id: opts.account_id,
     })
   ) {
+    await logPassportUnlink({
+      account_id: opts.account_id,
+      name: _passport_key(opts),
+      strategyName: opts.strategy,
+      blocked: true,
+      reason: "sso_required_domain",
+    });
     throw Error(`You are not allowed to unlink '${opts.strategy}'`);
   }
 
@@ -30,5 +40,11 @@ export async function delete_passport(
     where: {
       "account_id = $::UUID": opts.account_id,
     },
+  });
+  await logPassportUnlink({
+    account_id: opts.account_id,
+    name: _passport_key(opts),
+    strategyName: opts.strategy,
+    blocked: false,
   });
 }

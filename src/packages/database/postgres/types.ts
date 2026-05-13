@@ -6,7 +6,6 @@
 import { EventEmitter } from "events";
 import type { Pool, PoolClient } from "pg";
 
-import { PassportStrategyDB } from "@cocalc/database/settings/auth-sso-types";
 import { ProjectStatus } from "@cocalc/util/db-schema/projects";
 import {
   CB,
@@ -595,15 +594,6 @@ export interface PostgreSQLMethods extends EventEmitter {
   passport_exists(opts: PassportExistsOpts): Promise<string | undefined>;
 
   create_passport(opts: CreatePassportOpts): Promise<void>;
-
-  set_passport_settings(opts: PassportStrategyDB & { cb?: CB }): Promise<void>;
-
-  get_passport_settings(opts: {
-    strategy: string;
-    cb?: (data: object) => void;
-  }): Promise<PassportStrategyDB>;
-  get_all_passport_settings(): Promise<PassportStrategyDB[]>;
-  get_all_passport_settings_cached(): Promise<PassportStrategyDB[]>;
 
   update_account_and_passport(
     opts: UpdateAccountInfoAndPassportOpts,

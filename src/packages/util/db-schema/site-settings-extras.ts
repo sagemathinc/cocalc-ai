@@ -622,7 +622,7 @@ export const EXTRAS: SettingsExtras = {
   },
   google_sso_enabled: {
     name: "Enable Google SSO",
-    desc: "Enable the built-in Google sign-in provider. If disabled, legacy Google entries in `passport_settings` are ignored.",
+    desc: "Enable the built-in Google sign-in provider.",
     default: "no",
     valid: only_booleans,
     to_val: to_bool,

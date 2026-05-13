@@ -1446,8 +1446,9 @@ export async function exposeApp({
       preferredServicePort = started.port ?? publicRestart.network.port;
     }
   }
+  const hub = hubApi(getProjectConatClient());
+  await hub.system.assertProjectPublicSharingAllowed({ project_id });
   try {
-    const hub = hubApi(getProjectConatClient());
     const policy = await hub.system.getProjectAppPublicPolicy({ project_id });
     warnings.push(...(policy?.warnings ?? []));
     if (policy?.enabled) {

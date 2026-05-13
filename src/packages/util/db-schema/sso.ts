@@ -14,6 +14,48 @@ const SECRET_CONFIG_KEYS = new Set([
   "privateKey",
 ]);
 
+const ALLOWED_PROVIDER_KINDS = new Set(["saml"]);
+
+const DISALLOWED_PLAINTEXT_CONFIG_KEYS = new Set([
+  "accessToken",
+  "clientSecret",
+  "client_secret",
+  "decryptionPvk",
+  "metadataXml",
+  "password",
+  "privateKey",
+  "refreshToken",
+  "secret",
+  "token",
+]);
+
+function findDisallowedPlaintextConfigKey(
+  value: unknown,
+  path: string[] = [],
+): string | undefined {
+  if (value == null || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const match = findDisallowedPlaintextConfigKey(value[i], [
+        ...path,
+        `${i}`,
+      ]);
+      if (match) return match;
+    }
+    return;
+  }
+  for (const [key, nestedValue] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
+    const nextPath = [...path, key];
+    if (DISALLOWED_PLAINTEXT_CONFIG_KEYS.has(key)) {
+      return nextPath.join(".");
+    }
+    const match = findDisallowedPlaintextConfigKey(nestedValue, nextPath);
+    if (match) return match;
+  }
+}
+
 function stringOrUndefined(value: unknown): string | undefined {
   const text = `${value ?? ""}`.trim();
   return text ? text : undefined;
@@ -96,6 +138,23 @@ Table({
           config: null,
           notes: null,
         },
+        check_hook(_database, obj, _accountId, _projectId, cb) {
+          const kind = stringOrUndefined(obj?.kind);
+          if (kind != null && !ALLOWED_PROVIDER_KINDS.has(kind)) {
+            cb(
+              `Unsupported SSO provider kind "${kind}". Configure public Google SSO in Site Settings; this provider table only accepts SAML providers.`,
+            );
+            return;
+          }
+          const disallowedKey = findDisallowedPlaintextConfigKey(obj?.config);
+          if (disallowedKey) {
+            cb(
+              `SSO provider config must not contain plaintext secret key "${disallowedKey}". Store secrets in encrypted site settings or a future secret table.`,
+            );
+            return;
+          }
+          cb();
+        },
         on_change(database, oldVal, newVal, accountId, cb) {
           logSsoConfigChange(
             database,
@@ -127,7 +186,7 @@ Table({
     },
     kind: {
       type: "string",
-      desc: "Provider implementation kind, e.g. google_oidc, saml, oidc.",
+      desc: "Provider implementation kind. For cocalc-ai release SSO provider rows only support saml; public Google OIDC is configured through encrypted site settings.",
     },
     display: {
       type: "string",

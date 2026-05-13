@@ -183,6 +183,7 @@ import type {
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getClusterConfig } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 
 const logger = getLogger("server:conat:api:system");
 // Non-serializable capability used only by trusted in-process inter-bay handlers.
@@ -2890,6 +2891,65 @@ async function resolveProjectContext(opts: {
   return project_id;
 }
 
+async function getProjectOwnerAccountIds(
+  project_id: string,
+): Promise<string[]> {
+  const pool = getPool();
+  const { rows } = await pool.query<{ account_id: string }>(
+    `
+      SELECT owner.key AS account_id
+      FROM projects,
+           jsonb_each(projects.users) AS owner(key, value)
+      WHERE projects.project_id=$1
+        AND owner.value ->> 'group' = 'owner'
+      ORDER BY owner.key
+    `,
+    [project_id],
+  );
+  return rows.map((row) => `${row.account_id ?? ""}`.trim()).filter(Boolean);
+}
+
+export async function assertProjectPublicSharingAllowed({
+  account_id,
+  host_id,
+  project_id,
+}: {
+  account_id?: string;
+  host_id?: string;
+  project_id?: string;
+}): Promise<{
+  allowed: true;
+  project_id: string;
+  checked_account_ids: string[];
+}> {
+  const resolvedProjectId = await resolveProjectContext({
+    account_id,
+    host_id,
+    project_id,
+  });
+  const action = "publicly share project content";
+  if (account_id) {
+    await assertAccountTrustedForProductAccess(account_id, action);
+    return {
+      allowed: true,
+      project_id: resolvedProjectId,
+      checked_account_ids: [account_id],
+    };
+  }
+  const ownerAccountIds = await getProjectOwnerAccountIds(resolvedProjectId);
+  if (ownerAccountIds.length === 0) {
+    throw new Error("project has no owner account");
+  }
+  for (const ownerAccountId of ownerAccountIds) {
+    await assertAccountTrustedForProductAccess(ownerAccountId, action);
+  }
+  return {
+    allowed: true,
+    project_id: resolvedProjectId,
+    checked_account_ids: ownerAccountIds,
+  };
+}
+
 export async function getProjectAppPublicPolicy({
   account_id,
   host_id,
@@ -2981,6 +3041,11 @@ export async function reserveProjectAppPublicSubdomain({
     account_id,
     host_id,
     project_id,
+  });
+  await assertProjectPublicSharingAllowed({
+    account_id,
+    host_id,
+    project_id: resolvedProjectId,
   });
   return await reserveProjectAppPublicSubdomainRaw({
     project_id: resolvedProjectId,

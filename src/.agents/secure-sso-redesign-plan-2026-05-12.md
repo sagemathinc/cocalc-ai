@@ -410,9 +410,12 @@ Record audit events for:
 - SSO sign-in allowed/denied. Status: implemented via
   `sso_sign_in_allowed` / `sso_sign_in_denied`, including direct Google/SAML
   callback failures before `PassportLogin`,
-- account identity linked/unlinked,
-- password attempt blocked because domain requires SSO,
-- SSO result rejected because email was missing or unverified.
+- account identity linked/unlinked. Status: implemented for passport
+  link/unlink and unlink-blocked events,
+- password attempt blocked because domain requires SSO. Status: implemented
+  via `sso_required_password_sign_in_blocked`,
+- SSO result rejected because email was missing or unverified. Status: covered
+  by shared SSO denial logging.
 
 Do not log raw tokens, authorization codes, SAML assertions, OAuth client
 secrets, or full provider responses.
@@ -434,6 +437,30 @@ Do not ship the new SSO implementation until:
 - admin UI can configure Google without database edits,
 - provider secrets are encrypted at rest,
 - focused tests cover the main account-creation and sign-in policy decisions.
+
+Focused verification on 2026-05-12:
+
+- Product-access gating for unverified password accounts is not complete.
+  Signup policy computes whether an account-creation path is trusted, but that
+  trust result is not persisted as an account fact and is not centrally enforced
+  by project creation, API-key creation, Codex/ACP, billing, invitations, or
+  public-sharing paths.
+- Follow-up implementation started on 2026-05-12: registration-token-created
+  accounts persist a server-owned `trusted_product_access` marker; project
+  creation, API-key creation, central Codex auth entry points, and project-owner
+  ACP admission limits now enforce verified email or trusted creation when
+  email verification is configured. Membership purchase/seat/package mutation
+  flows and collaboration invitation/acceptance flows now enforce the same
+  gate. Public app exposure/public viewer sharing now checks the same gate
+  before any project-local public exposure state is written.
+- Sites without an email backend need an explicit exception model. If
+  `verify_emails` is disabled or email sending is unavailable, email
+  verification cannot be the release gate; registration-token-created accounts
+  and admin-created accounts should satisfy the trusted-account requirement.
+- SSO provider secrets are release-safe only if provider rows stay non-secret.
+  Public Google OIDC client secrets belong in encrypted site settings; SAML
+  provider rows should store public IdP metadata/certificates only and reject
+  private keys, OAuth client secrets, passwords, and tokens.
 
 ## Relationship To Current Security Audit
 

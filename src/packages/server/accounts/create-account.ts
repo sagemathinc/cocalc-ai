@@ -26,6 +26,8 @@ interface Params {
   home_bay_id?: string;
   ephemeral?: number;
   customize?: any;
+  trusted_product_access?: boolean;
+  trusted_product_access_reason?: string;
 }
 
 export default async function createAccount({
@@ -40,6 +42,8 @@ export default async function createAccount({
   home_bay_id,
   ephemeral,
   customize,
+  trusted_product_access,
+  trusted_product_access_reason,
 }: Params): Promise<void> {
   if (!email) {
     throw Error("Email address is required for account creation.");
@@ -56,7 +60,7 @@ export default async function createAccount({
     );
     const pool = getPool();
     await pool.query(
-      "INSERT INTO accounts (email_address, password_hash, first_name, last_name, account_id, created, tags, sign_up_usage_intent, owner_id, ephemeral, customize, home_bay_id) VALUES($1::TEXT, $2::TEXT, $3::TEXT, $4::TEXT, $5::UUID, NOW(), $6::TEXT[], $7::TEXT, $8::UUID, $9::BIGINT, $10::JSONB, $11::TEXT)",
+      "INSERT INTO accounts (email_address, password_hash, first_name, last_name, account_id, created, tags, sign_up_usage_intent, owner_id, ephemeral, customize, home_bay_id, trusted_product_access, trusted_product_access_reason) VALUES($1::TEXT, $2::TEXT, $3::TEXT, $4::TEXT, $5::UUID, NOW(), $6::TEXT[], $7::TEXT, $8::UUID, $9::BIGINT, $10::JSONB, $11::TEXT, $12::BOOL, $13::TEXT)",
       [
         email ? email : undefined, // can't insert "" more than once!
         password ? passwordHash(password) : undefined, // definitely don't set password_hash to hash of empty string, e.g., anonymous accounts can then NEVER switch to email/password.  This was a bug in production for a while.
@@ -69,6 +73,10 @@ export default async function createAccount({
         ephemeral ?? null,
         customize ?? null,
         `${home_bay_id ?? ""}`.trim() || getConfiguredBayId(),
+        trusted_product_access === true,
+        trusted_product_access === true
+          ? `${trusted_product_access_reason ?? ""}`.trim() || null
+          : null,
       ],
     );
     await accountCreationActions({

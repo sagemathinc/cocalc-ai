@@ -3,26 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { isSupportedSSOStrategy } from "./get-sso-strategies";
 import {
   googleSsoStateFromSettings,
   normalizeGoogleSsoDomains,
   normalizeGoogleSsoSignupMode,
 } from "./google-sso";
-
-describe("isSupportedSSOStrategy", () => {
-  it("keeps Google as the only supported built-in public SSO provider", () => {
-    expect(isSupportedSSOStrategy("google", true)).toBe(true);
-    expect(isSupportedSSOStrategy("github", true)).toBe(false);
-    expect(isSupportedSSOStrategy("facebook", true)).toBe(false);
-    expect(isSupportedSSOStrategy("twitter", true)).toBe(false);
-  });
-
-  it("allows custom organization providers", () => {
-    expect(isSupportedSSOStrategy("cornell", false)).toBe(true);
-    expect(isSupportedSSOStrategy("cornell", true)).toBe(true);
-  });
-});
 
 describe("googleSsoStateFromSettings", () => {
   it("does not configure Google SSO unless enabled with credentials", () => {

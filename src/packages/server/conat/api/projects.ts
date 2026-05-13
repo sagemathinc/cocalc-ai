@@ -133,6 +133,7 @@ import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { fromWire as collabInviteFromWire } from "@cocalc/server/projects/collab-invite-inbox";
 import { deleteProjectDataOnHost } from "@cocalc/server/project-host/control";
+import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import dayjs from "dayjs";
 
 // Start/restart can legitimately take a long time because the owning bay may
@@ -2390,6 +2391,7 @@ export async function codexDeviceAuthStart({
   project_id: string;
 }): Promise<never> {
   await assertCollab({ account_id, project_id });
+  await assertAccountTrustedForProductAccess(account_id!, "use Codex");
   throw Error(
     "codex device auth is not implemented on central hub; call a project-host endpoint via project routing",
   );
@@ -2433,6 +2435,7 @@ export async function codexUploadAuthFile({
   content: string;
 }): Promise<never> {
   await assertCollab({ account_id, project_id });
+  await assertAccountTrustedForProductAccess(account_id!, "upload Codex auth");
   throw Error(
     "codex auth-file upload is not implemented on central hub; call a project-host endpoint via project routing",
   );

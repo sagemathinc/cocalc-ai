@@ -22,11 +22,11 @@ Table({
     },
     conf: {
       type: "map",
-      desc: "a JSON object with the configuration for this strategy, consumed by the 'auth.ts' module",
+      desc: "legacy Passport strategy configuration; not used by the current SSO runtime",
     },
     info: {
       type: "map",
-      desc: "additional public information about this strategy, displayed on the next.js pages, etc.",
+      desc: "legacy public information for this strategy; not used by the current SSO runtime",
     },
   },
 });

@@ -46,62 +46,32 @@ export type LoginInfoKeys = "id" | "first_name" | "last_name" | "emails";
 // Google is the only built-in public SSO provider. It is hardcoded separately.
 export const PassportTypesList = [
   "email", // special case, always included by default, not a passport strategy
-  "activedirectory",
-  "gitlab2",
-  "oauth1",
-  "oauth2",
-  "oauth2next",
   "oidc",
-  "orcid",
   "saml",
-  "saml-v3",
-  "saml-v4",
-  // Google is not included here because it is a hardcoded special case.
 ] as const;
 
 export type PassportTypes = (typeof PassportTypesList)[number];
 
 export function isSAML(type: PassportTypes): boolean {
-  return type === "saml" || type === "saml-v3" || type === "saml-v4";
-}
-
-// the OAuth2 strategies
-export function isOAuth2(type: PassportTypes): boolean {
-  return type === "oauth2" || type === "oauth2next";
+  return type === "saml";
 }
 
 export type PassportLoginInfo = { [key in LoginInfoKeys]?: string };
 
 /**
- * To confgure a passport strategy, the "type" field is required.
- * It associates these config parameters with a strategy constructor from one of the passport.js strategies.
- * The remaining fields, except for type, clientID, clientSecret, and callbackURL, userinfoURL, login_info are passed to that constructor.
- * Additionally, there are default values for some of the fields, e.g. for the SAML2.0 strategy.
- * Please check the hub/auth.ts file for more details.
- *
- * Regarding the userinfoURL, this is used by OAuth2 to get the profile.
- *
- * The "login_info" field is a mapping from "cocalc" profile fields, that end up in the DB,
- * to the entries in the generated profile object. The DB entry can only be a string and
- * processing is done by using the "dot-object" npm library.
- * What should be provided is a mapping like that (the default for OAuth2), which in particular provides a unique id (a number or email address):
- * {
- *   id: "id",
- *   first_name: "name.givenName",
- *   last_name: "name.familyName",
- *   emails: "emails[0].value",
- * }
- * You can to customize the separator of dot-object, e.g. to process keys with dots, add a "_sep: string" entry.
+ * Configuration for supported SSO providers. Google OIDC is configured via
+ * admin site settings, and organization SAML providers are configured via
+ * sso_providers.
  */
 export interface PassportStrategyDBConfig {
   type: PassportTypes;
-  clientID?: string; // Google, Twitter, ... and OAuth2
-  clientSecret?: string; // Google, Twitter, ... and OAuth2
-  authorizationURL?: string; // OAuth2
-  tokenURL?: string; // --*--
-  userinfoURL?: string; // OAuth2, to get a profile
+  clientID?: string; // Google OIDC
+  clientSecret?: string; // Google OIDC
+  authorizationURL?: string;
+  tokenURL?: string;
+  userinfoURL?: string;
   login_info?: PassportLoginInfo; // extracting fields from the returned profile, uses "dot-object", e.g. { emails: "emails[0].value" }
-  auth_opts?: { [key: string]: string }; // auth options, typed as AuthenticateOptions but OAuth2 has one which isn't part of the type – hence we keep it general
+  auth_opts?: { [key: string]: string };
   cert?: string; // passport-saml<5
   idpCert?: string; // passport-saml>=5  https://github.com/node-saml/node-saml/pull/343
   idpIssuer?: string; // SAML IdP entity ID, when known
