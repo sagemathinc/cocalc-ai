@@ -83,7 +83,7 @@ register({
           width: node.width,
           maxWidth: "100%",
           maxHeight: "100%",
-          objectFit: "cover",
+          objectFit: "contain",
         }}
       />
     );
