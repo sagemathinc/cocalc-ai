@@ -40,7 +40,18 @@ package-managed `postgresql` service so it does not collide with the bay-local
 Postgres instance on `127.0.0.1:5432`. Use `--preserve-system-postgres` only if
 you intentionally want to keep that system service around.
 
-2. Stage a built `src/` tree as the active bay release:
+2. Install the shared site master key before starting bay services:
+
+```sh
+sudo install -o root -g root -m 0600 /path/to/site-master-key /etc/cocalc/site-master-key
+```
+
+Use the same key on every bay for one `cocalc.ai` site. Keep an encrypted backup
+of this key outside the VM; database/R2/disk backups are not enough without it.
+The bay units load it with systemd `LoadCredential=` and expose it to CoCalc only
+through `$CREDENTIALS_DIRECTORY/site-master-key`.
+
+3. Stage a built `src/` tree as the active bay release:
 
 ```sh
 sudo ./src/scripts/bay-systemd/bay-bootstrap-release.sh \
@@ -71,6 +82,7 @@ The release bootstrap currently:
 - provisions the bay database if missing
 - writes `/etc/cocalc/bay.env`, `bay-workers.env`, and `bay-secrets.env`
 - enables `cocalc-bay.target` plus the requested hub worker units
+- requires `/etc/cocalc/site-master-key` when `--start` is used
 
 ## Suggested Install Layout
 
@@ -85,8 +97,9 @@ sudo ./src/scripts/bay-systemd/install-scaffold.sh --overlay current-cocalc --da
    - `/etc/cocalc/bay-workers.env`
    - `/etc/cocalc/bay-secrets.env`
    - optionally `/etc/cocalc/bay-overlay.env`
-3. Enable whichever worker instances you actually want.
-4. Start the bay target:
+3. Install `/etc/cocalc/site-master-key` with mode `0600`.
+4. Enable whichever worker instances you actually want.
+5. Start the bay target:
 
 ```sh
 sudo systemctl enable cocalc-bay-hub@1.service
@@ -101,6 +114,9 @@ sudo systemctl start cocalc-bay.target
   - `/etc/cocalc/bay-workers.env`
   - `/etc/cocalc/bay-secrets.env`
 - optionally `/etc/cocalc/bay-overlay.env`
+- Production bay services set `COCALC_REQUIRE_SITE_MASTER_KEY=1` and load
+  `/etc/cocalc/site-master-key` as a systemd credential. Missing keys fail
+  startup instead of creating a new local key.
 - The optional `bay-current-cocalc-overlay.env.example` file is intentionally
   transitional. It binds the scaffold to the current repo layout:
   - router and persist from `@cocalc/project-host`

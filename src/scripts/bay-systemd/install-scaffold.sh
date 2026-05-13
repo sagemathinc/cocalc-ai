@@ -147,18 +147,20 @@ Next steps:
   1. Edit ${TARGET_ENV_DIR}/bay.env
   2. Edit ${TARGET_ENV_DIR}/bay-workers.env
   3. Edit ${TARGET_ENV_DIR}/bay-secrets.env
+  4. Install the shared site master key:
+     install -o root -g root -m 0600 /path/to/site-master-key ${TARGET_ENV_DIR}/site-master-key
 EOF
 
 if [[ "$OVERLAY_MODE" != "none" ]]; then
   cat <<EOF
-  4. Review ${TARGET_ENV_DIR}/bay-overlay.env
+  5. Review ${TARGET_ENV_DIR}/bay-overlay.env
 EOF
 fi
 
 cat <<EOF
-  5. Enable desired workers, e.g.:
+  6. Enable desired workers, e.g.:
      systemctl enable cocalc-bay-hub@1.service
      systemctl enable cocalc-bay-hub@2.service
-  6. Start the bay:
+  7. Start the bay:
      systemctl start cocalc-bay.target
 EOF

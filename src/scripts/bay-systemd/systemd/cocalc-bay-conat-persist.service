@@ -5,13 +5,14 @@ Requires=cocalc-bay-postgres.service cocalc-bay-migrations.service cocalc-bay-co
 PartOf=cocalc-bay.target
 
 [Service]
-Type=simple
+Type=exec
 User=cocalc-bay
 WorkingDirectory=/opt/cocalc/bay/current
 EnvironmentFile=/etc/cocalc/bay.env
 EnvironmentFile=-/etc/cocalc/bay-workers.env
 EnvironmentFile=-/etc/cocalc/bay-overlay.env
 EnvironmentFile=-/etc/cocalc/bay-secrets.env
+LoadCredential=site-master-key:/etc/cocalc/site-master-key
 ExecStartPre=/opt/cocalc/bay/current/bin/bay-preflight persist
 ExecStart=/opt/cocalc/bay/current/bin/bay-conat-persist
 ExecStartPost=/opt/cocalc/bay/current/bin/bay-persist-health

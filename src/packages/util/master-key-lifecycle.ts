@@ -24,7 +24,10 @@ import { dirname, join, resolve } from "node:path";
 
 export const SITE_MASTER_KEY_ID = "site-master-key";
 export const SITE_MASTER_KEY_FILENAME = "site-master-key";
+export const SITE_MASTER_KEY_CREDENTIAL_NAME = "site-master-key";
 export const SITE_MASTER_KEY_ENV = "COCALC_SITE_MASTER_KEY_PATH";
+export const SITE_MASTER_KEY_REQUIRE_ENV = "COCALC_REQUIRE_SITE_MASTER_KEY";
+export const SYSTEMD_CREDENTIALS_DIRECTORY_ENV = "CREDENTIALS_DIRECTORY";
 export const LEGACY_SECRET_SETTINGS_KEY_ENV = "COCALC_SECRET_SETTINGS_KEY_PATH";
 export const SITE_MASTER_KEY_BACKUP_KIND = "cocalc-site-master-key-backup";
 
@@ -35,6 +38,13 @@ export type SiteMasterKeyPurpose =
 export type LegacyMasterKeyId =
   | "legacy-secret-settings"
   | "legacy-project-backups";
+
+export type MasterKeyFileSource =
+  | "option"
+  | "systemd-credential"
+  | "environment"
+  | "legacy-environment"
+  | "default";
 
 export interface SiteMasterKeyPathOptions {
   dataDir?: string;
@@ -49,6 +59,9 @@ export interface MasterKeyFile {
   label: string;
   path: string;
   env?: string;
+  source?: MasterKeyFileSource;
+  read_only?: boolean;
+  required?: boolean;
 }
 
 export interface MasterKeyFileStatus extends MasterKeyFile {
@@ -112,6 +125,20 @@ function normalizePath(path?: string): string | undefined {
   return trimmed ? resolve(trimmed) : undefined;
 }
 
+function truthyEnv(name: string): boolean {
+  const value = `${process.env[name] ?? ""}`.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function resolveSystemdCredentialPath(): string | undefined {
+  const credentialsDir = normalizePath(
+    process.env[SYSTEMD_CREDENTIALS_DIRECTORY_ENV],
+  );
+  return credentialsDir
+    ? join(credentialsDir, SITE_MASTER_KEY_CREDENTIAL_NAME)
+    : undefined;
+}
+
 function resolveDataDir(opts: SiteMasterKeyPathOptions = {}): string {
   return (
     normalizePath(opts.dataDir) ??
@@ -133,15 +160,61 @@ export function resolveSiteMasterKeyFile(
   opts: SiteMasterKeyPathOptions = {},
 ): MasterKeyFile {
   const secretsDir = resolveSecretsDir(opts);
+  const required = truthyEnv(SITE_MASTER_KEY_REQUIRE_ENV);
+  const optionPath = normalizePath(opts.siteMasterKeyPath);
+  if (optionPath) {
+    return {
+      id: SITE_MASTER_KEY_ID,
+      label: "Site master key",
+      path: optionPath,
+      env: SITE_MASTER_KEY_ENV,
+      source: "option",
+      required,
+    };
+  }
+  const credentialPath = resolveSystemdCredentialPath();
+  if (credentialPath) {
+    return {
+      id: SITE_MASTER_KEY_ID,
+      label: "Site master key",
+      path: credentialPath,
+      env: SYSTEMD_CREDENTIALS_DIRECTORY_ENV,
+      source: "systemd-credential",
+      read_only: true,
+      required: true,
+    };
+  }
+  const envPath = normalizePath(process.env[SITE_MASTER_KEY_ENV]);
+  if (envPath) {
+    return {
+      id: SITE_MASTER_KEY_ID,
+      label: "Site master key",
+      path: envPath,
+      env: SITE_MASTER_KEY_ENV,
+      source: "environment",
+      required,
+    };
+  }
+  const legacyEnvPath = normalizePath(
+    process.env[LEGACY_SECRET_SETTINGS_KEY_ENV],
+  );
+  if (legacyEnvPath) {
+    return {
+      id: SITE_MASTER_KEY_ID,
+      label: "Site master key",
+      path: legacyEnvPath,
+      env: LEGACY_SECRET_SETTINGS_KEY_ENV,
+      source: "legacy-environment",
+      required,
+    };
+  }
   return {
     id: SITE_MASTER_KEY_ID,
     label: "Site master key",
-    path:
-      normalizePath(opts.siteMasterKeyPath) ??
-      normalizePath(process.env[SITE_MASTER_KEY_ENV]) ??
-      normalizePath(process.env[LEGACY_SECRET_SETTINGS_KEY_ENV]) ??
-      join(secretsDir, SITE_MASTER_KEY_FILENAME),
+    path: join(secretsDir, SITE_MASTER_KEY_FILENAME),
     env: SITE_MASTER_KEY_ENV,
+    source: "default",
+    required,
   };
 }
 
@@ -238,6 +311,11 @@ export async function getOrCreateSiteMasterKey(
   const file = resolveSiteMasterKeyFile(opts);
   const existing = await readOptionalMasterKeyFile(file.path);
   if (existing) return existing;
+  if (file.required || file.read_only) {
+    throw new Error(
+      `site master key is required but missing at ${file.path}; provision it before startup`,
+    );
+  }
   const key = randomBytes(32);
   await writeSiteMasterKeyFile({ path: file.path, key, overwrite: false });
   return key;
@@ -476,6 +554,11 @@ export async function restoreSiteMasterKeyBackup({
   force?: boolean;
 }): Promise<SiteMasterKeyStatus> {
   const target = resolveSiteMasterKeyFile(paths);
+  if (target.read_only) {
+    throw new Error(
+      `cannot restore site master key to read-only credential path ${target.path}; set ${SITE_MASTER_KEY_ENV} to a writable permanent path`,
+    );
+  }
   const key = Buffer.from(backup.key.value_base64, "base64");
   if (sha256(key) !== backup.key.sha256) {
     throw new Error("backup checksum mismatch for site master key");

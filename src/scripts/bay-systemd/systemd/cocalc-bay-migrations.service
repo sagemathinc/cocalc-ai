@@ -12,6 +12,7 @@ EnvironmentFile=/etc/cocalc/bay.env
 EnvironmentFile=-/etc/cocalc/bay-workers.env
 EnvironmentFile=-/etc/cocalc/bay-overlay.env
 EnvironmentFile=-/etc/cocalc/bay-secrets.env
+LoadCredential=site-master-key:/etc/cocalc/site-master-key
 ExecStart=/opt/cocalc/bay/current/bin/bay-migrate
 RemainAfterExit=yes
 StandardOutput=journal

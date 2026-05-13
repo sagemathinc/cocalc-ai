@@ -19,6 +19,7 @@ PERSIST_PORT=9202
 HUB_BASE_PORT=9300
 PUBLIC_URL=""
 DAEMON_RELOAD=1
+SITE_MASTER_KEY_PATH="/etc/cocalc/site-master-key"
 
 usage() {
   cat <<'EOF'
@@ -109,6 +110,33 @@ render_if_missing_or_forced() {
 
 random_secret() {
   openssl rand -hex 32
+}
+
+ensure_site_master_key_required_env() {
+  local secrets_env="${ENV_DIR}/bay-secrets.env"
+  if ! grep -q '^COCALC_REQUIRE_SITE_MASTER_KEY=' "$secrets_env"; then
+    cat >>"$secrets_env" <<'EOF'
+COCALC_REQUIRE_SITE_MASTER_KEY=1
+EOF
+  fi
+}
+
+validate_site_master_key() {
+  if [[ ! -f "$SITE_MASTER_KEY_PATH" || ! -s "$SITE_MASTER_KEY_PATH" ]]; then
+    cat >&2 <<EOF
+missing required site master key at ${SITE_MASTER_KEY_PATH}
+
+Install the same 32-byte base64 site master key on every bay before starting:
+  install -o root -g root -m 0600 /path/to/site-master-key ${SITE_MASTER_KEY_PATH}
+EOF
+    exit 1
+  fi
+  local mode
+  mode="$(stat -c '%a' "$SITE_MASTER_KEY_PATH")"
+  if (( (8#$mode & 0077) != 0 )); then
+    echo "site master key must not be readable or writable by group/other users: ${SITE_MASTER_KEY_PATH} mode ${mode}" >&2
+    exit 1
+  fi
 }
 
 postgres_ready() {
@@ -459,7 +487,9 @@ EOF
 COCALC_SESSION_SECRET=$(random_secret)
 COCALC_COOKIE_SECRET=$(random_secret)
 COCALC_CONAT_SHARED_SECRET=$(random_secret)
+COCALC_REQUIRE_SITE_MASTER_KEY=1
 EOF
+  ensure_site_master_key_required_env
   chmod 0600 "${ENV_DIR}/bay-secrets.env"
 
   if [[ "$OVERLAY_MODE" != "none" ]]; then
@@ -475,6 +505,7 @@ EOF
   fi
 
   if [[ "$START_BAY" -eq 1 ]]; then
+    validate_site_master_key
     run systemctl start cocalc-bay.target
   fi
 
@@ -494,12 +525,17 @@ Generated files:
   /etc/cocalc/bay-secrets.env
   ${BAY_ROOT}/secrets/conat-password
 
+Required pre-provisioned file:
+  ${SITE_MASTER_KEY_PATH}
+
 Next steps:
   1. Review /etc/cocalc/bay.env
   2. Review /etc/cocalc/bay-overlay.env
-  3. Verify migrations manually:
+  3. Install the same site master key on every bay before starting:
+     install -o root -g root -m 0600 /path/to/site-master-key ${SITE_MASTER_KEY_PATH}
+  4. Verify migrations manually:
      ${CURRENT_LINK}/bin/bay-migrate
-  4. Start the bay if not already started:
+  5. Start the bay if not already started:
      systemctl start cocalc-bay.target
 EOF
 }

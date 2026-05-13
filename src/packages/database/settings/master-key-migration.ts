@@ -678,6 +678,14 @@ export async function getMasterKeyDoctorReport({
         ? `site master key path is not accessible at ${site.path}: ${site.warning}`
         : `site master key is missing at ${site.path}`,
   );
+  check(
+    checks,
+    "site-master-key-production-mode",
+    site.required ? "ok" : "warning",
+    site.required
+      ? `site master key is required from ${site.source ?? "configured path"}`
+      : "site master key is not required; missing keys may be auto-created for development",
+  );
   if (site.exists) {
     check(
       checks,

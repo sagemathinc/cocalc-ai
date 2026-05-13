@@ -641,6 +641,9 @@ Current model:
   dry-run by default; writes require `--execute --yes-i-stopped-cocalc`.
 - legacy `server-settings-key` and `backup-master-key` files are read only as
   migration fallbacks, not as new root keys.
+- production bay systemd units load `/etc/cocalc/site-master-key` via
+  `LoadCredential=site-master-key:...`; `COCALC_REQUIRE_SITE_MASTER_KEY=1`
+  makes missing keys fatal instead of auto-creating a local key.
 
 Audit questions:
 

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -9,17 +9,35 @@ import {
   getSiteMasterKeyStatus,
   readSiteMasterKeyBackupFile,
   restoreSiteMasterKeyBackup,
+  SITE_MASTER_KEY_CREDENTIAL_NAME,
+  SITE_MASTER_KEY_REQUIRE_ENV,
+  SYSTEMD_CREDENTIALS_DIRECTORY_ENV,
 } from "./master-key-lifecycle";
 
 describe("master-key-lifecycle", () => {
   let dir: string;
+  let originalEnv: Record<string, string | undefined>;
 
   beforeEach(async () => {
+    originalEnv = {
+      [SITE_MASTER_KEY_REQUIRE_ENV]: process.env[SITE_MASTER_KEY_REQUIRE_ENV],
+      [SYSTEMD_CREDENTIALS_DIRECTORY_ENV]:
+        process.env[SYSTEMD_CREDENTIALS_DIRECTORY_ENV],
+    };
+    delete process.env[SITE_MASTER_KEY_REQUIRE_ENV];
+    delete process.env[SYSTEMD_CREDENTIALS_DIRECTORY_ENV];
     dir = await mkdtemp(join(tmpdir(), "cocalc-site-master-key-"));
   });
 
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
+    for (const [name, value] of Object.entries(originalEnv)) {
+      if (value == null) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
   });
 
   it("creates one site master key and derives distinct purpose keys", async () => {
@@ -73,5 +91,32 @@ describe("master-key-lifecycle", () => {
     expect(status.legacy_keys).toHaveLength(2);
     expect(status.needs_initialization).toBe(true);
     expect(status.backup_required).toBe(false);
+  });
+
+  it("fails closed when production requires a pre-provisioned key", async () => {
+    process.env[SITE_MASTER_KEY_REQUIRE_ENV] = "1";
+    await expect(
+      getOrCreateSiteMasterKey({ secretsDir: join(dir, "secrets") }),
+    ).rejects.toThrow("site master key is required but missing");
+  });
+
+  it("reads a systemd credential before the writable secrets directory", async () => {
+    const credentialsDir = join(dir, "credentials");
+    const secretsDir = join(dir, "secrets");
+    const expected = Buffer.alloc(32, 7);
+    await mkdir(credentialsDir);
+    await writeFile(
+      join(credentialsDir, SITE_MASTER_KEY_CREDENTIAL_NAME),
+      expected.toString("base64"),
+      { mode: 0o600 },
+    );
+    process.env[SYSTEMD_CREDENTIALS_DIRECTORY_ENV] = credentialsDir;
+
+    const siteKey = await getOrCreateSiteMasterKey({ secretsDir });
+
+    expect(siteKey.equals(expected)).toBe(true);
+    const status = await getSiteMasterKeyStatus({ secretsDir });
+    expect(status.site_master_key.source).toBe("systemd-credential");
+    expect(status.site_master_key.read_only).toBe(true);
   });
 });

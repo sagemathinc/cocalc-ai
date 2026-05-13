@@ -166,7 +166,8 @@ main() {
     "${BAY_ROOT}/state" \
     "${BAY_ROOT}/secrets" \
     "${BAY_ROOT}/projects"
-  run mkdir -p "${INSTALL_BASE}/releases" /etc/cocalc
+  run mkdir -p "${INSTALL_BASE}/releases"
+  run install -d -o root -g "$BAY_GROUP" -m 0750 /etc/cocalc
   run chown -R "${BAY_USER}:${BAY_GROUP}" "$BAY_ROOT" "${INSTALL_BASE}"
 
   INITDB="$(find_initdb)"
@@ -188,6 +189,10 @@ Install base:    ${INSTALL_BASE}
 initdb:          ${INITDB}
 
 Next step:
+  install the shared site master key before starting any bay services:
+    sudo install -o root -g root -m 0600 /path/to/site-master-key /etc/cocalc/site-master-key
+
+Then stage a release:
   sudo ./src/scripts/bay-systemd/bay-bootstrap-release.sh \\
     --source /path/to/built/src \\
     --bay-id ${BAY_ID}
