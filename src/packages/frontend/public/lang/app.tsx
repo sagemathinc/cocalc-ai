@@ -13,7 +13,7 @@ import { FeatureImage } from "@cocalc/frontend/public/features/page-components";
 import {
   PublicHero,
   PublicPage,
-  PublicCard,
+  PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import { LOCALE, LOCALIZATIONS, type Locale } from "@cocalc/util/i18n";
 import { SITE_NAME } from "@cocalc/util/theme";
@@ -26,7 +26,6 @@ const { Paragraph, Text, Title } = Typography;
 interface LangConfig {
   is_authenticated?: boolean;
   logo_square?: string;
-  show_policies?: boolean;
   site_name?: string;
 }
 
@@ -118,7 +117,7 @@ function sortedLocales(): Locale[] {
 
 function LocaleSwitcher({ current }: { current?: Locale }) {
   return (
-    <PublicCard>
+    <PublicSection>
       <Text strong type="secondary">
         LANGUAGES
       </Text>
@@ -136,7 +135,7 @@ function LocaleSwitcher({ current }: { current?: Locale }) {
           );
         })}
       </Flex>
-    </PublicCard>
+    </PublicSection>
   );
 }
 
@@ -144,13 +143,12 @@ function LangIndex({ siteName }: { siteName: string }) {
   return (
     <>
       <PublicHero
-        eyebrow="TRANSLATED LANDING PAGES"
         title={`Translations for ${siteName}`}
         subtitle={`Open a language-specific overview of ${siteName}. These pages are intentionally minimal public landing pages for discovery and SEO.`}
       />
       <div style={{ display: "grid", gap: 16, marginTop: 24 }}>
         <LocaleSwitcher />
-        <PublicCard>
+        <PublicSection>
           <Title level={3} style={{ margin: 0 }}>
             Available languages
           </Title>
@@ -159,7 +157,7 @@ function LangIndex({ siteName }: { siteName: string }) {
             languages, while the broader public site and main application
             continue to evolve in English first.
           </Paragraph>
-        </PublicCard>
+        </PublicSection>
       </div>
     </>
   );
@@ -176,12 +174,9 @@ function LocaleLanding({
   messages: LangMessages;
   siteName: string;
 }) {
-  const localization = LOCALIZATIONS[locale];
-
   return (
     <>
       <PublicHero
-        eyebrow={`${localization.flag} ${localization.native}`}
         title={messages.tagline ?? siteName}
         subtitle={messages["site-description"] ?? siteName}
         actions={
@@ -206,7 +201,7 @@ function LocaleLanding({
         }
       />
       <div style={{ display: "grid", gap: 16, marginTop: 24 }}>
-        <PublicCard>
+        <PublicSection>
           <Text strong type="secondary">
             {messages.intro ?? "Overview"}
           </Text>
@@ -218,7 +213,7 @@ function LocaleLanding({
             src="/public/cocalc-screenshot-20200128-nq8.png"
           />
           <HTML value={messages["intro-1"] ?? ""} />
-        </PublicCard>
+        </PublicSection>
         <LocaleSwitcher current={locale} />
         <section>
           <Title level={2} style={{ margin: 0 }}>
@@ -231,7 +226,7 @@ function LocaleLanding({
           <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
             {TRANSLATED_FEATURES.map((feature) => (
               <Col key={feature.titleKey} xs={24} lg={12}>
-                <PublicCard>
+                <PublicSection>
                   <FeatureImage
                     alt={messages[feature.titleKey] ?? feature.titleKey}
                     src={feature.image}
@@ -245,7 +240,7 @@ function LocaleLanding({
                       feature.links,
                     )}
                   />
-                </PublicCard>
+                </PublicSection>
               </Col>
             ))}
           </Row>
@@ -307,9 +302,9 @@ export default function PublicLangApp({
     }
     if (!messages) {
       return (
-        <PublicCard>
+        <PublicSection>
           <Empty description="Loading translation…" />
-        </PublicCard>
+        </PublicSection>
       );
     }
     return (

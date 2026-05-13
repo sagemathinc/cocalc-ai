@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -19,7 +19,7 @@ const { Paragraph, Title } = Typography;
 export default function SageFeaturePage({ helpEmail }: { helpEmail?: string }) {
   return (
     <Flex vertical gap={18}>
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
@@ -52,11 +52,11 @@ export default function SageFeaturePage({ helpEmail }: { helpEmail?: string }) {
             />
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Why SageMath fits naturally in CoCalc
             </Title>
@@ -72,10 +72,10 @@ export default function SageFeaturePage({ helpEmail }: { helpEmail?: string }) {
               The value is not only that Sage runs remotely. It is that the rest
               of the collaborative environment is already built around it.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Lower setup cost for classes and collaborators
             </Title>
@@ -89,11 +89,11 @@ export default function SageFeaturePage({ helpEmail }: { helpEmail?: string }) {
               That is especially helpful in courses where students should focus
               on the mathematics rather than on local package management.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -130,11 +130,11 @@ export default function SageFeaturePage({ helpEmail }: { helpEmail?: string }) {
             </Flex>
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="SageMath with nbgrader"
               src="/public/features/sage-nbgrader.png"
@@ -151,10 +151,10 @@ export default function SageFeaturePage({ helpEmail }: { helpEmail?: string }) {
               That means SageMath can be part of a real teaching workflow, not
               just a standalone compute tool.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Use SageMath the way your project needs
             </Title>
@@ -167,11 +167,11 @@ export default function SageFeaturePage({ helpEmail }: { helpEmail?: string }) {
               Collaboration, chat, history, and support workflows remain
               available whichever interface you use.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Why use SageMath on CoCalc
         </Title>
@@ -190,7 +190,7 @@ export default function SageFeaturePage({ helpEmail }: { helpEmail?: string }) {
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </Flex>
   );
 }

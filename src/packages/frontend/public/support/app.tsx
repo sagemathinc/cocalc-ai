@@ -10,11 +10,11 @@ import { Button, Flex, Typography } from "antd";
 import type { HistoricCounts, Stats } from "@cocalc/util/db-schema/stats";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { EmptyCard, fetchJson, LoadingCard } from "../common";
+import { EmptySection, fetchJson, LoadingSection } from "../common";
 import {
-  PublicCard,
   PublicGrid,
   PublicPage,
+  PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
 import { navigatePublic } from "../navigation";
 import type { PublicSupportRoute, SupportView } from "./routes";
@@ -32,7 +32,6 @@ interface SupportConfig {
   is_authenticated?: boolean;
   logo_square?: string;
   on_cocalc_com?: boolean;
-  show_policies?: boolean;
   site_name?: string;
   support?: string;
   support_video_call?: string;
@@ -93,11 +92,11 @@ function SupportCard({
   title: string;
 }) {
   return (
-    <PublicCard>
+    <PublicSection>
       <div style={{ fontWeight: 700, fontSize: "18px" }}>{title}</div>
       <div style={{ color: COLORS.GRAY }}>{description}</div>
       <div>{children}</div>
-    </PublicCard>
+    </PublicSection>
   );
 }
 
@@ -228,7 +227,7 @@ function StatusMetricCard({
   value: string;
 }) {
   return (
-    <PublicCard>
+    <PublicSection>
       <div style={{ color: COLORS.GRAY, fontSize: "13px", fontWeight: 700 }}>
         {title}
       </div>
@@ -236,7 +235,7 @@ function StatusMetricCard({
         {value}
       </div>
       <Paragraph style={{ margin: 0 }}>{detail}</Paragraph>
-    </PublicCard>
+    </PublicSection>
   );
 }
 
@@ -259,11 +258,11 @@ function SupportStatusPage({ siteName }: { siteName: string }) {
   }, []);
 
   if (loading) {
-    return <LoadingCard label="Loading system status…" />;
+    return <LoadingSection label="Loading system status…" />;
   }
 
   if (payload.error) {
-    return <EmptyCard label={`Status unavailable: ${payload.error}`} />;
+    return <EmptySection label={`Status unavailable: ${payload.error}`} />;
   }
 
   const connectedClients = (payload.hub_servers ?? []).reduce(
@@ -273,7 +272,7 @@ function SupportStatusPage({ siteName }: { siteName: string }) {
 
   return (
     <div style={{ display: "grid", gap: 24 }}>
-      <PublicCard>
+      <PublicSection>
         <Typography.Title level={3} style={{ margin: 0 }}>
           Live activity snapshot
         </Typography.Title>
@@ -284,7 +283,7 @@ function SupportStatusPage({ siteName }: { siteName: string }) {
         <Paragraph style={{ margin: 0 }}>
           Last updated: {formatDateTime(payload.time)}
         </Paragraph>
-      </PublicCard>
+      </PublicSection>
       <PublicGrid columns={3}>
         <StatusMetricCard
           detail={`Active in 5 minutes: ${historicCount(payload.accounts_active, "5min")} · Active in 1 day: ${historicCount(payload.accounts_active, "1d")}`}
@@ -374,18 +373,20 @@ export default function PublicSupportApp({
           <SupportIndex config={config} onNavigate={navigate} />
         ) : null}
         {view === "new" ? (
-          <Suspense fallback={<PublicCard>Loading support form…</PublicCard>}>
+          <Suspense
+            fallback={<PublicSection>Loading support form…</PublicSection>}
+          >
             <SupportNew config={config} onNavigate={navigate} />
           </Suspense>
         ) : null}
         {view === "tickets" ? (
-          <Suspense fallback={<PublicCard>Loading tickets…</PublicCard>}>
+          <Suspense fallback={<PublicSection>Loading tickets…</PublicSection>}>
             <SupportTickets config={config} />
           </Suspense>
         ) : null}
         {view === "community" ? (
           <Suspense
-            fallback={<PublicCard>Loading community links…</PublicCard>}
+            fallback={<PublicSection>Loading community links…</PublicSection>}
           >
             <CommunityView />
           </Suspense>

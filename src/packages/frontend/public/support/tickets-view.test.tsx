@@ -23,7 +23,7 @@ jest.mock("@cocalc/frontend/client/api", () => ({
 }));
 
 jest.mock("@cocalc/frontend/public/layout/shell", () => ({
-  PublicCard: ({ children }: any) => <div>{children}</div>,
+  PublicSection: ({ children }: any) => <div>{children}</div>,
 }));
 
 describe("SupportTicketsView", () => {

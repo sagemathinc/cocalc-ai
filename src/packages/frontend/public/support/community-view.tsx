@@ -5,7 +5,7 @@
 
 import { Button, Flex, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -62,7 +62,7 @@ export default function CommunityView() {
         }}
       >
         {COMMUNITY_LINKS.map((item) => (
-          <PublicCard key={item.href}>
+          <PublicSection key={item.href}>
             <Text strong type="secondary">
               COMMUNITY
             </Text>
@@ -75,7 +75,7 @@ export default function CommunityView() {
                 Open
               </Button>
             </Flex>
-          </PublicCard>
+          </PublicSection>
         ))}
       </div>
     </div>

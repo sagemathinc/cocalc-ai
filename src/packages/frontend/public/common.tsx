@@ -9,9 +9,12 @@ import { Suspense, lazy } from "react";
 import { Button, Empty, Flex, Spin, Typography } from "antd";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getSiteName, type PublicConfig } from "@cocalc/frontend/public/config";
-import { PublicCard, PublicPage } from "@cocalc/frontend/public/layout/shell";
+import {
+  PublicPage,
+  PublicSection,
+} from "@cocalc/frontend/public/layout/shell";
 import type { PublicTopNavActiveKey } from "@cocalc/frontend/public/layout/top-nav";
-import { COLORS } from "@cocalc/util/theme";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 const Markdown = lazy(() => import("@cocalc/frontend/markdown/component"));
@@ -21,7 +24,7 @@ export { getSiteName };
 export type { PublicConfig };
 
 export const MUTED_STYLE: CSSProperties = {
-  color: COLORS.GRAY_M,
+  color: PUBLIC_COLORS.mutedText,
 } as const;
 
 export async function fetchJson<T>(path: string): Promise<T> {
@@ -33,32 +36,32 @@ export function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
 
-export function MarkdownCard({ value }: { value: string }) {
+export function MarkdownSection({ value }: { value: string }) {
   return (
-    <PublicCard>
+    <PublicSection>
       <Suspense fallback={<div>Loading content…</div>}>
         <Markdown value={value} />
       </Suspense>
-    </PublicCard>
+    </PublicSection>
   );
 }
 
-export function LoadingCard({ label }: { label: string }) {
+export function LoadingSection({ label }: { label: string }) {
   return (
-    <PublicCard>
+    <PublicSection>
       <Flex align="center" gap={12}>
         <Spin size="small" />
         <Text>{label}</Text>
       </Flex>
-    </PublicCard>
+    </PublicSection>
   );
 }
 
-export function EmptyCard({ label }: { label: string }) {
+export function EmptySection({ label }: { label: string }) {
   return (
-    <PublicCard>
+    <PublicSection>
       <Empty description={label} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-    </PublicCard>
+    </PublicSection>
   );
 }
 

@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   BulletList,
   FeatureImage,
@@ -18,7 +18,7 @@ const { Paragraph, Title } = Typography;
 export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
   return (
     <Flex vertical gap={18}>
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
@@ -53,11 +53,11 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
             />
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Common use cases
             </Title>
@@ -69,10 +69,10 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
                 "Build external services that need a stable programmatic interface to CoCalc.",
               ]}
             />
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Works with hosted and self-hosted deployments
             </Title>
@@ -86,11 +86,11 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
               routine work without depending on browser automation or fragile UI
               scripts.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Programmatic control instead of UI automation
         </Title>
@@ -109,7 +109,7 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </Flex>
   );
 }

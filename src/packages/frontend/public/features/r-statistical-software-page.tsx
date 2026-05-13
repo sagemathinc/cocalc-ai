@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -23,7 +23,7 @@ export default function RStatisticalSoftwareFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
@@ -56,11 +56,11 @@ export default function RStatisticalSoftwareFeaturePage({
             />
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Zero-setup R for teaching and analysis
             </Title>
@@ -76,10 +76,10 @@ export default function RStatisticalSoftwareFeaturePage({
               CoCalc reduces the operational overhead so people can focus on the
               statistical or data-analysis work itself.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Full workflow, not just a notebook
             </Title>
@@ -92,11 +92,11 @@ export default function RStatisticalSoftwareFeaturePage({
               CoCalc is useful here because it keeps those pieces in one
               project.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -131,11 +131,11 @@ export default function RStatisticalSoftwareFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="R and LaTeX integration in CoCalc"
               src="/public/features/cocalc-r-latex.png"
@@ -155,10 +155,10 @@ export default function RStatisticalSoftwareFeaturePage({
             <LinkButton href={appPath("features/latex-editor")}>
               LaTeX editor
             </LinkButton>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="R environment in CoCalc"
               src="/public/features/cocalc-r-environment.png"
@@ -175,11 +175,11 @@ export default function RStatisticalSoftwareFeaturePage({
               That is the difference between an online R demo and a usable
               shared workspace.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Why use R on CoCalc
         </Title>
@@ -198,7 +198,7 @@ export default function RStatisticalSoftwareFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </Flex>
   );
 }

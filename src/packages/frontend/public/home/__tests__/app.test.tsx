@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 
 import PublicHomeApp from "../app";
 
@@ -46,7 +46,11 @@ describe("PublicHomeApp", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "Launchpad home" })).not.toBeNull();
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", {
+        name: "Launchpad home",
+      }),
+    ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
         name: "CoCalc AI is becoming agent-first",

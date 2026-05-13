@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -22,7 +22,7 @@ export default function SlidesFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
@@ -56,11 +56,11 @@ export default function SlidesFeaturePage({
             />
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Slides for technical subjects
             </Title>
@@ -77,10 +77,10 @@ export default function SlidesFeaturePage({
               and live explanation than a conventional slide deck disconnected
               from the rest of the workflow.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Present and edit from the same workspace
             </Title>
@@ -93,11 +93,11 @@ export default function SlidesFeaturePage({
             <Paragraph style={{ margin: 0 }}>
               Coauthors can also work on the same presentation in real time.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Tag
           color="blue"
           style={{
@@ -122,9 +122,9 @@ export default function SlidesFeaturePage({
           easier to evolve presentations over time without losing earlier
           versions.
         </Paragraph>
-      </PublicCard>
+      </PublicSection>
 
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Why use slides in CoCalc
         </Title>
@@ -145,7 +145,7 @@ export default function SlidesFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </Flex>
   );
 }

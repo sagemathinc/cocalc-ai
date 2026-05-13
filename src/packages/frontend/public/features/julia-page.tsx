@@ -5,7 +5,7 @@
 
 import { Button, Col, Flex, Row, Tag, Typography } from "antd";
 
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import { COLORS } from "@cocalc/util/theme";
 import {
   BulletList,
@@ -23,7 +23,7 @@ export default function JuliaFeaturePage({
 }) {
   return (
     <Flex vertical gap={18}>
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={12}>
             <Flex vertical gap={12}>
@@ -56,11 +56,11 @@ export default function JuliaFeaturePage({
             />
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Multiple ways to work with Julia
             </Title>
@@ -76,10 +76,10 @@ export default function JuliaFeaturePage({
               The right interface depends on the task, and CoCalc gives you that
               flexibility without moving to a different platform.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} lg={12}>
-          <PublicCard>
+          <PublicSection>
             <Title level={3} style={{ margin: 0 }}>
               Benefits of working online
             </Title>
@@ -92,11 +92,11 @@ export default function JuliaFeaturePage({
               This is particularly helpful in courses or research groups where a
               common, reusable Julia environment saves time.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Row gutter={[24, 24]} align="middle">
           <Col xs={24} lg={11}>
             <FeatureImage
@@ -134,11 +134,11 @@ export default function JuliaFeaturePage({
             </Flex>
           </Col>
         </Row>
-      </PublicCard>
+      </PublicSection>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="Teaching Julia with nbgrader"
               src="/public/features/julia-nbgrader.png"
@@ -151,10 +151,10 @@ export default function JuliaFeaturePage({
               apply to Julia notebooks, which makes Julia viable in structured
               course settings rather than just in personal research projects.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
         <Col xs={24} xl={12}>
-          <PublicCard>
+          <PublicSection>
             <FeatureImage
               alt="Collaborative Julia code editing"
               src="/public/features/julia-code.png"
@@ -169,11 +169,11 @@ export default function JuliaFeaturePage({
             <Paragraph style={{ margin: 0 }}>
               That is useful for pair work, support, and research collaboration.
             </Paragraph>
-          </PublicCard>
+          </PublicSection>
         </Col>
       </Row>
 
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Why use Julia on CoCalc
         </Title>
@@ -192,7 +192,7 @@ export default function JuliaFeaturePage({
             <Button href={`mailto:${helpEmail}`}>Contact support</Button>
           ) : null}
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </Flex>
   );
 }

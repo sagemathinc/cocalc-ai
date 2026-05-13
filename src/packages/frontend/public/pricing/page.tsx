@@ -3,12 +3,15 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
-import { Alert, Button, Card, Flex, Space, Tag, Typography } from "antd";
+import { Alert, Button, Flex, Space, Tag, Typography } from "antd";
 
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
-import { PublicCard } from "@cocalc/frontend/public/layout/shell";
+import {
+  PublicGrid,
+  PublicSection,
+} from "@cocalc/frontend/public/layout/shell";
 import { currency, plural, round2 } from "@cocalc/util/misc";
 import { upgrades } from "@cocalc/util/upgrade-spec";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -27,12 +30,6 @@ export interface PublicMembershipTier {
   project_defaults?: Record<string, unknown>;
   store_visible?: boolean;
 }
-
-const GRID_STYLE: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-  gap: "16px",
-} as const;
 
 const PROJECT_DEFAULT_KEYS = ["memory", "disk_quota", "network"] as const;
 
@@ -160,7 +157,7 @@ function yearlySavingsTag(tier: PublicMembershipTier): ReactNode {
   return <Tag color="blue">Save about {savings}% yearly</Tag>;
 }
 
-function TierCard({
+function TierSection({
   isAuthenticated,
   tier,
 }: {
@@ -174,16 +171,7 @@ function TierCard({
     "A public membership tier configured by this deployment.";
 
   return (
-    <Card
-      styles={{
-        body: {
-          display: "grid",
-          gap: 12,
-          height: "100%",
-        },
-      }}
-      variant="outlined"
-    >
+    <PublicSection>
       <Flex align="center" gap={8} justify="space-between">
         <Title level={3} style={{ margin: 0 }}>
           {label}
@@ -224,7 +212,7 @@ function TierCard({
           </>
         )}
       </Flex>
-    </Card>
+    </PublicSection>
   );
 }
 
@@ -263,7 +251,7 @@ export default function PricingPage({
 
   return (
     <>
-      <PublicCard>
+      <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
           Membership-first pricing
         </Title>
@@ -301,42 +289,42 @@ export default function PricingPage({
             Ask Sales
           </Button>
         </Flex>
-      </PublicCard>
+      </PublicSection>
 
       {visibleTiers.length > 0 ? (
-        <div style={GRID_STYLE}>
+        <PublicGrid columns={3}>
           {visibleTiers.map((tier) => (
-            <TierCard
+            <TierSection
               isAuthenticated={isAuthenticated}
               key={tier.id}
               tier={tier}
             />
           ))}
-        </div>
+        </PublicGrid>
       ) : loaded ? (
-        <PublicCard>
+        <PublicSection>
           <Alert
             title="No public membership tiers are currently configured."
             showIcon
             type="info"
           />
-        </PublicCard>
+        </PublicSection>
       ) : null}
 
-      <PublicCard>
+      <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
           What you can buy
         </Title>
-        <div style={GRID_STYLE}>
-          <Card variant="borderless">
+        <PublicGrid columns={3}>
+          <PublicSection>
             <Title level={4}>Individual memberships</Title>
             <Paragraph style={{ marginBottom: 0 }}>
               The main product is a recurring membership. Admins define the
               actual tiers and prices, and those tiers determine the defaults
               for project resources, AI usage, and feature access.
             </Paragraph>
-          </Card>
-          <Card variant="borderless">
+          </PublicSection>
+          <PublicSection>
             <Title level={4}>Vouchers</Title>
             <Paragraph style={{ marginBottom: 0 }}>
               Vouchers let an instructor, department, or organization prepay
@@ -344,24 +332,24 @@ export default function PricingPage({
               to cover accounts today without waiting for the fuller team and
               campus purchasing flows.
             </Paragraph>
-          </Card>
-          <Card variant="borderless">
+          </PublicSection>
+          <PublicSection>
             <Title level={4}>Self-hosted software</Title>
             <Paragraph style={{ marginBottom: 0 }}>
               CoCalc Plus and CoCalc Launchpad are separate software offerings
               for local and self-hosted deployments. They are not project-level
               quota purchases.
             </Paragraph>
-          </Card>
-        </div>
-      </PublicCard>
+          </PublicSection>
+        </PublicGrid>
+      </PublicSection>
 
-      <PublicCard>
+      <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
           Teaching and course payment options
         </Title>
-        <div style={GRID_STYLE}>
-          <Card variant="outlined">
+        <PublicGrid columns={3}>
+          <PublicSection>
             <Space orientation="vertical" size="middle">
               <Flex align="center" gap={8} wrap>
                 <Title level={4} style={{ margin: 0 }}>
@@ -380,9 +368,9 @@ export default function PricingPage({
                 deliverable after the Next.js removal itself lands.
               </Paragraph>
             </Space>
-          </Card>
+          </PublicSection>
 
-          <Card variant="outlined">
+          <PublicSection>
             <Space orientation="vertical" size="middle">
               <Flex align="center" gap={8} wrap>
                 <Title level={4} style={{ margin: 0 }}>
@@ -408,9 +396,9 @@ export default function PricingPage({
                 </Button>
               </Flex>
             </Space>
-          </Card>
+          </PublicSection>
 
-          <Card variant="outlined">
+          <PublicSection>
             <Space orientation="vertical" size="middle">
               <Flex align="center" gap={8} wrap>
                 <Title level={4} style={{ margin: 0 }}>
@@ -433,12 +421,12 @@ export default function PricingPage({
                 Ask about campus pricing
               </Button>
             </Space>
-          </Card>
-        </div>
-      </PublicCard>
+          </PublicSection>
+        </PublicGrid>
+      </PublicSection>
 
-      <div style={GRID_STYLE}>
-        <PublicCard>
+      <PublicGrid columns={3}>
+        <PublicSection>
           <Title level={3} style={{ margin: 0 }}>
             Subscription options
           </Title>
@@ -452,9 +440,9 @@ export default function PricingPage({
             use support to request invoicing, purchase-order handling, or
             assisted purchases.
           </Paragraph>
-        </PublicCard>
+        </PublicSection>
 
-        <PublicCard>
+        <PublicSection>
           <Title level={3} style={{ margin: 0 }}>
             On-premises and self-hosted installs
           </Title>
@@ -468,9 +456,9 @@ export default function PricingPage({
               CoCalc Launchpad
             </Button>
           </Flex>
-        </PublicCard>
+        </PublicSection>
 
-        <PublicCard>
+        <PublicSection>
           <Title level={3} style={{ margin: 0 }}>
             User-owned project hosts
           </Title>
@@ -481,8 +469,8 @@ export default function PricingPage({
             <Text code> /hosts </Text> and is a separate second-round follow-up.
           </Paragraph>
           <Button href={appPath("hosts")}>Project hosts</Button>
-        </PublicCard>
-      </div>
+        </PublicSection>
+      </PublicGrid>
     </>
   );
 }

@@ -13,7 +13,7 @@ import {
   PublicSectionShell,
 } from "../common";
 import { publicPath } from "../routes";
-import { PublicCard, PublicGrid } from "../layout/shell";
+import { PublicCard, PublicGrid, PublicSection } from "../layout/shell";
 import { CodeCommand, CopyCommandButton } from "./components";
 import type { PublicProductsRoute } from "./routes";
 
@@ -77,7 +77,7 @@ function ProductsOverviewPage() {
 function CocalcRocketPage() {
   return (
     <PublicGrid columns={3}>
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           What CoCalc Rocket is
         </Title>
@@ -92,8 +92,8 @@ function CocalcRocketPage() {
           hosted CoCalc is essentially Rocket run and managed by us instead of
           by your own team.
         </Paragraph>
-      </PublicCard>
-      <PublicCard>
+      </PublicSection>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Choose Rocket, Launchpad, or Plus
         </Title>
@@ -111,8 +111,8 @@ function CocalcRocketPage() {
             Compare with CoCalc Plus
           </LinkButton>
         </Flex>
-      </PublicCard>
-      <PublicCard>
+      </PublicSection>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Talk with us
         </Title>
@@ -126,7 +126,7 @@ function CocalcRocketPage() {
           <LinkButton href={appPath("support")}>Support</LinkButton>
           <LinkButton href={appPath("pricing")}>Pricing</LinkButton>
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </PublicGrid>
   );
 }
@@ -138,7 +138,7 @@ function CocalcLaunchpadPage() {
   return (
     <>
       <PublicGrid columns={3}>
-        <PublicCard>
+        <PublicSection>
           <Title level={3} style={{ margin: 0 }}>
             What CoCalc Launchpad is
           </Title>
@@ -152,8 +152,8 @@ function CocalcLaunchpadPage() {
             use of the same collaborative workspace model that powers the hosted
             service.
           </Paragraph>
-        </PublicCard>
-        <PublicCard>
+        </PublicSection>
+        <PublicSection>
           <Title level={3} style={{ margin: 0 }}>
             Install CoCalc Launchpad
           </Title>
@@ -174,8 +174,8 @@ function CocalcLaunchpadPage() {
             Current supported targets are Linux on x64 or arm64, and macOS on
             arm64.
           </Paragraph>
-        </PublicCard>
-        <PublicCard>
+        </PublicSection>
+        <PublicSection>
           <Title level={3} style={{ margin: 0 }}>
             What the installer does
           </Title>
@@ -189,9 +189,9 @@ function CocalcLaunchpadPage() {
             <code> ~/.local/share/cocalc-launchpad</code>, and on macOS under
             <code> ~/Library/Application Support/cocalc-launchpad</code>.
           </Paragraph>
-        </PublicCard>
+        </PublicSection>
       </PublicGrid>
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Choose Launchpad or CoCalc Plus
         </Title>
@@ -206,7 +206,7 @@ function CocalcLaunchpadPage() {
           </LinkButton>
           <LinkButton href={appPath("features/api")}>HTTP API</LinkButton>
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </>
   );
 }
@@ -217,7 +217,7 @@ function CocalcPlusPage() {
 
   return (
     <PublicGrid columns={3}>
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           What CoCalc Plus is
         </Title>
@@ -230,8 +230,8 @@ function CocalcPlusPage() {
           It brings notebooks, terminals, files, and the broader CoCalc
           workspace model into a local single-user install.
         </Paragraph>
-      </PublicCard>
-      <PublicCard>
+      </PublicSection>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Install CoCalc Plus
         </Title>
@@ -249,8 +249,8 @@ function CocalcPlusPage() {
           Current target platforms are Linux and macOS. The installer places the
           runtime in a user-owned location and adds a launcher if needed.
         </Paragraph>
-      </PublicCard>
-      <PublicCard>
+      </PublicSection>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
           Choose hosted CoCalc or CoCalc Plus
         </Title>
@@ -272,7 +272,7 @@ function CocalcPlusPage() {
             Linux workflow
           </LinkButton>
         </Flex>
-      </PublicCard>
+      </PublicSection>
     </PublicGrid>
   );
 }

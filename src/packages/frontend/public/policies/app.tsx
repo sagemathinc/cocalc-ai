@@ -8,14 +8,20 @@ import { useEffect } from "react";
 import { Button, Flex, Menu, Typography } from "antd";
 import { theme } from "antd";
 import {
-  EmptyCard,
+  EmptySection,
   getSiteName,
-  MarkdownCard,
+  MarkdownSection,
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
+import {
+  arePublicPoliciesVisible,
+  getExternalPoliciesUrl,
+  publicPoliciesUseBuiltin,
+  publicPoliciesUseCustom,
+} from "@cocalc/frontend/public/config";
 import { publicPath } from "../routes";
-import { PublicCard, PublicGrid } from "../layout/shell";
+import { PublicCard, PublicGrid, PublicSection } from "../layout/shell";
 import {
   BuiltinPolicyPage,
   BUILTIN_POLICIES,
@@ -25,15 +31,6 @@ import {
 import type { PublicPoliciesRoute } from "./routes";
 
 const { Paragraph, Title } = Typography;
-
-function arePoliciesVisible(config?: PublicConfig): boolean {
-  return !!config?.show_policies;
-}
-
-function getExternalPoliciesUrl(config?: PublicConfig): string | undefined {
-  const url = config?.terms_of_service_url?.trim();
-  return url ? url : undefined;
-}
 
 function titleForRoute(route: PublicPoliciesRoute, siteName: string): string {
   switch (route.view) {
@@ -52,16 +49,16 @@ function titleForRoute(route: PublicPoliciesRoute, siteName: string): string {
 function PolicyGateCard({ config }: { config?: PublicConfig }) {
   const externalUrl = getExternalPoliciesUrl(config);
 
-  if (!arePoliciesVisible(config)) {
+  if (!arePublicPoliciesVisible(config)) {
     return (
-      <PublicCard>
+      <PublicSection>
         <Title level={3} style={{ margin: 0 }}>
-          Public policy pages are disabled
+          Public policy pages are not configured
         </Title>
         <Paragraph style={{ margin: 0 }}>
           This deployment is not exposing a public policy section.
         </Paragraph>
-      </PublicCard>
+      </PublicSection>
     );
   }
 
@@ -70,7 +67,7 @@ function PolicyGateCard({ config }: { config?: PublicConfig }) {
   }
 
   return (
-    <PublicCard>
+    <PublicSection>
       <Title level={3} style={{ margin: 0 }}>
         Public policy information
       </Title>
@@ -88,23 +85,25 @@ function PolicyGateCard({ config }: { config?: PublicConfig }) {
           Open policy page
         </Button>
       </div>
-    </PublicCard>
+    </PublicSection>
   );
 }
 
 function PoliciesHome({ config }: { config: PublicConfig }) {
   const externalUrl = getExternalPoliciesUrl(config);
-  if (!arePoliciesVisible(config) || externalUrl) {
+  if (!arePublicPoliciesVisible(config) || externalUrl) {
     return <PolicyGateCard config={config} />;
   }
 
   const items = [
-    ...BUILTIN_POLICIES.map((policy) => ({
-      description: policy.description,
-      href: publicPath(`policies/${policy.slug}`),
-      title: policy.title,
-    })),
-    ...(config.imprint
+    ...(publicPoliciesUseBuiltin(config)
+      ? BUILTIN_POLICIES.map((policy) => ({
+          description: policy.description,
+          href: publicPath(`policies/${policy.slug}`),
+          title: policy.title,
+        }))
+      : []),
+    ...(publicPoliciesUseCustom(config) && config.imprint
       ? [
           {
             description: "Site-specific legal imprint information.",
@@ -113,7 +112,7 @@ function PoliciesHome({ config }: { config: PublicConfig }) {
           },
         ]
       : []),
-    ...(config.policies
+    ...(publicPoliciesUseCustom(config) && config.policies
       ? [
           {
             description:
@@ -124,6 +123,10 @@ function PoliciesHome({ config }: { config: PublicConfig }) {
         ]
       : []),
   ];
+
+  if (items.length === 0) {
+    return <EmptySection label="No public policy content is configured." />;
+  }
 
   return (
     <PublicGrid columns={3}>
@@ -145,15 +148,20 @@ function PoliciesDetailPage({
   markdown?: string;
   title: string;
 }) {
-  if (!arePoliciesVisible(config) || getExternalPoliciesUrl(config)) {
+  if (!arePublicPoliciesVisible(config) || getExternalPoliciesUrl(config)) {
     return <PolicyGateCard config={config} />;
+  }
+  if (!publicPoliciesUseCustom(config)) {
+    return (
+      <EmptySection label={`No ${title.toLowerCase()} content configured.`} />
+    );
   }
   if (!markdown) {
     return (
-      <EmptyCard label={`No ${title.toLowerCase()} content configured.`} />
+      <EmptySection label={`No ${title.toLowerCase()} content configured.`} />
     );
   }
-  return <MarkdownCard value={markdown} />;
+  return <MarkdownSection value={markdown} />;
 }
 
 function PolicySubNav({ slug }: { slug?: string }) {
@@ -186,15 +194,15 @@ function PolicySubNav({ slug }: { slug?: string }) {
 
 function BuiltinPolicyPageShell({ slug }: { slug?: string }) {
   if (getBuiltinPolicy(slug) == null) {
-    return <EmptyCard label="This policy page was not found." />;
+    return <EmptySection label="This policy page was not found." />;
   }
 
   return (
     <div style={{ display: "grid" }}>
       <PolicySubNav slug={slug} />
-      <PublicCard>
+      <PublicSection>
         <BuiltinPolicyPage slug={slug} />
-      </PublicCard>
+      </PublicSection>
     </div>
   );
 }
@@ -234,8 +242,10 @@ export default function PublicPoliciesApp({
           title="Policies"
         />
       ) : initialRoute.view === "policies-detail" ? (
-        !arePoliciesVisible(config) || getExternalPoliciesUrl(config) ? (
+        !arePublicPoliciesVisible(config) || getExternalPoliciesUrl(config) ? (
           <PolicyGateCard config={config} />
+        ) : !publicPoliciesUseBuiltin(config) ? (
+          <EmptySection label="This policy page was not found." />
         ) : (
           <BuiltinPolicyPageShell slug={initialRoute.policySlug} />
         )

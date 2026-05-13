@@ -16,18 +16,18 @@ import {
 } from "@cocalc/util/types/news";
 import {
   appPath,
-  EmptyCard,
+  EmptySection,
   fetchJson,
   getSiteName,
   LinkButton,
-  LoadingCard,
+  LoadingSection,
   type PublicConfig,
   PublicSectionShell,
 } from "../common";
 import { publicPath } from "../routes";
 import type { PublicNewsRoute } from "./routes";
 import { contentNewsPath, formatNewsDate, newsHistoryPath } from "./utils";
-import { PublicCard, PublicGrid } from "../layout/shell";
+import { PublicGrid, PublicSection } from "../layout/shell";
 
 const StaticMarkdown = lazy(
   () => import("@cocalc/frontend/editors/slate/static-markdown-public"),
@@ -74,7 +74,7 @@ function NewsMarkdown({
 
 function NewsCard({ item }: { item: NewsItem }) {
   return (
-    <PublicCard>
+    <PublicSection>
       <Flex gap={8} wrap>
         <Tag color="blue">{item.channel}</Tag>
         <Text type="secondary">{formatNewsDate(item.date)}</Text>
@@ -96,7 +96,7 @@ function NewsCard({ item }: { item: NewsItem }) {
           <LinkButton href={item.url}>External link</LinkButton>
         ) : null}
       </Flex>
-    </PublicCard>
+    </PublicSection>
   );
 }
 
@@ -136,7 +136,7 @@ function NewsListPage({ isAdmin }: { isAdmin?: boolean }) {
         <LinkButton href={publicPath("news/feed.json")}>JSON Feed</LinkButton>.
       </Paragraph>
       {isAdmin ? (
-        <PublicCard>
+        <PublicSection>
           <Flex gap={12} wrap>
             <LinkButton href={appPath("admin/news")}>Manage news</LinkButton>
             <LinkButton href={appPath("admin/news/new")}>
@@ -146,7 +146,7 @@ function NewsListPage({ isAdmin }: { isAdmin?: boolean }) {
               Create event
             </LinkButton>
           </Flex>
-        </PublicCard>
+        </PublicSection>
       ) : null}
       <Segmented
         block
@@ -162,7 +162,7 @@ function NewsListPage({ isAdmin }: { isAdmin?: boolean }) {
         value={channel}
       />
       {!loading && visible.length === 0 ? (
-        <EmptyCard label="No news items match the selected filter." />
+        <EmptySection label="No news items match the selected filter." />
       ) : (
         <PublicGrid columns={3}>
           {visible.map((item) => (
@@ -203,8 +203,9 @@ function NewsDetailPage({ route }: { route: PublicNewsDetailRoute }) {
     };
   }, [route.newsId, routeTimestamp]);
 
-  if (loading) return <LoadingCard label="Loading news item…" />;
-  if (!payload.news) return <EmptyCard label="This news item was not found." />;
+  if (loading) return <LoadingSection label="Loading news item…" />;
+  if (!payload.news)
+    return <EmptySection label="This news item was not found." />;
 
   const { news } = payload;
   return (
@@ -221,11 +222,11 @@ function NewsDetailPage({ route }: { route: PublicNewsDetailRoute }) {
         ) : null}
       </Flex>
       {payload.history ? (
-        <PublicCard>
+        <PublicSection>
           Historic snapshot from {formatNewsDate(payload.timestamp)}
-        </PublicCard>
+        </PublicSection>
       ) : null}
-      <PublicCard>
+      <PublicSection>
         <Flex gap={8} wrap>
           <Tag color="blue">{news.channel}</Tag>
           <Text type="secondary">{formatNewsDate(news.date)}</Text>
@@ -241,7 +242,7 @@ function NewsDetailPage({ route }: { route: PublicNewsDetailRoute }) {
           </Flex>
         ) : null}
         <NewsMarkdown value={news.text} />
-      </PublicCard>
+      </PublicSection>
       <Flex gap={12} wrap>
         {!payload.history && payload.prev ? (
           <LinkButton href={contentNewsPath(payload.prev)}>Older</LinkButton>
