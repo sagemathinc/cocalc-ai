@@ -410,9 +410,12 @@ Record audit events for:
 - SSO sign-in allowed/denied. Status: implemented via
   `sso_sign_in_allowed` / `sso_sign_in_denied`, including direct Google/SAML
   callback failures before `PassportLogin`,
-- account identity linked/unlinked,
-- password attempt blocked because domain requires SSO,
-- SSO result rejected because email was missing or unverified.
+- account identity linked/unlinked. Status: implemented for passport
+  link/unlink and unlink-blocked events,
+- password attempt blocked because domain requires SSO. Status: implemented
+  via `sso_required_password_sign_in_blocked`,
+- SSO result rejected because email was missing or unverified. Status: covered
+  by shared SSO denial logging.
 
 Do not log raw tokens, authorization codes, SAML assertions, OAuth client
 secrets, or full provider responses.

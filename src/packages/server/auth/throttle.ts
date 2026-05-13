@@ -6,7 +6,9 @@ the database.
 
 import getStrategies from "@cocalc/database/settings/get-sso-strategies";
 import LRU from "lru-cache";
-import { checkRequiredSSO } from "./sso/check-required-sso";
+import { checkRequiredSSO, getEmailDomain } from "./sso/check-required-sso";
+import centralLog from "@cocalc/database/postgres/central-log";
+import type { Strategy } from "@cocalc/util/types/sso";
 
 const emailShortCache = new LRU<string, number>({
   max: 10000, // avoid memory issues
@@ -43,6 +45,30 @@ async function isExclusiveEmail(email: string) {
   return checkRequiredSSO({ email, strategies });
 }
 
+async function logSsoRequiredPasswordBlock({
+  email,
+  ip,
+  strategy,
+}: {
+  email: string;
+  ip?: string;
+  strategy: Strategy;
+}): Promise<void> {
+  try {
+    await centralLog({
+      event: "sso_required_password_sign_in_blocked",
+      value: {
+        strategy: strategy.name,
+        display: strategy.display,
+        email_domain: getEmailDomain(email),
+        ip_address: ip,
+      },
+    });
+  } catch {
+    // Sign-in throttling must not depend on telemetry availability.
+  }
+}
+
 export async function signInCheck(
   email: string,
   ip?: string,
@@ -70,6 +96,11 @@ export async function signInCheck(
     const exclusiveSSO = await isExclusiveEmail(email);
     if (exclusiveSSO != null) {
       const name = exclusiveSSO.display ?? exclusiveSSO.name;
+      await logSsoRequiredPasswordBlock({
+        email,
+        ip,
+        strategy: exclusiveSSO,
+      });
       return `You have to sign in using the Single-Sign-On mechanism "${name}" of your institution.`;
     }
   }

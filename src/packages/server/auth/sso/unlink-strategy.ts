@@ -14,6 +14,8 @@ import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fenc
 import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { checkRequiredSSO } from "./check-required-sso";
 import getStrategies from "@cocalc/database/settings/get-sso-strategies";
+import centralLog from "@cocalc/database/postgres/central-log";
+import { createHash } from "crypto";
 
 // The name should be something like "google-9999601658192", i.e., a key
 // of the passports field.
@@ -35,6 +37,13 @@ export default async function unlinkStrategy(opts: Options): Promise<void> {
   const strategyName = name.split("-")[0];
 
   if (await isBlockedUnlinkStrategy({ strategyName, account_id })) {
+    await logPassportUnlink({
+      account_id,
+      name,
+      strategyName,
+      blocked: true,
+      reason: "sso_required_domain",
+    });
     throw new Error("You are not allowed to unlink this SSO account");
   }
 
@@ -49,6 +58,39 @@ export default async function unlinkStrategy(opts: Options): Promise<void> {
       );
     },
   });
+  await logPassportUnlink({ account_id, name, strategyName, blocked: false });
+}
+
+export async function logPassportUnlink({
+  account_id,
+  name,
+  strategyName,
+  blocked,
+  reason,
+}: {
+  account_id: string;
+  name: string;
+  strategyName: string;
+  blocked: boolean;
+  reason?: string;
+}): Promise<void> {
+  const passportKeyHash = createHash("sha256")
+    .update(name)
+    .digest("hex")
+    .slice(0, 32);
+  try {
+    await centralLog({
+      event: blocked ? "sso_passport_unlink_blocked" : "sso_passport_unlinked",
+      value: {
+        account_id,
+        strategy: strategyName,
+        passport_key_hash: passportKeyHash,
+        reason,
+      },
+    });
+  } catch {
+    // Account linking/unlinking must not depend on telemetry availability.
+  }
 }
 
 interface Opts {

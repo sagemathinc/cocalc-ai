@@ -10,6 +10,7 @@ import {
   getPassportsCached,
   setPassportsCached,
 } from "@cocalc/database/settings/server-settings";
+import { createHash } from "crypto";
 import { to_json } from "@cocalc/util/misc";
 import { CB } from "@cocalc/util/types/database";
 import {
@@ -24,6 +25,30 @@ import {
   UpdateAccountInfoAndPassportOpts,
 } from "../types";
 import { _passport_key } from "./passport-key";
+
+function passportKeyHash(key: string): string {
+  return createHash("sha256").update(key).digest("hex").slice(0, 32);
+}
+
+async function logPassportLink(db: PostgreSQL, opts: CreatePassportOpts) {
+  const key = _passport_key(opts);
+  try {
+    await (db.log({
+      event: "sso_passport_linked",
+      value: {
+        account_id: opts.account_id,
+        strategy: opts.strategy,
+        passport_key_hash: passportKeyHash(key),
+        email_domain: `${opts.email_address ?? ""}`
+          .trim()
+          .toLowerCase()
+          .split("@")[1],
+      },
+    }) as any);
+  } catch (err) {
+    db._dbg("create_passport")(`failed to log passport link: ${err}`);
+  }
+}
 
 export async function set_passport_settings(
   db: PostgreSQL,
@@ -122,6 +147,7 @@ export async function create_passport(
         email_address: opts.email_address,
       });
     }
+    await logPassportLink(db, opts);
     opts.cb?.(undefined); // all good
   } catch (err) {
     if (opts.cb != null) {
