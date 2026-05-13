@@ -22,6 +22,10 @@ type CloudflareResponse<T> = {
   success: boolean;
   errors?: { code?: number; message?: string }[];
   result?: T;
+  result_info?: {
+    page?: number;
+    total_pages?: number;
+  };
 };
 
 async function cloudflareRequest<T>(
@@ -57,13 +61,44 @@ export async function listBuckets(
   token: string,
   accountId: string,
 ): Promise<string[]> {
-  const result = await cloudflareRequest<
-    { name: string }[] | { buckets: { name: string }[] }
-  >(token, `accounts/${accountId}/r2/buckets`);
-  if (Array.isArray(result)) {
-    return result.map((bucket) => bucket.name);
+  const names: string[] = [];
+  let page = 1;
+  while (page <= 100) {
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets?${new URLSearchParams(
+        { page: `${page}`, per_page: "100" },
+      ).toString()}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `cloudflare api failed: ${response.status} ${response.statusText}`,
+      );
+    }
+    const payload = (await response.json()) as CloudflareResponse<
+      { name: string }[] | { buckets: { name: string }[] }
+    >;
+    if (!payload.success) {
+      const error = payload.errors?.[0]?.message ?? "unknown error";
+      throw new Error(`cloudflare api failed: ${error}`);
+    }
+    const result = payload.result;
+    if (result == null) {
+      throw new Error("cloudflare api returned no result");
+    }
+    const buckets = Array.isArray(result) ? result : (result.buckets ?? []);
+    names.push(...buckets.map((bucket) => bucket.name));
+    const totalPages = payload.result_info?.total_pages ?? page;
+    if (page >= totalPages) break;
+    page += 1;
   }
-  return result.buckets.map((bucket) => bucket.name);
+  return [...new Set(names)];
 }
 
 export type R2BucketInfo = {

@@ -17,6 +17,10 @@ type CloudflareResponse<T> = {
   success?: boolean;
   errors?: Array<{ message?: string }>;
   result?: T;
+  result_info?: {
+    page?: number;
+    total_pages?: number;
+  };
 };
 
 type CloudflareBucket = {
@@ -191,13 +195,54 @@ async function listBucketInfo(
   token: string,
   accountId: string,
 ): Promise<CloudflareBucket[]> {
-  const result = await cloudflareRequest<CloudflareBucketList>(
-    token,
-    `accounts/${accountId}/r2/buckets`,
-  );
-  return (Array.isArray(result) ? result : (result.buckets ?? [])).filter(
-    (bucket) => !!bucket.name,
-  );
+  const buckets: CloudflareBucket[] = [];
+  let page = 1;
+  while (page <= 100) {
+    const qs = new URLSearchParams({ page: `${page}`, per_page: "100" });
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets?${qs.toString()}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+    let payload: CloudflareResponse<CloudflareBucketList> | undefined;
+    try {
+      payload =
+        (await response.json()) as CloudflareResponse<CloudflareBucketList>;
+    } catch {
+      payload = undefined;
+    }
+    if (!response.ok || !payload?.success) {
+      const details =
+        payload?.errors
+          ?.map((err) => err.message)
+          .filter(Boolean)
+          .join(", ") ||
+        `${response.status} ${response.statusText}`.trim() ||
+        "unknown error";
+      throw new Error(`cloudflare api failed: ${details}`);
+    }
+    const result = payload.result;
+    buckets.push(
+      ...(Array.isArray(result) ? result : (result?.buckets ?? [])).filter(
+        (bucket) => !!bucket.name,
+      ),
+    );
+    const totalPages = payload.result_info?.total_pages ?? page;
+    if (page >= totalPages) break;
+    page += 1;
+  }
+  const seen = new Set<string>();
+  return buckets.filter((bucket) => {
+    const name = clean(bucket.name);
+    if (!name || seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
 }
 
 async function queryStorageMetrics({
