@@ -434,6 +434,8 @@ export interface AccountDirectoryCreateRequest {
   signup_reason?: string;
   ephemeral?: number;
   customize?: any;
+  trusted_product_access?: boolean;
+  trusted_product_access_reason?: string;
 }
 
 export type MembershipClaimIdentityState = "pending" | "active" | "revoked";

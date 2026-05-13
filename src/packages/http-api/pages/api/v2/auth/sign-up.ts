@@ -276,6 +276,10 @@ export async function signUp(req, res) {
       home_bay_id: selected_home_bay_id,
       owner_id,
       ephemeral: tokenInfo?.ephemeral,
+      trusted_product_access: requiresRegistrationToken,
+      trusted_product_access_reason: requiresRegistrationToken
+        ? "registration_token"
+        : undefined,
     });
     const account_id = created.account_id;
     const home_bay_id =

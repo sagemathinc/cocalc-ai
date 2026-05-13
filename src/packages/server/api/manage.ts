@@ -31,6 +31,7 @@ import {
   deleteClusterAccountApiKeyDirectoryEntry,
 } from "@cocalc/server/inter-bay/accounts";
 import { type ApiKeyPrincipal, normalizeApiKeyScope } from "./api-key-scope";
+import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 
 const log = getLogger("server:api:manage");
 
@@ -236,6 +237,7 @@ async function createApiKey({
   capabilities?: ApiKeyCapability[];
   allowed_project_ids?: string[];
 }): Promise<ApiKeyType> {
+  await assertAccountTrustedForProductAccess(account_id, "create API keys");
   const pool = getPool();
   await ensureApiKeysV2Schema();
   const scope = normalizeApiKeyScope({ capabilities, allowed_project_ids });
