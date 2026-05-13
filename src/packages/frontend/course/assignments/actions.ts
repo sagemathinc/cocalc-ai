@@ -72,6 +72,7 @@ import {
 } from "./consts";
 import { DUE_DATE_FILENAME } from "../common/consts";
 import type { ProjectCopyDestination } from "@cocalc/conat/hub/api/projects";
+import { type CourseCopyDestination, waitForCourseCopyLro } from "../copy-lro";
 
 const UPDATE_DUE_DATE_FILENAME_DEBOUNCE_MS = 3000;
 
@@ -992,6 +993,7 @@ ${details}
 
     let errors = "";
     const dests: ProjectCopyDestination[] = [];
+    const courseCopyDests: CourseCopyDestination[] = [];
     const startedStudentIds: string[] = [];
     const src_path = this.assignment_src_path(assignment);
     const studentIds = store.get_student_ids({ deleted: false });
@@ -1038,6 +1040,10 @@ ${details}
           path: assignment.get("target_path"),
           metadata: { student_id, course_item_id: assignment_id },
         });
+        courseCopyDests.push({
+          student_id,
+          project_id: student_project_id,
+        });
       } catch (err) {
         this.finish_copy(assignment_id, student_id, "last_assignment", err);
         errors += `\n ${err}`;
@@ -1050,13 +1056,31 @@ ${details}
           id,
           desc: `Copying assignment to ${dests.length} students`,
         });
-        await webapp_client.project_client.copyPathBetweenProjects({
+        const op = await webapp_client.project_client.copyPathBetweenProjects({
           src: { project_id: store.get("course_project_id"), path: src_path },
           dests,
           options: { recursive: true, force: !!overwrite },
         });
+        const result = await waitForCourseCopyLro({
+          op,
+          dests: courseCopyDests,
+          onSummary: (summary) => {
+            const progress = summary.progress_summary;
+            if (progress?.total) {
+              this.course_actions.set_activity({
+                id,
+                desc: `Copying assignment to ${dests.length} students (${progress.done ?? 0}/${progress.total} done)`,
+              });
+            }
+          },
+        });
         for (const student_id of startedStudentIds) {
-          this.finish_copy(assignment_id, student_id, "last_assignment", "");
+          this.finish_copy(
+            assignment_id,
+            student_id,
+            "last_assignment",
+            result[student_id] ?? "",
+          );
         }
       } catch (err) {
         for (const student_id of startedStudentIds) {

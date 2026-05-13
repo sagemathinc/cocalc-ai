@@ -16,6 +16,7 @@ import type { SyncDBRecordHandout } from "../types";
 import { exec } from "../../frame-editors/generic/client";
 import { export_student_file_use_times } from "../export/file-use-times";
 import type { ProjectCopyDestination } from "@cocalc/conat/hub/api/projects";
+import { type CourseCopyDestination, waitForCourseCopyLro } from "../copy-lro";
 
 export class HandoutsActions {
   private course_actions: CourseActions;
@@ -294,6 +295,7 @@ export class HandoutsActions {
 
     let errors = "";
     const dests: ProjectCopyDestination[] = [];
+    const courseCopyDests: CourseCopyDestination[] = [];
     const startedStudentIds: string[] = [];
     const studentIds = store.get_student_ids({ deleted: false });
     for (const student_id of studentIds) {
@@ -333,6 +335,10 @@ export class HandoutsActions {
           path: handout.get("target_path"),
           metadata: { student_id, course_item_id: handout_id },
         });
+        courseCopyDests.push({
+          student_id,
+          project_id: student_project_id,
+        });
       } catch (err) {
         this.handout_finish_copy(handout_id, student_id, `${err}`);
         errors += `\n ${err}`;
@@ -345,7 +351,7 @@ export class HandoutsActions {
           id,
           desc: `Copying handout to ${dests.length} students`,
         });
-        await webapp_client.project_client.copyPathBetweenProjects({
+        const op = await webapp_client.project_client.copyPathBetweenProjects({
           src: {
             project_id: store.get("course_project_id"),
             path: handout.get("path"),
@@ -353,8 +359,25 @@ export class HandoutsActions {
           dests,
           options: { force: !!overwrite },
         });
+        const result = await waitForCourseCopyLro({
+          op,
+          dests: courseCopyDests,
+          onSummary: (summary) => {
+            const progress = summary.progress_summary;
+            if (progress?.total) {
+              this.course_actions.set_activity({
+                id,
+                desc: `Copying handout to ${dests.length} students (${progress.done ?? 0}/${progress.total} done)`,
+              });
+            }
+          },
+        });
         for (const student_id of startedStudentIds) {
-          this.handout_finish_copy(handout_id, student_id, "");
+          this.handout_finish_copy(
+            handout_id,
+            student_id,
+            result[student_id] ?? "",
+          );
         }
       } catch (err) {
         for (const student_id of startedStudentIds) {
