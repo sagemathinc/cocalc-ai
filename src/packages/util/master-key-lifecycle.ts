@@ -290,7 +290,17 @@ async function getMasterKeyFileStatus(
       strict_permissions: strict,
       warning,
     };
-  } catch {
+  } catch (err: any) {
+    if (err?.code && err.code !== "ENOENT") {
+      return {
+        ...file,
+        exists: false,
+        readable: false,
+        key_valid: false,
+        strict_permissions: false,
+        warning: `not accessible: ${err}`,
+      };
+    }
     return {
       ...file,
       exists: false,

@@ -396,6 +396,10 @@ async function requirePassphraseOption(opts: {
   return passphrase;
 }
 
+async function loadMasterKeyMigration() {
+  return await import("@cocalc/database/settings/master-key-migration");
+}
+
 function parseExpiresAtOption(value: string | undefined): string | null | void {
   const trimmed = `${value ?? ""}`.trim();
   if (!trimmed) return;
@@ -731,6 +735,51 @@ export function registerAdminCommand(
               backup,
               force: !!opts.force,
             }),
+            null,
+            2,
+          ),
+        );
+      },
+    );
+
+  adminMasterKey
+    .command("doctor")
+    .description(
+      "check local site master key state and encrypted-data migration readiness",
+    )
+    .option("--files-only", "skip the database scan")
+    .action(async (opts: { filesOnly?: boolean }) => {
+      const { getMasterKeyDoctorReport } = await loadMasterKeyMigration();
+      console.log(
+        JSON.stringify(
+          await getMasterKeyDoctorReport({ scanDatabase: !opts.filesOnly }),
+          null,
+          2,
+        ),
+      );
+    });
+
+  adminMasterKey
+    .command("migrate")
+    .description(
+      "offline migration from legacy master keys to the single site master key; dry-run by default",
+    )
+    .option("--execute", "apply database updates; otherwise only report")
+    .option(
+      "--yes-i-stopped-cocalc",
+      "required with --execute; confirms all CoCalc services are stopped",
+    )
+    .action(
+      async (opts: { execute?: boolean; yesIStoppedCocalc?: boolean }) => {
+        if (opts.execute && !opts.yesIStoppedCocalc) {
+          throw new Error(
+            "--execute requires --yes-i-stopped-cocalc; this migration must be run offline",
+          );
+        }
+        const { runMasterKeyMigration } = await loadMasterKeyMigration();
+        console.log(
+          JSON.stringify(
+            await runMasterKeyMigration({ execute: !!opts.execute }),
             null,
             2,
           ),

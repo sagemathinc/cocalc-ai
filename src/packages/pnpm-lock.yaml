@@ -305,6 +305,9 @@ importers:
       '@cocalc/conat':
         specifier: workspace:*
         version: link:../conat
+      '@cocalc/database':
+        specifier: workspace:*
+        version: link:../database
       '@cocalc/export':
         specifier: workspace:*
         version: link:../export

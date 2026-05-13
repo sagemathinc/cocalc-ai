@@ -634,6 +634,11 @@ Current model:
 - `cocalc admin master-key status|init|export|import` provides the first
   operator lifecycle for checking, creating, passphrase-exporting, and restoring
   the key.
+- `cocalc admin master-key doctor` checks key presence, validity, permissions,
+  legacy key residue, and encrypted-data migration state without printing key
+  material.
+- `cocalc admin master-key migrate` is an offline-only migration command. It is
+  dry-run by default; writes require `--execute --yes-i-stopped-cocalc`.
 - legacy `server-settings-key` and `backup-master-key` files are read only as
   migration fallbacks, not as new root keys.
 
@@ -670,6 +675,8 @@ Release target:
 - ensure file permissions are strict and checked.
 - ensure operators have a documented backup/restore path; R2/database backups
   are not sufficient without the `site-master-key`.
+- ensure an existing dev/early install can migrate from legacy two-key storage
+  to one `site-master-key` without creating a new server.
 - keep the door open for KMS/keystore/manual-unlock implementation without
   changing every secret consumer.
 - add the master-key state to `cocalc doctor security` or equivalent.
