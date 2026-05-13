@@ -5,6 +5,8 @@ import {
   encryptProjectSecretValue,
   normalizeProjectSecretName,
   PROJECT_ENV_MAX_COUNT,
+  PROJECT_ENV_TOTAL_MAX_BYTES,
+  PROJECT_ENV_VALUE_MAX_BYTES,
   PROJECT_SECRETS_ENV,
   validateProjectEnv,
   validateProjectSecretValue,
@@ -63,6 +65,25 @@ describe("project-secrets", () => {
       validateProjectEnv({ [PROJECT_SECRETS_ENV]: "/tmp/nope" }),
     ).toThrow("managed by CoCalc");
     expect(() => validateProjectEnv({ COCALC_TOKEN: "x" })).toThrow("reserved");
+    expect(() => validateProjectEnv({ "bad-key": "x" })).toThrow("invalid");
+    expect(() => validateProjectEnv({ OK: 12 as any })).toThrow(
+      "must be a string",
+    );
+    expect(() =>
+      validateProjectEnv({
+        TOO_BIG: "x".repeat(PROJECT_ENV_VALUE_MAX_BYTES + 1),
+      }),
+    ).toThrow("too large");
+    expect(() =>
+      validateProjectEnv({
+        ...Object.fromEntries(
+          Array.from({ length: 9 }, (_, i) => [
+            `TOTAL_${i}`,
+            "x".repeat(Math.floor(PROJECT_ENV_TOTAL_MAX_BYTES / 8)),
+          ]),
+        ),
+      }),
+    ).toThrow("too large");
     expect(() =>
       validateProjectEnv(
         Object.fromEntries(
