@@ -48,6 +48,22 @@ The irreversible part is archived projects whose only remaining storage is R2.
 Everything else is operationally disruptive but recoverable from local state or
 live project hosts.
 
+The operation must leave CoCalc in a defined, non-corrupt state:
+
+- Project metadata remains in the local database.
+- Collaborators, titles, descriptions, course metadata, and ownership remain.
+- Active/non-archived projects continue to resolve to their project-host data.
+- Projects whose archived data was deleted still exist as database records and
+  should open as empty/unprovisioned projects with a clear recovery/data-missing
+  state, not crash, spin forever, or poison project lists.
+- Backup views should report "no cloud backups available" rather than assuming
+  backup indexes still exist.
+- Any future reconfiguration of Cloudflare/R2 should create fresh backup state
+  without requiring manual DB surgery.
+
+This is a teardown of external Cloudflare storage/ingress resources, not a
+database-corrupting partial delete.
+
 ## Safety Principles
 
 1. Dry-run first. `apply` must consume a saved plan; it must not rescan and
@@ -370,12 +386,12 @@ Production safety test:
 
 ## Open Questions
 
-- What is the exact schema signal for "archived project exists only in R2"?
-- Should the first R2 deletion release be dev-only until we have more soak?
+- What is the exact schema signal for "archived project exists only in R2"? ANS: I think it is that there is a last_backup field and the host isn't set?
+- Should the first R2 deletion release be dev-only until we have more soak? ANS: I think this should be extremely limited. E.g., maybe it HAS to be run via cocalc-cli from the same account/machine as is running a hub, i.e., somewhere that has access to the site master key. I.e., it should never be possible via the web interface. But it's not dev only.
 - Do we need a durable Cloudflare resource registry table going forward, or is
-  host/bay metadata plus backup metadata enough?
+  host/bay metadata plus backup metadata enough? ANS: I'm not sure what this means.
 - Should bootstrap-created tokens include a cluster/deployment id in the name to
-  make future cleanup safer?
+  make future cleanup safer? ANS: I'm also not 100% sure what this means.
 
 ## Recommendation
 

@@ -83,6 +83,11 @@ import {
   type CloudflareBootstrapResult,
 } from "@cocalc/server/cloud/cloudflare-bootstrap";
 import {
+  createCloudflareTeardownPlan as createCloudflareTeardownPlan0,
+  getCloudflareTeardownPlan as getCloudflareTeardownPlan0,
+  type CloudflareTeardownPlan,
+} from "@cocalc/server/cloud/cloudflare-teardown";
+import {
   clearProviderSetupChallenge as clearProviderSetupChallenge0,
   createProviderSetupChallenge as createProviderSetupChallenge0,
   getProviderSetupChallenge as getProviderSetupChallenge0,
@@ -3207,6 +3212,35 @@ export async function bootstrapCloudflareConfiguration({
     r2BucketPrefix,
     invalidateBootstrapToken,
   });
+}
+
+export async function createCloudflareTeardownPlan({
+  account_id,
+  include_r2,
+}: {
+  account_id?: string;
+  include_r2?: boolean;
+}): Promise<CloudflareTeardownPlan> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await createCloudflareTeardownPlan0({
+    account_id,
+    include_r2,
+  });
+}
+
+export async function getCloudflareTeardownPlan({
+  account_id,
+  plan_id,
+}: {
+  account_id?: string;
+  plan_id: string;
+}): Promise<CloudflareTeardownPlan> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await getCloudflareTeardownPlan0({ account_id, plan_id });
 }
 
 export async function createProviderSetupChallenge({

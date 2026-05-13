@@ -188,6 +188,10 @@ import {
   registerBrowserCommand,
   type BrowserCommandDeps,
 } from "./commands/browser";
+import {
+  registerCloudflareCommand,
+  type CloudflareCommandDeps,
+} from "./commands/cloudflare";
 
 const cliVerboseFlag = process.argv.includes("--verbose");
 const cliDebugEnabled =
@@ -2650,6 +2654,12 @@ const browserCommandDeps = {
 } satisfies BrowserCommandDeps;
 
 registerBrowserCommand(program, browserCommandDeps);
+
+const cloudflareCommandDeps = {
+  withContext,
+} satisfies CloudflareCommandDeps;
+
+registerCloudflareCommand(program, cloudflareCommandDeps);
 
 const hostCommandDeps = {
   withContext,
