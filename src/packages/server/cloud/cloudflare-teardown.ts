@@ -7,11 +7,13 @@ import { randomUUID } from "crypto";
 
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { deleteR2ObjectsConcurrently, scanR2Objects } from "@cocalc/backend/r2";
 import { listBuckets as listR2Buckets } from "@cocalc/server/project-backup/r2";
 import { updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import {
+  getR2S3Auth,
   getCachedCloudflareR2Audit,
   type CloudflareR2AuditResult,
 } from "@cocalc/server/cloud/cloudflare-r2-usage";
@@ -19,6 +21,8 @@ import {
 const TABLE = "cloudflare_teardown_plans";
 const PLAN_TTL_MS = 10 * 60 * 1000;
 const R2_AUDIT_CACHE_MAX_AGE_MINUTES = 24 * 60;
+const R2_DELETE_PROGRESS_INTERVAL_MS = 2000;
+const R2_DELETE_CONCURRENCY = 32;
 
 type CloudflareResponse<T> = {
   success?: boolean;
@@ -126,14 +130,26 @@ export type CloudflareTeardownApplyAction = {
 };
 
 export type CloudflareTeardownApplyProgress = {
-  phase: "starting" | "deleting_dns" | "deleting_tunnels" | "done";
+  phase:
+    | "starting"
+    | "deleting_dns"
+    | "deleting_tunnels"
+    | "deleting_r2_objects"
+    | "deleting_r2_buckets"
+    | "done";
   plan_id: string;
   deleted_dns_records: number;
   total_dns_records: number;
   deleted_tunnels: number;
   total_tunnels: number;
   skipped_r2_buckets: number;
+  deleted_r2_objects: number;
+  total_r2_objects: number;
+  deleted_r2_bytes: number;
+  total_r2_bytes: number;
+  deleted_r2_buckets: number;
   total_r2_buckets: number;
+  current_r2_bucket?: string;
   message: string;
 };
 
@@ -144,6 +160,9 @@ export type CloudflareTeardownApplyResult = {
   deleted_dns_records: number;
   deleted_tunnels: number;
   skipped_r2_buckets: number;
+  deleted_r2_objects: number;
+  deleted_r2_bytes: number;
+  deleted_r2_buckets: number;
   notes: string[];
 };
 
@@ -837,15 +856,31 @@ function makeApplyProgress({
   plan,
   deletedDnsRecords,
   deletedTunnels,
+  skippedR2Buckets,
+  deletedR2Objects,
+  totalR2Objects,
+  deletedR2Bytes,
+  totalR2Bytes,
+  deletedR2Buckets,
+  currentR2Bucket,
 }: {
   phase: CloudflareTeardownApplyProgress["phase"];
   plan: CloudflareTeardownPlan;
   deletedDnsRecords: number;
   deletedTunnels: number;
+  skippedR2Buckets?: number;
+  deletedR2Objects?: number;
+  totalR2Objects?: number;
+  deletedR2Bytes?: number;
+  totalR2Bytes?: number;
+  deletedR2Buckets?: number;
+  currentR2Bucket?: string;
 }): CloudflareTeardownApplyProgress {
   const totalDnsRecords = safeResources(plan, "dns_record").length;
   const totalTunnels = safeResources(plan, "tunnel").length;
   const totalR2Buckets = safeResources(plan, "r2_bucket").length;
+  const r2Objects = totalR2Objects ?? r2ObjectTotal(plan);
+  const r2Bytes = totalR2Bytes ?? r2ByteTotal(plan);
   return {
     phase,
     plan_id: plan.id,
@@ -853,17 +888,41 @@ function makeApplyProgress({
     total_dns_records: totalDnsRecords,
     deleted_tunnels: deletedTunnels,
     total_tunnels: totalTunnels,
-    skipped_r2_buckets: totalR2Buckets,
+    skipped_r2_buckets: skippedR2Buckets ?? totalR2Buckets,
+    deleted_r2_objects: deletedR2Objects ?? 0,
+    total_r2_objects: r2Objects,
+    deleted_r2_bytes: deletedR2Bytes ?? 0,
+    total_r2_bytes: r2Bytes,
+    deleted_r2_buckets: deletedR2Buckets ?? 0,
     total_r2_buckets: totalR2Buckets,
+    current_r2_bucket: currentR2Bucket,
     message:
       phase === "done"
         ? "Cloudflare teardown apply complete"
-        : phase === "deleting_tunnels"
-          ? "deleting Cloudflare tunnels"
-          : phase === "deleting_dns"
-            ? "deleting Cloudflare DNS records"
-            : "starting Cloudflare teardown apply",
+        : phase === "deleting_r2_buckets"
+          ? "deleting empty Cloudflare R2 buckets"
+          : phase === "deleting_r2_objects"
+            ? "deleting Cloudflare R2 bucket contents"
+            : phase === "deleting_tunnels"
+              ? "deleting Cloudflare tunnels"
+              : phase === "deleting_dns"
+                ? "deleting Cloudflare DNS records"
+                : "starting Cloudflare teardown apply",
   };
+}
+
+function r2ObjectTotal(plan: CloudflareTeardownPlan): number {
+  return safeResources(plan, "r2_bucket").reduce(
+    (total, resource) => total + Number(resource.details?.object_count ?? 0),
+    0,
+  );
+}
+
+function r2ByteTotal(plan: CloudflareTeardownPlan): number {
+  return safeResources(plan, "r2_bucket").reduce(
+    (total, resource) => total + Number(resource.details?.total_bytes ?? 0),
+    0,
+  );
 }
 
 async function updateApplyLro({
@@ -911,6 +970,107 @@ async function updateApplyLro({
   return summary;
 }
 
+function assertR2TeardownReady(plan: CloudflareTeardownPlan): void {
+  const r2Buckets = safeResources(plan, "r2_bucket");
+  if (r2Buckets.length === 0) return;
+  if (!plan.include_r2) {
+    throw new Error("teardown plan did not include R2 resources");
+  }
+  const missingUsage = r2Buckets.filter(
+    (resource) =>
+      resource.details?.usage_cache === "missing" ||
+      typeof resource.details?.object_count !== "number" ||
+      typeof resource.details?.total_bytes !== "number",
+  );
+  if (missingUsage.length > 0) {
+    throw new Error(
+      `R2 bucket usage cache is missing for ${missingUsage
+        .map((resource) => resource.name)
+        .filter(Boolean)
+        .join(
+          ", ",
+        )}; run 'cocalc cloudflare r2 audit <bucket> --refresh' for each bucket and create a new teardown plan`,
+    );
+  }
+  if (
+    !Number.isInteger(plan.summary.counts.archived_project_candidates) ||
+    plan.summary.counts.archived_project_candidates < 0
+  ) {
+    throw new Error(
+      "teardown plan does not have a reliable archived project candidate count",
+    );
+  }
+}
+
+async function deleteR2BucketContents({
+  plan,
+  bucket,
+  op_id,
+  deletedDnsRecords,
+  deletedTunnels,
+  deletedR2Objects,
+  deletedR2Bytes,
+  deletedR2Buckets,
+}: {
+  plan: CloudflareTeardownPlan;
+  bucket: CloudflareTeardownResource;
+  op_id: string;
+  deletedDnsRecords: number;
+  deletedTunnels: number;
+  deletedR2Objects: { value: number };
+  deletedR2Bytes: { value: number };
+  deletedR2Buckets: number;
+}): Promise<void> {
+  if (!bucket.name) {
+    throw new Error("R2 bucket resource is missing a bucket name");
+  }
+  const { auth } = await getR2S3Auth(bucket.name);
+  let lastProgressAt = 0;
+  const publishProgress = async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastProgressAt < R2_DELETE_PROGRESS_INTERVAL_MS) {
+      return;
+    }
+    lastProgressAt = now;
+    await updateApplyLro({
+      op_id,
+      status: "running",
+      progress_summary: makeApplyProgress({
+        phase: "deleting_r2_objects",
+        plan,
+        deletedDnsRecords,
+        deletedTunnels,
+        skippedR2Buckets: 0,
+        deletedR2Objects: deletedR2Objects.value,
+        totalR2Objects: r2ObjectTotal(plan),
+        deletedR2Bytes: deletedR2Bytes.value,
+        totalR2Bytes: r2ByteTotal(plan),
+        deletedR2Buckets,
+        currentR2Bucket: bucket.name,
+      }),
+    });
+  };
+  await publishProgress(true);
+  await scanR2Objects({
+    auth,
+    onPage: async (entries) => {
+      const entryByKey = new Map(entries.map((entry) => [entry.key, entry]));
+      await deleteR2ObjectsConcurrently({
+        auth,
+        keys: entries.map((entry) => entry.key),
+        concurrency: R2_DELETE_CONCURRENCY,
+        onDeleted: async (key) => {
+          const entry = entryByKey.get(key);
+          deletedR2Objects.value += 1;
+          deletedR2Bytes.value += entry?.size ?? 0;
+          await publishProgress();
+        },
+      });
+      await publishProgress();
+    },
+  });
+}
+
 export async function runCloudflareTeardownApplyLro({
   op_id,
   account_id,
@@ -927,6 +1087,10 @@ export async function runCloudflareTeardownApplyLro({
   let plan: CloudflareTeardownPlan | undefined;
   let deletedDnsRecords = 0;
   let deletedTunnels = 0;
+  const deletedR2Objects = { value: 0 };
+  const deletedR2Bytes = { value: 0 };
+  let deletedR2Buckets = 0;
+  let skippedR2Buckets = 0;
   const actions: CloudflareTeardownApplyAction[] = [];
   try {
     plan = await getCloudflareTeardownPlan({ account_id, plan_id });
@@ -943,9 +1107,7 @@ export async function runCloudflareTeardownApplyLro({
     }
     const r2Buckets = safeResources(plan, "r2_bucket");
     if (delete_r2_contents) {
-      throw new Error(
-        "full R2 bucket deletion is not implemented in teardown apply yet; use targeted R2 cleanup commands",
-      );
+      assertR2TeardownReady(plan);
     }
     await pool().query(
       `UPDATE ${TABLE}
@@ -961,6 +1123,7 @@ export async function runCloudflareTeardownApplyLro({
         plan,
         deletedDnsRecords,
         deletedTunnels,
+        skippedR2Buckets: delete_r2_contents ? 0 : r2Buckets.length,
       }),
     });
 
@@ -987,6 +1150,10 @@ export async function runCloudflareTeardownApplyLro({
           plan,
           deletedDnsRecords,
           deletedTunnels,
+          skippedR2Buckets: delete_r2_contents ? 0 : r2Buckets.length,
+          deletedR2Objects: deletedR2Objects.value,
+          deletedR2Bytes: deletedR2Bytes.value,
+          deletedR2Buckets,
         }),
       });
       if (!resource.id || !plan.zone_id) {
@@ -1021,6 +1188,10 @@ export async function runCloudflareTeardownApplyLro({
           plan,
           deletedDnsRecords,
           deletedTunnels,
+          skippedR2Buckets: delete_r2_contents ? 0 : r2Buckets.length,
+          deletedR2Objects: deletedR2Objects.value,
+          deletedR2Bytes: deletedR2Bytes.value,
+          deletedR2Buckets,
         }),
       });
       if (!resource.id) {
@@ -1046,13 +1217,61 @@ export async function runCloudflareTeardownApplyLro({
       });
     }
 
-    for (const resource of r2Buckets) {
-      actions.push({
-        kind: resource.kind,
-        name: resource.name,
-        status: "skipped",
-        reason: "R2 bucket deletion is disabled for this teardown phase",
-      });
+    if (delete_r2_contents) {
+      const r2Token = clean(settings.r2_api_token) ?? token;
+      const r2AccountId =
+        clean(settings.r2_account_id) ?? plan.cloudflare_account_id;
+      if (!r2Token) throw new Error("missing Cloudflare R2 API token");
+      if (!r2AccountId) throw new Error("missing Cloudflare R2 account id");
+      for (const resource of r2Buckets) {
+        await deleteR2BucketContents({
+          plan,
+          bucket: resource,
+          op_id,
+          deletedDnsRecords,
+          deletedTunnels,
+          deletedR2Objects,
+          deletedR2Bytes,
+          deletedR2Buckets,
+        });
+        await updateApplyLro({
+          op_id,
+          status: "running",
+          progress_summary: makeApplyProgress({
+            phase: "deleting_r2_buckets",
+            plan,
+            deletedDnsRecords,
+            deletedTunnels,
+            skippedR2Buckets: 0,
+            deletedR2Objects: deletedR2Objects.value,
+            deletedR2Bytes: deletedR2Bytes.value,
+            deletedR2Buckets,
+            currentR2Bucket: resource.name,
+          }),
+        });
+        await cloudflareDelete(
+          r2Token,
+          `accounts/${r2AccountId}/r2/buckets/${encodeURIComponent(
+            resource.name ?? "",
+          )}`,
+        );
+        deletedR2Buckets += 1;
+        actions.push({
+          kind: resource.kind,
+          name: resource.name,
+          status: "deleted",
+        });
+      }
+    } else {
+      skippedR2Buckets = r2Buckets.length;
+      for (const resource of r2Buckets) {
+        actions.push({
+          kind: resource.kind,
+          name: resource.name,
+          status: "skipped",
+          reason: "R2 bucket deletion requires --delete-r2-contents",
+        });
+      }
     }
 
     const result: CloudflareTeardownApplyResult = {
@@ -1061,10 +1280,15 @@ export async function runCloudflareTeardownApplyLro({
       actions,
       deleted_dns_records: deletedDnsRecords,
       deleted_tunnels: deletedTunnels,
-      skipped_r2_buckets: r2Buckets.length,
+      skipped_r2_buckets: skippedR2Buckets,
+      deleted_r2_objects: deletedR2Objects.value,
+      deleted_r2_bytes: deletedR2Bytes.value,
+      deleted_r2_buckets: deletedR2Buckets,
       notes: [
-        "Only safe-owned DNS records and tunnels are deleted in this phase.",
-        "R2 buckets, API tokens, local database rows, and local site settings are not modified.",
+        delete_r2_contents
+          ? "Safe-owned R2 bucket contents and empty buckets were deleted from the saved plan."
+          : "R2 buckets were not modified; pass --delete-r2-contents to delete safe-owned bucket contents and buckets.",
+        "API tokens, local database rows, local site settings, and active project-host storage are not modified.",
       ],
     };
     await pool().query(
@@ -1082,6 +1306,10 @@ export async function runCloudflareTeardownApplyLro({
         plan,
         deletedDnsRecords,
         deletedTunnels,
+        skippedR2Buckets,
+        deletedR2Objects: deletedR2Objects.value,
+        deletedR2Bytes: deletedR2Bytes.value,
+        deletedR2Buckets,
       }),
     });
   } catch (err) {
@@ -1103,6 +1331,10 @@ export async function runCloudflareTeardownApplyLro({
         actions,
         deleted_dns_records: deletedDnsRecords,
         deleted_tunnels: deletedTunnels,
+        skipped_r2_buckets: skippedR2Buckets,
+        deleted_r2_objects: deletedR2Objects.value,
+        deleted_r2_bytes: deletedR2Bytes.value,
+        deleted_r2_buckets: deletedR2Buckets,
       },
       progress_summary: plan
         ? makeApplyProgress({
@@ -1110,6 +1342,10 @@ export async function runCloudflareTeardownApplyLro({
             plan,
             deletedDnsRecords,
             deletedTunnels,
+            skippedR2Buckets,
+            deletedR2Objects: deletedR2Objects.value,
+            deletedR2Bytes: deletedR2Bytes.value,
+            deletedR2Buckets,
           })
         : undefined,
     });

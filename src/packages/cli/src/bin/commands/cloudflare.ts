@@ -57,6 +57,9 @@ function summarizeApplyResult(result: any) {
     deleted_dns_records: result?.deleted_dns_records ?? 0,
     deleted_tunnels: result?.deleted_tunnels ?? 0,
     skipped_r2_buckets: result?.skipped_r2_buckets ?? 0,
+    deleted_r2_buckets: result?.deleted_r2_buckets ?? 0,
+    deleted_r2_objects: result?.deleted_r2_objects ?? 0,
+    deleted_r2_bytes: bytes(result?.deleted_r2_bytes),
     notes: (result?.notes ?? []).join(" "),
   };
 }
@@ -391,7 +394,19 @@ function formatTeardownApplyProgress(progress: any): string | undefined {
   const tunnelDeleted = Number(progress.deleted_tunnels ?? 0);
   const tunnelTotal = Number(progress.total_tunnels ?? 0);
   const r2Total = Number(progress.total_r2_buckets ?? 0);
-  const r2Text = r2Total > 0 ? `, ${r2Total} R2 buckets skipped` : "";
+  const r2Deleted = Number(progress.deleted_r2_buckets ?? 0);
+  const r2Skipped = Number(progress.skipped_r2_buckets ?? 0);
+  const r2ObjectsDeleted = Number(progress.deleted_r2_objects ?? 0);
+  const r2ObjectsTotal = Number(progress.total_r2_objects ?? 0);
+  const r2BytesDeleted = bytes(Number(progress.deleted_r2_bytes ?? 0));
+  const r2BytesTotal = bytes(Number(progress.total_r2_bytes ?? 0));
+  const r2Bucket = progress.current_r2_bucket
+    ? `, bucket ${progress.current_r2_bucket}`
+    : "";
+  const r2Text =
+    r2Total > 0
+      ? `, R2 buckets ${r2Deleted}/${r2Total}, R2 objects ${r2ObjectsDeleted}/${r2ObjectsTotal}, R2 bytes ${r2BytesDeleted || "0 B"}/${r2BytesTotal || "0 B"}${r2Skipped > 0 ? `, ${r2Skipped} R2 buckets skipped` : ""}${r2Bucket}`
+      : "";
   return `${phase}: DNS ${dnsDeleted}/${dnsTotal}, tunnels ${tunnelDeleted}/${tunnelTotal}${r2Text}`;
 }
 
@@ -661,7 +676,7 @@ export function registerCloudflareCommand(
   teardown
     .command("apply <plan-id>")
     .description(
-      "Apply a saved Cloudflare teardown plan for safe-owned DNS records and tunnels",
+      "Apply a saved Cloudflare teardown plan for safe-owned resources",
     )
     .requiredOption(
       "--confirm <text>",
@@ -669,7 +684,7 @@ export function registerCloudflareCommand(
     )
     .option(
       "--delete-r2-contents",
-      "Request destructive R2 bucket deletion; currently refused until full R2 teardown is implemented",
+      "Delete safe-owned R2 bucket contents and buckets from the saved plan",
     )
     .option("--actions", "Show per-resource apply actions")
     .option(

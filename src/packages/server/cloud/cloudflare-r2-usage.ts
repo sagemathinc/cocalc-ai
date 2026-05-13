@@ -262,7 +262,7 @@ function r2Endpoint(accountId: string, configured?: string): string {
   return clean(configured) ?? `https://${accountId}.r2.cloudflarestorage.com`;
 }
 
-async function getR2S3Auth(bucket: string) {
+export async function getR2S3Auth(bucket: string) {
   const bucketName = clean(bucket);
   if (!bucketName) throw new Error("bucket is required");
   const settings = await getServerSettings();
