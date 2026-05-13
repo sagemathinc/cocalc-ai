@@ -26,6 +26,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     conat_client: {
       hub: {
         system: {
+          bootstrapCloudflareConfiguration: jest.fn(),
           testR2Credentials: jest.fn(),
         },
       },

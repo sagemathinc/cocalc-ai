@@ -79,6 +79,10 @@ import {
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
 import {
+  bootstrapCloudflareConfiguration as bootstrapCloudflareConfiguration0,
+  type CloudflareBootstrapResult,
+} from "@cocalc/server/cloud/cloudflare-bootstrap";
+import {
   clearProviderSetupChallenge as clearProviderSetupChallenge0,
   createProviderSetupChallenge as createProviderSetupChallenge0,
   getProviderSetupChallenge as getProviderSetupChallenge0,
@@ -3172,6 +3176,36 @@ export async function testR2Credentials({
     bucketPrefix:
       clean(overrides?.r2_bucket_prefix) ?? clean(settings.r2_bucket_prefix),
     endpoint,
+  });
+}
+
+export async function bootstrapCloudflareConfiguration({
+  account_id,
+  domain,
+  token,
+  tunnelPrefix,
+  hostSuffix,
+  r2BucketPrefix,
+  invalidateBootstrapToken,
+}: {
+  account_id?: string;
+  domain: string;
+  token: string;
+  tunnelPrefix?: string;
+  hostSuffix?: string;
+  r2BucketPrefix?: string;
+  invalidateBootstrapToken?: boolean;
+}): Promise<CloudflareBootstrapResult> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await bootstrapCloudflareConfiguration0({
+    domain,
+    token,
+    tunnelPrefix,
+    hostSuffix,
+    r2BucketPrefix,
+    invalidateBootstrapToken,
   });
 }
 

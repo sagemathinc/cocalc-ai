@@ -8,7 +8,10 @@ import { useEffect, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { R2CredentialsTestResult } from "@cocalc/conat/hub/api/system";
+import type {
+  CloudflareBootstrapResult,
+  R2CredentialsTestResult,
+} from "@cocalc/conat/hub/api/system";
 import cloudflareApiTokenImg from "./assets/cloudflare-api-token.png";
 import cloudflareManagedTransformImg from "./assets/cloudflare-managed-transform-location-headers.png";
 
@@ -140,6 +143,11 @@ export default function CloudflareConfigWizard({
   const [locationHeadersTestError, setLocationHeadersTestError] = useState("");
   const [locationHeadersResult, setLocationHeadersResult] =
     useState<VisitorLocationHeaderResult | null>(null);
+  const [bootstrapToken, setBootstrapToken] = useState("");
+  const [bootstrapLoading, setBootstrapLoading] = useState(false);
+  const [bootstrapError, setBootstrapError] = useState("");
+  const [bootstrapResult, setBootstrapResult] =
+    useState<CloudflareBootstrapResult | null>(null);
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -160,6 +168,10 @@ export default function CloudflareConfigWizard({
       setLocationHeadersTesting(false);
       setLocationHeadersTestError("");
       setLocationHeadersResult(null);
+      setBootstrapToken("");
+      setBootstrapLoading(false);
+      setBootstrapError("");
+      setBootstrapResult(null);
       setNotice("");
       return;
     }
@@ -192,6 +204,10 @@ export default function CloudflareConfigWizard({
     setLocationHeadersTesting(false);
     setLocationHeadersTestError("");
     setLocationHeadersResult(null);
+    setBootstrapToken("");
+    setBootstrapLoading(false);
+    setBootstrapError("");
+    setBootstrapResult(null);
   }, [open, data]);
 
   const showSelfConfig = mode === "self";
@@ -340,6 +356,57 @@ export default function CloudflareConfigWizard({
     }
   }
 
+  async function runCloudflareBootstrap() {
+    setBootstrapLoading(true);
+    setBootstrapError("");
+    setBootstrapResult(null);
+    try {
+      const result =
+        await webapp_client.conat_client.hub.system.bootstrapCloudflareConfiguration(
+          {
+            domain: externalDomain,
+            token: bootstrapToken,
+            tunnelPrefix,
+            hostSuffix,
+            r2BucketPrefix,
+            invalidateBootstrapToken: true,
+          },
+        );
+      setBootstrapResult(result);
+      const values = result.values ?? {};
+      setMode(values.cloudflare_mode ?? "self");
+      setExternalDomain(values.dns ?? externalDomain);
+      setAccountId(
+        values.project_hosts_cloudflare_tunnel_account_id ?? accountId,
+      );
+      if (values.project_hosts_cloudflare_tunnel_api_token) {
+        setApiToken(values.project_hosts_cloudflare_tunnel_api_token);
+      }
+      if (values.r2_api_token) {
+        setR2ApiToken(values.r2_api_token);
+      }
+      if (values.r2_account_id) {
+        setR2BucketPrefix(values.r2_bucket_prefix ?? r2BucketPrefix);
+      }
+      if (values.project_hosts_cloudflare_tunnel_prefix) {
+        setTunnelPrefix(values.project_hosts_cloudflare_tunnel_prefix);
+      }
+      if (values.project_hosts_cloudflare_tunnel_host_suffix) {
+        setHostSuffix(values.project_hosts_cloudflare_tunnel_host_suffix);
+      }
+      setBootstrapToken("");
+      setNotice(
+        result.bootstrap_token_invalidated
+          ? "Cloudflare bootstrap completed and the bootstrap token was invalidated."
+          : "Cloudflare bootstrap completed. Review the results below.",
+      );
+    } catch (err) {
+      setBootstrapError(`${err}`);
+    } finally {
+      setBootstrapLoading(false);
+    }
+  }
+
   return (
     <Modal
       open={open}
@@ -384,6 +451,111 @@ export default function CloudflareConfigWizard({
                 This domain <b>must</b> be managed by Cloudflare (a DNS zone in
                 your account). It is used by the hub and project hosts.
               </div>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginTop: "10px" }}
+                title="Fast path: bootstrap from one temporary Cloudflare token"
+                description={
+                  <Space
+                    orientation="vertical"
+                    size={8}
+                    style={{ width: "100%" }}
+                  >
+                    <div>
+                      Create a temporary Cloudflare API token with enough
+                      permissions to read zones, create API tokens, edit DNS,
+                      edit Cloudflare Tunnels, and edit Managed Headers. Paste
+                      it here and CoCalc will discover the account/zone, create
+                      a narrower durable token, enable visitor location headers,
+                      fill the form, and try to invalidate the temporary token.
+                    </div>
+                    <Input.Password
+                      placeholder="Temporary Cloudflare bootstrap API token"
+                      value={bootstrapToken}
+                      onChange={(e) => setBootstrapToken(e.target.value)}
+                    />
+                    <Button
+                      icon={<Icon name="magic" />}
+                      loading={bootstrapLoading}
+                      disabled={
+                        !externalDomain.trim() || !bootstrapToken.trim()
+                      }
+                      onClick={runCloudflareBootstrap}
+                    >
+                      Bootstrap Cloudflare Settings
+                    </Button>
+                    {bootstrapError ? (
+                      <Alert
+                        type="error"
+                        showIcon
+                        title="Cloudflare bootstrap failed"
+                        description={bootstrapError}
+                      />
+                    ) : null}
+                    {bootstrapResult ? (
+                      <Alert
+                        type={
+                          bootstrapResult.tunnel_token.ok &&
+                          bootstrapResult.visitor_location_headers.ok
+                            ? "success"
+                            : "warning"
+                        }
+                        showIcon
+                        title="Cloudflare bootstrap result"
+                        description={
+                          <div style={{ display: "grid", rowGap: "4px" }}>
+                            <div>
+                              <b>Account:</b>{" "}
+                              <code>
+                                {bootstrapResult.account_name
+                                  ? `${bootstrapResult.account_name} (${bootstrapResult.account_id})`
+                                  : bootstrapResult.account_id}
+                              </code>
+                            </div>
+                            <div>
+                              <b>Zone:</b>{" "}
+                              <code>
+                                {bootstrapResult.zone_name} (
+                                {bootstrapResult.zone_id})
+                              </code>
+                            </div>
+                            <div>
+                              <b>Durable token:</b>{" "}
+                              {bootstrapResult.tunnel_token.ok
+                                ? "created and filled"
+                                : (bootstrapResult.tunnel_token.message ??
+                                  "not created")}
+                            </div>
+                            <div>
+                              <b>Visitor location headers:</b>{" "}
+                              {bootstrapResult.visitor_location_headers.ok
+                                ? "enabled"
+                                : (bootstrapResult.visitor_location_headers
+                                    .message ?? "not enabled")}
+                            </div>
+                            <div>
+                              <b>R2:</b>{" "}
+                              {bootstrapResult.r2.message ??
+                                "R2 still needs manual S3 keys."}
+                            </div>
+                            <div>
+                              <b>Bootstrap token:</b>{" "}
+                              {bootstrapResult.bootstrap_token_invalidated
+                                ? "invalidated"
+                                : (bootstrapResult.bootstrap_token_invalidation_error ??
+                                  "not invalidated")}
+                            </div>
+                            {bootstrapResult.notes.length ? (
+                              <div>{bootstrapResult.notes.join(" ")}</div>
+                            ) : null}
+                          </div>
+                        }
+                      />
+                    ) : null}
+                  </Space>
+                }
+              />
             </div>
             <div>
               <strong>Step 3 - Cloudflare account ID</strong>
