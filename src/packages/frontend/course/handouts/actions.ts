@@ -260,7 +260,24 @@ export class HandoutsActions {
         },
         options: { force: !!overwrite },
       };
-      await webapp_client.project_client.copyPathBetweenProjects(opts);
+      const op =
+        await webapp_client.project_client.copyPathBetweenProjects(opts);
+      const result = await waitForCourseCopyLro({
+        op,
+        dests: [{ student_id, project_id: student_project_id }],
+        onSummary: (summary) => {
+          const progress = summary.progress_summary;
+          if (progress?.total) {
+            this.course_actions.set_activity({
+              id,
+              desc: `Copying files to ${student_name}'s project (${progress.done ?? 0}/${progress.total} done)`,
+            });
+          }
+        },
+      });
+      if (result[student_id]) {
+        throw new Error(result[student_id]);
+      }
 
       finish();
     } catch (err) {
