@@ -66,12 +66,27 @@ Use:
 /run/secrets/cocalc/<name>
 ```
 
+Also set a project runtime environment variable:
+
+```sh
+COCALC_SECRETS=/run/secrets/cocalc
+```
+
+Users should prefer `$COCALC_SECRETS/<name>` in scripts instead of hardcoding
+the path:
+
+```sh
+ssh -i "$COCALC_SECRETS/GITHUB_DEPLOY_KEY" git@github.com
+```
+
 Rationale:
 
 - `/run` is the standard Linux runtime-state location.
 - `/run/secrets` is a common convention from container/orchestration tooling.
 - it is outside `$HOME`, `/tmp`, and the rootfs publish tree.
 - it clearly signals runtime-only material.
+- `COCALC_SECRETS` gives scripts a stable contract if the underlying runtime
+  mount ever needs to change.
 
 Do not use `/tmp/secrets`; `/tmp` has weaker semantics and is frequently used by
 tools that scan, copy, or expose temporary files.
@@ -373,7 +388,9 @@ At project start:
 host runtime dir -> /run/secrets/cocalc
 ```
 
-6. after project stop, project-host deletes the host-side runtime directory.
+6. project-host sets `COCALC_SECRETS=/run/secrets/cocalc` in the project
+   runtime environment.
+7. after project stop, project-host deletes the host-side runtime directory.
 
 The host-side plaintext directory must be:
 
@@ -387,7 +404,10 @@ Use atomic write into a temporary directory and rename into place to avoid
 partially materialized secret sets.
 
 First implementation can require project restart after secret changes. Hot
-reload can come later.
+reload can come later. (USER: yes, required project restart is fine for now.)
+
+`COCALC_SECRETS` should be set even when a project has zero secrets. Prefer
+mounting an empty read-only directory for predictable scripts.
 
 ## Podman Wiring
 
@@ -403,8 +423,9 @@ secrets?: {
 Then in project-runner Podman args:
 
 - add read-only bind mount for `secrets.host_path`.
+- set `COCALC_SECRETS=/run/secrets/cocalc`.
 - never pass secret values via `-e`.
-- do not add this mount if there are zero secrets.
+- mount an empty read-only directory if there are zero secrets.
 
 The existing project runner already handles read-only mounts and home/tmp
 mounts; this should be a small extension.
@@ -439,6 +460,8 @@ Add validation/caps to `setProjectEnv`:
 - value byte length cap.
 - total serialized size cap.
 - reject keys with `COCALC_` prefix unless explicitly allowed.
+- specifically reject user-defined `COCALC_SECRETS`; project runtime owns this
+  variable.
 - reject or warn on obvious secret-looking names? Do not block automatically at
   first; add UI warning that secrets belong in Project Secrets instead.
 
@@ -464,7 +487,7 @@ Suggested copy:
 > Store API keys and private tokens as files mounted at runtime. Secrets are
 > encrypted at rest and are not included in project files, backups, public
 > shares, rootfs images, or downloads. Any code running in this project can read
-> them.
+> them. In scripts, use `$COCALC_SECRETS/<name>`.
 
 ## CLI/API Plan
 
