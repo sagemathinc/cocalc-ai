@@ -84,7 +84,7 @@ export function googleSsoStateFromSettings(
     strategy: {
       strategy: GOOGLE_SSO_STRATEGY,
       conf: {
-        type: "oauth2",
+        type: "oidc",
         clientID,
         clientSecret,
       },

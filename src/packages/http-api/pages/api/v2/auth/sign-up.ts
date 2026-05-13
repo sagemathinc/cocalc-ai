@@ -32,6 +32,10 @@ TIP: If you want to pass in an email like jd+1@example.com, use '%2B' in place o
 import { v4 } from "uuid";
 
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import {
+  getEnabledSsoDomainPolicyForEmail,
+  passwordSignupBlockedBySsoPolicy,
+} from "@cocalc/database/settings/sso-policies";
 import getPool from "@cocalc/database/pool";
 import isAccountAvailable from "@cocalc/server/auth/is-account-available";
 import isDomainExclusiveSSO from "@cocalc/server/auth/is-domain-exclusive-sso";
@@ -151,12 +155,35 @@ export async function signUp(req, res) {
     });
     return;
   }
-  const exclusive = await isDomainExclusiveSSO(email);
+  const ssoDomainPolicy = await getEnabledSsoDomainPolicyForEmail(email);
+  const exclusive = passwordSignupBlockedBySsoPolicy(ssoDomainPolicy)
+    ? ssoDomainPolicy?.domain
+    : await isDomainExclusiveSSO(email);
   const domainPolicy = evaluateAccountCreationPolicy({
     auth_method: "password",
     email,
     sso_required_domain: exclusive,
+    signup_disabled_domain:
+      ssoDomainPolicy?.signup_mode === "disabled"
+        ? ssoDomainPolicy.domain
+        : undefined,
   });
+  if (domainPolicy.type === "deny_signup_disabled") {
+    res.json({
+      issues: {
+        email: `Account creation is disabled for "@${domainPolicy.domain}".`,
+      },
+    });
+    return;
+  }
+  if (ssoDomainPolicy?.require_cocalc_2fa) {
+    res.json({
+      issues: {
+        email: `Account creation is disabled for "@${ssoDomainPolicy.domain}" because that domain requires CoCalc two-factor authentication. Contact your site administrator to create or prepare your account.`,
+      },
+    });
+    return;
+  }
   if (domainPolicy.type === "deny_use_sso") {
     res.json({
       issues: {
@@ -166,7 +193,12 @@ export async function signUp(req, res) {
     return;
   }
 
-  const requiresRegistrationToken = await getRequiresRegistrationToken();
+  const requiresRegistrationToken =
+    ssoDomainPolicy?.signup_mode === "public_allowed"
+      ? false
+      : ssoDomainPolicy?.signup_mode === "registration_token_required"
+        ? true
+        : await getRequiresRegistrationToken();
   if (requiresRegistrationToken) {
     const tokenThrottle = signUpTokenCheck(email, req.ip);
     if (tokenThrottle) {

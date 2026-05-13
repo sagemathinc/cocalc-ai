@@ -8,6 +8,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 
 export type PublicAuthRoute =
   | { kind: "auth-form"; view: AuthView }
+  | { challengeId: string; kind: "auth-second-factor" }
   | { challengeId: string; kind: "auth-cli-elevate" }
   | { challengeId: string; kind: "auth-cli-login" }
   | { kind: "auth-password-reset-done" }
@@ -134,6 +135,17 @@ export function getPublicAuthRouteFromPath(
 
   if (routeParts[0] === "auth" && routeParts[1] === "password-reset-done") {
     return { kind: "auth-password-reset-done" };
+  }
+
+  if (
+    routeParts[0] === "auth" &&
+    routeParts[1] === "second-factor" &&
+    routeParts[2]
+  ) {
+    return {
+      challengeId: routeParts[2],
+      kind: "auth-second-factor",
+    };
   }
 
   if (

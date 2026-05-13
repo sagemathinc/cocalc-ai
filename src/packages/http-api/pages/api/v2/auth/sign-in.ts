@@ -24,6 +24,7 @@ import {
   createSignInSecondFactorChallenge,
   hasActiveSecondFactor,
 } from "@cocalc/server/auth/two-factor";
+import { emailRequiresCocalc2fa } from "@cocalc/database/settings/sso-policies";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
@@ -87,7 +88,16 @@ export default async function signIn(req: Request, res: Response) {
     return;
   }
 
-  if (await hasActiveSecondFactor(account_id)) {
+  const hasSecondFactor = await hasActiveSecondFactor(account_id);
+  if ((await emailRequiresCocalc2fa(email)) && !hasSecondFactor) {
+    res.json({
+      error:
+        "This email domain requires CoCalc two-factor authentication. Contact your site administrator to enable 2FA before signing in.",
+    });
+    return;
+  }
+
+  if (hasSecondFactor) {
     let challenge;
     try {
       challenge = await createSignInSecondFactorChallenge({ account_id });

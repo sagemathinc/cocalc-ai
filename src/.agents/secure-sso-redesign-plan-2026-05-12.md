@@ -309,31 +309,53 @@ site secret encryption mechanism, not plaintext config rows.
 
 ### Phase 3: Admin-Configured Google OIDC
 
-1. Add admin settings/UI for Google OIDC client configuration. Transitional
-   status: implemented through admin site settings and the existing Google
-   Passport runtime. Client secret storage is encrypted; legacy DB-only Google
-   rows are ignored.
-2. Implement direct OIDC flow or a minimal OIDC library integration.
-3. Require `openid email profile` and `email_verified=true`.
+1. Add admin settings/UI for Google OIDC client configuration. Status:
+   implemented through admin site settings. Client secret storage is encrypted;
+   legacy DB-only Google rows are ignored.
+2. Implement direct OIDC flow or a minimal OIDC library integration. Status:
+   implemented with direct code flow and ID-token validation against Google's
+   JWKS.
+3. Require `openid email profile` and `email_verified=true`. Status:
+   implemented for Google.
 4. Link identity to existing account only after safe policy checks.
 5. Keep CoCalc 2FA/fresh-auth requirements unchanged after SSO login.
 
 ### Phase 4: Domain Policy UI
 
-1. Add admin UI for domain auth policies.
-2. Add sign-in UI support for "Use SSO for this email/domain."
-3. Add optional domain policy for requiring CoCalc-native 2FA.
+1. Add admin UI for domain auth policies. Status: first-class
+   `sso_providers` and `sso_domain_policies` tables plus an Administration
+   panel exist.
+2. Add sign-in UI support for "Use SSO for this email/domain." Status:
+   implemented for enabled `sso_required` domain policies that point at a
+   configured provider.
+3. Add optional domain policy for requiring CoCalc-native 2FA. Status:
+   enforced for password sign-in and SSO sign-in. Password sign-in is denied if
+   the matching domain requires CoCalc 2FA and the account has no active second
+   factor; SSO sign-in creates a public second-factor challenge before setting
+   sign-in cookies. New account creation is denied for matching domains because
+   a newly created account cannot already have an active CoCalc second factor.
 4. Add clear error/redirect responses for password attempts on SSO-required
    domains.
 5. Add tests for domain normalization, SSO precedence, and domain-level CoCalc
-   2FA requirements.
+   2FA requirements. Status: focused policy, auth API, and public auth route
+   tests cover the implemented paths.
 
 ### Phase 5: Organization SAML
 
-1. Add admin UI for SAML provider config.
-2. Implement direct SAML flow using a focused maintained library.
-3. Require trusted email mapping and allowed-domain checks.
-4. Add provider-specific sign-in links and error diagnostics for admins.
+1. Add admin UI for SAML provider config. Status: implemented with structured
+   provider fields for IdP metadata XML, IdP entity ID, SSO URL, signing
+   certificate, allowed domains, account-creation mode, and copyable SP
+   metadata/ACS URLs.
+2. Implement direct SAML flow using a focused maintained library. Status:
+   implemented using `@node-saml/passport-saml`'s direct `SAML` API, not
+   Passport strategy routing.
+3. Require trusted email mapping and allowed-domain checks. Status: SAML
+   profiles are normalized into the existing `PassportLogin` path, which
+   applies allowed-domain checks, domain policy, registration-token signup
+   policy, and CoCalc 2FA requirements.
+4. Add provider-specific sign-in links and error diagnostics for admins. Status:
+   provider links and metadata URLs exist; richer test-configuration diagnostics
+   remain open.
 
 ### Phase 6: Passport Removal
 
@@ -414,5 +436,8 @@ Recommended order:
 1. Finish `SEC-ROOTFS-001`.
 2. Return to SSO as `SEC-SSO-001`.
 3. Implement Phase 1 policy boundary and provider deletion first.
-4. Replace the remaining Google Passport runtime with direct OIDC next; the
-   admin-managed settings are now in place.
+4. Replace remaining non-Google organization Passport paths with direct
+   SAML/OIDC next; Google no longer depends on Passport.js and the
+   provider/domain policy skeleton is in place. Status: direct SAML is
+   implemented; generic non-Google OIDC remains deferred until there is a
+   concrete customer requirement.

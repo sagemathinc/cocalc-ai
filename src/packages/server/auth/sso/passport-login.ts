@@ -37,6 +37,7 @@ import {
 } from "@cocalc/database/settings/auth-sso-types";
 import { callback2 as cb2 } from "@cocalc/util/async-utils";
 import { HELP_EMAIL } from "@cocalc/util/theme";
+import { joinUrlPath } from "@cocalc/util/url-path";
 import getEmailAddress from "../../accounts/get-email-address";
 import { emailBelongsToDomain, getEmailDomain } from "./check-required-sso";
 import { SSO_API_KEY_COOKIE_NAME } from "./consts";
@@ -47,6 +48,11 @@ import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
 import type { AccountCreationAuthMethod } from "@cocalc/server/auth/account-creation-policy";
 import { evaluateAccountCreationPolicy } from "@cocalc/server/auth/account-creation-policy";
 import getRequiresRegistrationToken from "@cocalc/server/auth/tokens/get-requires-token";
+import { getEnabledSsoDomainPolicyForEmail } from "@cocalc/database/settings/sso-policies";
+import {
+  createSignInSecondFactorChallenge,
+  hasActiveSecondFactor,
+} from "@cocalc/server/auth/two-factor";
 
 const logger = getLogger("server:auth:sso:passport-login");
 
@@ -206,7 +212,11 @@ export class PassportLogin {
       // WARNING: a 302 appears to work in dev mode, but that's only because
       // of all the hot module loading complexity.  Also, I could not get a meta redirect to work,
       // so had to use Javascript.
-      clientSideRedirect({ res: this.opts.res, target: this.opts.site_url });
+      const target =
+        locals.target && locals.target !== base_path
+          ? locals.target
+          : this.opts.site_url;
+      clientSideRedirect({ res: this.opts.res, target });
     } catch (err) {
       // this error is used to signal that the user has done something wrong (in a general sense)
       // and it shouldn't be the code or how it handles the returned data.
@@ -549,12 +559,32 @@ export class PassportLogin {
     L(`emails=${opts.emails} email_address=${locals.email_address}`);
     const accountCreation =
       opts.passports[opts.strategyName].info?.account_creation;
+    const domainPolicy = await getEnabledSsoDomainPolicyForEmail(
+      locals.email_address,
+      opts.strategyName,
+    );
+    if (domainPolicy?.signup_mode === "disabled") {
+      throw Error(
+        `Account creation is disabled for "@${domainPolicy.domain}".`,
+      );
+    }
+    if (domainPolicy?.signup_mode === "registration_token_required") {
+      throw Error(
+        "Account creation requires a valid registration token. Create an account using email/password and a registration token first, then link SSO from account settings.",
+      );
+    }
+    if (domainPolicy?.require_cocalc_2fa) {
+      throw Error(
+        `Account creation is disabled for "@${domainPolicy.domain}" because that domain requires CoCalc two-factor authentication. Contact your site administrator to create or prepare your account.`,
+      );
+    }
     if (accountCreation === "disabled") {
       throw Error(
         `The ${opts.passports[opts.strategyName].info?.display ?? opts.strategyName} SSO provider is not allowed to create new accounts.`,
       );
     }
     const requiresRegistrationToken =
+      domainPolicy?.signup_mode === "public_allowed" ||
       accountCreation === "public_allowed"
         ? false
         : accountCreation === "registration_token_required"
@@ -670,7 +700,7 @@ export class PassportLogin {
   // SSO strategies can configure the expiration of that cookie – e.g. super
   // paranoid ones can set this to 1 day.
   private async handleNewSignIn(
-    { req, res }: PassportLoginOpts,
+    { req, res, emails }: PassportLoginOpts,
     locals: PassportLoginLocals,
   ): Promise<void> {
     if (locals.has_valid_remember_me) return;
@@ -682,6 +712,26 @@ export class PassportLogin {
     }
 
     L("passport created: set remember_me cookie, so user gets logged in");
+
+    const email = locals.email_address ?? emails?.[0];
+    const domainPolicy = await getEnabledSsoDomainPolicyForEmail(email);
+    if (domainPolicy?.require_cocalc_2fa) {
+      if (!(await hasActiveSecondFactor(locals.account_id))) {
+        throw Error(
+          `This email domain requires CoCalc two-factor authentication. Contact your site administrator to enable 2FA before signing in with SSO.`,
+        );
+      }
+      const challenge = await createSignInSecondFactorChallenge({
+        account_id: locals.account_id,
+      });
+      locals.target = joinUrlPath(
+        base_path,
+        "auth",
+        "second-factor",
+        challenge.challenge_id,
+      );
+      return;
+    }
 
     L(`create remember_me cookie in database`);
     await setSignInCookies({

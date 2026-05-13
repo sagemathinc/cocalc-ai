@@ -23,8 +23,8 @@
 // 5. When done, there should be an entry under "OAuth 2.0 client IDs"
 // 6. Configure Google SSO client ID and secret in admin site settings.
 //
-// Custom organization strategies still live in passport_settings. The old DB-only
-// Google setup is intentionally ignored by this runtime.
+// Custom organization SAML strategies live in sso_providers. The old DB-only
+// Google setup and legacy Passport SAML rows are intentionally ignored by this runtime.
 
 import Cookies from "cookies";
 import dot from "dot-object";
@@ -33,6 +33,7 @@ import * as express from "express";
 import express_session from "express-session";
 import * as _ from "lodash";
 import ms from "ms";
+import { SAML } from "@node-saml/passport-saml";
 import passport, { AuthenticateOptions } from "passport";
 import { join as path_join } from "path";
 import safeJsonStringify from "safe-json-stringify";
@@ -49,7 +50,6 @@ import { addUserProfileCallback } from "@cocalc/server/auth/sso/oauth2-user-prof
 import { PassportLogin } from "@cocalc/server/auth/sso/passport-login";
 import {
   InitPassport,
-  LoginInfo,
   PassportManagerOpts,
   StrategyConf,
   StrategyInstanceOpts,
@@ -79,6 +79,15 @@ import {
   getGoogleSsoSettingsState,
 } from "@cocalc/database/settings/google-sso";
 import {
+  applyDomainPoliciesToPassports,
+  getEnabledSsoDomainPolicies,
+} from "@cocalc/database/settings/sso-policies";
+import {
+  getEnabledSamlSsoProviders,
+  isValidSsoProviderID,
+  ssoProviderToPassportStrategy,
+} from "@cocalc/database/settings/sso-providers";
+import {
   PassportLoginOpts,
   PassportStrategyDB,
   PassportStrategyDBConfig,
@@ -92,7 +101,16 @@ import {
   DEFAULT_LOGIN_INFO,
   SSO_API_KEY_COOKIE_NAME,
 } from "@cocalc/server/auth/sso/consts";
-import { GoogleStrategyConf } from "@cocalc/server/auth/sso/public-strategies";
+import {
+  exchangeGoogleOidcCode,
+  googleOidcAuthorizationUrl,
+  googleProfileFromClaims,
+  verifyGoogleIdToken,
+} from "@cocalc/server/auth/sso/google-oidc";
+import {
+  directSamlConfig,
+  passportProfileFromSamlProfile,
+} from "@cocalc/server/auth/sso/direct-saml";
 import siteUrl from "@cocalc/server/hub/site-url";
 
 const logger = getLogger("server:hub:auth");
@@ -143,7 +161,11 @@ interface HandleReturnOpts {
   type: PassportTypes;
   update_on_login: boolean;
   cookie_ttl_s: number | undefined;
-  login_info: LoginInfo;
+  login_info: StrategyConf["login_info"];
+}
+
+interface GoogleOidcState {
+  nonce: string;
 }
 
 export class PassportManager {
@@ -156,6 +178,7 @@ export class PassportManager {
   // configured strategies
   private passports: { [k: string]: PassportStrategyDB } | undefined =
     undefined;
+  private readonly directSamlStrategies = new Set<string>();
   // prefix for those endpoints, where SSO services return back
   private auth_url: string | undefined = undefined;
   private site_url = `https://${DNS}${base_path}`; // updated during init
@@ -213,6 +236,12 @@ export class PassportManager {
         }
         // backwards compatibility
         const conf = setting.conf as any;
+        if (isSAML(conf?.type)) {
+          logger.warn(
+            `Ignoring legacy SAML passport_settings row '${name}'. Configure organization SAML through admin SSO providers instead.`,
+          );
+          continue;
+        }
         setting.info = setting.info ?? {};
         if (setting.info.disabled ?? conf?.disabled ?? false) {
           continue;
@@ -229,6 +258,32 @@ export class PassportManager {
         }
         this.passports[setting.strategy] = setting;
       }
+      const directSamlProviders = await getEnabledSamlSsoProviders();
+      for (const provider of directSamlProviders) {
+        const name = provider.provider_id;
+        if (!isValidSsoProviderID(name)) {
+          logger.warn(`Ignoring SSO provider '${name}' with unsafe id.`);
+          continue;
+        }
+        if (BLACKLISTED_STRATEGIES.includes(name as any)) {
+          throw new Error(
+            `It is not allowed to name a strategy endpoint "${name}", because it is used by the next.js /auth/* endpoint. See next/pages/auth/ROUTING.md for more information.`,
+          );
+        }
+        if (this.passports[name] != null) {
+          throw new Error(
+            `SSO provider '${name}' conflicts with another configured authentication strategy.`,
+          );
+        }
+        const strategy = ssoProviderToPassportStrategy(provider);
+        if (strategy == null) continue;
+        this.passports[name] = strategy;
+        this.directSamlStrategies.add(name);
+      }
+      applyDomainPoliciesToPassports(
+        this.passports,
+        await getEnabledSsoDomainPolicies(),
+      );
       return this.passports;
     } catch (err) {
       logger.debug(`error getting passport settings -- ${err}`);
@@ -336,7 +391,8 @@ export class PassportManager {
     logger.debug(`auth_url='${this.auth_url}'`);
 
     await Promise.all([
-      this.initStrategy(GoogleStrategyConf),
+      this.initGoogleOidc(),
+      this.initDirectSamlStrategies(),
       this.init_extra_strategies(),
     ]);
   }
@@ -535,6 +591,9 @@ export class PassportManager {
       if (PRIMARY_STRATEGIES.indexOf(name as any) >= 0) {
         continue;
       }
+      if (this.directSamlStrategies.has(name)) {
+        continue;
+      }
       if (strategy.conf.type == null) {
         throw new Error(
           `all "extra" strategies must define their type, in particular also "${name}"`,
@@ -592,7 +651,10 @@ export class PassportManager {
 
     const verify = this.getVerify(type);
     L1.silly({ type, opts, userinfoURL });
-    const strategy_instance = new PassportStrategyConstructor(opts, verify);
+    const strategy_instance = new (PassportStrategyConstructor as any)(
+      opts,
+      verify,
+    );
 
     // for OAuth2, set the userinfoURL to get the profile
     if (userinfoURL != null) {
@@ -692,7 +754,7 @@ export class PassportManager {
         // due to https://github.com/Microsoft/TypeScript/issues/13965 we have to check on name and can't use instanceof
         if (err.name === "PassportLoginError") {
           const signInUrl = path_join(base_path, "auth", "sign-in");
-          err_msg = `Problem signing in using '${name}:<br/><strong>${
+          err_msg = `Problem signing in using '${name}':<br/><strong>${
             err.message ?? `${err}`
           }</strong><br/><a href="${signInUrl}">Sign-in again</a>`;
         } else {
@@ -703,6 +765,278 @@ export class PassportManager {
         res.send(err_msg);
       }
     };
+  }
+
+  private async sendPassportLoginError({
+    name,
+    res,
+    passportLogin,
+    err,
+    includeDetails = true,
+  }: {
+    name: string;
+    res: express.Response;
+    passportLogin?: PassportLogin;
+    err: any;
+    includeDetails?: boolean;
+  }): Promise<void> {
+    let err_msg = "";
+    if (err.name === "PassportLoginError") {
+      const signInUrl = path_join(base_path, "auth", "sign-in");
+      err_msg = `Problem signing in using '${name}':<br/><strong>${
+        err.message ?? `${err}`
+      }</strong><br/><a href="${signInUrl}">Sign-in again</a>`;
+    } else {
+      const helpEmail =
+        passportLogin != null
+          ? await passportLogin.getHelpEmail()
+          : (await cb2(this.database.get_server_settings_cached)).help_email;
+      err_msg = `Error trying to login using '${name}' -- if this problem persists please contact ${helpEmail}`;
+      if (includeDetails) {
+        err_msg += ` -- ${err}`;
+      }
+    }
+    logger.debug(`sending error "${err_msg}"`);
+    res.send(err_msg);
+  }
+
+  private googleOidcRedirectURI(): string {
+    if (this.auth_url == null) {
+      throw new Error("auth_url must be initialized before Google OIDC");
+    }
+    return `${this.auth_url}/google/return`;
+  }
+
+  private async initGoogleOidc(): Promise<void> {
+    if (this.passports == null) throw Error("strategies not initalized!");
+    const strategy = this.passports[GOOGLE_SSO_STRATEGY];
+    if (strategy == null) {
+      logger.debug("Google OIDC is not configured; skipping /auth/google");
+      return;
+    }
+    const clientID = strategy.conf.clientID;
+    const clientSecret = strategy.conf.clientSecret;
+    if (!clientID || !clientSecret) {
+      logger.warn("Google OIDC is enabled but missing client ID or secret");
+      return;
+    }
+
+    const stateCache = getOauthCache(GOOGLE_SSO_STRATEGY);
+    this.router.get(
+      `${AUTH_BASE}/google`,
+      this.handle_get_api_key,
+      async (_req, res) => {
+        try {
+          const state = uuidv4();
+          const nonce = uuidv4();
+          const savedState: GoogleOidcState = { nonce };
+          await stateCache.saveAsync(state, JSON.stringify(savedState));
+          res.redirect(
+            googleOidcAuthorizationUrl({
+              clientID,
+              redirectURI: this.googleOidcRedirectURI(),
+              state,
+              nonce,
+            }),
+          );
+        } catch (err) {
+          logger.warn(`Google OIDC sign-in start failed: ${err}`);
+          await this.sendPassportLoginError({
+            name: GOOGLE_SSO_STRATEGY,
+            res,
+            err,
+            includeDetails: false,
+          });
+        }
+      },
+    );
+
+    this.router.get(`${AUTH_BASE}/google/return`, async (req, res) => {
+      let passportLogin: PassportLogin | undefined;
+      try {
+        if (typeof req.query.error === "string") {
+          throw new Error(
+            `Google returned an authentication error: ${req.query.error}`,
+          );
+        }
+        if (typeof req.query.code !== "string") {
+          throw new Error("Google OIDC return is missing the code parameter.");
+        }
+        if (typeof req.query.state !== "string") {
+          throw new Error("Google OIDC return is missing the state parameter.");
+        }
+        const savedStateRaw = await stateCache.getAsync(req.query.state);
+        await stateCache.removeAsync(req.query.state);
+        if (savedStateRaw == null) {
+          throw new Error("Google OIDC state is invalid or expired.");
+        }
+        const savedState = JSON.parse(savedStateRaw) as GoogleOidcState;
+        if (!savedState.nonce) {
+          throw new Error("Google OIDC state did not include a nonce.");
+        }
+
+        const tokens = await exchangeGoogleOidcCode({
+          code: req.query.code,
+          clientID,
+          clientSecret,
+          redirectURI: this.googleOidcRedirectURI(),
+        });
+        const claims = await verifyGoogleIdToken({
+          idToken: tokens.id_token,
+          clientID,
+          nonce: savedState.nonce,
+        });
+        const profile = googleProfileFromClaims(claims);
+        const emails = profile.emails?.map((email) => email.value) ?? [];
+        passportLogin = new PassportLogin({
+          passports: this.passports ?? {},
+          database: this.database,
+          host: this.host,
+          id: profile.id,
+          strategyName: GOOGLE_SSO_STRATEGY,
+          profile,
+          first_name: profile.name?.givenName ?? "Anonymous",
+          last_name: profile.name?.familyName ?? "User",
+          emails,
+          update_on_login: strategy.info?.update_on_login ?? false,
+          cookie_ttl_s: strategy.info?.cookie_ttl_s,
+          req,
+          res,
+          site_url: this.site_url,
+        });
+        await passportLogin.login();
+      } catch (err) {
+        if (err.name !== "PassportLoginError") {
+          logger.warn(`Google OIDC sign-in failed: ${err}`);
+        }
+        await this.sendPassportLoginError({
+          name: GOOGLE_SSO_STRATEGY,
+          res,
+          passportLogin,
+          err,
+          includeDetails: false,
+        });
+      }
+    });
+  }
+
+  private getDirectSaml(name: string): SAML {
+    if (this.auth_url == null) {
+      throw new Error("auth_url must be initialized before direct SAML");
+    }
+    const strategy = this.passports?.[name];
+    if (strategy == null) {
+      throw new Error(`direct SAML strategy '${name}' is not configured`);
+    }
+    return new SAML(
+      directSamlConfig({
+        name,
+        authUrl: this.auth_url,
+        config: strategy.conf,
+        cacheProvider: getPassportCache(name, ms("8 hours")),
+      }),
+    );
+  }
+
+  private async initDirectSamlStrategies(): Promise<void> {
+    if (this.passports == null) throw Error("strategies not initalized!");
+    for (const name of this.directSamlStrategies) {
+      const strategy = this.passports[name];
+      if (strategy == null) continue;
+      // Validate config at startup instead of first user click.
+      this.getDirectSaml(name);
+
+      const strategyUrl = `${AUTH_BASE}/${name}`;
+      const returnUrl = `${strategyUrl}/return`;
+      const handleReturn = this.getHandleReturn({
+        Linit: logger.extend("init_direct_saml"),
+        name,
+        type: "saml",
+        update_on_login: strategy.info?.update_on_login ?? false,
+        cookie_ttl_s: strategy.info?.cookie_ttl_s,
+        login_info: { ...DEFAULT_LOGIN_INFO, ...strategy.conf.login_info },
+      });
+
+      this.router.get(
+        strategyUrl,
+        this.handle_get_api_key,
+        async (_req, res) => {
+          try {
+            res.redirect(
+              await this.getDirectSaml(name).getAuthorizeUrlAsync(
+                "",
+                undefined,
+                {},
+              ),
+            );
+          } catch (err) {
+            logger.warn(
+              `Direct SAML sign-in start failed for '${name}': ${err}`,
+            );
+            await this.sendPassportLoginError({
+              name,
+              res,
+              err,
+              includeDetails: false,
+            });
+          }
+        },
+      );
+
+      this.router.post(
+        returnUrl,
+        express.urlencoded({ extended: false }),
+        express.json(),
+        async (req, res) => {
+          let passportLogin: PassportLogin | undefined;
+          try {
+            if (typeof req.body?.SAMLResponse !== "string") {
+              throw new Error("SAML return is missing SAMLResponse.");
+            }
+            const result = await this.getDirectSaml(
+              name,
+            ).validatePostResponseAsync({
+              SAMLResponse: req.body.SAMLResponse,
+            });
+            if (result.loggedOut) {
+              throw new Error("Unexpected SAML logout response.");
+            }
+            if (result.profile == null) {
+              throw new Error("SAML response did not include a profile.");
+            }
+            (req as any).user = passportProfileFromSamlProfile(result.profile);
+            await handleReturn(req, res);
+          } catch (err) {
+            if (err.name !== "PassportLoginError") {
+              logger.warn(`Direct SAML sign-in failed for '${name}': ${err}`);
+            }
+            await this.sendPassportLoginError({
+              name,
+              res,
+              passportLogin,
+              err,
+              includeDetails: false,
+            });
+          }
+        },
+      );
+
+      this.router.get(`${strategyUrl}/metadata`, (_req, res) => {
+        try {
+          res.type("application/samlmetadata+xml");
+          res.send(
+            this.getDirectSaml(name).generateServiceProviderMetadata(null),
+          );
+        } catch (err) {
+          logger.warn(`Direct SAML metadata failed for '${name}': ${err}`);
+          res.status(500).send("SAML metadata is not available.");
+        }
+      });
+
+      logger.debug(
+        `direct SAML initialization of '${name}' at '${strategyUrl}' successful`,
+      );
+    }
   }
 
   // right now, we only set this for OAauth2 (SAML knows what to do on its own)
@@ -811,7 +1145,7 @@ export class PassportManager {
     });
 
     // this ties the name (our name set in the DB) to the strategy instance
-    passport.use(name, strategy_instance);
+    passport.use(name, strategy_instance as any);
 
     this.router.get(
       strategyUrl,

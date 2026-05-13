@@ -353,4 +353,26 @@ export type MembershipTierGetFields =
   | "created"
   | "updated";
 
+export type SsoProviderSetFields =
+  | "provider_id"
+  | "kind"
+  | "display"
+  | "enabled"
+  | "public"
+  | "config"
+  | "notes";
+
+export type SsoProviderGetFields = SsoProviderSetFields;
+
+export type SsoDomainPolicySetFields =
+  | "domain"
+  | "provider_id"
+  | "mode"
+  | "enabled"
+  | "require_cocalc_2fa"
+  | "signup_mode"
+  | "notes";
+
+export type SsoDomainPolicyGetFields = SsoDomainPolicySetFields;
+
 export type AllSiteSettingsKeys = SiteSettingsKeys | SiteSettingsExtrasKeys;

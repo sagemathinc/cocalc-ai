@@ -197,15 +197,19 @@ function ssoLoginHref(strategyName: string): string {
 }
 
 export function PublicSignInForm({
+  initialChallengeId,
+  initialInfo,
   onNavigate,
   redirectToPath,
 }: {
+  initialChallengeId?: string;
+  initialInfo?: string;
   onNavigate: (view: AuthView) => void;
   redirectToPath?: string | (() => string);
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [challengeId, setChallengeId] = useState("");
+  const [challengeId, setChallengeId] = useState(initialChallengeId ?? "");
   const [factorCode, setFactorCode] = useState("");
   const [signingIn, setSigningIn] = useState(false);
   const [checkingSignInMethod, setCheckingSignInMethod] = useState(false);
@@ -216,6 +220,10 @@ export function PublicSignInForm({
     !challengeId && signInMethod?.sso_required
       ? signInMethod.sso_strategy
       : undefined;
+
+  useEffect(() => {
+    setChallengeId(initialChallengeId ?? "");
+  }, [initialChallengeId]);
 
   const canSubmit = challengeId
     ? factorCode.trim().length > 0 && !signingIn
@@ -353,6 +361,7 @@ export function PublicSignInForm({
   return (
     <div style={STACK_STYLE}>
       {error && <Alert kind="error">{error}</Alert>}
+      {initialInfo && challengeId && <Alert kind="info">{initialInfo}</Alert>}
       {!challengeId ? (
         <>
           <div style={FIELD_STYLE}>
