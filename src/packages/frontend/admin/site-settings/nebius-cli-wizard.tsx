@@ -4,10 +4,12 @@
  */
 
 import { Alert, Button, Input, Modal, Space } from "antd";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { ProviderSetupChallenge } from "@cocalc/conat/hub/api/system";
 
 interface WizardProps {
   open: boolean;
@@ -30,6 +32,10 @@ type ParsedValues = {
 
 const START_MARKER = "=== COCALC NEBIUS CONFIG START ===";
 const END_MARKER = "=== COCALC NEBIUS CONFIG END ===";
+
+function shQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\"'\"'")}'`;
+}
 
 function normalizeRegionEntry(entry: any): RegionConfigEntry | null {
   if (!entry || typeof entry !== "object") return null;
@@ -128,6 +134,11 @@ export default function NebiusCliWizard({
   const [parsed, setParsed] = useState<ParsedValues | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [challenge, setChallenge] = useState<
+    (ProviderSetupChallenge & { token?: string }) | null
+  >(null);
+  const [challengeError, setChallengeError] = useState("");
+  const [challengeLoading, setChallengeLoading] = useState(false);
 
   const scriptUrl = useMemo(() => {
     if (typeof window === "undefined") return "";
@@ -139,13 +150,19 @@ export default function NebiusCliWizard({
     return `${window.location.origin}${base}/project-host/nebius-setup.sh`;
   }, [softwareBaseUrl]);
 
-  const scriptCommand = useMemo(
-    () =>
-      scriptUrl
-        ? `curl -fsSL "${scriptUrl}" | bash`
-        : "curl -fsSL <software-base-url>/nebius/nebius-setup.sh | bash",
-    [scriptUrl],
-  );
+  const scriptCommand = useMemo(() => {
+    const uploadUrl =
+      challenge?.id && typeof window !== "undefined"
+        ? `${window.location.origin}${appBasePath === "/" ? "" : appBasePath}/project-host/provider-setup/${challenge.id}/upload`
+        : "";
+    const uploadEnv =
+      uploadUrl && challenge?.token
+        ? `COCALC_SETUP_UPLOAD_URL=${shQuote(uploadUrl)} COCALC_SETUP_TOKEN=${shQuote(challenge.token)} `
+        : "";
+    return scriptUrl
+      ? `curl -fsSL "${scriptUrl}" | ${uploadEnv}bash`
+      : `curl -fsSL <software-base-url>/nebius/nebius-setup.sh | ${uploadEnv}bash`;
+  }, [scriptUrl, challenge]);
 
   const scriptMarkdown = useMemo(
     () => `Run this once in your terminal (after installing and authenticating \`nebius\`):
@@ -181,6 +198,53 @@ You can review the script here: ${
     setParsed(normalized);
   }
 
+  async function startUploadChallenge() {
+    setChallengeLoading(true);
+    setChallengeError("");
+    try {
+      const next =
+        await webapp_client.conat_client.hub.system.createProviderSetupChallenge(
+          { provider: "nebius" },
+        );
+      setChallenge(next);
+      setNotice("Direct upload challenge created.");
+    } catch (err) {
+      setChallengeError(`${err}`);
+    } finally {
+      setChallengeLoading(false);
+    }
+  }
+
+  async function refreshUploadChallenge() {
+    if (!challenge?.id) return;
+    setChallengeLoading(true);
+    setChallengeError("");
+    try {
+      const next =
+        await webapp_client.conat_client.hub.system.getProviderSetupChallenge({
+          id: challenge.id,
+        });
+      setChallenge({ ...next, token: challenge.token });
+      const normalized = normalizeParsed(next.payload);
+      if (normalized) {
+        setParsed(normalized);
+        setParseError(null);
+      }
+    } catch (err) {
+      setChallengeError(`${err}`);
+    } finally {
+      setChallengeLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!challenge?.id || challenge.status !== "pending") return;
+    const timer = setInterval(() => {
+      void refreshUploadChallenge();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [challenge?.id, challenge?.status]);
+
   async function applySettings() {
     if (!parsed) return;
     const updates: Record<string, string> = {};
@@ -193,6 +257,16 @@ You can review the script here: ${
       updates.project_hosts_nebius_prefix = parsed.project_hosts_nebius_prefix;
     }
     await onApply(updates);
+    if (challenge?.id && challenge.status === "uploaded") {
+      try {
+        await webapp_client.conat_client.hub.system.clearProviderSetupChallenge(
+          { id: challenge.id },
+        );
+      } catch {
+        // Non-fatal: settings are applied and expired challenge cleanup will
+        // remove the temporary payload later.
+      }
+    }
     setNotice("Settings applied and saved.");
     onClose();
   }
@@ -223,6 +297,44 @@ You can review the script here: ${
         </div>
         <div>
           <strong>Step 2 - Run this script</strong>
+          <div style={{ marginTop: "8px" }}>
+            <Button
+              size="small"
+              icon={<Icon name="cloud-upload" />}
+              loading={challengeLoading}
+              onClick={startUploadChallenge}
+            >
+              Use direct upload instead of paste
+            </Button>
+            {challenge ? (
+              <Button
+                size="small"
+                style={{ marginLeft: "8px" }}
+                loading={challengeLoading}
+                onClick={refreshUploadChallenge}
+              >
+                Check upload
+              </Button>
+            ) : null}
+          </div>
+          {challengeError ? (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginTop: "8px" }}
+              title="Direct upload setup error"
+              description={challengeError}
+            />
+          ) : null}
+          {challenge?.status === "uploaded" && parsed ? (
+            <Alert
+              type="success"
+              showIcon
+              style={{ marginTop: "8px" }}
+              title="Configuration uploaded."
+              description="Review the parsed settings below, then apply them."
+            />
+          ) : null}
           <StaticMarkdown value={scriptMarkdown} />
         </div>
         <div>

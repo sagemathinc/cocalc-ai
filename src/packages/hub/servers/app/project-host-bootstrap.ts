@@ -12,6 +12,7 @@ import {
 } from "@cocalc/server/project-host/bootstrap-token";
 import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 import type { HostMachine } from "@cocalc/conat/hub/api/hosts";
+import { uploadProviderSetupChallengePayload } from "@cocalc/server/provider-setup/challenges";
 
 const logger = getLogger("hub:servers:app:project-host-bootstrap");
 
@@ -180,6 +181,34 @@ export default function init(router: Router) {
       res.status(500).send("gcp-setup.sh fetch failed");
     }
   });
+
+  router.post(
+    "/project-host/provider-setup/:id/upload",
+    jsonParser,
+    async (req, res) => {
+      try {
+        const token = extractToken(req);
+        if (!token) {
+          res.status(401).json({ error: "missing provider setup token" });
+          return;
+        }
+        const challenge = await uploadProviderSetupChallengePayload({
+          id: req.params.id,
+          token,
+          payload: req.body,
+        });
+        res.json({
+          id: challenge.id,
+          provider: challenge.provider,
+          status: challenge.status,
+          uploaded_at: challenge.uploaded_at,
+        });
+      } catch (err) {
+        logger.warn("provider setup upload failed", err);
+        res.status(400).json({ error: `${err}` });
+      }
+    },
+  );
 
   router.get("/project-host/bootstrap", async (req, res) => {
     try {

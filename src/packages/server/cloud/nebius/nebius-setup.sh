@@ -339,7 +339,8 @@ fi
 # 7) Emit a JSON blob that the wizard can parse and apply.
 export CONFIG_TMP NEBIUS_PREFIX START_MARKER END_MARKER
 
-python3 - <<'PY'
+OUT_PATH=$(mktemp)
+python3 - > "$OUT_PATH" <<'PY'
 import json, os
 config_path = os.environ["CONFIG_TMP"]
 prefix = os.environ.get("NEBIUS_PREFIX", "cocalc-host")
@@ -360,13 +361,26 @@ out = {
   "nebius_region_config_json": region_config,
   "project_hosts_nebius_prefix": prefix,
 }
-print(os.environ.get("START_MARKER"))
 print(json.dumps(out, indent=2))
-print(os.environ.get("END_MARKER"))
 PY
 
+if [ -n "${COCALC_SETUP_UPLOAD_URL:-}" ] && [ -n "${COCALC_SETUP_TOKEN:-}" ]; then
+  log "Uploading Nebius configuration to CoCalc setup challenge"
+  curl -fsS \
+    -X POST \
+    -H "Authorization: Bearer ${COCALC_SETUP_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data-binary "@${OUT_PATH}" \
+    "$COCALC_SETUP_UPLOAD_URL" >/dev/null
+  log "Upload complete. Return to CoCalc to review and apply the settings."
+else
+  echo "$START_MARKER"
+  cat "$OUT_PATH"
+  echo "$END_MARKER"
+fi
+
 # 8) Cleanup temp files with credentials.
-rm -f "$CONFIG_TMP"
+rm -f "$CONFIG_TMP" "$OUT_PATH"
 for f in "${CREDS_FILES[@]}"; do
   rm -f "$f"
 done

@@ -106,6 +106,10 @@ export const system = {
   setProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
+  bootstrapCloudflareConfiguration: authFirst,
+  createProviderSetupChallenge: authFirst,
+  getProviderSetupChallenge: authFirst,
+  clearProviderSetupChallenge: authFirst,
   upsertBrowserSession: authFirst,
   listBrowserSessions: authFirst,
   removeBrowserSession: authFirst,
@@ -123,6 +127,20 @@ export const system = {
   userSalesloftSync: authFirst,
 };
 
+export type ProviderSetupChallengeProvider = "gcp" | "nebius";
+export type ProviderSetupChallengeStatus = "pending" | "uploaded" | "expired";
+
+export interface ProviderSetupChallenge {
+  id: string;
+  provider: ProviderSetupChallengeProvider;
+  status: ProviderSetupChallengeStatus;
+  created_at: string;
+  expires_at: string;
+  uploaded_at?: string;
+  payload?: Record<string, unknown>;
+  error?: string;
+}
+
 export interface ExternalCredentialInfo {
   id: string;
   provider: string;
@@ -136,6 +154,26 @@ export interface ExternalCredentialInfo {
   updated: Date;
   revoked?: Date | null;
   last_used?: Date | null;
+}
+
+export interface CloudflareBootstrapResult {
+  account_id?: string;
+  account_name?: string;
+  zone_id?: string;
+  zone_name?: string;
+  durable_token_id?: string;
+  bootstrap_token_id?: string;
+  bootstrap_token_invalidated?: boolean;
+  bootstrap_token_invalidation_error?: string;
+  tunnel_token: { ok: boolean; message?: string };
+  visitor_location_headers: {
+    ok: boolean;
+    message?: string;
+    transform_id?: string;
+  };
+  r2: { ok: boolean; message?: string };
+  values: Record<string, string>;
+  notes: string[];
 }
 
 export interface AccountMembershipPortabilityRepairCounts {
@@ -1544,6 +1582,31 @@ export interface System {
       r2_endpoint?: string;
     };
   }) => Promise<R2CredentialsTestResult>;
+
+  bootstrapCloudflareConfiguration: (opts: {
+    account_id?: string;
+    domain: string;
+    token: string;
+    tunnelPrefix?: string;
+    hostSuffix?: string;
+    r2BucketPrefix?: string;
+    invalidateBootstrapToken?: boolean;
+  }) => Promise<CloudflareBootstrapResult>;
+
+  createProviderSetupChallenge: (opts: {
+    account_id?: string;
+    provider: ProviderSetupChallengeProvider;
+  }) => Promise<ProviderSetupChallenge & { token: string }>;
+
+  getProviderSetupChallenge: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<ProviderSetupChallenge>;
+
+  clearProviderSetupChallenge: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<{ deleted: boolean }>;
 
   upsertBrowserSession: (opts: {
     account_id?: string;
