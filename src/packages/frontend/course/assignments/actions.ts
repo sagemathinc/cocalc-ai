@@ -71,6 +71,7 @@ import {
   STUDENT_SUBDIR,
 } from "./consts";
 import { DUE_DATE_FILENAME } from "../common/consts";
+import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import type {
   CourseCollectAssignmentItem,
   ProjectCopyDestination,
@@ -82,6 +83,12 @@ import {
 } from "../copy-lro";
 
 const UPDATE_DUE_DATE_FILENAME_DEBOUNCE_MS = 3000;
+const TERMINAL_LRO_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "canceled",
+  "expired",
+]);
 
 export class AssignmentsActions {
   private course_actions: CourseActions;
@@ -442,6 +449,71 @@ export class AssignmentsActions {
         auto_collect_error: `${err}`,
       });
       this.course_actions.set_error(`schedule assignment collection: ${err}`);
+    }
+  };
+
+  private apply_collect_lro_summary = (summary: LroSummary): void => {
+    const assignment_id = summary.input?.assignment_id;
+    if (!assignment_id) return;
+    const { store } = this.course_actions.resolve({ assignment_id });
+    const result = courseCollectResultByStudent(summary);
+    const items = Array.isArray(summary.input?.items)
+      ? summary.input.items
+      : [];
+    for (const item of items as CourseCollectAssignmentItem[]) {
+      if (!item?.student_id) continue;
+      const err =
+        result[item.student_id] ??
+        (summary.status === "succeeded"
+          ? ""
+          : (summary.error ?? summary.status));
+      if (
+        !err &&
+        store.last_copied("collect", assignment_id, item.student_id, true)
+      ) {
+        continue;
+      }
+      this.finish_copy(assignment_id, item.student_id, "last_collect", err);
+    }
+    this.set_assignment_fields(assignment_id, {
+      auto_collect: false,
+      auto_collect_op_id: null,
+      auto_collect_run_at: null,
+      auto_collect_error:
+        summary.status === "succeeded"
+          ? null
+          : (summary.error ?? summary.status),
+    });
+  };
+
+  reconcile_scheduled_collections = async (): Promise<void> => {
+    if (this.course_actions.is_closed()) return;
+    const store = this.get_store();
+    const assignments = store.get("assignments");
+    if (!assignments) return;
+    for (const assignment of assignments.valueSeq().toArray()) {
+      if (this.course_actions.is_closed()) return;
+      const op_id = assignment.get("auto_collect_op_id");
+      if (!op_id) continue;
+      try {
+        const summary = await webapp_client.conat_client.hub.lro.get({
+          op_id,
+        });
+        if (!summary) {
+          this.set_assignment_fields(assignment.get("assignment_id"), {
+            auto_collect: false,
+            auto_collect_error: "scheduled collection operation not found",
+          });
+          continue;
+        }
+        if (TERMINAL_LRO_STATUSES.has(summary.status)) {
+          this.apply_collect_lro_summary(summary);
+        }
+      } catch (err) {
+        this.set_assignment_fields(assignment.get("assignment_id"), {
+          auto_collect_error: `${err}`,
+        });
+      }
     }
   };
 
