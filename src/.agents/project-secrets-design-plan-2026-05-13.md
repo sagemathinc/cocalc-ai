@@ -276,6 +276,51 @@ Suggested UI:
 - choose conflict behavior: skip existing or overwrite existing.
 - show restart-required notice for the target project.
 
+## Project Clone Behavior
+
+Project clone should copy project secrets automatically.
+
+Rationale:
+
+- clone project is intended to make an instant functional copy of the source
+  project.
+- current clone semantics preserve owner/collaborators.
+- same-host clone uses btrfs copy-on-write for project files, but secrets are
+  deliberately outside the project filesystem, so they need explicit handling.
+- without automatic copy, users will likely manually reveal/copy/paste secrets,
+  which is more dangerous and error-prone.
+
+Rules:
+
+- clone copies all source project secrets to the new project by default.
+- cloned secrets must be decrypted and re-encrypted with the new target
+  `project_id` in authenticated metadata.
+- do not copy encrypted blobs byte-for-byte.
+- enforce `PROJECT_SECRETS_MAX_COUNT` on the target, though normal clone should
+  already be at or below the cap if the source is valid.
+- if secret copy fails, project clone should fail before reporting success, or
+  clearly roll back the newly created project. Silent partial clones are not
+  acceptable.
+- audit copied secrets as part of the clone operation. A compact
+  `project_secrets_cloned` event with source project, target project, actor, and
+  count is enough; do not emit values.
+
+UI/documentation:
+
+- the clone modal should say that project secrets are copied to the new project.
+- if a future clone option allows changing collaborators or owner during clone,
+  the modal must make the secret-copy behavior explicit and may need an opt-out.
+
+Tests:
+
+- clone copies secret metadata/value successfully.
+- cloned ciphertext differs from source ciphertext because of target
+  `project_id` binding.
+- cloned secret decrypts under target project metadata.
+- source ciphertext fails to decrypt under target project metadata if copied
+  raw.
+- clone fails or rolls back on secret copy failure.
+
 ## Project-Host Cache
 
 The project-host needs to start projects when the central hub is temporarily
@@ -412,6 +457,7 @@ Project Settings:
 - copy secrets from another project by name, without revealing values.
 - no reveal button.
 - after add/replace/delete/copy, show “restart project to apply”.
+- clone-project modal says project secrets are copied into the clone.
 
 Suggested copy:
 
@@ -448,6 +494,7 @@ Do not print values.
 - Add `project_secrets` schema/migration.
 - Implement list/set/delete helpers in server/database code.
 - Implement copy helpers that re-encrypt under the target project metadata.
+- Integrate the same re-encrypting copy helper into project clone.
 - Add Conat hub API methods.
 - Enforce count and value-size limits transactionally.
 - Add audit events.
@@ -503,6 +550,7 @@ Recommended first policy:
 - Verify logs and audit events do not include values.
 - Verify project restart applies changes.
 - Verify copied secrets materialize only in the target after restart.
+- Verify cloned projects receive re-encrypted copies of source project secrets.
 - Verify central hub outage behavior.
 
 ## Open Questions
