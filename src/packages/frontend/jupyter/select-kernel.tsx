@@ -273,6 +273,31 @@ export function KernelSelector({
     ));
   }
 
+  function render_install_kernel_items(): Rendered[] {
+    return [
+      <Descriptions.Item key="install-generic-kernel" label="Ask Agent">
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: "12px",
+            alignItems: "flex-start",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div>Install any Jupyter kernel you need in this project.</div>
+            <Text type="secondary" style={{ fontSize: "12px" }}>
+              Agent will inspect the project environment, install the kernel,
+              and register its kernelspec.
+            </Text>
+          </div>
+          {renderAskAgentButton()}
+        </div>
+      </Descriptions.Item>,
+      ...render_popular_kernel_install_items(),
+    ];
+  }
+
   function kernel_name(name: string): string | undefined {
     return kernel_attr(name, "display_name");
   }
@@ -417,7 +442,7 @@ export function KernelSelector({
           </Paragraph>
         </Space>
       </Descriptions.Item>,
-      ...render_popular_kernel_install_items(),
+      ...render_install_kernel_items(),
     ];
   }
 
@@ -455,6 +480,7 @@ export function KernelSelector({
 
   function render_select_all() {
     const all = render_all_langs();
+    const hasKnownKernels = (kernels_by_name?.size ?? 0) > 0;
 
     const items: TabsProps["items"] = [
       {
@@ -472,6 +498,22 @@ export function KernelSelector({
         ),
       },
     ];
+    if (hasKnownKernels) {
+      items.push({
+        key: "install",
+        label: (
+          <>
+            <Icon name="plus-circle" />{" "}
+            {embedded ? "Install" : "Install kernels"}
+          </>
+        ),
+        children: (
+          <Descriptions bordered column={1} style={sectionStyle}>
+            {render_install_kernel_items()}
+          </Descriptions>
+        ),
+      });
+    }
 
     return (
       <Tabs
