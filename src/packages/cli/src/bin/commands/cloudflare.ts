@@ -87,6 +87,10 @@ function r2UsageRows(result: any) {
 }
 
 function summarizeR2Audit(result: any) {
+  const hasRefinedBreakdown =
+    Array.isArray(result.rustic_repos) &&
+    result.project_backup_index != null &&
+    result.other != null;
   const rusticRepos = result.rustic_repos ?? [];
   const rusticObjectCount = rusticRepos.reduce(
     (total: number, repo: any) => total + (repo.object_count ?? 0),
@@ -98,7 +102,21 @@ function summarizeR2Audit(result: any) {
   );
   const index = result.project_backup_index ?? {};
   const other = result.other ?? {};
+  const indexBytes = index.total_bytes ?? 0;
+  const otherBytes = other.total_bytes ?? 0;
+  const breakdownTotalBytes = rusticTotalBytes + indexBytes + otherBytes;
+  const breakdownDeltaBytes =
+    typeof result.total_bytes === "number"
+      ? result.total_bytes - breakdownTotalBytes
+      : undefined;
+  const warnings = [...(result.warnings ?? [])];
+  if (!hasRefinedBreakdown) {
+    warnings.push(
+      "refined audit breakdown unavailable; rebuild/restart the hub and rerun with --refresh",
+    );
+  }
   return {
+    audit_schema_version: result.audit_schema_version ?? "",
     bucket: result.bucket,
     prefix: result.prefix ?? "",
     scanned_at: result.scanned_at,
@@ -110,13 +128,18 @@ function summarizeR2Audit(result: any) {
     rustic_objects: rusticObjectCount,
     rustic_total: bytes(rusticTotalBytes),
     index_files: index.object_count ?? 0,
-    index_total: bytes(index.total_bytes),
+    index_total: bytes(indexBytes),
     other_objects: other.object_count ?? 0,
-    other_total: bytes(other.total_bytes),
+    other_total: bytes(otherBytes),
+    breakdown_total: hasRefinedBreakdown ? bytes(breakdownTotalBytes) : "",
+    breakdown_matches_total: hasRefinedBreakdown
+      ? breakdownDeltaBytes === 0
+      : "",
+    breakdown_delta: hasRefinedBreakdown ? bytes(breakdownDeltaBytes) : "",
     db_purpose: result.database?.purpose ?? "",
     db_region: result.database?.region ?? "",
     db_projects: result.database?.assigned_projects ?? "",
-    warnings: (result.warnings ?? []).join(" "),
+    warnings: warnings.join(" "),
     notes: (result.notes ?? []).join(" "),
   };
 }
@@ -180,6 +203,25 @@ function reportProgress(ctx: any, message: string): void {
   process.stderr.write(`${message}\n`);
 }
 
+async function withScanTimeout<T>(
+  ctx: any,
+  timeoutMinutes: number | undefined,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const minutes = Math.max(1, timeoutMinutes ?? 360);
+  const timeoutMs = minutes * 60 * 1000;
+  const prevTimeoutMs = ctx.timeoutMs;
+  const prevRpcTimeoutMs = ctx.rpcTimeoutMs;
+  ctx.timeoutMs = Math.max(prevTimeoutMs ?? 0, timeoutMs);
+  ctx.rpcTimeoutMs = Math.max(prevRpcTimeoutMs ?? 0, timeoutMs);
+  try {
+    return await fn();
+  } finally {
+    ctx.timeoutMs = prevTimeoutMs;
+    ctx.rpcTimeoutMs = prevRpcTimeoutMs;
+  }
+}
+
 function recomputeR2UsageTotals(result: any): void {
   const sum = (field: string) => {
     let total = 0;
@@ -214,12 +256,7 @@ async function runR2UsageScan(ctx: any, options: any): Promise<any> {
   if (buckets.length === 0) return result;
 
   const timeoutMinutes = Math.max(1, options.scanTimeoutMinutes ?? 360);
-  const scanTimeoutMs = timeoutMinutes * 60 * 1000;
-  const prevTimeoutMs = ctx.timeoutMs;
-  const prevRpcTimeoutMs = ctx.rpcTimeoutMs;
-  ctx.timeoutMs = Math.max(prevTimeoutMs ?? 0, scanTimeoutMs);
-  ctx.rpcTimeoutMs = Math.max(prevRpcTimeoutMs ?? 0, scanTimeoutMs);
-  try {
+  await withScanTimeout(ctx, timeoutMinutes, async () => {
     reportProgress(
       ctx,
       `scanning ${buckets.length} R2 bucket${buckets.length === 1 ? "" : "s"} via S3 listings; per-bucket timeout is ${timeoutMinutes} minutes`,
@@ -249,10 +286,7 @@ async function runR2UsageScan(ctx: any, options: any): Promise<any> {
         `finished R2 bucket ${label}: ${bucket.bucket} (${audit.object_count} objects, ${bytes(audit.total_bytes)}, ${audit.cache?.hit ? "cache" : "scan"}, ${seconds}s)`,
       );
     }
-  } finally {
-    ctx.timeoutMs = prevTimeoutMs;
-    ctx.rpcTimeoutMs = prevRpcTimeoutMs;
-  }
+  });
 
   result.buckets = buckets.sort(
     (a: any, b: any) => (b.total_bytes ?? -1) - (a.total_bytes ?? -1),
@@ -374,6 +408,12 @@ export function registerCloudflareCommand(
       "Use cached audit data if it is this many minutes old or newer",
       parseNonNegativeInt,
     )
+    .option(
+      "--scan-timeout-minutes <minutes>",
+      "Maximum time to wait for the bucket scan",
+      parseNonNegativeInt,
+      360,
+    )
     .option("--categories", "Show category rows instead of the summary")
     .option("--rustic-repos", "Show per-rustic-repository usage rows")
     .option("--other-prefixes", "Show top non-rustic, non-index prefix rows")
@@ -381,12 +421,23 @@ export function registerCloudflareCommand(
     .option("--top-objects", "Show largest object rows")
     .action(async (bucket, options, command) => {
       await deps.withContext(command, "cloudflare r2 audit", async (ctx) => {
-        const result = await ctx.hub.system.auditCloudflareR2Bucket({
-          bucket,
-          prefix: options.prefix,
-          refresh: !!options.refresh,
-          max_age_minutes: options.maxAgeMinutes,
-        });
+        if (options.refresh) {
+          reportProgress(
+            ctx,
+            `scanning R2 bucket ${bucket}; timeout is ${Math.max(1, options.scanTimeoutMinutes ?? 360)} minutes`,
+          );
+        }
+        const result = await withScanTimeout(
+          ctx,
+          options.scanTimeoutMinutes,
+          async () =>
+            await ctx.hub.system.auditCloudflareR2Bucket({
+              bucket,
+              prefix: options.prefix,
+              refresh: !!options.refresh,
+              max_age_minutes: options.maxAgeMinutes,
+            }),
+        );
         if (options.categories) return r2AuditCategoryRows(result);
         if (options.rusticRepos) return r2AuditRusticRepoRows(result);
         if (options.otherPrefixes) return r2AuditOtherPrefixRows(result);

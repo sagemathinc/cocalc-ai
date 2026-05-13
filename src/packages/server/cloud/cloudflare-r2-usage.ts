@@ -12,6 +12,7 @@ const DEFAULT_AUDIT_CACHE_TTL_MS = 60 * 60 * 1000;
 const MAX_EXAMPLES_PER_CATEGORY = 3;
 const MAX_TOP_OBJECTS = 20;
 const MAX_TOP_PREFIXES = 30;
+const R2_AUDIT_SCHEMA_VERSION = 2;
 
 type CloudflareResponse<T> = {
   success?: boolean;
@@ -136,6 +137,7 @@ export type CloudflareR2AuditRusticRepo = CloudflareR2AuditUsageGroup & {
 };
 
 export type CloudflareR2AuditResult = {
+  audit_schema_version?: number;
   account_id: string;
   bucket: string;
   prefix?: string;
@@ -745,6 +747,7 @@ async function getCachedAudit(opts: {
   const cached = rows[0]?.result_json;
   if (!cached) return undefined;
   if (
+    cached.audit_schema_version !== R2_AUDIT_SCHEMA_VERSION ||
     !Array.isArray(cached.rustic_repos) ||
     cached.project_backup_index == null ||
     cached.other == null ||
@@ -893,6 +896,7 @@ export async function auditCloudflareR2Bucket({
 
   const scannedAt = new Date();
   const result: CloudflareR2AuditResult = {
+    audit_schema_version: R2_AUDIT_SCHEMA_VERSION,
     account_id: accountId,
     bucket: bucketName,
     prefix: normalizedPrefix || undefined,

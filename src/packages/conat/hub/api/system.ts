@@ -314,6 +314,7 @@ export interface CloudflareR2AuditRusticRepo extends CloudflareR2AuditUsageGroup
 }
 
 export interface CloudflareR2AuditResult {
+  audit_schema_version?: number;
   account_id: string;
   bucket: string;
   prefix?: string;
