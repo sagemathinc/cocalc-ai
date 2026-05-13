@@ -135,6 +135,101 @@ function parseNonNegativeInt(value: string): number {
   return n;
 }
 
+function isJsonOutput(ctx: any): boolean {
+  return !!ctx.globals?.json || ctx.globals?.output === "json";
+}
+
+function reportProgress(ctx: any, message: string): void {
+  if (isJsonOutput(ctx) || ctx.globals?.quiet) return;
+  process.stderr.write(`${message}\n`);
+}
+
+function recomputeR2UsageTotals(result: any): void {
+  const sum = (field: string) => {
+    let total = 0;
+    let seen = false;
+    for (const bucket of result.buckets ?? []) {
+      const value = bucket[field];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        total += value;
+        seen = true;
+      }
+    }
+    return seen ? total : undefined;
+  };
+
+  result.totals = {
+    object_count: sum("object_count"),
+    payload_bytes: sum("payload_bytes"),
+    metadata_bytes: sum("metadata_bytes"),
+    total_bytes: sum("total_bytes"),
+    upload_count: sum("upload_count"),
+  };
+}
+
+async function runR2UsageScan(ctx: any, options: any): Promise<any> {
+  const result = await ctx.hub.system.getCloudflareR2Usage({
+    all_buckets: !!options.all,
+    scan: false,
+    refresh: false,
+    max_age_minutes: options.maxAgeMinutes,
+  });
+  const buckets = result.buckets ?? [];
+  if (buckets.length === 0) return result;
+
+  const timeoutMinutes = Math.max(1, options.scanTimeoutMinutes ?? 360);
+  const scanTimeoutMs = timeoutMinutes * 60 * 1000;
+  const prevTimeoutMs = ctx.timeoutMs;
+  const prevRpcTimeoutMs = ctx.rpcTimeoutMs;
+  ctx.timeoutMs = Math.max(prevTimeoutMs ?? 0, scanTimeoutMs);
+  ctx.rpcTimeoutMs = Math.max(prevRpcTimeoutMs ?? 0, scanTimeoutMs);
+  try {
+    reportProgress(
+      ctx,
+      `scanning ${buckets.length} R2 bucket${buckets.length === 1 ? "" : "s"} via S3 listings; per-bucket timeout is ${timeoutMinutes} minutes`,
+    );
+    for (let i = 0; i < buckets.length; i += 1) {
+      const bucket = buckets[i];
+      const label = `${i + 1}/${buckets.length}`;
+      reportProgress(ctx, `scanning R2 bucket ${label}: ${bucket.bucket}`);
+      const started = Date.now();
+      const audit = await ctx.hub.system.auditCloudflareR2Bucket({
+        bucket: bucket.bucket,
+        refresh: !!options.refresh,
+        max_age_minutes: options.maxAgeMinutes,
+      });
+      bucket.object_count = audit.object_count;
+      bucket.payload_bytes = audit.total_bytes;
+      bucket.total_bytes = audit.total_bytes;
+      bucket.measured_at = audit.scanned_at;
+      bucket.metrics_source = audit.cache?.hit ? "s3-cache" : "s3-scan";
+      bucket.database = audit.database ?? bucket.database;
+      if (Array.isArray(audit.warnings) && audit.warnings.length > 0) {
+        result.warnings = [...(result.warnings ?? []), ...audit.warnings];
+      }
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      reportProgress(
+        ctx,
+        `finished R2 bucket ${label}: ${bucket.bucket} (${audit.object_count} objects, ${bytes(audit.total_bytes)}, ${audit.cache?.hit ? "cache" : "scan"}, ${seconds}s)`,
+      );
+    }
+  } finally {
+    ctx.timeoutMs = prevTimeoutMs;
+    ctx.rpcTimeoutMs = prevRpcTimeoutMs;
+  }
+
+  result.buckets = buckets.sort(
+    (a: any, b: any) => (b.total_bytes ?? -1) - (a.total_bytes ?? -1),
+  );
+  recomputeR2UsageTotals(result);
+  result.checked_at = new Date().toISOString();
+  result.notes = [
+    ...(result.notes ?? []),
+    "Exact usage was refreshed by scanning each selected bucket via S3 listings.",
+  ];
+  return result;
+}
+
 export function registerCloudflareCommand(
   program: Command,
   deps: CloudflareCommandDeps,
@@ -213,19 +308,23 @@ export function registerCloudflareCommand(
       "Use cached S3 usage data if it is this many minutes old or newer",
       parseNonNegativeInt,
     )
+    .option(
+      "--scan-timeout-minutes <minutes>",
+      "Maximum time to wait for each scanned bucket",
+      parseNonNegativeInt,
+      360,
+    )
     .option("--summary", "Show account-level summary instead of bucket rows")
     .action(async (options, command) => {
       await deps.withContext(command, "cloudflare r2 usage", async (ctx) => {
-        const result = await ctx.hub.system.getCloudflareR2Usage({
-          all_buckets: !!options.all,
-          scan: options.scan
-            ? true
-            : options.s3Scan === false
-              ? false
-              : undefined,
-          refresh: !!options.refresh,
-          max_age_minutes: options.maxAgeMinutes,
-        });
+        const result = options.scan
+          ? await runR2UsageScan(ctx, options)
+          : await ctx.hub.system.getCloudflareR2Usage({
+              all_buckets: !!options.all,
+              scan: options.s3Scan === false ? false : undefined,
+              refresh: !!options.refresh,
+              max_age_minutes: options.maxAgeMinutes,
+            });
         return options.summary ? summarizeR2Usage(result) : r2UsageRows(result);
       });
     });

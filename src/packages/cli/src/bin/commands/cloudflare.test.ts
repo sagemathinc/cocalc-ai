@@ -8,6 +8,9 @@ function deps(overrides: Record<string, any> = {}) {
   return {
     withContext: async (_command: unknown, _label: string, fn: any) => {
       const ctx = {
+        globals: { json: true, output: "json" },
+        timeoutMs: 30_000,
+        rpcTimeoutMs: 30_000,
         hub: {
           system: {},
         },
@@ -196,14 +199,15 @@ test("cloudflare r2 usage can request all visible buckets", async () => {
 });
 
 test("cloudflare r2 usage passes S3 scan controls", async () => {
-  let capturedArgs: any;
+  let capturedUsageArgs: any;
+  let capturedAuditArgs: any;
   const program = new Command();
   registerCloudflareCommand(
     program,
     deps({
       system: {
         getCloudflareR2Usage: async (opts: any) => {
-          capturedArgs = opts;
+          capturedUsageArgs = opts;
           return {
             checked_at: "2026-05-12T00:00:00.000Z",
             account_id: "acct",
@@ -211,7 +215,34 @@ test("cloudflare r2 usage passes S3 scan controls", async () => {
             bucket_count: 1,
             cloudflare_bucket_count: 1,
             totals: {},
-            buckets: [],
+            buckets: [
+              {
+                bucket: "lite4b-wnam",
+                metrics_source: "unavailable",
+                database: { known: true, purpose: "project-backups" },
+              },
+            ],
+            warnings: [],
+            notes: [],
+          };
+        },
+        auditCloudflareR2Bucket: async (opts: any) => {
+          capturedAuditArgs = opts;
+          return {
+            account_id: "acct",
+            bucket: opts.bucket,
+            scanned_at: "2026-05-12T00:01:00.000Z",
+            cache: {
+              hit: false,
+              max_age_minutes: opts.max_age_minutes,
+              expires_at: "2026-05-12T01:01:00.000Z",
+            },
+            object_count: 3,
+            total_bytes: 4096,
+            categories: [],
+            top_prefixes: [],
+            top_objects: [],
+            database: { known: true, purpose: "project-backups" },
             warnings: [],
             notes: [],
           };
@@ -232,9 +263,14 @@ test("cloudflare r2 usage passes S3 scan controls", async () => {
     "10",
   ]);
 
-  assert.deepEqual(capturedArgs, {
+  assert.deepEqual(capturedUsageArgs, {
     all_buckets: false,
-    scan: true,
+    scan: false,
+    refresh: false,
+    max_age_minutes: 10,
+  });
+  assert.deepEqual(capturedAuditArgs, {
+    bucket: "lite4b-wnam",
     refresh: true,
     max_age_minutes: 10,
   });
