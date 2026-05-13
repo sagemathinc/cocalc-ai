@@ -69,7 +69,7 @@ function decodeJsonSegment<T>(value: string): T {
   return JSON.parse(base64UrlDecode(value).toString("utf8"));
 }
 
-function parseCacheMaxAge(cacheControl: string | undefined): number {
+function parseCacheMaxAge(cacheControl: unknown): number {
   const match = `${cacheControl ?? ""}`.match(/(?:^|,\s*)max-age=(\d+)/i);
   return match == null ? 3600 : Number(match[1]);
 }
