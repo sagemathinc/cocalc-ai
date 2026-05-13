@@ -588,30 +588,36 @@ export function SsoAdmin() {
   async function load() {
     setLoading(true);
     try {
-      const result = await query({
-        query: {
-          sso_providers: {
-            provider_id: "*",
-            kind: null,
-            display: null,
-            enabled: null,
-            public: null,
-            config: null,
-            notes: null,
+      const [providersResult, policiesResult] = await Promise.all([
+        query({
+          query: {
+            sso_providers: {
+              provider_id: "*",
+              kind: null,
+              display: null,
+              enabled: null,
+              public: null,
+              config: null,
+              notes: null,
+            },
           },
-          sso_domain_policies: {
-            domain: "*",
-            provider_id: null,
-            mode: null,
-            enabled: null,
-            require_cocalc_2fa: null,
-            signup_mode: null,
-            notes: null,
+        }),
+        query({
+          query: {
+            sso_domain_policies: {
+              domain: "*",
+              provider_id: null,
+              mode: null,
+              enabled: null,
+              require_cocalc_2fa: null,
+              signup_mode: null,
+              notes: null,
+            },
           },
-        },
-      });
-      setProviders(result.query.sso_providers ?? []);
-      setPolicies(result.query.sso_domain_policies ?? []);
+        }),
+      ]);
+      setProviders(providersResult.query.sso_providers ?? []);
+      setPolicies(policiesResult.query.sso_domain_policies ?? []);
       setError("");
     } catch (err) {
       setError(`${err}`);
