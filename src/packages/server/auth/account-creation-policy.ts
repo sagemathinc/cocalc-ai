@@ -30,6 +30,7 @@ export interface AccountCreationPolicyInput {
   email_verified?: boolean;
   requires_registration_token?: boolean;
   registration_token_validated?: boolean;
+  domain_sso_validated?: boolean;
   existing_account?: boolean;
   sso_required_domain?: string;
 }
@@ -44,6 +45,7 @@ export function evaluateAccountCreationPolicy({
   email_verified = false,
   requires_registration_token = false,
   registration_token_validated = false,
+  domain_sso_validated = false,
   existing_account = false,
   sso_required_domain,
 }: AccountCreationPolicyInput): AccountCreationPolicyDecision {
@@ -55,7 +57,11 @@ export function evaluateAccountCreationPolicy({
     };
   }
 
-  if (requires_registration_token && !registration_token_validated) {
+  if (
+    requires_registration_token &&
+    !registration_token_validated &&
+    !domain_sso_validated
+  ) {
     return { type: "deny_registration_token_required" };
   }
 
@@ -69,6 +75,7 @@ export function evaluateAccountCreationPolicy({
 
   return {
     type: "allow_create",
-    trusted_account: email_verified || registration_token_validated,
+    trusted_account:
+      email_verified || registration_token_validated || domain_sso_validated,
   };
 }

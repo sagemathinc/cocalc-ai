@@ -27,6 +27,20 @@ describe("account creation policy", () => {
     ).toEqual({ type: "deny_registration_token_required" });
   });
 
+  it("allows validated domain SSO to be the registration gate", () => {
+    expect(
+      evaluateAccountCreationPolicy({
+        auth_method: "saml",
+        requires_registration_token: true,
+        domain_sso_validated: true,
+        email_verified: true,
+      }),
+    ).toEqual({
+      type: "allow_create",
+      trusted_account: true,
+    });
+  });
+
   it("does not allow signup to authenticate an existing account", () => {
     expect(
       evaluateAccountCreationPolicy({

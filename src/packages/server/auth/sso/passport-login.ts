@@ -33,6 +33,7 @@ import {
   PassportLoginLocals,
   PassportLoginOpts,
   PassportStrategyDB,
+  isSAML,
 } from "@cocalc/database/settings/auth-sso-types";
 import { callback2 as cb2 } from "@cocalc/util/async-utils";
 import { HELP_EMAIL } from "@cocalc/util/theme";
@@ -43,8 +44,62 @@ import isBanned from "@cocalc/server/accounts/is-banned";
 import accountCreationActions from "@cocalc/server/accounts/account-creation-actions";
 import clientSideRedirect from "@cocalc/server/auth/client-side-redirect";
 import setSignInCookies from "@cocalc/server/auth/set-sign-in-cookies";
+import type { AccountCreationAuthMethod } from "@cocalc/server/auth/account-creation-policy";
+import { evaluateAccountCreationPolicy } from "@cocalc/server/auth/account-creation-policy";
+import getRequiresRegistrationToken from "@cocalc/server/auth/tokens/get-requires-token";
 
 const logger = getLogger("server:auth:sso:passport-login");
+
+function normalizedEmail(value: string | undefined): string | undefined {
+  const email = `${value ?? ""}`.trim().toLowerCase();
+  return email || undefined;
+}
+
+function profileEmailMatches(
+  email: string,
+  profileEmail: string | undefined,
+): boolean {
+  return normalizedEmail(profileEmail) === email;
+}
+
+function profileHasVerifiedEmail(
+  profile: any,
+  emailAddress: string | undefined,
+): boolean {
+  const email = normalizedEmail(emailAddress);
+  if (!email) return false;
+
+  const json = profile?._json;
+  if (
+    (json?.email_verified === true || json?.email_verified === "true") &&
+    profileEmailMatches(email, json?.email)
+  ) {
+    return true;
+  }
+
+  if (
+    (profile?.email_verified === true || profile?.email_verified === "true") &&
+    profileEmailMatches(email, profile?.email)
+  ) {
+    return true;
+  }
+
+  const emails = Array.isArray(profile?.emails) ? profile.emails : [];
+  for (const item of emails) {
+    const value =
+      typeof item === "string" ? item : (item?.value ?? item?.email);
+    const verified =
+      item?.verified === true ||
+      item?.verified === "true" ||
+      item?.email_verified === true ||
+      item?.email_verified === "true";
+    if (verified && profileEmailMatches(email, value)) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 export class PassportLogin {
   private readonly passports: { [k: string]: PassportStrategyDB } = {};
@@ -248,6 +303,24 @@ export class PassportLogin {
     return false;
   }
 
+  private checkEmailMatchesExclusiveSSO(
+    opts: PassportLoginOpts,
+    email_address: string | undefined,
+  ): boolean {
+    const emailDomain = getEmailDomain(
+      `${email_address ?? ""}`.trim().toLocaleLowerCase(),
+    );
+    if (!emailDomain) return false;
+
+    const strategy = opts.passports[opts.strategyName];
+    for (const ssoDomain of strategy.info?.exclusive_domains ?? []) {
+      if (emailBelongsToDomain(emailDomain, ssoDomain)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // similar to the above, for a specific email address
   private checkEmailExclusiveSSO(email_address): boolean {
     const emailDomain = getEmailDomain(email_address.toLocaleLowerCase());
@@ -260,6 +333,28 @@ export class PassportLogin {
       }
     }
     return false;
+  }
+
+  private accountCreationAuthMethod(
+    opts: PassportLoginOpts,
+  ): AccountCreationAuthMethod {
+    const type = opts.passports[opts.strategyName]?.conf?.type;
+    if (type != null && isSAML(type)) {
+      return "saml";
+    }
+    return "google_oidc";
+  }
+
+  private isTrustedSsoEmail(
+    opts: PassportLoginOpts,
+    email_address: string | undefined,
+  ): boolean {
+    if (!email_address) return false;
+    if (this.checkEmailMatchesExclusiveSSO(opts, email_address)) {
+      // Admin-configured domain SSO is treated as the email trust boundary.
+      return true;
+    }
+    return profileHasVerifiedEmail(opts.profile, email_address);
   }
 
   // check, if depending on the strategy name and provided ID, we already know about that particular passport
@@ -419,6 +514,33 @@ export class PassportLogin {
       locals.email_address = opts.emails[0];
     }
     L(`emails=${opts.emails} email_address=${locals.email_address}`);
+    const requiresRegistrationToken = await getRequiresRegistrationToken();
+    const domainSsoValidated = this.checkEmailMatchesExclusiveSSO(
+      opts,
+      locals.email_address,
+    );
+    const emailVerified = this.isTrustedSsoEmail(opts, locals.email_address);
+    const creationPolicy = evaluateAccountCreationPolicy({
+      auth_method: this.accountCreationAuthMethod(opts),
+      email: locals.email_address,
+      email_verified: emailVerified,
+      requires_registration_token: requiresRegistrationToken,
+      domain_sso_validated: domainSsoValidated,
+    });
+    if (creationPolicy.type === "deny_registration_token_required") {
+      throw Error(
+        "Account creation requires a valid registration token. Create an account using email/password and a registration token first, then link SSO from account settings.",
+      );
+    }
+    if (creationPolicy.type === "deny_email_unverified") {
+      throw Error(
+        `The ${opts.passports[opts.strategyName].info?.display ?? opts.strategyName} SSO provider did not return a verified email address, so it cannot create a new account.`,
+      );
+    }
+    if (creationPolicy.type !== "allow_create") {
+      throw Error("SSO account creation is not allowed.");
+    }
+
     locals.account_id = await this.create_account(opts, locals.email_address);
     locals.new_account_created = true;
 
@@ -430,7 +552,7 @@ export class PassportLogin {
       // TODO: tags should be encoded in URL and passed here, but that's
       // not implemented
     });
-    if (locals.email_address != null) {
+    if (locals.email_address != null && emailVerified) {
       await set_email_address_verified({
         db: this.database,
         account_id: locals.account_id,
