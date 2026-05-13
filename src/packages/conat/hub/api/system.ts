@@ -106,6 +106,9 @@ export const system = {
   setProjectRootfsImage: authFirstRequireAccount,
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
+  createProviderSetupChallenge: authFirst,
+  getProviderSetupChallenge: authFirst,
+  clearProviderSetupChallenge: authFirst,
   upsertBrowserSession: authFirst,
   listBrowserSessions: authFirst,
   removeBrowserSession: authFirst,
@@ -121,6 +124,20 @@ export const system = {
   adminSalesloftSync: authFirst,
   userSalesloftSync: authFirst,
 };
+
+export type ProviderSetupChallengeProvider = "gcp" | "nebius";
+export type ProviderSetupChallengeStatus = "pending" | "uploaded" | "expired";
+
+export interface ProviderSetupChallenge {
+  id: string;
+  provider: ProviderSetupChallengeProvider;
+  status: ProviderSetupChallengeStatus;
+  created_at: string;
+  expires_at: string;
+  uploaded_at?: string;
+  payload?: Record<string, unknown>;
+  error?: string;
+}
 
 export interface ExternalCredentialInfo {
   id: string;
@@ -1543,6 +1560,21 @@ export interface System {
       r2_endpoint?: string;
     };
   }) => Promise<R2CredentialsTestResult>;
+
+  createProviderSetupChallenge: (opts: {
+    account_id?: string;
+    provider: ProviderSetupChallengeProvider;
+  }) => Promise<ProviderSetupChallenge & { token: string }>;
+
+  getProviderSetupChallenge: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<ProviderSetupChallenge>;
+
+  clearProviderSetupChallenge: (opts: {
+    account_id?: string;
+    id: string;
+  }) => Promise<{ deleted: boolean }>;
 
   upsertBrowserSession: (opts: {
     account_id?: string;

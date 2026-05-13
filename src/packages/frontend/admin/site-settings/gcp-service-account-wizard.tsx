@@ -8,6 +8,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@cocalc/frontend/components";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { ProviderSetupChallenge } from "@cocalc/conat/hub/api/system";
 
 interface WizardProps {
   open: boolean;
@@ -19,6 +21,10 @@ interface WizardProps {
 
 const START_MARKER = "=== COCALC GCP CONFIG START ===";
 const END_MARKER = "=== COCALC GCP CONFIG END ===";
+
+function shQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\"'\"'")}'`;
+}
 
 function extractJsonBlock(input: string): any | null {
   const trimmed = input.trim();
@@ -81,6 +87,11 @@ export default function GcpServiceAccountWizard({
   const [gcloudReady, setGcloudReady] = useState(false);
   const [jsonInput, setJsonInput] = useState("");
   const [jsonNotice, setJsonNotice] = useState("");
+  const [challenge, setChallenge] = useState<
+    (ProviderSetupChallenge & { token?: string }) | null
+  >(null);
+  const [challengeError, setChallengeError] = useState("");
+  const [challengeLoading, setChallengeLoading] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -89,6 +100,9 @@ export default function GcpServiceAccountWizard({
       setGcloudReady(false);
       setJsonInput("");
       setJsonNotice("");
+      setChallenge(null);
+      setChallengeError("");
+      setChallengeLoading(false);
       return;
     }
     const parsed = normalizeServiceAccountJson(currentJson ?? "");
@@ -126,11 +140,19 @@ export default function GcpServiceAccountWizard({
     if (!scriptUrl) {
       return "curl -fsSL <software-base-url>/gcp/gcp-setup.sh | bash";
     }
+    const uploadUrl =
+      challenge?.id && typeof window !== "undefined"
+        ? `${window.location.origin}${appBasePath === "/" ? "" : appBasePath}/project-host/provider-setup/${challenge.id}/upload`
+        : "";
+    const uploadEnv =
+      uploadUrl && challenge?.token
+        ? `COCALC_SETUP_UPLOAD_URL=${shQuote(uploadUrl)} COCALC_SETUP_TOKEN=${shQuote(challenge.token)} `
+        : "";
     if (!trimmedProject) {
-      return `curl -fsSL \"${scriptUrl}\" | bash`;
+      return `curl -fsSL \"${scriptUrl}\" | ${uploadEnv}bash`;
     }
-    return `curl -fsSL \"${scriptUrl}\" | PROJECT_ID=\"${trimmedProject}\" SA_NAME=\"${trimmedServiceAccount}\" bash`;
-  }, [scriptUrl, trimmedProject, trimmedServiceAccount]);
+    return `curl -fsSL \"${scriptUrl}\" | ${uploadEnv}PROJECT_ID=\"${trimmedProject}\" SA_NAME=\"${trimmedServiceAccount}\" bash`;
+  }, [scriptUrl, trimmedProject, trimmedServiceAccount, challenge]);
 
   const scriptMarkdown = useMemo(
     () =>
@@ -154,9 +176,55 @@ export default function GcpServiceAccountWizard({
   }, [trimmedProject, trimmedServiceAccount]);
 
   const parsedJson = normalizeServiceAccountJson(jsonInput.trim());
+  const uploadedJson = normalizeServiceAccountJson(
+    challenge?.payload == null ? "" : JSON.stringify(challenge.payload),
+  );
   const jsonProjectId = parsedJson?.project_id ?? "";
   const jsonEmail = parsedJson?.client_email ?? "";
   const jsonValid = !!parsedJson;
+  const uploadedJsonValid = !!uploadedJson;
+
+  async function startUploadChallenge() {
+    setChallengeLoading(true);
+    setChallengeError("");
+    try {
+      const next =
+        await webapp_client.conat_client.hub.system.createProviderSetupChallenge(
+          { provider: "gcp" },
+        );
+      setChallenge(next);
+      setJsonNotice("Direct upload challenge created.");
+    } catch (err) {
+      setChallengeError(`${err}`);
+    } finally {
+      setChallengeLoading(false);
+    }
+  }
+
+  async function refreshUploadChallenge() {
+    if (!challenge?.id) return;
+    setChallengeLoading(true);
+    setChallengeError("");
+    try {
+      const next =
+        await webapp_client.conat_client.hub.system.getProviderSetupChallenge({
+          id: challenge.id,
+        });
+      setChallenge({ ...next, token: challenge.token });
+    } catch (err) {
+      setChallengeError(`${err}`);
+    } finally {
+      setChallengeLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!challenge?.id || challenge.status !== "pending") return;
+    const timer = setInterval(() => {
+      void refreshUploadChallenge();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [challenge?.id, challenge?.status]);
 
   async function copyCommands() {
     if (!scriptCommand) return;
@@ -183,6 +251,23 @@ export default function GcpServiceAccountWizard({
     if (!jsonValid) return;
     onApplyJson(JSON.stringify(parsedJson, null, 2));
     setJsonNotice("Service account JSON applied to the form.");
+    onClose();
+  }
+
+  async function applyUploadedJson() {
+    if (!uploadedJsonValid) return;
+    onApplyJson(JSON.stringify(uploadedJson, null, 2));
+    if (challenge?.id) {
+      try {
+        await webapp_client.conat_client.hub.system.clearProviderSetupChallenge(
+          { id: challenge.id },
+        );
+      } catch {
+        // Non-fatal: settings are applied and expired challenge cleanup will
+        // remove the temporary payload later.
+      }
+    }
+    setJsonNotice("Uploaded service account JSON applied to the form.");
     onClose();
   }
 
@@ -249,6 +334,60 @@ export default function GcpServiceAccountWizard({
               <strong>
                 Step 4 — Run this script to create your service account
               </strong>
+              <div style={{ marginTop: "8px" }}>
+                <Button
+                  size="small"
+                  icon={<Icon name="cloud-upload" />}
+                  loading={challengeLoading}
+                  onClick={startUploadChallenge}
+                >
+                  Use direct upload instead of paste
+                </Button>
+                {challenge ? (
+                  <Button
+                    size="small"
+                    style={{ marginLeft: "8px" }}
+                    loading={challengeLoading}
+                    onClick={refreshUploadChallenge}
+                  >
+                    Check upload
+                  </Button>
+                ) : null}
+              </div>
+              {challengeError ? (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginTop: "8px" }}
+                  title="Direct upload setup error"
+                  description={challengeError}
+                />
+              ) : null}
+              {challenge?.status === "uploaded" && uploadedJsonValid ? (
+                <Alert
+                  type="success"
+                  showIcon
+                  style={{ marginTop: "8px" }}
+                  title="Configuration uploaded."
+                  description={
+                    <div>
+                      <div>
+                        <b>Project:</b> {uploadedJson.project_id}
+                      </div>
+                      <div>
+                        <b>Service account:</b> {uploadedJson.client_email}
+                      </div>
+                      <Button
+                        type="primary"
+                        style={{ marginTop: "8px" }}
+                        onClick={applyUploadedJson}
+                      >
+                        Apply Uploaded JSON
+                      </Button>
+                    </div>
+                  }
+                />
+              ) : null}
               <div style={{ marginTop: "8px" }}>
                 <StaticMarkdown value={scriptMarkdown} />
               </div>

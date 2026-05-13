@@ -79,6 +79,13 @@ import {
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
 import {
+  clearProviderSetupChallenge as clearProviderSetupChallenge0,
+  createProviderSetupChallenge as createProviderSetupChallenge0,
+  getProviderSetupChallenge as getProviderSetupChallenge0,
+  type ProviderSetupChallenge,
+  type ProviderSetupChallengeProvider,
+} from "@cocalc/server/provider-setup/challenges";
+import {
   getProjectBackupInfrastructureStatus,
   getProjectBackupShardAdminStatus,
 } from "@cocalc/server/project-backup";
@@ -3166,4 +3173,43 @@ export async function testR2Credentials({
       clean(overrides?.r2_bucket_prefix) ?? clean(settings.r2_bucket_prefix),
     endpoint,
   });
+}
+
+export async function createProviderSetupChallenge({
+  account_id,
+  provider,
+}: {
+  account_id?: string;
+  provider: ProviderSetupChallengeProvider;
+}): Promise<ProviderSetupChallenge & { token: string }> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await createProviderSetupChallenge0({ account_id, provider });
+}
+
+export async function getProviderSetupChallenge({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<ProviderSetupChallenge> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await getProviderSetupChallenge0({ account_id, id });
+}
+
+export async function clearProviderSetupChallenge({
+  account_id,
+  id,
+}: {
+  account_id?: string;
+  id: string;
+}): Promise<{ deleted: boolean }> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await clearProviderSetupChallenge0({ account_id, id });
 }

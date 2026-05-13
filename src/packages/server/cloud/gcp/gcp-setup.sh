@@ -103,21 +103,35 @@ if ! add_project_binding; then
   exit 1
 fi
 
-# 3) Generate a new service account key JSON and output it.
+# 3) Generate a new service account key JSON and output it or upload it.
 KEY_PATH=$(mktemp)
+OUT_PATH=$(mktemp)
 log "Generating service account key JSON"
 gcloud iam service-accounts keys create "$KEY_PATH" --iam-account="$SA_EMAIL"
 
 export KEY_PATH START_MARKER END_MARKER
-python3 - <<'PY'
+python3 - > "$OUT_PATH" <<'PY'
 import json, os
 path = os.environ["KEY_PATH"]
 with open(path, "r", encoding="utf-8") as f:
   key = json.load(f)
 out = {"google_cloud_service_account_json": key}
-print(os.environ.get("START_MARKER"))
 print(json.dumps(out, indent=2))
-print(os.environ.get("END_MARKER"))
 PY
 
-rm -f "$KEY_PATH"
+if [ -n "${COCALC_SETUP_UPLOAD_URL:-}" ] && [ -n "${COCALC_SETUP_TOKEN:-}" ]; then
+  log "Uploading service account JSON to CoCalc setup challenge"
+  curl -fsS \
+    -X POST \
+    -H "Authorization: Bearer ${COCALC_SETUP_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data-binary "@${OUT_PATH}" \
+    "$COCALC_SETUP_UPLOAD_URL" >/dev/null
+  log "Upload complete. Return to CoCalc to review and apply the settings."
+else
+  echo "$START_MARKER"
+  cat "$OUT_PATH"
+  echo "$END_MARKER"
+fi
+
+rm -f "$KEY_PATH" "$OUT_PATH"
