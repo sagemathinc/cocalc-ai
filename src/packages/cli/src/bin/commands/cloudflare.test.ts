@@ -340,6 +340,78 @@ test("cloudflare r2 audit passes cache controls", async () => {
   });
 });
 
+test("cloudflare r2 audit can show rustic repository kind groups", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        auditCloudflareR2Bucket: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            account_id: "acct",
+            bucket: opts.bucket,
+            scanned_at: "2026-05-12T00:00:00.000Z",
+            cache: {
+              hit: true,
+              max_age_minutes: 60,
+              expires_at: "2026-05-12T01:00:00.000Z",
+            },
+            object_count: 3,
+            total_bytes: 6144,
+            rustic_repos: [
+              {
+                repo: "rustic/shared-wnam-0001",
+                kind: "project-backup",
+                object_count: 1,
+                total_bytes: 1024,
+                examples: [],
+              },
+              {
+                repo: "rustic/shared-wnam-0002",
+                kind: "project-backup",
+                object_count: 1,
+                total_bytes: 2048,
+                examples: [],
+              },
+              {
+                repo: "rustic/bay-backups/bay-1",
+                kind: "bay-backup",
+                object_count: 1,
+                total_bytes: 3072,
+                examples: [],
+              },
+            ],
+            categories: [],
+            top_prefixes: [],
+            top_objects: [],
+            warnings: [],
+            notes: [],
+          };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "r2",
+    "audit",
+    "alpha-wnam",
+    "--rustic-kinds",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bucket: "alpha-wnam",
+    prefix: undefined,
+    refresh: false,
+    max_age_minutes: undefined,
+  });
+});
+
 test("cloudflare r2 audit refresh starts LRO", async () => {
   let capturedArgs: any;
   const program = new Command();

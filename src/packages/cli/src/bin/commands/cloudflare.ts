@@ -179,6 +179,52 @@ function r2AuditRusticRepoRows(result: any) {
   }));
 }
 
+function r2AuditRusticKindRows(result: any) {
+  const byKind = new Map<
+    string,
+    {
+      repos: number;
+      object_count: number;
+      total_bytes: number;
+      largest_repo: string;
+      largest_repo_bytes: number;
+    }
+  >();
+  for (const repo of result.rustic_repos ?? []) {
+    const kind = `${repo.kind ?? "unknown"}`;
+    const current = byKind.get(kind) ?? {
+      repos: 0,
+      object_count: 0,
+      total_bytes: 0,
+      largest_repo: "",
+      largest_repo_bytes: 0,
+    };
+    const totalBytes = Number(repo.total_bytes ?? 0);
+    current.repos += 1;
+    current.object_count += Number(repo.object_count ?? 0);
+    current.total_bytes += totalBytes;
+    if (totalBytes > current.largest_repo_bytes) {
+      current.largest_repo = `${repo.repo ?? ""}`;
+      current.largest_repo_bytes = totalBytes;
+    }
+    byKind.set(kind, current);
+  }
+  return [...byKind.entries()]
+    .map(([kind, row]) => ({
+      kind,
+      repos: row.repos,
+      objects: row.object_count,
+      total: bytes(row.total_bytes),
+      largest_repo: row.largest_repo,
+      largest_repo_total: bytes(row.largest_repo_bytes),
+    }))
+    .sort((a, b) => {
+      const aBytes = byKind.get(a.kind)?.total_bytes ?? 0;
+      const bBytes = byKind.get(b.kind)?.total_bytes ?? 0;
+      return bBytes - aBytes;
+    });
+}
+
 function r2AuditCategoryRows(result: any) {
   return (result.categories ?? []).map((row: any) => ({
     category: row.category,
@@ -594,6 +640,7 @@ export function registerCloudflareCommand(
       360,
     )
     .option("--categories", "Show category rows instead of the summary")
+    .option("--rustic-kinds", "Show rustic repository usage grouped by kind")
     .option("--rustic-repos", "Show per-rustic-repository usage rows")
     .option("--other-prefixes", "Show top non-rustic, non-index prefix rows")
     .option("--top-prefixes", "Show top object-key prefix rows")
@@ -614,6 +661,7 @@ export function registerCloudflareCommand(
                 }),
             );
         if (options.categories) return r2AuditCategoryRows(result);
+        if (options.rusticKinds) return r2AuditRusticKindRows(result);
         if (options.rusticRepos) return r2AuditRusticRepoRows(result);
         if (options.otherPrefixes) return r2AuditOtherPrefixRows(result);
         if (options.topPrefixes) return r2AuditPrefixRows(result);
