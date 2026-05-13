@@ -55,7 +55,7 @@ describe("googleSsoStateFromSettings", () => {
     expect(state.strategy).toEqual({
       strategy: "google",
       conf: {
-        type: "oauth2",
+        type: "oidc",
         clientID: "id",
         clientSecret: "secret",
       },

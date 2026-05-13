@@ -309,12 +309,14 @@ site secret encryption mechanism, not plaintext config rows.
 
 ### Phase 3: Admin-Configured Google OIDC
 
-1. Add admin settings/UI for Google OIDC client configuration. Transitional
-   status: implemented through admin site settings and the existing Google
-   Passport runtime. Client secret storage is encrypted; legacy DB-only Google
-   rows are ignored.
-2. Implement direct OIDC flow or a minimal OIDC library integration.
-3. Require `openid email profile` and `email_verified=true`.
+1. Add admin settings/UI for Google OIDC client configuration. Status:
+   implemented through admin site settings. Client secret storage is encrypted;
+   legacy DB-only Google rows are ignored.
+2. Implement direct OIDC flow or a minimal OIDC library integration. Status:
+   implemented with direct code flow and ID-token validation against Google's
+   JWKS.
+3. Require `openid email profile` and `email_verified=true`. Status:
+   implemented for Google.
 4. Link identity to existing account only after safe policy checks.
 5. Keep CoCalc 2FA/fresh-auth requirements unchanged after SSO login.
 
@@ -414,5 +416,5 @@ Recommended order:
 1. Finish `SEC-ROOTFS-001`.
 2. Return to SSO as `SEC-SSO-001`.
 3. Implement Phase 1 policy boundary and provider deletion first.
-4. Replace the remaining Google Passport runtime with direct OIDC next; the
-   admin-managed settings are now in place.
+4. Add first-class domain/provider admin UI next; Google no longer depends on
+   Passport.js.

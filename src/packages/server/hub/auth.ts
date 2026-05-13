@@ -49,7 +49,6 @@ import { addUserProfileCallback } from "@cocalc/server/auth/sso/oauth2-user-prof
 import { PassportLogin } from "@cocalc/server/auth/sso/passport-login";
 import {
   InitPassport,
-  LoginInfo,
   PassportManagerOpts,
   StrategyConf,
   StrategyInstanceOpts,
@@ -92,7 +91,12 @@ import {
   DEFAULT_LOGIN_INFO,
   SSO_API_KEY_COOKIE_NAME,
 } from "@cocalc/server/auth/sso/consts";
-import { GoogleStrategyConf } from "@cocalc/server/auth/sso/public-strategies";
+import {
+  exchangeGoogleOidcCode,
+  googleOidcAuthorizationUrl,
+  googleProfileFromClaims,
+  verifyGoogleIdToken,
+} from "@cocalc/server/auth/sso/google-oidc";
 import siteUrl from "@cocalc/server/hub/site-url";
 
 const logger = getLogger("server:hub:auth");
@@ -143,7 +147,11 @@ interface HandleReturnOpts {
   type: PassportTypes;
   update_on_login: boolean;
   cookie_ttl_s: number | undefined;
-  login_info: LoginInfo;
+  login_info: StrategyConf["login_info"];
+}
+
+interface GoogleOidcState {
+  nonce: string;
 }
 
 export class PassportManager {
@@ -335,10 +343,7 @@ export class PassportManager {
     this.auth_url = await siteUrl(AUTH_BASE);
     logger.debug(`auth_url='${this.auth_url}'`);
 
-    await Promise.all([
-      this.initStrategy(GoogleStrategyConf),
-      this.init_extra_strategies(),
-    ]);
+    await Promise.all([this.initGoogleOidc(), this.init_extra_strategies()]);
   }
 
   // check if exclusive domains are unique
@@ -592,7 +597,10 @@ export class PassportManager {
 
     const verify = this.getVerify(type);
     L1.silly({ type, opts, userinfoURL });
-    const strategy_instance = new PassportStrategyConstructor(opts, verify);
+    const strategy_instance = new (PassportStrategyConstructor as any)(
+      opts,
+      verify,
+    );
 
     // for OAuth2, set the userinfoURL to get the profile
     if (userinfoURL != null) {
@@ -692,7 +700,7 @@ export class PassportManager {
         // due to https://github.com/Microsoft/TypeScript/issues/13965 we have to check on name and can't use instanceof
         if (err.name === "PassportLoginError") {
           const signInUrl = path_join(base_path, "auth", "sign-in");
-          err_msg = `Problem signing in using '${name}:<br/><strong>${
+          err_msg = `Problem signing in using '${name}':<br/><strong>${
             err.message ?? `${err}`
           }</strong><br/><a href="${signInUrl}">Sign-in again</a>`;
         } else {
@@ -703,6 +711,159 @@ export class PassportManager {
         res.send(err_msg);
       }
     };
+  }
+
+  private async sendPassportLoginError({
+    name,
+    res,
+    passportLogin,
+    err,
+    includeDetails = true,
+  }: {
+    name: string;
+    res: express.Response;
+    passportLogin?: PassportLogin;
+    err: any;
+    includeDetails?: boolean;
+  }): Promise<void> {
+    let err_msg = "";
+    if (err.name === "PassportLoginError") {
+      const signInUrl = path_join(base_path, "auth", "sign-in");
+      err_msg = `Problem signing in using '${name}':<br/><strong>${
+        err.message ?? `${err}`
+      }</strong><br/><a href="${signInUrl}">Sign-in again</a>`;
+    } else {
+      const helpEmail =
+        passportLogin != null
+          ? await passportLogin.getHelpEmail()
+          : (await cb2(this.database.get_server_settings_cached)).help_email;
+      err_msg = `Error trying to login using '${name}' -- if this problem persists please contact ${helpEmail}`;
+      if (includeDetails) {
+        err_msg += ` -- ${err}`;
+      }
+    }
+    logger.debug(`sending error "${err_msg}"`);
+    res.send(err_msg);
+  }
+
+  private googleOidcRedirectURI(): string {
+    if (this.auth_url == null) {
+      throw new Error("auth_url must be initialized before Google OIDC");
+    }
+    return `${this.auth_url}/google/return`;
+  }
+
+  private async initGoogleOidc(): Promise<void> {
+    if (this.passports == null) throw Error("strategies not initalized!");
+    const strategy = this.passports[GOOGLE_SSO_STRATEGY];
+    if (strategy == null) {
+      logger.debug("Google OIDC is not configured; skipping /auth/google");
+      return;
+    }
+    const clientID = strategy.conf.clientID;
+    const clientSecret = strategy.conf.clientSecret;
+    if (!clientID || !clientSecret) {
+      logger.warn("Google OIDC is enabled but missing client ID or secret");
+      return;
+    }
+
+    const stateCache = getOauthCache(GOOGLE_SSO_STRATEGY);
+    this.router.get(
+      `${AUTH_BASE}/google`,
+      this.handle_get_api_key,
+      async (_req, res) => {
+        try {
+          const state = uuidv4();
+          const nonce = uuidv4();
+          const savedState: GoogleOidcState = { nonce };
+          await stateCache.saveAsync(state, JSON.stringify(savedState));
+          res.redirect(
+            googleOidcAuthorizationUrl({
+              clientID,
+              redirectURI: this.googleOidcRedirectURI(),
+              state,
+              nonce,
+            }),
+          );
+        } catch (err) {
+          logger.warn(`Google OIDC sign-in start failed: ${err}`);
+          await this.sendPassportLoginError({
+            name: GOOGLE_SSO_STRATEGY,
+            res,
+            err,
+            includeDetails: false,
+          });
+        }
+      },
+    );
+
+    this.router.get(`${AUTH_BASE}/google/return`, async (req, res) => {
+      let passportLogin: PassportLogin | undefined;
+      try {
+        if (typeof req.query.error === "string") {
+          throw new Error(
+            `Google returned an authentication error: ${req.query.error}`,
+          );
+        }
+        if (typeof req.query.code !== "string") {
+          throw new Error("Google OIDC return is missing the code parameter.");
+        }
+        if (typeof req.query.state !== "string") {
+          throw new Error("Google OIDC return is missing the state parameter.");
+        }
+        const savedStateRaw = await stateCache.getAsync(req.query.state);
+        await stateCache.removeAsync(req.query.state);
+        if (savedStateRaw == null) {
+          throw new Error("Google OIDC state is invalid or expired.");
+        }
+        const savedState = JSON.parse(savedStateRaw) as GoogleOidcState;
+        if (!savedState.nonce) {
+          throw new Error("Google OIDC state did not include a nonce.");
+        }
+
+        const tokens = await exchangeGoogleOidcCode({
+          code: req.query.code,
+          clientID,
+          clientSecret,
+          redirectURI: this.googleOidcRedirectURI(),
+        });
+        const claims = await verifyGoogleIdToken({
+          idToken: tokens.id_token,
+          clientID,
+          nonce: savedState.nonce,
+        });
+        const profile = googleProfileFromClaims(claims);
+        const emails = profile.emails?.map((email) => email.value) ?? [];
+        passportLogin = new PassportLogin({
+          passports: this.passports ?? {},
+          database: this.database,
+          host: this.host,
+          id: profile.id,
+          strategyName: GOOGLE_SSO_STRATEGY,
+          profile,
+          first_name: profile.name?.givenName ?? "Anonymous",
+          last_name: profile.name?.familyName ?? "User",
+          emails,
+          update_on_login: strategy.info?.update_on_login ?? false,
+          cookie_ttl_s: strategy.info?.cookie_ttl_s,
+          req,
+          res,
+          site_url: this.site_url,
+        });
+        await passportLogin.login();
+      } catch (err) {
+        if (err.name !== "PassportLoginError") {
+          logger.warn(`Google OIDC sign-in failed: ${err}`);
+        }
+        await this.sendPassportLoginError({
+          name: GOOGLE_SSO_STRATEGY,
+          res,
+          passportLogin,
+          err,
+          includeDetails: false,
+        });
+      }
+    });
   }
 
   // right now, we only set this for OAauth2 (SAML knows what to do on its own)
@@ -811,7 +972,7 @@ export class PassportManager {
     });
 
     // this ties the name (our name set in the DB) to the strategy instance
-    passport.use(name, strategy_instance);
+    passport.use(name, strategy_instance as any);
 
     this.router.get(
       strategyUrl,

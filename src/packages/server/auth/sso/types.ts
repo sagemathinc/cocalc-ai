@@ -6,9 +6,7 @@
 import { Router } from "express";
 
 import { Strategy as SAMLStrategyNew } from "@node-saml/passport-saml";
-import { Strategy as GoogleStrategyOld } from "@passport-next/passport-google-oauth2";
 import { AuthenticateOptions, Strategy as PassportStrategy } from "passport";
-import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 
 import { PostgreSQL } from "@cocalc/database/postgres/types";
 import type {
@@ -31,9 +29,7 @@ export interface PassportManagerOpts {
 
 export type PassportStrategyConstructorType =
   | typeof PassportStrategy
-  | typeof SAMLStrategyNew
-  | typeof GoogleStrategy
-  | typeof GoogleStrategyOld;
+  | typeof SAMLStrategyNew;
 
 export interface StrategyInstanceOpts {
   type: PassportTypes;
