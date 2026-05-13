@@ -42,7 +42,10 @@ import { isDirViaFs } from "./is-dir";
 import { throttle } from "lodash";
 import { type ProjectApi } from "@cocalc/conat/project/api";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
-import { type ProjectCopyDestination } from "@cocalc/conat/hub/api/projects";
+import type {
+  ProjectCopyDestination,
+  ProjectCopyRow,
+} from "@cocalc/conat/hub/api/projects";
 import { resolveExplicitStreamStart } from "./stream-start";
 
 const TOUCH_THROTTLE = 30_000;
@@ -145,6 +148,12 @@ export class ProjectClient {
     return await this.client.conat_client.hub.projects.copyPathBetweenProjects(
       opts,
     );
+  };
+
+  listCopyRowsByOpId = async (opts: {
+    op_id: string;
+  }): Promise<ProjectCopyRow[]> => {
+    return await this.client.conat_client.hub.projects.listCopyRowsByOpId(opts);
   };
 
   // Set a quota parameter for a given project.

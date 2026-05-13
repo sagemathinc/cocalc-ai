@@ -2,6 +2,8 @@ export {};
 
 let assertCollabMock: jest.Mock;
 let createLroMock: jest.Mock;
+let getLroMock: jest.Mock;
+let listCopiesByOpIdMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let publishLroEventMock: jest.Mock;
 let triggerCopyLroWorkerMock: jest.Mock;
@@ -66,6 +68,7 @@ jest.mock("@cocalc/server/projects/control", () => ({
 jest.mock("@cocalc/server/projects/copy-db", () => ({
   __esModule: true,
   cancelCopy: jest.fn(),
+  listCopiesByOpId: (...args: any[]) => listCopiesByOpIdMock(...args),
   listCopiesForProject: jest.fn(async () => []),
 }));
 
@@ -85,6 +88,7 @@ jest.mock("@cocalc/server/membership/project-limits", () => ({
 jest.mock("@cocalc/server/lro/lro-db", () => ({
   __esModule: true,
   createLro: (...args: any[]) => createLroMock(...args),
+  getLro: (...args: any[]) => getLroMock(...args),
   updateLro: jest.fn(),
 }));
 
@@ -118,6 +122,8 @@ describe("projects.copyPathBetweenProjects", () => {
       scope_type: "project",
       scope_id: "src-project",
     }));
+    getLroMock = jest.fn(async () => undefined);
+    listCopiesByOpIdMock = jest.fn(async () => []);
     publishLroSummaryMock = jest.fn(async () => undefined);
     publishLroEventMock = jest.fn(async () => undefined);
     triggerCopyLroWorkerMock = jest.fn();
@@ -326,5 +332,52 @@ describe("projects.copyPathBetweenProjects", () => {
     ).rejects.toThrow("total account storage hard cap reached");
     expect(createLroMock).not.toHaveBeenCalled();
     expect(triggerCopyLroWorkerMock).not.toHaveBeenCalled();
+  });
+
+  it("lists copy rows by op id after checking source project access", async () => {
+    getLroMock = jest.fn(async () => ({
+      op_id: "op-1",
+      kind: "copy-path-between-projects",
+      scope_type: "project",
+      scope_id: "src-project",
+    }));
+    listCopiesByOpIdMock = jest.fn(async () => [
+      {
+        copy_id: "copy-1",
+        op_id: "op-1",
+        src_project_id: "src-project",
+        dest_project_id: "dest-project",
+      },
+    ]);
+    const { listCopyRowsByOpId } = await import("./projects");
+    const rows = await listCopyRowsByOpId({
+      account_id: "acct-1",
+      op_id: "op-1",
+    });
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      project_id: "src-project",
+    });
+    expect(listCopiesByOpIdMock).toHaveBeenCalledWith({ op_id: "op-1" });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        copy_id: "copy-1",
+        op_id: "op-1",
+      }),
+    ]);
+  });
+
+  it("rejects copy row listing for non-copy operations", async () => {
+    getLroMock = jest.fn(async () => ({
+      op_id: "op-1",
+      kind: "project-start",
+      scope_type: "project",
+      scope_id: "src-project",
+    }));
+    const { listCopyRowsByOpId } = await import("./projects");
+    await expect(
+      listCopyRowsByOpId({ account_id: "acct-1", op_id: "op-1" }),
+    ).rejects.toThrow("operation is not a project copy");
+    expect(listCopiesByOpIdMock).not.toHaveBeenCalled();
   });
 });

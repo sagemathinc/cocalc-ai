@@ -42,10 +42,11 @@ import {
 } from "@cocalc/util/public-viewer-origin";
 import {
   cancelCopy as cancelCopyDb,
+  listCopiesByOpId,
   listCopiesForProject,
 } from "@cocalc/server/projects/copy-db";
 import { triggerCopyLroWorker } from "@cocalc/server/projects/copy-worker";
-import { createLro, updateLro } from "@cocalc/server/lro/lro-db";
+import { createLro, getLro, updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { lroStreamName } from "@cocalc/conat/lro/names";
 import { SERVICE as PERSIST_SERVICE } from "@cocalc/conat/persist/util";
@@ -519,6 +520,27 @@ export async function listPendingCopies({
 }): Promise<ProjectCopyRow[]> {
   await assertCollab({ account_id, project_id });
   return await listCopiesForProject({ project_id, include_completed });
+}
+
+export async function listCopyRowsByOpId({
+  account_id,
+  op_id,
+}: {
+  account_id?: string;
+  op_id: string;
+}): Promise<ProjectCopyRow[]> {
+  const op = await getLro(op_id);
+  if (!op) {
+    return [];
+  }
+  if (op.kind !== "copy-path-between-projects") {
+    throw new Error("operation is not a project copy");
+  }
+  if (op.scope_type !== "project") {
+    throw new Error("copy operation has unsupported scope");
+  }
+  await assertCollab({ account_id, project_id: op.scope_id });
+  return await listCopiesByOpId({ op_id });
 }
 
 export async function cancelPendingCopy({
