@@ -62,6 +62,7 @@
     "dev:hosts:upgrade": "bash ./scripts/dev/hub-daemon.sh upgrade-hosts",
     "dev:hosts:reconcile": "bash ./scripts/dev/hub-daemon.sh reconcile-hosts",
     "dev:stack:refresh": "bash ./scripts/dev/hub-daemon.sh refresh",
+    "dev:saml:idp": "node ./scripts/dev/saml-idp.mjs",
     "bench:codex-thread": "node ./scripts/dev/codex-thread-benchmark.mjs",
     "lint:frontend": "cd packages && pnpm lint:frontend",
     "lint": "cd packages && ./node_modules/.bin/oxlint --config .oxlintrc.jsonc frontend && ./node_modules/.bin/oxlint --config .oxlintrc.non-frontend.jsonc .",

@@ -23,6 +23,7 @@ const EMAIL_KEYS = [
 
 const FIRST_NAME_KEYS = [
   "first_name",
+  "firstName",
   "givenName",
   "given_name",
   "FirstName",
@@ -32,6 +33,7 @@ const FIRST_NAME_KEYS = [
 
 const LAST_NAME_KEYS = [
   "last_name",
+  "lastName",
   "sn",
   "surname",
   "family_name",
@@ -43,6 +45,7 @@ const LAST_NAME_KEYS = [
 const ID_KEYS = [
   "nameID",
   "id",
+  "userName",
   "uid",
   "eduPersonPrincipalName",
   ...EMAIL_KEYS,

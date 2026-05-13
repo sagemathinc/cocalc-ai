@@ -12,6 +12,10 @@ const PII_EVENTS = new Set([
   "successful_sign_in",
   "webapp-email_sign_up",
   "create_account_registration_token",
+  "sso_domain_policy_changed",
+  "sso_provider_config_changed",
+  "sso_sign_in_allowed",
+  "sso_sign_in_denied",
 ]);
 
 export default async function centralLog({
