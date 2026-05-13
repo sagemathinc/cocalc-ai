@@ -675,19 +675,19 @@ Current concern:
 
 - registration tokens are intended to prevent random people from creating
   accounts on a Launchpad instance.
-- if all registration tokens are disabled or absent, signup currently may become
-  public without an explicit operator opt-in.
-- this is confusing and unsafe.
-- registration-token values are stored as plaintext primary keys, so a leaked
-  database backup leaks active signup/admin-bootstrap tokens.
-- sign-up must not double as sign-in and must not bypass sign-in 2FA.
-- token-gated signup should validate the token before returning
-  account-specific errors, otherwise invalid-token attempts can enumerate
-  existing accounts.
-- registration tokens should not be consumed until all cheap pre-create checks
-  have passed.
-- unauthenticated signup should not accept arbitrary metadata such as tags or
-  signup reason; any such policy should come from validated token metadata or
+- fail-open public signup when no tokens are active has been fixed by the
+  explicit `public_signup_without_registration_token` setting.
+- normal registration-token rows are now encrypted at rest so admins can
+  redisplay token values without storing cleartext in database backups.
+- bootstrap-admin registration-token rows are hash-only, hidden from admin token
+  listing, and deleted after successful bootstrap signup.
+- sign-up no longer doubles as sign-in and cannot bypass sign-in 2FA.
+- token-gated signup validates the token before returning account-specific
+  errors, so invalid-token attempts cannot enumerate existing accounts.
+- registration tokens are not consumed until cheap pre-create checks have
+  passed.
+- unauthenticated signup no longer accepts arbitrary metadata such as tags or
+  signup reason; any future policy should come from validated token metadata or
   later authenticated account setup.
 
 Required behavior:
@@ -696,8 +696,8 @@ Required behavior:
 - public signup without a token requires an explicit setting.
 - that setting is visible and editable on the registration-token admin page.
 - disabling/deleting all tokens must not implicitly enable public signup.
-- active token values are stored as hashes, with cleartext shown only at token
-  creation time.
+- normal token values are encrypted at rest for admin redisplay, while
+  bootstrap-admin token values are hash-only.
 - invalid token attempts are throttled whether the submitted token is wrong,
   disabled, expired, exhausted, or missing.
 - signup creation failures are logged server-side but returned to users as
@@ -714,8 +714,8 @@ Audit targets:
 - admin registration-token page.
 - Launchpad bootstrap defaults.
 - tests for "no tokens configured" and "all tokens disabled".
-- migration/removal path for any remaining plaintext token values before
-  release.
+- direct regression coverage for encrypted normal tokens, hash-only bootstrap
+  tokens, and legacy plaintext opportunistic protection.
 
 Release gate:
 
