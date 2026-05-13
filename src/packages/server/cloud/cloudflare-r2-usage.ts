@@ -124,6 +124,17 @@ export type CloudflareR2AuditObject = {
   size: number;
 };
 
+export type CloudflareR2AuditUsageGroup = {
+  object_count: number;
+  total_bytes: number;
+  examples: string[];
+};
+
+export type CloudflareR2AuditRusticRepo = CloudflareR2AuditUsageGroup & {
+  repo: string;
+  kind: "project-backup" | "bay-backup" | "rootfs" | "other";
+};
+
 export type CloudflareR2AuditResult = {
   account_id: string;
   bucket: string;
@@ -136,6 +147,10 @@ export type CloudflareR2AuditResult = {
   };
   object_count: number;
   total_bytes: number;
+  rustic_repos?: CloudflareR2AuditRusticRepo[];
+  project_backup_index?: CloudflareR2AuditUsageGroup;
+  other?: CloudflareR2AuditUsageGroup;
+  other_prefixes?: CloudflareR2AuditPrefix[];
   categories: CloudflareR2AuditCategory[];
   top_prefixes: CloudflareR2AuditPrefix[];
   top_objects: CloudflareR2AuditObject[];
@@ -655,6 +670,23 @@ function prefixForKey(key: string): string {
   return parts[0];
 }
 
+function rusticRepoForKey(
+  key: string,
+): Pick<CloudflareR2AuditRusticRepo, "repo" | "kind"> | undefined {
+  const parts = key.split("/").filter(Boolean);
+  if (parts[0] !== "rustic" || !parts[1]) return undefined;
+  if (parts[1].startsWith("shared-")) {
+    return { repo: `rustic/${parts[1]}`, kind: "project-backup" };
+  }
+  if (parts[1] === "bay-backups" && parts[2]) {
+    return { repo: `rustic/bay-backups/${parts[2]}`, kind: "bay-backup" };
+  }
+  if (parts[1] === "rootfs-images") {
+    return { repo: "rustic/rootfs-images", kind: "rootfs" };
+  }
+  return { repo: `rustic/${parts[1]}`, kind: "other" };
+}
+
 function addToMap(
   map: Map<string, { object_count: number; total_bytes: number }>,
   key: string,
@@ -664,6 +696,17 @@ function addToMap(
   existing.object_count += 1;
   existing.total_bytes += size;
   map.set(key, existing);
+}
+
+function addToUsageGroup(
+  group: CloudflareR2AuditUsageGroup,
+  entry: R2ObjectListEntry,
+): void {
+  group.object_count += 1;
+  group.total_bytes += entry.size;
+  if (group.examples.length < MAX_EXAMPLES_PER_CATEGORY) {
+    group.examples.push(entry.key);
+  }
 }
 
 function pushTopObject(
@@ -701,6 +744,14 @@ async function getCachedAudit(opts: {
   );
   const cached = rows[0]?.result_json;
   if (!cached) return undefined;
+  if (
+    !Array.isArray(cached.rustic_repos) ||
+    cached.project_backup_index == null ||
+    cached.other == null ||
+    !Array.isArray(cached.other_prefixes)
+  ) {
+    return undefined;
+  }
   const scannedAt = new Date(cached.scanned_at);
   return {
     ...cached,
@@ -778,6 +829,21 @@ export async function auditCloudflareR2Bucket({
     string,
     { object_count: number; total_bytes: number }
   >();
+  const rusticRepos = new Map<string, CloudflareR2AuditRusticRepo>();
+  const projectBackupIndex: CloudflareR2AuditUsageGroup = {
+    object_count: 0,
+    total_bytes: 0,
+    examples: [],
+  };
+  const other: CloudflareR2AuditUsageGroup = {
+    object_count: 0,
+    total_bytes: 0,
+    examples: [],
+  };
+  const otherPrefixes = new Map<
+    string,
+    { object_count: number; total_bytes: number }
+  >();
   const topObjects: CloudflareR2AuditObject[] = [];
 
   const { objectCount, totalSize } = await scanR2Objects({
@@ -804,6 +870,22 @@ export async function auditCloudflareR2Bucket({
         }
         categories.set(category, current);
         addToMap(prefixes, prefixForKey(entry.key), entry.size);
+        const rusticRepo = rusticRepoForKey(entry.key);
+        if (rusticRepo) {
+          const currentRepo = rusticRepos.get(rusticRepo.repo) ?? {
+            ...rusticRepo,
+            object_count: 0,
+            total_bytes: 0,
+            examples: [],
+          };
+          addToUsageGroup(currentRepo, entry);
+          rusticRepos.set(rusticRepo.repo, currentRepo);
+        } else if (entry.key.startsWith("project-backup-index/v1/")) {
+          addToUsageGroup(projectBackupIndex, entry);
+        } else {
+          addToUsageGroup(other, entry);
+          addToMap(otherPrefixes, prefixForKey(entry.key), entry.size);
+        }
         pushTopObject(topObjects, entry);
       }
     },
@@ -824,6 +906,15 @@ export async function auditCloudflareR2Bucket({
     },
     object_count: objectCount,
     total_bytes: totalSize,
+    rustic_repos: [...rusticRepos.values()].sort(
+      (a, b) => b.total_bytes - a.total_bytes,
+    ),
+    project_backup_index: projectBackupIndex,
+    other,
+    other_prefixes: [...otherPrefixes.entries()]
+      .map(([prefixName, value]) => ({ prefix: prefixName, ...value }))
+      .sort((a, b) => b.total_bytes - a.total_bytes)
+      .slice(0, MAX_TOP_PREFIXES),
     categories: [...categories.entries()]
       .map(([category, value]) => ({ category, ...value }))
       .sort((a, b) => b.total_bytes - a.total_bytes),
@@ -836,7 +927,7 @@ export async function auditCloudflareR2Bucket({
     warnings: [],
     notes: [
       "This audit is based on live S3 ListObjectsV2 metadata and is exact for objects visible to the configured R2 S3 credentials.",
-      "Category labels are heuristic groupings of CoCalc object-key prefixes.",
+      "The refined breakdown treats rustic/* as rustic repositories, project-backup-index/v1/* as backup index files, and everything else as other bucket usage.",
     ],
   };
   await saveCachedAudit(result);

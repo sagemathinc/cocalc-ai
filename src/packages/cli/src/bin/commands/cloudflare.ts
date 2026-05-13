@@ -87,6 +87,17 @@ function r2UsageRows(result: any) {
 }
 
 function summarizeR2Audit(result: any) {
+  const rusticRepos = result.rustic_repos ?? [];
+  const rusticObjectCount = rusticRepos.reduce(
+    (total: number, repo: any) => total + (repo.object_count ?? 0),
+    0,
+  );
+  const rusticTotalBytes = rusticRepos.reduce(
+    (total: number, repo: any) => total + (repo.total_bytes ?? 0),
+    0,
+  );
+  const index = result.project_backup_index ?? {};
+  const other = result.other ?? {};
   return {
     bucket: result.bucket,
     prefix: result.prefix ?? "",
@@ -95,12 +106,29 @@ function summarizeR2Audit(result: any) {
     cache_expires_at: result.cache?.expires_at ?? "",
     objects: result.object_count ?? 0,
     total: bytes(result.total_bytes),
+    rustic_repos: rusticRepos.length,
+    rustic_objects: rusticObjectCount,
+    rustic_total: bytes(rusticTotalBytes),
+    index_files: index.object_count ?? 0,
+    index_total: bytes(index.total_bytes),
+    other_objects: other.object_count ?? 0,
+    other_total: bytes(other.total_bytes),
     db_purpose: result.database?.purpose ?? "",
     db_region: result.database?.region ?? "",
     db_projects: result.database?.assigned_projects ?? "",
     warnings: (result.warnings ?? []).join(" "),
     notes: (result.notes ?? []).join(" "),
   };
+}
+
+function r2AuditRusticRepoRows(result: any) {
+  return (result.rustic_repos ?? []).map((row: any) => ({
+    repo: row.repo,
+    kind: row.kind,
+    objects: row.object_count,
+    total: bytes(row.total_bytes),
+    examples: (row.examples ?? []).join(" "),
+  }));
 }
 
 function r2AuditCategoryRows(result: any) {
@@ -124,6 +152,14 @@ function r2AuditObjectRows(result: any) {
   return (result.top_objects ?? []).map((row: any) => ({
     key: row.key,
     size: bytes(row.size),
+  }));
+}
+
+function r2AuditOtherPrefixRows(result: any) {
+  return (result.other_prefixes ?? []).map((row: any) => ({
+    prefix: row.prefix,
+    objects: row.object_count,
+    total: bytes(row.total_bytes),
   }));
 }
 
@@ -339,6 +375,8 @@ export function registerCloudflareCommand(
       parseNonNegativeInt,
     )
     .option("--categories", "Show category rows instead of the summary")
+    .option("--rustic-repos", "Show per-rustic-repository usage rows")
+    .option("--other-prefixes", "Show top non-rustic, non-index prefix rows")
     .option("--top-prefixes", "Show top object-key prefix rows")
     .option("--top-objects", "Show largest object rows")
     .action(async (bucket, options, command) => {
@@ -350,6 +388,8 @@ export function registerCloudflareCommand(
           max_age_minutes: options.maxAgeMinutes,
         });
         if (options.categories) return r2AuditCategoryRows(result);
+        if (options.rusticRepos) return r2AuditRusticRepoRows(result);
+        if (options.otherPrefixes) return r2AuditOtherPrefixRows(result);
         if (options.topPrefixes) return r2AuditPrefixRows(result);
         if (options.topObjects) return r2AuditObjectRows(result);
         return summarizeR2Audit(result);

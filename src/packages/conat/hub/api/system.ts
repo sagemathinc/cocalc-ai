@@ -302,6 +302,17 @@ export interface CloudflareR2AuditObject {
   size: number;
 }
 
+export interface CloudflareR2AuditUsageGroup {
+  object_count: number;
+  total_bytes: number;
+  examples: string[];
+}
+
+export interface CloudflareR2AuditRusticRepo extends CloudflareR2AuditUsageGroup {
+  repo: string;
+  kind: "project-backup" | "bay-backup" | "rootfs" | "other";
+}
+
 export interface CloudflareR2AuditResult {
   account_id: string;
   bucket: string;
@@ -314,6 +325,10 @@ export interface CloudflareR2AuditResult {
   };
   object_count: number;
   total_bytes: number;
+  rustic_repos?: CloudflareR2AuditRusticRepo[];
+  project_backup_index?: CloudflareR2AuditUsageGroup;
+  other?: CloudflareR2AuditUsageGroup;
+  other_prefixes?: CloudflareR2AuditPrefix[];
   categories: CloudflareR2AuditCategory[];
   top_prefixes: CloudflareR2AuditPrefix[];
   top_objects: CloudflareR2AuditObject[];
