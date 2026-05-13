@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
+import { PROJECT_SECRETS_ENV } from "@cocalc/util/project-secrets";
 
 /*
 getUid
@@ -68,7 +69,7 @@ export function envForSpawn() {
     delete env[name];
   }
   for (const name in env) {
-    if (name.startsWith("COCALC_")) {
+    if (name.startsWith("COCALC_") && name !== PROJECT_SECRETS_ENV) {
       delete env[name];
     }
   }

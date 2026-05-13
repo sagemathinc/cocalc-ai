@@ -12,6 +12,7 @@ pnpm test ./execute-code.test.ts
 */
 
 import { delay } from "awaiting";
+import { PROJECT_SECRETS_ENV } from "@cocalc/util/project-secrets";
 
 process.env.COCALC_PROJECT_MONITOR_INTERVAL_S = "1";
 // default is much lower, might fail if you have more procs than the default
@@ -26,6 +27,35 @@ describe("hello world", () => {
       args: ["hello world"],
     });
     expect(stdout).toBe("hello world\n");
+  });
+
+  it("preserves only the managed project secrets env var from CoCalc-prefixed env", async () => {
+    const previousSecrets = process.env[PROJECT_SECRETS_ENV];
+    const previousPrivate = process.env.COCALC_PRIVATE_TEST_VALUE;
+    process.env[PROJECT_SECRETS_ENV] = "/run/secrets/cocalc";
+    process.env.COCALC_PRIVATE_TEST_VALUE = "do-not-leak";
+    try {
+      const { stdout } = await executeCode({
+        command: "sh",
+        args: [
+          "-c",
+          `printf "%s|%s" "$${PROJECT_SECRETS_ENV}" "$COCALC_PRIVATE_TEST_VALUE"`,
+        ],
+        bash: false,
+      });
+      expect(stdout).toBe("/run/secrets/cocalc|");
+    } finally {
+      if (previousSecrets == null) {
+        delete process.env[PROJECT_SECRETS_ENV];
+      } else {
+        process.env[PROJECT_SECRETS_ENV] = previousSecrets;
+      }
+      if (previousPrivate == null) {
+        delete process.env.COCALC_PRIVATE_TEST_VALUE;
+      } else {
+        process.env.COCALC_PRIVATE_TEST_VALUE = previousPrivate;
+      }
+    }
   });
 });
 

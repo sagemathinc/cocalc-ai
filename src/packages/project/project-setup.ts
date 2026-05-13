@@ -10,6 +10,7 @@ This configures the project hub based on an environment variable or other data.
 import { existsSync } from "node:fs";
 import { setPriority } from "node:os";
 
+import { PROJECT_SECRETS_ENV } from "@cocalc/util/project-secrets";
 import { getLogger } from "@cocalc/project/logger";
 const L = getLogger("project:project-setup");
 
@@ -20,6 +21,7 @@ const PRESERVED_COCALC_ENV_VARS = new Set([
   "COCALC_EXTRA_ENV",
   "COCALC_PROXY_HOST",
   "COCALC_PROXY_PORT",
+  PROJECT_SECRETS_ENV,
 ]);
 
 // this only lists some of the fields in use, there might be more
