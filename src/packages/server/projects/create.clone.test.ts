@@ -57,6 +57,15 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
   default: jest.fn(async () => false),
 }));
 
+jest.mock("@cocalc/database/settings/server-settings", () => ({
+  __esModule: true,
+  getServerSettings: jest.fn(async () => ({
+    verify_emails: false,
+    email_enabled: false,
+    email_backend: "none",
+  })),
+}));
+
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
   assertLocalProjectCollaborator: (...args: any[]) =>

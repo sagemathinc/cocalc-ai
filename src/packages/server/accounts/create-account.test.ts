@@ -54,6 +54,8 @@ describe("accounts.createAccount", () => {
         null,
         null,
         "bay-0",
+        false,
+        null,
       ],
     );
     expect(accountCreationActionsMock).toHaveBeenCalled();
@@ -87,6 +89,8 @@ describe("accounts.createAccount", () => {
         null,
         null,
         "bay-7",
+        false,
+        null,
       ],
     );
   });

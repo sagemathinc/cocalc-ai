@@ -9,6 +9,33 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+jest.mock("@cocalc/project/conat/hub", () => ({
+  hubApi: jest.fn(() => ({
+    system: {
+      assertProjectPublicSharingAllowed: jest.fn(async () => ({
+        allowed: true,
+      })),
+      getProjectAppPublicPolicy: jest.fn(async () => ({
+        enabled: false,
+        warnings: [],
+      })),
+      reserveProjectAppPublicSubdomain: jest.fn(async () => ({
+        hostname: "test-public-app.example.com",
+        label: "test",
+        url_public: "https://test-public-app.example.com",
+        warnings: [],
+      })),
+      releaseProjectAppPublicSubdomain: jest.fn(async () => ({
+        released: true,
+      })),
+    },
+  })),
+}));
+
+jest.mock("@cocalc/project/conat/runtime-client", () => ({
+  getProjectConatClient: jest.fn(() => ({})),
+}));
+
 import {
   appLogs,
   auditAppPublicReadiness,
