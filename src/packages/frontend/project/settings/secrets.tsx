@@ -30,6 +30,7 @@ import {
   SettingBox,
 } from "@cocalc/frontend/components";
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
+import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { humanSize } from "@cocalc/util/misc";
 import {
@@ -413,11 +414,13 @@ export const ProjectSecrets: React.FC<Props> = ({
               Copy Secrets from Another Project
             </Typography.Text>
             <Space direction="vertical" style={{ width: "100%", marginTop: 8 }}>
-              <Input
-                disabled={saving}
-                placeholder="Source project id"
-                value={sourceProjectId}
-                onChange={(event) => setSourceProjectId(event.target.value)}
+              <SelectProject
+                exclude={[project_id]}
+                value={sourceProjectId || undefined}
+                onChange={(sourceProjectId) =>
+                  setSourceProjectId(sourceProjectId ?? "")
+                }
+                style={{ width: "100%" }}
               />
               <Input
                 disabled={saving}
