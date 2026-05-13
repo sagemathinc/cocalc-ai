@@ -107,6 +107,8 @@ export const system = {
   getPublicSiteUrl: authFirst,
   testR2Credentials: authFirst,
   bootstrapCloudflareConfiguration: authFirst,
+  createCloudflareTeardownPlan: authFirst,
+  getCloudflareTeardownPlan: authFirst,
   createProviderSetupChallenge: authFirst,
   getProviderSetupChallenge: authFirst,
   clearProviderSetupChallenge: authFirst,
@@ -174,6 +176,68 @@ export interface CloudflareBootstrapResult {
   r2: { ok: boolean; message?: string };
   values: Record<string, string>;
   notes: string[];
+}
+
+export type CloudflareTeardownClassification =
+  | "safe_owned"
+  | "probably_owned"
+  | "unknown"
+  | "protected";
+
+export interface CloudflareTeardownResource {
+  kind: "tunnel" | "dns_record" | "r2_bucket" | "api_token";
+  classification: CloudflareTeardownClassification;
+  id?: string;
+  name?: string;
+  reason: string;
+  details?: Record<string, unknown>;
+}
+
+export interface CloudflareTeardownPlanSummary {
+  plan_id: string;
+  status: string;
+  include_r2: boolean;
+  expires_at: string;
+  confirmation_text: string;
+  cloudflare_account_id?: string;
+  zone_id?: string;
+  zone_name?: string;
+  selected: {
+    tunnels: number;
+    dns_records: number;
+    r2_buckets: number;
+    api_tokens: number;
+  };
+  counts: {
+    active_projects: number;
+    archived_project_candidates: number;
+    projects_with_backups: number;
+    r2_bucket_records: number;
+    cloudflare_r2_buckets: number;
+  };
+  warnings: string[];
+  notes: string[];
+}
+
+export interface CloudflareTeardownPlan {
+  id: string;
+  account_id: string;
+  cloudflare_account_id?: string;
+  zone_id?: string;
+  zone_name?: string;
+  status: string;
+  include_r2: boolean;
+  plan_json: {
+    resources: CloudflareTeardownResource[];
+    counts: CloudflareTeardownPlanSummary["counts"];
+    warnings: string[];
+    notes: string[];
+  };
+  confirmation_text: string;
+  created_at: string;
+  expires_at: string;
+  applied_at?: string;
+  summary: CloudflareTeardownPlanSummary;
 }
 
 export interface AccountMembershipPortabilityRepairCounts {
@@ -1592,6 +1656,16 @@ export interface System {
     r2BucketPrefix?: string;
     invalidateBootstrapToken?: boolean;
   }) => Promise<CloudflareBootstrapResult>;
+
+  createCloudflareTeardownPlan: (opts: {
+    account_id?: string;
+    include_r2?: boolean;
+  }) => Promise<CloudflareTeardownPlan>;
+
+  getCloudflareTeardownPlan: (opts: {
+    account_id?: string;
+    plan_id: string;
+  }) => Promise<CloudflareTeardownPlan>;
 
   createProviderSetupChallenge: (opts: {
     account_id?: string;
