@@ -449,8 +449,9 @@ Focused verification on 2026-05-12:
   accounts persist a server-owned `trusted_product_access` marker; project
   creation, API-key creation, central Codex auth entry points, and project-owner
   ACP admission limits now enforce verified email or trusted creation when
-  email verification is configured. Billing, invitations, and public sharing
-  still need a separate pass.
+  email verification is configured. Membership purchase/seat/package mutation
+  flows and collaboration invitation/acceptance flows now enforce the same
+  gate. Public sharing still needs a separate pass.
 - Sites without an email backend need an explicit exception model. If
   `verify_emails` is disabled or email sending is unavailable, email
   verification cannot be the release gate; registration-token-created accounts
