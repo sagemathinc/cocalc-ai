@@ -177,9 +177,11 @@ export type CloudflareR2AuditProgress = {
   pages_seen: number;
   objects_seen: number;
   bytes_seen: number;
+  expected_total_objects?: number;
   expected_total_bytes?: number;
   progress?: number;
   elapsed_ms: number;
+  objects_per_second?: number;
   bytes_per_second?: number;
   eta_seconds?: number;
   message: string;
@@ -761,6 +763,7 @@ function makeAuditProgress({
   pagesSeen,
   objectsSeen,
   bytesSeen,
+  expectedTotalObjects,
   expectedTotalBytes,
   startedAt,
 }: {
@@ -770,28 +773,59 @@ function makeAuditProgress({
   pagesSeen: number;
   objectsSeen: number;
   bytesSeen: number;
+  expectedTotalObjects?: number;
   expectedTotalBytes?: number;
   startedAt: number;
 }): CloudflareR2AuditProgress {
   const elapsedMs = Math.max(0, Date.now() - startedAt);
   const elapsedSeconds = elapsedMs / 1000;
+  const objectsPerSecond =
+    elapsedSeconds > 0
+      ? Math.round((objectsSeen / elapsedSeconds) * 10) / 10
+      : undefined;
   const bytesPerSecond =
     elapsedSeconds > 0 ? Math.round(bytesSeen / elapsedSeconds) : undefined;
-  const progress =
+  const byteProgress =
     expectedTotalBytes && expectedTotalBytes > 0
       ? Math.min(1, bytesSeen / expectedTotalBytes)
       : undefined;
-  const etaSeconds =
-    progress != null &&
-    progress > 0 &&
-    progress < 1 &&
+  const objectProgress =
+    expectedTotalObjects && expectedTotalObjects > 0
+      ? Math.min(1, objectsSeen / expectedTotalObjects)
+      : undefined;
+  const progress = byteProgress ?? objectProgress;
+  const etaCandidates: number[] = [];
+  if (
+    byteProgress != null &&
+    byteProgress > 0 &&
+    byteProgress < 1 &&
     bytesPerSecond &&
     bytesPerSecond > 0
-      ? Math.max(
-          0,
-          Math.round((expectedTotalBytes! - bytesSeen) / bytesPerSecond),
-        )
-      : undefined;
+  ) {
+    etaCandidates.push(
+      Math.max(
+        0,
+        Math.round((expectedTotalBytes! - bytesSeen) / bytesPerSecond),
+      ),
+    );
+  }
+  if (
+    objectProgress != null &&
+    objectProgress > 0 &&
+    objectProgress < 1 &&
+    objectsPerSecond &&
+    objectsPerSecond > 0
+  ) {
+    etaCandidates.push(
+      Math.max(
+        0,
+        Math.round((expectedTotalObjects! - objectsSeen) / objectsPerSecond),
+      ),
+    );
+  }
+  const etaSeconds = etaCandidates.length
+    ? Math.max(...etaCandidates)
+    : undefined;
   return {
     phase,
     bucket,
@@ -799,9 +833,11 @@ function makeAuditProgress({
     pages_seen: pagesSeen,
     objects_seen: objectsSeen,
     bytes_seen: bytesSeen,
+    expected_total_objects: expectedTotalObjects,
     expected_total_bytes: expectedTotalBytes,
     progress,
     elapsed_ms: elapsedMs,
+    objects_per_second: objectsPerSecond,
     bytes_per_second: bytesPerSecond,
     eta_seconds: etaSeconds,
     message:
@@ -859,7 +895,7 @@ async function getCachedAudit(opts: {
   };
 }
 
-async function getCachedAuditTotalBytesForProgress({
+async function getCachedAuditProgressBaseline({
   accountId,
   bucket,
   prefix,
@@ -867,9 +903,13 @@ async function getCachedAuditTotalBytesForProgress({
   accountId: string;
   bucket: string;
   prefix: string;
-}): Promise<number | undefined> {
-  const { rows } = await pool().query<{ total_bytes: unknown }>(
-    `SELECT result_json->>'total_bytes' AS total_bytes
+}): Promise<{ totalBytes?: number; objectCount?: number }> {
+  const { rows } = await pool().query<{
+    total_bytes: unknown;
+    object_count: unknown;
+  }>(
+    `SELECT result_json->>'total_bytes' AS total_bytes,
+            result_json->>'object_count' AS object_count
        FROM ${CACHE_TABLE}
       WHERE account_id=$1
         AND bucket=$2
@@ -877,8 +917,14 @@ async function getCachedAuditTotalBytesForProgress({
       LIMIT 1`,
     [accountId, bucket, prefix],
   );
-  const value = Number(rows[0]?.total_bytes);
-  return Number.isFinite(value) && value > 0 ? value : undefined;
+  const totalBytes = Number(rows[0]?.total_bytes);
+  const objectCount = Number(rows[0]?.object_count);
+  return {
+    totalBytes:
+      Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : undefined,
+    objectCount:
+      Number.isFinite(objectCount) && objectCount > 0 ? objectCount : undefined,
+  };
 }
 
 async function saveCachedAudit(result: CloudflareR2AuditResult): Promise<void> {
@@ -905,6 +951,7 @@ export async function auditCloudflareR2Bucket({
   prefix,
   refresh,
   max_age_minutes,
+  expected_total_objects,
   expected_total_bytes,
   onProgress,
 }: {
@@ -912,6 +959,7 @@ export async function auditCloudflareR2Bucket({
   prefix?: string;
   refresh?: boolean;
   max_age_minutes?: number;
+  expected_total_objects?: number;
   expected_total_bytes?: number;
   onProgress?: (progress: CloudflareR2AuditProgress) => void | Promise<void>;
 }): Promise<CloudflareR2AuditResult> {
@@ -930,15 +978,17 @@ export async function auditCloudflareR2Bucket({
   await ensureAuditCacheTable();
   const normalizedPrefix = normalizePrefix(prefix) ?? "";
   const maxAgeMinutes = cacheMaxAgeMinutes(max_age_minutes);
+  const progressBaseline = onProgress
+    ? await getCachedAuditProgressBaseline({
+        accountId,
+        bucket: bucketName,
+        prefix: normalizedPrefix,
+      })
+    : {};
+  const progressExpectedTotalObjects =
+    expected_total_objects ?? progressBaseline.objectCount;
   const progressExpectedTotalBytes =
-    expected_total_bytes ??
-    (onProgress
-      ? await getCachedAuditTotalBytesForProgress({
-          accountId,
-          bucket: bucketName,
-          prefix: normalizedPrefix,
-        })
-      : undefined);
+    expected_total_bytes ?? progressBaseline.totalBytes;
   if (!refresh && maxAgeMinutes > 0) {
     const cached = await getCachedAudit({
       accountId,
@@ -1008,6 +1058,7 @@ export async function auditCloudflareR2Bucket({
         pagesSeen,
         objectsSeen,
         bytesSeen,
+        expectedTotalObjects: progressExpectedTotalObjects,
         expectedTotalBytes: progressExpectedTotalBytes,
         startedAt,
       }),
@@ -1206,9 +1257,11 @@ export async function runCloudflareR2AuditLro({
         pages_seen: lastProgress?.pages_seen ?? 0,
         objects_seen: result.object_count,
         bytes_seen: result.total_bytes,
+        expected_total_objects: result.object_count,
         expected_total_bytes: result.total_bytes,
         progress: 1,
         elapsed_ms: lastProgress?.elapsed_ms ?? 0,
+        objects_per_second: lastProgress?.objects_per_second,
         bytes_per_second: lastProgress?.bytes_per_second,
         message: "audit complete",
       },

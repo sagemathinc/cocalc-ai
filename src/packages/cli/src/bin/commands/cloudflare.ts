@@ -230,9 +230,17 @@ function reportProgress(ctx: any, message: string): void {
 
 function formatR2AuditProgress(progress: any): string | undefined {
   if (!progress || typeof progress !== "object") return undefined;
+  if (!progress.bucket && !progress.objects_seen && !progress.bytes_seen) {
+    return undefined;
+  }
   const bucket = progress.bucket ? `${progress.bucket}` : "R2 bucket";
   const phase = progress.phase ?? "scanning";
   const objects = Number(progress.objects_seen ?? 0);
+  const expectedObjects = Number(progress.expected_total_objects);
+  const objectLabel =
+    Number.isFinite(expectedObjects) && expectedObjects > 0
+      ? `${objects}/${expectedObjects} objects`
+      : `${objects} objects`;
   const pages = Number(progress.pages_seen ?? 0);
   const seen = bytes(Number(progress.bytes_seen ?? 0)) || "0 B";
   const expectedBytes = Number(progress.expected_total_bytes);
@@ -252,7 +260,7 @@ function formatR2AuditProgress(progress: any): string | undefined {
       : "";
   const etaValue = duration(Number(progress.eta_seconds));
   const eta = etaValue ? `, eta ${etaValue}` : "";
-  return `${phase} ${bucket}: ${objects} objects, ${seen}${expected}${percent}, ${pages} pages${rate}${eta}`;
+  return `${phase} ${bucket}: ${objectLabel}, ${seen}${expected}${percent}, ${pages} pages${rate}${eta}`;
 }
 
 async function withScanTimeout<T>(
