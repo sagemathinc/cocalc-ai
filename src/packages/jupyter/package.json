@@ -49,7 +49,7 @@
     "he": "^1.2.0",
     "immutable": "^4.3.8",
     "jsonfile": "^6.1.0",
-    "lodash": "^4.17.23",
+    "lodash": "^4.18.1",
     "lru-cache": "^7.18.3",
     "mkdirp": "^1.0.4",
     "node-cleanup": "^2.1.2",
@@ -59,9 +59,9 @@
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
-    "expect": "^26.6.2",
     "@types/node": "^22.10.10",
-    "@types/node-cleanup": "^2.1.2"
+    "@types/node-cleanup": "^2.1.2",
+    "expect": "^26.6.2"
   },
   "homepage": "https://github.com/sagemathinc/cocalc/tree/master/src/packages/jupyter",
   "repository": {

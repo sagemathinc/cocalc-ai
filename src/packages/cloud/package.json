@@ -32,10 +32,10 @@
   "dependencies": {
     "@cocalc/backend": "workspace:*",
     "@cocalc/util": "workspace:*",
-    "@google-cloud/compute": "^6.9.0",
+    "@google-cloud/compute": "^6.9.1",
     "@nebius/js-sdk": "^0.1.49",
     "awaiting": "^3.0.0",
-    "axios": "^1.13.5",
+    "axios": "^1.16.0",
     "cheerio": "^1.0.0-rc.12",
     "google-auth-library": "^10.6.2"
   },

@@ -62,7 +62,7 @@
     "chokidar": "^4.0.3",
     "debug": "^4.4.0",
     "fs-extra": "^11.3.1",
-    "lodash": "^4.17.23",
+    "lodash": "^4.18.1",
     "lru-cache": "^7.18.3",
     "micro-key-producer": "^0.8.2",
     "password-hash": "^1.2.2",

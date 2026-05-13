@@ -97,6 +97,7 @@
     "timeago": "^1.6.3",
     "tsd": "^0.22.0",
     "util": "^0.12.3",
+    "webpack": "^5.106.2",
     "webpack-hot-middleware": "^2.26.1",
     "webpack-path-rewriter": "^1.1.4"
   }

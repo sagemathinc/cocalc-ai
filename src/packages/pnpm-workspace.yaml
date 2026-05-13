@@ -12,3 +12,7 @@ packages:
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   - patchflow
+  # First patched version for GHSA-xcj9-5m2h-648r, GHSA-87f9-hvmw-gh4p,
+  # and GHSA-ghcm-xqfw-q4vr in the active Mermaid 11.x line.
+  - mermaid
+  - "@mermaid-js/parser"
