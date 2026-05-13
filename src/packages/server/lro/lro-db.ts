@@ -66,6 +66,14 @@ export async function ensureLroSchema(): Promise<void> {
       "ALTER TABLE long_running_operations ADD COLUMN dismissed_by UUID",
     );
   } catch {}
+  try {
+    await pool().query(
+      "ALTER TABLE long_running_operations ADD COLUMN parent_id UUID",
+    );
+  } catch {}
+  await pool().query(
+    "CREATE INDEX IF NOT EXISTS lro_parent_idx ON long_running_operations(parent_id)",
+  );
 }
 
 export async function createLro({

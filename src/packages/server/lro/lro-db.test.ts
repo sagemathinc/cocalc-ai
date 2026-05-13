@@ -118,3 +118,21 @@ describe("claimLroOps", () => {
     ]);
   });
 });
+
+describe("ensureLroSchema", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    connectQueryMock = jest.fn(async () => ({ rows: [] }));
+    queryMock = jest.fn(async () => ({ rows: [] }));
+  });
+
+  it("migrates child LRO parent tracking into existing tables", async () => {
+    const { ensureLroSchema } = await import("./lro-db");
+
+    await ensureLroSchema();
+
+    const sql = queryMock.mock.calls.map(([sql]) => `${sql}`);
+    expect(sql.some((x) => x.includes("ADD COLUMN parent_id UUID"))).toBe(true);
+    expect(sql.some((x) => x.includes("lro_parent_idx"))).toBe(true);
+  });
+});
