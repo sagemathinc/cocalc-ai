@@ -55,6 +55,24 @@ export interface ProjectCopyDestination {
   };
 }
 
+export interface CourseCollectAssignmentItem {
+  student_id: string;
+  student_project_id: string;
+  src_path: string;
+  dest_path: string;
+  student_account_id?: string;
+  student_name?: string;
+  assignment_title?: string;
+}
+
+export interface CourseCollectAssignmentResult {
+  op_id: string;
+  scope_type: "project";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}
+
 export interface BackupFindResult {
   id: string;
   time: Date;
@@ -434,6 +452,7 @@ export type ProjectRunQuota = Record<string, any> | null;
 export const projects = {
   createProject: authFirstRequireAccount,
   copyPathBetweenProjects: authFirstRequireAccount,
+  collectAssignment: authFirstRequireAccount,
   inspectPublicPath: authFirstRequireAccount,
   importPublicUrl: authFirstRequireAccount,
   importPublicPath: authFirstRequireAccount,
@@ -559,6 +578,15 @@ export interface Projects {
     service: string;
     stream_name: string;
   }>;
+
+  collectAssignment: (opts: {
+    account_id?: string;
+    course_project_id: string;
+    assignment_id: string;
+    items: CourseCollectAssignmentItem[];
+    options?: CopyOptions;
+    run_at?: string;
+  }) => Promise<CourseCollectAssignmentResult>;
 
   inspectPublicPath: (opts: {
     account_id?: string;

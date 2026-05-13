@@ -375,10 +375,15 @@ export class MentionsActions extends Actions<MentionsState> {
     }
     switch (event.type) {
       case "notification.upsert": {
-        void showCodexTurnCompletionToastBestEffort({
-          account_id,
-          row: event.notification,
-        });
+        if (
+          event.reason === "projected_upsert" &&
+          !event.notification.read_state?.read
+        ) {
+          void showCodexTurnCompletionToastBestEffort({
+            account_id,
+            row: event.notification,
+          });
+        }
         const mention = buildNotificationMention(account_id, {
           ...event.notification,
           created_at: event.notification.created_at

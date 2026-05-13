@@ -8,6 +8,10 @@ jest.mock("@cocalc/frontend/conat/account-dstream", () => ({
   getSharedAccountDStream: jest.fn(),
 }));
 
+jest.mock("../codex-turn-toast", () => ({
+  showCodexTurnCompletionToastBestEffort: jest.fn(),
+}));
+
 jest.mock("@cocalc/frontend/webapp-client", () => {
   const webappClient = Object.assign(new EventEmitter(), {
     is_signed_in: jest.fn(() => true),
@@ -40,6 +44,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => {
 
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { MentionsActions } from "./actions";
+import { showCodexTurnCompletionToastBestEffort } from "../codex-turn-toast";
 
 const mockedWebappClient = webapp_client as unknown as EventEmitter & {
   is_signed_in: jest.Mock;
@@ -53,6 +58,8 @@ const mockedWebappClient = webapp_client as unknown as EventEmitter & {
   };
 };
 const getSharedAccountDStreamMock = getSharedAccountDStream as jest.Mock;
+const showCodexTurnCompletionToastBestEffortMock =
+  showCodexTurnCompletionToastBestEffort as jest.Mock;
 
 class MockFeed extends EventEmitter {
   private closed = false;
@@ -182,6 +189,93 @@ describe("MentionsActions realtime feed", () => {
     expect(
       mockedWebappClient.conat_client.hub.notifications.list,
     ).toHaveBeenCalledTimes(2);
+  });
+
+  it("only shows codex completion toasts for new unread notification arrivals", async () => {
+    let mentionsStore = ImmutableMap({ mentions: ImmutableMap() });
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-1" });
+        }
+        if (name === "mentions") {
+          return mentionsStore;
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((patch) => {
+        if (patch.mentions != null) {
+          mentionsStore = mentionsStore.merge(patch.mentions);
+        }
+      }),
+      removeActions: jest.fn(),
+    } as any;
+    const actions = new MentionsActions("mentions", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    const notification = {
+      notification_id: "n-codex",
+      kind: "account_notice",
+      project_id: null,
+      summary: {
+        title: "Codex finished",
+        origin_label: "Codex",
+        notice_type: "codex_turn_completion",
+      },
+      read_state: {
+        read: false,
+        saved: false,
+      },
+      created_at: "2026-04-05T00:00:00.000Z",
+      updated_at: "2026-04-05T00:00:00.000Z",
+    };
+
+    feed.emit("change", {
+      type: "notification.upsert",
+      account_id: "acct-1",
+      reason: "projected_upsert",
+      ts: Date.now(),
+      notification,
+    });
+    await flushMicrotasks();
+
+    expect(showCodexTurnCompletionToastBestEffortMock).toHaveBeenCalledTimes(1);
+
+    feed.emit("change", {
+      type: "notification.upsert",
+      account_id: "acct-1",
+      reason: "read_state_updated",
+      ts: Date.now(),
+      notification: {
+        ...notification,
+        read_state: {
+          read: true,
+          saved: false,
+        },
+      },
+    });
+    await flushMicrotasks();
+
+    feed.emit("change", {
+      type: "notification.upsert",
+      account_id: "acct-1",
+      reason: "projected_upsert",
+      ts: Date.now(),
+      notification: {
+        ...notification,
+        notification_id: "n-already-read",
+        read_state: {
+          read: true,
+          saved: false,
+        },
+      },
+    });
+    await flushMicrotasks();
+
+    expect(showCodexTurnCompletionToastBestEffortMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not leave notifications loading forever after a transient refresh failure", async () => {

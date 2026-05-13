@@ -3,7 +3,17 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Card, Col, Input, Popconfirm, Row, Space } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  Col,
+  Input,
+  Popconfirm,
+  Row,
+  Space,
+  Switch,
+} from "antd";
 import { ReactElement, useState } from "react";
 import { DebounceInput } from "react-debounce-input";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -18,6 +28,7 @@ import {
 } from "@cocalc/frontend/components";
 import { course, labels } from "@cocalc/frontend/i18n";
 import { capitalize, trunc_middle } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import { CourseActions } from "../actions";
 import { BigTime, Progress } from "../common";
 import { STEP_NAMES, STEPS_INTL } from "../common/consts";
@@ -126,7 +137,7 @@ export function Assignment({
           <Tip
             placement="top"
             title="Set the due date"
-            tip="Set the due date for the assignment.  This changes how the list of assignments is sorted.  Note that you must explicitly click a button to collect student assignments when they are due -- they are not automatically collected on the due date.  {intl.formatMessage(labels.you)} should also tell students when assignments are due (e.g., at the top of the assignment)."
+            tip="Set the due date for the assignment. This changes how the list of assignments is sorted and can be used to schedule automatic collection. You should also tell students when assignments are due, e.g. at the top of the assignment."
           >
             Due
           </Tip>
@@ -137,6 +148,47 @@ export function Assignment({
           onChange={date_change}
         />
       </Space>
+    );
+  }
+
+  function render_auto_collect() {
+    const assignment_id = assignment.get("assignment_id");
+    const dueDate = assignment.get("due_date");
+    const enabled = !!assignment.get("auto_collect");
+    const scheduledAt = assignment.get("auto_collect_run_at");
+    const error = assignment.get("auto_collect_error");
+    return (
+      <div style={{ marginTop: "8px" }}>
+        <Space size="small" wrap>
+          <Tip
+            placement="top"
+            title="Automatic collection"
+            tip="Automatically collect this assignment from eligible student projects at the due date. Changing or clearing the due date cancels and replaces the scheduled collection."
+          >
+            Auto collect
+          </Tip>
+          <Switch
+            size="small"
+            checked={enabled}
+            disabled={!dueDate}
+            onChange={(checked) =>
+              assignment_id
+                ? actions.assignments.set_auto_collect(assignment_id, checked)
+                : undefined
+            }
+          />
+          {enabled && scheduledAt ? (
+            <span style={{ color: "#666" }}>
+              scheduled <BigTime date={scheduledAt} />
+            </span>
+          ) : undefined}
+        </Space>
+        {error ? (
+          <div style={{ color: COLORS.ANTD_RED_WARN, marginTop: "4px" }}>
+            {error}
+          </div>
+        ) : undefined}
+      </div>
     );
   }
 
@@ -273,6 +325,7 @@ export function Assignment({
           <Row>
             <Col md={8} style={{ fontSize: "14px" }} key="due">
               {render_due()}
+              {render_auto_collect()}
             </Col>
             <Col md={16} key="delete">
               <Row>
@@ -803,8 +856,8 @@ export function Assignment({
         <FormattedMessage
           id="course.assignments.collect.tooltip"
           defaultMessage={`Collect an assignment from all of your students.
-          (There is currently no way to schedule collection at a specific time;
-          instead, collection happens when you click the button.)`}
+          You can collect immediately with this button, or enable automatic
+          collection at the assignment due date.`}
         />
       </span>
     );

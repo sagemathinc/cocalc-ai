@@ -7,6 +7,7 @@ let updateLroMock: jest.Mock;
 let dismissLroMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let cancelCopiesByOpIdMock: jest.Mock;
+let cancelCourseCollectChildrenMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -29,6 +30,13 @@ jest.mock("@cocalc/server/lro/stream", () => ({
 jest.mock("@cocalc/server/projects/copy-db", () => ({
   __esModule: true,
   cancelCopiesByOpId: (...args: any[]) => cancelCopiesByOpIdMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/course-collect-worker", () => ({
+  __esModule: true,
+  COURSE_COLLECT_ASSIGNMENT_LRO_KIND: "course-collect-assignment",
+  cancelCourseCollectChildren: (...args: any[]) =>
+    cancelCourseCollectChildrenMock(...args),
 }));
 
 jest.mock("./util", () => ({
@@ -60,6 +68,7 @@ describe("lro host authorization", () => {
     dismissLroMock = jest.fn(async () => null);
     publishLroSummaryMock = jest.fn(async () => undefined);
     cancelCopiesByOpIdMock = jest.fn(async () => undefined);
+    cancelCourseCollectChildrenMock = jest.fn(async () => undefined);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.includes("FROM project_hosts")) {
         return {
@@ -161,6 +170,34 @@ describe("lro host authorization", () => {
     expect(cancelCopiesByOpIdMock).toHaveBeenCalledWith({
       op_id: "op-copy",
       include_applying: true,
+    });
+  });
+
+  it("cancels child copy operations when canceling a course collection", async () => {
+    getLroMock = jest.fn(async () => ({
+      op_id: "op-collect",
+      kind: "course-collect-assignment",
+      scope_type: "project",
+      scope_id: "project-1",
+      status: "running",
+    }));
+    updateLroMock = jest.fn(async () => ({
+      op_id: "op-collect",
+      kind: "course-collect-assignment",
+      scope_type: "project",
+      scope_id: "project-1",
+      status: "canceled",
+      error: "canceled",
+    }));
+
+    const { cancel } = await import("./lro");
+    await cancel({
+      account_id: "project-user",
+      op_id: "op-collect",
+    });
+
+    expect(cancelCourseCollectChildrenMock).toHaveBeenCalledWith({
+      op_id: "op-collect",
     });
   });
 });

@@ -7,6 +7,7 @@ let listCopiesByOpIdMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let publishLroEventMock: jest.Mock;
 let triggerCopyLroWorkerMock: jest.Mock;
+let triggerCourseCollectLroWorkerMock: jest.Mock;
 let getProjectOwnerAccountIdMock: jest.Mock;
 let assertCanIncreaseAccountStorageMock: jest.Mock;
 
@@ -77,6 +78,20 @@ jest.mock("@cocalc/server/projects/copy-worker", () => ({
   triggerCopyLroWorker: (...args: any[]) => triggerCopyLroWorkerMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/course-collect-worker", () => ({
+  __esModule: true,
+  COURSE_COLLECT_ASSIGNMENT_LRO_KIND: "course-collect-assignment",
+  triggerCourseCollectLroWorker: (...args: any[]) =>
+    triggerCourseCollectLroWorkerMock(...args),
+  courseCollectLroResponse: (op: any) => ({
+    op_id: op.op_id,
+    scope_type: "project",
+    scope_id: op.scope_id,
+    service: "persist-service",
+    stream_name: `stream:${op.op_id}`,
+  }),
+}));
+
 jest.mock("@cocalc/server/membership/project-limits", () => ({
   __esModule: true,
   getProjectOwnerAccountId: (...args: any[]) =>
@@ -127,6 +142,7 @@ describe("projects.copyPathBetweenProjects", () => {
     publishLroSummaryMock = jest.fn(async () => undefined);
     publishLroEventMock = jest.fn(async () => undefined);
     triggerCopyLroWorkerMock = jest.fn();
+    triggerCourseCollectLroWorkerMock = jest.fn();
     getProjectOwnerAccountIdMock = jest.fn(async () => "owner-1");
     assertCanIncreaseAccountStorageMock = jest.fn(async () => undefined);
   });
@@ -379,5 +395,97 @@ describe("projects.copyPathBetweenProjects", () => {
       listCopyRowsByOpId({ account_id: "acct-1", op_id: "op-1" }),
     ).rejects.toThrow("operation is not a project copy");
     expect(listCopiesByOpIdMock).not.toHaveBeenCalled();
+  });
+
+  it("creates a course collection LRO after checking course and student project access", async () => {
+    createLroMock = jest.fn(async () => ({
+      op_id: "collect-op-1",
+      scope_type: "project",
+      scope_id: "course-project",
+    }));
+    const { collectAssignment } = await import("./projects");
+    const result = await collectAssignment({
+      account_id: "acct-1",
+      course_project_id: "course-project",
+      assignment_id: "assignment-1",
+      items: [
+        {
+          student_id: "student-1",
+          student_project_id: "student-project-1",
+          src_path: "Homework 1",
+          dest_path: "course-collect/Homework 1/student-1",
+          student_name: "Student One",
+        },
+      ],
+      options: { recursive: true },
+    });
+    expect(assertCollabMock).toHaveBeenNthCalledWith(1, {
+      account_id: "acct-1",
+      project_id: "course-project",
+    });
+    expect(assertCollabMock).toHaveBeenNthCalledWith(2, {
+      account_id: "acct-1",
+      project_id: "student-project-1",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "course-collect-assignment",
+        scope_type: "project",
+        scope_id: "course-project",
+        created_by: "acct-1",
+        routing: "hub",
+        input: expect.objectContaining({
+          course_project_id: "course-project",
+          assignment_id: "assignment-1",
+          items: [
+            {
+              student_id: "student-1",
+              student_project_id: "student-project-1",
+              src_path: "Homework 1",
+              dest_path: "course-collect/Homework 1/student-1",
+              student_name: "Student One",
+            },
+          ],
+          options: { recursive: true },
+        }),
+        status: "queued",
+      }),
+    );
+    expect(triggerCourseCollectLroWorkerMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      op_id: "collect-op-1",
+      scope_type: "project",
+      scope_id: "course-project",
+      service: "persist-service",
+      stream_name: "stream:collect-op-1",
+    });
+  });
+
+  it("stores scheduled course collection run time and dedupe key", async () => {
+    const { collectAssignment } = await import("./projects");
+    await collectAssignment({
+      account_id: "acct-1",
+      course_project_id: "course-project",
+      assignment_id: "assignment-1",
+      run_at: "2026-05-14T17:00:00.000Z",
+      items: [
+        {
+          student_id: "student-1",
+          student_project_id: "student-project-1",
+          src_path: "Homework 1",
+          dest_path: "course-collect/Homework 1/student-1",
+        },
+      ],
+    });
+
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dedupe_key:
+          "course-collect:course-project:assignment-1:2026-05-14T17:00:00.000Z",
+        input: expect.objectContaining({
+          run_at: "2026-05-14T17:00:00.000Z",
+        }),
+      }),
+    );
   });
 });

@@ -71,10 +71,24 @@ import {
   STUDENT_SUBDIR,
 } from "./consts";
 import { DUE_DATE_FILENAME } from "../common/consts";
-import type { ProjectCopyDestination } from "@cocalc/conat/hub/api/projects";
-import { type CourseCopyDestination, waitForCourseCopyLro } from "../copy-lro";
+import type { LroSummary } from "@cocalc/conat/hub/api/lro";
+import type {
+  CourseCollectAssignmentItem,
+  ProjectCopyDestination,
+} from "@cocalc/conat/hub/api/projects";
+import {
+  courseCollectResultByStudent,
+  type CourseCopyDestination,
+  waitForCourseCopyLro,
+} from "../copy-lro";
 
 const UPDATE_DUE_DATE_FILENAME_DEBOUNCE_MS = 3000;
+const TERMINAL_LRO_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "canceled",
+  "expired",
+]);
 
 export class AssignmentsActions {
   private course_actions: CourseActions;
@@ -287,6 +301,17 @@ export class AssignmentsActions {
     });
   };
 
+  private set_assignment_fields = (
+    assignment_id: string,
+    fields: Partial<SyncDBRecordAssignment>,
+  ): void => {
+    this.course_actions.set({
+      ...fields,
+      table: "assignments",
+      assignment_id,
+    });
+  };
+
   set_due_date = async (
     assignment_id: string,
     due_date: Date | string | undefined | null,
@@ -305,6 +330,9 @@ export class AssignmentsActions {
         // not deleted so delete it
         this.set_assignment_field(assignment_id, "due_date", null);
         this.updateDueDateFile(assignment_id);
+      }
+      if (assignment.get("auto_collect")) {
+        await this.set_auto_collect(assignment_id, false);
       }
       return;
     }
@@ -325,6 +353,168 @@ export class AssignmentsActions {
     // actual update only happens after it stabilizes for a while.  Also, we can be
     // sure the store has updated the assignment.
     this.updateDueDateFile(assignment_id);
+    if (assignment.get("auto_collect")) {
+      await this.set_auto_collect(assignment_id, true, due_date);
+    }
+  };
+
+  private cancel_auto_collect_op = async (op_id?: string | null) => {
+    if (!op_id) return;
+    await webapp_client.conat_client.hub.lro.cancel({ op_id });
+  };
+
+  set_auto_collect = async (
+    assignment_id: string,
+    enabled: boolean,
+    run_at?: string,
+  ): Promise<void> => {
+    const { store, assignment } = this.course_actions.resolve({
+      assignment_id,
+    });
+    if (!assignment) return;
+
+    const previousOpId = assignment.get("auto_collect_op_id");
+    const previousRunAt = assignment.get("auto_collect_run_at");
+
+    if (!enabled) {
+      try {
+        await this.cancel_auto_collect_op(previousOpId);
+        this.set_assignment_fields(assignment_id, {
+          auto_collect: false,
+          auto_collect_op_id: null,
+          auto_collect_run_at: null,
+          auto_collect_error: null,
+        });
+      } catch (err) {
+        this.set_assignment_fields(assignment_id, {
+          auto_collect_error: `${err}`,
+        });
+        this.course_actions.set_error(`cancel scheduled collection: ${err}`);
+      }
+      return;
+    }
+
+    const runAt = run_at ?? assignment.get("due_date");
+    if (!runAt) {
+      const err = "set a due date before enabling automatic collection";
+      this.set_assignment_fields(assignment_id, {
+        auto_collect: false,
+        auto_collect_error: err,
+      });
+      this.course_actions.set_error(err);
+      return;
+    }
+
+    if (previousOpId && previousRunAt === runAt) {
+      this.set_assignment_fields(assignment_id, {
+        auto_collect: true,
+        auto_collect_error: null,
+      });
+      return;
+    }
+
+    const { items } = this.build_collect_assignment_items({
+      assignment_id,
+      new_only: true,
+      mark_started: false,
+    });
+    if (!items.length) {
+      const err =
+        "no assigned student projects are currently eligible for automatic collection";
+      this.set_assignment_fields(assignment_id, {
+        auto_collect: false,
+        auto_collect_error: err,
+      });
+      this.course_actions.set_error(err);
+      return;
+    }
+
+    try {
+      await this.cancel_auto_collect_op(previousOpId);
+      const op = await webapp_client.project_client.collectAssignment({
+        course_project_id: store.get("course_project_id"),
+        assignment_id,
+        items,
+        options: { recursive: true },
+        run_at: runAt,
+      });
+      this.set_assignment_fields(assignment_id, {
+        auto_collect: true,
+        auto_collect_op_id: op.op_id,
+        auto_collect_run_at: runAt,
+        auto_collect_error: null,
+      });
+    } catch (err) {
+      this.set_assignment_fields(assignment_id, {
+        auto_collect_error: `${err}`,
+      });
+      this.course_actions.set_error(`schedule assignment collection: ${err}`);
+    }
+  };
+
+  private apply_collect_lro_summary = (summary: LroSummary): void => {
+    const assignment_id = summary.input?.assignment_id;
+    if (!assignment_id) return;
+    const { store } = this.course_actions.resolve({ assignment_id });
+    const result = courseCollectResultByStudent(summary);
+    const items = Array.isArray(summary.input?.items)
+      ? summary.input.items
+      : [];
+    for (const item of items as CourseCollectAssignmentItem[]) {
+      if (!item?.student_id) continue;
+      const err =
+        result[item.student_id] ??
+        (summary.status === "succeeded"
+          ? ""
+          : (summary.error ?? summary.status));
+      if (
+        !err &&
+        store.last_copied("collect", assignment_id, item.student_id, true)
+      ) {
+        continue;
+      }
+      this.finish_copy(assignment_id, item.student_id, "last_collect", err);
+    }
+    this.set_assignment_fields(assignment_id, {
+      auto_collect: false,
+      auto_collect_op_id: null,
+      auto_collect_run_at: null,
+      auto_collect_error:
+        summary.status === "succeeded"
+          ? null
+          : (summary.error ?? summary.status),
+    });
+  };
+
+  reconcile_scheduled_collections = async (): Promise<void> => {
+    if (this.course_actions.is_closed()) return;
+    const store = this.get_store();
+    const assignments = store.get("assignments");
+    if (!assignments) return;
+    for (const assignment of assignments.valueSeq().toArray()) {
+      if (this.course_actions.is_closed()) return;
+      const op_id = assignment.get("auto_collect_op_id");
+      if (!op_id) continue;
+      try {
+        const summary = await webapp_client.conat_client.hub.lro.get({
+          op_id,
+        });
+        if (!summary) {
+          this.set_assignment_fields(assignment.get("assignment_id"), {
+            auto_collect: false,
+            auto_collect_error: "scheduled collection operation not found",
+          });
+          continue;
+        }
+        if (TERMINAL_LRO_STATUSES.has(summary.status)) {
+          this.apply_collect_lro_summary(summary);
+        }
+      } catch (err) {
+        this.set_assignment_fields(assignment.get("assignment_id"), {
+          auto_collect_error: `${err}`,
+        });
+      }
+    }
   };
 
   private updateDueDateFile = debounce(async (assignment_id: string) => {
@@ -1131,6 +1321,72 @@ ${details}
     finish(errors);
   };
 
+  private build_collect_assignment_items = ({
+    assignment_id,
+    new_only,
+    mark_started,
+  }: {
+    assignment_id: string;
+    new_only: boolean;
+    mark_started: boolean;
+  }): {
+    items: CourseCollectAssignmentItem[];
+    startedStudentIds: string[];
+    store?: CourseStore;
+  } => {
+    const { store, assignment } = this.course_actions.resolve({
+      assignment_id,
+    });
+    if (!assignment) {
+      return { items: [], startedStudentIds: [] };
+    }
+    const items: CourseCollectAssignmentItem[] = [];
+    const startedStudentIds: string[] = [];
+    const peer: boolean = assignment.getIn(["peer_grade", "enabled"], false);
+    const prev_step = previous_step("collect", peer);
+    for (const student_id of store.get_student_ids({ deleted: false })) {
+      if (this.course_actions.is_closed()) break;
+      if (!store.last_copied(prev_step, assignment_id, student_id, true)) {
+        continue;
+      }
+      if (
+        new_only &&
+        store.last_copied("collect", assignment_id, student_id, true)
+      ) {
+        continue;
+      }
+      if (
+        mark_started &&
+        this.start_copy(assignment_id, student_id, "last_collect")
+      ) {
+        continue;
+      }
+      const { student } = this.course_actions.resolve({
+        assignment_id,
+        student_id,
+      });
+      if (!student) continue;
+      const student_project_id = student.get("project_id");
+      if (student_project_id == null) {
+        if (mark_started) {
+          this.stop_copy(assignment_id, student_id, "last_collect");
+        }
+        continue;
+      }
+      startedStudentIds.push(student_id);
+      items.push({
+        student_id,
+        student_project_id,
+        student_account_id: student.get("account_id"),
+        student_name: store.get_student_name_extra(student_id).simple,
+        assignment_title: assignment.get("title") ?? assignment.get("path"),
+        src_path: assignment.get("target_path"),
+        dest_path: join(assignment.get("collect_path"), student_id),
+      });
+    }
+    return { items, startedStudentIds, store };
+  };
+
   // Copy the given assignment to from all non-deleted students, doing several copies in parallel at once.
   copy_assignment_from_all_students = async (
     assignment_id: string,
@@ -1141,14 +1397,73 @@ ${details}
       desc += " from whom we have not already copied it";
     }
     const short_desc = "copy from student";
-    await this.assignment_action_all_students({
+    const id = this.course_actions.set_activity({ desc });
+    const finish = (err) => {
+      this.course_actions.clear_activity(id);
+      if (err) {
+        this.course_actions.set_error(`${short_desc}: ${err}`);
+      }
+    };
+    const { assignment } = this.course_actions.resolve({
       assignment_id,
-      new_only,
-      action: this.copy_assignment_from_student,
-      step: "collect",
-      desc,
-      short_desc,
     });
+    if (!assignment) return;
+    const { items, startedStudentIds, store } =
+      this.build_collect_assignment_items({
+        assignment_id,
+        new_only,
+        mark_started: true,
+      });
+    if (!store) return;
+    if (!items.length) {
+      finish("");
+      return;
+    }
+    try {
+      const op = await webapp_client.project_client.collectAssignment({
+        course_project_id: store.get("course_project_id"),
+        assignment_id,
+        items,
+        options: { recursive: true },
+      });
+      const summary = await webapp_client.conat_client.lroWait({
+        op_id: op.op_id,
+        scope_type: op.scope_type,
+        scope_id: op.scope_id,
+        timeout_ms: 2 * 60 * 60 * 1000,
+        onSummary: (summary) => {
+          const progress = summary.progress_summary;
+          if (progress?.total) {
+            this.course_actions.set_activity({
+              id,
+              desc: `Copying assignment from ${items.length} students (${progress.done ?? 0}/${progress.total} done)`,
+            });
+          }
+        },
+      });
+      const result = courseCollectResultByStudent(summary);
+      for (const student_id of startedStudentIds) {
+        this.finish_copy(
+          assignment_id,
+          student_id,
+          "last_collect",
+          result[student_id] ??
+            (summary.status === "succeeded"
+              ? ""
+              : (summary.error ?? summary.status)),
+        );
+      }
+      finish(
+        summary.status === "failed"
+          ? (summary.error ?? "collection failed")
+          : "",
+      );
+    } catch (err) {
+      for (const student_id of startedStudentIds) {
+        this.finish_copy(assignment_id, student_id, "last_collect", err);
+      }
+      finish(err);
+    }
   };
 
   async peer_copy_to_all_students(

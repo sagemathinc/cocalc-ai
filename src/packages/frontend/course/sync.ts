@@ -98,6 +98,7 @@ export function create_sync_db(
     if (p != null) {
       p.log_opened_time(store.get("course_filename"));
     }
+    void actions.assignments.reconcile_scheduled_collections();
 
     // Wait until the projects store has data about users of our project before configuring anything.
     const projects_store = redux.getStore("projects");

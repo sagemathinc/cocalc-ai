@@ -66,6 +66,14 @@ export async function ensureLroSchema(): Promise<void> {
       "ALTER TABLE long_running_operations ADD COLUMN dismissed_by UUID",
     );
   } catch {}
+  try {
+    await pool().query(
+      "ALTER TABLE long_running_operations ADD COLUMN parent_id UUID",
+    );
+  } catch {}
+  await pool().query(
+    "CREATE INDEX IF NOT EXISTS lro_parent_idx ON long_running_operations(parent_id)",
+  );
 }
 
 export async function createLro({
@@ -78,6 +86,7 @@ export async function createLro({
   routing,
   input,
   dedupe_key,
+  parent_id,
   expires_at,
   status = "queued",
 }: {
@@ -90,6 +99,7 @@ export async function createLro({
   routing?: string;
   input?: any;
   dedupe_key?: string;
+  parent_id?: string;
   expires_at?: Date;
   status?: LroStatus;
 }): Promise<LroSummary> {
@@ -116,8 +126,8 @@ export async function createLro({
   const { rows } = await pool().query(
     `
       INSERT INTO long_running_operations
-        (op_id, kind, scope_type, scope_id, status, created_by, owner_type, owner_id, routing, input, expires_at, dedupe_key)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        (op_id, kind, scope_type, scope_id, status, created_by, owner_type, owner_id, routing, input, expires_at, dedupe_key, parent_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
       RETURNING *
     `,
     [
@@ -133,6 +143,7 @@ export async function createLro({
       input ?? null,
       expires,
       dedupe_key ?? null,
+      parent_id ?? null,
     ],
   );
   return rows[0] as LroSummary;
@@ -266,6 +277,24 @@ export async function getLro(op_id: string): Promise<LroSummary | undefined> {
   return rows[0] as LroSummary | undefined;
 }
 
+export async function listChildLro({
+  parent_id,
+}: {
+  parent_id: string;
+}): Promise<LroSummary[]> {
+  await ensureLroSchema();
+  const { rows } = await pool().query(
+    `
+      SELECT *
+      FROM long_running_operations
+      WHERE parent_id=$1
+      ORDER BY created_at
+    `,
+    [parent_id],
+  );
+  return rows as LroSummary[];
+}
+
 export async function listLro({
   scope_type,
   scope_id,
@@ -304,12 +333,14 @@ export async function claimLroOps({
   owner_id,
   limit = 10,
   lease_ms = 120_000,
+  input_not_before_key,
 }: {
   kind: string;
   owner_type: "hub" | "host";
   owner_id: string;
   limit?: number;
   lease_ms?: number;
+  input_not_before_key?: string;
 }): Promise<LroSummary[]> {
   await expireDueLros({ kind });
   await ensureLroSchema();
@@ -324,6 +355,11 @@ export async function claimLroOps({
           WHERE kind=$1
             AND dismissed_at IS NULL
             AND expires_at > now()
+            AND (
+              $6::text IS NULL
+              OR input ->> $6 IS NULL
+              OR (input ->> $6)::timestamptz <= now()
+            )
             AND (
               status='queued'
               OR (
@@ -348,7 +384,14 @@ export async function claimLroOps({
         WHERE op_id IN (SELECT op_id FROM candidate)
         RETURNING *
       `,
-      [kind, lease_ms, limit, owner_type, owner_id],
+      [
+        kind,
+        lease_ms,
+        limit,
+        owner_type,
+        owner_id,
+        input_not_before_key ?? null,
+      ],
     );
     await client.query("COMMIT");
     return rows as LroSummary[];

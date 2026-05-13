@@ -20,6 +20,12 @@ export interface CourseCopyDestination {
 
 export type CourseCopyResultByStudent = Record<string, string>;
 
+type CourseCollectItemResult = {
+  student_id: string;
+  status: string;
+  error?: string;
+};
+
 const TERMINAL_COPY_STATUSES = new Set([
   "done",
   "failed",
@@ -98,4 +104,20 @@ export async function waitForCourseCopyLro({
     (await webapp_client.conat_client.hub.lro.get({ op_id: op.op_id })) ??
     summary;
   return summarizeRows({ summary: currentSummary, rows, dests });
+}
+
+export function courseCollectResultByStudent(
+  summary: LroSummary,
+): CourseCopyResultByStudent {
+  const result: CourseCopyResultByStudent = {};
+  const items = summary.result?.items;
+  if (!Array.isArray(items)) {
+    return result;
+  }
+  for (const item of items as CourseCollectItemResult[]) {
+    if (!item?.student_id) continue;
+    result[item.student_id] =
+      item.status === "done" ? "" : (item.error ?? item.status);
+  }
+  return result;
 }

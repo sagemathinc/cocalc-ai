@@ -72,6 +72,10 @@ export interface SyncDBRecordAssignment {
   collect_path?: string;
   graded_path?: string;
   target_path?: string;
+  auto_collect?: boolean;
+  auto_collect_op_id?: string | null;
+  auto_collect_run_at?: string | null;
+  auto_collect_error?: string | null;
   status?: {
     [student_id: string]: { start?: number; time?: number; error?: string };
   };
