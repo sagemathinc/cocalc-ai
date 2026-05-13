@@ -87,7 +87,9 @@ export type CloudflareR2UsageResult = {
   checked_at: string;
   account_id: string;
   bucket_prefix?: string;
+  filtered_by_prefix: boolean;
   bucket_count: number;
+  cloudflare_bucket_count: number;
   totals: {
     object_count?: number;
     payload_bytes?: number;
@@ -370,7 +372,11 @@ function bucketNameForMetricAliases(bucket: CloudflareBucket): string[] {
   return aliases;
 }
 
-export async function getCloudflareR2Usage(): Promise<CloudflareR2UsageResult> {
+export async function getCloudflareR2Usage({
+  all_buckets,
+}: {
+  all_buckets?: boolean;
+} = {}): Promise<CloudflareR2UsageResult> {
   const settings = await getServerSettings();
   const accountId =
     clean(settings.r2_account_id) ??
@@ -385,7 +391,19 @@ export async function getCloudflareR2Usage(): Promise<CloudflareR2UsageResult> {
   const notes: string[] = [
     "Storage metrics come from Cloudflare GraphQL analytics when available; they can lag behind live S3 object listings.",
   ];
-  const buckets = await listBucketInfo(token, accountId);
+  const bucketPrefix = clean(settings.r2_bucket_prefix);
+  const allBuckets = await listBucketInfo(token, accountId);
+  const filteredByPrefix = !!bucketPrefix && !all_buckets;
+  const buckets = filteredByPrefix
+    ? allBuckets.filter((bucket) =>
+        clean(bucket.name)?.startsWith(`${bucketPrefix}-`),
+      )
+    : allBuckets;
+  if (filteredByPrefix && buckets.length === 0) {
+    warnings.push(
+      `no Cloudflare R2 buckets match configured prefix '${bucketPrefix}-' among ${allBuckets.length} visible buckets; use --all to inspect every visible bucket`,
+    );
+  }
   const dbInfo = await loadBucketDatabaseInfo();
   const endDate = new Date();
   const startDate = new Date(endDate.getTime() - 24 * 60 * 60 * 1000);
@@ -402,13 +420,21 @@ export async function getCloudflareR2Usage(): Promise<CloudflareR2UsageResult> {
     warnings.push(
       `could not query per-bucket R2 GraphQL metrics: ${err}. Run 'cocalc cloudflare r2 audit <bucket>' for exact S3-listing totals.`,
     );
-    try {
-      accountMetricTotals = await queryAccountMetrics(token, accountId);
+    if (!filteredByPrefix) {
+      try {
+        accountMetricTotals = await queryAccountMetrics(token, accountId);
+        notes.push(
+          "Account-level totals use Cloudflare's R2 metrics REST endpoint because per-bucket GraphQL metrics were unavailable.",
+        );
+      } catch (metricsErr) {
+        warnings.push(
+          `could not query account-level R2 metrics: ${metricsErr}`,
+        );
+      }
+    } else {
       notes.push(
-        "Account-level totals use Cloudflare's R2 metrics REST endpoint because per-bucket GraphQL metrics were unavailable.",
+        "Account-level R2 REST metrics are not used for filtered bucket output because Cloudflare's REST metrics endpoint is account-wide.",
       );
-    } catch (metricsErr) {
-      warnings.push(`could not query account-level R2 metrics: ${metricsErr}`);
     }
   }
 
@@ -460,8 +486,10 @@ export async function getCloudflareR2Usage(): Promise<CloudflareR2UsageResult> {
   return {
     checked_at: new Date().toISOString(),
     account_id: accountId,
-    bucket_prefix: clean(settings.r2_bucket_prefix),
+    bucket_prefix: bucketPrefix,
+    filtered_by_prefix: filteredByPrefix,
     bucket_count: rows.length,
+    cloudflare_bucket_count: allBuckets.length,
     totals: {
       object_count: sum("object_count") ?? accountMetricTotals?.object_count,
       payload_bytes: sum("payload_bytes") ?? accountMetricTotals?.payload_bytes,

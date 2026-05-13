@@ -52,7 +52,9 @@ function summarizeR2Usage(result: any) {
     checked_at: result.checked_at,
     account_id: result.account_id,
     bucket_prefix: result.bucket_prefix ?? "",
+    filtered_by_prefix: result.filtered_by_prefix ?? false,
     bucket_count: result.bucket_count ?? 0,
+    cloudflare_bucket_count: result.cloudflare_bucket_count ?? "",
     total_objects: result.totals?.object_count ?? "",
     total_size: bytes(result.totals?.total_bytes),
     total_payload: bytes(result.totals?.payload_bytes),
@@ -64,6 +66,9 @@ function summarizeR2Usage(result: any) {
 }
 
 function r2UsageRows(result: any) {
+  if ((result.buckets ?? []).length === 0) {
+    return [summarizeR2Usage(result)];
+  }
   return (result.buckets ?? []).map((bucket: any) => ({
     bucket: bucket.bucket,
     objects: bucket.object_count ?? "",
@@ -188,10 +193,16 @@ export function registerCloudflareCommand(
 
   r2.command("usage")
     .description("Show configured Cloudflare R2 bucket usage")
+    .option(
+      "--all",
+      "Show all visible R2 buckets instead of only buckets matching configured r2_bucket_prefix",
+    )
     .option("--summary", "Show account-level summary instead of bucket rows")
     .action(async (options, command) => {
       await deps.withContext(command, "cloudflare r2 usage", async (ctx) => {
-        const result = await ctx.hub.system.getCloudflareR2Usage({});
+        const result = await ctx.hub.system.getCloudflareR2Usage({
+          all_buckets: !!options.all,
+        });
         return options.summary ? summarizeR2Usage(result) : r2UsageRows(result);
       });
     });

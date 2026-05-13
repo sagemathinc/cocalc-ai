@@ -110,18 +110,20 @@ test("cloudflare teardown review fetches saved plan", async () => {
 });
 
 test("cloudflare r2 usage requests usage summary", async () => {
-  let called = false;
+  let capturedArgs: any;
   const program = new Command();
   registerCloudflareCommand(
     program,
     deps({
       system: {
-        getCloudflareR2Usage: async () => {
-          called = true;
+        getCloudflareR2Usage: async (opts: any) => {
+          capturedArgs = opts;
           return {
             checked_at: "2026-05-12T00:00:00.000Z",
             account_id: "acct",
+            filtered_by_prefix: false,
             bucket_count: 1,
+            cloudflare_bucket_count: 1,
             totals: { object_count: 2, total_bytes: 1024 },
             buckets: [
               {
@@ -142,7 +144,45 @@ test("cloudflare r2 usage requests usage summary", async () => {
 
   await program.parseAsync(["node", "test", "cloudflare", "r2", "usage"]);
 
-  assert.equal(called, true);
+  assert.deepEqual(capturedArgs, { all_buckets: false });
+});
+
+test("cloudflare r2 usage can request all visible buckets", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        getCloudflareR2Usage: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            checked_at: "2026-05-12T00:00:00.000Z",
+            account_id: "acct",
+            bucket_prefix: "lite4b",
+            filtered_by_prefix: false,
+            bucket_count: 0,
+            cloudflare_bucket_count: 20,
+            totals: {},
+            buckets: [],
+            warnings: ["none matched"],
+            notes: [],
+          };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "r2",
+    "usage",
+    "--all",
+  ]);
+
+  assert.deepEqual(capturedArgs, { all_buckets: true });
 });
 
 test("cloudflare r2 audit passes cache controls", async () => {

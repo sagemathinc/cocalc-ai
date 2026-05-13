@@ -269,7 +269,9 @@ export interface CloudflareR2UsageResult {
   checked_at: string;
   account_id: string;
   bucket_prefix?: string;
+  filtered_by_prefix: boolean;
   bucket_count: number;
+  cloudflare_bucket_count: number;
   totals: {
     object_count?: number;
     payload_bytes?: number;
