@@ -6,7 +6,7 @@
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
-  deleteR2Object,
+  deleteR2ObjectsConcurrently,
   scanR2Objects,
   type R2ObjectListEntry,
 } from "@cocalc/backend/r2";
@@ -215,6 +215,8 @@ export type CloudflareR2BayBackupCleanupProgress = {
   phase: "starting" | "scanning" | "deleting" | "done";
   bucket: string;
   prefix: string;
+  objects_total?: number;
+  bytes_total?: number;
   objects_seen: number;
   bytes_seen: number;
   objects_deleted: number;
@@ -1465,6 +1467,8 @@ function makeBayBackupCleanupProgress({
   phase,
   bucket,
   prefix,
+  objectsTotal,
+  bytesTotal,
   objectsSeen,
   bytesSeen,
   objectsDeleted,
@@ -1474,6 +1478,8 @@ function makeBayBackupCleanupProgress({
   phase: CloudflareR2BayBackupCleanupProgress["phase"];
   bucket: string;
   prefix: string;
+  objectsTotal?: number;
+  bytesTotal?: number;
   objectsSeen: number;
   bytesSeen: number;
   objectsDeleted: number;
@@ -1490,6 +1496,8 @@ function makeBayBackupCleanupProgress({
     phase,
     bucket,
     prefix,
+    objects_total: objectsTotal,
+    bytes_total: bytesTotal,
     objects_seen: objectsSeen,
     bytes_seen: bytesSeen,
     objects_deleted: objectsDeleted,
@@ -1546,31 +1554,6 @@ async function updateBayBackupCleanupLro({
   return summary;
 }
 
-async function deleteR2ObjectsConcurrently({
-  auth,
-  entries,
-  concurrency,
-  onDeleted,
-}: {
-  auth: Awaited<ReturnType<typeof getR2S3Auth>>["auth"];
-  entries: R2ObjectListEntry[];
-  concurrency: number;
-  onDeleted: (entry: R2ObjectListEntry) => void | Promise<void>;
-}): Promise<void> {
-  let next = 0;
-  const workerCount = Math.min(concurrency, entries.length);
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (true) {
-      const index = next++;
-      const entry = entries[index];
-      if (!entry) return;
-      await deleteR2Object({ auth, key: entry.key, acceptMissing: true });
-      await onDeleted(entry);
-    }
-  });
-  await Promise.all(workers);
-}
-
 export async function runCloudflareR2BayBackupCleanupLro({
   op_id,
   bucket,
@@ -1613,6 +1596,8 @@ export async function runCloudflareR2BayBackupCleanupLro({
           phase,
           bucket: plan.bucket,
           prefix: plan.prefix,
+          objectsTotal: plan.object_count,
+          bytesTotal: plan.total_bytes,
           objectsSeen,
           bytesSeen,
           objectsDeleted,
@@ -1629,13 +1614,15 @@ export async function runCloudflareR2BayBackupCleanupLro({
         objectsSeen += entries.length;
         bytesSeen += entries.reduce((sum, entry) => sum + entry.size, 0);
         await publishProgress("scanning");
+        const entryByKey = new Map(entries.map((entry) => [entry.key, entry]));
         await deleteR2ObjectsConcurrently({
           auth,
-          entries,
+          keys: entries.map((entry) => entry.key),
           concurrency: BAY_BACKUP_CLEANUP_DELETE_CONCURRENCY,
-          onDeleted: async (entry) => {
+          onDeleted: async (key) => {
+            const entry = entryByKey.get(key);
             objectsDeleted += 1;
-            bytesDeleted += entry.size;
+            bytesDeleted += entry?.size ?? 0;
             await publishProgress("deleting");
           },
         });
@@ -1646,6 +1633,8 @@ export async function runCloudflareR2BayBackupCleanupLro({
       phase: "done",
       bucket: plan.bucket,
       prefix: plan.prefix,
+      objectsTotal: plan.object_count,
+      bytesTotal: plan.total_bytes,
       objectsSeen,
       bytesSeen,
       objectsDeleted,

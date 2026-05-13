@@ -87,7 +87,7 @@ import { getSingleBayInfo } from "@cocalc/server/bay-directory";
 import { getLaunchpadLocalConfig } from "@cocalc/server/launchpad/mode";
 import {
   createBucket,
-  deleteObject,
+  deleteObjects,
   issueSignedObjectDownload,
   listObjects,
   listBuckets,
@@ -1801,23 +1801,23 @@ async function pruneRemoteWalObjects({
   ) {
     return 0;
   }
-  let removed = 0;
+  const keysToDelete: string[] = [];
   for (const key of remote_object_keys) {
     if (!key.startsWith(`${wal_object_prefix}/`)) continue;
     const name = key.slice(wal_object_prefix.length + 1);
     if (name.endsWith(".history")) continue;
     if (!WAL_SEGMENT_NAME_RE.test(name)) continue;
     if (name >= keep_from_segment) continue;
-    await deleteObject({
-      endpoint: r2.bucket_endpoint,
-      accessKey: r2.access_key,
-      secretKey: r2.secret_key,
-      bucket: r2.bucket_name,
-      key,
-    });
-    removed += 1;
+    keysToDelete.push(key);
   }
-  return removed;
+  await deleteObjects({
+    endpoint: r2.bucket_endpoint,
+    accessKey: r2.access_key,
+    secretKey: r2.secret_key,
+    bucket: r2.bucket_name,
+    keys: keysToDelete,
+  });
+  return keysToDelete.length;
 }
 
 async function pruneLocalArchiveDirectories({

@@ -22,6 +22,7 @@ import { isValidUUID } from "@cocalc/util/misc";
 const log = getLogger("server:projects:hard-delete");
 
 const RUSTIC_TIMEOUT_MS = 2 * 60 * 1000;
+const RUSTIC_FORGET_BATCH_SIZE = 100;
 const DEFAULT_BACKUP_RETENTION_DAYS = 7;
 const MAX_BACKUP_RETENTION_DAYS = 365;
 let deletedProjectsSchemaReady: Promise<void> | undefined;
@@ -305,9 +306,10 @@ async function forgetAllSnapshotsForHost({
   if (!ids.length) {
     return 0;
   }
-  for (const id of ids) {
+  for (let i = 0; i < ids.length; i += RUSTIC_FORGET_BATCH_SIZE) {
+    const batch = ids.slice(i, i + RUSTIC_FORGET_BATCH_SIZE);
     parseOutput(
-      await rustic(["forget", id], {
+      await rustic(["forget", ...batch], {
         repo,
         host,
         timeout: RUSTIC_TIMEOUT_MS,

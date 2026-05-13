@@ -299,11 +299,12 @@ function formatR2BayBackupCleanupProgress(progress: any): string | undefined {
   const prefix = progress.prefix ? `${progress.prefix}` : "bay-backups/";
   const phase = progress.phase ?? "deleting";
   const seen = Number(progress.objects_seen ?? 0);
+  const total = Number(progress.objects_total ?? seen);
   const deleted = Number(progress.objects_deleted ?? 0);
   const deletedBytes = bytes(Number(progress.bytes_deleted ?? 0)) || "0 B";
   const rate = Number(progress.objects_per_second);
   const rateText = Number.isFinite(rate) && rate > 0 ? `, ${rate}/s` : "";
-  return `${phase} ${bucket}/${prefix}: ${deleted}/${seen} objects deleted, ${deletedBytes}${rateText}`;
+  return `${phase} ${bucket}/${prefix}: ${deleted}/${total} objects deleted, ${deletedBytes}${rateText}`;
 }
 
 async function withScanTimeout<T>(
