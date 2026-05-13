@@ -11,11 +11,14 @@ function deps(overrides: Record<string, any> = {}) {
         globals: { json: true, output: "json" },
         timeoutMs: 30_000,
         rpcTimeoutMs: 30_000,
+        pollMs: 0,
         hub: {
           system: {},
+          lro: {},
         },
       };
       Object.assign(ctx.hub.system, overrides.system ?? {});
+      Object.assign(ctx.hub.lro, overrides.lro ?? {});
       return await fn(ctx);
     },
   };
@@ -324,10 +327,85 @@ test("cloudflare r2 audit passes cache controls", async () => {
     "alpha-wnam",
     "--prefix",
     "rustic/",
-    "--refresh",
     "--max-age-minutes",
     "5",
     "--categories",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bucket: "alpha-wnam",
+    prefix: "rustic/",
+    refresh: false,
+    max_age_minutes: 5,
+  });
+});
+
+test("cloudflare r2 audit refresh starts LRO", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        auditCloudflareR2Bucket: async () => {
+          throw new Error("direct audit should not be used for refresh");
+        },
+        startCloudflareR2Audit: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            op_id: "audit-op-1",
+            scope_type: "account",
+            scope_id: "acct",
+            service: "persist",
+            stream_name: "lro:audit-op-1",
+          };
+        },
+      },
+      lro: {
+        get: async () => ({
+          op_id: "audit-op-1",
+          status: "succeeded",
+          result: {
+            account_id: "acct",
+            bucket: "alpha-wnam",
+            prefix: "rustic/",
+            scanned_at: "2026-05-12T00:00:00.000Z",
+            cache: {
+              hit: false,
+              max_age_minutes: 5,
+              expires_at: "2026-05-12T01:00:00.000Z",
+            },
+            object_count: 1,
+            total_bytes: 2048,
+            categories: [],
+            top_prefixes: [],
+            top_objects: [],
+            warnings: [],
+            notes: [],
+          },
+          progress_summary: {
+            phase: "done",
+            bucket: "alpha-wnam",
+            objects_seen: 1,
+            bytes_seen: 2048,
+          },
+        }),
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "r2",
+    "audit",
+    "alpha-wnam",
+    "--prefix",
+    "rustic/",
+    "--refresh",
+    "--max-age-minutes",
+    "5",
   ]);
 
   assert.deepEqual(capturedArgs, {

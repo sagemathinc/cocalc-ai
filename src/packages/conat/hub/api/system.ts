@@ -111,6 +111,7 @@ export const system = {
   getCloudflareTeardownPlan: authFirst,
   getCloudflareR2Usage: authFirst,
   auditCloudflareR2Bucket: authFirst,
+  startCloudflareR2Audit: authFirst,
   createProviderSetupChallenge: authFirst,
   getProviderSetupChallenge: authFirst,
   clearProviderSetupChallenge: authFirst,
@@ -338,6 +339,14 @@ export interface CloudflareR2AuditResult {
   database?: CloudflareR2BucketUsage["database"];
   warnings: string[];
   notes: string[];
+}
+
+export interface CloudflareR2AuditLroRef {
+  op_id: string;
+  scope_type: "account";
+  scope_id: string;
+  service: string;
+  stream_name: string;
 }
 
 export interface AccountMembershipPortabilityRepairCounts {
@@ -1766,6 +1775,30 @@ export interface System {
     account_id?: string;
     plan_id: string;
   }) => Promise<CloudflareTeardownPlan>;
+
+  getCloudflareR2Usage: (opts: {
+    account_id?: string;
+    all_buckets?: boolean;
+    scan?: boolean;
+    refresh?: boolean;
+    max_age_minutes?: number;
+  }) => Promise<CloudflareR2UsageResult>;
+
+  auditCloudflareR2Bucket: (opts: {
+    account_id?: string;
+    bucket: string;
+    prefix?: string;
+    refresh?: boolean;
+    max_age_minutes?: number;
+  }) => Promise<CloudflareR2AuditResult>;
+
+  startCloudflareR2Audit: (opts: {
+    account_id?: string;
+    bucket: string;
+    prefix?: string;
+    refresh?: boolean;
+    max_age_minutes?: number;
+  }) => Promise<CloudflareR2AuditLroRef>;
 
   createProviderSetupChallenge: (opts: {
     account_id?: string;

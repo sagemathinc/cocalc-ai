@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { humanSize } from "@cocalc/util/misc";
+import { waitForLro } from "../core/lro";
 
 export type CloudflareCommandDeps = {
   withContext: any;
@@ -45,6 +46,19 @@ function summarizeResources(plan: any) {
 function bytes(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "";
   return humanSize(value, { binary: true });
+}
+
+function duration(seconds: unknown): string {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) {
+    return "";
+  }
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) return `${hours}h${minutes}m`;
+  if (minutes > 0) return `${minutes}m${secs}s`;
+  return `${secs}s`;
 }
 
 function summarizeR2Usage(result: any) {
@@ -214,6 +228,33 @@ function reportProgress(ctx: any, message: string): void {
   process.stderr.write(`${message}\n`);
 }
 
+function formatR2AuditProgress(progress: any): string | undefined {
+  if (!progress || typeof progress !== "object") return undefined;
+  const bucket = progress.bucket ? `${progress.bucket}` : "R2 bucket";
+  const phase = progress.phase ?? "scanning";
+  const objects = Number(progress.objects_seen ?? 0);
+  const pages = Number(progress.pages_seen ?? 0);
+  const seen = bytes(Number(progress.bytes_seen ?? 0)) || "0 B";
+  const expectedBytes = Number(progress.expected_total_bytes);
+  const expected =
+    Number.isFinite(expectedBytes) && expectedBytes > 0
+      ? ` / ${bytes(expectedBytes)}`
+      : "";
+  const progressFraction = Number(progress.progress);
+  const percent =
+    Number.isFinite(progressFraction) && progressFraction >= 0
+      ? ` (${Math.min(100, Math.max(0, progressFraction * 100)).toFixed(1)}%)`
+      : "";
+  const rateBytes = Number(progress.bytes_per_second);
+  const rate =
+    Number.isFinite(rateBytes) && rateBytes > 0
+      ? `, ${bytes(rateBytes)}/s`
+      : "";
+  const etaValue = duration(Number(progress.eta_seconds));
+  const eta = etaValue ? `, eta ${etaValue}` : "";
+  return `${phase} ${bucket}: ${objects} objects, ${seen}${expected}${percent}, ${pages} pages${rate}${eta}`;
+}
+
 async function withScanTimeout<T>(
   ctx: any,
   timeoutMinutes: number | undefined,
@@ -231,6 +272,44 @@ async function withScanTimeout<T>(
     ctx.timeoutMs = prevTimeoutMs;
     ctx.rpcTimeoutMs = prevRpcTimeoutMs;
   }
+}
+
+async function runR2AuditRefresh(ctx: any, bucket: string, options: any) {
+  const timeoutMinutes = Math.max(1, options.scanTimeoutMinutes ?? 360);
+  const timeoutMs = timeoutMinutes * 60 * 1000;
+  const op = await ctx.hub.system.startCloudflareR2Audit({
+    bucket,
+    prefix: options.prefix,
+    refresh: true,
+    max_age_minutes: options.maxAgeMinutes,
+  });
+  reportProgress(
+    ctx,
+    `scanning R2 bucket ${bucket}; timeout is ${timeoutMinutes} minutes; op_id=${op.op_id}`,
+  );
+  const waited = await waitForLro({
+    hub: ctx.hub,
+    opId: op.op_id,
+    timeoutMs,
+    pollMs: Math.max(1000, ctx.pollMs ?? 1000),
+    terminalStatuses: new Set(["succeeded", "failed", "canceled", "expired"]),
+    onUpdate: async (update) => {
+      const message = formatR2AuditProgress(update.progress_summary);
+      if (message) reportProgress(ctx, message);
+    },
+  });
+  if (waited.timedOut) {
+    throw new Error(
+      `timeout waiting for R2 audit operation ${op.op_id} (${timeoutMinutes} minutes)`,
+    );
+  }
+  if (waited.status !== "succeeded") {
+    throw new Error(
+      waited.error ||
+        `R2 audit operation ${op.op_id} finished with status ${waited.status}`,
+    );
+  }
+  return waited.result;
 }
 
 function recomputeR2UsageTotals(result: any): void {
@@ -432,23 +511,19 @@ export function registerCloudflareCommand(
     .option("--top-objects", "Show largest object rows")
     .action(async (bucket, options, command) => {
       await deps.withContext(command, "cloudflare r2 audit", async (ctx) => {
-        if (options.refresh) {
-          reportProgress(
-            ctx,
-            `scanning R2 bucket ${bucket}; timeout is ${Math.max(1, options.scanTimeoutMinutes ?? 360)} minutes`,
-          );
-        }
-        const result = await withScanTimeout(
-          ctx,
-          options.scanTimeoutMinutes,
-          async () =>
-            await ctx.hub.system.auditCloudflareR2Bucket({
-              bucket,
-              prefix: options.prefix,
-              refresh: !!options.refresh,
-              max_age_minutes: options.maxAgeMinutes,
-            }),
-        );
+        const result = options.refresh
+          ? await runR2AuditRefresh(ctx, bucket, options)
+          : await withScanTimeout(
+              ctx,
+              options.scanTimeoutMinutes,
+              async () =>
+                await ctx.hub.system.auditCloudflareR2Bucket({
+                  bucket,
+                  prefix: options.prefix,
+                  refresh: false,
+                  max_age_minutes: options.maxAgeMinutes,
+                }),
+            );
         if (options.categories) return r2AuditCategoryRows(result);
         if (options.rusticRepos) return r2AuditRusticRepoRows(result);
         if (options.otherPrefixes) return r2AuditOtherPrefixRows(result);

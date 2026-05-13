@@ -6,6 +6,10 @@
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { scanR2Objects, type R2ObjectListEntry } from "@cocalc/backend/r2";
+import getLogger from "@cocalc/backend/logger";
+import { updateLro } from "@cocalc/server/lro/lro-db";
+import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
+import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 
 const CACHE_TABLE = "cloudflare_r2_audit_cache";
 const DEFAULT_AUDIT_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -13,6 +17,9 @@ const MAX_EXAMPLES_PER_CATEGORY = 3;
 const MAX_TOP_OBJECTS = 20;
 const MAX_TOP_PREFIXES = 30;
 const R2_AUDIT_SCHEMA_VERSION = 4;
+const R2_AUDIT_PROGRESS_INTERVAL_MS = 2000;
+
+const logger = getLogger("server:cloud:cloudflare-r2-usage");
 
 type CloudflareResponse<T> = {
   success?: boolean;
@@ -162,6 +169,25 @@ export type CloudflareR2AuditResult = {
   warnings: string[];
   notes: string[];
 };
+
+export type CloudflareR2AuditProgress = {
+  phase: "starting" | "scanning" | "saving" | "done";
+  bucket: string;
+  prefix?: string;
+  pages_seen: number;
+  objects_seen: number;
+  bytes_seen: number;
+  expected_total_bytes?: number;
+  progress?: number;
+  elapsed_ms: number;
+  bytes_per_second?: number;
+  eta_seconds?: number;
+  message: string;
+};
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 function pool() {
   return getPool();
@@ -728,6 +754,67 @@ function cacheMaxAgeMinutes(maxAgeMinutes?: number): number {
   return value;
 }
 
+function makeAuditProgress({
+  phase,
+  bucket,
+  prefix,
+  pagesSeen,
+  objectsSeen,
+  bytesSeen,
+  expectedTotalBytes,
+  startedAt,
+}: {
+  phase: CloudflareR2AuditProgress["phase"];
+  bucket: string;
+  prefix: string;
+  pagesSeen: number;
+  objectsSeen: number;
+  bytesSeen: number;
+  expectedTotalBytes?: number;
+  startedAt: number;
+}): CloudflareR2AuditProgress {
+  const elapsedMs = Math.max(0, Date.now() - startedAt);
+  const elapsedSeconds = elapsedMs / 1000;
+  const bytesPerSecond =
+    elapsedSeconds > 0 ? Math.round(bytesSeen / elapsedSeconds) : undefined;
+  const progress =
+    expectedTotalBytes && expectedTotalBytes > 0
+      ? Math.min(1, bytesSeen / expectedTotalBytes)
+      : undefined;
+  const etaSeconds =
+    progress != null &&
+    progress > 0 &&
+    progress < 1 &&
+    bytesPerSecond &&
+    bytesPerSecond > 0
+      ? Math.max(
+          0,
+          Math.round((expectedTotalBytes! - bytesSeen) / bytesPerSecond),
+        )
+      : undefined;
+  return {
+    phase,
+    bucket,
+    prefix: prefix || undefined,
+    pages_seen: pagesSeen,
+    objects_seen: objectsSeen,
+    bytes_seen: bytesSeen,
+    expected_total_bytes: expectedTotalBytes,
+    progress,
+    elapsed_ms: elapsedMs,
+    bytes_per_second: bytesPerSecond,
+    eta_seconds: etaSeconds,
+    message:
+      phase === "done"
+        ? "audit complete"
+        : phase === "saving"
+          ? "saving audit result"
+          : phase === "starting"
+            ? "starting R2 bucket scan"
+            : "scanning R2 bucket",
+  };
+}
+
 async function getCachedAudit(opts: {
   accountId: string;
   bucket: string;
@@ -772,6 +859,28 @@ async function getCachedAudit(opts: {
   };
 }
 
+async function getCachedAuditTotalBytesForProgress({
+  accountId,
+  bucket,
+  prefix,
+}: {
+  accountId: string;
+  bucket: string;
+  prefix: string;
+}): Promise<number | undefined> {
+  const { rows } = await pool().query<{ total_bytes: unknown }>(
+    `SELECT result_json->>'total_bytes' AS total_bytes
+       FROM ${CACHE_TABLE}
+      WHERE account_id=$1
+        AND bucket=$2
+        AND prefix=$3
+      LIMIT 1`,
+    [accountId, bucket, prefix],
+  );
+  const value = Number(rows[0]?.total_bytes);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 async function saveCachedAudit(result: CloudflareR2AuditResult): Promise<void> {
   await pool().query(
     `INSERT INTO ${CACHE_TABLE}
@@ -796,11 +905,15 @@ export async function auditCloudflareR2Bucket({
   prefix,
   refresh,
   max_age_minutes,
+  expected_total_bytes,
+  onProgress,
 }: {
   bucket: string;
   prefix?: string;
   refresh?: boolean;
   max_age_minutes?: number;
+  expected_total_bytes?: number;
+  onProgress?: (progress: CloudflareR2AuditProgress) => void | Promise<void>;
 }): Promise<CloudflareR2AuditResult> {
   const bucketName = clean(bucket);
   if (!bucketName) throw new Error("bucket is required");
@@ -817,6 +930,15 @@ export async function auditCloudflareR2Bucket({
   await ensureAuditCacheTable();
   const normalizedPrefix = normalizePrefix(prefix) ?? "";
   const maxAgeMinutes = cacheMaxAgeMinutes(max_age_minutes);
+  const progressExpectedTotalBytes =
+    expected_total_bytes ??
+    (onProgress
+      ? await getCachedAuditTotalBytesForProgress({
+          accountId,
+          bucket: bucketName,
+          prefix: normalizedPrefix,
+        })
+      : undefined);
   if (!refresh && maxAgeMinutes > 0) {
     const cached = await getCachedAudit({
       accountId,
@@ -862,7 +984,37 @@ export async function auditCloudflareR2Bucket({
     { object_count: number; total_bytes: number }
   >();
   const topObjects: CloudflareR2AuditObject[] = [];
+  const startedAt = Date.now();
+  let pagesSeen = 0;
+  let objectsSeen = 0;
+  let bytesSeen = 0;
+  let lastProgressAt = 0;
 
+  const publishProgress = async (
+    phase: CloudflareR2AuditProgress["phase"],
+    force = false,
+  ) => {
+    if (!onProgress) return;
+    const now = Date.now();
+    if (!force && now - lastProgressAt < R2_AUDIT_PROGRESS_INTERVAL_MS) {
+      return;
+    }
+    lastProgressAt = now;
+    await onProgress(
+      makeAuditProgress({
+        phase,
+        bucket: bucketName,
+        prefix: normalizedPrefix,
+        pagesSeen,
+        objectsSeen,
+        bytesSeen,
+        expectedTotalBytes: progressExpectedTotalBytes,
+        startedAt,
+      }),
+    );
+  };
+
+  await publishProgress("starting", true);
   const { objectCount, totalSize } = await scanR2Objects({
     auth: {
       endpoint: r2Endpoint(accountId),
@@ -872,7 +1024,10 @@ export async function auditCloudflareR2Bucket({
       region: "auto",
     },
     prefix: normalizedPrefix || undefined,
-    onPage: (entries) => {
+    onPage: async (entries) => {
+      pagesSeen += 1;
+      objectsSeen += entries.length;
+      bytesSeen += entries.reduce((sum, entry) => sum + entry.size, 0);
       for (const entry of entries) {
         const category = categoryForKey(entry.key);
         const current = categories.get(category) ?? {
@@ -909,8 +1064,10 @@ export async function auditCloudflareR2Bucket({
         }
         pushTopObject(topObjects, entry);
       }
+      await publishProgress("scanning");
     },
   });
+  await publishProgress("saving", true);
 
   const scannedAt = new Date();
   const result: CloudflareR2AuditResult = {
@@ -955,5 +1112,124 @@ export async function auditCloudflareR2Bucket({
     ],
   };
   await saveCachedAudit(result);
+  await publishProgress("done", true);
   return result;
+}
+
+async function publishAuditLroSummary(summary?: LroSummary): Promise<void> {
+  if (!summary) return;
+  await publishLroSummary({
+    scope_type: summary.scope_type,
+    scope_id: summary.scope_id,
+    summary,
+  });
+}
+
+async function updateAuditLro({
+  op_id,
+  status,
+  result,
+  error,
+  progress_summary,
+}: {
+  op_id: string;
+  status?: "running" | "succeeded" | "failed";
+  result?: CloudflareR2AuditResult;
+  error?: string | null;
+  progress_summary?: CloudflareR2AuditProgress;
+}): Promise<LroSummary | undefined> {
+  const summary = await updateLro({
+    op_id,
+    status,
+    result,
+    error,
+    progress_summary,
+    heartbeat_at: new Date(),
+  });
+  await publishAuditLroSummary(summary);
+  if (summary && progress_summary) {
+    await publishLroEvent({
+      scope_type: summary.scope_type,
+      scope_id: summary.scope_id,
+      op_id,
+      event: {
+        type: "progress",
+        ts: Date.now(),
+        phase: progress_summary.phase,
+        message: progress_summary.message,
+        progress: progress_summary.progress,
+        detail: progress_summary,
+      },
+    });
+  }
+  return summary;
+}
+
+export async function runCloudflareR2AuditLro({
+  op_id,
+  bucket,
+  prefix,
+  refresh,
+  max_age_minutes,
+}: {
+  op_id: string;
+  bucket: string;
+  prefix?: string;
+  refresh?: boolean;
+  max_age_minutes?: number;
+}): Promise<void> {
+  let lastProgress: CloudflareR2AuditProgress | undefined;
+  try {
+    const result = await auditCloudflareR2Bucket({
+      bucket,
+      prefix,
+      refresh,
+      max_age_minutes,
+      onProgress: async (progress) => {
+        lastProgress = progress;
+        await updateAuditLro({
+          op_id,
+          status: "running",
+          progress_summary: progress,
+        });
+      },
+    });
+    await updateAuditLro({
+      op_id,
+      status: "succeeded",
+      result,
+      progress_summary: {
+        ...lastProgress,
+        phase: "done",
+        bucket: result.bucket,
+        prefix: result.prefix,
+        pages_seen: lastProgress?.pages_seen ?? 0,
+        objects_seen: result.object_count,
+        bytes_seen: result.total_bytes,
+        expected_total_bytes: result.total_bytes,
+        progress: 1,
+        elapsed_ms: lastProgress?.elapsed_ms ?? 0,
+        bytes_per_second: lastProgress?.bytes_per_second,
+        message: "audit complete",
+      },
+    });
+  } catch (err) {
+    const message = errorMessage(err);
+    logger.warn("R2 audit LRO failed", { op_id, bucket, err });
+    await updateAuditLro({
+      op_id,
+      status: "failed",
+      error: message,
+      progress_summary: {
+        phase: "done",
+        bucket,
+        prefix,
+        pages_seen: 0,
+        objects_seen: 0,
+        bytes_seen: 0,
+        elapsed_ms: 0,
+        message,
+      },
+    });
+  }
 }
