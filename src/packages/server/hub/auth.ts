@@ -21,17 +21,10 @@
 // 3. https://console.developers.google.com/apis/credentials → create credentials → oauth, ...
 // 4. The return path for google is https://{DOMAIN_NAME}/auth/google/return
 // 5. When done, there should be an entry under "OAuth 2.0 client IDs"
-// 6. ... and you have your ID and secret!
+// 6. Configure Google SSO client ID and secret in admin site settings.
 //
-// Now, connect to the database, where the setup is in the passports_settings table:
-//
-// In older code, there was a "site_conf". We fix it to be $base_path/auth. There is no need to configure it, and existing configurations are ignored. Besides that, it wasn't properly used for all SSO strategies anyways …
-//
-// What's important is to configure the individual passport settings:
-//
-// 2. insert into passport_settings (strategy , conf ) VALUES ( 'google', '{"clientID": "....apps.googleusercontent.com", "clientSecret": "..."}'::JSONB )
-//
-// Then restart the hubs.
+// Custom organization strategies still live in passport_settings. The old DB-only
+// Google setup is intentionally ignored by this runtime.
 
 import Cookies from "cookies";
 import dot from "dot-object";
@@ -81,6 +74,10 @@ import {
   getPassportCache,
 } from "@cocalc/database/postgres/auth/passport-store";
 import { getServerSettings } from "@cocalc/database/settings";
+import {
+  GOOGLE_SSO_STRATEGY,
+  getGoogleSsoSettingsState,
+} from "@cocalc/database/settings/google-sso";
 import {
   PassportLoginOpts,
   PassportStrategyDB,
@@ -188,9 +185,19 @@ export class PassportManager {
           info: { public: true },
         },
       };
+      const googleSso = await getGoogleSsoSettingsState();
+      if (googleSso.strategy != null) {
+        this.passports[GOOGLE_SSO_STRATEGY] = googleSso.strategy;
+      }
       const settings = await this.database.get_all_passport_settings();
       for (const setting of settings) {
         const name = setting.strategy;
+        if (name === GOOGLE_SSO_STRATEGY) {
+          logger.warn(
+            "Ignoring legacy Google SSO passport_settings row. Configure Google SSO through admin site settings instead.",
+          );
+          continue;
+        }
         if (BLACKLISTED_STRATEGIES.includes(name as any)) {
           throw new Error(
             `It is not allowed to name a strategy endpoint "${name}", because it is used by the next.js /auth/* endpoint. See next/pages/auth/ROUTING.md for more information.`,

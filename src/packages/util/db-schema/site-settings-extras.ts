@@ -97,6 +97,12 @@ const metrics_enabled = (conf: SiteSettings) =>
       "prometheus_metrics"
     ],
   );
+const google_sso_enabled = (conf: SiteSettings) =>
+  to_bool(
+    (conf as SiteSettings & { google_sso_enabled?: string })[
+      "google_sso_enabled"
+    ],
+  );
 
 // Ollama and Custom OpenAI have the same schema
 function custom_ai_model_valid(value: string): boolean {
@@ -233,6 +239,12 @@ export type SiteSettingsExtrasKeys =
   | "password_reset_smtp_password"
   | "password_reset_smtp_port"
   | "password_reset_smtp_secure"
+  | "google_sso_heading"
+  | "google_sso_enabled"
+  | "google_sso_client_id"
+  | "google_sso_client_secret"
+  | "google_sso_allowed_domains"
+  | "google_sso_signup_mode"
   | "zendesk_heading"
   | "zendesk_token"
   | "zendesk_username"
@@ -598,6 +610,68 @@ export const EXTRAS: SettingsExtras = {
     tags: ["captcha"],
     group: "Access & Identity",
     subgroup: "Signup Security",
+  },
+  google_sso_heading: {
+    name: "Google Single Sign-On",
+    desc: "Configure the built-in Google OpenID Connect sign-in provider. Create an OAuth client in the [Google Cloud Console](https://console.cloud.google.com/apis/credentials) with redirect URI `https://YOUR-DOMAIN/auth/google/return`, then paste its client ID and client secret here.",
+    default: "",
+    type: "header",
+    tags: ["SSO", "Security"],
+    group: "Access & Identity",
+    subgroup: "Single Sign-On",
+  },
+  google_sso_enabled: {
+    name: "Enable Google SSO",
+    desc: "Enable the built-in Google sign-in provider. If disabled, legacy Google entries in `passport_settings` are ignored.",
+    default: "no",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["SSO", "Security"],
+    group: "Access & Identity",
+    subgroup: "Single Sign-On",
+  },
+  google_sso_client_id: {
+    name: "Google SSO Client ID",
+    desc: "OAuth client ID from the Google Cloud Console. It usually ends with `.apps.googleusercontent.com`.",
+    default: "",
+    show: google_sso_enabled,
+    required_when: [{ key: "google_sso_enabled", equals: "yes" }],
+    to_val: to_trimmed_str,
+    tags: ["SSO", "Security"],
+    group: "Access & Identity",
+    subgroup: "Single Sign-On",
+  },
+  google_sso_client_secret: {
+    name: "Google SSO Client Secret",
+    desc: "OAuth client secret from the Google Cloud Console. This is encrypted at rest and never sent back to the browser after saving.",
+    default: "",
+    password: true,
+    show: google_sso_enabled,
+    required_when: [{ key: "google_sso_enabled", equals: "yes" }],
+    to_val: to_trimmed_str,
+    tags: ["SSO", "Security"],
+    group: "Access & Identity",
+    subgroup: "Single Sign-On",
+  },
+  google_sso_allowed_domains: {
+    name: "Google SSO Allowed Domains",
+    desc: "Optional comma-separated email domains, e.g. `example.com, school.edu`. If set, Google SSO is only accepted for verified email addresses in these domains, and password sign-in for those domains is routed to Google SSO.",
+    default: "",
+    show: google_sso_enabled,
+    to_val: to_trimmed_str,
+    tags: ["SSO", "Security"],
+    group: "Access & Identity",
+    subgroup: "Single Sign-On",
+  },
+  google_sso_signup_mode: {
+    name: "Google SSO Account Creation",
+    desc: "Controls whether Google SSO may create new accounts. `Registration token required` is the safest general setting; users can still link Google SSO after creating an account with a valid registration token.",
+    default: "registration_token_required",
+    show: google_sso_enabled,
+    valid: ["disabled", "registration_token_required", "public_allowed"],
+    tags: ["SSO", "Security"],
+    group: "Access & Identity",
+    subgroup: "Single Sign-On",
   },
   zendesk_heading: {
     name: "Zendesk API Configuration",

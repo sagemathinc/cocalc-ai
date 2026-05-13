@@ -116,6 +116,8 @@ export interface PassportStrategyDBConfig {
  * The ultimate intention is that users with such email addresses have to go through that authentication mechanism.
  * They're also prevented from linking with other passports, changing email address, or unlinking that passport from their account.
  * That way, the organization behind that SSO mechanism has full control over the user's account.
+ * - allowed_domains: a list of domains accepted by this strategy. This is stricter than exclusive_domains:
+ * if present, returned SSO profiles must have a verified email address in one of these domains.
  * - display: The string that's presented to the user as the name of that SSO strategy.
  * - description: A longer description of the strategy, could be markdown, shown on the dedicated /sso/... pages.
  * - icon: A URL to an icon
@@ -123,17 +125,23 @@ export interface PassportStrategyDBConfig {
  * - update_on_login: if true, the user's profile is updated on login (first and last name, not email)
  * - cookie_ttl_s: how long the remember_me cookied lasts (default is a month or so).
  * This could be set to a much shorter period to force users more frequently to re-login.
+ * - account_creation: whether this strategy may create new accounts.
  */
 export interface PassportStrategyDBInfo {
   public?: boolean; // default true
   do_not_hide?: boolean; // default false, only relevant for public=false SSOs, which will be shown on the login/signup page directly
   exclusive_domains?: string[]; // list of domains, e.g. ["foo.com"], which must go through that SSO mechanism (and hence block normal email signup)
+  allowed_domains?: string[]; // list of domains this strategy accepts; if set, returned SSO email must match one of them
   display?: string; // e.g. "WOW Tech", fallback: capitalize(strategy)
   description?: string; // markdown
   icon?: string; // URL to a square image
   disabled?: boolean; // if true, ignore this entry. default false.
   update_on_login?: boolean; // if true, update the user's info on login. default false.
   cookie_ttl_s?: number; // default is about a month
+  account_creation?:
+    | "disabled"
+    | "registration_token_required"
+    | "public_allowed";
 }
 
 // those are the 3 columns in the DB table

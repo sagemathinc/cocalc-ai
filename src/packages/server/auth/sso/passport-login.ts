@@ -177,6 +177,7 @@ export class PassportLogin {
     }
 
     sanitizeProfile(this.opts, logger.extend("sanitizeProfile").debug);
+    this.checkAllowedDomains(this.opts);
 
     // L({ locals, opts }); // DANGER -- do not uncomment except for debugging due to SECURITY
 
@@ -319,6 +320,38 @@ export class PassportLogin {
       }
     }
     return false;
+  }
+
+  private checkAllowedDomains(opts: PassportLoginOpts): void {
+    const strategy = opts.passports[opts.strategyName];
+    const allowedDomains = strategy.info?.allowed_domains ?? [];
+    if (isEmpty(allowedDomains)) return;
+
+    let matchedDomain = false;
+    for (const rawEmail of opts.emails ?? []) {
+      const email = normalizedEmail(rawEmail);
+      if (!email) continue;
+      const emailDomain = getEmailDomain(email);
+      for (const ssoDomain of allowedDomains) {
+        if (emailBelongsToDomain(emailDomain, ssoDomain)) {
+          matchedDomain = true;
+          if (profileHasVerifiedEmail(opts.profile, email)) {
+            return;
+          }
+        }
+      }
+    }
+
+    if (matchedDomain) {
+      throw Error(
+        `The ${strategy.info?.display ?? opts.strategyName} SSO provider did not return a verified email address in an allowed domain.`,
+      );
+    }
+    throw Error(
+      `This ${strategy.info?.display ?? opts.strategyName} SSO provider is only enabled for: ${allowedDomains.join(
+        ", ",
+      )}.`,
+    );
   }
 
   // similar to the above, for a specific email address
@@ -514,7 +547,19 @@ export class PassportLogin {
       locals.email_address = opts.emails[0];
     }
     L(`emails=${opts.emails} email_address=${locals.email_address}`);
-    const requiresRegistrationToken = await getRequiresRegistrationToken();
+    const accountCreation =
+      opts.passports[opts.strategyName].info?.account_creation;
+    if (accountCreation === "disabled") {
+      throw Error(
+        `The ${opts.passports[opts.strategyName].info?.display ?? opts.strategyName} SSO provider is not allowed to create new accounts.`,
+      );
+    }
+    const requiresRegistrationToken =
+      accountCreation === "public_allowed"
+        ? false
+        : accountCreation === "registration_token_required"
+          ? true
+          : await getRequiresRegistrationToken();
     const domainSsoValidated = this.checkEmailMatchesExclusiveSSO(
       opts,
       locals.email_address,

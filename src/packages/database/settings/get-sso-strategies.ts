@@ -7,6 +7,7 @@ import getPool from "@cocalc/database/pool";
 import type { Strategy } from "@cocalc/util/types/sso";
 import { PRIMARY_SSO } from "@cocalc/util/types/passport-types";
 import { ssoDispayedName } from "@cocalc/util/auth";
+import { GOOGLE_SSO_STRATEGY, getGoogleSsoSettingsState } from "./google-sso";
 
 const CACHE_TTL_MS = process.env.NODE_ENV === "development" ? 3_000 : 15_000;
 const SUPPORTED_PUBLIC_SSO = ["google"] as const;
@@ -25,6 +26,7 @@ export default async function getStrategies(): Promise<Strategy[]> {
   if (cachedStrategies && cachedStrategies.expires > Date.now()) {
     return cachedStrategies.value;
   }
+  const googleSso = await getGoogleSsoSettingsState();
   const pool = getPool();
   // entries in "conf" were used before the "info" col existed. this is only for backwards compatibility.
   const { rows } = await pool.query(`
@@ -40,6 +42,7 @@ export default async function getStrategies(): Promise<Strategy[]> {
       AND COALESCE(info ->> 'disabled', conf ->> 'disabled', 'false') != 'true'`);
 
   const strategies = rows
+    .filter((row) => row.strategy !== GOOGLE_SSO_STRATEGY)
     .filter((row) => isSupportedSSOStrategy(row.strategy, row.public))
     .map((row) => {
       const display = ssoDispayedName({
@@ -57,6 +60,17 @@ export default async function getStrategies(): Promise<Strategy[]> {
         doNotHide: row.do_not_hide ?? false,
       };
     });
+  if (googleSso.strategy != null) {
+    strategies.push({
+      name: GOOGLE_SSO_STRATEGY,
+      display: "Google",
+      icon: "google",
+      backgroundColor: COLORS.google,
+      public: true,
+      exclusiveDomains: googleSso.allowedDomains,
+      doNotHide: false,
+    });
+  }
   cachedStrategies = {
     expires: Date.now() + CACHE_TTL_MS,
     value: strategies,
