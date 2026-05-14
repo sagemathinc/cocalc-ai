@@ -20,11 +20,15 @@ import htmlReactParser, {
   Element,
   Text,
 } from "html-react-parser";
-import sanitizeHtml from "sanitize-html";
 import { useFileContext } from "@cocalc/frontend/lib/file-context";
 import DefaultMath from "@cocalc/frontend/components/math/ssr";
 import { MathJaxConfig } from "@cocalc/util/mathjax-config";
 import { decodeHTML } from "entities";
+import {
+  isAllowedHtmlTag,
+  sanitizeHtmlAttributes,
+  shouldDropHtmlTagContents,
+} from "./sanitize-html";
 
 const URL_ATTRIBS = ["src", "href", "data"];
 const MATH_SKIP_TAGS = new Set<string>(MathJaxConfig.tex2jax.skipTags);
@@ -40,32 +44,6 @@ export default function HTML({
 }) {
   const { urlTransform, AnchorTagComponent, noSanitize, MathComponent } =
     useFileContext();
-  if (!noSanitize) {
-    value = sanitizeHtml(value, {
-      allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img", "iframe"]),
-      allowedAttributes: {
-        ...sanitizeHtml.defaults.allowedAttributes,
-        iframe: [
-          "src",
-          "width",
-          "height",
-          "title",
-          "allow",
-          "allowfullscreen",
-          "referrerpolicy",
-          "loading",
-          "frameborder",
-        ],
-      },
-      allowedIframeHostnames: [
-        "www.youtube.com",
-        "youtube.com",
-        "www.youtube-nocookie.com",
-        "youtube-nocookie.com",
-        "player.vimeo.com",
-      ],
-    });
-  }
   if (value.trimLeft().startsWith("<html>")) {
     // Sage output formulas are wrapped in "<html>" for some stupid reason, which
     // probably originates with a ridiculous design choice that Tom Boothby or I
@@ -119,10 +97,36 @@ export default function HTML({
       }
 
       if (AnchorTagComponent != null && name == "a") {
+        const sanitizedAttribs = noSanitize
+          ? attribs
+          : sanitizeHtmlAttributes(name, attribs, urlTransform);
         return (
-          <AnchorTagComponent {...attribs}>
+          <AnchorTagComponent {...sanitizedAttribs}>
             {domToReact(children as any, options)}
           </AnchorTagComponent>
+        );
+      }
+
+      if (!noSanitize) {
+        if (!isAllowedHtmlTag(name)) {
+          if (shouldDropHtmlTagContents(name)) {
+            return React.createElement(React.Fragment);
+          }
+          return (
+            <React.Fragment>
+              {domToReact(children as any, options)}
+            </React.Fragment>
+          );
+        }
+        const props = attributesToProps(
+          sanitizeHtmlAttributes(name, attribs, urlTransform),
+        );
+        return React.createElement(
+          name,
+          props,
+          children && children?.length > 0
+            ? domToReact(children as any, options)
+            : undefined,
         );
       }
 

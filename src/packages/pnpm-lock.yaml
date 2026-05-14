@@ -931,9 +931,6 @@ importers:
       react-virtuoso:
         specifier: ^4.18.5
         version: 4.18.5(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
-      sanitize-html:
-        specifier: ^2.17.0
-        version: 2.17.0
       slate:
         specifier: ^0.124.1
         version: 0.124.1
@@ -1640,6 +1637,9 @@ importers:
       express-session:
         specifier: ^1.18.1
         version: 1.18.2
+      htmlparser2:
+        specifier: ^8.0.2
+        version: 8.0.2
       lodash:
         specifier: ^4.18.1
         version: 4.18.1
@@ -1673,9 +1673,6 @@ importers:
       safe-json-stringify:
         specifier: ^1.2.0
         version: 1.2.0
-      sanitize-html:
-        specifier: ^2.17.0
-        version: 2.17.0
       stripe:
         specifier: ^17.5.0
         version: 17.7.0
@@ -1716,9 +1713,6 @@ importers:
       '@types/passport':
         specifier: ^1.0.9
         version: 1.0.17
-      '@types/sanitize-html':
-        specifier: ^2.3.1
-        version: 2.16.0
       expect:
         specifier: ^26.6.2
         version: 26.6.2
@@ -4886,9 +4880,6 @@ packages:
 
   '@types/retry@0.12.2':
     resolution: {integrity: sha512-XISRgDJ2Tc5q4TRqvgJtzsRkFYNJzZrhTdtMoGVBttwzzQJkPnS3WWTFc7kuDRoPtPakl+T+OfdEUjYJj7Jbow==}
-
-  '@types/sanitize-html@2.16.0':
-    resolution: {integrity: sha512-l6rX1MUXje5ztPT0cAFtUayXF06DqPhRyfVXareEN5gGCFaP/iwsxIyKODr9XDhfxPpN6vXUFNfo5kZMXCxBtw==}
 
   '@types/seedrandom@3.0.8':
     resolution: {integrity: sha512-TY1eezMU2zH2ozQoAFAQFOPpvP15g+ZgSfTZt31AUUH/Rxtnz3H+A/Sv1Snw2/amp//omibc+AEkTaA8KUeOLQ==}
@@ -9247,9 +9238,6 @@ packages:
   parse-rect@1.2.0:
     resolution: {integrity: sha512-4QZ6KYbnE6RTwg9E0HpLchUM9EZt6DnDxajFZZDSV4p/12ZJEvPO702DZpGvRYEPo00yKDys7jASi+/w7aO8LA==}
 
-  parse-srcset@1.0.2:
-    resolution: {integrity: sha512-/2qh0lav6CmI15FzA3i/2Bzk2zCgQhGMkvhOhKNcBVQ1ldgpbfiNTVslmooUmWJcADi1f1kIeynbDRVzNlfR6Q==}
-
   parse-svg-path@0.1.2:
     resolution: {integrity: sha512-JyPSBnkTJ0AI8GGJLfMXvKq42cj5c006fnLz6fXy6zfoVjJizi8BNTpu8on8ziI1cKy9d9DGNuY17Ce7wuejpQ==}
 
@@ -10042,9 +10030,6 @@ packages:
 
   safer-buffer@2.1.2:
     resolution: {integrity: sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==}
-
-  sanitize-html@2.17.0:
-    resolution: {integrity: sha512-dLAADUSS8rBwhaevT12yCezvioCA+bmUTPH/u57xKPT8d++voeYE6HeluA/bPbQ15TwDBG2ii+QZIEmYx8VdxA==}
 
   sass-loader@16.0.6:
     resolution: {integrity: sha512-sglGzId5gmlfxNs4gK2U3h7HlVRfx278YK6Ono5lwzuvi1jxig80YiuHkaDBVsYIKFhx8wN7XSCI0M2IDS/3qA==}
@@ -14913,10 +14898,6 @@ snapshots:
       '@types/node': 22.19.18
 
   '@types/retry@0.12.2': {}
-
-  '@types/sanitize-html@2.16.0':
-    dependencies:
-      htmlparser2: 8.0.2
 
   '@types/seedrandom@3.0.8': {}
 
@@ -20624,8 +20605,6 @@ snapshots:
     dependencies:
       pick-by-alias: 1.2.0
 
-  parse-srcset@1.0.2: {}
-
   parse-svg-path@0.1.2: {}
 
   parse-unit@1.0.1: {}
@@ -21531,15 +21510,6 @@ snapshots:
       is-regex: 1.2.1
 
   safer-buffer@2.1.2: {}
-
-  sanitize-html@2.17.0:
-    dependencies:
-      deepmerge: 4.3.1
-      escape-string-regexp: 4.0.0
-      htmlparser2: 8.0.2
-      is-plain-object: 5.0.0
-      parse-srcset: 1.0.2
-      postcss: 8.5.14
 
   sass-loader@16.0.6(@rspack/core@1.7.10(@swc/helpers@0.5.15))(sass@1.93.3)(webpack@5.106.2(postcss@8.5.14)):
     dependencies:
