@@ -3,10 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Checkbox, Input, Modal, Space } from "antd";
+import { Alert, Button, Checkbox, Input, Modal, Space } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { postAuthApi } from "@cocalc/frontend/auth/api";
+import {
+  postAuthApi,
+  type SecondFactorMethod,
+} from "@cocalc/frontend/auth/api";
+import { freshAuthWithPasskey } from "@cocalc/frontend/auth/passkeys";
 import {
   getSecondFactorPlaceholder,
   inferSecondFactorInputMethod,
@@ -15,6 +19,7 @@ import {
 type FreshAuthStatus = {
   mode: "account" | "impersonation_actor";
   enabled: boolean;
+  methods?: SecondFactorMethod[];
   actor_name?: string | null;
   actor_email_address?: string | null;
 };
@@ -36,6 +41,7 @@ export function FreshAuthModal({
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [code, setCode] = useState("");
+  const [usePasskey, setUsePasskey] = useState(false);
   const [extended, setExtended] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -60,6 +66,7 @@ export function FreshAuthModal({
         if (!cancelled) {
           setStatus(next);
           setFactorEnabled(!!next?.enabled);
+          setUsePasskey((next.methods ?? []).includes("passkey"));
         }
       } catch (err) {
         if (!cancelled) {
@@ -76,29 +83,37 @@ export function FreshAuthModal({
   }, [open]);
 
   useEffect(() => {
-    if (factorEnabled !== true || inferredMethod !== "totp") {
+    if (factorEnabled !== true || (!usePasskey && inferredMethod !== "totp")) {
       setExtended(false);
     }
-  }, [factorEnabled, inferredMethod]);
+  }, [factorEnabled, inferredMethod, usePasskey]);
 
   async function submit() {
     setSaving(true);
     setError("");
     try {
       const requireSecondFactor = factorEnabled === true;
-      await postAuthApi({
-        endpoint: "auth/fresh-auth",
-        body: {
+      if (requireSecondFactor && usePasskey) {
+        await freshAuthWithPasskey({
           current_password: currentPassword,
-          ...(requireSecondFactor
-            ? { method: inferredMethod, code: code.trim() }
-            : {}),
-          duration: requireSecondFactor && extended ? "extended" : "default",
-        },
-      });
+          duration: extended ? "extended" : "default",
+        });
+      } else {
+        await postAuthApi({
+          endpoint: "auth/fresh-auth",
+          body: {
+            current_password: currentPassword,
+            ...(requireSecondFactor
+              ? { method: inferredMethod, code: code.trim() }
+              : {}),
+            duration: requireSecondFactor && extended ? "extended" : "default",
+          },
+        });
+      }
       await onSuccess();
       setCurrentPassword("");
       setCode("");
+      setUsePasskey(false);
       setExtended(false);
       onCancel();
     } catch (err) {
@@ -119,7 +134,7 @@ export function FreshAuthModal({
         disabled:
           saving ||
           factorEnabled == null ||
-          (factorEnabled === true && code.trim().length === 0),
+          (factorEnabled === true && !usePasskey && code.trim().length === 0),
       }}
     >
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -150,26 +165,59 @@ export function FreshAuthModal({
           <>
             <div>
               <div style={{ marginBottom: "8px" }}>Second factor</div>
-              <Alert
-                type="info"
-                showIcon
-                message="Enter either the 6-digit authenticator code or one of your recovery codes."
-              />
+              <Space
+                direction="vertical"
+                size="small"
+                style={{ width: "100%" }}
+              >
+                {(status?.methods ?? []).includes("passkey") &&
+                (status?.methods ?? []).some(
+                  (method) => method !== "passkey",
+                ) ? (
+                  <Space wrap>
+                    <Button
+                      type={usePasskey ? "primary" : "default"}
+                      onClick={() => setUsePasskey(true)}
+                    >
+                      Use passkey
+                    </Button>
+                    <Button
+                      type={!usePasskey ? "primary" : "default"}
+                      onClick={() => setUsePasskey(false)}
+                    >
+                      Use code
+                    </Button>
+                  </Space>
+                ) : undefined}
+                <Alert
+                  type="info"
+                  showIcon
+                  message={
+                    usePasskey
+                      ? "Use your browser or device passkey prompt to verify this security action."
+                      : "Enter either the 6-digit authenticator code or one of your recovery codes."
+                  }
+                />
+              </Space>
             </div>
-            <div>
-              <Input
-                value={code}
-                autoComplete="one-time-code"
-                placeholder={getSecondFactorPlaceholder(code)}
-                onChange={(e) => setCode(e.target.value)}
-                onPressEnter={submit}
-              />
-            </div>
+            {!usePasskey ? (
+              <div>
+                <Input
+                  value={code}
+                  autoComplete="one-time-code"
+                  placeholder={getSecondFactorPlaceholder(code)}
+                  onChange={(e) => setCode(e.target.value)}
+                  onPressEnter={submit}
+                />
+              </div>
+            ) : undefined}
           </>
         ) : undefined}
         <Checkbox
           checked={extended}
-          disabled={factorEnabled !== true || inferredMethod !== "totp"}
+          disabled={
+            factorEnabled !== true || (!usePasskey && inferredMethod !== "totp")
+          }
           onChange={(e) => setExtended(e.target.checked)}
         >
           Keep this verification active for 8 hours on this browser

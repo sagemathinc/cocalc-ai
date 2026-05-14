@@ -45,6 +45,11 @@ import {
   deleteOtherRememberMe,
   getRememberMeHash,
 } from "@cocalc/server/auth/remember-me";
+import {
+  FACTOR_TYPE_PASSKEY,
+  hasActivePasskey,
+  listActivePasskeyRows,
+} from "@cocalc/server/auth/passkeys";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -153,6 +158,39 @@ async function getActiveFactor(account_id: string): Promise<FactorRow | null> {
     )
   ).rows[0];
   return row ?? null;
+}
+
+async function getActiveRecoveryCodeFactorWithDb({
+  db,
+  account_id,
+}: {
+  db: Queryable;
+  account_id: string;
+}): Promise<FactorRow | null> {
+  const row = (
+    await db.query<FactorRow>(
+      `
+        SELECT *
+          FROM account_second_factors
+         WHERE account_id = $1::UUID
+           AND type IN ($2::VARCHAR(32), $3::VARCHAR(32))
+           AND status = $4::VARCHAR(32)
+         ORDER BY activated_at DESC NULLS LAST, created DESC
+         LIMIT 1
+      `,
+      [account_id, FACTOR_TYPE_TOTP, FACTOR_TYPE_PASSKEY, FACTOR_STATUS_ACTIVE],
+    )
+  ).rows[0];
+  return row ?? null;
+}
+
+async function getActiveRecoveryCodeFactor(
+  account_id: string,
+): Promise<FactorRow | null> {
+  return await getActiveRecoveryCodeFactorWithDb({
+    db: getPool(),
+    account_id,
+  });
 }
 
 async function getTotpAccountLabel(account_id: string): Promise<string> {
@@ -340,10 +378,10 @@ function assertFreshAuthDurationMethodCompatible({
   const normalizedMethod = `${method ?? ""}`.trim();
   if (!normalizedMethod || normalizedMethod === "recovery_code") {
     throw new Error(
-      "extended fresh auth requires a TOTP verification in this browser session",
+      "extended fresh auth requires a TOTP or passkey verification in this browser session",
     );
   }
-  if (normalizedMethod !== "totp") {
+  if (normalizedMethod !== "totp" && normalizedMethod !== "passkey") {
     ensureFreshAuthCodeMethod(normalizedMethod);
   }
 }
@@ -407,22 +445,7 @@ async function verifyFreshAuthInputs({
     }
   }
 
-  const factor = (
-    await db.query<FactorRow>(
-      `
-        SELECT *
-          FROM account_second_factors
-         WHERE account_id = $1::UUID
-           AND type = $2::VARCHAR(32)
-           AND status = $3::VARCHAR(32)
-         ORDER BY activated_at DESC NULLS LAST, created DESC
-         LIMIT 1
-      `,
-      [account_id, FACTOR_TYPE_TOTP, FACTOR_STATUS_ACTIVE],
-    )
-  ).rows[0];
-
-  if (!factor) {
+  if (!(await hasActiveSecondFactor(account_id))) {
     return "none";
   }
 
@@ -430,6 +453,26 @@ async function verifyFreshAuthInputs({
   const resolvedCode = `${code ?? ""}`.trim();
   if (!resolvedCode) {
     throw new Error("second factor code is required");
+  }
+  const factor =
+    resolvedMethod === "totp"
+      ? (
+          await db.query<FactorRow>(
+            `
+              SELECT *
+                FROM account_second_factors
+               WHERE account_id = $1::UUID
+                 AND type = $2::VARCHAR(32)
+                 AND status = $3::VARCHAR(32)
+               ORDER BY activated_at DESC NULLS LAST, created DESC
+               LIMIT 1
+            `,
+            [account_id, FACTOR_TYPE_TOTP, FACTOR_STATUS_ACTIVE],
+          )
+        ).rows[0]
+      : await getActiveRecoveryCodeFactorWithDb({ db, account_id });
+  if (!factor) {
+    throw new Error("two-factor authentication is not enabled");
   }
   if (resolvedMethod === "totp") {
     const secret = await decryptFactorSecret(
@@ -486,7 +529,31 @@ export async function verifyFreshAuthCredentials({
 export async function hasActiveSecondFactor(
   account_id: string,
 ): Promise<boolean> {
-  return !!(await getActiveFactor(ensureAccountId(account_id)));
+  const accountId = ensureAccountId(account_id);
+  return (
+    !!(await getActiveFactor(accountId)) || (await hasActivePasskey(accountId))
+  );
+}
+
+async function getActiveSecondFactorMethods(
+  account_id: string,
+): Promise<SecondFactorMethod[]> {
+  const accountId = ensureAccountId(account_id);
+  const [activeTotp, activePasskeys] = await Promise.all([
+    getActiveFactor(accountId),
+    listActivePasskeyRows(accountId),
+  ]);
+  const methods: SecondFactorMethod[] = [];
+  if (activePasskeys.length > 0) {
+    methods.push(FACTOR_TYPE_PASSKEY);
+  }
+  if (activeTotp) {
+    methods.push("totp");
+  }
+  if (methods.length > 0) {
+    methods.push("recovery_code");
+  }
+  return methods;
 }
 
 export async function getTwoFactorStatus({
@@ -497,8 +564,9 @@ export async function getTwoFactorStatus({
   account_id: string;
 }) {
   const accountId = ensureAccountId(account_id);
-  const [activeFactor, pendingCount] = await Promise.all([
+  const [activeFactor, activePasskeys, pendingCount] = await Promise.all([
     getActiveFactor(accountId),
+    listActivePasskeyRows(accountId),
     getPool().query<{ count: string }>(
       `
         SELECT COUNT(*)::TEXT AS count
@@ -517,10 +585,21 @@ export async function getTwoFactorStatus({
         .fresh_auth_until ?? null;
   } catch {}
   return {
-    enabled: !!activeFactor,
+    enabled: !!activeFactor || activePasskeys.length > 0,
     factor_type: activeFactor?.type ?? null,
     label: activeFactor?.label ?? null,
     last_used_at: activeFactor?.last_used_at ?? null,
+    passkeys: activePasskeys.map((row) => ({
+      id: row.id,
+      label: `${row.label ?? ""}`.trim() || "Passkey",
+      created: row.created ?? null,
+      activated_at: row.activated_at ?? null,
+      last_used_at: row.last_used_at ?? null,
+      credential_id: `${row.metadata?.credential_id ?? ""}`,
+      transports: Array.isArray(row.metadata?.transports)
+        ? row.metadata.transports
+        : undefined,
+    })),
     pending_setup_count: Number(pendingCount.rows[0]?.count ?? 0) || 0,
     fresh_auth_until,
   };
@@ -574,6 +653,7 @@ export async function getFreshAuthStatus({
 }): Promise<{
   mode: "account" | "impersonation_actor";
   enabled: boolean;
+  methods: SecondFactorMethod[];
   actor_account_id?: string;
   actor_email_address?: string | null;
   actor_name?: string | null;
@@ -584,17 +664,23 @@ export async function getFreshAuthStatus({
     account_id: accountId,
   });
   if (impersonation?.active) {
+    const methods = await getActiveSecondFactorMethods(
+      impersonation.actor_account_id,
+    );
     return {
       mode: "impersonation_actor",
-      enabled: true,
+      enabled: methods.length > 0,
+      methods,
       actor_account_id: impersonation.actor_account_id,
       actor_email_address: impersonation.actor_email_address ?? null,
       actor_name: impersonation.actor_name ?? null,
     };
   }
+  const methods = await getActiveSecondFactorMethods(accountId);
   return {
     mode: "account",
-    enabled: await hasActiveSecondFactor(accountId),
+    enabled: methods.length > 0,
+    methods,
   };
 }
 
@@ -777,9 +863,14 @@ export async function createSignInSecondFactorChallenge({
   methods: SecondFactorMethod[];
 }> {
   const accountId = ensureAccountId(account_id);
-  if (!(await hasActiveSecondFactor(accountId))) {
+  const [activeTotp, activePasskeys] = await Promise.all([
+    getActiveFactor(accountId),
+    listActivePasskeyRows(accountId),
+  ]);
+  if (!activeTotp && activePasskeys.length === 0) {
     throw new Error("two-factor authentication is not enabled");
   }
+  const methods = await getActiveSecondFactorMethods(accountId);
   const challenge_id = uuid();
   await withAccountRehomeWriteFence({
     account_id: accountId,
@@ -870,7 +961,7 @@ export async function createSignInSecondFactorChallenge({
   });
   return {
     challenge_id,
-    methods: ["totp", "recovery_code"],
+    methods,
   };
 }
 
@@ -929,20 +1020,26 @@ export async function verifySignInSecondFactorChallenge({
       if ((locked.attempt_count ?? 0) >= (locked.max_attempts ?? 0)) {
         throw new Error("too many second factor attempts");
       }
-      const factor = (
-        await db.query(
-          `
-            SELECT *
-              FROM account_second_factors
-             WHERE account_id = $1::UUID
-               AND type = $2::VARCHAR(32)
-               AND status = $3::VARCHAR(32)
-             ORDER BY activated_at DESC NULLS LAST, created DESC
-             LIMIT 1
-          `,
-          [accountId, FACTOR_TYPE_TOTP, FACTOR_STATUS_ACTIVE],
-        )
-      ).rows[0] as FactorRow | undefined;
+      const factor =
+        resolvedMethod === "totp"
+          ? ((
+              await db.query(
+                `
+                  SELECT *
+                    FROM account_second_factors
+                   WHERE account_id = $1::UUID
+                     AND type = $2::VARCHAR(32)
+                     AND status = $3::VARCHAR(32)
+                   ORDER BY activated_at DESC NULLS LAST, created DESC
+                   LIMIT 1
+                `,
+                [accountId, FACTOR_TYPE_TOTP, FACTOR_STATUS_ACTIVE],
+              )
+            ).rows[0] as FactorRow | undefined)
+          : await getActiveRecoveryCodeFactorWithDb({
+              db,
+              account_id: accountId,
+            });
       if (!factor) {
         throw new Error("two-factor authentication is not enabled");
       }
@@ -1138,7 +1235,7 @@ export async function rotateRecoveryCodes({
 }): Promise<{ recovery_codes: string[] }> {
   const accountId = ensureAccountId(account_id);
   await requireFreshAuth({ req, account_id: accountId });
-  const factor = await getActiveFactor(accountId);
+  const factor = await getActiveRecoveryCodeFactor(accountId);
   if (!factor) {
     throw new Error("two-factor authentication is not enabled");
   }

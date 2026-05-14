@@ -643,7 +643,7 @@ export interface AccountLocalCreateImpersonationGrantRequest {
   actor_password_verified_at?: Date | string | number | null;
   actor_factor_verified_at?: Date | string | number | null;
   actor_fresh_auth_until?: Date | string | number | null;
-  actor_factor_level?: "none" | "totp" | "recovery_code" | null;
+  actor_factor_level?: "none" | "totp" | "recovery_code" | "passkey" | null;
   reason?: string | null;
   metadata?: Record<string, unknown> | null;
 }
@@ -663,7 +663,7 @@ export interface AccountLocalVerifyFreshAuthCredentialsRequest {
 }
 
 export interface AccountLocalVerifyFreshAuthCredentialsResult {
-  factor_level: "none" | "totp" | "recovery_code";
+  factor_level: "none" | "totp" | "recovery_code" | "passkey";
 }
 
 export interface AccountLocalVerifySignInPasswordRequest {

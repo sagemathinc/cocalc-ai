@@ -10,7 +10,9 @@ import {
   isWrongBayAuthResponse,
   postAuthApi,
   retryAuthOnHomeBay,
+  type SecondFactorMethod,
 } from "./api";
+import { signInWithPasskey } from "./passkeys";
 import { appUrl } from "./util";
 
 interface SignInProps {
@@ -21,15 +23,17 @@ export default function SignInForm({ onNavigate }: SignInProps) {
   const [email, setEmail] = useState<string>("");
   const [password, setPassword] = useState<string>("");
   const [challengeId, setChallengeId] = useState<string>("");
-  const [factorMethod, setFactorMethod] = useState<"totp" | "recovery_code">(
-    "totp",
-  );
+  const [factorMethods, setFactorMethods] = useState<SecondFactorMethod[]>([]);
+  const [factorMethod, setFactorMethod] = useState<SecondFactorMethod>("totp");
   const [factorCode, setFactorCode] = useState<string>("");
+  const [mfaOrigin, setMfaOrigin] = useState<string | undefined>();
   const [signingIn, setSigningIn] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
 
   const canSubmit = challengeId
-    ? factorCode.trim().length > 0 && !signingIn
+    ? factorMethod === "passkey"
+      ? !signingIn
+      : factorCode.trim().length > 0 && !signingIn
     : isValidEmailAddress(email) && password.length > 0 && !signingIn;
 
   async function signIn() {
@@ -53,7 +57,13 @@ export default function SignInForm({ onNavigate }: SignInProps) {
       if (isMfaRequiredAuthResponse(result)) {
         setStoredControlPlaneOrigin(result?.home_bay_url);
         setChallengeId(result.challenge_id);
-        setFactorMethod("totp");
+        setFactorMethods(result.methods ?? []);
+        setFactorMethod(
+          result.methods?.includes("passkey")
+            ? "passkey"
+            : (result.methods?.[0] ?? "totp"),
+        );
+        setMfaOrigin(result.home_bay_url);
         setFactorCode("");
         return;
       }
@@ -76,14 +86,21 @@ export default function SignInForm({ onNavigate }: SignInProps) {
     setError("");
     setSigningIn(true);
     try {
-      const result = await postAuthApi<any>({
-        endpoint: "auth/verify-second-factor",
-        body: {
-          challenge_id: challengeId,
-          method: factorMethod,
-          code: factorCode.trim(),
-        },
-      });
+      const result =
+        factorMethod === "passkey"
+          ? await signInWithPasskey({
+              challenge_id: challengeId,
+              origin: mfaOrigin,
+            })
+          : await postAuthApi<any>({
+              endpoint: "auth/verify-second-factor",
+              origin: mfaOrigin,
+              body: {
+                challenge_id: challengeId,
+                method: factorMethod,
+                code: factorCode.trim(),
+              },
+            });
       if (!result?.account_id) {
         throw new Error("Second factor verification failed. Please try again.");
       }
@@ -129,34 +146,59 @@ export default function SignInForm({ onNavigate }: SignInProps) {
           <div>
             <div>Second factor</div>
             <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-              <Button
-                type={factorMethod === "totp" ? "primary" : "default"}
-                onClick={() => setFactorMethod("totp")}
-              >
-                Authenticator code
-              </Button>
-              <Button
-                type={factorMethod === "recovery_code" ? "primary" : "default"}
-                onClick={() => setFactorMethod("recovery_code")}
-              >
-                Recovery code
-              </Button>
+              {factorMethods.includes("passkey") ? (
+                <Button
+                  type={factorMethod === "passkey" ? "primary" : "default"}
+                  onClick={() => setFactorMethod("passkey")}
+                >
+                  Use passkey
+                </Button>
+              ) : undefined}
+              {factorMethods.includes("totp") ? (
+                <Button
+                  type={factorMethod === "totp" ? "primary" : "default"}
+                  onClick={() => setFactorMethod("totp")}
+                >
+                  Authenticator code
+                </Button>
+              ) : undefined}
+              {factorMethods.includes("recovery_code") ? (
+                <Button
+                  type={
+                    factorMethod === "recovery_code" ? "primary" : "default"
+                  }
+                  onClick={() => setFactorMethod("recovery_code")}
+                >
+                  Recovery code
+                </Button>
+              ) : undefined}
             </div>
-            <Input
-              autoFocus
-              value={factorCode}
-              autoComplete="one-time-code"
-              placeholder={
-                factorMethod === "totp" ? "123456" : "ABCD-EFGH-IJKL"
-              }
-              onChange={(e) => setFactorCode(e.target.value)}
-              onPressEnter={verifySecondFactor}
-            />
+            {factorMethod === "passkey" ? (
+              <Alert
+                type="info"
+                showIcon
+                message="Use your browser or device passkey prompt to finish signing in."
+              />
+            ) : (
+              <Input
+                autoFocus
+                value={factorCode}
+                autoComplete="one-time-code"
+                placeholder={
+                  factorMethod === "totp" ? "123456" : "ABCD-EFGH-IJKL"
+                }
+                onChange={(e) => setFactorCode(e.target.value)}
+                onPressEnter={verifySecondFactor}
+              />
+            )}
           </div>
           <a
             onClick={() => {
               setChallengeId("");
+              setFactorMethods([]);
+              setFactorMethod("totp");
               setFactorCode("");
+              setMfaOrigin(undefined);
               setError("");
             }}
             style={{ cursor: "pointer" }}
@@ -176,7 +218,9 @@ export default function SignInForm({ onNavigate }: SignInProps) {
             ? "Verifying..."
             : "Signing In..."
           : challengeId
-            ? "Verify"
+            ? factorMethod === "passkey"
+              ? "Use passkey"
+              : "Verify"
             : "Sign In"}
       </Button>
       {!challengeId && (

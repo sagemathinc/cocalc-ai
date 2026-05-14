@@ -26,6 +26,12 @@ import {
 } from "@cocalc/server/auth/home-bay-retry-token";
 import { verifyFreshAuthCredentials } from "@cocalc/server/auth/two-factor";
 import {
+  finishFreshAuthPasskeyAuthentication,
+  startFreshAuthPasskeyAuthentication,
+  type PasskeyFreshAuthStart,
+} from "@cocalc/server/auth/passkeys";
+import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
+import {
   getClusterAccountByEmail,
   getClusterAccountById,
 } from "@cocalc/server/inter-bay/accounts";
@@ -774,5 +780,99 @@ export async function approveCliElevateChallenge({
     approved: true,
     factor_level,
     fresh_auth_until,
+  };
+}
+
+export async function startCliElevatePasskeyChallenge({
+  req,
+  challenge_id,
+  account_id,
+  current_password,
+}: {
+  req: any;
+  challenge_id: string;
+  account_id: string;
+  current_password: string;
+}): Promise<PasskeyFreshAuthStart> {
+  const row = await ensureChallengeOwnedByAccount({
+    challenge_id,
+    account_id,
+    expected_kind: "elevate",
+  });
+  if (row.status !== "pending") {
+    throw new Error("cli auth challenge is not pending");
+  }
+  const target_session_hash = cleanSessionHash(
+    `${row.target_session_hash ?? ""}`,
+  );
+  return await startFreshAuthPasskeyAuthentication({
+    req,
+    account_id,
+    current_password,
+    duration: row.requested_duration ?? "default",
+    target_session_hash,
+    metadata: {
+      cli_auth_challenge_id: row.id,
+    },
+  });
+}
+
+export async function finishCliElevatePasskeyChallenge({
+  req,
+  challenge_id,
+  passkey_challenge_id,
+  account_id,
+  response,
+}: {
+  req: any;
+  challenge_id: string;
+  passkey_challenge_id: string;
+  account_id: string;
+  response: AuthenticationResponseJSON;
+}): Promise<{
+  approved: true;
+  factor_level: AuthSessionFactorLevel;
+  fresh_auth_until: Date;
+}> {
+  const row = await ensureChallengeOwnedByAccount({
+    challenge_id,
+    account_id,
+    expected_kind: "elevate",
+  });
+  if (row.status !== "pending") {
+    throw new Error("cli auth challenge is not pending");
+  }
+  const target_session_hash = cleanSessionHash(
+    `${row.target_session_hash ?? ""}`,
+  );
+  const result = await finishFreshAuthPasskeyAuthentication({
+    req,
+    account_id,
+    challenge_id: passkey_challenge_id,
+    response,
+    allow_target_session_hash: true,
+  });
+  if (result.target_session_hash !== target_session_hash) {
+    throw new Error("passkey challenge target session mismatch");
+  }
+  await withAccountRehomeWriteFence({
+    account_id,
+    action: "approve cli auth elevate passkey challenge",
+    fn: async (db) => {
+      await updateChallengeApprovalWithDb({
+        db,
+        row,
+        metadataPatch: {
+          factor_level: result.factor_level,
+          fresh_auth_until: result.fresh_auth_until.toISOString(),
+          passkey_challenge_id,
+        },
+      });
+    },
+  });
+  return {
+    approved: true,
+    factor_level: result.factor_level,
+    fresh_auth_until: result.fresh_auth_until,
   };
 }

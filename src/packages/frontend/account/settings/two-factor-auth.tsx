@@ -8,16 +8,30 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@cocalc/frontend/antd-bootstrap";
 import { FreshAuthModal } from "@cocalc/frontend/auth/fresh-auth";
+import { registerPasskey } from "@cocalc/frontend/auth/passkeys";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { SettingBox } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
+
+type PasskeyStatus = {
+  id: string;
+  label: string;
+  credential_id: string;
+  created?: string | Date | null;
+  activated_at?: string | Date | null;
+  last_used_at?: string | Date | null;
+  transports?: string[];
+  backed_up?: boolean;
+  device_type?: string;
+};
 
 type TwoFactorStatus = {
   enabled: boolean;
   factor_type?: string | null;
   label?: string | null;
   last_used_at?: string | Date | null;
+  passkeys?: PasskeyStatus[];
   pending_setup_count?: number;
   fresh_auth_until?: string | Date | null;
 };
@@ -62,9 +76,15 @@ export default function TwoFactorAuthSetting() {
   const [setupCode, setSetupCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
-  const [freshAction, setFreshAction] = useState<"disable" | "rotate" | null>(
-    null,
-  );
+  const [renamePasskeyId, setRenamePasskeyId] = useState("");
+  const [renameLabel, setRenameLabel] = useState("");
+  const [freshAction, setFreshAction] = useState<
+    | { type: "add-passkey" }
+    | { type: "disable-passkey"; factor_id: string }
+    | { type: "disable" }
+    | { type: "rotate" }
+    | null
+  >(null);
 
   async function loadStatus() {
     setLoading(true);
@@ -139,6 +159,38 @@ export default function TwoFactorAuthSetting() {
     await loadStatus();
   }
 
+  async function addPasskey() {
+    const result = await registerPasskey();
+    setRecoveryCodes(result.recovery_codes ?? []);
+    await loadStatus();
+  }
+
+  async function disablePasskey(factor_id: string) {
+    await postAuthApi({
+      endpoint: "auth/2fa/passkeys/disable",
+      body: { factor_id },
+    });
+    await loadStatus();
+  }
+
+  async function renamePasskey(factor_id: string, label: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await postAuthApi({
+        endpoint: "auth/2fa/passkeys/rename",
+        body: { factor_id, label },
+      });
+      setRenamePasskeyId("");
+      setRenameLabel("");
+      await loadStatus();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function disableTwoFactor() {
     await postAuthApi({
       endpoint: "auth/2fa/disable",
@@ -195,6 +247,97 @@ export default function TwoFactorAuthSetting() {
             }
           />
         ) : undefined}
+        {status?.passkeys?.length ? (
+          <Space direction="vertical" size="small" style={{ width: "100%" }}>
+            <Typography.Title level={5} style={{ margin: 0 }}>
+              Passkeys
+            </Typography.Title>
+            {status.passkeys.map((passkey) => (
+              <div
+                key={passkey.id}
+                style={{
+                  border: "1px solid #ddd",
+                  borderRadius: "6px",
+                  padding: "10px",
+                }}
+              >
+                <Space
+                  direction="vertical"
+                  size="small"
+                  style={{ width: "100%" }}
+                >
+                  {renamePasskeyId === passkey.id ? (
+                    <Space.Compact style={{ width: "100%" }}>
+                      <Input
+                        value={renameLabel}
+                        maxLength={128}
+                        onChange={(e) => setRenameLabel(e.target.value)}
+                        onPressEnter={() =>
+                          renamePasskey(passkey.id, renameLabel)
+                        }
+                      />
+                      <Button
+                        bsStyle="primary"
+                        disabled={busy || renameLabel.trim().length === 0}
+                        onClick={() => renamePasskey(passkey.id, renameLabel)}
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        disabled={busy}
+                        onClick={() => {
+                          setRenamePasskeyId("");
+                          setRenameLabel("");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </Space.Compact>
+                  ) : (
+                    <Typography.Text strong>{passkey.label}</Typography.Text>
+                  )}
+                  <Typography.Text type="secondary">
+                    Created:{" "}
+                    {passkey.created
+                      ? new Date(passkey.created).toLocaleString()
+                      : "unknown"}
+                  </Typography.Text>
+                  <Typography.Text type="secondary">
+                    Last used:{" "}
+                    {passkey.last_used_at
+                      ? new Date(passkey.last_used_at).toLocaleString()
+                      : "never"}
+                  </Typography.Text>
+                  <div>
+                    <Space wrap>
+                      <Button
+                        disabled={isImpersonating || busy}
+                        onClick={() => {
+                          setRenamePasskeyId(passkey.id);
+                          setRenameLabel(passkey.label);
+                        }}
+                      >
+                        Rename
+                      </Button>
+                      <Button
+                        bsStyle="danger"
+                        disabled={isImpersonating}
+                        onClick={() =>
+                          setFreshAction({
+                            type: "disable-passkey",
+                            factor_id: passkey.id,
+                          })
+                        }
+                      >
+                        Disable passkey
+                      </Button>
+                    </Space>
+                  </div>
+                </Space>
+              </div>
+            ))}
+          </Space>
+        ) : undefined}
         {isImpersonating ? null : setup ? (
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
             <Alert
@@ -234,17 +377,33 @@ export default function TwoFactorAuthSetting() {
           </Space>
         ) : status?.enabled ? (
           <Space wrap>
-            <Button onClick={() => setFreshAction("rotate")}>
+            <Button onClick={() => setFreshAction({ type: "add-passkey" })}>
+              Add passkey
+            </Button>
+            <Button onClick={() => setFreshAction({ type: "rotate" })}>
               Rotate recovery codes
             </Button>
-            <Button bsStyle="danger" onClick={() => setFreshAction("disable")}>
-              Disable 2FA
-            </Button>
+            {status.passkeys?.length ? undefined : (
+              <Button
+                bsStyle="danger"
+                onClick={() => setFreshAction({ type: "disable" })}
+              >
+                Disable 2FA
+              </Button>
+            )}
           </Space>
         ) : (
-          <Button bsStyle="primary" disabled={busy} onClick={startSetup}>
-            {busy ? "Starting..." : "Set up authenticator app"}
-          </Button>
+          <Space wrap>
+            <Button bsStyle="primary" disabled={busy} onClick={startSetup}>
+              {busy ? "Starting..." : "Set up authenticator app"}
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={() => setFreshAction({ type: "add-passkey" })}
+            >
+              Add passkey
+            </Button>
+          </Space>
         )}
         <RecoveryCodesBlock codes={recoveryCodes} />
       </Space>
@@ -252,9 +411,13 @@ export default function TwoFactorAuthSetting() {
         open={freshAction != null && !isImpersonating}
         onCancel={() => setFreshAction(null)}
         onSuccess={async () => {
-          if (freshAction === "rotate") {
+          if (freshAction?.type === "add-passkey") {
+            await addPasskey();
+          } else if (freshAction?.type === "disable-passkey") {
+            await disablePasskey(freshAction.factor_id);
+          } else if (freshAction?.type === "rotate") {
             await rotateRecoveryCodes();
-          } else if (freshAction === "disable") {
+          } else if (freshAction?.type === "disable") {
             await disableTwoFactor();
           }
         }}
