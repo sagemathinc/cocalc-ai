@@ -1112,3 +1112,55 @@ export async function disablePasskey({
     },
   });
 }
+
+export async function renamePasskey({
+  req,
+  account_id,
+  factor_id,
+  label,
+}: {
+  req: Request;
+  account_id: string;
+  factor_id: string;
+  label: string;
+}): Promise<{ passkey: PasskeySummary }> {
+  const accountId = ensureAccountId(account_id);
+  await requireFreshAuth({ req, account_id: accountId });
+  const factorId = `${factor_id ?? ""}`.trim();
+  const nextLabel = cleanLabel(label);
+  let row: FactorRow | undefined;
+  await withAccountRehomeWriteFence({
+    account_id: accountId,
+    action: "rename passkey",
+    fn: async (db) => {
+      const q = db as Queryable;
+      const result = await q.query<FactorRow>(
+        `
+          UPDATE account_second_factors
+             SET label = $3::VARCHAR(128)
+           WHERE id = $1::UUID
+             AND account_id = $2::UUID
+             AND type = $4::VARCHAR(32)
+             AND status = $5::VARCHAR(32)
+       RETURNING id, account_id, type, label, status, created, activated_at,
+                 disabled_at, last_used_at, metadata
+        `,
+        [
+          factorId,
+          accountId,
+          nextLabel,
+          FACTOR_TYPE_PASSKEY,
+          FACTOR_STATUS_ACTIVE,
+        ],
+      );
+      row = result.rows[0];
+      if (!row) {
+        throw new Error("active passkey not found");
+      }
+    },
+  });
+  if (!row) {
+    throw new Error("active passkey not found");
+  }
+  return { passkey: summarizePasskey(row) };
+}

@@ -76,6 +76,8 @@ export default function TwoFactorAuthSetting() {
   const [setupCode, setSetupCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+  const [renamePasskeyId, setRenamePasskeyId] = useState("");
+  const [renameLabel, setRenameLabel] = useState("");
   const [freshAction, setFreshAction] = useState<
     | { type: "add-passkey" }
     | { type: "disable-passkey"; factor_id: string }
@@ -171,6 +173,24 @@ export default function TwoFactorAuthSetting() {
     await loadStatus();
   }
 
+  async function renamePasskey(factor_id: string, label: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await postAuthApi({
+        endpoint: "auth/2fa/passkeys/rename",
+        body: { factor_id, label },
+      });
+      setRenamePasskeyId("");
+      setRenameLabel("");
+      await loadStatus();
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function disableTwoFactor() {
     await postAuthApi({
       endpoint: "auth/2fa/disable",
@@ -246,7 +266,36 @@ export default function TwoFactorAuthSetting() {
                   size="small"
                   style={{ width: "100%" }}
                 >
-                  <Typography.Text strong>{passkey.label}</Typography.Text>
+                  {renamePasskeyId === passkey.id ? (
+                    <Space.Compact style={{ width: "100%" }}>
+                      <Input
+                        value={renameLabel}
+                        maxLength={128}
+                        onChange={(e) => setRenameLabel(e.target.value)}
+                        onPressEnter={() =>
+                          renamePasskey(passkey.id, renameLabel)
+                        }
+                      />
+                      <Button
+                        bsStyle="primary"
+                        disabled={busy || renameLabel.trim().length === 0}
+                        onClick={() => renamePasskey(passkey.id, renameLabel)}
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        disabled={busy}
+                        onClick={() => {
+                          setRenamePasskeyId("");
+                          setRenameLabel("");
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </Space.Compact>
+                  ) : (
+                    <Typography.Text strong>{passkey.label}</Typography.Text>
+                  )}
                   <Typography.Text type="secondary">
                     Created:{" "}
                     {passkey.created
@@ -260,18 +309,29 @@ export default function TwoFactorAuthSetting() {
                       : "never"}
                   </Typography.Text>
                   <div>
-                    <Button
-                      bsStyle="danger"
-                      disabled={isImpersonating}
-                      onClick={() =>
-                        setFreshAction({
-                          type: "disable-passkey",
-                          factor_id: passkey.id,
-                        })
-                      }
-                    >
-                      Disable passkey
-                    </Button>
+                    <Space wrap>
+                      <Button
+                        disabled={isImpersonating || busy}
+                        onClick={() => {
+                          setRenamePasskeyId(passkey.id);
+                          setRenameLabel(passkey.label);
+                        }}
+                      >
+                        Rename
+                      </Button>
+                      <Button
+                        bsStyle="danger"
+                        disabled={isImpersonating}
+                        onClick={() =>
+                          setFreshAction({
+                            type: "disable-passkey",
+                            factor_id: passkey.id,
+                          })
+                        }
+                      >
+                        Disable passkey
+                      </Button>
+                    </Space>
                   </div>
                 </Space>
               </div>
