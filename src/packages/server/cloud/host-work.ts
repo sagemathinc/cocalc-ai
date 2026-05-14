@@ -202,7 +202,7 @@ async function observeProviderReadyStatus(opts: {
     if (entry.provider.getStatus) {
       const status = await entry.provider.getStatus(runtime, creds);
       return {
-        mapped_status: status === "stopped" ? "stopped" : status,
+        mapped_status: status,
         provider_status: status,
       };
     }
