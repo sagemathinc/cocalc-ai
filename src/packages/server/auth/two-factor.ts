@@ -497,6 +497,27 @@ export async function hasActiveSecondFactor(
   );
 }
 
+async function getActiveSecondFactorMethods(
+  account_id: string,
+): Promise<SecondFactorMethod[]> {
+  const accountId = ensureAccountId(account_id);
+  const [activeTotp, activePasskeys] = await Promise.all([
+    getActiveFactor(accountId),
+    listActivePasskeyRows(accountId),
+  ]);
+  const methods: SecondFactorMethod[] = [];
+  if (activePasskeys.length > 0) {
+    methods.push(FACTOR_TYPE_PASSKEY);
+  }
+  if (activeTotp) {
+    methods.push("totp");
+  }
+  if (methods.length > 0) {
+    methods.push("recovery_code");
+  }
+  return methods;
+}
+
 export async function getTwoFactorStatus({
   req,
   account_id,
@@ -594,6 +615,7 @@ export async function getFreshAuthStatus({
 }): Promise<{
   mode: "account" | "impersonation_actor";
   enabled: boolean;
+  methods: SecondFactorMethod[];
   actor_account_id?: string;
   actor_email_address?: string | null;
   actor_name?: string | null;
@@ -604,17 +626,23 @@ export async function getFreshAuthStatus({
     account_id: accountId,
   });
   if (impersonation?.active) {
+    const methods = await getActiveSecondFactorMethods(
+      impersonation.actor_account_id,
+    );
     return {
       mode: "impersonation_actor",
-      enabled: true,
+      enabled: methods.length > 0,
+      methods,
       actor_account_id: impersonation.actor_account_id,
       actor_email_address: impersonation.actor_email_address ?? null,
       actor_name: impersonation.actor_name ?? null,
     };
   }
+  const methods = await getActiveSecondFactorMethods(accountId);
   return {
     mode: "account",
-    enabled: await hasActiveSecondFactor(accountId),
+    enabled: methods.length > 0,
+    methods,
   };
 }
 
@@ -804,14 +832,7 @@ export async function createSignInSecondFactorChallenge({
   if (!activeTotp && activePasskeys.length === 0) {
     throw new Error("two-factor authentication is not enabled");
   }
-  const methods: SecondFactorMethod[] = [];
-  if (activePasskeys.length > 0) {
-    methods.push(FACTOR_TYPE_PASSKEY);
-  }
-  if (activeTotp) {
-    methods.push("totp");
-  }
-  methods.push("recovery_code");
+  const methods = await getActiveSecondFactorMethods(accountId);
   const challenge_id = uuid();
   await withAccountRehomeWriteFence({
     account_id: accountId,
