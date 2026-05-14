@@ -262,7 +262,7 @@ function r2Endpoint(accountId: string, configured?: string): string {
   return clean(configured) ?? `https://${accountId}.r2.cloudflarestorage.com`;
 }
 
-async function getR2S3Auth(bucket: string) {
+export async function getR2S3Auth(bucket: string) {
   const bucketName = clean(bucket);
   if (!bucketName) throw new Error("bucket is required");
   const settings = await getServerSettings();
@@ -1227,6 +1227,25 @@ export async function auditCloudflareR2Bucket({
   await saveCachedAudit(result);
   await publishProgress("done", true);
   return result;
+}
+
+export async function getCachedCloudflareR2Audit({
+  bucket,
+  prefix,
+  max_age_minutes,
+}: {
+  bucket: string;
+  prefix?: string;
+  max_age_minutes?: number;
+}): Promise<CloudflareR2AuditResult | undefined> {
+  const { bucketName, accountId } = await getR2S3Auth(bucket);
+  await ensureAuditCacheTable();
+  return await getCachedAudit({
+    accountId,
+    bucket: bucketName,
+    prefix: normalizePrefix(prefix) ?? "",
+    maxAgeMinutes: cacheMaxAgeMinutes(max_age_minutes),
+  });
 }
 
 async function publishAuditLroSummary(summary?: LroSummary): Promise<void> {
