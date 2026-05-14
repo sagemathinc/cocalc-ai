@@ -40,6 +40,9 @@ let hostConnectionListHostRootfsImagesMock: jest.Mock;
 let hostConnectionPullHostRootfsImageMock: jest.Mock;
 let hostConnectionDeleteHostRootfsImageMock: jest.Mock;
 let hostConnectionGcDeletedHostRootfsImagesMock: jest.Mock;
+let hostConnectionListHostSshAuthorizedKeysMock: jest.Mock;
+let hostConnectionAddHostSshAuthorizedKeyMock: jest.Mock;
+let hostConnectionRemoveHostSshAuthorizedKeyMock: jest.Mock;
 let hostConnectionListHostRuntimeDeploymentsMock: jest.Mock;
 let hostConnectionSetHostRuntimeDeploymentsMock: jest.Mock;
 let hostConnectionGetHostManagedComponentStatusMock: jest.Mock;
@@ -82,6 +85,7 @@ let runReconcileOnceMock: jest.Mock;
 let listCloudOrphanInstancesMock: jest.Mock;
 let getBrowserAuthSessionHashMock: jest.Mock;
 let requireFreshAuthForSessionHashMock: jest.Mock;
+let getImpersonationSessionBySessionHashMock: jest.Mock;
 let hasActiveSecondFactorMock: jest.Mock;
 let hasPaymentMethodMock: jest.Mock;
 let getBalanceMock: jest.Mock;
@@ -166,6 +170,12 @@ jest.mock("@cocalc/server/auth/auth-sessions", () => ({
   __esModule: true,
   requireFreshAuthForSessionHash: (...args: any[]) =>
     requireFreshAuthForSessionHashMock(...args),
+}));
+
+jest.mock("@cocalc/server/auth/impersonation", () => ({
+  __esModule: true,
+  getImpersonationSessionBySessionHash: (...args: any[]) =>
+    getImpersonationSessionBySessionHashMock(...args),
 }));
 
 jest.mock("@cocalc/server/auth/two-factor", () => ({
@@ -359,6 +369,12 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         hostConnectionDeleteHostRootfsImageMock(...args),
       gcDeletedHostRootfsImages: (...args: any[]) =>
         hostConnectionGcDeletedHostRootfsImagesMock(...args),
+      listHostSshAuthorizedKeys: (...args: any[]) =>
+        hostConnectionListHostSshAuthorizedKeysMock(...args),
+      addHostSshAuthorizedKey: (...args: any[]) =>
+        hostConnectionAddHostSshAuthorizedKeyMock(...args),
+      removeHostSshAuthorizedKey: (...args: any[]) =>
+        hostConnectionRemoveHostSshAuthorizedKeyMock(...args),
       listHostRuntimeDeployments: (...args: any[]) =>
         hostConnectionListHostRuntimeDeploymentsMock(...args),
       setHostRuntimeDeployments: (...args: any[]) =>
@@ -481,7 +497,15 @@ beforeEach(() => {
   getServerSettingsMock = jest.fn(async () => ({}));
   getProjectUsageAccountIdMock = jest.fn(async () => undefined);
   getBrowserAuthSessionHashMock = jest.fn(() => undefined);
-  requireFreshAuthForSessionHashMock = jest.fn(async () => undefined);
+  requireFreshAuthForSessionHashMock = jest.fn(async () => ({
+    account_id: ACCOUNT_ID,
+    session_hash: "session-hash",
+    fresh_auth_until: new Date(Date.now() + 60_000),
+    password_verified_at: new Date("2026-05-14T12:00:00.000Z"),
+    factor_verified_at: new Date("2026-05-14T12:00:01.000Z"),
+    factor_level: "totp",
+  }));
+  getImpersonationSessionBySessionHashMock = jest.fn(async () => undefined);
   resolveMembershipForAccountMock = jest.fn(async () => ({
     class: "member",
     entitlements: {
@@ -648,6 +672,29 @@ beforeEach(() => {
     items: [],
     removed_count: 0,
     removed_bytes_total: 0,
+  }));
+  hostConnectionListHostSshAuthorizedKeysMock = jest.fn(async () => ({
+    host_id: HOST_ID,
+    user: "user",
+    home: "/home/user",
+    path: "/home/user/.ssh/authorized_keys",
+    keys: [],
+  }));
+  hostConnectionAddHostSshAuthorizedKeyMock = jest.fn(async () => ({
+    host_id: HOST_ID,
+    user: "user",
+    home: "/home/user",
+    path: "/home/user/.ssh/authorized_keys",
+    keys: ["ssh-ed25519 AAAATEST test"],
+    added: true,
+  }));
+  hostConnectionRemoveHostSshAuthorizedKeyMock = jest.fn(async () => ({
+    host_id: HOST_ID,
+    user: "user",
+    home: "/home/user",
+    path: "/home/user/.ssh/authorized_keys",
+    keys: [],
+    removed: true,
   }));
   hostConnectionListHostRuntimeDeploymentsMock = jest.fn(async () => []);
   hostConnectionSetHostRuntimeDeploymentsMock = jest.fn(async () => []);
@@ -1845,6 +1892,20 @@ describe("hosts browser fresh auth gating", () => {
     expect(createLroMock).not.toHaveBeenCalled();
   });
 
+  it("requires fresh 2FA before queueing host delete", async () => {
+    const { deleteHost } = await import("./hosts");
+    await expect(
+      deleteHost({
+        account_id: ACCOUNT_ID,
+        id: HOST_ID,
+      }),
+    ).rejects.toMatchObject({
+      code: "fresh_auth_required",
+    });
+    expect(resolveHostBayMock).not.toHaveBeenCalled();
+    expect(createLroMock).not.toHaveBeenCalled();
+  });
+
   it("cancels queued start and restart ops before queueing delete", async () => {
     listLroMock = jest.fn(async () => [
       {
@@ -1887,6 +1948,7 @@ describe("hosts browser fresh auth gating", () => {
     const { deleteHost } = await import("./hosts");
     const result = await deleteHost({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
     });
 
@@ -2483,6 +2545,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
       await import("./hosts");
     const pulled = await pullHostRootfsImage({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
       image: "ghcr.io/cocalc/project:remote",
     });
@@ -2493,6 +2556,7 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
 
     expect(hostConnectionPullHostRootfsImageMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
       image: "ghcr.io/cocalc/project:remote",
     });
@@ -2512,6 +2576,56 @@ describe("hosts.getHostRuntimeDeploymentStatus", () => {
         component: "conat-router",
       }),
     ]);
+  });
+
+  it("routes SSH authorized key operations to the authoritative remote bay", async () => {
+    resolveHostBayMock = jest.fn(async () => ({
+      bay_id: "bay-1",
+      epoch: 2,
+    }));
+    queryMock = jest.fn(async () => {
+      throw new Error("should not query local host rows for remote-owned host");
+    });
+
+    const {
+      listHostSshAuthorizedKeys,
+      addHostSshAuthorizedKey,
+      removeHostSshAuthorizedKey,
+    } = await import("./hosts");
+    await listHostSshAuthorizedKeys({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    await addHostSshAuthorizedKey({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      public_key: "ssh-ed25519 AAAATEST test",
+    });
+    await removeHostSshAuthorizedKey({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      public_key: "ssh-ed25519 AAAATEST test",
+    });
+
+    expect(hostConnectionListHostSshAuthorizedKeysMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      id: HOST_ID,
+    });
+    expect(hostConnectionAddHostSshAuthorizedKeyMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      public_key: "ssh-ed25519 AAAATEST test",
+      user: undefined,
+    });
+    expect(hostConnectionRemoveHostSshAuthorizedKeyMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
+      id: HOST_ID,
+      public_key: "ssh-ed25519 AAAATEST test",
+    });
   });
 
   it("ignores missing host-agent status support on older hosts", async () => {
@@ -2689,15 +2803,18 @@ describe("hosts.authoritative remote host actions", () => {
     });
     await deleteHost({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
       skip_backups: true,
     });
     await forceDeprovisionHost({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
     });
     await removeSelfHostConnector({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
     });
 
@@ -2763,15 +2880,18 @@ describe("hosts.authoritative remote host actions", () => {
     );
     expect(hostConnectionDeleteHostMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
       skip_backups: true,
     });
     expect(hostConnectionForceDeprovisionHostMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
     });
     expect(hostConnectionRemoveSelfHostConnectorMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
+      session_hash: "session-hash",
       id: HOST_ID,
     });
   });

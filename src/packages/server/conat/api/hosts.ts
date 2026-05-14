@@ -185,6 +185,7 @@ import {
 import { getDedicatedHostWindowUsageForHostLocal } from "@cocalc/server/project-host/spend";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
+import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import {
   ensureHostOwnerSshTrust as ensureHostOwnerSshTrustInternal,
   getHostRehomeOperation as getHostRehomeOperationInternal,
@@ -493,6 +494,11 @@ const HOST_DEPROVISION_LRO_KIND = "host-deprovision";
 const HOST_DELETE_LRO_KIND = "host-delete";
 const HOST_FORCE_DEPROVISION_LRO_KIND = "host-force-deprovision";
 const HOST_REMOVE_CONNECTOR_LRO_KIND = "host-remove-connector";
+// Non-serializable capability used only by trusted in-process inter-bay
+// handlers. Public Conat API callers cannot supply this value over JSON.
+export const HOST_DANGEROUS_INTERNAL_AUTH = Symbol(
+  "host-dangerous-internal-auth",
+);
 const HOST_DESTRUCTIVE_LRO_KINDS = [
   HOST_DEPROVISION_LRO_KIND,
   HOST_DELETE_LRO_KIND,
@@ -1004,6 +1010,25 @@ async function maybeRequireFreshAuthForInteractiveHostAction({
   return {
     allow_second_factor_override: impersonation ? true : undefined,
   };
+}
+
+async function requireDangerousHostMutationAuth({
+  account_id,
+  session_hash,
+  internalAuth,
+}: {
+  account_id?: string;
+  session_hash?: string | null;
+  internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
+}): Promise<void> {
+  if (internalAuth === HOST_DANGEROUS_INTERNAL_AUTH) {
+    return;
+  }
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
 }
 
 function currentHostFundingMode(
@@ -3922,19 +3947,29 @@ export async function listHostRootfsImages({
 
 export async function pullHostRootfsImage({
   account_id,
+  session_hash,
+  internalAuth,
   id,
   image,
 }: {
   account_id?: string;
+  session_hash?: string | null;
+  internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
   image: string;
 }): Promise<HostRootfsImage> {
+  await requireDangerousHostMutationAuth({
+    account_id,
+    session_hash,
+    internalAuth,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge()
       .hostConnection(remoteBay)
       .pullHostRootfsImage({
         account_id,
+        session_hash,
         id,
         image,
       });
@@ -3964,19 +3999,29 @@ export async function pullHostRootfsImage({
 
 export async function deleteHostRootfsImage({
   account_id,
+  session_hash,
+  internalAuth,
   id,
   image,
 }: {
   account_id?: string;
+  session_hash?: string | null;
+  internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
   image: string;
 }): Promise<{ removed: boolean }> {
+  await requireDangerousHostMutationAuth({
+    account_id,
+    session_hash,
+    internalAuth,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge()
       .hostConnection(remoteBay)
       .deleteHostRootfsImage({
         account_id,
+        session_hash,
         id,
         image,
       });
@@ -3995,17 +4040,27 @@ export async function deleteHostRootfsImage({
 
 export async function gcDeletedHostRootfsImages({
   account_id,
+  session_hash,
+  internalAuth,
   id,
 }: {
   account_id?: string;
+  session_hash?: string | null;
+  internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
 }): Promise<HostRootfsGcResult> {
+  await requireDangerousHostMutationAuth({
+    account_id,
+    session_hash,
+    internalAuth,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge()
       .hostConnection(remoteBay)
       .gcDeletedHostRootfsImages({
         account_id,
+        session_hash,
         id,
       });
   }
@@ -4072,6 +4127,15 @@ export async function listHostSshAuthorizedKeys({
   path: string;
   keys: string[];
 }> {
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .listHostSshAuthorizedKeys({
+        account_id,
+        id,
+      });
+  }
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
   const response = await client.listHostSshAuthorizedKeys();
@@ -4086,11 +4150,15 @@ export async function listHostSshAuthorizedKeys({
 
 export async function addHostSshAuthorizedKey({
   account_id,
+  session_hash,
+  internalAuth,
   id,
   public_key,
   user,
 }: {
   account_id?: string;
+  session_hash?: string | null;
+  internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
   public_key: string;
   user?: string;
@@ -4102,6 +4170,23 @@ export async function addHostSshAuthorizedKey({
   keys: string[];
   added: boolean;
 }> {
+  await requireDangerousHostMutationAuth({
+    account_id,
+    session_hash,
+    internalAuth,
+  });
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .addHostSshAuthorizedKey({
+        account_id,
+        session_hash,
+        id,
+        public_key,
+        user,
+      });
+  }
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
   const response = await client.addHostSshAuthorizedKey({ public_key, user });
@@ -4117,10 +4202,14 @@ export async function addHostSshAuthorizedKey({
 
 export async function removeHostSshAuthorizedKey({
   account_id,
+  session_hash,
+  internalAuth,
   id,
   public_key,
 }: {
   account_id?: string;
+  session_hash?: string | null;
+  internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
   public_key: string;
 }): Promise<{
@@ -4131,6 +4220,22 @@ export async function removeHostSshAuthorizedKey({
   keys: string[];
   removed: boolean;
 }> {
+  await requireDangerousHostMutationAuth({
+    account_id,
+    session_hash,
+    internalAuth,
+  });
+  const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
+  if (remoteBay) {
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .removeHostSshAuthorizedKey({
+        account_id,
+        session_hash,
+        id,
+        public_key,
+      });
+  }
   await loadOwnedHost(id, account_id);
   const client = await hostControlClient(id);
   const response = await client.removeHostSshAuthorizedKey({ public_key });
@@ -4578,17 +4683,27 @@ export async function drainHostInternal({
 
 export async function forceDeprovisionHost({
   account_id,
+  session_hash,
+  internalAuth,
   id,
 }: {
   account_id?: string;
+  session_hash?: string | null;
+  internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
 }): Promise<HostLroResponse> {
+  await requireDangerousHostMutationAuth({
+    account_id,
+    session_hash,
+    internalAuth,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge()
       .hostConnection(remoteBay)
       .forceDeprovisionHost({
         account_id,
+        session_hash,
         id,
       });
   }
@@ -4815,17 +4930,27 @@ export async function forceDeprovisionHostInternal({
 
 export async function removeSelfHostConnector({
   account_id,
+  session_hash,
+  internalAuth,
   id,
 }: {
   account_id?: string;
+  session_hash?: string | null;
+  internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
 }): Promise<HostLroResponse> {
+  await requireDangerousHostMutationAuth({
+    account_id,
+    session_hash,
+    internalAuth,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge()
       .hostConnection(remoteBay)
       .removeSelfHostConnector({
         account_id,
+        session_hash,
         id,
       });
   }
@@ -6494,17 +6619,27 @@ export async function rolloutHostManagedComponentsInternal({
 
 export async function deleteHost({
   account_id,
+  session_hash,
+  internalAuth,
   id,
   skip_backups,
 }: {
   account_id?: string;
+  session_hash?: string | null;
+  internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
   skip_backups?: boolean;
 }): Promise<HostLroResponse> {
+  await requireDangerousHostMutationAuth({
+    account_id,
+    session_hash,
+    internalAuth,
+  });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
     return await getInterBayBridge().hostConnection(remoteBay).deleteHost({
       account_id,
+      session_hash,
       id,
       skip_backups,
     });

@@ -163,6 +163,7 @@ import {
   handleProjectSecretsSet,
 } from "@cocalc/server/inter-bay/project-secrets";
 import {
+  HOST_DANGEROUS_INTERNAL_AUTH,
   deleteHost,
   deleteHostRootfsImage,
   drainHost,
@@ -189,9 +190,11 @@ import {
   stopHost,
   upgradeHostSoftware,
   listHostRootfsImages,
+  listHostSshAuthorizedKeys,
   listHostProjects,
   listHostRuntimeDeployments,
   pullHostRootfsImage,
+  addHostSshAuthorizedKey,
   issueProjectHostAuthTokenLocal,
   listHostAccess,
   listHostsLocal,
@@ -206,6 +209,7 @@ import {
   getProjectBackupIndexesLocal,
   syncProjectBackupIndexesLocal,
   deleteProjectBackupIndexLocal,
+  removeHostSshAuthorizedKey,
 } from "@cocalc/server/conat/api/hosts";
 import {
   getProjectBackupShardAdminStatus,
@@ -1037,20 +1041,26 @@ async function startHostConnectionService(): Promise<void> {
         components,
         reason,
       }),
-    deleteHost: async ({ account_id, id, skip_backups }) =>
+    deleteHost: async ({ account_id, session_hash, id, skip_backups }) =>
       await deleteHost({
         account_id,
+        session_hash,
+        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
         skip_backups,
       }),
-    forceDeprovisionHost: async ({ account_id, id }) =>
+    forceDeprovisionHost: async ({ account_id, session_hash, id }) =>
       await forceDeprovisionHost({
         account_id,
+        session_hash,
+        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
       }),
-    removeSelfHostConnector: async ({ account_id, id }) =>
+    removeSelfHostConnector: async ({ account_id, session_hash, id }) =>
       await removeSelfHostConnector({
         account_id,
+        session_hash,
+        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
       }),
     listHostRootfsImages: async ({ account_id, id }) =>
@@ -1058,22 +1068,61 @@ async function startHostConnectionService(): Promise<void> {
         account_id,
         id,
       }),
-    pullHostRootfsImage: async ({ account_id, id, image }) =>
+    pullHostRootfsImage: async ({ account_id, session_hash, id, image }) =>
       await pullHostRootfsImage({
         account_id,
+        session_hash,
+        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
         image,
       }),
-    deleteHostRootfsImage: async ({ account_id, id, image }) =>
+    deleteHostRootfsImage: async ({ account_id, session_hash, id, image }) =>
       await deleteHostRootfsImage({
         account_id,
+        session_hash,
+        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
         image,
       }),
-    gcDeletedHostRootfsImages: async ({ account_id, id }) =>
+    gcDeletedHostRootfsImages: async ({ account_id, session_hash, id }) =>
       await gcDeletedHostRootfsImages({
         account_id,
+        session_hash,
+        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
+      }),
+    listHostSshAuthorizedKeys: async ({ account_id, id }) =>
+      await listHostSshAuthorizedKeys({
+        account_id,
+        id,
+      }),
+    addHostSshAuthorizedKey: async ({
+      account_id,
+      session_hash,
+      id,
+      public_key,
+      user,
+    }) =>
+      await addHostSshAuthorizedKey({
+        account_id,
+        session_hash,
+        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
+        id,
+        public_key,
+        user,
+      }),
+    removeHostSshAuthorizedKey: async ({
+      account_id,
+      session_hash,
+      id,
+      public_key,
+    }) =>
+      await removeHostSshAuthorizedKey({
+        account_id,
+        session_hash,
+        internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
+        id,
+        public_key,
       }),
     listHostRuntimeDeployments: async ({ account_id, scope_type, id }) =>
       await listHostRuntimeDeployments({
