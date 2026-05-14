@@ -16,9 +16,12 @@ import {
   recordNewAuthSession,
 } from "@cocalc/server/auth/auth-sessions";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
+import { createSignInSecondFactorChallenge } from "@cocalc/server/auth/two-factor";
 import {
   finishPasskeySetup,
+  finishSignInPasskeyAuthentication,
   listPasskeys,
+  startSignInPasskeyAuthentication,
   startPasskeySetup,
 } from "@cocalc/server/auth/passkeys";
 import { uuid } from "@cocalc/util/misc";
@@ -35,6 +38,12 @@ jest.mock("@simplewebauthn/server", () => ({
     },
     pubKeyCredParams: [],
   })),
+  generateAuthenticationOptions: jest.fn(async () => ({
+    challenge: "authentication-challenge",
+    rpId: "localhost",
+    allowCredentials: [{ id: "credential-id", type: "public-key" }],
+    userVerification: "preferred",
+  })),
   verifyRegistrationResponse: jest.fn(async () => ({
     verified: true,
     registrationInfo: {
@@ -44,6 +53,18 @@ jest.mock("@simplewebauthn/server", () => ({
         publicKey: new Uint8Array([1, 2, 3, 4]),
         counter: 7,
       },
+      credentialBackedUp: true,
+      credentialDeviceType: "multiDevice",
+      origin: "http://localhost",
+      rpID: "localhost",
+      userVerified: true,
+    },
+  })),
+  verifyAuthenticationResponse: jest.fn(async () => ({
+    verified: true,
+    authenticationInfo: {
+      credentialID: "credential-id",
+      newCounter: 8,
       credentialBackedUp: true,
       credentialDeviceType: "multiDevice",
       origin: "http://localhost",
@@ -146,6 +167,37 @@ describe("passkey setup", () => {
           credential_id: "credential-id",
         },
       ],
+    });
+
+    const signInChallenge = await createSignInSecondFactorChallenge({
+      account_id,
+    });
+    expect(signInChallenge.methods).toContain("passkey");
+
+    const authStart = await startSignInPasskeyAuthentication({
+      req,
+      challenge_id: signInChallenge.challenge_id,
+    });
+    expect(authStart.options.challenge).toBe("authentication-challenge");
+
+    await expect(
+      finishSignInPasskeyAuthentication({
+        challenge_id: signInChallenge.challenge_id,
+        response: {
+          id: "credential-id",
+          rawId: "credential-id",
+          type: "public-key",
+          clientExtensionResults: {},
+          response: {
+            clientDataJSON: "client-data",
+            authenticatorData: "authenticator-data",
+            signature: "signature",
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
+      account_id,
+      factor_level: "passkey",
     });
   });
 });

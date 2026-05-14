@@ -6,8 +6,12 @@
 import type { Request } from "express";
 import { v4 as uuid } from "uuid";
 import {
+  generateAuthenticationOptions,
   generateRegistrationOptions,
+  verifyAuthenticationResponse,
   verifyRegistrationResponse,
+  type AuthenticationResponseJSON,
+  type PublicKeyCredentialRequestOptionsJSON,
   type PublicKeyCredentialCreationOptionsJSON,
   type RegistrationResponseJSON,
   type AuthenticatorTransportFuture,
@@ -39,6 +43,7 @@ const FACTOR_STATUS_PENDING = "pending";
 const FACTOR_STATUS_ACTIVE = "active";
 const FACTOR_STATUS_DISABLED = "disabled";
 const CHALLENGE_PURPOSE_PASSKEY_SETUP = "passkey_setup";
+const CHALLENGE_PURPOSE_SIGN_IN = "sign_in";
 const CHALLENGE_TTL_MS = 10 * 60_000;
 const CHALLENGE_MAX_ATTEMPTS = 8;
 const RECOVERY_CODE_COUNT = 10;
@@ -67,6 +72,7 @@ type ChallengeRow = {
   id: string;
   account_id: string;
   purpose: string;
+  password_verified_at?: Date | null;
   expire: Date;
   attempt_count: number;
   max_attempts: number;
@@ -93,6 +99,19 @@ export type PasskeySetupStart = {
   options: PublicKeyCredentialCreationOptionsJSON;
 };
 
+export type PasskeyAuthenticationStart = {
+  challenge_id: string;
+  options: PublicKeyCredentialRequestOptionsJSON;
+};
+
+export type PasskeySignInResult = {
+  account_id: string;
+  factor_level: "passkey";
+  password_verified_at: Date;
+  factor_verified_at: Date;
+  fresh_auth_until: Date;
+};
+
 function ensureAccountId(account_id: string): string {
   const value = `${account_id ?? ""}`.trim();
   if (!isValidUUID(value)) {
@@ -108,6 +127,15 @@ function cleanLabel(value: unknown): string {
 
 function toBase64Url(value: Uint8Array): string {
   return Buffer.from(value).toString("base64url");
+}
+
+function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
+  const buffer = Buffer.from(value, "base64url");
+  const arrayBuffer = buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  ) as ArrayBuffer;
+  return new Uint8Array(arrayBuffer);
 }
 
 function summarizePasskey(row: FactorRow): PasskeySummary {
@@ -495,6 +523,263 @@ export async function finishPasskeySetup({
     });
   }
   return { passkey, recovery_codes };
+}
+
+function toWebAuthnCredential(row: FactorRow) {
+  const metadata = row.metadata ?? {};
+  const credential_id = `${metadata.credential_id ?? ""}`.trim();
+  const publicKey = `${metadata.credential_public_key ?? ""}`.trim();
+  if (!credential_id || !publicKey) {
+    throw new Error("passkey credential metadata is incomplete");
+  }
+  return {
+    id: credential_id,
+    publicKey: fromBase64Url(publicKey),
+    counter: Number(metadata.counter ?? 0) || 0,
+    transports: Array.isArray(metadata.transports)
+      ? metadata.transports
+      : undefined,
+  };
+}
+
+async function getActivePasskeyByCredentialIdWithDb({
+  db,
+  account_id,
+  credential_id,
+}: {
+  db: Queryable;
+  account_id: string;
+  credential_id: string;
+}): Promise<FactorRow | null> {
+  const row = (
+    await db.query<FactorRow>(
+      `
+        SELECT *
+          FROM account_second_factors
+         WHERE account_id = $1::UUID
+           AND type = $2::VARCHAR(32)
+           AND status = $3::VARCHAR(32)
+           AND metadata->>'credential_id' = $4
+         LIMIT 1
+         FOR UPDATE
+      `,
+      [account_id, FACTOR_TYPE_PASSKEY, FACTOR_STATUS_ACTIVE, credential_id],
+    )
+  ).rows[0];
+  return row ?? null;
+}
+
+export async function startSignInPasskeyAuthentication({
+  req,
+  challenge_id,
+}: {
+  req: Request;
+  challenge_id: string;
+}): Promise<PasskeyAuthenticationStart> {
+  const challengeId = `${challenge_id ?? ""}`.trim();
+  const challenge = (
+    await getPool().query<ChallengeRow>(
+      `
+        SELECT *
+          FROM account_auth_challenges
+         WHERE id = $1::UUID
+         LIMIT 1
+      `,
+      [challengeId],
+    )
+  ).rows[0];
+  if (!challenge || challenge.purpose !== CHALLENGE_PURPOSE_SIGN_IN) {
+    throw new Error("sign-in challenge not found");
+  }
+  if (challenge.completed_at) {
+    throw new Error("sign-in challenge has already been used");
+  }
+  if (new Date(challenge.expire).valueOf() < Date.now()) {
+    throw new Error("sign-in challenge has expired");
+  }
+  const accountId = ensureAccountId(challenge.account_id);
+  const passkeys = await listActivePasskeyRows(accountId);
+  if (passkeys.length === 0) {
+    throw new Error("no active passkeys");
+  }
+  const rp = await getWebAuthnRelyingPartyForRequest(req);
+  const options = await generateAuthenticationOptions({
+    rpID: rp.rp_id,
+    allowCredentials: passkeys.map((row) => {
+      const metadata = row.metadata ?? {};
+      return {
+        id: `${metadata.credential_id ?? ""}`,
+        transports: Array.isArray(metadata.transports)
+          ? metadata.transports
+          : undefined,
+      };
+    }),
+    userVerification: "preferred",
+  });
+  await withAccountRehomeWriteFence({
+    account_id: accountId,
+    action: "start sign-in passkey authentication",
+    fn: async (db) => {
+      await db.query(
+        `
+          UPDATE account_auth_challenges
+             SET metadata = coalesce(metadata, '{}'::JSONB) || $2::JSONB
+           WHERE id = $1::UUID
+        `,
+        [
+          challengeId,
+          JSON.stringify({
+            passkey_challenge: options.challenge,
+            passkey_origin: rp.origin,
+            passkey_rp_id: rp.rp_id,
+          }),
+        ],
+      );
+    },
+  });
+  return { challenge_id: challengeId, options };
+}
+
+export async function finishSignInPasskeyAuthentication({
+  challenge_id,
+  response,
+}: {
+  challenge_id: string;
+  response: AuthenticationResponseJSON;
+}): Promise<PasskeySignInResult> {
+  const challengeId = `${challenge_id ?? ""}`.trim();
+  const initialChallenge = (
+    await getPool().query<ChallengeRow>(
+      `
+        SELECT account_id, purpose
+          FROM account_auth_challenges
+         WHERE id = $1::UUID
+         LIMIT 1
+      `,
+      [challengeId],
+    )
+  ).rows[0];
+  if (
+    !initialChallenge ||
+    initialChallenge.purpose !== CHALLENGE_PURPOSE_SIGN_IN
+  ) {
+    throw new Error("sign-in challenge not found");
+  }
+  const initialAccountId = ensureAccountId(initialChallenge.account_id);
+  let result: PasskeySignInResult | undefined;
+  await withAccountRehomeWriteFence({
+    account_id: initialAccountId,
+    action: "finish sign-in passkey authentication",
+    fn: async (db) => {
+      const q = db as Queryable;
+      const challenge = (
+        await q.query<ChallengeRow>(
+          `
+            SELECT *
+              FROM account_auth_challenges
+             WHERE id = $1::UUID
+             FOR UPDATE
+          `,
+          [challengeId],
+        )
+      ).rows[0];
+      if (!challenge || challenge.purpose !== CHALLENGE_PURPOSE_SIGN_IN) {
+        throw new Error("sign-in challenge not found");
+      }
+      const accountId = ensureAccountId(challenge.account_id);
+      if (challenge.completed_at) {
+        throw new Error("sign-in challenge has already been used");
+      }
+      if (new Date(challenge.expire).valueOf() < Date.now()) {
+        throw new Error("sign-in challenge has expired");
+      }
+      if ((challenge.attempt_count ?? 0) >= (challenge.max_attempts ?? 0)) {
+        throw new Error("too many second factor attempts");
+      }
+      const metadata = challenge.metadata ?? {};
+      const credential_id = `${response?.id ?? ""}`.trim();
+      const passkey = await getActivePasskeyByCredentialIdWithDb({
+        db: q,
+        account_id: accountId,
+        credential_id,
+      });
+      if (!passkey) {
+        await q.query(
+          `
+            UPDATE account_auth_challenges
+               SET attempt_count = attempt_count + 1
+             WHERE id = $1::UUID
+          `,
+          [challengeId],
+        );
+        throw new Error("passkey credential not found");
+      }
+      const verification = await verifyAuthenticationResponse({
+        response,
+        expectedChallenge: `${metadata.passkey_challenge ?? ""}`,
+        expectedOrigin: `${metadata.passkey_origin ?? ""}`,
+        expectedRPID: `${metadata.passkey_rp_id ?? ""}`,
+        credential: toWebAuthnCredential(passkey),
+        requireUserVerification: false,
+      });
+      if (!verification.verified) {
+        await q.query(
+          `
+            UPDATE account_auth_challenges
+               SET attempt_count = attempt_count + 1
+             WHERE id = $1::UUID
+          `,
+          [challengeId],
+        );
+        throw new Error("passkey verification failed");
+      }
+      const factor_verified_at = new Date();
+      const password_verified_at = challenge.password_verified_at
+        ? new Date(challenge.password_verified_at)
+        : new Date();
+      await q.query(
+        `
+          UPDATE account_second_factors
+             SET last_used_at = NOW(),
+                 metadata = coalesce(metadata, '{}'::JSONB) || $2::JSONB
+           WHERE id = $1::UUID
+        `,
+        [
+          passkey.id,
+          JSON.stringify({
+            counter: verification.authenticationInfo.newCounter,
+            backed_up: verification.authenticationInfo.credentialBackedUp,
+            device_type: verification.authenticationInfo.credentialDeviceType,
+            origin: verification.authenticationInfo.origin,
+            rp_id: verification.authenticationInfo.rpID,
+            user_verified: verification.authenticationInfo.userVerified,
+          }),
+        ],
+      );
+      await q.query(
+        `
+          UPDATE account_auth_challenges
+             SET attempt_count = attempt_count + 1,
+                 factor_verified_at = NOW(),
+                 verified_factor_type = $2::VARCHAR(32),
+                 completed_at = NOW()
+           WHERE id = $1::UUID
+        `,
+        [challengeId, FACTOR_TYPE_PASSKEY],
+      );
+      result = {
+        account_id: accountId,
+        factor_level: FACTOR_TYPE_PASSKEY,
+        password_verified_at,
+        factor_verified_at,
+        fresh_auth_until: new Date(Date.now() + FRESH_AUTH_DEFAULT_MS),
+      };
+    },
+  });
+  if (!result) {
+    throw new Error("passkey verification failed");
+  }
+  return result;
 }
 
 export async function disablePasskey({
