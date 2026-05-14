@@ -1644,25 +1644,86 @@ export async function getRootfsCatalogAdmin(
   return await listRootfsImagesAdmin(opts.account_id);
 }
 
+const ROOTFS_ADMIN_CATALOG_FIELDS = [
+  "official",
+  "prepull",
+  "hidden",
+  "blocked",
+  "blocked_reason",
+] as const;
+
+function hasRootfsAdminCatalogField(body: RootfsCatalogSaveBody): boolean {
+  return ROOTFS_ADMIN_CATALOG_FIELDS.some((field) => {
+    return (
+      Object.prototype.hasOwnProperty.call(body, field) &&
+      body[field] !== undefined
+    );
+  });
+}
+
+async function isAdminMutatingNonOwnedRootfsEntry({
+  account_id,
+  image_id,
+}: {
+  account_id: string;
+  image_id?: string;
+}): Promise<boolean> {
+  const imageId = `${image_id ?? ""}`.trim();
+  if (!imageId || !(await isAdmin(account_id))) {
+    return false;
+  }
+  const { rows } = await getPool().query<{ owner_id: string | null }>(
+    "SELECT owner_id FROM rootfs_images WHERE image_id=$1",
+    [imageId],
+  );
+  if (rows.length === 0) {
+    return false;
+  }
+  return rows[0].owner_id !== account_id;
+}
+
 export async function saveRootfsCatalogEntry(
-  opts: RootfsCatalogSaveBody & { account_id?: string },
+  opts: RootfsCatalogSaveBody & {
+    account_id?: string;
+    session_hash?: string | null;
+  },
 ) {
-  const { account_id, ...body } = opts;
+  const { account_id, session_hash, ...body } = opts;
   if (!account_id) {
     throw Error("user must be signed in");
   }
+  const admin = await isAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor:
+      (admin && hasRootfsAdminCatalogField(body)) ||
+      (await isAdminMutatingNonOwnedRootfsEntry({
+        account_id,
+        image_id: body.image_id,
+      })),
+  });
   return await saveRootfsImage({ account_id, body });
 }
 
 export async function requestRootfsImageDeletion(opts: {
   account_id?: string;
+  session_hash?: string | null;
   image_id: string;
   reason?: string;
 }) {
-  const { account_id, image_id, reason } = opts;
+  const { account_id, session_hash, image_id, reason } = opts;
   if (!account_id) {
     throw Error("user must be signed in");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: await isAdminMutatingNonOwnedRootfsEntry({
+      account_id,
+      image_id,
+    }),
+  });
   return await requestRootfsImageDeletion0({
     account_id,
     image_id,
@@ -1672,12 +1733,18 @@ export async function requestRootfsImageDeletion(opts: {
 
 export async function runRootfsReleaseGc(opts: {
   account_id?: string;
+  session_hash?: string | null;
   limit?: number;
 }) {
-  const { account_id, limit } = opts;
+  const { account_id, session_hash, limit } = opts;
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
   return await runPendingRootfsReleaseGc({ limit });
 }
 

@@ -1710,18 +1710,23 @@ export interface System {
   }) => Promise<RootfsAdminCatalogEntry[]>;
 
   saveRootfsCatalogEntry: (
-    opts: RootfsCatalogSaveBody & { account_id?: string },
+    opts: RootfsCatalogSaveBody & {
+      account_id?: string;
+      session_hash?: string | null;
+    },
   ) => Promise<RootfsImageEntry>;
 
   requestRootfsImageDeletion: (opts: {
     image_id: string;
     reason?: string;
     account_id?: string;
+    session_hash?: string | null;
   }) => Promise<RootfsDeleteRequestResult>;
 
   runRootfsReleaseGc: (opts: {
     limit?: number;
     account_id?: string;
+    session_hash?: string | null;
   }) => Promise<RootfsReleaseGcRunResult>;
 
   publishProjectRootfsImage: (
