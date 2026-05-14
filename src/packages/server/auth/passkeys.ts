@@ -1,0 +1,553 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import type { Request } from "express";
+import { v4 as uuid } from "uuid";
+import {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  type PublicKeyCredentialCreationOptionsJSON,
+  type RegistrationResponseJSON,
+  type AuthenticatorTransportFuture,
+} from "@simplewebauthn/server";
+
+import passwordHash from "@cocalc/backend/auth/password-hash";
+import getPool from "@cocalc/database/pool";
+import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import {
+  FRESH_AUTH_DEFAULT_MS,
+  requireFreshAuth,
+  revokeOtherAuthSessions,
+  setCurrentSessionFreshAuth,
+} from "@cocalc/server/auth/auth-sessions";
+import {
+  deleteOtherRememberMe,
+  getRememberMeHash,
+} from "@cocalc/server/auth/remember-me";
+import { getWebAuthnRelyingPartyForRequest } from "@cocalc/server/auth/webauthn-origin";
+import {
+  generateRecoveryCodes,
+  normalizeRecoveryCode,
+} from "@cocalc/server/auth/totp";
+import { isValidUUID } from "@cocalc/util/misc";
+
+export const FACTOR_TYPE_PASSKEY = "passkey";
+
+const FACTOR_STATUS_PENDING = "pending";
+const FACTOR_STATUS_ACTIVE = "active";
+const FACTOR_STATUS_DISABLED = "disabled";
+const CHALLENGE_PURPOSE_PASSKEY_SETUP = "passkey_setup";
+const CHALLENGE_TTL_MS = 10 * 60_000;
+const CHALLENGE_MAX_ATTEMPTS = 8;
+const RECOVERY_CODE_COUNT = 10;
+
+type Queryable = {
+  query: <T = any>(
+    sql: string,
+    params?: any[],
+  ) => Promise<{ rows: T[]; rowCount?: number | null }>;
+};
+
+type FactorRow = {
+  id: string;
+  account_id: string;
+  type: string;
+  label?: string | null;
+  status: string;
+  created?: Date | null;
+  activated_at?: Date | null;
+  disabled_at?: Date | null;
+  last_used_at?: Date | null;
+  metadata?: Record<string, any> | null;
+};
+
+type ChallengeRow = {
+  id: string;
+  account_id: string;
+  purpose: string;
+  expire: Date;
+  attempt_count: number;
+  max_attempts: number;
+  completed_at?: Date | null;
+  metadata?: Record<string, any> | null;
+};
+
+export type PasskeySummary = {
+  id: string;
+  label: string;
+  credential_id: string;
+  created?: Date | null;
+  activated_at?: Date | null;
+  last_used_at?: Date | null;
+  transports?: AuthenticatorTransportFuture[];
+  backed_up?: boolean;
+  device_type?: string;
+  aaguid?: string;
+  rp_id?: string;
+};
+
+export type PasskeySetupStart = {
+  challenge_id: string;
+  options: PublicKeyCredentialCreationOptionsJSON;
+};
+
+function ensureAccountId(account_id: string): string {
+  const value = `${account_id ?? ""}`.trim();
+  if (!isValidUUID(value)) {
+    throw new Error("invalid account_id");
+  }
+  return value;
+}
+
+function cleanLabel(value: unknown): string {
+  const label = `${value ?? ""}`.trim();
+  return label.slice(0, 128) || "Passkey";
+}
+
+function toBase64Url(value: Uint8Array): string {
+  return Buffer.from(value).toString("base64url");
+}
+
+function summarizePasskey(row: FactorRow): PasskeySummary {
+  const metadata = row.metadata ?? {};
+  return {
+    id: row.id,
+    label: `${row.label ?? ""}`.trim() || "Passkey",
+    credential_id: `${metadata.credential_id ?? ""}`,
+    created: row.created ?? null,
+    activated_at: row.activated_at ?? null,
+    last_used_at: row.last_used_at ?? null,
+    transports: Array.isArray(metadata.transports)
+      ? metadata.transports
+      : undefined,
+    backed_up:
+      typeof metadata.backed_up === "boolean" ? metadata.backed_up : undefined,
+    device_type:
+      typeof metadata.device_type === "string"
+        ? metadata.device_type
+        : undefined,
+    aaguid: typeof metadata.aaguid === "string" ? metadata.aaguid : undefined,
+    rp_id: typeof metadata.rp_id === "string" ? metadata.rp_id : undefined,
+  };
+}
+
+export async function listActivePasskeyRows(
+  account_id: string,
+): Promise<FactorRow[]> {
+  return (
+    await getPool().query<FactorRow>(
+      `
+        SELECT id, account_id, type, label, status, created, activated_at,
+               disabled_at, last_used_at, metadata
+          FROM account_second_factors
+         WHERE account_id = $1::UUID
+           AND type = $2::VARCHAR(32)
+           AND status = $3::VARCHAR(32)
+         ORDER BY last_used_at DESC NULLS LAST, activated_at DESC NULLS LAST,
+                  created DESC
+      `,
+      [ensureAccountId(account_id), FACTOR_TYPE_PASSKEY, FACTOR_STATUS_ACTIVE],
+    )
+  ).rows;
+}
+
+export async function listPasskeys({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<{ passkeys: PasskeySummary[] }> {
+  return {
+    passkeys: (await listActivePasskeyRows(account_id)).map(summarizePasskey),
+  };
+}
+
+export async function hasActivePasskey(account_id: string): Promise<boolean> {
+  return (await listActivePasskeyRows(account_id)).length > 0;
+}
+
+export async function startPasskeySetup({
+  req,
+  account_id,
+  label,
+}: {
+  req: Request;
+  account_id: string;
+  label?: string;
+}): Promise<PasskeySetupStart> {
+  const accountId = ensureAccountId(account_id);
+  await requireFreshAuth({ req, account_id: accountId });
+  const rp = await getWebAuthnRelyingPartyForRequest(req);
+  const existing = await listActivePasskeyRows(accountId);
+  const account = (
+    await getPool().query<{
+      email_address?: string | null;
+      first_name?: string | null;
+      last_name?: string | null;
+      name?: string | null;
+    }>(
+      `
+        SELECT email_address, first_name, last_name, name
+          FROM accounts
+         WHERE account_id = $1::UUID
+         LIMIT 1
+      `,
+      [accountId],
+    )
+  ).rows[0];
+  const email = `${account?.email_address ?? ""}`.trim();
+  const displayName =
+    `${account?.first_name ?? ""} ${account?.last_name ?? ""}`.trim() ||
+    `${account?.name ?? ""}`.trim() ||
+    email ||
+    accountId;
+  const options = await generateRegistrationOptions({
+    rpName: rp.rp_name,
+    rpID: rp.rp_id,
+    userID: Buffer.from(accountId),
+    userName: email || accountId,
+    userDisplayName: displayName,
+    attestationType: "none",
+    excludeCredentials: existing
+      .map((row) => `${row.metadata?.credential_id ?? ""}`.trim())
+      .filter(Boolean)
+      .map((id) => ({
+        id,
+        transports: existing.find(
+          (row) => `${row.metadata?.credential_id ?? ""}`.trim() === id,
+        )?.metadata?.transports,
+      })),
+    authenticatorSelection: {
+      residentKey: "preferred",
+      userVerification: "preferred",
+    },
+  });
+  const challenge_id = uuid();
+  await withAccountRehomeWriteFence({
+    account_id: accountId,
+    action: "start passkey setup",
+    fn: async (db) => {
+      await db.query(
+        `
+          INSERT INTO account_auth_challenges(
+            id, account_id, purpose, password_verified_at, factor_verified_at,
+            verified_factor_type, target_session_hash, expire, attempt_count,
+            max_attempts, completed_at, created, metadata
+          ) VALUES(
+            $1::UUID, $2::UUID, $3::VARCHAR(32), NOW(), NULL, NULL, $4::CHAR(127),
+            $5::TIMESTAMP, 0, $6::INTEGER, NULL, NOW(), $7::JSONB
+          )
+        `,
+        [
+          challenge_id,
+          accountId,
+          CHALLENGE_PURPOSE_PASSKEY_SETUP,
+          getRememberMeHash(req) ?? null,
+          new Date(Date.now() + CHALLENGE_TTL_MS),
+          CHALLENGE_MAX_ATTEMPTS,
+          JSON.stringify({
+            challenge: options.challenge,
+            origin: rp.origin,
+            rp_id: rp.rp_id,
+            rp_name: rp.rp_name,
+            label: cleanLabel(label),
+          }),
+        ],
+      );
+    },
+  });
+  return { challenge_id, options };
+}
+
+async function issueRecoveryCodesWithDb({
+  db,
+  account_id,
+  factor_id,
+}: {
+  db: Queryable;
+  account_id: string;
+  factor_id: string;
+}): Promise<string[]> {
+  const codes = generateRecoveryCodes(RECOVERY_CODE_COUNT);
+  await db.query(
+    "DELETE FROM account_second_factor_recovery_codes WHERE account_id = $1::UUID",
+    [account_id],
+  );
+  for (const code of codes) {
+    await db.query(
+      `
+        INSERT INTO account_second_factor_recovery_codes(
+          id, account_id, factor_id, code_hash, used_at, created, metadata
+        ) VALUES(
+          $1::UUID, $2::UUID, $3::UUID, $4::VARCHAR(173), NULL, NOW(), $5::JSONB
+        )
+      `,
+      [
+        uuid(),
+        account_id,
+        factor_id,
+        passwordHash(normalizeRecoveryCode(code)),
+        "{}",
+      ],
+    );
+  }
+  return codes;
+}
+
+async function activeSecondFactorCountWithDb({
+  db,
+  account_id,
+}: {
+  db: Queryable;
+  account_id: string;
+}): Promise<number> {
+  const row = (
+    await db.query<{ count: string }>(
+      `
+        SELECT COUNT(*)::TEXT AS count
+          FROM account_second_factors
+         WHERE account_id = $1::UUID
+           AND status = $2::VARCHAR(32)
+           AND type IN ('totp', 'passkey')
+      `,
+      [account_id, FACTOR_STATUS_ACTIVE],
+    )
+  ).rows[0];
+  return Number(row?.count ?? 0) || 0;
+}
+
+export async function finishPasskeySetup({
+  req,
+  account_id,
+  challenge_id,
+  response,
+  label,
+}: {
+  req: Request;
+  account_id: string;
+  challenge_id: string;
+  response: RegistrationResponseJSON;
+  label?: string;
+}): Promise<{ passkey: PasskeySummary; recovery_codes: string[] }> {
+  const accountId = ensureAccountId(account_id);
+  const challengeId = `${challenge_id ?? ""}`.trim();
+  let passkey: PasskeySummary | undefined;
+  let recovery_codes: string[] = [];
+  await withAccountRehomeWriteFence({
+    account_id: accountId,
+    action: "finish passkey setup",
+    fn: async (db) => {
+      const q = db as Queryable;
+      const challenge = (
+        await q.query<ChallengeRow>(
+          `
+            SELECT *
+              FROM account_auth_challenges
+             WHERE id = $1::UUID
+             FOR UPDATE
+          `,
+          [challengeId],
+        )
+      ).rows[0];
+      if (
+        !challenge ||
+        challenge.account_id !== accountId ||
+        challenge.purpose !== CHALLENGE_PURPOSE_PASSKEY_SETUP
+      ) {
+        throw new Error("passkey setup challenge not found");
+      }
+      if (challenge.completed_at) {
+        throw new Error("passkey setup challenge has already been used");
+      }
+      if (new Date(challenge.expire).valueOf() < Date.now()) {
+        throw new Error("passkey setup challenge has expired");
+      }
+      if ((challenge.attempt_count ?? 0) >= (challenge.max_attempts ?? 0)) {
+        throw new Error("too many passkey setup attempts");
+      }
+      const metadata = challenge.metadata ?? {};
+      const verification = await verifyRegistrationResponse({
+        response,
+        expectedChallenge: `${metadata.challenge ?? ""}`,
+        expectedOrigin: `${metadata.origin ?? ""}`,
+        expectedRPID: `${metadata.rp_id ?? ""}`,
+        requireUserVerification: false,
+      });
+      if (!verification.verified) {
+        await q.query(
+          `
+            UPDATE account_auth_challenges
+               SET attempt_count = attempt_count + 1
+             WHERE id = $1::UUID
+          `,
+          [challengeId],
+        );
+        throw new Error("passkey setup verification failed");
+      }
+      const info = verification.registrationInfo;
+      const credential_id = info.credential.id;
+      const duplicate = (
+        await q.query(
+          `
+            SELECT id
+              FROM account_second_factors
+             WHERE type = $1::VARCHAR(32)
+               AND status IN ($2::VARCHAR(32), $3::VARCHAR(32))
+               AND metadata->>'credential_id' = $4
+             LIMIT 1
+          `,
+          [
+            FACTOR_TYPE_PASSKEY,
+            FACTOR_STATUS_ACTIVE,
+            FACTOR_STATUS_PENDING,
+            credential_id,
+          ],
+        )
+      ).rows[0];
+      if (duplicate) {
+        throw new Error("passkey is already registered");
+      }
+      const factor_id = uuid();
+      const row: FactorRow = {
+        id: factor_id,
+        account_id: accountId,
+        type: FACTOR_TYPE_PASSKEY,
+        label: cleanLabel(label ?? metadata.label),
+        status: FACTOR_STATUS_ACTIVE,
+        metadata: {
+          credential_id,
+          credential_public_key: toBase64Url(info.credential.publicKey),
+          counter: info.credential.counter,
+          transports: response.response.transports ?? [],
+          backed_up: info.credentialBackedUp,
+          device_type: info.credentialDeviceType,
+          aaguid: info.aaguid,
+          rp_id: info.rpID ?? metadata.rp_id,
+          origin: info.origin,
+          user_verified: info.userVerified,
+        },
+      };
+      await db.query(
+        `
+          INSERT INTO account_second_factors(
+            id, account_id, type, label, secret_encrypted, status, created,
+            activated_at, disabled_at, last_used_at, metadata
+          ) VALUES(
+            $1::UUID, $2::UUID, $3::VARCHAR(32), $4::VARCHAR(128), $5::TEXT,
+            $6::VARCHAR(32), NOW(), NOW(), NULL, NOW(), $7::JSONB
+          )
+        `,
+        [
+          row.id,
+          row.account_id,
+          row.type,
+          row.label,
+          "",
+          row.status,
+          JSON.stringify(row.metadata),
+        ],
+      );
+      await db.query(
+        `
+          UPDATE account_auth_challenges
+             SET attempt_count = attempt_count + 1,
+                 factor_verified_at = NOW(),
+                 verified_factor_type = $2::VARCHAR(32),
+                 completed_at = NOW()
+           WHERE id = $1::UUID
+        `,
+        [challengeId, FACTOR_TYPE_PASSKEY],
+      );
+      if (
+        (await activeSecondFactorCountWithDb({ db, account_id: accountId })) ===
+        1
+      ) {
+        recovery_codes = await issueRecoveryCodesWithDb({
+          db,
+          account_id: accountId,
+          factor_id,
+        });
+      }
+      passkey = summarizePasskey({
+        ...row,
+        created: new Date(),
+        activated_at: new Date(),
+        last_used_at: new Date(),
+      });
+    },
+  });
+  if (!passkey) {
+    throw new Error("passkey setup failed");
+  }
+  const currentHash = getRememberMeHash(req);
+  if (currentHash) {
+    await deleteOtherRememberMe(accountId, currentHash);
+    await revokeOtherAuthSessions({
+      account_id: accountId,
+      keep_session_hash: currentHash,
+    });
+    await setCurrentSessionFreshAuth({
+      req,
+      account_id: accountId,
+      factor_level: FACTOR_TYPE_PASSKEY,
+      fresh_auth_until: new Date(Date.now() + FRESH_AUTH_DEFAULT_MS),
+    });
+  }
+  return { passkey, recovery_codes };
+}
+
+export async function disablePasskey({
+  req,
+  account_id,
+  factor_id,
+}: {
+  req: Request;
+  account_id: string;
+  factor_id: string;
+}): Promise<void> {
+  const accountId = ensureAccountId(account_id);
+  await requireFreshAuth({ req, account_id: accountId });
+  const factorId = `${factor_id ?? ""}`.trim();
+  await withAccountRehomeWriteFence({
+    account_id: accountId,
+    action: "disable passkey",
+    fn: async (db) => {
+      const q = db as Queryable;
+      const row = (
+        await q.query<FactorRow>(
+          `
+            SELECT *
+              FROM account_second_factors
+             WHERE id = $1::UUID
+               AND account_id = $2::UUID
+               AND type = $3::VARCHAR(32)
+               AND status = $4::VARCHAR(32)
+             FOR UPDATE
+          `,
+          [factorId, accountId, FACTOR_TYPE_PASSKEY, FACTOR_STATUS_ACTIVE],
+        )
+      ).rows[0];
+      if (!row) {
+        throw new Error("active passkey not found");
+      }
+      const activeCount = await activeSecondFactorCountWithDb({
+        db: q,
+        account_id: accountId,
+      });
+      if (activeCount <= 1) {
+        throw new Error("cannot disable the last active second factor");
+      }
+      await q.query(
+        `
+          UPDATE account_second_factors
+             SET status = $3::VARCHAR(32),
+                 disabled_at = NOW()
+           WHERE id = $1::UUID
+             AND account_id = $2::UUID
+        `,
+        [factorId, accountId, FACTOR_STATUS_DISABLED],
+      );
+    },
+  });
+}

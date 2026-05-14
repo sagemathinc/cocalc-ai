@@ -14,7 +14,7 @@ import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
 import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
 import { isValidUUID } from "@cocalc/util/misc";
 
-export type SecondFactorMethod = "totp" | "recovery_code";
+export type SecondFactorMethod = "totp" | "recovery_code" | "passkey";
 export type AuthSessionFactorLevel = "none" | SecondFactorMethod;
 export type FreshAuthDuration = "default" | "extended";
 

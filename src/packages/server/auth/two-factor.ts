@@ -45,6 +45,11 @@ import {
   deleteOtherRememberMe,
   getRememberMeHash,
 } from "@cocalc/server/auth/remember-me";
+import {
+  FACTOR_TYPE_PASSKEY,
+  hasActivePasskey,
+  listActivePasskeyRows,
+} from "@cocalc/server/auth/passkeys";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -486,7 +491,10 @@ export async function verifyFreshAuthCredentials({
 export async function hasActiveSecondFactor(
   account_id: string,
 ): Promise<boolean> {
-  return !!(await getActiveFactor(ensureAccountId(account_id)));
+  const accountId = ensureAccountId(account_id);
+  return (
+    !!(await getActiveFactor(accountId)) || (await hasActivePasskey(accountId))
+  );
 }
 
 export async function getTwoFactorStatus({
@@ -497,8 +505,9 @@ export async function getTwoFactorStatus({
   account_id: string;
 }) {
   const accountId = ensureAccountId(account_id);
-  const [activeFactor, pendingCount] = await Promise.all([
+  const [activeFactor, activePasskeys, pendingCount] = await Promise.all([
     getActiveFactor(accountId),
+    listActivePasskeyRows(accountId),
     getPool().query<{ count: string }>(
       `
         SELECT COUNT(*)::TEXT AS count
@@ -517,10 +526,21 @@ export async function getTwoFactorStatus({
         .fresh_auth_until ?? null;
   } catch {}
   return {
-    enabled: !!activeFactor,
+    enabled: !!activeFactor || activePasskeys.length > 0,
     factor_type: activeFactor?.type ?? null,
     label: activeFactor?.label ?? null,
     last_used_at: activeFactor?.last_used_at ?? null,
+    passkeys: activePasskeys.map((row) => ({
+      id: row.id,
+      label: `${row.label ?? ""}`.trim() || "Passkey",
+      created: row.created ?? null,
+      activated_at: row.activated_at ?? null,
+      last_used_at: row.last_used_at ?? null,
+      credential_id: `${row.metadata?.credential_id ?? ""}`,
+      transports: Array.isArray(row.metadata?.transports)
+        ? row.metadata.transports
+        : undefined,
+    })),
     pending_setup_count: Number(pendingCount.rows[0]?.count ?? 0) || 0,
     fresh_auth_until,
   };
@@ -777,9 +797,21 @@ export async function createSignInSecondFactorChallenge({
   methods: SecondFactorMethod[];
 }> {
   const accountId = ensureAccountId(account_id);
-  if (!(await hasActiveSecondFactor(accountId))) {
+  const [activeTotp, activePasskeys] = await Promise.all([
+    getActiveFactor(accountId),
+    listActivePasskeyRows(accountId),
+  ]);
+  if (!activeTotp && activePasskeys.length === 0) {
     throw new Error("two-factor authentication is not enabled");
   }
+  const methods: SecondFactorMethod[] = [];
+  if (activePasskeys.length > 0) {
+    methods.push(FACTOR_TYPE_PASSKEY);
+  }
+  if (activeTotp) {
+    methods.push("totp");
+  }
+  methods.push("recovery_code");
   const challenge_id = uuid();
   await withAccountRehomeWriteFence({
     account_id: accountId,
@@ -870,7 +902,7 @@ export async function createSignInSecondFactorChallenge({
   });
   return {
     challenge_id,
-    methods: ["totp", "recovery_code"],
+    methods,
   };
 }
 
