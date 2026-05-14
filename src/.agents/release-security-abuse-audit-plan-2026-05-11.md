@@ -60,6 +60,11 @@ Primary release risks:
    means "public signup allowed".
 10. Plaintext-on-disk master-key handling for encrypted application secrets.
 11. User-created root filesystems with unbounded count or storage size.
+12. Unbounded simultaneous running projects attributed to one owner or
+    `usage_account_id`, especially course/team workflows where one paid account
+    can implicitly sponsor many free collaborators.
+13. Dependency-advisory drift between `pnpm audit`, GitHub Dependabot, Python
+    lockfile scanners, and production bundle reachability.
 
 ## Audit Rules
 
@@ -118,6 +123,10 @@ Initial inventory buckets:
 15. Master-key loading, storage, rotation, and bay startup unlock flows.
 16. Root filesystem create/edit/publish/storage flows and image distribution
     side effects.
+17. Project start/wake/restart admission, including concurrent running project
+    caps by `usage_account_id`, owner, project host, and bay.
+18. Dependency advisory reconciliation across npm and Python lockfiles, with
+    explicit release decisions for open Dependabot alerts.
 
 Inventory commands:
 
@@ -171,6 +180,8 @@ Implementation targets:
 - per-socket reconnect and resubscription storm limits
 - per-account/project/browser reconnect dampening
 - max concurrent expensive operations per account/project
+- max simultaneously running projects per billing/usage account, owner, bay, and
+  host, enforced before project wake/start work enters project-host placement
 - bounded queue depth for work accepted by a websocket service
 - structured deny reasons returned to clients
 - metrics/logs for allowed, delayed, and denied work
@@ -186,6 +197,8 @@ High-priority checks:
   re-fetch, or re-open expensive resources?
 - Are rate-limit keys based on trusted address resolution only?
 - Do limits apply before project-host wake/start operations?
+- Can one paid user or `usage_account_id` sponsor an unbounded number of
+  simultaneously running free-user/collaborator projects?
 - Are denied/rejected websocket requests cheap enough to process under attack?
 
 Minimum release target:
@@ -575,6 +588,7 @@ pnpm -C src audit
 pnpm -C src outdated
 pnpm -C src version-check
 pnpm -C src license-check
+gh api repos/sagemathinc/cocalc-ai/dependabot/alerts --paginate
 ```
 
 If exact commands differ, record the actual supported commands in the scoreboard.
@@ -583,6 +597,8 @@ Review categories:
 
 - direct production dependencies with known CVEs
 - transitive dependencies bundled into frontend assets
+- Python package lockfiles surfaced by Dependabot even when `pnpm audit` is
+  clean
 - packages that execute untrusted content
 - packages that parse archives, images, markdown, HTML, PDFs, notebooks, or
   terminal output
@@ -591,8 +607,13 @@ Review categories:
 Policy:
 
 - fix high/critical production vulnerabilities before release
+- fix or explicitly defer medium/low Dependabot alerts with manifest path and
+  production reachability
 - document false positives with package path and exploitability reason
 - avoid risky major upgrades without focused smoke tests
+- if an advisory has no upstream patched version, mitigate locally, remove the
+  reachable use, or write a specific non-exploitability decision; do not hide it
+  behind a generic scanner exception
 
 News Item to be aware of -- [**Postmortem: TanStack NPM supply-chain compromise**](https://news.ycombinator.com/item?id=48083938)
 
@@ -758,8 +779,12 @@ Minimum metrics/logs:
 - outbound notification/email attempts and denials
 - host create/start/stop/deprovision attempts
 - project wake/start attempts
+- project wake/start denials by owner, `usage_account_id`, host, bay, and
+  effective membership tier
 - membership/billing mutation attempts
 - rootfs create/clone/import/grow/delete attempts and quota denials
+- simultaneously running project counts by owner/`usage_account_id`, host, and
+  bay
 - API-key creations, revocations, and dangerous-use attempts
 - registration-token signup attempts and public-signup denials
 - master-key unlock/startup mode and failures
@@ -772,6 +797,7 @@ Minimum admin/CLI readouts:
 - top accounts by websocket/request rate
 - top accounts by outbound notifications/email
 - top accounts by host/project wake cost
+- top accounts by simultaneously running sponsored projects
 - top users in absolute terms for every 5-hour and 7-day limit
 - users closest to their effective 5-hour and 7-day limits, accounting for
   membership tier and admin overrides
@@ -849,6 +875,9 @@ Do not release hosted SaaS until:
 - Browser automation sandbox host functions are audited and bounded.
 - Agent/project/operator CLI auth classification exists for dangerous commands.
 - Outbound email/notification abuse controls exist for user-triggered sends.
+- Project start/wake has an explicit simultaneous-running-project admission
+  policy, including `usage_account_id` attribution and course/team sponsorship
+  semantics.
 - API keys have a least-privilege scope story, and project-scoped keys are
   removed or explicitly risk-accepted.
 - Public signup without registration tokens is explicit opt-in, never automatic.
@@ -856,6 +885,8 @@ Do not release hosted SaaS until:
   with documented file-permission checks and upgrade path.
 - High/critical production dependency CVEs are fixed or explicitly documented as
   non-exploitable.
+- GitHub Dependabot open alerts are reconciled against package-manager audit
+  output, including Python lockfile alerts not seen by `pnpm audit`.
 - Installable defaults are safe for accidental LAN exposure or loudly warn.
 - Operators have at least basic abuse visibility for Codex, websockets, browser
   automation, notifications, hosts, rootfs usage, and project starts.
