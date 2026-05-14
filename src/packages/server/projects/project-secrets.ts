@@ -337,11 +337,13 @@ export async function setProjectSecret({
   name,
   value,
   account_id,
+  overwrite = true,
 }: {
   project_id: string;
   name: string;
   value: string;
   account_id: string;
+  overwrite?: boolean;
 }): Promise<ProjectSecretMetadata> {
   const normalizedName = normalizeProjectSecretName(name);
   const valueBytes = validateProjectSecretValue(value);
@@ -363,20 +365,26 @@ export async function setProjectSecret({
     );
     const count = Number(existingRows[0]?.count ?? 0);
     const exists = !!existingRows[0]?.exists;
+    if (exists && !overwrite) {
+      throw new Error(`project secret ${normalizedName} already exists`);
+    }
     if (!exists && count >= PROJECT_SECRETS_MAX_COUNT) {
       throw new Error(
         `project secret limit reached (${count}/${PROJECT_SECRETS_MAX_COUNT})`,
       );
     }
+    const conflictClause = overwrite
+      ? `DO UPDATE SET
+         encrypted_value=EXCLUDED.encrypted_value,
+         value_bytes=EXCLUDED.value_bytes,
+         updated_by=EXCLUDED.updated_by,
+         updated_at=NOW()`
+      : "DO NOTHING";
     const { rows } = await db.query(
       `INSERT INTO project_secrets
          (project_id, name, encrypted_value, value_bytes, created_by, updated_by, created_at, updated_at)
        VALUES ($1, $2, $3::JSONB, $4, $5, $5, NOW(), NOW())
-       ON CONFLICT (project_id, name) DO UPDATE SET
-         encrypted_value=EXCLUDED.encrypted_value,
-         value_bytes=EXCLUDED.value_bytes,
-         updated_by=EXCLUDED.updated_by,
-         updated_at=NOW()
+       ON CONFLICT (project_id, name) ${conflictClause}
        RETURNING project_id, name, value_bytes, created_by, updated_by, created_at, updated_at`,
       [
         project_id,
@@ -386,6 +394,9 @@ export async function setProjectSecret({
         account_id,
       ],
     );
+    if (!rows[0]) {
+      throw new Error(`project secret ${normalizedName} already exists`);
+    }
     logger.info("project secret set", {
       project_id,
       name: normalizedName,

@@ -5,6 +5,9 @@
 
 export const PROJECT_SECRETS_MOUNT_PATH = "/run/secrets/cocalc";
 export const PROJECT_SECRETS_ENV = "COCALC_SECRETS";
+export const PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME = "SSH_PRIVATE_KEY";
+export const PROJECT_SECRETS_SSH_PRIVATE_KEY_PATH = ".ssh/id_ed25519";
+export const PROJECT_SECRETS_SSH_PUBLIC_KEY_PATH = ".ssh/id_ed25519.pub";
 export const PROJECT_SECRETS_PURPOSE = "project-secrets:v1";
 export const PROJECT_SECRETS_KEY_ID = "site-master-key-v1";
 export const PROJECT_SECRETS_MAX_COUNT = 20;

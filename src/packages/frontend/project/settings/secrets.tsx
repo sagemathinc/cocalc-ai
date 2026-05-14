@@ -15,6 +15,7 @@ import {
 
 import type {
   CopyProjectSecretsResult,
+  GenerateProjectSshKeySecretResult,
   ProjectSecretMetadata,
 } from "@cocalc/conat/hub/api/projects";
 import {
@@ -37,6 +38,9 @@ import {
   PROJECT_SECRETS_ENV,
   PROJECT_SECRETS_MAX_COUNT,
   PROJECT_SECRETS_MOUNT_PATH,
+  PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME,
+  PROJECT_SECRETS_SSH_PRIVATE_KEY_PATH,
+  PROJECT_SECRETS_SSH_PUBLIC_KEY_PATH,
   PROJECT_SECRET_NAME_MAX_LENGTH,
   PROJECT_SECRET_VALUE_MAX_BYTES,
 } from "@cocalc/util/project-secrets-constants";
@@ -50,6 +54,8 @@ interface Props {
 }
 
 const SECRET_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+const SSH_PRIVATE_KEY_RE =
+  /-----BEGIN (?:OPENSSH|RSA|EC|DSA) PRIVATE KEY-----[\s\S]*-----END (?:OPENSSH|RSA|EC|DSA) PRIVATE KEY-----$/;
 
 function formatDate(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
@@ -69,6 +75,10 @@ function validateName(name: string): string | undefined {
 
 function secretPath(name: string): string {
   return `${PROJECT_SECRETS_MOUNT_PATH}/${name}`;
+}
+
+function sshPrivateKeyMissingFinalNewline(value: string): boolean {
+  return SSH_PRIVATE_KEY_RE.test(value.trimEnd()) && !value.endsWith("\n");
 }
 
 function parseNames(value: string): string[] | undefined {
@@ -118,6 +128,8 @@ export const ProjectSecrets: React.FC<Props> = ({
   const [copyResult, setCopyResult] = useState<CopyProjectSecretsResult | null>(
     null,
   );
+  const [sshKeyResult, setSshKeyResult] =
+    useState<GenerateProjectSshKeySecretResult | null>(null);
   const [showRestartWarning, setShowRestartWarning] = useState<boolean>(false);
 
   const trimmedName = name.trim();
@@ -127,6 +139,10 @@ export const ProjectSecrets: React.FC<Props> = ({
   const countAtLimit =
     sortedSecrets.length >= PROJECT_SECRETS_MAX_COUNT &&
     !sortedSecrets.some((secret) => secret.name === trimmedName);
+  const sshSecretExists = sortedSecrets.some(
+    (secret) => secret.name === PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME,
+  );
+  const sshNewlineWarning = sshPrivateKeyMissingFinalNewline(value);
 
   async function setSecret(): Promise<void> {
     if (!trimmedName) {
@@ -152,6 +168,7 @@ export const ProjectSecrets: React.FC<Props> = ({
     setSaving(true);
     setError("");
     setCopyResult(null);
+    setSshKeyResult(null);
     try {
       const metadata =
         await webapp_client.conat_client.hub.projects.setProjectSecret({
@@ -182,6 +199,7 @@ export const ProjectSecrets: React.FC<Props> = ({
     setSaving(true);
     setError("");
     setCopyResult(null);
+    setSshKeyResult(null);
     try {
       const result =
         await webapp_client.conat_client.hub.projects.deleteProjectSecret({
@@ -224,6 +242,7 @@ export const ProjectSecrets: React.FC<Props> = ({
     setSaving(true);
     setError("");
     setCopyResult(null);
+    setSshKeyResult(null);
     try {
       const result =
         await webapp_client.conat_client.hub.projects.copyProjectSecrets({
@@ -253,6 +272,48 @@ export const ProjectSecrets: React.FC<Props> = ({
     }
   }
 
+  async function generateSshKeySecret(): Promise<void> {
+    if (sshSecretExists) {
+      setError(
+        `Project secret ${PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME} already exists.`,
+      );
+      return;
+    }
+    if (sortedSecrets.length >= PROJECT_SECRETS_MAX_COUNT) {
+      setError(
+        `This project already has ${PROJECT_SECRETS_MAX_COUNT} secrets.`,
+      );
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setCopyResult(null);
+    setSshKeyResult(null);
+    try {
+      const result =
+        await webapp_client.conat_client.hub.projects.generateProjectSshKeySecret(
+          {
+            project_id,
+          },
+        );
+      if (!isMountedRef.current) return;
+      setSecrets(upsertMetadata(secrets, result.secret));
+      setSshKeyResult(result);
+      setShowRestartWarning(result.restart_required);
+      publishProjectDetailInvalidation({
+        project_id,
+        fields: ["secrets"],
+      });
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      setError(`${err}`);
+    } finally {
+      if (isMountedRef.current) {
+        setSaving(false);
+      }
+    }
+  }
+
   const help = (
     <HelpIcon title="Project Secrets" placement="right" maxWidth="540px">
       <p style={{ marginTop: 0 }}>
@@ -266,6 +327,10 @@ export const ProjectSecrets: React.FC<Props> = ({
         these files. Use the environment variable{" "}
         <code>{PROJECT_SECRETS_ENV}</code> in scripts instead of hardcoding the
         directory.
+      </p>
+      <p style={{ marginBottom: 0 }}>
+        SSH private keys usually need a final newline. If you paste one
+        manually, use the warning below to add the newline before saving.
       </p>
     </HelpIcon>
   );
@@ -348,6 +413,58 @@ export const ProjectSecrets: React.FC<Props> = ({
     );
   }
 
+  function renderSshKeyResult(): React.JSX.Element | undefined {
+    if (!sshKeyResult) return;
+    return (
+      <Alert
+        banner
+        showIcon
+        type={sshKeyResult.setup.ok ? "success" : "warning"}
+        message={
+          sshKeyResult.setup.ok
+            ? "Generated SSH deploy key secret."
+            : "Generated SSH deploy key secret, but project file setup needs attention."
+        }
+        description={
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <Typography.Text>
+              Private key secret:{" "}
+              <Typography.Text code>
+                {secretPath(sshKeyResult.secret_name)}
+              </Typography.Text>
+            </Typography.Text>
+            <Typography.Text>
+              Project SSH files:{" "}
+              <Typography.Text code>
+                {sshKeyResult.setup.private_key_path}
+              </Typography.Text>{" "}
+              and{" "}
+              <Typography.Text code>
+                {sshKeyResult.setup.public_key_path}
+              </Typography.Text>
+            </Typography.Text>
+            {!sshKeyResult.setup.ok ? (
+              <Typography.Text type="warning">
+                Setup error: {sshKeyResult.setup.error}
+              </Typography.Text>
+            ) : undefined}
+            <div>
+              <Typography.Text strong>
+                Public key to add to GitHub/GitLab:
+              </Typography.Text>
+              <Input.TextArea
+                readOnly
+                value={sshKeyResult.public_key}
+                autoSize={{ minRows: 2, maxRows: 4 }}
+                onFocus={(event) => event.currentTarget.select()}
+              />
+            </div>
+          </Space>
+        }
+      />
+    );
+  }
+
   function renderBody(): React.JSX.Element {
     return (
       <div style={{ padding: "10px" }}>
@@ -398,6 +515,19 @@ export const ProjectSecrets: React.FC<Props> = ({
                 autoSize={{ minRows: 3, maxRows: 8 }}
                 onChange={(event) => setValue(event.target.value)}
               />
+              {sshNewlineWarning ? (
+                <Alert
+                  banner
+                  showIcon
+                  type="warning"
+                  message="This looks like an SSH private key and does not end with a newline. Some SSH libraries reject that."
+                  action={
+                    <Button size="small" onClick={() => setValue(`${value}\n`)}>
+                      Add newline
+                    </Button>
+                  }
+                />
+              ) : undefined}
               <Button
                 type="primary"
                 disabled={
@@ -407,6 +537,46 @@ export const ProjectSecrets: React.FC<Props> = ({
               >
                 {saving ? "Saving..." : "Set Secret"}
               </Button>
+            </Space>
+          </div>
+          <div>
+            <Typography.Text strong>Generate SSH Deploy Key</Typography.Text>
+            <Space direction="vertical" style={{ width: "100%", marginTop: 8 }}>
+              <Typography.Text type="secondary">
+                Creates a new ed25519 keypair, stores the private key as{" "}
+                <Typography.Text code>
+                  {PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME}
+                </Typography.Text>
+                , writes{" "}
+                <Typography.Text code>
+                  {PROJECT_SECRETS_SSH_PUBLIC_KEY_PATH}
+                </Typography.Text>
+                , and creates{" "}
+                <Typography.Text code>
+                  {PROJECT_SECRETS_SSH_PRIVATE_KEY_PATH}
+                </Typography.Text>{" "}
+                as a symlink to the mounted secret. This refuses to continue if{" "}
+                <Typography.Text code>
+                  {PROJECT_SECRETS_SSH_PRIVATE_KEY_PATH}
+                </Typography.Text>{" "}
+                already exists.
+              </Typography.Text>
+              <Button
+                disabled={
+                  saving ||
+                  sshSecretExists ||
+                  sortedSecrets.length >= PROJECT_SECRETS_MAX_COUNT
+                }
+                onClick={generateSshKeySecret}
+              >
+                Generate SSH Key Secret
+              </Button>
+              {sshSecretExists ? (
+                <Typography.Text type="secondary">
+                  {PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME} already exists.
+                </Typography.Text>
+              ) : undefined}
+              {renderSshKeyResult()}
             </Space>
           </div>
           <div>

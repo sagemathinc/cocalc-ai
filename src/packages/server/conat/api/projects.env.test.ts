@@ -10,6 +10,7 @@ let listProjectSecretsMock: jest.Mock;
 let setProjectSecretMock: jest.Mock;
 let deleteProjectSecretMock: jest.Mock;
 let copyProjectSecretsMock: jest.Mock;
+let generateProjectSshKeySecretLocalMock: jest.Mock;
 let exportProjectSecretsForCopyMock: jest.Mock;
 let importProjectSecretsForCopyMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
@@ -20,6 +21,7 @@ let interBayProjectSecretsMock: {
   copy: jest.Mock;
   exportForCopy: jest.Mock;
   importForCopy: jest.Mock;
+  generateSshKeySecret: jest.Mock;
 };
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
@@ -78,6 +80,12 @@ jest.mock("@cocalc/server/projects/project-secrets", () => ({
     exportProjectSecretsForCopyMock(...args),
   importProjectSecretsForCopy: (...args: any[]) =>
     importProjectSecretsForCopyMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/project-secret-ssh-key", () => ({
+  __esModule: true,
+  generateProjectSshKeySecretLocal: (...args: any[]) =>
+    generateProjectSshKeySecretLocalMock(...args),
 }));
 
 describe("project env helpers", () => {
@@ -147,6 +155,28 @@ describe("project env helpers", () => {
       conflicts: [],
       missing: [],
     }));
+    generateProjectSshKeySecretLocalMock = jest.fn(
+      async ({ project_id, secret_name }) => ({
+        secret: {
+          project_id,
+          name: secret_name ?? "SSH_PRIVATE_KEY",
+          value_bytes: 411,
+          created_by: ACCOUNT_ID,
+          updated_by: ACCOUNT_ID,
+          created_at: new Date("2026-05-13T00:00:00.000Z"),
+          updated_at: new Date("2026-05-13T00:00:00.000Z"),
+        },
+        secret_name: secret_name ?? "SSH_PRIVATE_KEY",
+        public_key: "ssh-ed25519 AAAATEST cocalc-project:test",
+        setup: {
+          ok: true,
+          private_key_path: ".ssh/id_ed25519",
+          public_key_path: ".ssh/id_ed25519.pub",
+          symlink_target: "/run/secrets/cocalc/SSH_PRIVATE_KEY",
+        },
+        restart_required: true,
+      }),
+    );
     exportProjectSecretsForCopyMock = jest.fn(async () => ({
       secrets: { API_KEY: "secret" },
       missing: [],
@@ -195,6 +225,26 @@ describe("project env helpers", () => {
         copied: ["API_KEY"],
         conflicts: [],
         missing: [],
+      })),
+      generateSshKeySecret: jest.fn(async () => ({
+        secret: {
+          project_id: PROJECT_ID,
+          name: "SSH_PRIVATE_KEY",
+          value_bytes: 411,
+          created_by: ACCOUNT_ID,
+          updated_by: ACCOUNT_ID,
+          created_at: new Date("2026-05-13T00:00:00.000Z"),
+          updated_at: new Date("2026-05-13T00:00:00.000Z"),
+        },
+        secret_name: "SSH_PRIVATE_KEY",
+        public_key: "ssh-ed25519 AAAATEST cocalc-project:test",
+        setup: {
+          ok: true,
+          private_key_path: ".ssh/id_ed25519",
+          public_key_path: ".ssh/id_ed25519.pub",
+          symlink_target: "/run/secrets/cocalc/SSH_PRIVATE_KEY",
+        },
+        restart_required: true,
       })),
     };
   });
@@ -484,6 +534,69 @@ describe("project env helpers", () => {
       secrets: { API_KEY: "secret" },
       overwrite: true,
       epoch: 4,
+    });
+  });
+
+  it("generates an SSH key secret on the owning bay", async () => {
+    const { generateProjectSshKeySecret } = await import("./projects");
+
+    await expect(
+      generateProjectSshKeySecret({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        secret_name: "SSH_PRIVATE_KEY",
+        public_key: "ssh-ed25519 AAAATEST cocalc-project:test",
+        restart_required: true,
+      }),
+    );
+
+    expect(assertCollabMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+    });
+    expect(generateProjectSshKeySecretLocalMock).toHaveBeenCalledWith({
+      project_id: PROJECT_ID,
+      account_id: ACCOUNT_ID,
+      secret_name: undefined,
+    });
+    expect(publishProjectDetailInvalidationBestEffortMock).toHaveBeenCalledWith(
+      {
+        project_id: PROJECT_ID,
+        fields: ["secrets"],
+      },
+    );
+  });
+
+  it("routes SSH key secret generation to the owning bay", async () => {
+    resolveProjectBayMock = jest.fn(async () => ({
+      bay_id: "bay-7",
+      epoch: 3,
+    }));
+    const { generateProjectSshKeySecret } = await import("./projects");
+
+    await expect(
+      generateProjectSshKeySecret({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        secret_name: "SSH_PRIVATE_KEY",
+      }),
+    );
+
+    expect(assertCollabMock).not.toHaveBeenCalled();
+    expect(generateProjectSshKeySecretLocalMock).not.toHaveBeenCalled();
+    expect(
+      interBayProjectSecretsMock.generateSshKeySecret,
+    ).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      secret_name: undefined,
+      epoch: 3,
     });
   });
 });

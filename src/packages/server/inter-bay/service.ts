@@ -157,6 +157,7 @@ import {
   handleProjectSecretsCopy,
   handleProjectSecretsDelete,
   handleProjectSecretsExportForCopy,
+  handleProjectSecretsGenerateSshKeySecret,
   handleProjectSecretsImportForCopy,
   handleProjectSecretsList,
   handleProjectSecretsSet,
@@ -809,6 +810,8 @@ async function startProjectSecretsService(): Promise<void> {
       await handleProjectSecretsExportForCopy(opts),
     importForCopy: async (opts) =>
       await handleProjectSecretsImportForCopy(opts),
+    generateSshKeySecret: async (opts) =>
+      await handleProjectSecretsGenerateSshKeySecret(opts),
   };
   services.push(
     ...createInterBayProjectSecretsHandlers({
@@ -1287,6 +1290,10 @@ async function startHostControlService(): Promise<void> {
       await (
         await getHostClient(host_id, 30_000)
       ).syncProjectSecretsCache(sync),
+    setupProjectSecretSshKey: async ({ host_id, setup }) =>
+      await (
+        await getHostClient(host_id, 30_000)
+      ).setupProjectSecretSshKey(setup),
     applyPendingCopies: async ({ host_id, apply }) =>
       await (await getHostClient(host_id, 30_000)).applyPendingCopies(apply),
     deleteProjectData: async ({ host_id, del }) =>

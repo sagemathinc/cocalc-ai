@@ -15,6 +15,9 @@ export {
   PROJECT_SECRETS_MAX_COUNT,
   PROJECT_SECRETS_MOUNT_PATH,
   PROJECT_SECRETS_PURPOSE,
+  PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME,
+  PROJECT_SECRETS_SSH_PRIVATE_KEY_PATH,
+  PROJECT_SECRETS_SSH_PUBLIC_KEY_PATH,
   PROJECT_SECRET_NAME_MAX_LENGTH,
   PROJECT_SECRET_VALUE_MAX_BYTES,
 } from "./project-secrets-constants";
@@ -25,6 +28,8 @@ import {
   PROJECT_SECRETS_ENV,
   PROJECT_SECRETS_KEY_ID,
   PROJECT_SECRETS_PURPOSE,
+  PROJECT_SECRETS_SSH_PRIVATE_KEY_PATH,
+  PROJECT_SECRETS_SSH_PUBLIC_KEY_PATH,
   PROJECT_SECRET_VALUE_MAX_BYTES,
 } from "./project-secrets-constants";
 
@@ -51,6 +56,12 @@ export interface ProjectSecretRuntimeCacheEntry {
 export interface ProjectSecretsRuntimeCache {
   key_base64: string;
   entries: ProjectSecretRuntimeCacheEntry[];
+}
+
+export interface ProjectSecretSshKeySetupResult {
+  private_key_path: typeof PROJECT_SECRETS_SSH_PRIVATE_KEY_PATH;
+  public_key_path: typeof PROJECT_SECRETS_SSH_PUBLIC_KEY_PATH;
+  symlink_target: string;
 }
 
 function byteLength(value: string): number {

@@ -18,6 +18,7 @@ import type {
   ExecuteCodeOutput,
 } from "@cocalc/util/types/execute-code";
 import type { LroStatus } from "./lro";
+import type { ProjectSecretSshKeySetupResult } from "@cocalc/util/project-secrets";
 
 export type ProjectCopyState =
   | "queued"
@@ -455,6 +456,18 @@ export interface CopyProjectSecretsResult {
   conflicts: string[];
   missing: string[];
 }
+export interface GenerateProjectSshKeySecretResult {
+  secret: ProjectSecretMetadata;
+  secret_name: string;
+  public_key: string;
+  setup:
+    | (ProjectSecretSshKeySetupResult & { ok: true })
+    | (ProjectSecretSshKeySetupResult & {
+        ok: false;
+        error: string;
+      });
+  restart_required: boolean;
+}
 export interface ProjectRootfsConfig {
   image: string;
   image_id?: string | null;
@@ -492,6 +505,7 @@ export const projects = {
   setProjectSecret: authFirstRequireAccount,
   deleteProjectSecret: authFirstRequireAccount,
   copyProjectSecrets: authFirstRequireAccount,
+  generateProjectSshKeySecret: authFirstRequireAccount,
   getProjectRootfs: authFirstRequireAccount,
   getProjectSettings: authFirstRequireAccount,
   getProjectCourseInfo: authFirstRequireAccount,
@@ -694,6 +708,12 @@ export interface Projects {
     names?: string[];
     overwrite?: boolean;
   }) => Promise<CopyProjectSecretsResult>;
+
+  generateProjectSshKeySecret: (opts: {
+    account_id?: string;
+    project_id: string;
+    secret_name?: string;
+  }) => Promise<GenerateProjectSshKeySecretResult>;
 
   getProjectRootfs: (opts: {
     account_id?: string;

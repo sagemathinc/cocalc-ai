@@ -102,6 +102,7 @@ import type {
   ProjectEnv,
   ProjectSecretMetadata,
   CopyProjectSecretsResult,
+  GenerateProjectSshKeySecretResult,
   ProjectCourseInfo,
   ProjectRootfsConfig,
   ProjectQuotaSettings,
@@ -123,6 +124,7 @@ import {
   getProjectSecretsRuntimeCache,
   setProjectSecret as setProjectSecretInDb,
 } from "@cocalc/server/projects/project-secrets";
+import { generateProjectSshKeySecretLocal } from "@cocalc/server/projects/project-secret-ssh-key";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getMembershipTierById } from "@cocalc/server/membership/tiers";
 import { listClaimableMembershipPackagesForAccount } from "@cocalc/server/membership/packages";
@@ -1155,6 +1157,40 @@ export async function copyProjectSecrets({
       project_id: target_project_id,
     });
   }
+  return result;
+}
+
+export async function generateProjectSshKeySecret({
+  account_id,
+  project_id,
+  secret_name,
+}: {
+  account_id?: string;
+  project_id: string;
+  secret_name?: string;
+}): Promise<GenerateProjectSshKeySecretResult> {
+  const actor = requireAccountId(account_id);
+  const ownership = await resolveRequiredProjectBay(project_id);
+  if (ownership.bay_id !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .projectSecrets(ownership.bay_id)
+      .generateSshKeySecret({
+        account_id: actor,
+        project_id,
+        secret_name,
+        epoch: ownership.epoch,
+      });
+  }
+  await assertCollab({ account_id: actor, project_id });
+  const result = await generateProjectSshKeySecretLocal({
+    project_id,
+    account_id: actor,
+    secret_name,
+  });
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["secrets"],
+  });
   return result;
 }
 

@@ -27,6 +27,7 @@ import {
   listProjectSecrets,
   setProjectSecret,
 } from "@cocalc/server/projects/project-secrets";
+import { generateProjectSshKeySecretLocal } from "@cocalc/server/projects/project-secret-ssh-key";
 
 const logger = getLogger("server:inter-bay:project-secrets");
 
@@ -234,5 +235,26 @@ export async function handleProjectSecretsImportForCopy({
     });
     await syncProjectSecretsCacheOnAssignedHost({ project_id });
   }
+  return result;
+}
+
+export async function handleProjectSecretsGenerateSshKeySecret({
+  account_id,
+  project_id,
+  secret_name,
+  epoch,
+}: Parameters<InterBayProjectSecretsApi["generateSshKeySecret"]>[0]): Promise<
+  Awaited<ReturnType<InterBayProjectSecretsApi["generateSshKeySecret"]>>
+> {
+  await assertLocalProjectSecretAccess({ account_id, project_id, epoch });
+  const result = await generateProjectSshKeySecretLocal({
+    project_id,
+    account_id,
+    secret_name,
+  });
+  await publishProjectDetailInvalidationBestEffort({
+    project_id,
+    fields: ["secrets"],
+  });
   return result;
 }

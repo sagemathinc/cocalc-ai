@@ -50,6 +50,7 @@ import type {
   ProjectSecretMetadata,
   ProjectSnapshotSchedule,
   CopyProjectSecretsResult,
+  GenerateProjectSshKeySecretResult,
 } from "@cocalc/conat/hub/api/projects";
 import type {
   HostAgentStatus,
@@ -964,6 +965,7 @@ export type HostControlMethod =
   | "update-authorized-keys"
   | "update-project-users"
   | "sync-project-secrets-cache"
+  | "setup-project-secret-ssh-key"
   | "apply-pending-copies"
   | "delete-project-data"
   | "upgrade-software"
@@ -1054,7 +1056,8 @@ export type ProjectSecretsMethod =
   | "delete"
   | "copy"
   | "export-for-copy"
-  | "import-for-copy";
+  | "import-for-copy"
+  | "generate-ssh-key-secret";
 export type AccountProjectFeedMethod = "upsert" | "remove";
 
 interface ResolveProjectBayApi {
@@ -1152,6 +1155,12 @@ export interface InterBayProjectSecretsApi {
     overwrite?: boolean;
     epoch?: number;
   }) => Promise<CopyProjectSecretsResult>;
+  generateSshKeySecret: (opts: {
+    account_id: string;
+    project_id: string;
+    secret_name?: string;
+    epoch?: number;
+  }) => Promise<GenerateProjectSshKeySecretResult>;
 }
 
 export interface InterBayHostConnectionApi {
@@ -1537,6 +1546,12 @@ export interface InterBayHostControlApi {
     host_id: string;
     sync: HostControlArg<"syncProjectSecretsCache">;
   }) => Promise<Awaited<ReturnType<HostControlApi["syncProjectSecretsCache"]>>>;
+  setupProjectSecretSshKey: (opts: {
+    host_id: string;
+    setup: HostControlArg<"setupProjectSecretSshKey">;
+  }) => Promise<
+    Awaited<ReturnType<HostControlApi["setupProjectSecretSshKey"]>>
+  >;
   applyPendingCopies: (opts: {
     host_id: string;
     apply: HostControlArg<"applyPendingCopies">;
@@ -1880,6 +1895,7 @@ const HOST_CONTROL_METHOD_SPECS = [
   { name: "updateAuthorizedKeys", method: "update-authorized-keys" },
   { name: "updateProjectUsers", method: "update-project-users" },
   { name: "syncProjectSecretsCache", method: "sync-project-secrets-cache" },
+  { name: "setupProjectSecretSshKey", method: "setup-project-secret-ssh-key" },
   { name: "applyPendingCopies", method: "apply-pending-copies" },
   { name: "deleteProjectData", method: "delete-project-data" },
   { name: "upgradeSoftware", method: "upgrade-software" },
@@ -1938,6 +1954,7 @@ const PROJECT_SECRETS_METHOD_SPECS = [
   { name: "copy", method: "copy" },
   { name: "exportForCopy", method: "export-for-copy" },
   { name: "importForCopy", method: "import-for-copy" },
+  { name: "generateSshKeySecret", method: "generate-ssh-key-secret" },
 ] as const satisfies ReadonlyArray<{
   name: ProjectSecretsName;
   method: ProjectSecretsMethod;

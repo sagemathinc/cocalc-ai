@@ -172,6 +172,31 @@ describe("project secrets database helpers", () => {
     });
   });
 
+  it("can refuse to overwrite an existing secret", async () => {
+    await insertAccountAndProject(SOURCE_PROJECT_ID);
+
+    await setProjectSecret({
+      project_id: SOURCE_PROJECT_ID,
+      name: "SSH_PRIVATE_KEY",
+      value: "first",
+      account_id: ACCOUNT_ID,
+    });
+
+    await expect(
+      setProjectSecret({
+        project_id: SOURCE_PROJECT_ID,
+        name: "SSH_PRIVATE_KEY",
+        value: "second",
+        account_id: ACCOUNT_ID,
+        overwrite: false,
+      }),
+    ).rejects.toThrow("project secret SSH_PRIVATE_KEY already exists");
+
+    await expect(
+      getProjectSecretsForRuntime({ project_id: SOURCE_PROJECT_ID }),
+    ).resolves.toEqual({ SSH_PRIVATE_KEY: "first" });
+  });
+
   it("exports plaintext for trusted inter-bay copy and imports re-encrypted values", async () => {
     await insertAccountAndProject(SOURCE_PROJECT_ID);
     await insertAccountAndProject(TARGET_PROJECT_ID);
