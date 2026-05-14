@@ -2,7 +2,21 @@
 
 Date: 2026-05-13
 
-Status: proposal for review.
+Status: implemented and in final audit.
+
+As of 2026-05-14, the feature code is substantially complete: central storage,
+crypto, hub API, CLI support, multibay routing, project-host encrypted cache,
+runtime mounting, copy, clone, environment-variable hardening, UI, and the SSH
+deploy-key helper are implemented.
+
+Remaining work is not new feature design. It is release audit and follow-up
+hardening:
+
+- complete one final end-to-end security audit pass.
+- keep durable audit events as an explicit post-release deferral unless product
+  requirements change.
+- keep broader product documentation/manual QA as release work outside this
+  implementation plan.
 
 ## Goal
 
@@ -377,6 +391,18 @@ restarts and cannot reach hub to receive the key, it cannot decrypt cached
 secrets. That is acceptable for the first implementation and avoids persisting
 decryption keys on project-host disk.
 
+Implementation note, 2026-05-14:
+
+- project-host maintains an encrypted SQLite cache and uses it for project
+  starts when it already has the in-memory derived key.
+- if cached secret names indicate configured secrets but plaintext materialized
+  values cannot be loaded, project start fails closed instead of starting
+  without secrets.
+- host-side plaintext materialization directories are cleaned on stop, startup
+  failure, and project-runner startup garbage collection. Startup GC preserves
+  directories for still-running project containers and removes stale project or
+  temporary secret directories.
+
 ## Runtime Materialization
 
 At project start:
@@ -585,15 +611,30 @@ Recommended first policy:
 
 ### Phase 7: End-to-End Security Audit
 
-- Verify project archive download excludes secrets.
-- Verify public sharing cannot access secrets.
-- Verify rootfs publish excludes secrets.
-- Verify project backups exclude secrets.
-- Verify logs and audit events do not include values.
-- Verify project restart applies changes.
-- Verify copied secrets materialize only in the target after restart.
-- Verify cloned projects receive re-encrypted copies of source project secrets.
-- Verify central hub outage behavior.
+- [x] Verify project archive/download paths do not use the runtime secret mount.
+      Secrets are outside project home, and file-server sandbox policy rejects
+      `/run/secrets/cocalc`.
+- [x] Verify public sharing/static app paths use sandboxed filesystem access and
+      cannot read `/run/secrets/cocalc`.
+- [x] Verify rootfs publish excludes secrets by construction because secrets are
+      runtime mounts outside project home/rootfs state.
+- [x] Verify project backups exclude secrets by construction because secrets are
+      runtime mounts outside project home and encrypted central/cache rows are not
+      part of project filesystem backups.
+- [x] Verify project start logs redact plaintext runtime secrets. A first audit
+      pass found and fixed a serious logging issue here.
+- [x] Verify project restart applies changes; manual testing confirmed mounted
+      secret and SSH deploy-key behavior after restart.
+- [x] Verify copied secrets are re-encrypted under the target project metadata
+      and only materialize in the target runtime after restart.
+- [x] Verify cloned projects copy secrets through the re-encrypting copy helper
+      and fail clone creation if secret copy fails.
+- [x] Verify central hub outage behavior: a project-host with warm encrypted
+      cache and in-memory derived key can start projects without a hub roundtrip; if
+      configured secrets cannot be materialized, start fails closed.
+- [x] Verify host-side plaintext materialization lifecycle: directories are
+      private, replaced atomically, cleaned on stop/start failure, and garbage
+      collected on project-runner startup when stale.
 
 ## Resolved Design Decisions
 
@@ -603,6 +644,9 @@ Recommended first policy:
 - Caps are fixed constants, not membership-tier based.
 - Project-host receives the derived `project-secrets:v1` key at startup.
 - Secret changes require project restart.
+- Durable audit events are deferred. Current logging is sufficient for this
+  first implementation, but product-grade durable audit history can be added
+  later without changing the storage/runtime model.
 
 ## Release Recommendation
 

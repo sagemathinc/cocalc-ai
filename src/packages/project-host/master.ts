@@ -32,6 +32,7 @@ import { podmanEnv } from "@cocalc/backend/podman/env";
 import { getConmonContainerProcesses } from "@cocalc/backend/podman/conmon";
 import { deleteProjectLocal, upsertProject } from "./sqlite/projects";
 import { syncProjectSecretsCache as syncProjectSecretsCacheLocal } from "./project-secrets-cache";
+import { setupProjectSecretSshKey } from "./project-secret-ssh-key";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
 import { matchAppRequest } from "./app-public-access";
 import {
@@ -979,6 +980,10 @@ export async function startMasterRegistration({
         });
         upsertProject({ project_id, secret_names });
         return { secret_names };
+      },
+      async setupProjectSecretSshKey(opts) {
+        await awaitReadyForControl("setupProjectSecretSshKey", waitUntilReady);
+        return await setupProjectSecretSshKey(opts);
       },
       async applyPendingCopies({ project_id, limit }) {
         await awaitReadyForControl("applyPendingCopies", waitUntilReady);

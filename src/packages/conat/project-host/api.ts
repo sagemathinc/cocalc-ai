@@ -11,7 +11,10 @@ import type {
 import type { SnapshotSchedule } from "@cocalc/util/consts/snapshots";
 import type { HostPressureZone } from "@cocalc/conat/hub/api/hosts";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
-import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
+import type {
+  ProjectSecretsRuntimeCache,
+  ProjectSecretSshKeySetupResult,
+} from "@cocalc/util/project-secrets";
 export { DEFAULT_RUNTIME_RETENTION_POLICY } from "./retention-policy";
 
 export interface HostCreateProjectRequest extends CreateProjectOptions {
@@ -322,6 +325,12 @@ export interface HostControlApi {
     project_id: string;
     cache: ProjectSecretsRuntimeCache;
   }) => Promise<{ secret_names: string[] }>;
+  setupProjectSecretSshKey: (opts: {
+    project_id: string;
+    secret_name: string;
+    public_key?: string;
+    check_only?: boolean;
+  }) => Promise<ProjectSecretSshKeySetupResult>;
   applyPendingCopies: (opts: {
     project_id?: string;
     limit?: number;

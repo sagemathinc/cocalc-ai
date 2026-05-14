@@ -93,11 +93,13 @@ jest.mock("./conat-client", () => ({
 }));
 
 import getPort from "@cocalc/backend/get-port";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import {
   cleanupProjectSecretsHostPath,
+  cleanupStaleProjectSecretsHostPaths,
   getAll,
   projectSecretsHostPath,
+  PROJECT_SECRETS_HOST_ROOT,
   redactConfigurationForLog,
   start,
   state,
@@ -462,6 +464,34 @@ describe("project-runner podman orphan fallback", () => {
 
     await cleanupProjectSecretsHostPath(project1);
     await expect(stat(`${path}/API_KEY`)).rejects.toThrow();
+  });
+
+  it("removes stale project secret runtime directories on startup cleanup", async () => {
+    await cleanupProjectSecretsHostPath(project1);
+    await cleanupProjectSecretsHostPath(project2);
+    await writeProjectSecretsHostPath({
+      project_id: project1,
+      secrets: { API_KEY: "active" },
+    });
+    await writeProjectSecretsHostPath({
+      project_id: project2,
+      secrets: { API_KEY: "stale" },
+    });
+    await mkdir(`${PROJECT_SECRETS_HOST_ROOT}/.tmp-stale`, {
+      recursive: true,
+    });
+    mockPodman.mockResolvedValueOnce({ stdout: `${project1}\n` });
+
+    await cleanupStaleProjectSecretsHostPaths();
+
+    await expect(
+      stat(`${projectSecretsHostPath(project1)}/API_KEY`),
+    ).resolves.toBeDefined();
+    await expect(stat(projectSecretsHostPath(project2))).rejects.toThrow();
+    await expect(
+      stat(`${PROJECT_SECRETS_HOST_ROOT}/.tmp-stale`),
+    ).rejects.toThrow();
+    await cleanupProjectSecretsHostPath(project1);
   });
 
   it("redacts runtime secrets before logging project start config", () => {

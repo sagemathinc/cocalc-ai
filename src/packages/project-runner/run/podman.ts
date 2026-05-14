@@ -126,6 +126,35 @@ export async function cleanupProjectSecretsHostPath(
   });
 }
 
+export async function cleanupStaleProjectSecretsHostPaths(): Promise<void> {
+  let activeProjectIds: Set<string>;
+  try {
+    activeProjectIds = new Set(await getAll());
+  } catch (err) {
+    logger.warn("project secrets startup cleanup skipped", { err: `${err}` });
+    return;
+  }
+
+  const entries = await readdir(PROJECT_SECRETS_HOST_ROOT, {
+    withFileTypes: true,
+  }).catch((err) => {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  });
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const staleTempDir = entry.name.startsWith(".tmp-");
+    const staleProjectDir =
+      isValidUUID(entry.name) && !activeProjectIds.has(entry.name);
+    if (!staleTempDir && !staleProjectDir) continue;
+    await rm(join(PROJECT_SECRETS_HOST_ROOT, entry.name), {
+      recursive: true,
+      force: true,
+    });
+  }
+}
+
 export async function writeProjectSecretsHostPath({
   project_id,
   secrets,
