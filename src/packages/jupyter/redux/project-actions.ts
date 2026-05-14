@@ -62,6 +62,10 @@ export class JupyterActions extends JupyterActions0 {
     this.jupyter_kernel?.signal(signal);
   };
 
+  protected handleCellDeleted(id: string): void {
+    this.jupyter_kernel?.cancel_execute(id);
+  }
+
   handle_nbconvert_change = (oldVal, newVal): void => {
     const oldValue = oldVal?.toJS != null ? oldVal.toJS() : oldVal;
     const newValue = newVal?.toJS != null ? newVal.toJS() : newVal;
