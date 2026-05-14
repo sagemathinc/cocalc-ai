@@ -2,6 +2,12 @@
 
 Status: 2026-05-14 second-pass audit for `SEC-CLI-001` and `SEC-KEY-001`.
 
+Update: the first fresh-auth implementation tranche is complete. Account
+delete/rehome/drain/repair, admin membership/entitlement mutation, and org token
+create/expire now use a shared Conat dangerous-session helper. Admin,
+account-rehome, entitlement, and org-token creation gates require recent 2FA;
+self account delete and org-token expiry require a fresh authenticated session.
+
 Scope:
 
 - Dangerous `cocalc-cli` command families that call hub/project-host Conat RPCs.
@@ -24,21 +30,23 @@ paths:
 - HTTP Conat project API-key access requires `project:exec`, an explicit
   allowed project id, and normal collaborator access.
 
-Fresh-auth coverage is incomplete:
+Fresh-auth coverage is still incomplete but improved:
 
 - CLI transport forwards `auth_session_hash`, and `cocalc auth elevate` exists,
   so the transport can support server-side freshness gates.
-- Several high-risk endpoint families already require freshness: membership
+- Several high-risk endpoint families now require freshness: membership
   purchase, cloud host create/start/configuration, host access escalation to
-  `manager`, host RAM/spend-cap changes, and admin impersonation grants.
-- Many destructive/admin endpoints still only check ownership/admin/collaborator
-  authorization. They do not require a fresh browser/CLI session or a recent
-  second-factor check.
+  `manager`, host RAM/spend-cap changes, admin impersonation grants, account
+  delete/rehome/drain/repair, admin membership/entitlement mutation, and org
+  token lifecycle.
+- The remaining destructive/admin gaps are concentrated in host
+  delete/rootfs/SSH mutation, project hard delete/move/rehome/restore,
+  backup/snapshot mutation, rootfs admin mutation, and legacy token generation.
 
 Conclusion: `SEC-KEY-001` is acceptable as guarded for the first release unless
 websocket API-key hub RPC support is intentionally expanded. `SEC-CLI-001`
-should remain guarded until the freshness gaps below are either fixed or
-explicitly accepted.
+should remain guarded until the remaining freshness gaps below are either fixed
+or explicitly accepted.
 
 ## Evidence Reviewed
 
@@ -79,6 +87,14 @@ Existing freshness/2FA checks:
 - `src/packages/server/conat/api/hosts.ts` requires fresh auth for cloud host
   create/start/configuration, host-manager access grants, host project-RAM
   limits, and owner spend caps.
+- `src/packages/server/conat/api/dangerous-session-auth.ts` provides the shared
+  Conat dangerous-session helper. It requires a fresh session hash, supports
+  actor impersonation, and can require active plus recent second-factor
+  verification for the account or impersonating actor.
+- `src/packages/server/conat/api/system.ts` applies this helper to account
+  delete/rehome/drain/repair and admin membership/entitlement mutation.
+- `src/packages/server/conat/api/org.ts` applies this helper to org token
+  creation and expiry.
 - `src/packages/server/conat/api/hosts.test.ts` has regression coverage for the
   host fresh-auth gates.
 - `src/packages/server/conat/api/purchases.test.ts` has regression coverage for
@@ -86,26 +102,26 @@ Existing freshness/2FA checks:
 
 ## Dangerous Operation Matrix
 
-| Surface                                               | Current Authorization                                                | Fresh/2FA                                   | API-key Exposure                                                                                            | Multibay Posture                                                           | Audit Result                                                              |
-| ----------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Admin impersonation grant                             | Site admin                                                           | Fresh auth and active 2FA required          | API-key hub RPC denied                                                                                      | Resolves subject account home bay before creating the grant                | Good                                                                      |
-| Membership package purchase                           | Account purchase checks                                              | Fresh browser auth required                 | API-key hub RPC denied                                                                                      | Account-home/billing path                                                  | Good                                                                      |
-| Cloud host create/start/config                        | Owner/host permission/membership                                     | Fresh auth for cloud/self-funded risk paths | API-key hub RPC denied                                                                                      | Resolves remote host bay and forwards through inter-bay host connection    | Good                                                                      |
-| Host manager access/RAM/spend caps                    | Host manage/config permission                                        | Fresh auth required                         | API-key hub RPC denied                                                                                      | Resolves remote host bay                                                   | Good                                                                      |
-| Account delete                                        | Self or site admin for another account                               | Not required                                | API-key hub RPC denied                                                                                      | Uses cluster account delete routing                                        | Gap                                                                       |
-| Account rehome/drain/repair                           | Site-admin/operator checks in rehome helpers                         | Not required at Conat boundary              | API-key hub RPC denied                                                                                      | Uses account home-bay/rehome helpers                                       | Gap                                                                       |
-| Admin membership assignment and entitlement overrides | Site admin                                                           | Not required                                | API-key hub RPC denied                                                                                      | Entitlement overrides route to account home bay                            | Gap                                                                       |
-| Org token create/expire                               | Org admin/site admin                                                 | Not required                                | API-key hub RPC denied                                                                                      | Legacy single-db organization model                                        | Gap                                                                       |
-| Project soft delete/undelete                          | Project collaborator/owner checks via project control                | Not required                                | HTTP hub API-key denied; project API-key with `project:exec` can operate inside allowlisted project runtime | Project control routes to owning bay                                       | Gap                                                                       |
-| Project hard delete                                   | `assertHardDeleteProjectPermission`                                  | Not required                                | HTTP hub API-key denied                                                                                     | LRO routed from owning/control bay                                         | Gap                                                                       |
-| Project move/rehome                                   | Collaborator/admin checks                                            | Not required                                | HTTP hub API-key denied                                                                                     | Resolves project owning bay and forwards through inter-bay project control | Gap                                                                       |
-| Backup/snapshot delete/restore                        | Project collaborator checks                                          | Not required                                | HTTP hub API-key denied; project bridge requires `project:exec`                                             | Project/file-server routing is project-aware                               | Gap                                                                       |
-| Public app expose/unexpose                            | Project app/project collaborator checks                              | Not required                                | Project API-key with `project:exec` can call project-host app APIs for an allowlisted project               | Project-host routed; same security as project runtime authority            | Acceptable if `project:exec` is treated as full project runtime authority |
-| Host delete/deprovision                               | Host owner                                                           | Not required                                | API-key hub RPC denied                                                                                      | Resolves remote host bay before delete                                     | Gap                                                                       |
-| Host RootFS image delete/pull                         | Host rootfs-management permission                                    | Not required                                | API-key hub RPC denied                                                                                      | Resolves remote host bay                                                   | Gap                                                                       |
-| Host SSH authorized key add/remove                    | Host owner                                                           | Not required                                | API-key hub RPC denied                                                                                      | Local `loadOwnedHost`/host-control path; does not resolve remote host bay  | Freshness and multibay routing gap                                        |
-| RootFS catalog/admin/release mutation                 | Site admin                                                           | Not required                                | API-key hub RPC denied                                                                                      | Hub/site admin path                                                        | Gap                                                                       |
-| `system.generateUserAuthToken`                        | Admin or target password; used by legacy hub-password bootstrap path | Not required                                | API-key hub RPC denied                                                                                      | Token creation logs centrally                                              | Residual legacy path                                                      |
+| Surface                                               | Current Authorization                                                | Fresh/2FA                                                                                 | API-key Exposure                                                                                            | Multibay Posture                                                           | Audit Result                                                              |
+| ----------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Admin impersonation grant                             | Site admin                                                           | Fresh auth and active 2FA required                                                        | API-key hub RPC denied                                                                                      | Resolves subject account home bay before creating the grant                | Good                                                                      |
+| Membership package purchase                           | Account purchase checks                                              | Fresh browser auth required                                                               | API-key hub RPC denied                                                                                      | Account-home/billing path                                                  | Good                                                                      |
+| Cloud host create/start/config                        | Owner/host permission/membership                                     | Fresh auth for cloud/self-funded risk paths                                               | API-key hub RPC denied                                                                                      | Resolves remote host bay and forwards through inter-bay host connection    | Good                                                                      |
+| Host manager access/RAM/spend caps                    | Host manage/config permission                                        | Fresh auth required                                                                       | API-key hub RPC denied                                                                                      | Resolves remote host bay                                                   | Good                                                                      |
+| Account delete                                        | Self or site admin for another account                               | Fresh auth required; admin deleting another account also requires active/recent 2FA       | API-key hub RPC denied                                                                                      | Uses cluster account delete routing                                        | Improved                                                                  |
+| Account rehome/drain/repair                           | Site-admin/operator checks in rehome helpers                         | Fresh auth plus active/recent 2FA required                                                | API-key hub RPC denied                                                                                      | Uses account home-bay/rehome helpers                                       | Good                                                                      |
+| Admin membership assignment and entitlement overrides | Site admin                                                           | Fresh auth plus active/recent 2FA required                                                | API-key hub RPC denied                                                                                      | Entitlement overrides route to account home bay                            | Good                                                                      |
+| Org token create/expire                               | Org admin/site admin                                                 | Token create requires fresh auth plus active/recent 2FA; token expire requires fresh auth | API-key hub RPC denied                                                                                      | Legacy single-db organization model                                        | Improved                                                                  |
+| Project soft delete/undelete                          | Project collaborator/owner checks via project control                | Not required                                                                              | HTTP hub API-key denied; project API-key with `project:exec` can operate inside allowlisted project runtime | Project control routes to owning bay                                       | Gap                                                                       |
+| Project hard delete                                   | `assertHardDeleteProjectPermission`                                  | Not required                                                                              | HTTP hub API-key denied                                                                                     | LRO routed from owning/control bay                                         | Gap                                                                       |
+| Project move/rehome                                   | Collaborator/admin checks                                            | Not required                                                                              | HTTP hub API-key denied                                                                                     | Resolves project owning bay and forwards through inter-bay project control | Gap                                                                       |
+| Backup/snapshot delete/restore                        | Project collaborator checks                                          | Not required                                                                              | HTTP hub API-key denied; project bridge requires `project:exec`                                             | Project/file-server routing is project-aware                               | Gap                                                                       |
+| Public app expose/unexpose                            | Project app/project collaborator checks                              | Not required                                                                              | Project API-key with `project:exec` can call project-host app APIs for an allowlisted project               | Project-host routed; same security as project runtime authority            | Acceptable if `project:exec` is treated as full project runtime authority |
+| Host delete/deprovision                               | Host owner                                                           | Not required                                                                              | API-key hub RPC denied                                                                                      | Resolves remote host bay before delete                                     | Gap                                                                       |
+| Host RootFS image delete/pull                         | Host rootfs-management permission                                    | Not required                                                                              | API-key hub RPC denied                                                                                      | Resolves remote host bay                                                   | Gap                                                                       |
+| Host SSH authorized key add/remove                    | Host owner                                                           | Not required                                                                              | API-key hub RPC denied                                                                                      | Local `loadOwnedHost`/host-control path; does not resolve remote host bay  | Freshness and multibay routing gap                                        |
+| RootFS catalog/admin/release mutation                 | Site admin                                                           | Not required                                                                              | API-key hub RPC denied                                                                                      | Hub/site admin path                                                        | Gap                                                                       |
+| `system.generateUserAuthToken`                        | Admin or target password; used by legacy hub-password bootstrap path | Not required                                                                              | API-key hub RPC denied                                                                                      | Token creation logs centrally                                              | Residual legacy path                                                      |
 
 ## API-Key Result
 
@@ -131,14 +147,15 @@ per-function API-key policy.
 
 ## Freshness Result
 
-Fresh-auth transport exists and is already used by several endpoints, but there
-is no central dangerous-operation policy. The largest remaining issue is that
-dangerous endpoints are easy to add or review as ordinary `authFirst` methods
-without remembering freshness.
+Fresh-auth transport exists and is used by several endpoint families. A shared
+Conat dangerous-session helper now covers the first account/admin/org tranche,
+but there is still no central registry that marks dangerous operations. The
+remaining issue is that dangerous endpoints are still easy to add or review as
+ordinary `authFirst` methods without remembering freshness.
 
 Recommended implementation pattern:
 
-1. Add a small shared helper for Conat endpoint handlers, e.g.
+1. Use the shared Conat endpoint helper
    `requireDangerousSessionAuth({ account_id, session_hash, require_second_factor })`.
 2. Use it only server-side; CLI and browser callers already forward a session
    hash when authenticated by a remember-me/browser session.
@@ -146,15 +163,17 @@ Recommended implementation pattern:
    UI and CLI can route users to existing fresh-auth/elevation flows.
 4. Add focused tests per endpoint family.
 
-Suggested priority if freshness gates are implemented:
+Suggested next priority for freshness gates:
 
-1. Account delete/rehome and admin membership/entitlement overrides.
-2. Host delete/deprovision, host rootfs mutation, and host SSH-authorized-key
+1. Host delete/deprovision, host rootfs mutation, and host SSH-authorized-key
    mutation. The SSH-authorized-key path should also be routed through
    authoritative host-bay resolution.
-3. Project hard delete, project move/rehome, backup/snapshot restore/delete.
-4. RootFS catalog/admin mutation.
-5. Org token lifecycle and organization membership/admin mutation.
+2. Project hard delete, project move/rehome, backup/snapshot restore/delete.
+3. RootFS catalog/admin mutation.
+4. Organization membership/admin mutation if treated as equivalent to token
+   issuance.
+5. Decide whether legacy `system.generateUserAuthToken` should be gated,
+   retired, or explicitly accepted for its bootstrap use case.
 
 ## Release Decision
 
@@ -164,5 +183,6 @@ Recommended current statuses:
   because dangerous hub RPCs are denied by default. Remaining work is audit
   events and future websocket hub API-key support only if needed.
 - `SEC-CLI-001`: keep `guarded`; the endpoint-level audit is complete, but
-  several freshness gaps remain. Either implement the prioritized gates above
-  or explicitly accept the residual risk for first release.
+  several freshness gaps remain after the first account/admin/org gate tranche.
+  Either implement the prioritized gates above or explicitly accept the residual
+  risk for first release.

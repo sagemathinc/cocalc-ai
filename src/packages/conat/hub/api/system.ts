@@ -1467,6 +1467,7 @@ export interface System {
 
   deleteAccount: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     user_account_id: string;
     only_if_tag?: string;
   }) => Promise<{
@@ -1477,6 +1478,7 @@ export interface System {
 
   rehomeAccount: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     user_account_id: string;
     dest_bay_id: string;
     reason?: string | null;
@@ -1497,6 +1499,7 @@ export interface System {
 
   drainAccountRehome: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     source_bay_id?: string;
     dest_bay_id: string;
     limit?: number;
@@ -1508,6 +1511,7 @@ export interface System {
 
   repairAccountMembershipPortability: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     user_account_id: string;
     dry_run?: boolean;
     clear_stale?: boolean;
@@ -1584,6 +1588,7 @@ export interface System {
   // Non-admins always get back an error.
   adminResetPasswordLink: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     user_account_id: string;
   }) => Promise<string>;
 
@@ -1623,6 +1628,7 @@ export interface System {
 
   setAdminAssignedMembership: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     user_account_id: string;
     membership_class: string;
     expires_at?: Date | null;
@@ -1631,6 +1637,7 @@ export interface System {
 
   clearAdminAssignedMembership: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     user_account_id: string;
   }) => Promise<void>;
 
@@ -1641,6 +1648,7 @@ export interface System {
 
   setAccountEntitlementOverride: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     user_account_id: string;
     override: Omit<
       Partial<AccountEntitlementOverride>,
@@ -1651,6 +1659,7 @@ export interface System {
 
   clearAccountEntitlementOverride: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     user_account_id: string;
     reason: string;
   }) => Promise<void>;

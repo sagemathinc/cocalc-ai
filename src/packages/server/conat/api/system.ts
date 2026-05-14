@@ -207,6 +207,7 @@ import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getClusterConfig } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
+import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 
 const logger = getLogger("server:conat:api:system");
 // Non-serializable capability used only by trusted in-process inter-bay handlers.
@@ -1938,14 +1939,21 @@ import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import { createReset } from "@cocalc/server/auth/password-reset";
 export async function adminResetPasswordLink({
   account_id,
+  session_hash,
   user_account_id,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   user_account_id: string;
 }): Promise<string> {
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const email = await getEmailAddress(user_account_id);
   if (!email) {
     throw Error("passwords are only defined for accounts with email");
@@ -2047,10 +2055,12 @@ export async function adminCreateUser({
 
 export async function deleteAccount({
   account_id,
+  session_hash,
   user_account_id,
   only_if_tag,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   user_account_id: string;
   only_if_tag?: string;
 }): Promise<{
@@ -2068,6 +2078,11 @@ export async function deleteAccount({
   if (targetAccountId !== account_id && !(await isAdmin(account_id))) {
     throw Error("must be an admin to delete another account");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: targetAccountId !== account_id,
+  });
   return await deleteClusterAccount({
     account_id: targetAccountId,
     only_if_tag: `${only_if_tag ?? ""}`.trim() || undefined,
@@ -2076,17 +2091,24 @@ export async function deleteAccount({
 
 export async function rehomeAccount({
   account_id,
+  session_hash,
   user_account_id,
   dest_bay_id,
   reason,
   campaign_id,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   user_account_id: string;
   dest_bay_id: string;
   reason?: string | null;
   campaign_id?: string | null;
 }) {
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
   return await rehomeAccountInternal({
     account_id,
     target_account_id: user_account_id,
@@ -2132,6 +2154,7 @@ export async function reconcileAccountRehome({
 
 export async function drainAccountRehome({
   account_id,
+  session_hash,
   source_bay_id,
   dest_bay_id,
   limit,
@@ -2141,6 +2164,7 @@ export async function drainAccountRehome({
   only_if_tag,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   source_bay_id?: string;
   dest_bay_id: string;
   limit?: number;
@@ -2149,6 +2173,11 @@ export async function drainAccountRehome({
   reason?: string | null;
   only_if_tag?: string | null;
 }) {
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
   return await drainAccountRehomeInternal({
     account_id,
     source_bay_id,
@@ -2163,15 +2192,22 @@ export async function drainAccountRehome({
 
 export async function repairAccountMembershipPortability({
   account_id,
+  session_hash,
   user_account_id,
   dry_run,
   clear_stale,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   user_account_id: string;
   dry_run?: boolean;
   clear_stale?: boolean;
 }) {
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
   return await repairAccountMembershipPortabilityInternal({
     account_id,
     target_account_id: user_account_id,
@@ -2238,12 +2274,14 @@ export async function getAdminAssignedMembership({
 
 export async function setAdminAssignedMembership({
   account_id,
+  session_hash,
   user_account_id,
   membership_class,
   expires_at,
   notes,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   user_account_id: string;
   membership_class: string;
   expires_at?: Date | null;
@@ -2252,6 +2290,11 @@ export async function setAdminAssignedMembership({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const pool = db();
   const assigned_at = new Date();
   const assigned_by = account_id;
@@ -2279,14 +2322,21 @@ export async function setAdminAssignedMembership({
 
 export async function clearAdminAssignedMembership({
   account_id,
+  session_hash,
   user_account_id,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   user_account_id: string;
 }): Promise<void> {
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const pool = db();
   await pool.async_query({
     query: "DELETE FROM admin_assigned_memberships WHERE account_id=$1",
@@ -2336,11 +2386,13 @@ export async function getAccountEntitlementOverride({
 
 export async function setAccountEntitlementOverride({
   account_id,
+  session_hash,
   user_account_id,
   override,
   reason,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   user_account_id: string;
   override: AccountEntitlementOverrideInput;
   reason: string;
@@ -2348,6 +2400,11 @@ export async function setAccountEntitlementOverride({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const client = await getAccountEntitlementOverrideHomeClient({
     account_id,
     user_account_id,
@@ -2369,16 +2426,23 @@ export async function setAccountEntitlementOverride({
 
 export async function clearAccountEntitlementOverride({
   account_id,
+  session_hash,
   user_account_id,
   reason,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   user_account_id: string;
   reason: string;
 }): Promise<void> {
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const client = await getAccountEntitlementOverrideHomeClient({
     account_id,
     user_account_id,

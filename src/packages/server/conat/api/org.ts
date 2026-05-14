@@ -10,6 +10,7 @@ import {
 import send from "@cocalc/server/messages/send";
 import { secureRandomString } from "@cocalc/backend/misc";
 import siteUrl from "@cocalc/server/hub/site-url";
+import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 
 // this is a permissions check
 async function isOrganizationAdmin({
@@ -347,19 +348,26 @@ export async function getAccount(
 
 export async function createToken({
   account_id,
+  session_hash,
   user,
   expire,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   user: string;
   expire?: number; // when token expires as ms since epoch (default = 12 hours from now)
 }): Promise<{ token: string; url: string }> {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
   const { name, account_id: account_id0 } = await getAccount(user);
   if (!name) {
     throw Error(`user is not in an org`);
-  }
-  if (!account_id) {
-    throw Error("must be signed in");
   }
   if (!account_id0) {
     throw Error("account not found");
@@ -374,7 +382,19 @@ export async function createToken({
   return { token, url: await siteUrl(`auth/impersonate?auth_token=${token}`) };
 }
 
-export async function expireToken({ token }: { token: string }): Promise<void> {
+export async function expireToken({
+  account_id,
+  session_hash,
+  token,
+}: {
+  account_id?: string;
+  session_hash?: string | null;
+  token: string;
+}): Promise<void> {
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+  });
   await revokeUserAuthToken(token);
 }
 
