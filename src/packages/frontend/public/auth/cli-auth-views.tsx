@@ -6,7 +6,11 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
-import { postAuthApi } from "@cocalc/frontend/auth/api";
+import {
+  postAuthApi,
+  type SecondFactorMethod,
+} from "@cocalc/frontend/auth/api";
+import { approveCliElevationWithPasskey } from "@cocalc/frontend/auth/passkeys";
 import {
   getSecondFactorPlaceholder,
   inferSecondFactorInputMethod,
@@ -343,6 +347,8 @@ export function PublicCliElevateApprovalView({
   const [info, setInfo] = useState<ChallengeInfo | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [code, setCode] = useState("");
+  const [methods, setMethods] = useState<SecondFactorMethod[]>([]);
+  const [usePasskey, setUsePasskey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [approved, setApproved] = useState(false);
   const [error, setError] = useState("");
@@ -360,6 +366,15 @@ export function PublicCliElevateApprovalView({
         if (!cancelled) {
           setInfo(next);
         }
+        const status = await postAuthApi<{ methods?: SecondFactorMethod[] }>({
+          endpoint: "auth/fresh-auth-status",
+          body: {},
+        });
+        if (!cancelled) {
+          const nextMethods = status.methods ?? [];
+          setMethods(nextMethods);
+          setUsePasskey(nextMethods.includes("passkey"));
+        }
       } catch (err) {
         if (!cancelled) {
           setError(`${err}`);
@@ -373,23 +388,32 @@ export function PublicCliElevateApprovalView({
   }, [challengeId]);
 
   const allowExtended = useMemo(
-    () => info?.requested_duration === "extended" && inferredMethod === "totp",
-    [info?.requested_duration, inferredMethod],
+    () =>
+      info?.requested_duration === "extended" &&
+      (usePasskey || inferredMethod === "totp"),
+    [info?.requested_duration, inferredMethod, usePasskey],
   );
 
   async function approve() {
     setSaving(true);
     setError("");
     try {
-      await postAuthApi({
-        endpoint: "auth/cli/elevate/approve",
-        body: {
+      if (usePasskey) {
+        await approveCliElevationWithPasskey({
           challenge_id: challengeId,
           current_password: currentPassword,
-          method: code.trim() ? inferredMethod : undefined,
-          code: code.trim() || undefined,
-        },
-      });
+        });
+      } else {
+        await postAuthApi({
+          endpoint: "auth/cli/elevate/approve",
+          body: {
+            challenge_id: challengeId,
+            current_password: currentPassword,
+            method: code.trim() ? inferredMethod : undefined,
+            code: code.trim() || undefined,
+          },
+        });
+      }
       setApproved(true);
     } catch (err) {
       setError(`${err}`);
@@ -477,17 +501,51 @@ export function PublicCliElevateApprovalView({
           </div>
           <div style={FIELD_STYLE}>
             <div style={LABEL_STYLE}>Second factor</div>
-            <div style={{ color: "#666" }}>
-              Enter either the 6-digit authenticator code or one of your
-              recovery codes.
-            </div>
-            <TextInput
-              autoComplete="one-time-code"
-              placeholder={getSecondFactorPlaceholder(code)}
-              value={code}
-              onChange={setCode}
-              onPressEnter={approve}
-            />
+            {methods.includes("passkey") &&
+            methods.some((method) => method !== "passkey") ? (
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button
+                  style={{
+                    ...BUTTON_STYLE,
+                    width: "auto",
+                    background: usePasskey ? COLORS.BLUE_D : COLORS.GRAY_L,
+                  }}
+                  onClick={() => setUsePasskey(true)}
+                >
+                  Use passkey
+                </button>
+                <button
+                  style={{
+                    ...BUTTON_STYLE,
+                    width: "auto",
+                    background: !usePasskey ? COLORS.BLUE_D : COLORS.GRAY_L,
+                  }}
+                  onClick={() => setUsePasskey(false)}
+                >
+                  Use code
+                </button>
+              </div>
+            ) : undefined}
+            {usePasskey ? (
+              <div style={{ color: "#666" }}>
+                Use your browser or device passkey prompt to approve CLI
+                elevation.
+              </div>
+            ) : (
+              <>
+                <div style={{ color: "#666" }}>
+                  Enter either the 6-digit authenticator code or one of your
+                  recovery codes.
+                </div>
+                <TextInput
+                  autoComplete="one-time-code"
+                  placeholder={getSecondFactorPlaceholder(code)}
+                  value={code}
+                  onChange={setCode}
+                  onPressEnter={approve}
+                />
+              </>
+            )}
           </div>
           <ActionButton disabled={saving} onClick={approve}>
             {saving ? "Verifying..." : "Approve CLI Elevation"}

@@ -28,6 +28,7 @@ import {
   resolveFreshAuthDurationMs,
   revokeOtherAuthSessions,
   setCurrentSessionFreshAuth,
+  setSessionFreshAuth,
   type FreshAuthDuration,
 } from "@cocalc/server/auth/auth-sessions";
 import isPasswordCorrect from "@cocalc/server/auth/is-password-correct";
@@ -127,6 +128,7 @@ export type PasskeyFreshAuthStart = {
 export type PasskeyFreshAuthResult = {
   fresh_auth_until: Date;
   factor_level: "passkey";
+  target_session_hash: string;
 };
 
 function ensureAccountId(account_id: string): string {
@@ -828,11 +830,15 @@ export async function startFreshAuthPasskeyAuthentication({
   account_id,
   current_password,
   duration,
+  target_session_hash,
+  metadata,
 }: {
   req: Request;
   account_id: string;
   current_password: string;
   duration?: FreshAuthDuration;
+  target_session_hash?: string;
+  metadata?: Record<string, unknown>;
 }): Promise<PasskeyFreshAuthStart> {
   const accountId = ensureAccountId(account_id);
   const session = await getCurrentAuthSession({ req, account_id: accountId });
@@ -840,6 +846,7 @@ export async function startFreshAuthPasskeyAuthentication({
   if (!sessionHash) {
     throw new Error("browser sign-in is required");
   }
+  const targetSessionHash = `${target_session_hash ?? session.session_hash ?? sessionHash}`;
   await verifyCurrentPassword({
     account_id: accountId,
     current_password,
@@ -882,10 +889,11 @@ export async function startFreshAuthPasskeyAuthentication({
           challenge_id,
           accountId,
           CHALLENGE_PURPOSE_FRESH_AUTH,
-          session.session_hash ?? sessionHash,
+          targetSessionHash,
           new Date(Date.now() + CHALLENGE_TTL_MS),
           CHALLENGE_MAX_ATTEMPTS,
           JSON.stringify({
+            ...(metadata ?? {}),
             passkey_challenge: options.challenge,
             passkey_origin: rp.origin,
             passkey_rp_id: rp.rp_id,
@@ -903,11 +911,13 @@ export async function finishFreshAuthPasskeyAuthentication({
   account_id,
   challenge_id,
   response,
+  allow_target_session_hash = false,
 }: {
   req: Request;
   account_id: string;
   challenge_id: string;
   response: AuthenticationResponseJSON;
+  allow_target_session_hash?: boolean;
 }): Promise<PasskeyFreshAuthResult> {
   const accountId = ensureAccountId(account_id);
   const sessionHash = getRememberMeHash(req);
@@ -949,7 +959,11 @@ export async function finishFreshAuthPasskeyAuthentication({
         throw new Error("too many passkey fresh auth attempts");
       }
       const targetSessionHash = `${challenge.target_session_hash ?? ""}`;
-      if (targetSessionHash && targetSessionHash !== sessionHash) {
+      if (
+        targetSessionHash &&
+        targetSessionHash !== sessionHash &&
+        !allow_target_session_hash
+      ) {
         throw new Error("fresh auth passkey challenge is for another session");
       }
       const metadata = challenge.metadata ?? {};
@@ -1021,6 +1035,7 @@ export async function finishFreshAuthPasskeyAuthentication({
       );
       result = {
         factor_level: FACTOR_TYPE_PASSKEY,
+        target_session_hash: targetSessionHash || sessionHash,
         fresh_auth_until: new Date(
           Date.now() +
             resolveFreshAuthDurationMs({
@@ -1034,9 +1049,9 @@ export async function finishFreshAuthPasskeyAuthentication({
   if (!result) {
     throw new Error("passkey fresh auth failed");
   }
-  await setCurrentSessionFreshAuth({
-    req,
+  await setSessionFreshAuth({
     account_id: accountId,
+    session_hash: result.target_session_hash,
     factor_level: result.factor_level,
     fresh_auth_until: result.fresh_auth_until,
   });

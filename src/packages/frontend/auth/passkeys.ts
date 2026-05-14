@@ -128,3 +128,34 @@ export async function freshAuthWithPasskey({
     },
   });
 }
+
+export async function approveCliElevationWithPasskey({
+  challenge_id,
+  current_password,
+}: {
+  challenge_id: string;
+  current_password: string;
+}): Promise<any> {
+  const unavailable = webAuthnUnavailableMessage();
+  if (unavailable) {
+    throw new Error(unavailable);
+  }
+  const authentication = await postAuthApi<PasskeyAuthenticationStart>({
+    endpoint: "auth/cli/elevate/passkey/start",
+    body: {
+      challenge_id,
+      current_password,
+    },
+  });
+  const response: AuthenticationResponseJSON = await startAuthentication({
+    optionsJSON: authentication.options,
+  });
+  return await postAuthApi({
+    endpoint: "auth/cli/elevate/passkey/finish",
+    body: {
+      challenge_id,
+      passkey_challenge_id: authentication.challenge_id,
+      response,
+    },
+  });
+}
