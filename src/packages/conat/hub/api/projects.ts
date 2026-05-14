@@ -905,12 +905,14 @@ export interface Projects {
 
   deleteBackup: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     project_id: string;
     id: string;
   }) => Promise<void>;
 
   restoreBackup: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     project_id: string;
     path?: string;
     dest?: string;
@@ -937,6 +939,7 @@ export interface Projects {
 
   finalizeRestoreStaging: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     handle: RestoreStagingHandle;
   }) => Promise<void>;
 
@@ -1012,6 +1015,7 @@ export interface Projects {
 
   restoreSnapshot: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     project_id: string;
     snapshot: string;
     mode?: SnapshotRestoreMode;
@@ -1026,6 +1030,7 @@ export interface Projects {
 
   deleteSnapshot: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     project_id: string;
     name: string;
   }) => Promise<void>;
@@ -1111,10 +1116,12 @@ export interface Projects {
   }) => Promise<ProjectActiveOperationSummary | null>;
   deleteProject: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     project_id: string;
   }) => Promise<void>;
   setProjectDeleted: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     project_id: string;
     deleted: boolean;
   }) => Promise<void>;
@@ -1124,6 +1131,7 @@ export interface Projects {
   }) => Promise<void>;
   hardDeleteProject: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     project_id: string;
     backup_retention_days?: number;
     purge_backups_now?: boolean;
@@ -1163,6 +1171,7 @@ export interface Projects {
 
   moveProject: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     project_id: string;
     dest_host_id?: string;
     allow_offline?: boolean;
@@ -1177,6 +1186,7 @@ export interface Projects {
 
   rehomeProject: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     project_id: string;
     dest_bay_id: string;
     reason?: string | null;

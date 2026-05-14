@@ -26,6 +26,7 @@ import {
   getProjectBackupLimit,
 } from "@cocalc/server/membership/project-limits";
 import { capitalize, humanSize } from "@cocalc/util/misc";
+import { requireDangerousProjectMutationAuth } from "./project-dangerous-auth";
 const log = getLogger("server:conat:api:project-backups");
 const BACKUP_CONTROL_TIMEOUT_MS = BACKUP_TIMEOUT_MS + 60_000;
 
@@ -389,13 +390,19 @@ export async function createBackup(
 
 export async function deleteBackup({
   account_id,
+  session_hash,
   project_id,
   id,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   project_id: string;
   id: string;
 }) {
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+  });
   await assertCollab({ account_id, project_id });
   await (
     await projectClient(project_id, account_id)
@@ -407,12 +414,14 @@ export async function deleteBackup({
 
 export async function restoreBackup({
   account_id,
+  session_hash,
   project_id,
   id,
   path,
   dest,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   project_id: string;
   id: string;
   path?: string;
@@ -424,6 +433,10 @@ export async function restoreBackup({
   service: string;
   stream_name: string;
 }> {
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+  });
   await assertCollab({ account_id, project_id });
   await assertProjectOwnerCanIncreaseAccountStorage({ project_id });
   const op = await createLro({
@@ -487,11 +500,17 @@ export async function ensureRestoreStaging({
 
 export async function finalizeRestoreStaging({
   account_id,
+  session_hash,
   handle,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   handle: RestoreStagingHandle;
 }) {
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+  });
   await assertCollab({ account_id, project_id: handle.project_id });
   await (
     await projectClient(handle.project_id, account_id)

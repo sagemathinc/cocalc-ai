@@ -7,6 +7,7 @@ let publishLroEventMock: jest.Mock;
 let getProjectFileServerClientMock: jest.Mock;
 let assertProjectOwnerCanIncreaseAccountStorageMock: jest.Mock;
 let getProjectSnapshotLimitMock: jest.Mock;
+let requireDangerousProjectMutationAuthMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -64,6 +65,13 @@ jest.mock("@cocalc/server/membership/project-limits", () => ({
     getProjectSnapshotLimitMock(...args),
 }));
 
+jest.mock("./project-dangerous-auth", () => ({
+  __esModule: true,
+  PROJECT_DANGEROUS_INTERNAL_AUTH: Symbol("project-dangerous-internal-auth"),
+  requireDangerousProjectMutationAuth: (...args: any[]) =>
+    requireDangerousProjectMutationAuthMock(...args),
+}));
+
 describe("project-snapshots.createSnapshot", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -76,6 +84,7 @@ describe("project-snapshots.createSnapshot", () => {
       allSnapshotUsage: jest.fn(async () => []),
       getSnapshotFileText: jest.fn(),
     }));
+    requireDangerousProjectMutationAuthMock = jest.fn(async () => undefined);
   });
 
   it("uses the project owner snapshot cap when creating a snapshot", async () => {
@@ -125,12 +134,14 @@ describe("project-snapshots.restoreSnapshot", () => {
       allSnapshotUsage: jest.fn(async () => []),
       getSnapshotFileText: jest.fn(),
     }));
+    requireDangerousProjectMutationAuthMock = jest.fn(async () => undefined);
   });
 
   it("creates a project-restore LRO for snapshot restore", async () => {
     const { restoreSnapshot } = await import("./project-snapshots");
     const result = await restoreSnapshot({
       account_id: "acct-1",
+      session_hash: "session-1",
       project_id: "proj-1",
       snapshot: "before-upgrade",
       mode: "rootfs",
@@ -140,6 +151,10 @@ describe("project-snapshots.restoreSnapshot", () => {
     expect(assertCollabMock).toHaveBeenCalledWith({
       account_id: "acct-1",
       project_id: "proj-1",
+    });
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      session_hash: "session-1",
     });
     expect(
       assertProjectOwnerCanIncreaseAccountStorageMock,

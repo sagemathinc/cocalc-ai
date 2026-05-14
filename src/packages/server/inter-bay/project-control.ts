@@ -33,6 +33,7 @@ import { projectControlSubject } from "@cocalc/server/inter-bay/subjects";
 import { getProject } from "@cocalc/server/projects/control";
 import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { moveProject as moveProjectLocal } from "@cocalc/server/conat/api/projects";
+import { PROJECT_DANGEROUS_INTERNAL_AUTH } from "@cocalc/server/conat/api/project-dangerous-auth";
 import {
   clearProjectActiveOperation,
   getProjectActiveOperation,
@@ -294,6 +295,8 @@ export async function handleProjectControlMove(
   });
   return await moveProjectLocal({
     account_id: req.account_id,
+    session_hash: req.session_hash,
+    internalAuth: PROJECT_DANGEROUS_INTERNAL_AUTH,
     project_id: req.project_id,
     dest_host_id: req.dest_host_id,
     allow_offline: req.allow_offline,

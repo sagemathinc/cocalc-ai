@@ -1261,16 +1261,19 @@ export interface Hosts {
   }) => Promise<HostRootfsImage[]>;
   pullHostRootfsImage: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     id: string;
     image: string;
   }) => Promise<HostRootfsImage>;
   deleteHostRootfsImage: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     id: string;
     image: string;
   }) => Promise<{ removed: boolean }>;
   gcDeletedHostRootfsImages: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     id: string;
   }) => Promise<HostRootfsGcResult>;
   listHostSshAuthorizedKeys: (opts: {
@@ -1279,12 +1282,14 @@ export interface Hosts {
   }) => Promise<HostSshAuthorizedKeys>;
   addHostSshAuthorizedKey: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     id: string;
     public_key: string;
     user?: string;
   }) => Promise<HostSshAuthorizedKeys & { added: boolean }>;
   removeHostSshAuthorizedKey: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     id: string;
     public_key: string;
   }) => Promise<HostSshAuthorizedKeys & { removed: boolean }>;
@@ -1542,6 +1547,7 @@ export interface Hosts {
   }) => Promise<HostLroResponse>;
   forceDeprovisionHost: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     id: string;
   }) => Promise<HostLroResponse>;
   ensureHostOwnerSshTrust: (opts: {
@@ -1574,6 +1580,7 @@ export interface Hosts {
   }) => Promise<HostCloudOrphansResult>;
   removeSelfHostConnector: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     id: string;
   }) => Promise<HostLroResponse>;
   renameHost: (opts: {
@@ -1640,6 +1647,7 @@ export interface Hosts {
   }) => Promise<void>;
   deleteHost: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     id: string;
     skip_backups?: boolean;
   }) => Promise<HostLroResponse>;

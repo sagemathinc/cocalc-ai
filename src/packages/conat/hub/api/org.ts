@@ -91,13 +91,18 @@ export interface Org {
 
   createToken: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     // user = account_id or email address
     user: string;
     // expiration as milliseconds since epoch
     expire?: number;
   }) => Promise<{ token: string; url: string }>;
 
-  expireToken: (opts: { account_id?: string; token: string }) => Promise<void>;
+  expireToken: (opts: {
+    account_id?: string;
+    session_hash?: string | null;
+    token: string;
+  }) => Promise<void>;
 
   getUsers: (opts: { account_id?: string; name: string }) => Promise<
     {

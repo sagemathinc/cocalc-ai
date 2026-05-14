@@ -167,6 +167,7 @@ export interface ProjectControlAddressRequest {
 export interface ProjectControlMoveRequest {
   project_id: string;
   account_id: string;
+  session_hash?: string | null;
   dest_host_id?: string;
   allow_offline?: boolean;
   backup_region_cutover?: boolean;
@@ -935,6 +936,9 @@ export type HostConnectionMethod =
   | "pull-host-rootfs-image"
   | "delete-host-rootfs-image"
   | "gc-deleted-host-rootfs-images"
+  | "list-host-ssh-authorized-keys"
+  | "add-host-ssh-authorized-key"
+  | "remove-host-ssh-authorized-key"
   | "list-host-runtime-deployments"
   | "set-host-runtime-deployments"
   | "get-host-managed-component-status"
@@ -1244,6 +1248,15 @@ export interface InterBayHostConnectionApi {
   gcDeletedHostRootfsImages: (
     opts: Parameters<Hosts["gcDeletedHostRootfsImages"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["gcDeletedHostRootfsImages"]>>>;
+  listHostSshAuthorizedKeys: (
+    opts: Parameters<Hosts["listHostSshAuthorizedKeys"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["listHostSshAuthorizedKeys"]>>>;
+  addHostSshAuthorizedKey: (
+    opts: Parameters<Hosts["addHostSshAuthorizedKey"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["addHostSshAuthorizedKey"]>>>;
+  removeHostSshAuthorizedKey: (
+    opts: Parameters<Hosts["removeHostSshAuthorizedKey"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["removeHostSshAuthorizedKey"]>>>;
   listHostRuntimeDeployments: (
     opts: Parameters<Hosts["listHostRuntimeDeployments"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["listHostRuntimeDeployments"]>>>;
@@ -1418,6 +1431,15 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "gcDeletedHostRootfsImages",
     method: "gc-deleted-host-rootfs-images",
+  },
+  {
+    name: "listHostSshAuthorizedKeys",
+    method: "list-host-ssh-authorized-keys",
+  },
+  { name: "addHostSshAuthorizedKey", method: "add-host-ssh-authorized-key" },
+  {
+    name: "removeHostSshAuthorizedKey",
+    method: "remove-host-ssh-authorized-key",
   },
   {
     name: "listHostRuntimeDeployments",
