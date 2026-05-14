@@ -105,7 +105,7 @@ describe("freshAuthSession", () => {
         duration: "extended",
       }),
     ).rejects.toThrow(
-      "extended fresh auth requires a TOTP verification in this browser session",
+      "extended fresh auth requires a TOTP or passkey verification in this browser session",
     );
 
     await expect(

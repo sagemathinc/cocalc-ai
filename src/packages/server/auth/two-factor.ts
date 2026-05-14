@@ -345,10 +345,10 @@ function assertFreshAuthDurationMethodCompatible({
   const normalizedMethod = `${method ?? ""}`.trim();
   if (!normalizedMethod || normalizedMethod === "recovery_code") {
     throw new Error(
-      "extended fresh auth requires a TOTP verification in this browser session",
+      "extended fresh auth requires a TOTP or passkey verification in this browser session",
     );
   }
-  if (normalizedMethod !== "totp") {
+  if (normalizedMethod !== "totp" && normalizedMethod !== "passkey") {
     ensureFreshAuthCodeMethod(normalizedMethod);
   }
 }

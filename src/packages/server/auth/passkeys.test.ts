@@ -18,9 +18,11 @@ import {
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
 import { createSignInSecondFactorChallenge } from "@cocalc/server/auth/two-factor";
 import {
+  finishFreshAuthPasskeyAuthentication,
   finishPasskeySetup,
   finishSignInPasskeyAuthentication,
   listPasskeys,
+  startFreshAuthPasskeyAuthentication,
   startSignInPasskeyAuthentication,
   startPasskeySetup,
 } from "@cocalc/server/auth/passkeys";
@@ -116,9 +118,10 @@ afterAll(after);
 describe("passkey setup", () => {
   it("creates an active passkey and marks the account as 2FA-enabled", async () => {
     const account_id = uuid();
+    const password = "cocalcrulez";
     await createAccount({
       email: `${uuid()}@test.com`,
-      password: "cocalcrulez",
+      password,
       firstName: "Passkey",
       lastName: "User",
       account_id,
@@ -197,6 +200,35 @@ describe("passkey setup", () => {
       }),
     ).resolves.toMatchObject({
       account_id,
+      factor_level: "passkey",
+    });
+
+    const freshStart = await startFreshAuthPasskeyAuthentication({
+      req,
+      account_id,
+      current_password: password,
+      duration: "extended",
+    });
+    expect(freshStart.options.challenge).toBe("authentication-challenge");
+
+    await expect(
+      finishFreshAuthPasskeyAuthentication({
+        req,
+        account_id,
+        challenge_id: freshStart.challenge_id,
+        response: {
+          id: "credential-id",
+          rawId: "credential-id",
+          type: "public-key",
+          clientExtensionResults: {},
+          response: {
+            clientDataJSON: "client-data",
+            authenticatorData: "authenticator-data",
+            signature: "signature",
+          },
+        },
+      }),
+    ).resolves.toMatchObject({
       factor_level: "passkey",
     });
   });

@@ -562,9 +562,9 @@ export function resolveFreshAuthDurationMs({
   factor_level: AuthSessionFactorLevel;
 }): number {
   if (duration === "extended") {
-    if (factor_level !== "totp") {
+    if (factor_level !== "totp" && factor_level !== "passkey") {
       throw new Error(
-        "extended fresh auth requires a TOTP verification in this browser session",
+        "extended fresh auth requires a TOTP or passkey verification in this browser session",
       );
     }
     return FRESH_AUTH_EXTENDED_MS;

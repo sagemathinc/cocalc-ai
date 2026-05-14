@@ -20,12 +20,17 @@ import {
 import passwordHash from "@cocalc/backend/auth/password-hash";
 import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import hasPassword from "@cocalc/server/auth/has-password";
 import {
   FRESH_AUTH_DEFAULT_MS,
+  getCurrentAuthSession,
   requireFreshAuth,
+  resolveFreshAuthDurationMs,
   revokeOtherAuthSessions,
   setCurrentSessionFreshAuth,
+  type FreshAuthDuration,
 } from "@cocalc/server/auth/auth-sessions";
+import isPasswordCorrect from "@cocalc/server/auth/is-password-correct";
 import {
   deleteOtherRememberMe,
   getRememberMeHash,
@@ -44,6 +49,7 @@ const FACTOR_STATUS_ACTIVE = "active";
 const FACTOR_STATUS_DISABLED = "disabled";
 const CHALLENGE_PURPOSE_PASSKEY_SETUP = "passkey_setup";
 const CHALLENGE_PURPOSE_SIGN_IN = "sign_in";
+const CHALLENGE_PURPOSE_FRESH_AUTH = "fresh_auth";
 const CHALLENGE_TTL_MS = 10 * 60_000;
 const CHALLENGE_MAX_ATTEMPTS = 8;
 const RECOVERY_CODE_COUNT = 10;
@@ -73,6 +79,7 @@ type ChallengeRow = {
   account_id: string;
   purpose: string;
   password_verified_at?: Date | null;
+  target_session_hash?: string | null;
   expire: Date;
   attempt_count: number;
   max_attempts: number;
@@ -112,6 +119,16 @@ export type PasskeySignInResult = {
   fresh_auth_until: Date;
 };
 
+export type PasskeyFreshAuthStart = {
+  challenge_id: string;
+  options: PublicKeyCredentialRequestOptionsJSON;
+};
+
+export type PasskeyFreshAuthResult = {
+  fresh_auth_until: Date;
+  factor_level: "passkey";
+};
+
 function ensureAccountId(account_id: string): string {
   const value = `${account_id ?? ""}`.trim();
   if (!isValidUUID(value)) {
@@ -123,6 +140,30 @@ function ensureAccountId(account_id: string): string {
 function cleanLabel(value: unknown): string {
   const label = `${value ?? ""}`.trim();
   return label.slice(0, 128) || "Passkey";
+}
+
+function cleanFreshAuthDuration(value: unknown): FreshAuthDuration {
+  return value === "extended" ? "extended" : "default";
+}
+
+async function verifyCurrentPassword({
+  account_id,
+  current_password,
+}: {
+  account_id: string;
+  current_password: string;
+}): Promise<void> {
+  if (!(await hasPassword(account_id))) {
+    return;
+  }
+  if (
+    !(await isPasswordCorrect({
+      account_id,
+      password: current_password,
+    }))
+  ) {
+    throw new Error("current password is incorrect");
+  }
 }
 
 function toBase64Url(value: Uint8Array): string {
@@ -779,6 +820,226 @@ export async function finishSignInPasskeyAuthentication({
   if (!result) {
     throw new Error("passkey verification failed");
   }
+  return result;
+}
+
+export async function startFreshAuthPasskeyAuthentication({
+  req,
+  account_id,
+  current_password,
+  duration,
+}: {
+  req: Request;
+  account_id: string;
+  current_password: string;
+  duration?: FreshAuthDuration;
+}): Promise<PasskeyFreshAuthStart> {
+  const accountId = ensureAccountId(account_id);
+  const session = await getCurrentAuthSession({ req, account_id: accountId });
+  const sessionHash = getRememberMeHash(req);
+  if (!sessionHash) {
+    throw new Error("browser sign-in is required");
+  }
+  await verifyCurrentPassword({
+    account_id: accountId,
+    current_password,
+  });
+  const passkeys = await listActivePasskeyRows(accountId);
+  if (passkeys.length === 0) {
+    throw new Error("no active passkeys");
+  }
+  const rp = await getWebAuthnRelyingPartyForRequest(req);
+  const options = await generateAuthenticationOptions({
+    rpID: rp.rp_id,
+    allowCredentials: passkeys.map((row) => {
+      const metadata = row.metadata ?? {};
+      return {
+        id: `${metadata.credential_id ?? ""}`,
+        transports: Array.isArray(metadata.transports)
+          ? metadata.transports
+          : undefined,
+      };
+    }),
+    userVerification: "preferred",
+  });
+  const challenge_id = uuid();
+  await withAccountRehomeWriteFence({
+    account_id: accountId,
+    action: "start passkey fresh auth",
+    fn: async (db) => {
+      await db.query(
+        `
+          INSERT INTO account_auth_challenges(
+            id, account_id, purpose, password_verified_at, factor_verified_at,
+            verified_factor_type, target_session_hash, expire, attempt_count,
+            max_attempts, completed_at, created, metadata
+          ) VALUES(
+            $1::UUID, $2::UUID, $3::VARCHAR(32), NOW(), NULL, NULL, $4::CHAR(127),
+            $5::TIMESTAMP, 0, $6::INTEGER, NULL, NOW(), $7::JSONB
+          )
+        `,
+        [
+          challenge_id,
+          accountId,
+          CHALLENGE_PURPOSE_FRESH_AUTH,
+          session.session_hash ?? sessionHash,
+          new Date(Date.now() + CHALLENGE_TTL_MS),
+          CHALLENGE_MAX_ATTEMPTS,
+          JSON.stringify({
+            passkey_challenge: options.challenge,
+            passkey_origin: rp.origin,
+            passkey_rp_id: rp.rp_id,
+            duration: cleanFreshAuthDuration(duration),
+          }),
+        ],
+      );
+    },
+  });
+  return { challenge_id, options };
+}
+
+export async function finishFreshAuthPasskeyAuthentication({
+  req,
+  account_id,
+  challenge_id,
+  response,
+}: {
+  req: Request;
+  account_id: string;
+  challenge_id: string;
+  response: AuthenticationResponseJSON;
+}): Promise<PasskeyFreshAuthResult> {
+  const accountId = ensureAccountId(account_id);
+  const sessionHash = getRememberMeHash(req);
+  if (!sessionHash) {
+    throw new Error("browser sign-in is required");
+  }
+  const challengeId = `${challenge_id ?? ""}`.trim();
+  let result: PasskeyFreshAuthResult | undefined;
+  await withAccountRehomeWriteFence({
+    account_id: accountId,
+    action: "finish passkey fresh auth",
+    fn: async (db) => {
+      const q = db as Queryable;
+      const challenge = (
+        await q.query<ChallengeRow>(
+          `
+            SELECT *
+              FROM account_auth_challenges
+             WHERE id = $1::UUID
+             FOR UPDATE
+          `,
+          [challengeId],
+        )
+      ).rows[0];
+      if (
+        !challenge ||
+        challenge.account_id !== accountId ||
+        challenge.purpose !== CHALLENGE_PURPOSE_FRESH_AUTH
+      ) {
+        throw new Error("fresh auth passkey challenge not found");
+      }
+      if (challenge.completed_at) {
+        throw new Error("fresh auth passkey challenge has already been used");
+      }
+      if (new Date(challenge.expire).valueOf() < Date.now()) {
+        throw new Error("fresh auth passkey challenge has expired");
+      }
+      if ((challenge.attempt_count ?? 0) >= (challenge.max_attempts ?? 0)) {
+        throw new Error("too many passkey fresh auth attempts");
+      }
+      const targetSessionHash = `${challenge.target_session_hash ?? ""}`;
+      if (targetSessionHash && targetSessionHash !== sessionHash) {
+        throw new Error("fresh auth passkey challenge is for another session");
+      }
+      const metadata = challenge.metadata ?? {};
+      const credential_id = `${response?.id ?? ""}`.trim();
+      const passkey = await getActivePasskeyByCredentialIdWithDb({
+        db: q,
+        account_id: accountId,
+        credential_id,
+      });
+      if (!passkey) {
+        await q.query(
+          `
+            UPDATE account_auth_challenges
+               SET attempt_count = attempt_count + 1
+             WHERE id = $1::UUID
+          `,
+          [challengeId],
+        );
+        throw new Error("passkey credential not found");
+      }
+      const verification = await verifyAuthenticationResponse({
+        response,
+        expectedChallenge: `${metadata.passkey_challenge ?? ""}`,
+        expectedOrigin: `${metadata.passkey_origin ?? ""}`,
+        expectedRPID: `${metadata.passkey_rp_id ?? ""}`,
+        credential: toWebAuthnCredential(passkey),
+        requireUserVerification: false,
+      });
+      if (!verification.verified) {
+        await q.query(
+          `
+            UPDATE account_auth_challenges
+               SET attempt_count = attempt_count + 1
+             WHERE id = $1::UUID
+          `,
+          [challengeId],
+        );
+        throw new Error("passkey verification failed");
+      }
+      await q.query(
+        `
+          UPDATE account_second_factors
+             SET last_used_at = NOW(),
+                 metadata = coalesce(metadata, '{}'::JSONB) || $2::JSONB
+           WHERE id = $1::UUID
+        `,
+        [
+          passkey.id,
+          JSON.stringify({
+            counter: verification.authenticationInfo.newCounter,
+            backed_up: verification.authenticationInfo.credentialBackedUp,
+            device_type: verification.authenticationInfo.credentialDeviceType,
+            origin: verification.authenticationInfo.origin,
+            rp_id: verification.authenticationInfo.rpID,
+            user_verified: verification.authenticationInfo.userVerified,
+          }),
+        ],
+      );
+      await q.query(
+        `
+          UPDATE account_auth_challenges
+             SET attempt_count = attempt_count + 1,
+                 factor_verified_at = NOW(),
+                 verified_factor_type = $2::VARCHAR(32),
+                 completed_at = NOW()
+           WHERE id = $1::UUID
+        `,
+        [challengeId, FACTOR_TYPE_PASSKEY],
+      );
+      result = {
+        factor_level: FACTOR_TYPE_PASSKEY,
+        fresh_auth_until: new Date(
+          Date.now() +
+            resolveFreshAuthDurationMs({
+              duration: cleanFreshAuthDuration(metadata.duration),
+              factor_level: FACTOR_TYPE_PASSKEY,
+            }),
+        ),
+      };
+    },
+  });
+  if (!result) {
+    throw new Error("passkey fresh auth failed");
+  }
+  await setCurrentSessionFreshAuth({
+    req,
+    account_id: accountId,
+    factor_level: result.factor_level,
+    fresh_auth_until: result.fresh_auth_until,
+  });
   return result;
 }
 
