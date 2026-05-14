@@ -16,7 +16,10 @@ import {
   recordNewAuthSession,
 } from "@cocalc/server/auth/auth-sessions";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
-import { createSignInSecondFactorChallenge } from "@cocalc/server/auth/two-factor";
+import {
+  createSignInSecondFactorChallenge,
+  verifySignInSecondFactorChallenge,
+} from "@cocalc/server/auth/two-factor";
 import {
   finishFreshAuthPasskeyAuthentication,
   finishPasskeySetup,
@@ -170,6 +173,20 @@ describe("passkey setup", () => {
           credential_id: "credential-id",
         },
       ],
+    });
+
+    const recoveryChallenge = await createSignInSecondFactorChallenge({
+      account_id,
+    });
+    await expect(
+      verifySignInSecondFactorChallenge({
+        challenge_id: recoveryChallenge.challenge_id,
+        method: "recovery_code",
+        code: result.recovery_codes[0],
+      }),
+    ).resolves.toMatchObject({
+      account_id,
+      factor_level: "recovery_code",
     });
 
     const signInChallenge = await createSignInSecondFactorChallenge({
