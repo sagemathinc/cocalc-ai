@@ -15,7 +15,7 @@ import { DisksClient } from "@google-cloud/compute";
 import { NebiusClient } from "@cocalc/cloud/nebius/client";
 import { getVolumes } from "@cocalc/cloud/hyperstack/client";
 import { enqueueCloudVmWorkOnce } from "./db";
-import { listServerProviders } from "./providers";
+import { getServerProvider, listServerProviders } from "./providers";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getNebiusRegionKeys } from "./nebius-credentials";
 import { shouldAutoRestoreInterruptedSpotHost } from "./spot-restore";
@@ -48,6 +48,7 @@ type HostRow = {
   id: string;
   name?: string;
   status?: string;
+  region?: string;
   metadata?: Record<string, any>;
   public_url?: string;
   internal_url?: string;
@@ -91,7 +92,7 @@ type KnownCloudHost = {
 async function loadHosts(provider: Provider): Promise<HostRow[]> {
   const { rows } = await pool().query(
     `
-      SELECT id, name, status, metadata, public_url, internal_url
+      SELECT id, name, status, region, metadata, public_url, internal_url
       FROM project_hosts
       WHERE metadata->'machine'->>'cloud' = $1
         AND deleted IS NULL
@@ -552,7 +553,11 @@ async function enqueueSpotRestore(
 }
 
 async function reconcileProvider(provider: Provider) {
-  const { prefix, entry, creds } = await getProviderContext(provider);
+  const prefix = await getProviderPrefix(provider);
+  const entry = getServerProvider(provider)?.entry;
+  if (!entry) {
+    throw new Error(`unsupported cloud provider ${provider}`);
+  }
   const hosts = await loadHosts(provider);
   const instances = await listProviderInstances(provider, prefix);
   if (!instances) return;
@@ -602,6 +607,9 @@ async function reconcileProvider(provider: Provider) {
         await updateHost(row, { runtime: nextRuntime });
         continue;
       }
+      const { creds } = await getProviderContext(provider, {
+        region: row.metadata?.runtime?.region ?? row.region,
+      });
       const diskState = await dataDiskStatus(provider, row, creds);
       if (diskState === "unknown") {
         await updateHost(row, { runtime: nextRuntime });

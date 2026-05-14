@@ -461,6 +461,99 @@ describe("cloud host start failures", () => {
     ]);
   });
 
+  it("stops rescheduling verify_host_ready when the cloud VM disappears", async () => {
+    const hostId = "40f6e06d-75ec-4030-8709-7af14fe72127";
+    const startedAt = new Date(Date.now() - 60_000).toISOString();
+    const deadlineAt = new Date(Date.now() + 5 * 60_000).toISOString();
+    const getInstance = jest.fn(async () => undefined);
+    getProviderContextMock.mockResolvedValue({
+      entry: {
+        provider: {
+          getInstance,
+          mapStatus: (status?: string) =>
+            status === "STOPPED" ? "off" : undefined,
+        },
+      },
+      creds: {},
+    });
+
+    await upsertProjectHost({
+      id: hostId,
+      name: "Preempted verify host",
+      region: "us-central1",
+      status: "starting",
+      public_url: "https://host.example.test",
+      internal_url: "https://host.example.test",
+      metadata: {
+        owner: "acct-owner",
+        pricing_model: "spot",
+        desired_pricing_model: "spot",
+        effective_pricing_model: "spot",
+        desired_state: "running",
+        interruption_restore_policy: "immediate",
+        machine: {
+          cloud: "nebius",
+          machine_type: "1gpu-16vcpu-200gb",
+          disk_gb: 93,
+          disk_type: "ssd",
+          storage_mode: "persistent",
+        },
+        runtime: {
+          provider: "nebius",
+          instance_id: "computeinstance-preempted",
+          public_ip: "204.12.170.177",
+        },
+        bootstrap: {
+          status: "queued",
+          message: "Waiting for cloud host bootstrap",
+        },
+      },
+    });
+
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.verify_host_ready({
+      id: "verify-preempted-1",
+      vm_id: hostId,
+      action: "verify_host_ready",
+      payload: {
+        provider: "nebius",
+        started_at: startedAt,
+        deadline_at: deadlineAt,
+      },
+    } as any);
+
+    expect(getInstance).toHaveBeenCalled();
+    const hostRows = await getPool().query(
+      "SELECT status, last_seen, public_url, internal_url, metadata FROM project_hosts WHERE id=$1",
+      [hostId],
+    );
+    expect(hostRows.rows[0].status).toBe("off");
+    expect(hostRows.rows[0].last_seen).toBeNull();
+    expect(hostRows.rows[0].public_url).toBeNull();
+    expect(hostRows.rows[0].internal_url).toBeNull();
+    expect(hostRows.rows[0].metadata.last_error).toContain(
+      "Cloud VM disappeared before the host became ready",
+    );
+    expect(hostRows.rows[0].metadata.bootstrap).toMatchObject({
+      status: "error",
+      message: expect.stringContaining(
+        "Cloud VM disappeared before the host became ready",
+      ),
+    });
+    expect(hostRows.rows[0].metadata.runtime.provider_status).toBe("missing");
+    expect(hostRows.rows[0].metadata.runtime.public_ip).toBeNull();
+
+    const workRows = await getPool().query(
+      `
+        SELECT action, state
+        FROM cloud_vm_work
+        WHERE vm_id=$1
+      `,
+      [hostId],
+    );
+    expect(workRows.rows).toEqual([]);
+  });
+
   it("marks the host error and stops rescheduling when verify_host_ready times out", async () => {
     const hostId = "7cc7a0cb-a4ad-4629-bb9d-cafc6ddb9874";
     await upsertProjectHost({

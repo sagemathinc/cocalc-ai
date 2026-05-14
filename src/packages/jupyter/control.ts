@@ -527,6 +527,7 @@ export async function run({ path, cells, noHalt, socket, run_id }: RunOptions) {
         actions.ensureKernelIsReady();
         const kernel = actions.jupyter_kernel!;
         const output = kernel.execute_code({
+          id: cell.id,
           halt_on_error: !noHalt,
           code: cell.input,
           stdin: async (prompt: string, password: boolean) => {
