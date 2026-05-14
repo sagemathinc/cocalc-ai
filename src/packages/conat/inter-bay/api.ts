@@ -963,6 +963,7 @@ export type HostControlMethod =
   | "get-project-status"
   | "update-authorized-keys"
   | "update-project-users"
+  | "sync-project-secrets-cache"
   | "apply-pending-copies"
   | "delete-project-data"
   | "upgrade-software"
@@ -1532,6 +1533,10 @@ export interface InterBayHostControlApi {
     host_id: string;
     update: HostControlArg<"updateProjectUsers">;
   }) => Promise<void>;
+  syncProjectSecretsCache: (opts: {
+    host_id: string;
+    sync: HostControlArg<"syncProjectSecretsCache">;
+  }) => Promise<Awaited<ReturnType<HostControlApi["syncProjectSecretsCache"]>>>;
   applyPendingCopies: (opts: {
     host_id: string;
     apply: HostControlArg<"applyPendingCopies">;
@@ -1874,6 +1879,7 @@ const HOST_CONTROL_METHOD_SPECS = [
   { name: "getProjectStatus", method: "get-project-status" },
   { name: "updateAuthorizedKeys", method: "update-authorized-keys" },
   { name: "updateProjectUsers", method: "update-project-users" },
+  { name: "syncProjectSecretsCache", method: "sync-project-secrets-cache" },
   { name: "applyPendingCopies", method: "apply-pending-copies" },
   { name: "deleteProjectData", method: "delete-project-data" },
   { name: "upgradeSoftware", method: "upgrade-software" },

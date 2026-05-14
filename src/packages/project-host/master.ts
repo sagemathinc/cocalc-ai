@@ -30,7 +30,8 @@ import { upgradeSoftware } from "./upgrade";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { getConmonContainerProcesses } from "@cocalc/backend/podman/conmon";
-import { deleteProjectLocal } from "./sqlite/projects";
+import { deleteProjectLocal, upsertProject } from "./sqlite/projects";
+import { syncProjectSecretsCache as syncProjectSecretsCacheLocal } from "./project-secrets-cache";
 import { setProjectHostAuthPublicKey } from "./auth-public-key";
 import { matchAppRequest } from "./app-public-access";
 import {
@@ -969,6 +970,15 @@ export async function startMasterRegistration({
           project_id,
           users,
         });
+      },
+      async syncProjectSecretsCache({ project_id, cache }) {
+        await awaitReadyForControl("syncProjectSecretsCache", waitUntilReady);
+        const secret_names = syncProjectSecretsCacheLocal({
+          project_id,
+          cache,
+        });
+        upsertProject({ project_id, secret_names });
+        return { secret_names };
       },
       async applyPendingCopies({ project_id, limit }) {
         await awaitReadyForControl("applyPendingCopies", waitUntilReady);

@@ -20,6 +20,7 @@ import {
   copyProjectSecrets,
   deleteProjectSecret,
   exportProjectSecretsForCopy,
+  getProjectSecretsRuntimeCache,
   getProjectSecretsForRuntime,
   importProjectSecretsForCopy,
   listProjectSecrets,
@@ -93,6 +94,22 @@ describe("project secrets database helpers", () => {
     await expect(
       getProjectSecretsForRuntime({ project_id: SOURCE_PROJECT_ID }),
     ).resolves.toEqual({ API_KEY: "secret" });
+
+    await expect(
+      getProjectSecretsRuntimeCache({ project_id: SOURCE_PROJECT_ID }),
+    ).resolves.toEqual({
+      key_base64: Buffer.alloc(32, 7).toString("base64"),
+      entries: [
+        expect.objectContaining({
+          name: "API_KEY",
+          value_bytes: 6,
+          encrypted_value: expect.objectContaining({
+            cipher: "aes-256-gcm",
+            data_base64: expect.any(String),
+          }),
+        }),
+      ],
+    });
 
     await expect(
       deleteProjectSecret({

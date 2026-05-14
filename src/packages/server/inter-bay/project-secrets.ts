@@ -14,15 +14,21 @@ import type {
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
 import { resolveProjectBayDirect } from "@cocalc/server/inter-bay/directory";
+import getLogger from "@cocalc/backend/logger";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
   copyProjectSecrets,
   deleteProjectSecret,
   exportProjectSecretsForCopy,
+  getProjectSecretsRuntimeCache,
   importProjectSecretsForCopy,
   listProjectSecrets,
   setProjectSecret,
 } from "@cocalc/server/projects/project-secrets";
+
+const logger = getLogger("server:inter-bay:project-secrets");
 
 async function assertCurrentProjectOwnership({
   project_id,
@@ -59,6 +65,37 @@ async function assertLocalProjectSecretAccess({
   await assertLocalProjectCollaborator({ account_id, project_id });
 }
 
+async function syncProjectSecretsCacheOnAssignedHost({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<void> {
+  let host_id: string;
+  try {
+    host_id = (await getAssignedProjectHostInfo(project_id)).host_id;
+  } catch (err) {
+    logger.debug("project secrets cache sync skipped; no assigned host", {
+      project_id,
+      err: `${err}`,
+    });
+    return;
+  }
+  try {
+    const cache = await getProjectSecretsRuntimeCache({ project_id });
+    const client = await getRoutedHostControlClient({
+      host_id,
+      timeout: 30_000,
+    });
+    await client.syncProjectSecretsCache({ project_id, cache });
+  } catch (err) {
+    logger.warn("project secrets cache sync to host failed", {
+      project_id,
+      host_id,
+      err: `${err}`,
+    });
+  }
+}
+
 export async function handleProjectSecretsList({
   account_id,
   project_id,
@@ -90,6 +127,7 @@ export async function handleProjectSecretsSet({
     project_id,
     fields: ["secrets"],
   });
+  await syncProjectSecretsCacheOnAssignedHost({ project_id });
   return result;
 }
 
@@ -107,6 +145,9 @@ export async function handleProjectSecretsDelete({
     project_id,
     fields: ["secrets"],
   });
+  if (deleted) {
+    await syncProjectSecretsCacheOnAssignedHost({ project_id });
+  }
   return {
     deleted,
   };
@@ -151,6 +192,9 @@ export async function handleProjectSecretsCopy({
         fields: ["secrets"],
       }),
     ]);
+    await syncProjectSecretsCacheOnAssignedHost({
+      project_id: target_project_id,
+    });
   }
   return result;
 }
@@ -188,6 +232,7 @@ export async function handleProjectSecretsImportForCopy({
       project_id,
       fields: ["secrets"],
     });
+    await syncProjectSecretsCacheOnAssignedHost({ project_id });
   }
   return result;
 }

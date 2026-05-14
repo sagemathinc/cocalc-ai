@@ -41,6 +41,18 @@ export interface EncryptedProjectSecretValue {
   created_at: string;
 }
 
+export interface ProjectSecretRuntimeCacheEntry {
+  name: string;
+  encrypted_value: EncryptedProjectSecretValue;
+  value_bytes: number;
+  updated_at?: string | number;
+}
+
+export interface ProjectSecretsRuntimeCache {
+  key_base64: string;
+  entries: ProjectSecretRuntimeCacheEntry[];
+}
+
 function byteLength(value: string): number {
   return Buffer.byteLength(value, "utf8");
 }

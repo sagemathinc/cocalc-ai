@@ -19,6 +19,7 @@ import {
   validateProjectSecretValue,
 } from "@cocalc/util/project-secrets";
 import type { EncryptedProjectSecretValue } from "@cocalc/util/project-secrets";
+import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
 
 const logger = getLogger("server:projects:project-secrets");
 
@@ -176,6 +177,33 @@ export async function getProjectSecretsForRuntime({
       }),
     ]),
   );
+}
+
+export async function getProjectSecretsRuntimeCache({
+  project_id,
+  db = pool(),
+}: {
+  project_id: string;
+  db?: Queryable;
+}): Promise<ProjectSecretsRuntimeCache> {
+  await ensureProjectSecretsSchema(db);
+  const key = await getProjectSecretsKey();
+  const { rows } = await db.query(
+    `SELECT name, encrypted_value, value_bytes, updated_at
+     FROM project_secrets
+     WHERE project_id=$1
+     ORDER BY name`,
+    [project_id],
+  );
+  return {
+    key_base64: key.toString("base64"),
+    entries: rows.map((row) => ({
+      name: row.name,
+      encrypted_value: encryptedValue(row.encrypted_value),
+      value_bytes: Number(row.value_bytes ?? 0),
+      updated_at: row.updated_at,
+    })),
+  };
 }
 
 export async function exportProjectSecretsForCopy({
