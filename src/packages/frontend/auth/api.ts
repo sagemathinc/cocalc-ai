@@ -17,10 +17,12 @@ export type WrongBayAuthResponse = {
 export type MfaRequiredAuthResponse = {
   mfa_required: true;
   challenge_id: string;
-  methods: Array<"totp" | "recovery_code">;
+  methods: SecondFactorMethod[];
   home_bay_id: string;
   home_bay_url?: string;
 };
+
+export type SecondFactorMethod = "totp" | "recovery_code" | "passkey";
 
 export type AuthBootstrapResponse = {
   signed_in: boolean;
@@ -34,7 +36,7 @@ export type AuthBootstrapResponse = {
     actor_name?: string | null;
     subject_account_id: string;
     fresh_auth_until?: string | Date | null;
-    factor_level?: "none" | "totp" | "recovery_code" | null;
+    factor_level?: "none" | SecondFactorMethod | null;
   } | null;
 };
 
