@@ -14,6 +14,7 @@ let projectControlBackupMock: jest.Mock;
 let assertProjectOwnerCanIncreaseAccountStorageMock: jest.Mock;
 let getProjectBackupLimitMock: jest.Mock;
 let getManagedProjectEgressPolicyMock: jest.Mock;
+let requireDangerousProjectMutationAuthMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -108,6 +109,13 @@ jest.mock("@cocalc/server/membership/managed-egress-policy", () => ({
     getManagedProjectEgressPolicyMock(...args),
 }));
 
+jest.mock("./project-dangerous-auth", () => ({
+  __esModule: true,
+  PROJECT_DANGEROUS_INTERNAL_AUTH: Symbol("project-dangerous-internal-auth"),
+  requireDangerousProjectMutationAuth: (...args: any[]) =>
+    requireDangerousProjectMutationAuthMock(...args),
+}));
+
 describe("project-backups.createBackup", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -149,6 +157,7 @@ describe("project-backups.createBackup", () => {
       allowed: true,
       category: "backup-upload",
     }));
+    requireDangerousProjectMutationAuthMock = jest.fn(async () => undefined);
     projectControlBackupMock = jest.fn(async () => ({
       op_id: "remote-op-1",
       kind: "project-backup",
@@ -338,6 +347,7 @@ describe("project-backups.restoreBackup", () => {
     assertProjectOwnerCanIncreaseAccountStorageMock = jest.fn(
       async () => undefined,
     );
+    requireDangerousProjectMutationAuthMock = jest.fn(async () => undefined);
   });
 
   it("checks owner storage headroom before queuing a backup restore", async () => {
@@ -345,6 +355,7 @@ describe("project-backups.restoreBackup", () => {
 
     const result = await restoreBackup({
       account_id: "acct-1",
+      session_hash: "session-1",
       project_id: "proj-1",
       id: "backup-1",
       path: "data/results",
@@ -354,6 +365,10 @@ describe("project-backups.restoreBackup", () => {
     expect(assertCollabMock).toHaveBeenCalledWith({
       account_id: "acct-1",
       project_id: "proj-1",
+    });
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      session_hash: "session-1",
     });
     expect(
       assertProjectOwnerCanIncreaseAccountStorageMock,

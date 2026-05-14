@@ -11,6 +11,11 @@ The second fresh-auth tranche gates host delete/deprovision, RootFS image
 pull/delete/GC, and host SSH authorized-key mutation. Host SSH authorized-key
 operations now route to the authoritative host bay instead of using local
 host-row shortcuts.
+The third fresh-auth tranche gates project soft delete/undelete, hard delete,
+move/rehome, backup delete/restore/finalize-restore-staging, and snapshot
+delete/restore. Project move checks freshness on the caller bay before routing
+to the owning bay; the inter-bay handler uses a non-serializable internal
+capability after the caller-bay check.
 
 Scope:
 
@@ -44,9 +49,9 @@ Fresh-auth coverage is still incomplete but improved:
   delete/rehome/drain/repair, admin membership/entitlement mutation, and org
   token lifecycle, host delete/deprovision, host RootFS mutation, and host SSH
   authorized-key mutation.
-- The remaining destructive/admin gaps are concentrated in project hard
-  delete/move/rehome/restore, backup/snapshot mutation, rootfs admin mutation,
-  and legacy token generation.
+- The remaining destructive/admin gaps are concentrated in rootfs admin
+  mutation, organization membership/admin mutation if treated as equivalent to
+  token issuance, and legacy token generation.
 
 Conclusion: `SEC-KEY-001` is acceptable as guarded for the first release unless
 websocket API-key hub RPC support is intentionally expanded. `SEC-CLI-001`
@@ -125,10 +130,10 @@ Existing freshness/2FA checks:
 | Account rehome/drain/repair                           | Site-admin/operator checks in rehome helpers                         | Fresh auth plus active/recent 2FA required                                                | API-key hub RPC denied                                                                                      | Uses account home-bay/rehome helpers                                                                                    | Good                                                                      |
 | Admin membership assignment and entitlement overrides | Site admin                                                           | Fresh auth plus active/recent 2FA required                                                | API-key hub RPC denied                                                                                      | Entitlement overrides route to account home bay                                                                         | Good                                                                      |
 | Org token create/expire                               | Org admin/site admin                                                 | Token create requires fresh auth plus active/recent 2FA; token expire requires fresh auth | API-key hub RPC denied                                                                                      | Legacy single-db organization model                                                                                     | Improved                                                                  |
-| Project soft delete/undelete                          | Project collaborator/owner checks via project control                | Not required                                                                              | HTTP hub API-key denied; project API-key with `project:exec` can operate inside allowlisted project runtime | Project control routes to owning bay                                                                                    | Gap                                                                       |
-| Project hard delete                                   | `assertHardDeleteProjectPermission`                                  | Not required                                                                              | HTTP hub API-key denied                                                                                     | LRO routed from owning/control bay                                                                                      | Gap                                                                       |
-| Project move/rehome                                   | Collaborator/admin checks                                            | Not required                                                                              | HTTP hub API-key denied                                                                                     | Resolves project owning bay and forwards through inter-bay project control                                              | Gap                                                                       |
-| Backup/snapshot delete/restore                        | Project collaborator checks                                          | Not required                                                                              | HTTP hub API-key denied; project bridge requires `project:exec`                                             | Project/file-server routing is project-aware                                                                            | Gap                                                                       |
+| Project soft delete/undelete                          | Project collaborator/owner checks via project control                | Fresh auth plus active/recent 2FA required                                                | HTTP hub API-key denied; project API-key with `project:exec` can operate inside allowlisted project runtime | Project control routes to owning bay                                                                                    | Improved                                                                  |
+| Project hard delete                                   | `assertHardDeleteProjectPermission`                                  | Fresh auth plus active/recent 2FA required                                                | HTTP hub API-key denied                                                                                     | LRO routed from owning/control bay                                                                                      | Improved                                                                  |
+| Project move/rehome                                   | Collaborator/admin checks                                            | Fresh auth plus active/recent 2FA required                                                | HTTP hub API-key denied                                                                                     | Move resolves owning bay and forwards through inter-bay project control after caller-bay freshness check                | Improved                                                                  |
+| Backup/snapshot delete/restore                        | Project collaborator checks                                          | Fresh auth plus active/recent 2FA required                                                | HTTP hub API-key denied; project bridge requires `project:exec`                                             | Project/file-server routing is project-aware                                                                            | Improved                                                                  |
 | Public app expose/unexpose                            | Project app/project collaborator checks                              | Not required                                                                              | Project API-key with `project:exec` can call project-host app APIs for an allowlisted project               | Project-host routed; same security as project runtime authority                                                         | Acceptable if `project:exec` is treated as full project runtime authority |
 | Host delete/deprovision                               | Host owner                                                           | Fresh auth plus active/recent 2FA required                                                | API-key hub RPC denied                                                                                      | Resolves remote host bay before delete; inter-bay handler uses trusted internal auth after caller-bay freshness check   | Good                                                                      |
 | Host RootFS image delete/pull                         | Host rootfs-management permission                                    | Fresh auth plus active/recent 2FA required                                                | API-key hub RPC denied                                                                                      | Resolves remote host bay before mutation; inter-bay handler uses trusted internal auth after caller-bay freshness check | Good                                                                      |
@@ -178,11 +183,10 @@ Recommended implementation pattern:
 
 Suggested next priority for freshness gates:
 
-1. Project hard delete, project move/rehome, backup/snapshot restore/delete.
-2. RootFS catalog/admin mutation.
-3. Organization membership/admin mutation if treated as equivalent to token
+1. RootFS catalog/admin mutation.
+2. Organization membership/admin mutation if treated as equivalent to token
    issuance.
-4. Decide whether legacy `system.generateUserAuthToken` should be gated,
+3. Decide whether legacy `system.generateUserAuthToken` should be gated,
    retired, or explicitly accepted for its bootstrap use case.
 
 ## Release Decision

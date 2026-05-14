@@ -10,6 +10,7 @@ import {
   assertProjectOwnerCanIncreaseAccountStorage,
   getProjectSnapshotLimit,
 } from "@cocalc/server/membership/project-limits";
+import { requireDangerousProjectMutationAuth } from "./project-dangerous-auth";
 
 // NOTES about snapshots:
 
@@ -66,13 +67,19 @@ export async function createSnapshot({
 
 export async function deleteSnapshot({
   account_id,
+  session_hash,
   project_id,
   name,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   project_id: string;
   name: string;
 }) {
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+  });
   await assertCollab({ account_id, project_id });
   await (
     await projectClient(project_id, account_id)
@@ -134,12 +141,14 @@ export async function getSnapshotFileText({
 
 export async function restoreSnapshot({
   account_id,
+  session_hash,
   project_id,
   snapshot,
   mode,
   safety_snapshot_name,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   project_id: string;
   snapshot: string;
   mode?: SnapshotRestoreMode;
@@ -151,6 +160,10 @@ export async function restoreSnapshot({
   service: string;
   stream_name: string;
 }> {
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+  });
   await assertCollab({ account_id, project_id });
   await assertProjectOwnerCanIncreaseAccountStorage({ project_id });
   const restoreMode = mode ?? "both";

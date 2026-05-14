@@ -167,6 +167,7 @@ export interface ProjectControlAddressRequest {
 export interface ProjectControlMoveRequest {
   project_id: string;
   account_id: string;
+  session_hash?: string | null;
   dest_host_id?: string;
   allow_offline?: boolean;
   backup_region_cutover?: boolean;

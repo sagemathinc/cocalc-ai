@@ -6,6 +6,7 @@ let interBayStateMock: jest.Mock;
 let interBayAddressMock: jest.Mock;
 let interBayActiveOpMock: jest.Mock;
 let interBayMoveMock: jest.Mock;
+let requireDangerousProjectMutationAuthMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -125,6 +126,13 @@ jest.mock("./util", () => ({
     assertCollabMock(...args),
 }));
 
+jest.mock("./project-dangerous-auth", () => ({
+  __esModule: true,
+  PROJECT_DANGEROUS_INTERNAL_AUTH: Symbol("project-dangerous-internal-auth"),
+  requireDangerousProjectMutationAuth: (...args: any[]) =>
+    requireDangerousProjectMutationAuthMock(...args),
+}));
+
 describe("projects.getProjectState / getProjectAddress", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -164,6 +172,7 @@ describe("projects.getProjectState / getProjectAddress", () => {
       service: "persist-service",
       stream_name: "lro.move-op-1",
     }));
+    requireDangerousProjectMutationAuthMock = jest.fn(async () => undefined);
   });
 
   it("routes project state reads through the owning bay", async () => {
@@ -228,6 +237,7 @@ describe("projects.getProjectState / getProjectAddress", () => {
     await expect(
       moveProject({
         account_id: "acct-1",
+        session_hash: "session-1",
         project_id: "proj-1",
         dest_host_id: "host-1",
         allow_offline: true,
@@ -242,9 +252,15 @@ describe("projects.getProjectState / getProjectAddress", () => {
     expect(interBayMoveMock).toHaveBeenCalledWith({
       project_id: "proj-1",
       account_id: "acct-1",
+      session_hash: "session-1",
       dest_host_id: "host-1",
       allow_offline: true,
       epoch: 7,
+    });
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      session_hash: "session-1",
+      internalAuth: undefined,
     });
   });
 });

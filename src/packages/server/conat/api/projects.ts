@@ -149,6 +149,10 @@ import { fromWire as collabInviteFromWire } from "@cocalc/server/projects/collab
 import { deleteProjectDataOnHost } from "@cocalc/server/project-host/control";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import dayjs from "dayjs";
+import {
+  PROJECT_DANGEROUS_INTERNAL_AUTH,
+  requireDangerousProjectMutationAuth,
+} from "./project-dangerous-auth";
 
 // Start/restart can legitimately take a long time because the owning bay may
 // need to provision storage, restore data, pull rootfs layers, or seal a
@@ -2115,14 +2119,20 @@ export async function getProjectActiveOperation({
 
 export async function deleteProject({
   account_id,
+  session_hash,
   project_id,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   project_id: string;
 }): Promise<void> {
   if (!account_id) {
     throw new Error("must be signed in");
   }
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+  });
   await deleteProjectControl({
     project_id,
     account_id,
@@ -2131,16 +2141,22 @@ export async function deleteProject({
 
 export async function setProjectDeleted({
   account_id,
+  session_hash,
   project_id,
   deleted,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   project_id: string;
   deleted: boolean;
 }): Promise<void> {
   if (!account_id) {
     throw new Error("must be signed in");
   }
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+  });
   await setProjectDeletedControl({
     project_id,
     account_id,
@@ -2150,11 +2166,13 @@ export async function setProjectDeleted({
 
 export async function hardDeleteProject({
   account_id,
+  session_hash,
   project_id,
   backup_retention_days,
   purge_backups_now,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   project_id: string;
   backup_retention_days?: number;
   purge_backups_now?: boolean;
@@ -2168,6 +2186,10 @@ export async function hardDeleteProject({
   if (!account_id) {
     throw new Error("must be signed in");
   }
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+  });
   await assertHardDeleteProjectPermission({
     project_id,
     account_id,
@@ -2352,12 +2374,16 @@ export async function deleteProjectSshKey({
 
 export async function moveProject({
   account_id,
+  session_hash,
+  internalAuth,
   project_id,
   dest_host_id,
   allow_offline,
   backup_region_cutover,
 }: {
   account_id: string;
+  session_hash?: string | null;
+  internalAuth?: typeof PROJECT_DANGEROUS_INTERNAL_AUTH;
   project_id: string;
   dest_host_id?: string;
   allow_offline?: boolean;
@@ -2369,6 +2395,11 @@ export async function moveProject({
   service: string;
   stream_name: string;
 }> {
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+    internalAuth,
+  });
   await assertCollab({ account_id, project_id });
   const ownership = await resolveProjectBay(project_id);
   if (ownership == null) {
@@ -2378,6 +2409,7 @@ export async function moveProject({
     return await getInterBayBridge().projectControl(ownership.bay_id).move({
       project_id,
       account_id,
+      session_hash,
       dest_host_id,
       allow_offline,
       backup_region_cutover,
@@ -2449,12 +2481,14 @@ export async function moveProject({
 
 export async function rehomeProject({
   account_id,
+  session_hash,
   project_id,
   dest_bay_id,
   reason,
   campaign_id,
 }: {
   account_id: string;
+  session_hash?: string | null;
   project_id: string;
   dest_bay_id: string;
   reason?: string | null;
@@ -2463,6 +2497,10 @@ export async function rehomeProject({
   if (!account_id) {
     throw new Error("user must be signed in");
   }
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    session_hash,
+  });
   return await rehomeProjectControl({
     account_id,
     project_id,
