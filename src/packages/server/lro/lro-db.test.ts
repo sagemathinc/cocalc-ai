@@ -131,7 +131,9 @@ describe("ensureLroSchema", () => {
 
     await ensureLroSchema();
 
-    const sql = queryMock.mock.calls.map(([sql]) => `${sql}`);
+    const sql = connectQueryMock.mock.calls.map(([sql]) => `${sql}`);
+    expect(sql.some((x) => x.includes("pg_advisory_lock"))).toBe(true);
+    expect(sql.some((x) => x.includes("pg_advisory_unlock"))).toBe(true);
     expect(sql.some((x) => x.includes("ADD COLUMN parent_id UUID"))).toBe(true);
     expect(sql.some((x) => x.includes("lro_parent_idx"))).toBe(true);
   });
