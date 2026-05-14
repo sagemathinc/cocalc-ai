@@ -1002,37 +1002,41 @@ export function registerAdminCommand(
     );
 
   adminUser
-    .command("issue-auth-token <user>")
+    .command("issue-impersonation-link <user>")
     .description(
       "create an impersonation sign-in link for a user (account id, email, or name query)",
     )
     .action(async (user: string, _opts: {}, command: Command) => {
-      await withContext(command, "admin user issue-auth-token", async (ctx) => {
-        const identifier = `${user ?? ""}`.trim();
-        if (!identifier) {
-          throw new Error("user identifier must be non-empty");
-        }
+      await withContext(
+        command,
+        "admin user issue-impersonation-link",
+        async (ctx) => {
+          const identifier = `${user ?? ""}`.trim();
+          if (!identifier) {
+            throw new Error("user identifier must be non-empty");
+          }
 
-        const resolved = isValidUUID(identifier)
-          ? { account_id: identifier }
-          : await resolveAccountByIdentifier(ctx, identifier);
-        const userAccountId = `${resolved?.account_id ?? ""}`.trim();
-        if (!userAccountId) {
-          throw new Error(`unable to resolve account for '${identifier}'`);
-        }
+          const resolved = isValidUUID(identifier)
+            ? { account_id: identifier }
+            : await resolveAccountByIdentifier(ctx, identifier);
+          const userAccountId = `${resolved?.account_id ?? ""}`.trim();
+          if (!userAccountId) {
+            throw new Error(`unable to resolve account for '${identifier}'`);
+          }
 
-        const grant = await ctx.hub.system.createImpersonationGrant({
-          subject_account_id: userAccountId,
-        });
+          const grant = await ctx.hub.system.createImpersonationGrant({
+            subject_account_id: userAccountId,
+          });
 
-        return {
-          user_account_id: userAccountId,
-          grant_id: grant.grant_id,
-          subject_home_bay_id: grant.subject_home_bay_id,
-          url: grant.url,
-          expires_at: grant.expires_at,
-        };
-      });
+          return {
+            user_account_id: userAccountId,
+            grant_id: grant.grant_id,
+            subject_home_bay_id: grant.subject_home_bay_id,
+            url: grant.url,
+            expires_at: grant.expires_at,
+          };
+        },
+      );
     });
 
   adminEntitlementOverride

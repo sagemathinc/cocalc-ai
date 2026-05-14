@@ -161,7 +161,6 @@ import {
   type NotificationsCommandDeps,
 } from "./commands/notifications";
 import { registerLoadCommand, type LoadCommandDeps } from "./commands/load";
-import { registerOrgCommand, type OrgCommandDeps } from "./commands/org";
 import { registerDevCommand, type DevCommandDeps } from "./commands/dev";
 import {
   registerExportCommand,
@@ -625,28 +624,6 @@ function normalizeOptionalSecret(
   const trimmed = `${value ?? ""}`.trim();
   if (!trimmed) return undefined;
   return trimmed;
-}
-
-function getSetCookieHeaders(response: Response): string[] {
-  const headers = response.headers as Headers & {
-    getSetCookie?: () => string[];
-  };
-  if (typeof headers.getSetCookie === "function") {
-    return headers.getSetCookie();
-  }
-  const single = response.headers.get("set-cookie");
-  return single ? [single] : [];
-}
-
-function extractCookieFromHeaders(
-  headers: string[],
-  cookieName: string,
-): string | undefined {
-  for (const header of headers) {
-    const value = extractCookie(header, cookieName);
-    if (value) return value;
-  }
-  return undefined;
 }
 
 function buildRememberMeCookieHeader(
@@ -1189,43 +1166,14 @@ async function maybeReconnectAsRequestedAccount({
     return;
   }
 
-  const authToken = (await callHub({
-    client: remote.client,
-    account_id: signedInAccountId,
-    name: "system.generateUserAuthToken",
-    args: [{ user_account_id: cleanRequestedAccountId }],
-    timeout: Math.min(timeoutMs, MAX_TRANSPORT_TIMEOUT_MS),
-  }).catch(async (err) => {
-    const rememberMeCookie = await maybeCreateLocalDevRememberMeCookie({
-      globals,
-      apiBaseUrl,
-      requestedAccountId: cleanRequestedAccountId,
-    });
-    if (rememberMeCookie) {
-      return { rememberMeCookie };
-    }
-    throw err;
-  })) as string | { rememberMeCookie?: string };
-
-  let rememberMeCookie: string | undefined;
-  if (typeof authToken === "string") {
-    const url = new URL("/auth/impersonate", apiBaseUrl);
-    url.searchParams.set("auth_token", authToken);
-    const response = await fetch(url.toString(), {
-      redirect: "manual",
-    });
-    const cookieHeaders = getSetCookieHeaders(response);
-    rememberMeCookie =
-      extractCookieFromHeaders(
-        cookieHeaders,
-        cookieNameFor(apiBaseUrl, "remember_me"),
-      ) ?? extractCookieFromHeaders(cookieHeaders, "remember_me");
-  } else {
-    rememberMeCookie = authToken.rememberMeCookie;
-  }
+  const rememberMeCookie = await maybeCreateLocalDevRememberMeCookie({
+    globals,
+    apiBaseUrl,
+    requestedAccountId: cleanRequestedAccountId,
+  });
   if (!rememberMeCookie) {
     throw new Error(
-      "failed to bootstrap remember_me cookie for requested account",
+      "requested-account bootstrap requires local dev hub-password access",
     );
   }
 
@@ -2561,12 +2509,6 @@ const loadCommandDeps = {
 } satisfies LoadCommandDeps;
 
 registerLoadCommand(program, loadCommandDeps);
-
-const orgCommandDeps = {
-  withContext,
-} satisfies OrgCommandDeps;
-
-registerOrgCommand(program, orgCommandDeps);
 
 const devCommandDeps = {
   runLocalCommand,

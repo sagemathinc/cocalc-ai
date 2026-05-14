@@ -8,8 +8,6 @@ export const org = {
   addAdmin: authFirst,
   addUser: authFirst,
   createUser: authFirst,
-  createToken: authFirst,
-  expireToken: authFirst,
   getUsers: authFirst,
   message: authFirst,
   removeUser: authFirst,
@@ -87,21 +85,6 @@ export interface Org {
     name: string;
     // user = account_id or email address
     user: string;
-  }) => Promise<void>;
-
-  createToken: (opts: {
-    account_id?: string;
-    session_hash?: string | null;
-    // user = account_id or email address
-    user: string;
-    // expiration as milliseconds since epoch
-    expire?: number;
-  }) => Promise<{ token: string; url: string }>;
-
-  expireToken: (opts: {
-    account_id?: string;
-    session_hash?: string | null;
-    token: string;
   }) => Promise<void>;
 
   getUsers: (opts: { account_id?: string; name: string }) => Promise<

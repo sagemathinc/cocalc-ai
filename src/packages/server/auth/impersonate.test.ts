@@ -1,6 +1,5 @@
 export {};
 
-let queryMock: jest.Mock;
 let setSignInCookiesMock: jest.Mock;
 let getClusterAccountByIdMock: jest.Mock;
 let getBayPublicOriginForRequestMock: jest.Mock;
@@ -9,11 +8,8 @@ let clientSideRedirectMock: jest.Mock;
 let issueHomeBayRetryTokenMock: jest.Mock;
 let verifyHomeBayRetryTokenMock: jest.Mock;
 let clearAuthCookiesMock: jest.Mock;
-
-jest.mock("@cocalc/database/pool", () => ({
-  __esModule: true,
-  default: jest.fn(() => ({ query: queryMock })),
-}));
+let consumeImpersonationGrantLocalMock: jest.Mock;
+let createImpersonationSessionLocalMock: jest.Mock;
 
 jest.mock("@cocalc/server/auth/set-sign-in-cookies", () => ({
   __esModule: true,
@@ -51,6 +47,14 @@ jest.mock("@cocalc/server/auth/home-bay-retry-token", () => ({
     verifyHomeBayRetryTokenMock(...args),
 }));
 
+jest.mock("@cocalc/server/auth/impersonation", () => ({
+  __esModule: true,
+  consumeImpersonationGrantLocal: (...args: any[]) =>
+    consumeImpersonationGrantLocalMock(...args),
+  createImpersonationSessionLocal: (...args: any[]) =>
+    createImpersonationSessionLocalMock(...args),
+}));
+
 describe("auth/impersonate", () => {
   let prevBayId: string | undefined;
 
@@ -58,10 +62,10 @@ describe("auth/impersonate", () => {
     jest.resetModules();
     prevBayId = process.env.COCALC_BAY_ID;
     process.env.COCALC_BAY_ID = "bay-0";
-    queryMock = jest.fn(async () => ({
-      rows: [{ account_id: "11111111-1111-1111-1111-111111111111" }],
+    setSignInCookiesMock = jest.fn(async () => ({
+      hash: "session-hash",
+      expire: new Date("2026-05-14T12:00:00Z"),
     }));
-    setSignInCookiesMock = jest.fn(async () => undefined);
     getClusterAccountByIdMock = jest.fn(async () => ({
       account_id: "11111111-1111-1111-1111-111111111111",
       home_bay_id: "bay-2",
@@ -78,6 +82,11 @@ describe("auth/impersonate", () => {
     }));
     verifyHomeBayRetryTokenMock = jest.fn();
     clearAuthCookiesMock = jest.fn(async () => undefined);
+    consumeImpersonationGrantLocalMock = jest.fn(async () => ({
+      id: "22222222-2222-4222-8222-222222222222",
+      actor_account_id: "33333333-3333-4333-8333-333333333333",
+    }));
+    createImpersonationSessionLocalMock = jest.fn(async () => undefined);
   });
 
   afterEach(() => {
@@ -91,7 +100,11 @@ describe("auth/impersonate", () => {
   it("hands remote-home-bay impersonation off with a retry token", async () => {
     const { signInUsingImpersonateToken } = await import("./impersonate");
     const req = {
-      query: { auth_token: "test-token", lang_temp: "en" },
+      query: {
+        grant_id: "22222222-2222-4222-8222-222222222222",
+        account_id: "11111111-1111-1111-1111-111111111111",
+        lang_temp: "en",
+      },
       protocol: "https",
       headers: { host: "lite4b.cocalc.ai" },
     };
@@ -99,10 +112,6 @@ describe("auth/impersonate", () => {
 
     await signInUsingImpersonateToken({ req, res });
 
-    expect(queryMock).toHaveBeenCalledWith(
-      "SELECT account_id FROM auth_tokens WHERE auth_token=$1 AND expire > NOW()",
-      ["test-token"],
-    );
     expect(getClusterAccountByIdMock).toHaveBeenCalledWith(
       "11111111-1111-1111-1111-111111111111",
     );
@@ -117,7 +126,7 @@ describe("auth/impersonate", () => {
     expect(clientSideRedirectMock).toHaveBeenCalledWith({
       res,
       target:
-        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&lang_temp=en",
+        "https://bay-2-lite4b.cocalc.ai/auth/impersonate?retry_token=retry-token&grant_id=22222222-2222-4222-8222-222222222222&account_id=11111111-1111-1111-1111-111111111111&lang_temp=en",
     });
   });
 
@@ -137,7 +146,11 @@ describe("auth/impersonate", () => {
     }));
     const { signInUsingImpersonateToken } = await import("./impersonate");
     const req = {
-      query: { retry_token: "retry-token", lang_temp: "en" },
+      query: {
+        retry_token: "retry-token",
+        grant_id: "22222222-2222-4222-8222-222222222222",
+        lang_temp: "en",
+      },
       protocol: "https",
       headers: { host: "bay-2-lite4b.cocalc.ai" },
     };
@@ -145,7 +158,6 @@ describe("auth/impersonate", () => {
 
     await signInUsingImpersonateToken({ req, res });
 
-    expect(queryMock).not.toHaveBeenCalled();
     expect(verifyHomeBayRetryTokenMock).toHaveBeenCalledWith({
       token: "retry-token",
       home_bay_id: "bay-2",
@@ -157,6 +169,21 @@ describe("auth/impersonate", () => {
       res,
       account_id: "11111111-1111-1111-1111-111111111111",
       maxAge: 12 * 3600 * 1000,
+      session: expect.objectContaining({
+        metadata: expect.objectContaining({
+          session_mode: "impersonation",
+          actor_account_id: "33333333-3333-4333-8333-333333333333",
+          grant_id: "22222222-2222-4222-8222-222222222222",
+        }),
+      }),
+    });
+    expect(createImpersonationSessionLocalMock).toHaveBeenCalledWith({
+      session_hash: "session-hash",
+      expire: new Date("2026-05-14T12:00:00Z"),
+      grant: expect.objectContaining({
+        id: "22222222-2222-4222-8222-222222222222",
+      }),
+      metadata: { lang_temp: "en" },
     });
     expect(clientSideRedirectMock).toHaveBeenCalledWith({
       res,

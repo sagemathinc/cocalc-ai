@@ -1,13 +1,7 @@
-import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { recordAccountRevocation } from "@cocalc/server/accounts/revocation";
 
 export async function banUser(account_id: string): Promise<void> {
-  const pool = getPool();
-  // Delete all of the their auth tokens
-  await pool.query("DELETE FROM auth_tokens WHERE account_id = $1::UUID", [
-    account_id,
-  ]);
   // Ban them
   await withAccountRehomeWriteFence({
     account_id,

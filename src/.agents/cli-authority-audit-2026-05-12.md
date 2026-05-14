@@ -51,7 +51,7 @@ Important mechanics:
 | Load/dev/diagnostics               | `load ...`, `dev ...`, `op ...`, `notifications projector/drain/rebuild`                              | Developer/operator/admin depending on method                    | Useful for testing and ops; potentially high load. Should not be exposed through weak API keys or project-scoped auth.        |
 | Generic backend exec API           | `exec-api`, `exec`                                                                                    | Same authority as underlying namespace calls                    | Broad composition surface over tasks/text/timetravel/export/import/workspaces; should remain scoped by underlying APIs.       |
 | Import/export                      | `export ...`, `import ...`                                                                            | Account/project access to referenced data                       | Can move data across files/bundles. Server-side project/file permissions are authoritative.                                   |
-| Workspaces/notifications/org       | `workspaces ...`, `notifications ...`, `org token ...`                                                | Account/session; selected projector paths are operator/admin    | Org token lifecycle and notification projector controls should remain in endpoint-level dangerous-action inventory.           |
+| Workspaces/notifications           | `workspaces ...`, `notifications ...`                                                                 | Account/session; selected projector paths are operator/admin    | Notification projector controls should remain in endpoint-level dangerous-action inventory.                                   |
 
 ## Findings From This Pass
 
@@ -102,7 +102,7 @@ account login.
    exposure, rootfs admin mutation, host mutation, membership assignment, org
    token lifecycle, and CLI-issued auth tokens.
 3. Consider central audit events for `hub_password` account bootstrap,
-   `admin user issue-auth-token`, and browser/session automation use from the
+   `admin user issue-impersonation-link`, and browser/session automation use from the
    CLI.
 4. Consider a hidden `cocalc audit authority` command later that emits this
    matrix from structured metadata instead of a hand-maintained document.

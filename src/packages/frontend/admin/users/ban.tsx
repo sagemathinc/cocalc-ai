@@ -70,8 +70,8 @@ export class Ban extends Component<Props, State> {
         description={
           <div style={{ width: "400px" }}>
             {this.props.name} won't be able to login, all API access is revoked,
-            auth_tokens are deleted, can't connect to projects, and all ability
-            to spend money is immeediately halted. This means{" "}
+            can't connect to projects, and all ability to spend money is
+            immeediately halted. This means{" "}
             <b>their active access is terminated immediately.</b> Use this on
             spammers and credit card fraudsters. Before they refresh their
             browser, they will just feel likely CoCalc is slow/broken, but they

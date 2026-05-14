@@ -532,7 +532,6 @@ export interface AccountRehomeStateCopyRequest {
   account_second_factor_recovery_codes?: Record<string, unknown>[];
   account_impersonation_grants?: Record<string, unknown>[];
   account_impersonation_sessions?: Record<string, unknown>[];
-  auth_tokens?: Record<string, unknown>[];
   api_keys?: Record<string, unknown>[];
   account_entitlement_overrides?: Record<string, unknown>[];
   account_entitlement_override_events?: Record<string, unknown>[];

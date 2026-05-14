@@ -825,7 +825,7 @@ export class PassportManager {
   private initImpersonate = () => {
     logger.debug("initImpersonate");
     this.router.get(`${AUTH_BASE}/impersonate`, (req, res) => {
-      logger.debug("impersonate: handling an auth_token");
+      logger.debug("impersonate: handling an impersonation grant");
       signInUsingImpersonateToken({ req, res });
     });
   };

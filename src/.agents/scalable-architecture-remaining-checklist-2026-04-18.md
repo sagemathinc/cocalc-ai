@@ -855,7 +855,6 @@ Account rehome contract:
   - `account_collaborator_index`
   - `account_notification_index`
   - `remember_me`
-  - `auth_tokens`
   - account-wide v2 `api_keys`
 - Source flip updates the source `accounts.home_bay_id` and the cluster account
   directory entry to the destination bay.
@@ -887,7 +886,6 @@ Initial account rehome target:
   - `account_collaborator_index`
   - `account_notification_index`
   - `remember_me`
-  - `auth_tokens`
   - account-wide v2 `api_keys`
 - [x] update the cluster account directory so lookup/search resolves the new
       home bay
@@ -971,10 +969,9 @@ Live validation, 2026-04-22 PT:
   destination browser session reconnected to `bay-2` using the copied
   `remember_me` cookie and registered a fresh heartbeat with the same
   `browser_id`.
-- That validation exposed that `remember_me` and outstanding `auth_tokens`
-  were not part of the account rehome state copy. They are now copied during
-  `copyRehomeState`, which is required for existing browser sessions and
-  outstanding sign-in tokens to survive account-home migration.
+- That validation exposed that `remember_me` was not part of the account
+  rehome state copy. It is now copied during `copyRehomeState`, which is
+  required for existing browser sessions to survive account-home migration.
 - Cleaned up disposable accounts
   `c70e4a96-68da-49bf-8828-4d682cf28002`,
   `f7fba1c9-14bb-40f5-82c6-a1ca2a148bc3`, and
@@ -1038,15 +1035,15 @@ Non-goals for initial account rehome:
 Deferred billing/purchases follow-up:
 
 - [ ] Codify and enforce seed-owned billing/purchases. Current multibay code
-  still treats the `purchases` table as bay-local state: billing/purchases APIs
-  query local Postgres directly, the frontend calls same-origin
-  `billing/*` / `purchases/*` endpoints, and periodic purchases maintenance
-  runs wherever a hub process is running. Account rehome intentionally does not
-  move `purchases` or other billing/provider-side state outside the `accounts`
-  row. Before relying on account rehome in production for billing-active
-  accounts, attached bays should delegate billing/purchases APIs to the seed
-  bay, purchases maintenance should be seed-only, and the seed bay must have
-  enough account billing identity for attached-bay-created accounts.
+      still treats the `purchases` table as bay-local state: billing/purchases APIs
+      query local Postgres directly, the frontend calls same-origin
+      `billing/*` / `purchases/*` endpoints, and periodic purchases maintenance
+      runs wherever a hub process is running. Account rehome intentionally does not
+      move `purchases` or other billing/provider-side state outside the `accounts`
+      row. Before relying on account rehome in production for billing-active
+      accounts, attached bays should delegate billing/purchases APIs to the seed
+      bay, purchases maintenance should be seed-only, and the seed bay must have
+      enough account billing identity for attached-bay-created accounts.
 
 ### 10. Project Rehome
 

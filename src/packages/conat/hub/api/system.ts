@@ -68,9 +68,7 @@ export const system = {
   logClientError: authFirst,
   webappError: authFirst,
   manageApiKeys: authFirst,
-  generateUserAuthToken: authFirst,
   createImpersonationGrant: authFirst,
-  revokeUserAuthToken: noAuth,
   userSearch: authFirst,
   getNames: requireSignedIn,
   adminCreateUser: authFirst,
@@ -1431,12 +1429,6 @@ export interface System {
     id?: number;
   }) => Promise<ApiKey[] | undefined>;
 
-  generateUserAuthToken: (opts: {
-    account_id?: string;
-    user_account_id: string;
-    password?: string;
-  }) => Promise<string>;
-
   createImpersonationGrant: (opts: {
     account_id?: string;
     browser_id?: string;
@@ -1452,8 +1444,6 @@ export interface System {
     url: string;
     expires_at: Date;
   }>;
-
-  revokeUserAuthToken: (authToken: string) => Promise<void>;
 
   userSearch: (opts: {
     account_id?: string;

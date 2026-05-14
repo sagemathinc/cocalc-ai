@@ -62,8 +62,6 @@ export const api_key: any;
 export const api_key_info: any;
 export const api_keys: any;
 export const api_keys_response: any;
-export const user_auth: any;
-export const user_auth_token: any;
 export const disconnect_from_project: any;
 export const user_tracking: any;
 export const purchase_license: any;

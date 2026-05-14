@@ -1778,11 +1778,6 @@ export async function setProjectRootfsImage(opts: {
   });
 }
 
-export {
-  generateUserAuthToken,
-  revokeUserAuthToken,
-} from "@cocalc/server/auth/auth-token";
-
 export async function createImpersonationGrant({
   account_id,
   browser_id,

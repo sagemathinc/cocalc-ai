@@ -3,14 +3,8 @@ import isAdmin from "@cocalc/server/accounts/is-admin";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { uuid } from "@cocalc/util/misc";
 import createAccount from "@cocalc/server/accounts/create-account";
-import {
-  createAuthTokenNoCheck,
-  revokeUserAuthToken,
-} from "@cocalc/server/auth/auth-token";
 import send from "@cocalc/server/messages/send";
 import { secureRandomString } from "@cocalc/backend/misc";
-import siteUrl from "@cocalc/server/hub/site-url";
-import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 
 // this is a permissions check
 async function isOrganizationAdmin({
@@ -344,58 +338,6 @@ export async function getAccount(
     [user],
   );
   return rows[0] ?? {};
-}
-
-export async function createToken({
-  account_id,
-  session_hash,
-  user,
-  expire,
-}: {
-  account_id?: string;
-  session_hash?: string | null;
-  user: string;
-  expire?: number; // when token expires as ms since epoch (default = 12 hours from now)
-}): Promise<{ token: string; url: string }> {
-  if (!account_id) {
-    throw Error("must be signed in");
-  }
-  await requireDangerousSessionAuth({
-    account_id,
-    session_hash,
-    require_second_factor: true,
-  });
-  const { name, account_id: account_id0 } = await getAccount(user);
-  if (!name) {
-    throw Error(`user is not in an org`);
-  }
-  if (!account_id0) {
-    throw Error("account not found");
-  }
-  await assertAllowed({ account_id, name });
-  const token = await createAuthTokenNoCheck({
-    user_account_id: account_id0,
-    created_by: account_id,
-    is_admin: await isAdmin(account_id),
-    expire,
-  });
-  return { token, url: await siteUrl(`auth/impersonate?auth_token=${token}`) };
-}
-
-export async function expireToken({
-  account_id,
-  session_hash,
-  token,
-}: {
-  account_id?: string;
-  session_hash?: string | null;
-  token: string;
-}): Promise<void> {
-  await requireDangerousSessionAuth({
-    account_id,
-    session_hash,
-  });
-  await revokeUserAuthToken(token);
 }
 
 export async function getUsers({

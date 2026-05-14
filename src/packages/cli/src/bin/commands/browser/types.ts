@@ -258,10 +258,6 @@ export type BrowserCommandContext = {
         account_id?: string;
         max_age_ms?: number;
       }>;
-      generateUserAuthToken: (opts: {
-        user_account_id: string;
-        password?: string;
-      }) => Promise<string>;
     };
     hosts?: {
       resolveHostConnection: (opts: { host_id: string }) => Promise<{

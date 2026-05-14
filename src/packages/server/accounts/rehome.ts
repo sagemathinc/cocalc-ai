@@ -57,7 +57,6 @@ const PORTABLE_STATE_TABLES = [
   "account_second_factor_recovery_codes",
   "account_impersonation_grants",
   "account_impersonation_sessions",
-  "auth_tokens",
   "api_keys",
   "account_entitlement_overrides",
   "account_entitlement_override_events",
@@ -312,13 +311,11 @@ async function replacePortableRows({
             : table === "account_auth_sessions" ||
                 table === "account_impersonation_sessions"
               ? ["session_hash"]
-              : table === "auth_tokens"
-                ? ["auth_token"]
-                : table === "api_keys"
-                  ? ["key_id"]
-                  : table === "account_entitlement_overrides"
-                    ? ["account_id"]
-                    : ["id"];
+              : table === "api_keys"
+                ? ["key_id"]
+                : table === "account_entitlement_overrides"
+                  ? ["account_id"]
+                  : ["id"];
   if (table === "api_keys") {
     await getPool().query(
       `
@@ -651,7 +648,6 @@ async function loadPortableState(
     account_second_factor_recovery_codes,
     account_impersonation_grants,
     account_impersonation_sessions,
-    auth_tokens,
     api_keys,
     account_entitlement_overrides,
     account_entitlement_override_events,
@@ -667,7 +663,6 @@ async function loadPortableState(
     loadPortableRows("account_second_factor_recovery_codes", account_id),
     loadPortableRows("account_impersonation_grants", account_id),
     loadPortableRows("account_impersonation_sessions", account_id),
-    loadPortableRows("auth_tokens", account_id),
     loadAccountWidePortableApiKeyRows(account_id),
     loadPortableRows("account_entitlement_overrides", account_id),
     loadPortableRows("account_entitlement_override_events", account_id),
@@ -687,7 +682,6 @@ async function loadPortableState(
     account_second_factor_recovery_codes,
     account_impersonation_grants,
     account_impersonation_sessions,
-    auth_tokens,
     api_keys,
     account_entitlement_overrides,
     account_entitlement_override_events,
@@ -1114,7 +1108,6 @@ export async function copyAccountRehomeState({
   account_second_factor_recovery_codes,
   account_impersonation_grants,
   account_impersonation_sessions,
-  auth_tokens,
   api_keys,
   account_entitlement_overrides,
   account_entitlement_override_events,
@@ -1182,11 +1175,6 @@ export async function copyAccountRehomeState({
     account_id: accountId,
     rows: account_impersonation_sessions ?? [],
   });
-  await replacePortableRows({
-    table: "auth_tokens",
-    account_id: accountId,
-    rows: auth_tokens ?? [],
-  });
   await ensureAccountRehomeApiKeysSchema();
   await replacePortableRows({
     table: "api_keys",
@@ -1238,7 +1226,6 @@ export async function copyAccountRehomeState({
       account_impersonation_grants?.length ?? 0,
     account_impersonation_sessions_rows:
       account_impersonation_sessions?.length ?? 0,
-    auth_tokens_rows: auth_tokens?.length ?? 0,
     api_keys_rows: api_keys?.length ?? 0,
     account_entitlement_overrides_rows:
       account_entitlement_overrides?.length ?? 0,
