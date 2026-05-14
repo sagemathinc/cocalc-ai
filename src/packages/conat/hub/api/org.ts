@@ -28,7 +28,11 @@ export interface Org {
   // create a new organization with the given unique name (at most 39 characters); only admins
   // can create an organization.  Returns uuid of organization.  The name CANNOT BE CHANGED,
   // because it is what is used elsewhere to link to the org.
-  create: (opts: { account_id?: string; name: string }) => Promise<string>;
+  create: (opts: {
+    account_id?: string;
+    session_hash?: string | null;
+    name: string;
+  }) => Promise<string>;
 
   // get properties of an existing organization
   get: (opts: { account_id?: string; name: string }) => Promise<{
@@ -43,6 +47,7 @@ export interface Org {
   // change properties of an existing organization
   set: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     name: string;
     title?: string;
     description?: string;
@@ -52,6 +57,7 @@ export interface Org {
 
   addAdmin: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     name: string;
     // user = account_id or email address
     user: string;
@@ -59,6 +65,7 @@ export interface Org {
 
   addUser: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     name: string;
     // user = account_id or email address
     user: string;
@@ -66,6 +73,7 @@ export interface Org {
 
   createUser: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     name: string;
     email: string;
     firstName: string;
@@ -75,6 +83,7 @@ export interface Org {
 
   removeUser: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     name: string;
     // user = account_id or email address
     user: string;
@@ -82,6 +91,7 @@ export interface Org {
 
   removeAdmin: (opts: {
     account_id?: string;
+    session_hash?: string | null;
     name: string;
     // user = account_id or email address
     user: string;

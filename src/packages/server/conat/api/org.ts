@@ -5,6 +5,23 @@ import { uuid } from "@cocalc/util/misc";
 import createAccount from "@cocalc/server/accounts/create-account";
 import send from "@cocalc/server/messages/send";
 import { secureRandomString } from "@cocalc/backend/misc";
+import { requireDangerousSessionAuth } from "./dangerous-session-auth";
+
+type OrgAuthOpts = {
+  account_id?: string;
+  session_hash?: string | null;
+};
+
+async function requireOrgMutationAuth({
+  account_id,
+  session_hash,
+}: OrgAuthOpts): Promise<void> {
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: true,
+  });
+}
 
 // this is a permissions check
 async function isOrganizationAdmin({
@@ -83,14 +100,17 @@ export async function getAll({ account_id }: { account_id?: string }): Promise<
 // can create an organization.  Returns uuid of organization.
 export async function create({
   account_id,
+  session_hash,
   name,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   name: string;
 }): Promise<string> {
   if (!(await isAdmin(account_id))) {
     throw Error("only admins may create organizations");
   }
+  await requireOrgMutationAuth({ account_id, session_hash });
   if (!(await isNameAvailable(name))) {
     throw Error(`name ${name} is already used by some account or organization`);
   }
@@ -133,6 +153,7 @@ export async function get({
 // set properties of an existing organization
 export async function set(opts: {
   account_id?: string;
+  session_hash?: string | null;
   name: string;
   title?: string;
   description?: string;
@@ -140,6 +161,7 @@ export async function set(opts: {
   email_address?: string;
 }): Promise<void> {
   await assertAllowed(opts);
+  await requireOrgMutationAuth(opts);
   const pool = getPool();
   let i = 2;
   const x: string[] = [];
@@ -159,10 +181,12 @@ export async function set(opts: {
 
 export async function addAdmin({
   account_id,
+  session_hash,
   name,
   user,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   name: string;
   user: string;
 }): Promise<void> {
@@ -179,6 +203,7 @@ export async function addAdmin({
     account_id,
     name,
   });
+  await requireOrgMutationAuth({ account_id, session_hash });
   const pool = getPool();
   // query below takes care to ensure no dups and work in case of null.
   await pool.query(
@@ -195,29 +220,41 @@ export async function addAdmin({
     [name, admin_account_id],
   );
 
-  await addUser({
-    account_id,
+  await addUserToOrganization({
     name,
-    user: admin_account_id,
+    user_account_id: admin_account_id,
   });
 }
 
 export async function addUser({
   account_id,
+  session_hash,
   name,
   user,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   name: string;
   user: string;
 }): Promise<void> {
   if (!(await isAdmin(account_id))) {
     throw Error("only site admins can move user to an org right now");
   }
+  await requireOrgMutationAuth({ account_id, session_hash });
   const { account_id: user_account_id } = await getAccount(user);
   if (!user_account_id) {
     throw Error(`cannot find user '${user}'`);
   }
+  await addUserToOrganization({ name, user_account_id });
+}
+
+async function addUserToOrganization({
+  name,
+  user_account_id,
+}: {
+  name: string;
+  user_account_id: string;
+}): Promise<void> {
   await withAccountRehomeWriteFence({
     account_id: user_account_id,
     action: "add account to organization",
@@ -232,6 +269,7 @@ export async function addUser({
 
 export async function createUser({
   account_id,
+  session_hash,
   name,
   email,
   firstName,
@@ -239,6 +277,7 @@ export async function createUser({
   password,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   name: string;
   email: string;
   firstName: string;
@@ -247,6 +286,7 @@ export async function createUser({
 }): Promise<string> {
   password ??= await secureRandomString(16);
   await assertAllowed({ account_id, name });
+  await requireOrgMutationAuth({ account_id, session_hash });
   // create new account
   const new_account_id = uuid();
   await createAccount({
@@ -273,14 +313,17 @@ export async function createUser({
 
 export async function removeUser({
   account_id,
+  session_hash,
   name,
   user,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   name: string;
   user: string;
 }): Promise<void> {
   await assertAllowed({ account_id, name });
+  await requireOrgMutationAuth({ account_id, session_hash });
   const { account_id: user_account_id } = await getAccount(user);
   if (!user_account_id) {
     throw Error(`cannot find user '${user}'`);
@@ -303,14 +346,17 @@ export async function removeUser({
 
 export async function removeAdmin({
   account_id,
+  session_hash,
   name,
   user,
 }: {
   account_id?: string;
+  session_hash?: string | null;
   name: string;
   user: string;
 }): Promise<void> {
   await assertAllowed({ account_id, name });
+  await requireOrgMutationAuth({ account_id, session_hash });
   const { account_id: admin_account_id } = await getAccount(user);
   if (!admin_account_id) {
     throw Error(`cannot find user '${user}'`);
