@@ -1,6 +1,29 @@
 # Passkeys as an Alternative Second Factor
 
-Status: design and implementation plan, 2026-05-14.
+Status: implemented for the core second-factor flows, 2026-05-14.
+
+Implementation summary:
+
+- Backend passkey setup, sign-in second-factor assertion, fresh-auth assertion,
+  CLI elevation assertion, disable, rename, and list endpoints are implemented.
+- Frontend account settings can add, list, rename, and disable passkeys.
+- Main sign-in, public sign-in, dangerous-operation fresh auth, and CLI
+  elevation approval can use passkeys when available, with TOTP/recovery-code
+  fallback preserved.
+- Recovery codes work for passkey-only accounts.
+- Scope remains second-factor-only; there is no passwordless sign-in or
+  discoverable credential account lookup.
+
+Remaining work before release is validation/audit, not new core feature work:
+
+- Run real-browser smoke tests across Chrome/Google Password Manager,
+  macOS/iCloud Keychain, phone passkeys, and at least one hardware key if
+  available.
+- Test launchpad/self-host hostname behavior and final cocalc.ai production
+  hostname/RP ID behavior.
+- Recheck multibay routing in a multi-bay test cluster once available.
+- Add release docs and security-audit notes after smoke testing confirms final
+  behavior.
 
 Scope: add passkey/WebAuthn support as an alternative second factor and
 fresh-auth method. This is not passwordless sign-in.
