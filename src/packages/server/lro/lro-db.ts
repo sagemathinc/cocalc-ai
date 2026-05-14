@@ -16,64 +16,77 @@ const TERMINAL_STATUSES: LroStatus[] = [
 const pool = () => getPool();
 
 export async function ensureLroSchema(): Promise<void> {
-  await pool().query(`
-    CREATE TABLE IF NOT EXISTS long_running_operations (
-      op_id UUID PRIMARY KEY,
-      kind TEXT NOT NULL,
-      scope_type TEXT NOT NULL,
-      scope_id UUID NOT NULL,
-      status TEXT NOT NULL,
-      created_by UUID,
-      owner_type TEXT,
-      owner_id UUID,
-      routing TEXT,
-      input JSONB DEFAULT '{}'::jsonb,
-      result JSONB DEFAULT '{}'::jsonb,
-      error TEXT,
-      progress_summary JSONB DEFAULT '{}'::jsonb,
-      attempt INTEGER DEFAULT 0,
-      heartbeat_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ DEFAULT now(),
-      started_at TIMESTAMPTZ,
-      finished_at TIMESTAMPTZ,
-      dismissed_at TIMESTAMPTZ,
-      dismissed_by UUID,
-      updated_at TIMESTAMPTZ DEFAULT now(),
-      expires_at TIMESTAMPTZ NOT NULL,
-      dedupe_key TEXT,
-      parent_id UUID
-    )
-  `);
-  await pool().query(
-    "CREATE INDEX IF NOT EXISTS lro_scope_status_idx ON long_running_operations(scope_type, scope_id, status)",
-  );
-  await pool().query(
-    "CREATE INDEX IF NOT EXISTS lro_owner_status_idx ON long_running_operations(owner_type, owner_id, status)",
-  );
-  await pool().query(
-    "CREATE INDEX IF NOT EXISTS lro_dedupe_idx ON long_running_operations(dedupe_key, scope_type, scope_id)",
-  );
-  await pool().query(
-    "CREATE INDEX IF NOT EXISTS lro_updated_idx ON long_running_operations(updated_at)",
-  );
+  const client = await pool().connect();
   try {
-    await pool().query(
-      "ALTER TABLE long_running_operations ADD COLUMN dismissed_at TIMESTAMPTZ",
+    await client.query("SELECT pg_advisory_lock(hashtext($1))", [
+      "cocalc:lro-schema",
+    ]);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS long_running_operations (
+        op_id UUID PRIMARY KEY,
+        kind TEXT NOT NULL,
+        scope_type TEXT NOT NULL,
+        scope_id UUID NOT NULL,
+        status TEXT NOT NULL,
+        created_by UUID,
+        owner_type TEXT,
+        owner_id UUID,
+        routing TEXT,
+        input JSONB DEFAULT '{}'::jsonb,
+        result JSONB DEFAULT '{}'::jsonb,
+        error TEXT,
+        progress_summary JSONB DEFAULT '{}'::jsonb,
+        attempt INTEGER DEFAULT 0,
+        heartbeat_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        started_at TIMESTAMPTZ,
+        finished_at TIMESTAMPTZ,
+        dismissed_at TIMESTAMPTZ,
+        dismissed_by UUID,
+        updated_at TIMESTAMPTZ DEFAULT now(),
+        expires_at TIMESTAMPTZ NOT NULL,
+        dedupe_key TEXT,
+        parent_id UUID
+      )
+    `);
+    await client.query(
+      "CREATE INDEX IF NOT EXISTS lro_scope_status_idx ON long_running_operations(scope_type, scope_id, status)",
     );
-  } catch {}
-  try {
-    await pool().query(
-      "ALTER TABLE long_running_operations ADD COLUMN dismissed_by UUID",
+    await client.query(
+      "CREATE INDEX IF NOT EXISTS lro_owner_status_idx ON long_running_operations(owner_type, owner_id, status)",
     );
-  } catch {}
-  try {
-    await pool().query(
-      "ALTER TABLE long_running_operations ADD COLUMN parent_id UUID",
+    await client.query(
+      "CREATE INDEX IF NOT EXISTS lro_dedupe_idx ON long_running_operations(dedupe_key, scope_type, scope_id)",
     );
-  } catch {}
-  await pool().query(
-    "CREATE INDEX IF NOT EXISTS lro_parent_idx ON long_running_operations(parent_id)",
-  );
+    await client.query(
+      "CREATE INDEX IF NOT EXISTS lro_updated_idx ON long_running_operations(updated_at)",
+    );
+    try {
+      await client.query(
+        "ALTER TABLE long_running_operations ADD COLUMN dismissed_at TIMESTAMPTZ",
+      );
+    } catch {}
+    try {
+      await client.query(
+        "ALTER TABLE long_running_operations ADD COLUMN dismissed_by UUID",
+      );
+    } catch {}
+    try {
+      await client.query(
+        "ALTER TABLE long_running_operations ADD COLUMN parent_id UUID",
+      );
+    } catch {}
+    await client.query(
+      "CREATE INDEX IF NOT EXISTS lro_parent_idx ON long_running_operations(parent_id)",
+    );
+  } finally {
+    try {
+      await client.query("SELECT pg_advisory_unlock(hashtext($1))", [
+        "cocalc:lro-schema",
+      ]);
+    } catch {}
+    client.release();
+  }
 }
 
 export async function createLro({
