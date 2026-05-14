@@ -39,7 +39,7 @@ clear, enforceable abuse guardrail that users can understand.
 Every running project has one **runtime sponsor**.
 
 The runtime sponsor is the account whose membership is used for simultaneous
-running-project admission and shared-compute priority for that project.
+running-project admission, shared-compute priority and RAM limits for that project.  The sponsor is not used for disk space or egress metering.
 
 User-facing wording:
 
@@ -306,11 +306,11 @@ The UI should use this to show:
 
 Deliverables:
 
-- choose user-facing name: "runtime sponsor" or "compute sponsor"
-- decide whether v1 uses `usage_account_id ?? owner_account_id`
-- decide initial tier defaults
+- choose user-facing name: "runtime sponsor" or "compute sponsor"  ANS: "runtime sponsor"
+- decide whether v1 uses `usage_account_id ?? owner_account_id`   ANS: yes as the default; but I think we should implement the full spec. This is gold.
+- decide initial tier defaults   ANS: your suggestions are fine -- free = 1, standard/student=3,  pro=10.
 - decide whether collaborator starts using owner/sponsor slots are enabled by
-  default
+  default  -- ANS: yes.
 
 Recommendation:
 
@@ -445,7 +445,7 @@ Security/policy requirements:
 - never silently change sponsor
 - show which account will sponsor future starts
 - record durable audit event
-- require fresh auth only if this becomes billing-sensitive enough to justify it
+- require fresh auth only if this becomes billing-sensitive enough to justify it - ANS: this is not billing sensitive at all; there's never ever any pay-as-you-go billing for running projects; that's entirely for dedicated hosts.  
 
 Validation:
 
@@ -553,15 +553,15 @@ Can defer:
 ## Open Questions For Review
 
 1. Should the first implementation use `usage_account_id ?? owner_account_id`,
-   or should it add a separate runtime sponsor column immediately?
-2. Should collaborator starts using sponsor slots be enabled by default?
-3. What are the initial tier defaults for `max_sponsored_running_projects`?
+   or should it add a separate runtime sponsor column immediately?  Add runtime sponsor column.
+2. Should collaborator starts using sponsor slots be enabled by default?  YES
+3. What are the initial tier defaults for `max_sponsored_running_projects`?   See above -- 1, 3, 10 for now.  It's easy for admins to adjust.
 4. Should "use my membership for this project" be in the first release, or can
-   users clone/copy out as the first workaround?
+   users clone/copy out as the first workaround?  ANS: it should be in the first release; being locked out and having to copy a lot of data, etc. (and even hitting your project limit) could be very frustrating.  E.g., user is at their project limit and copying is tedious, and cloning isn't allowed since already at the limit.  So too frustrated, especially given that they aren't running anything. 
 5. Should sponsor-slot denial be a hard block for always-running projects, or
-   should always-running projects have a separate reserved-slot contract?
+   should always-running projects have a separate reserved-slot contract? ANS: the idea of an "always running" project should have been deleted.  If not, it should be deleted systematically everywhere.  We have replaced that by priorities.
 6. Should autostart make-room behavior exist at launch, or remain explicitly
-   off?
+   off?   ANS: this is fine to be explicitly off and not implemented -- it feels possibly too unpredictable to be useful.
 
 ## Risks
 
