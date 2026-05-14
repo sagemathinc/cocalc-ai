@@ -4,7 +4,7 @@
  */
 
 import ShowError from "@cocalc/frontend/components/error";
-import { Alert, Button, Col, Flex, Row, Typography } from "antd";
+import { Button, Col, Flex, Row, Typography } from "antd";
 import React, { useState } from "react";
 import { useIntl } from "react-intl";
 
@@ -60,7 +60,6 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const projectsLabelLower = intl.formatMessage(labels.projects).toLowerCase();
-  const [showNameInfo, setShowNameInfo] = useState<boolean>(false);
   const { course } = useProjectCourseInfo(project_id);
   const project_map = useTypedRedux("projects", "project_map");
   const courseProjectType = course?.get("type") as any;
@@ -129,6 +128,35 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
   }
 
   function renderBody() {
+    const nameLabel = (
+      <>
+        {intl.formatMessage({
+          id: "project.settings.about-box.name.label",
+          defaultMessage: "Name (optional)",
+          description: "Optional name of that project",
+        })}{" "}
+        <HelpIcon title={`${projectLabel} Name`} placement="right">
+          <p style={{ marginTop: 0 }}>
+            The {projectLabelLower} name is currently only used to provide
+            better URLs for publicly shared documents. It can be at most 100
+            characters long and must be unique among all {projectsLabelLower}{" "}
+            you own.
+          </p>
+          <p>
+            Only the {projectLabelLower} owner can change the name. To be
+            useful, the owner should also set their username in Account
+            Preferences.
+          </p>
+          {name ? (
+            <p style={{ marginBottom: 0 }}>
+              If you change the {projectLabelLower} name, existing links using
+              the previous name will no longer work.
+            </p>
+          ) : undefined}
+        </HelpIcon>
+      </>
+    );
+
     return (
       <>
         <ShowError error={error} setError={setError} />
@@ -166,14 +194,7 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
             </Button>
           </div>
         </LabeledRow>
-        <LabeledRow
-          label={intl.formatMessage({
-            id: "project.settings.about-box.name.label",
-            defaultMessage: "Name (optional)",
-            description: "Optional name of that project",
-          })}
-          vertical={isFlyout}
-        >
+        <LabeledRow label={nameLabel} vertical={isFlyout}>
           <TextInput
             style={{ width: "100%" }}
             type="textarea"
@@ -186,24 +207,8 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
                 setError(`${err}`);
               }
             }}
-            onFocus={() => setShowNameInfo(true)}
-            onBlur={() => setShowNameInfo(false)}
           />
         </LabeledRow>
-        {showNameInfo ? (
-          <Alert
-            style={{ margin: "0 0 15px 0" }}
-            showIcon={false}
-            banner={isFlyout}
-            title={
-              "The project name is currently only used to provide better URL's for publicly shared documents. It can be at most 100 characters long and must be unique among all projects you own. Only the project owner can change the project name.  To be useful, the owner should also set their username in Account Preferences." +
-              (name
-                ? " TEMPORARY WARNING: If you change the project name, existing links using the previous name will no longer work, so change with caution."
-                : "")
-            }
-            type="info"
-          />
-        ) : undefined}
         <LabeledRow
           label={intl.formatMessage(labels.starred)}
           vertical={isFlyout}

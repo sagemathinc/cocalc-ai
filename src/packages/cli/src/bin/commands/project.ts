@@ -17,6 +17,7 @@ import { registerProjectChatCommands } from "./project/chat";
 import { registerProjectJupyterCommands } from "./project/jupyter";
 import { registerProjectStorageCommands } from "./project/storage";
 import { registerProjectTerminalCommands } from "./project/terminal";
+import { registerProjectEnvSecretCommands } from "./project/env-secrets";
 
 export type ProjectCommandDeps = {
   withContext: any;
@@ -136,6 +137,7 @@ export function registerProjectCommand(
   registerProjectCollabCommands(project, deps);
   registerProjectFileCommands(project, deps);
   registerProjectStorageCommands(project, deps);
+  registerProjectEnvSecretCommands(project, deps);
   registerProjectLifecycleCommands(project, deps);
   registerProjectAppCommands(project, deps);
   registerProjectTerminalCommands(project, deps);

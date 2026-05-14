@@ -49,6 +49,16 @@ Guidance for Claude Code, Gemini CLI, and OpenAI Codex when working in this repo
 - For direct DB access in hub/backend, use `getPool()` from `@cocalc/database/pool`.
 - Keep dependency versions aligned across packages; update matching `@types/*` packages when applicable.
 
+## Multibay Architecture Rule
+
+- Before changing auth, accounts, billing, projects, collaborators, hosts, project files, backups, secrets, public sharing, or Conat control-plane APIs, read `src/.agents/scalable-architecture.md`.
+- Treat Launchpad as the one-bay special case of the same architecture, not a separate architecture.
+- Always ask: which bay is authoritative for this data or action?
+- Route by explicit ownership: account `home_bay_id`, project `owning_bay_id`, and host `bay_id`.
+- Do not assume the local bay/database is authoritative unless the code has resolved ownership or is documented as one-bay-only.
+- Cross-bay project operations must use the inter-bay/project-host routing layer, not direct local DB/project-host shortcuts.
+- For project-to-project operations, assume source and destination projects may belong to different bays unless the operation explicitly requires same-host/same-bay semantics.
+
 ## Git and Validation
 
 - By default, agents should auto-commit completed change-sets after relevant validation passes.
@@ -83,6 +93,5 @@ EOF
 
 - Architecture/docs: `docs/`
 - Translation workflow: `docs/translation.md`
-- Before using `cocalc browser`, load the relevant dev environment with `eval "$(pnpm -s dev:lite:env)"` or `eval "$(pnpm -s dev:hub:env)"` so the CLI targets the correct API/browser session.
 - Browser runtime debugging via `cocalc browser`: `docs/browser-debugging.md`
   - Includes both live-user-session targeting and dedicated Playwright-backed spawned sessions.

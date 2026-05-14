@@ -93,7 +93,17 @@ jest.mock("./conat-client", () => ({
 }));
 
 import getPort from "@cocalc/backend/get-port";
-import { getAll, start, state, stop } from "./podman";
+import { readFile, stat } from "node:fs/promises";
+import {
+  cleanupProjectSecretsHostPath,
+  getAll,
+  projectSecretsHostPath,
+  redactConfigurationForLog,
+  start,
+  state,
+  stop,
+  writeProjectSecretsHostPath,
+} from "./podman";
 
 describe("project-runner podman orphan fallback", () => {
   const project1 = "11111111-1111-4111-8111-111111111111";
@@ -434,6 +444,37 @@ describe("project-runner podman orphan fallback", () => {
       state: "running",
       ssh_port: 30123,
       http_port: 45123,
+    });
+  });
+
+  it("materializes project secrets as private runtime files", async () => {
+    await cleanupProjectSecretsHostPath(project1);
+
+    const path = await writeProjectSecretsHostPath({
+      project_id: project1,
+      secrets: { API_KEY: "secret" },
+    });
+
+    expect(path).toBe(projectSecretsHostPath(project1));
+    await expect(readFile(`${path}/API_KEY`, "utf8")).resolves.toBe("secret");
+    const info = await stat(`${path}/API_KEY`);
+    expect(info.mode & 0o777).toBe(0o400);
+
+    await cleanupProjectSecretsHostPath(project1);
+    await expect(stat(`${path}/API_KEY`)).rejects.toThrow();
+  });
+
+  it("redacts runtime secrets before logging project start config", () => {
+    expect(
+      redactConfigurationForLog({
+        secret: "project-token",
+        secrets: { API_KEY: "secret", SSH_KEY: "private" },
+        env: { PUBLIC: "ok" },
+      }),
+    ).toEqual({
+      secret: "[redacted]",
+      secrets: { API_KEY: "[redacted]", SSH_KEY: "[redacted]" },
+      env: { PUBLIC: "ok" },
     });
   });
 

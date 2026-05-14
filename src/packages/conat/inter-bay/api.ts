@@ -47,7 +47,9 @@ import type {
   ProjectRegion,
   ProjectRootfsConfig,
   ProjectRunQuota,
+  ProjectSecretMetadata,
   ProjectSnapshotSchedule,
+  CopyProjectSecretsResult,
 } from "@cocalc/conat/hub/api/projects";
 import type {
   HostAgentStatus,
@@ -1045,6 +1047,13 @@ export type ProjectCollabInviteMethod =
   | "remove-collaborator"
   | "create"
   | "respond";
+export type ProjectSecretsMethod =
+  | "list"
+  | "set"
+  | "delete"
+  | "copy"
+  | "export-for-copy"
+  | "import-for-copy";
 export type AccountProjectFeedMethod = "upsert" | "remove";
 
 interface ResolveProjectBayApi {
@@ -1094,6 +1103,54 @@ export interface InterBayProjectReferenceApi {
 
 export interface InterBayProjectDetailsApi {
   get: (opts: GetProjectDetailsRequest) => Promise<ProjectDetails>;
+}
+
+export interface InterBayProjectSecretsExportResult {
+  secrets: Record<string, string>;
+  missing: string[];
+}
+
+export interface InterBayProjectSecretsApi {
+  list: (opts: {
+    account_id: string;
+    project_id: string;
+    epoch?: number;
+  }) => Promise<ProjectSecretMetadata[]>;
+  set: (opts: {
+    account_id: string;
+    project_id: string;
+    name: string;
+    value: string;
+    epoch?: number;
+  }) => Promise<ProjectSecretMetadata>;
+  delete: (opts: {
+    account_id: string;
+    project_id: string;
+    name: string;
+    epoch?: number;
+  }) => Promise<{ deleted: boolean }>;
+  copy: (opts: {
+    account_id: string;
+    source_project_id: string;
+    target_project_id: string;
+    names?: string[];
+    overwrite?: boolean;
+    source_epoch?: number;
+    target_epoch?: number;
+  }) => Promise<CopyProjectSecretsResult>;
+  exportForCopy: (opts: {
+    account_id: string;
+    project_id: string;
+    names?: string[];
+    epoch?: number;
+  }) => Promise<InterBayProjectSecretsExportResult>;
+  importForCopy: (opts: {
+    account_id: string;
+    project_id: string;
+    secrets: Record<string, string>;
+    overwrite?: boolean;
+    epoch?: number;
+  }) => Promise<CopyProjectSecretsResult>;
 }
 
 export interface InterBayHostConnectionApi {
@@ -1866,6 +1923,20 @@ const HOST_CONTROL_METHOD_SPECS = [
   method: HostControlMethod;
 }>;
 
+type ProjectSecretsName = keyof InterBayProjectSecretsApi;
+
+const PROJECT_SECRETS_METHOD_SPECS = [
+  { name: "list", method: "list" },
+  { name: "set", method: "set" },
+  { name: "delete", method: "delete" },
+  { name: "copy", method: "copy" },
+  { name: "exportForCopy", method: "export-for-copy" },
+  { name: "importForCopy", method: "import-for-copy" },
+] as const satisfies ReadonlyArray<{
+  name: ProjectSecretsName;
+  method: ProjectSecretsMethod;
+}>;
+
 function createInterBayHostControlMethodClient<K extends HostControlName>({
   client,
   dest_bay,
@@ -2003,6 +2074,16 @@ export function projectCollabInviteSubject({
   method: ProjectCollabInviteMethod;
 }): string {
   return `bay.${dest_bay}.rpc.project-collab-invite.${method}`;
+}
+
+export function projectSecretsSubject({
+  dest_bay,
+  method,
+}: {
+  dest_bay: string;
+  method: ProjectSecretsMethod;
+}): string {
+  return `bay.${dest_bay}.rpc.project-secrets.${method}`;
 }
 
 export function accountProjectFeedSubject({
@@ -2281,6 +2362,29 @@ export function createInterBayProjectDetailsClient({
   };
 }
 
+export function createInterBayProjectSecretsClient({
+  client,
+  dest_bay,
+  timeout,
+}: {
+  client: Client;
+  dest_bay: string;
+  timeout?: number;
+}): InterBayProjectSecretsApi {
+  const api = {} as InterBayProjectSecretsApi;
+  for (const { name, method } of PROJECT_SECRETS_METHOD_SPECS) {
+    const methodClient = createServiceClient<
+      Pick<InterBayProjectSecretsApi, typeof name>
+    >({
+      ...serviceClientOptions({ client, timeout }),
+      subject: projectSecretsSubject({ dest_bay, method }),
+    });
+    (api as any)[name] = async (...args: any[]) =>
+      await (methodClient as any)[name](...args);
+  }
+  return api;
+}
+
 export function createInterBayHostConnectionClient({
   client,
   dest_bay,
@@ -2380,6 +2484,28 @@ export function createInterBayProjectDetailsHandler({
       get: async (opts) => await impl.get(opts),
     },
   });
+}
+
+export function createInterBayProjectSecretsHandlers({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectSecretsApi;
+}): ConatService[] {
+  return PROJECT_SECRETS_METHOD_SPECS.map(({ name, method }) =>
+    createServiceHandler<Pick<InterBayProjectSecretsApi, typeof name>>({
+      ...options,
+      service: "inter-bay-project-secrets",
+      subject: projectSecretsSubject({ dest_bay: bay_id, method }),
+      impl: {
+        [name]: async (
+          ...args: Parameters<InterBayProjectSecretsApi[typeof name]>
+        ) => await (impl[name] as any)(...args),
+      } as Pick<InterBayProjectSecretsApi, typeof name>,
+    }),
+  );
 }
 
 export function createInterBayHostConnectionHandler({

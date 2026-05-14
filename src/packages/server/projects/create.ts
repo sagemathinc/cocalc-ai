@@ -28,6 +28,7 @@ import {
   cloneProjectRootfsStates,
   initializeProjectRootfsStates,
 } from "@cocalc/server/projects/rootfs-state";
+import { copyProjectSecrets } from "@cocalc/server/projects/project-secrets";
 import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
@@ -430,6 +431,43 @@ export default async function createProject(opts: CreateProjectOptions) {
       project_id,
       src_project_id,
     });
+    try {
+      const result = await copyProjectSecrets({
+        source_project_id: src_project_id,
+        target_project_id: project_id,
+        account_id: account_id!,
+      });
+      if (result.copied.length > 0) {
+        log.info("createProject: cloned project secrets", {
+          src_project_id,
+          project_id,
+          account_id,
+          count: result.copied.length,
+        });
+      }
+    } catch (err) {
+      log.warn("createProject: failed to copy project secrets for clone", {
+        project_id,
+        src_project_id,
+        account_id,
+        err: `${err}`,
+      });
+      try {
+        await pool.query("DELETE FROM projects WHERE project_id=$1", [
+          project_id,
+        ]);
+      } catch (cleanupErr) {
+        log.warn(
+          "createProject: failed to cleanup project row after clone secret copy error",
+          {
+            project_id,
+            src_project_id,
+            err: `${cleanupErr}`,
+          },
+        );
+      }
+      throw Error(`failed to copy project secrets for clone: ${err}`);
+    }
   } else {
     await initializeProjectRootfsStates({
       project_id,

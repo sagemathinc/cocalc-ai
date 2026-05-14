@@ -3,6 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { is_valid_uuid_string } from "@cocalc/util/misc";
 import { applyTerminalInitFile, projectScopedCliEnv } from "./terminal-server";
+import {
+  PROJECT_SECRETS_ENV,
+  PROJECT_SECRETS_MOUNT_PATH,
+} from "@cocalc/util/project-secrets";
 
 describe("terminal-server init file support", () => {
   it("adds --init-file for bash terminals with a matching init file", async () => {
@@ -48,5 +52,6 @@ describe("terminal-server init file support", () => {
     expect(is_valid_uuid_string(env.COCALC_PROJECT_ID)).toBe(true);
     expect(env.COCALC_API_URL).toMatch(/^https?:\/\//);
     expect(env.COCALC_SECRET_TOKEN).toMatch(/secret-token$/);
+    expect(env[PROJECT_SECRETS_ENV]).toBe(PROJECT_SECRETS_MOUNT_PATH);
   });
 });

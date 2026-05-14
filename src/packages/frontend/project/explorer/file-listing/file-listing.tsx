@@ -45,6 +45,10 @@ import { url_href } from "@cocalc/frontend/project/utils";
 import { COLORS } from "@cocalc/util/theme";
 import { isBackupsPath, BACKUPS } from "@cocalc/util/consts/backups";
 import { isSnapshotsPath, SNAPSHOTS } from "@cocalc/util/consts/snapshots";
+import {
+  PROJECT_SECRETS_ENV,
+  PROJECT_SECRETS_MOUNT_PATH,
+} from "@cocalc/util/project-secrets-constants";
 import * as misc from "@cocalc/util/misc";
 import { useBackupsCacheVersion } from "@cocalc/frontend/project/listing/use-backups";
 import { useFilesCacheVersion } from "@cocalc/frontend/project/listing/use-files";
@@ -186,6 +190,15 @@ function typeFilterValue(record: DirectoryListingEntry): string {
     return "folder";
   }
   return misc.filename_extension(record.name)?.toLowerCase() || "(none)";
+}
+
+function normalizePath(path: string): string {
+  const trimmed = path.replace(/\/+$/, "");
+  return trimmed === "" ? "/" : trimmed;
+}
+
+function isProjectSecretsPath(path: string): boolean {
+  return normalizePath(path) === PROJECT_SECRETS_MOUNT_PATH;
 }
 
 function renderTimestamp({
@@ -1272,6 +1285,7 @@ export function FileListing({
 
   const isSnapshotsVirtualPath = isSnapshotsPath(current_path);
   const isBackupsVirtualPath = isBackupsPath(current_path);
+  const isSecretsPath = isProjectSecretsPath(current_path);
   const isReadonlyVirtualPath = isSnapshotsVirtualPath || isBackupsVirtualPath;
 
   if (baseDataSource.length === 0 && file_search[0] !== TERM_MODE_CHAR) {
@@ -1326,7 +1340,24 @@ export function FileListing({
             }
           />
         ) : null}
-        {isReadonlyVirtualPath ? (
+        {isSecretsPath ? (
+          <Alert
+            type="info"
+            showIcon
+            style={{ margin: "8px 16px 0 16px" }}
+            message="Project secrets are protected"
+            description={
+              <>
+                The file explorer intentionally does not list files under{" "}
+                <code>{PROJECT_SECRETS_MOUNT_PATH}</code>. In a running terminal
+                or program, use the environment variable{" "}
+                <code>{PROJECT_SECRETS_ENV}</code> to read mounted project
+                secret files. Secret values are hidden from the file explorer,
+                downloads, backups, rootfs images, and public sharing.
+              </>
+            }
+          />
+        ) : isReadonlyVirtualPath ? (
           <Alert
             type="info"
             showIcon

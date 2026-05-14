@@ -547,6 +547,8 @@ type StartMetadata = {
   authorized_keys?: string;
   run_quota?: any;
   env?: ProjectEnv;
+  secrets?: Record<string, string>;
+  secret_names?: string[];
 };
 
 type LocalProjectOptions = CreateProjectOptions & {
@@ -605,18 +607,24 @@ async function resolveStartMetadata({
     run_quota: run_quota ?? (existing as any)?.run_quota,
     image: image ?? existing?.image ?? undefined,
     env: (existing as any)?.env,
+    secrets: (existing as any)?.secrets,
   };
   const needsMaster =
     !resolved.image ||
     resolved.authorized_keys == null ||
     resolved.run_quota == null ||
     resolved.env == null ||
+    resolved.secrets == null ||
     !existing?.title;
   if (needsMaster) {
     try {
       const authoritative =
         await loadProjectStartMetadataFromMaster(project_id);
       if (authoritative) {
+        const secret_names =
+          authoritative.secrets == null
+            ? undefined
+            : Object.keys(authoritative.secrets).sort();
         resolved = {
           title: authoritative.title ?? existing?.title,
           users: authoritative.users,
@@ -625,6 +633,8 @@ async function resolveStartMetadata({
             resolved.authorized_keys ?? authoritative.authorized_keys,
           run_quota: resolved.run_quota ?? authoritative.run_quota,
           env: resolved.env ?? authoritative.env,
+          secrets: resolved.secrets ?? authoritative.secrets,
+          secret_names,
         };
       }
     } catch (err) {
@@ -648,6 +658,16 @@ async function resolveStartMetadata({
       `unable to determine project image for ${project_id}; refusing to fall back to the default image`,
     );
   }
+  const cachedSecretNames = (existing as any)?.secret_names;
+  if (
+    resolved.secrets == null &&
+    Array.isArray(cachedSecretNames) &&
+    cachedSecretNames.length > 0
+  ) {
+    throw new Error(
+      `unable to load project secrets for ${project_id}; refusing to start without configured secrets`,
+    );
+  }
   resolved.image = normalizeImage(resolved.image);
   return resolved;
 }
@@ -661,6 +681,7 @@ export function ensureProjectRow({
   project_bundle_version,
   tools_version,
   authorized_keys,
+  secret_names,
 }: {
   project_id: string;
   opts?: LocalProjectOptions;
@@ -670,6 +691,7 @@ export function ensureProjectRow({
   project_bundle_version?: string | null;
   tools_version?: string | null;
   authorized_keys?: string;
+  secret_names?: string[];
 }) {
   logger.debug("ensureProjectRow", {
     project_id,
@@ -734,6 +756,9 @@ export function ensureProjectRow({
   if (authorized_keys !== undefined) {
     row.authorized_keys = authorized_keys;
   }
+  if (secret_names !== undefined) {
+    row.secret_names = secret_names;
+  }
   if (opts) {
     const title = opts.title?.trim();
     if (title) {
@@ -769,7 +794,7 @@ async function getRunnerConfig(
   project_id: string,
   resolved: Pick<
     StartMetadata,
-    "image" | "authorized_keys" | "run_quota" | "env"
+    "image" | "authorized_keys" | "run_quota" | "env" | "secrets"
   >,
   opts?: {
     restore?: "none" | "auto" | "required";
@@ -808,6 +833,7 @@ async function getRunnerConfig(
     ssh_proxy_public_key,
     run_quota,
     env: resolved.env ?? undefined,
+    secrets: resolved.secrets ?? undefined,
     restore: opts?.restore,
     restore_backup_id: opts?.restore_backup_id,
     lro_op_id: opts?.lro_op_id,
@@ -1118,6 +1144,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         opts,
         state: "starting",
         authorized_keys: (opts as any).authorized_keys,
+        secret_names: resolved.secret_names,
       });
       beginProjectHostActivity(activity_id, "start");
       try {
@@ -1157,6 +1184,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           ssh_port: (status as any)?.ssh_port,
           project_bundle_version: (status as any)?.project_bundle_version,
           tools_version: (status as any)?.tools_version,
+          secret_names: resolved.secret_names,
         });
         kickOffAcpRehydrate(project_id, "createProject: post-start");
       } finally {
@@ -1227,6 +1255,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           image: startMetadata.image,
         },
         state: "starting",
+        secret_names: startMetadata.secret_names,
       });
       publishStartProgress({
         activity_id,
@@ -1255,6 +1284,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
             authorized_keys: startMetadata.authorized_keys,
             run_quota: startMetadata.run_quota,
             env: startMetadata.env,
+            secrets: startMetadata.secrets,
           },
           {
             restore,
@@ -1306,6 +1336,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
                 authorized_keys: startMetadata.authorized_keys,
                 run_quota: startMetadata.run_quota,
                 env: startMetadata.env,
+                secrets: startMetadata.secrets,
               },
               {
                 restore,
@@ -1354,6 +1385,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         ssh_port: (status as any)?.ssh_port,
         project_bundle_version: (status as any)?.project_bundle_version,
         tools_version: (status as any)?.tools_version,
+        secret_names: startMetadata.secret_names,
       });
       // During move/restore the destination project root may not exist until
       // runnerApi.start has created or restored it, so ACP rehydrate must wait.
@@ -1401,6 +1433,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           image: resolved?.image,
         },
         state: "opened",
+        secret_names: resolved?.secret_names,
       });
       publishStartProgress({
         activity_id,

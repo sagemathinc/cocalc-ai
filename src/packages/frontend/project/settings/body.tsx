@@ -30,6 +30,7 @@ import { ProjectCapabilities } from "./project-capabilites";
 import { ProjectControl } from "./project-control";
 import { useRunQuota } from "./run-quota/hooks";
 import SavingProjectSettingsError from "./saving-project-settings-error";
+import { ProjectSecrets } from "./secrets";
 import { SSHPanel } from "./ssh";
 import { Project } from "./types";
 import { lite } from "@cocalc/frontend/lite";
@@ -107,6 +108,7 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
             />
           )}
           {!lite && <Environment key="environment" project_id={project_id} />}
+          {!lite && <ProjectSecrets key="secrets" project_id={project_id} />}
           {!lite && showDatastore && (
             <Datastore key="datastore" project_id={project_id} />
           )}

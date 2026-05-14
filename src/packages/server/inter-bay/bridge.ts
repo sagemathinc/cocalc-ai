@@ -24,6 +24,8 @@ import {
   type InterBayProjectReferenceApi,
   createInterBayProjectCollabInviteClient,
   type InterBayProjectCollabInviteApi,
+  createInterBayProjectSecretsClient,
+  type InterBayProjectSecretsApi,
 } from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -66,6 +68,10 @@ export interface InterBayBridge {
     dest_bay: string,
     opts?: { timeout_ms?: number },
   ): InterBayProjectCollabInviteApi;
+  projectSecrets(
+    dest_bay: string,
+    opts?: { timeout_ms?: number },
+  ): InterBayProjectSecretsApi;
   bayOps(dest_bay: string, opts?: { timeout_ms?: number }): InterBayBayOpsApi;
 }
 
@@ -166,6 +172,17 @@ class LocalOnlyInterBayBridge implements InterBayBridge {
     opts: { timeout_ms?: number } = {},
   ): InterBayProjectCollabInviteApi {
     return createInterBayProjectCollabInviteClient({
+      client: this.client,
+      dest_bay,
+      timeout: opts.timeout_ms,
+    });
+  }
+
+  projectSecrets(
+    dest_bay: string,
+    opts: { timeout_ms?: number } = {},
+  ): InterBayProjectSecretsApi {
+    return createInterBayProjectSecretsClient({
       client: this.client,
       dest_bay,
       timeout: opts.timeout_ms,

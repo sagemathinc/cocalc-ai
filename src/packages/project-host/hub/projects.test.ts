@@ -704,6 +704,7 @@ describe("project host start ACP rehydrate ordering", () => {
       authorized_keys: "ssh-ed25519 AAAATEST user@test",
       run_quota: { memory_limit: 1234 },
       env: { FOO: "bar" },
+      secrets: { API_KEY: "secret" },
     });
 
     const { wireProjectsApi } = await import("./projects");
@@ -724,6 +725,7 @@ describe("project host start ACP rehydrate ordering", () => {
         image: customImage,
         authorized_keys: "ssh-ed25519 AAAATEST user@test",
         env: { FOO: "bar" },
+        secrets: { API_KEY: "secret" },
       }),
     });
     expect(upsertProject).toHaveBeenCalledWith(
@@ -731,8 +733,37 @@ describe("project host start ACP rehydrate ordering", () => {
         project_id,
         title: "dev",
         image: customImage,
+        secret_names: ["API_KEY"],
       }),
     );
+  });
+
+  it("fails closed when cached secret names exist but master metadata is unavailable", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    getProject.mockReturnValue({
+      image: customImage,
+      title: "dev",
+      authorized_keys: "ssh-ed25519 AAAATEST user@test",
+      run_quota: undefined,
+      secret_names: ["API_KEY"],
+    });
+    getMasterConatClient.mockReturnValue({ nats: true });
+    callHub.mockRejectedValue(new Error("master unavailable"));
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(hubApi.projects.start({ project_id })).rejects.toThrow(
+      "refusing to start without configured secrets",
+    );
+    expect(runnerApi.start).not.toHaveBeenCalled();
   });
 
   it("falls back to persisted current-image.txt when master metadata is unavailable", async () => {

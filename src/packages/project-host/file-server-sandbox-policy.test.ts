@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createProjectSandboxFilesystem } from "./file-server-sandbox-policy";
+import { PROJECT_SECRETS_MOUNT_PATH } from "@cocalc/util/project-secrets-constants";
 
 describe("file-server sandbox policy", () => {
   const project_id = "00000000-1000-4000-8000-000000000000";
@@ -70,6 +71,30 @@ describe("file-server sandbox policy", () => {
     await expect(fs.writeFile("/scratch/legacy.txt", "legacy")).rejects.toThrow(
       "'/scratch' is no longer supported. Use '/tmp' instead.",
     );
+  });
+
+  it("does not expose runtime project secrets through file-server paths", async () => {
+    const base = await mkdtemp(join(tmpdir(), "cocalc-fs-policy-"));
+    const home = join(base, "home");
+    const rootfs = join(base, "rootfs");
+    const scratch = join(base, "scratch");
+    await mkdir(home, { recursive: true });
+    await mkdir(rootfs, { recursive: true });
+    await mkdir(scratch, { recursive: true });
+
+    const fs = createProjectSandboxFilesystem({
+      project_id,
+      home,
+      rootfs,
+      scratch,
+    });
+
+    await expect(
+      fs.readFile(`${PROJECT_SECRETS_MOUNT_PATH}/API_KEY`, "utf8"),
+    ).rejects.toThrow();
+    await expect(
+      fs.writeFile(`${PROJECT_SECRETS_MOUNT_PATH}/API_KEY`, "leak"),
+    ).rejects.toThrow();
   });
 
   it("routes snapshot rm to deleteSnapshot for runtime-home paths", async () => {

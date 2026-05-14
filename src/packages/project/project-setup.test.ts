@@ -10,6 +10,10 @@ jest.mock("@cocalc/project/logger", () => ({
 }));
 
 import { cleanup, set_extra_env } from "./project-setup";
+import {
+  PROJECT_SECRETS_ENV,
+  PROJECT_SECRETS_MOUNT_PATH,
+} from "@cocalc/util/project-secrets";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -38,6 +42,7 @@ describe("project environment cleanup", () => {
     process.env.COCALC_EXTRA_ENV = Buffer.from(
       JSON.stringify({ FOO: "bar" }),
     ).toString("base64");
+    process.env[PROJECT_SECRETS_ENV] = PROJECT_SECRETS_MOUNT_PATH;
     process.env.COCALC_PROJECT_ID = "test-project";
     process.env.COCALC_SECRET_TOKEN = "/tmp/secret-token";
     process.env.COCALC_LOGS = "/home/user/.cache/cocalc/project";
@@ -47,6 +52,7 @@ describe("project environment cleanup", () => {
     expect(process.env.COCALC_PROXY_HOST).toBe("0.0.0.0");
     expect(process.env.COCALC_PROXY_PORT).toBe("18080");
     expect(process.env.COCALC_EXTRA_ENV).toBeDefined();
+    expect(process.env[PROJECT_SECRETS_ENV]).toBe(PROJECT_SECRETS_MOUNT_PATH);
     expect(process.env.COCALC_PROJECT_ID).toBeUndefined();
     expect(process.env.COCALC_SECRET_TOKEN).toBeUndefined();
     expect(process.env.COCALC_LOGS).toBeUndefined();

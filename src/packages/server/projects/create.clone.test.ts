@@ -20,6 +20,7 @@ let releaseMock: jest.Mock;
 let resolveHostBayMock: jest.Mock;
 let hostConnectionGetMock: jest.Mock;
 let hostControlCreateProjectMock: jest.Mock;
+let copyProjectSecretsMock: jest.Mock;
 let insertedProjectId: string | undefined;
 
 const ACCOUNT_ID = "6e22d250-68d4-46fb-9851-80fbeaa2d6b6";
@@ -146,6 +147,11 @@ jest.mock("@cocalc/server/project-backup", () => ({
     resolveProjectBackupRepoAssignmentMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/project-secrets", () => ({
+  __esModule: true,
+  copyProjectSecrets: (...args: any[]) => copyProjectSecretsMock(...args),
+}));
+
 describe("projects.createProject clone routing", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -183,6 +189,11 @@ describe("projects.createProject clone routing", () => {
     hostControlCreateProjectMock = jest.fn(async () => ({
       project_id: insertedProjectId,
       state: { state: "stopped" },
+    }));
+    copyProjectSecretsMock = jest.fn(async () => ({
+      copied: ["API_KEY"],
+      conflicts: [],
+      missing: [],
     }));
     releaseMock = jest.fn();
     queryMock = jest.fn(async (sql: string, params: any[]) => {
@@ -256,6 +267,9 @@ describe("projects.createProject clone routing", () => {
         expect(params[9]).toBe("bay-0");
         return { rowCount: 1 };
       }
+      if (sql === "DELETE FROM projects WHERE project_id=$1") {
+        return { rowCount: 1 };
+      }
       if (sql.includes("INSERT INTO project_rootfs_states")) {
         expect(params[0]).toBe(insertedProjectId);
         expect(params[1]).toBe(SOURCE_PROJECT_ID);
@@ -314,6 +328,11 @@ describe("projects.createProject clone routing", () => {
       project_id,
       src_project_id: SOURCE_PROJECT_ID,
     });
+    expect(copyProjectSecretsMock).toHaveBeenCalledWith({
+      source_project_id: SOURCE_PROJECT_ID,
+      target_project_id: project_id,
+      account_id: ACCOUNT_ID,
+    });
     expect(hostControlCreateProjectMock).toHaveBeenCalledWith(
       expect.objectContaining({
         account_id: ACCOUNT_ID,
@@ -324,6 +343,30 @@ describe("projects.createProject clone routing", () => {
         }),
       }),
     );
+  });
+
+  it("fails clone creation when project secrets cannot be copied", async () => {
+    copyProjectSecretsMock = jest.fn(async () => {
+      throw new Error("secret copy failed");
+    });
+    const createProject = (await import("./create")).default;
+
+    await expect(
+      createProject({
+        title: "Clone test",
+        description: "desc",
+        account_id: ACCOUNT_ID,
+        src_project_id: SOURCE_PROJECT_ID,
+        rootfs_image: "buildpack-deps:noble-scm",
+        start: false,
+      }),
+    ).rejects.toThrow("failed to copy project secrets for clone");
+
+    expect(queryMock).toHaveBeenCalledWith(
+      "DELETE FROM projects WHERE project_id=$1",
+      [insertedProjectId],
+    );
+    expect(hostControlCreateProjectMock).not.toHaveBeenCalled();
   });
 
   it("blocks project creation when the owner already reached max_projects", async () => {

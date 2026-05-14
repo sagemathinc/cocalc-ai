@@ -12,6 +12,10 @@ import { getOwnedProcessRegistry } from "@cocalc/project/project-info";
 import { supportsTerminalCwdLookup, terminalCwdForPid } from "./terminal/cwd";
 import { console_init_filename, path_split } from "@cocalc/util/misc";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
+import {
+  PROJECT_SECRETS_ENV,
+  PROJECT_SECRETS_MOUNT_PATH,
+} from "@cocalc/util/project-secrets";
 
 const logger = getLogger("project:conat:terminal-server");
 
@@ -36,6 +40,7 @@ export function projectScopedCliEnv(): Record<string, string> {
     COCALC_API_URL: conatServer,
     COCALC_PROJECT_ID: project_id,
     COCALC_SECRET_TOKEN: join(data, "secret-token"),
+    [PROJECT_SECRETS_ENV]: PROJECT_SECRETS_MOUNT_PATH,
   };
 }
 

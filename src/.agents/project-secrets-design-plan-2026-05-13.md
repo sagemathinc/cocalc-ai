@@ -46,7 +46,7 @@ The section supports:
 - replace a secret value.
 - delete a secret.
 - show runtime path for each secret.
-- explain that changes require project restart for the first implementation.
+- explain that changes require project restart.
 
 The UI does not reveal secret values after save. A user with runtime access can
 inspect the mounted file in a terminal if they truly need the value.
@@ -110,8 +110,9 @@ PROJECT_ENV_VALUE_MAX_BYTES = 16 * 1024;
 PROJECT_ENV_TOTAL_MAX_BYTES = 128 * 1024;
 ```
 
-These are intentionally conservative. They can later become membership-tier
-limits if needed.
+These are intentionally conservative. Keep them as fixed product/security caps
+for now, not membership-tier limits. This feature encourages safer secret
+handling and should not be gated by paid tier.
 
 Existing project environment variables should get caps as part of this work.
 Current `setProjectEnv` writes the `projects.env` JSON value directly after
@@ -125,7 +126,7 @@ Secret names become filenames, so validation must be strict.
 Suggested rule:
 
 ```text
-^[A-Z0-9_][A-Z0-9_.-]{0,127}$
+^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$
 ```
 
 Also reject:
@@ -133,8 +134,10 @@ Also reject:
 - names containing `/`.
 - names containing `..`.
 - names equal to `.` or `..`.
-- names that differ only by case from an existing secret, unless we make names
-  case-sensitive end-to-end. Prefer uppercase names in UI examples.
+
+Secret names are case-sensitive because CoCalc project runtimes are
+case-sensitive Linux filesystems. UI examples should prefer uppercase names, but
+the API should not collapse or reject case-distinct names.
 
 This rule is intentionally environment-variable-like while allowing dots and
 dashes for common secret file naming.
@@ -213,11 +216,13 @@ Optional later:
 
 Permissions:
 
-- require project collaborator for list/set/delete initially.
+- require project collaborator for list/set/delete.
 - require project collaborator on both source and target for copy.
-- consider requiring owner/admin for set/delete before public release if
-  collaborator write access is too broad.
 - admins may list metadata without project membership only through admin paths.
+
+Rationale: CoCalc projects generally treat collaborators as operational peers.
+The owner is special for billing and ownership invariants, but collaborators
+often do the technical project setup work.
 
 Return values:
 
@@ -403,8 +408,9 @@ The host-side plaintext directory must be:
 Use atomic write into a temporary directory and rename into place to avoid
 partially materialized secret sets.
 
-First implementation can require project restart after secret changes. Hot
-reload can come later. (USER: yes, required project restart is fine for now.)
+Secret changes require project restart. Do not implement hot reload unless there
+is a strong future product reason; restart-required keeps the feature simpler
+and easier to audit.
 
 `COCALC_SECRETS` should be set even when a project has zero secrets. Prefer
 mounting an empty read-only directory for predictable scripts.
@@ -448,6 +454,12 @@ Still audit these paths:
 If any code can access arbitrary absolute host paths, ensure it cannot traverse
 into the host-side secret materialization directory.
 
+Hard requirement: non-runtime access paths must deny `/run/secrets/cocalc` and
+the host-side secret materialization directory explicitly. Project file
+archive/download, public directory sharing, app/public previews, and file-server
+absolute path handling must not expose mounted secrets. The only intended access
+path is direct filesystem access by code running inside the project container.
+
 ## Environment Variables Hardening
 
 Do not merge secrets and environment variables.
@@ -467,6 +479,13 @@ Add validation/caps to `setProjectEnv`:
 
 This avoids repeating the class of incident where secrets and plain env config
 are mixed in the same storage/access path.
+
+Add a clear warning to the existing frontend Project Settings environment
+variable section:
+
+> Do not store API keys, private keys, or tokens in environment variables. Use
+> Project Secrets instead, which are encrypted at rest and mounted only at
+> runtime.
 
 ## UI Plan
 
@@ -576,26 +595,21 @@ Recommended first policy:
 - Verify cloned projects receive re-encrypted copies of source project secrets.
 - Verify central hub outage behavior.
 
-## Open Questions
+## Resolved Design Decisions
 
-- Should set/delete require owner/admin instead of any collaborator? Initial
-  collaborator access is simple and matches project-scoped runtime access, but
-  owner/admin-only reduces accidental secret changes.
-- Should secret names be case-insensitive? Prefer case-sensitive storage but
-  reject case-collisions in the UI/API to avoid cross-platform confusion.
-- Should there be a membership-tier cap later? Start with constants.
-- Should project-host receive the derived `project-secrets:v1` key at startup or
-  per project-start request? Startup is simpler; per-request reduces exposure
-  but adds complexity.
-- Should hot reload be supported later? Yes, but restart-required is safer for
-  the first release.
+- Any project collaborator can list/set/delete project secrets.
+- Copy requires collaborator access to both source and target projects.
+- Secret names are case-sensitive.
+- Caps are fixed constants, not membership-tier based.
+- Project-host receives the derived `project-secrets:v1` key at startup.
+- Secret changes require project restart.
 
 ## Release Recommendation
 
 This is a valuable security feature, but not a blocker for `cocalc.ai` release
 unless we need to store operational secrets inside CoCalc projects for launch.
 
-If implemented before release, keep the first version intentionally strict:
+If implemented before release, keep the implementation intentionally strict:
 
 - no reveal.
 - restart required.
@@ -603,3 +617,5 @@ If implemented before release, keep the first version intentionally strict:
 - project-scoped only.
 - file mounts only, no env injection.
 - fail start if configured secrets cannot be materialized.
+
+These are reasonable long-term boundaries, not just first-version shortcuts.

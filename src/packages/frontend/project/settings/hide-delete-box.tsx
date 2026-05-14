@@ -8,6 +8,7 @@ import { defineMessage, FormattedMessage, useIntl } from "react-intl";
 
 import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import {
+  HelpIcon,
   Icon,
   Paragraph,
   SettingBox,
@@ -104,7 +105,6 @@ export function HideDeleteBox(props: Readonly<Props>) {
       return (
         <Button
           danger
-          style={{ float: "right" }}
           onClick={toggle_delete_project}
           icon={<Icon name="trash" />}
         >
@@ -129,11 +129,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
           styles={{ root: { maxWidth: "400px" } }}
           icon={<Icon name="trash" />}
         >
-          <Button
-            danger
-            style={{ float: "right" }}
-            icon={<Icon name="trash" />}
-          >
+          <Button danger icon={<Icon name="trash" />}>
             {deleteUndeleteMsg}...
           </Button>
         </Popconfirm>
@@ -191,16 +187,33 @@ export function HideDeleteBox(props: Readonly<Props>) {
       defaultMessage: `{hidden, select, true {Hidden} other {Visible}}`,
       description: "The project is either visible or hidden",
     });
+    const deleteHelpTitle = intl.formatMessage(
+      {
+        id: "project.settings.hide-delete-box.delete.help.title",
+        defaultMessage: "Delete this {projectLabel}",
+      },
+      { projectLabel: projectLabelLower },
+    );
 
     return (
       <>
         <Row style={{ color: COLORS.GRAY_M }}>
           <Col sm={12}>
-            <Title level={4}>
-              <Icon name={hidden ? "eye-slash" : "eye"} /> {hide_label}
+            <Title level={4} style={{ marginBottom: 0, textAlign: "center" }}>
+              <Icon name={hidden ? "eye-slash" : "eye"} /> {hide_label}{" "}
+              <HelpIcon title={hide_label} placement="right">
+                {hide_message()}
+              </HelpIcon>
+            </Title>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                marginTop: "12px",
+              }}
+            >
               <Switch
                 checked={hidden}
-                style={{ float: "right" }}
                 checkedChildren={intl.formatMessage(hide_switch, {
                   hidden: true,
                 })}
@@ -209,33 +222,40 @@ export function HideDeleteBox(props: Readonly<Props>) {
                 })}
                 onChange={toggle_hide_project}
               />
-            </Title>
-            <Paragraph>{hide_message()}</Paragraph>
+            </div>
           </Col>
         </Row>
         <hr />
         <Row>
           <Col sm={12}>
-            <Title level={4}>
+            <Title level={4} style={{ marginBottom: 0, textAlign: "center" }}>
               <Icon name="trash" /> {deleteUndeleteMsg}{" "}
-              {render_delete_undelete_button()}
+              <HelpIcon title={deleteHelpTitle} placement="right">
+                <div>{delete_message()}</div>
+                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                  <FormattedMessage
+                    id="project.settings.hide-delete-box.delete.disclaimer"
+                    defaultMessage={`{projectsLabel} are not immediately deleted.
+                    If you need to permanently and immediately delete some sensitive information in this {projectLabel},
+                    contact {help}.`}
+                    values={{
+                      help: <HelpEmailLink />,
+                      projectsLabel: projectsLabelLower,
+                      projectLabel: projectLabelLower,
+                    }}
+                  />
+                </Paragraph>
+              </HelpIcon>
             </Title>
-          </Col>
-          <Col sm={12}>
-            <Paragraph>{delete_message()}</Paragraph>
-            <Paragraph type="secondary">
-              <FormattedMessage
-                id="project.settings.hide-delete-box.delete.disclaimer"
-                defaultMessage={`{projectsLabel} are not immediately deleted.
-                If you need to permanently and immediately delete some sensitive information in this {projectLabel},
-                contact {help}.`}
-                values={{
-                  help: <HelpEmailLink />,
-                  projectsLabel: projectsLabelLower,
-                  projectLabel: projectLabelLower,
-                }}
-              />
-            </Paragraph>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                marginTop: "12px",
+              }}
+            >
+              {render_delete_undelete_button()}
+            </div>
           </Col>
         </Row>
       </>
