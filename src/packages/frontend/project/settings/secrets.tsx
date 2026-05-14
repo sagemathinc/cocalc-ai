@@ -20,6 +20,7 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 import {
   React,
+  redux,
   useIsMountedRef,
   useMemo,
   useState,
@@ -130,6 +131,10 @@ export const ProjectSecrets: React.FC<Props> = ({
   );
   const [sshKeyResult, setSshKeyResult] =
     useState<GenerateProjectSshKeySecretResult | null>(null);
+  const [sshRestartState, setSshRestartState] = useState<
+    "queued" | "failed" | null
+  >(null);
+  const [sshRestartError, setSshRestartError] = useState<string>("");
   const [showRestartWarning, setShowRestartWarning] = useState<boolean>(false);
 
   const trimmedName = name.trim();
@@ -143,6 +148,12 @@ export const ProjectSecrets: React.FC<Props> = ({
     (secret) => secret.name === PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME,
   );
   const sshNewlineWarning = sshPrivateKeyMissingFinalNewline(value);
+
+  function clearSshKeyResult(): void {
+    setSshKeyResult(null);
+    setSshRestartState(null);
+    setSshRestartError("");
+  }
 
   async function setSecret(): Promise<void> {
     if (!trimmedName) {
@@ -168,7 +179,8 @@ export const ProjectSecrets: React.FC<Props> = ({
     setSaving(true);
     setError("");
     setCopyResult(null);
-    setSshKeyResult(null);
+    clearSshKeyResult();
+    setShowRestartWarning(false);
     try {
       const metadata =
         await webapp_client.conat_client.hub.projects.setProjectSecret({
@@ -199,7 +211,8 @@ export const ProjectSecrets: React.FC<Props> = ({
     setSaving(true);
     setError("");
     setCopyResult(null);
-    setSshKeyResult(null);
+    clearSshKeyResult();
+    setShowRestartWarning(false);
     try {
       const result =
         await webapp_client.conat_client.hub.projects.deleteProjectSecret({
@@ -242,7 +255,8 @@ export const ProjectSecrets: React.FC<Props> = ({
     setSaving(true);
     setError("");
     setCopyResult(null);
-    setSshKeyResult(null);
+    clearSshKeyResult();
+    setShowRestartWarning(false);
     try {
       const result =
         await webapp_client.conat_client.hub.projects.copyProjectSecrets({
@@ -288,7 +302,8 @@ export const ProjectSecrets: React.FC<Props> = ({
     setSaving(true);
     setError("");
     setCopyResult(null);
-    setSshKeyResult(null);
+    clearSshKeyResult();
+    setShowRestartWarning(false);
     try {
       const result =
         await webapp_client.conat_client.hub.projects.generateProjectSshKeySecret(
@@ -299,11 +314,22 @@ export const ProjectSecrets: React.FC<Props> = ({
       if (!isMountedRef.current) return;
       setSecrets(upsertMetadata(secrets, result.secret));
       setSshKeyResult(result);
-      setShowRestartWarning(result.restart_required);
       publishProjectDetailInvalidation({
         project_id,
         fields: ["secrets"],
       });
+      try {
+        await redux.getActions("projects").restart_project(project_id);
+        if (!isMountedRef.current) return;
+        setSshRestartState("queued");
+        setSshRestartError("");
+        setShowRestartWarning(false);
+      } catch (err) {
+        if (!isMountedRef.current) return;
+        setSshRestartState("failed");
+        setSshRestartError(`${err}`);
+        setShowRestartWarning(result.restart_required);
+      }
     } catch (err) {
       if (!isMountedRef.current) return;
       setError(`${err}`);
@@ -419,11 +445,19 @@ export const ProjectSecrets: React.FC<Props> = ({
       <Alert
         banner
         showIcon
-        type={sshKeyResult.setup.ok ? "success" : "warning"}
+        type={
+          sshKeyResult.setup.ok && sshRestartState !== "failed"
+            ? "success"
+            : "warning"
+        }
         message={
-          sshKeyResult.setup.ok
-            ? "Generated SSH deploy key secret."
-            : "Generated SSH deploy key secret, but project file setup needs attention."
+          sshRestartState === "queued"
+            ? "Generated SSH deploy key secret and queued project restart."
+            : sshRestartState === "failed"
+              ? "Generated SSH deploy key secret, but project restart needs attention."
+              : sshKeyResult.setup.ok
+                ? "Generated SSH deploy key secret."
+                : "Generated SSH deploy key secret, but project file setup needs attention."
         }
         description={
           <Space direction="vertical" style={{ width: "100%" }}>
@@ -446,6 +480,23 @@ export const ProjectSecrets: React.FC<Props> = ({
             {!sshKeyResult.setup.ok ? (
               <Typography.Text type="warning">
                 Setup error: {sshKeyResult.setup.error}
+              </Typography.Text>
+            ) : undefined}
+            {sshRestartState === "queued" ? (
+              <Typography.Text>
+                Project restart has been queued. The private key will be
+                available at{" "}
+                <Typography.Text code>
+                  {secretPath(sshKeyResult.secret_name)}
+                </Typography.Text>{" "}
+                after the restart completes.
+              </Typography.Text>
+            ) : undefined}
+            {sshRestartState === "failed" ? (
+              <Typography.Text type="warning">
+                The SSH key was generated, but the project restart was not
+                queued: {sshRestartError}. Restart this project manually before
+                using the key.
               </Typography.Text>
             ) : undefined}
             <div>
@@ -561,16 +612,52 @@ export const ProjectSecrets: React.FC<Props> = ({
                 </Typography.Text>{" "}
                 already exists.
               </Typography.Text>
-              <Button
+              <Popconfirm
                 disabled={
                   saving ||
                   sshSecretExists ||
                   sortedSecrets.length >= PROJECT_SECRETS_MAX_COUNT
                 }
-                onClick={generateSshKeySecret}
+                title={
+                  <Space direction="vertical" style={{ maxWidth: 440 }}>
+                    <Typography.Text strong>
+                      Generate an SSH keypair and restart this project?
+                    </Typography.Text>
+                    <Typography.Text>
+                      This creates a new ed25519 keypair, stores the private key
+                      as the project secret{" "}
+                      <Typography.Text code>
+                        {PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME}
+                      </Typography.Text>
+                      , writes{" "}
+                      <Typography.Text code>
+                        {PROJECT_SECRETS_SSH_PUBLIC_KEY_PATH}
+                      </Typography.Text>
+                      , creates{" "}
+                      <Typography.Text code>
+                        {PROJECT_SECRETS_SSH_PRIVATE_KEY_PATH}
+                      </Typography.Text>{" "}
+                      as a symlink to the mounted secret, and restarts this
+                      project so SSH can use it.
+                    </Typography.Text>
+                  </Space>
+                }
+                okText="Generate and Restart"
+                cancelText="Cancel"
+                onConfirm={generateSshKeySecret}
               >
-                Generate SSH Key Secret
-              </Button>
+                <Button
+                  disabled={
+                    saving ||
+                    sshSecretExists ||
+                    sortedSecrets.length >= PROJECT_SECRETS_MAX_COUNT
+                  }
+                >
+                  {saving
+                    ? "Generating..."
+                    : "Generate SSH Key Secret and Restart Project"}
+                </Button>
+              </Popconfirm>
               {sshSecretExists ? (
                 <Typography.Text type="secondary">
                   {PROJECT_SECRETS_SSH_PRIVATE_KEY_NAME} already exists.
