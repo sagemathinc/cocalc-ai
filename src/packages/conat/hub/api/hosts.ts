@@ -15,6 +15,7 @@ import {
   type ProjectCopyState,
   type ProjectEnv,
 } from "@cocalc/conat/hub/api/projects";
+import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
 import type {
   RootfsReleaseArtifactAccess,
   RootfsReleaseGcStatus,
@@ -1395,6 +1396,7 @@ export interface Hosts {
     authorized_keys?: string;
     run_quota?: any;
     env?: ProjectEnv;
+    project_secrets_cache?: ProjectSecretsRuntimeCache;
   }>;
   updateCopyStatus: (opts: {
     host_id?: string;

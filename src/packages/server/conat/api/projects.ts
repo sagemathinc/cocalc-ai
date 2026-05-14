@@ -120,6 +120,7 @@ import {
   exportProjectSecretsForCopy,
   importProjectSecretsForCopy,
   listProjectSecrets as listProjectSecretsInDb,
+  getProjectSecretsRuntimeCache,
   setProjectSecret as setProjectSecretInDb,
 } from "@cocalc/server/projects/project-secrets";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
@@ -462,6 +463,37 @@ function normalizeImportTargetPath(path?: string): string {
 
 async function getProjectHostId(project_id: string): Promise<string> {
   return (await getAssignedProjectHostInfo(project_id)).host_id;
+}
+
+async function syncProjectSecretsCacheOnAssignedHost({
+  project_id,
+}: {
+  project_id: string;
+}): Promise<void> {
+  let host_id: string;
+  try {
+    host_id = await getProjectHostId(project_id);
+  } catch (err) {
+    log.debug("project secrets cache sync skipped; no assigned host", {
+      project_id,
+      err: `${err}`,
+    });
+    return;
+  }
+  try {
+    const cache = await getProjectSecretsRuntimeCache({ project_id });
+    const client = await getRoutedHostControlClient({
+      host_id,
+      timeout: 30_000,
+    });
+    await client.syncProjectSecretsCache({ project_id, cache });
+  } catch (err) {
+    log.warn("project secrets cache sync to host failed", {
+      project_id,
+      host_id,
+      err: `${err}`,
+    });
+  }
 }
 
 async function resolvePublicImportSource({
@@ -981,6 +1013,7 @@ export async function setProjectSecret({
     project_id,
     fields: ["secrets"],
   });
+  await syncProjectSecretsCacheOnAssignedHost({ project_id });
   return result;
 }
 
@@ -1013,6 +1046,9 @@ export async function deleteProjectSecret({
     project_id,
     fields: ["secrets"],
   });
+  if (deleted) {
+    await syncProjectSecretsCacheOnAssignedHost({ project_id });
+  }
   return { deleted };
 }
 
@@ -1115,6 +1151,9 @@ export async function copyProjectSecrets({
         fields: ["secrets"],
       }),
     ]);
+    await syncProjectSecretsCacheOnAssignedHost({
+      project_id: target_project_id,
+    });
   }
   return result;
 }

@@ -19,6 +19,10 @@ import {
   getOrCreateProjectLocalSecretToken,
   upsertProject,
 } from "../sqlite/projects";
+import {
+  getCachedProjectSecretsForRuntime,
+  syncProjectSecretsCache,
+} from "../project-secrets-cache";
 import { upsertProjectStopState } from "../sqlite/stop-policy";
 import { type CreateProjectOptions } from "@cocalc/util/db-schema/projects";
 import type {
@@ -32,6 +36,7 @@ import type {
   ProjectEnv,
 } from "@cocalc/conat/hub/api/projects";
 import type { MembershipEffectiveLimits } from "@cocalc/conat/hub/api/purchases";
+import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
 import type { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import {
   DEFAULT_PROJECT_IMAGE,
@@ -548,6 +553,7 @@ type StartMetadata = {
   run_quota?: any;
   env?: ProjectEnv;
   secrets?: Record<string, string>;
+  project_secrets_cache?: ProjectSecretsRuntimeCache;
   secret_names?: string[];
 };
 
@@ -602,12 +608,31 @@ async function resolveStartMetadata({
   image?: string;
 }): Promise<StartMetadata> {
   const existing = getProject(project_id);
+  const cachedSecretNames = (existing as any)?.secret_names;
+  let cachedSecrets: Record<string, string> | undefined;
+  if (Array.isArray(cachedSecretNames)) {
+    if (cachedSecretNames.length === 0) {
+      cachedSecrets = {};
+    } else {
+      const loaded = getCachedProjectSecretsForRuntime({ project_id });
+      const loadedNames = loaded == null ? [] : Object.keys(loaded).sort();
+      const expectedNames = [...cachedSecretNames].sort();
+      if (
+        loaded != null &&
+        loadedNames.length === expectedNames.length &&
+        loadedNames.every((name, i) => name === expectedNames[i])
+      ) {
+        cachedSecrets = loaded;
+      }
+    }
+  }
   let resolved: StartMetadata = {
     authorized_keys: authorized_keys ?? existing?.authorized_keys ?? undefined,
     run_quota: run_quota ?? (existing as any)?.run_quota,
     image: image ?? existing?.image ?? undefined,
     env: (existing as any)?.env,
-    secrets: (existing as any)?.secrets,
+    secrets: cachedSecrets,
+    secret_names: cachedSecretNames,
   };
   const needsMaster =
     !resolved.image ||
@@ -621,10 +646,18 @@ async function resolveStartMetadata({
       const authoritative =
         await loadProjectStartMetadataFromMaster(project_id);
       if (authoritative) {
-        const secret_names =
+        let secrets = authoritative.secrets;
+        let secret_names =
           authoritative.secrets == null
             ? undefined
             : Object.keys(authoritative.secrets).sort();
+        if (authoritative.project_secrets_cache != null) {
+          secret_names = syncProjectSecretsCache({
+            project_id,
+            cache: authoritative.project_secrets_cache,
+          });
+          secrets = getCachedProjectSecretsForRuntime({ project_id }) ?? {};
+        }
         resolved = {
           title: authoritative.title ?? existing?.title,
           users: authoritative.users,
@@ -633,7 +666,7 @@ async function resolveStartMetadata({
             resolved.authorized_keys ?? authoritative.authorized_keys,
           run_quota: resolved.run_quota ?? authoritative.run_quota,
           env: resolved.env ?? authoritative.env,
-          secrets: resolved.secrets ?? authoritative.secrets,
+          secrets: secrets ?? resolved.secrets,
           secret_names,
         };
       }
@@ -658,7 +691,6 @@ async function resolveStartMetadata({
       `unable to determine project image for ${project_id}; refusing to fall back to the default image`,
     );
   }
-  const cachedSecretNames = (existing as any)?.secret_names;
   if (
     resolved.secrets == null &&
     Array.isArray(cachedSecretNames) &&

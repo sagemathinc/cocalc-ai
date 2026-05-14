@@ -1283,6 +1283,10 @@ async function startHostControlService(): Promise<void> {
       await (await getHostClient(host_id, 30_000)).updateAuthorizedKeys(update),
     updateProjectUsers: async ({ host_id, update }) =>
       await (await getHostClient(host_id, 30_000)).updateProjectUsers(update),
+    syncProjectSecretsCache: async ({ host_id, sync }) =>
+      await (
+        await getHostClient(host_id, 30_000)
+      ).syncProjectSecretsCache(sync),
     applyPendingCopies: async ({ host_id, apply }) =>
       await (await getHostClient(host_id, 30_000)).applyPendingCopies(apply),
     deleteProjectData: async ({ host_id, del }) =>
