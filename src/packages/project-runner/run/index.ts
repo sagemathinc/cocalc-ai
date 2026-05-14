@@ -12,7 +12,13 @@ import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import { init as initFilesystem, localPath, sshServers } from "./filesystem";
 import getLogger from "@cocalc/backend/logger";
 import { initConatClient } from "./conat-client";
-import { start, stop, status, save } from "./podman";
+import {
+  cleanupStaleProjectSecretsHostPaths,
+  start,
+  stop,
+  status,
+  save,
+} from "./podman";
 
 const logger = getLogger("project-runner:run");
 
@@ -26,6 +32,7 @@ export async function init(opts: { id?: string; client?: ConatClient } = {}) {
   client = opts.client ?? conat();
   initConatClient(client);
   initFilesystem({ client });
+  await cleanupStaleProjectSecretsHostPaths();
   return await projectRunnerServer({
     id,
     client,
