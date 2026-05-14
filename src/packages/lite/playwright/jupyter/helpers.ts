@@ -222,7 +222,7 @@ export async function resolveLoginUrl(): Promise<string | undefined> {
     const data = await runLiteCliJson([
       "admin",
       "user",
-      "issue-auth-token",
+      "issue-impersonation-link",
       accountId,
     ]);
     const issued = `${data.url ?? ""}`.trim();

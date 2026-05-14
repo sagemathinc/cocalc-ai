@@ -204,9 +204,7 @@ cocalc --profile alice --api https://lite4b.cocalc.ai auth login --email alice@e
 - `host issue-http-token`
 - `admin search`
 - `admin user create`
-- `admin user issue-auth-token`
-- `org token create`
-- `org token expire`
+- `admin user issue-impersonation-link`
 - `project proxy url`
 - `project proxy curl`
 - `op list`

@@ -1,6 +1,5 @@
-/* Sign in using an impersonation auth_token. */
+/* Sign in using an impersonation grant. */
 
-import getPool from "@cocalc/database/pool";
 import basePath from "@cocalc/backend/base-path";
 import clientSideRedirect from "@cocalc/server/auth/client-side-redirect";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -31,7 +30,6 @@ export async function signInUsingImpersonateToken({ req, res }) {
 
 async function doIt({ req, res }) {
   const {
-    auth_token,
     retry_token,
     grant_id,
     account_id: account_id_param,
@@ -43,6 +41,9 @@ async function doIt({ req, res }) {
   const hasGrantId = !!grantId;
 
   if (`${retry_token ?? ""}`.trim()) {
+    if (!hasGrantId) {
+      throw Error("grant_id is required");
+    }
     const claims = verifyHomeBayRetryToken({
       token: `${retry_token}`,
       home_bay_id: local_bay_id,
@@ -58,18 +59,7 @@ async function doIt({ req, res }) {
       throw Error("account_id is required for impersonation grants");
     }
   } else {
-    if (!auth_token) {
-      throw Error("invalid empty token");
-    }
-    const pool = getPool();
-    const { rows } = await pool.query(
-      "SELECT account_id FROM auth_tokens WHERE auth_token=$1 AND expire > NOW()",
-      [auth_token],
-    );
-    if (rows.length == 0) {
-      throw Error(`unknown or expired token: '${auth_token}'`);
-    }
-    account_id = rows[0].account_id;
+    throw Error("grant_id is required");
   }
 
   const account = await getClusterAccountById(account_id);
@@ -130,9 +120,6 @@ async function doIt({ req, res }) {
         lang_temp: isLocale(lang_temp) ? lang_temp : undefined,
       },
     });
-  } else {
-    // maxAge = 12 hours
-    await setSignInCookies({ req, res, account_id, maxAge: 12 * 3600 * 1000 });
   }
 
   const target = new URL(

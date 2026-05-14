@@ -34,22 +34,6 @@ function isLikelyExactBrowserId(value: string): boolean {
   return /^[A-Za-z0-9_-]{8,}$/.test(value);
 }
 
-function extractCookieValue(
-  cookieHeaders: string[],
-  name: string,
-): string | undefined {
-  for (const header of cookieHeaders) {
-    const firstPart = `${header ?? ""}`.split(";", 1)[0]?.trim();
-    if (!firstPart) continue;
-    const eq = firstPart.indexOf("=");
-    if (eq <= 0) continue;
-    const key = firstPart.slice(0, eq).trim();
-    if (key !== name) continue;
-    return firstPart.slice(eq + 1).trim();
-  }
-  return;
-}
-
 function getSetCookieHeaders(response: Response): string[] {
   const headers = response.headers as Headers & {
     getSetCookie?: () => string[];
@@ -63,50 +47,16 @@ function getSetCookieHeaders(response: Response): string[] {
 
 async function resolveSpawnRememberMeCookie({
   ctx,
-  apiUrl,
 }: {
   ctx: BrowserCommandContext;
-  apiUrl: string;
 }): Promise<{
   remember_me?: string;
   account_id?: string;
   sign_in_url?: string;
 }> {
-  const authToken = await ctx.hub.system.generateUserAuthToken({
-    user_account_id: ctx.accountId,
+  return await ctx.hub.system.issueBrowserSignInCookie({
+    max_age_ms: DEFAULT_SIGN_IN_COOKIE_MAX_AGE_MS,
   });
-  const url = new URL("/auth/impersonate", apiUrl);
-  url.searchParams.set("auth_token", authToken);
-  try {
-    const cookie = await ctx.hub.system.issueBrowserSignInCookie({
-      max_age_ms: DEFAULT_SIGN_IN_COOKIE_MAX_AGE_MS,
-    });
-    return { ...cookie, sign_in_url: url.toString() };
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : `${err ?? "unknown error"}`;
-    if (!/must be signed in/i.test(message)) {
-      throw err;
-    }
-  }
-
-  const response = await fetch(url.toString(), {
-    redirect: "manual",
-  });
-  const remember_me = extractCookieValue(
-    getSetCookieHeaders(response),
-    "remember_me",
-  );
-  if (!remember_me) {
-    throw new Error(
-      "failed to bootstrap browser remember_me cookie via /auth/impersonate",
-    );
-  }
-  return {
-    remember_me,
-    account_id: ctx.accountId,
-    sign_in_url: url.toString(),
-  };
 }
 
 function firstSetCookiePart(header: string): { name: string; value: string } {
@@ -576,7 +526,6 @@ export function registerBrowserSessionCommands({
             );
             const signInCookie = await resolveSpawnRememberMeCookie({
               ctx,
-              apiUrl: parsedApiUrl,
             });
             const cookieApiUrls = Array.from(
               new Set(

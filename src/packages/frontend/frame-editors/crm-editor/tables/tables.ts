@@ -15,7 +15,6 @@ import "./support-messages";
 import "./client-error-log";
 import "./central-log";
 import "./accounts";
-import "./auth-tokens";
 import "./messages";
 import "./agents";
 import "./patches";

@@ -218,9 +218,6 @@ describe("account rehome", () => {
       ) {
         return { rows: [], rowCount: 0 };
       }
-      if (sql.includes('DELETE FROM "auth_tokens" WHERE account_id=$1')) {
-        return { rows: [], rowCount: 0 };
-      }
       if (sql.includes("DELETE FROM api_keys")) {
         return { rows: [], rowCount: 0 };
       }
@@ -415,9 +412,6 @@ describe("account rehome", () => {
       if (sql.includes('FROM "account_impersonation_sessions"')) {
         return { rows: [{ rows: [] }] };
       }
-      if (sql.includes('FROM "auth_tokens"')) {
-        return { rows: [{ rows: [] }] };
-      }
       if (sql.includes("FROM api_keys") && sql.includes("jsonb_agg")) {
         return { rows: [{ rows: [] }] };
       }
@@ -586,9 +580,6 @@ describe("account rehome", () => {
           'DELETE FROM "account_impersonation_sessions" WHERE subject_account_id=$1',
         )
       ) {
-        return { rows: [], rowCount: 0 };
-      }
-      if (sql.includes('DELETE FROM "auth_tokens" WHERE account_id=$1')) {
         return { rows: [], rowCount: 0 };
       }
       if (sql.includes("DELETE FROM api_keys")) {

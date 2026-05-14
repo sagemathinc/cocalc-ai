@@ -16,12 +16,10 @@ const ORIGINAL_COCALC_PROJECT_ID = process.env.COCALC_PROJECT_ID;
 function makeProgram({
   openFiles,
   listBrowserSessions,
-  generateUserAuthToken,
   getWorkspaceSelection,
 }: {
   openFiles: { project_id: string; title?: string; path: string }[];
   listBrowserSessions?: () => Promise<any[]>;
-  generateUserAuthToken?: () => Promise<string>;
   getWorkspaceSelection?: (opts: { project_id: string }) => Promise<any>;
 }): { program: Command; results: unknown[] } {
   const results: unknown[] = [];
@@ -56,8 +54,6 @@ function makeProgram({
               ]),
             removeBrowserSession: async () => ({ removed: false }),
             issueBrowserSignInCookie: async () => ({}),
-            generateUserAuthToken:
-              generateUserAuthToken ?? (async () => "token"),
           },
         },
       } as any);
@@ -411,9 +407,6 @@ test("browser session spawn fails fast with a clear message under agent auth", a
   delete process.env.COCALC_AGENT_MODE;
   const { program } = makeProgram({
     openFiles: [],
-    generateUserAuthToken: async () => {
-      throw new Error("generateUserAuthToken should not be called");
-    },
   });
 
   await assert.rejects(

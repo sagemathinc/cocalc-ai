@@ -24,12 +24,6 @@ export class AdminClient {
     }
   }
 
-  public async get_user_auth_token(user_account_id: string): Promise<string> {
-    return await this.client.conat_client.hub.system.generateUserAuthToken({
-      user_account_id,
-    });
-  }
-
   public async create_impersonation_grant(opts: {
     subject_account_id: string;
     reason?: string | null;

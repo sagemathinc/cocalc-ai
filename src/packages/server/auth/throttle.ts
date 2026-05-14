@@ -72,7 +72,6 @@ async function logSsoRequiredPasswordBlock({
 export async function signInCheck(
   email: string,
   ip?: string,
-  auth_token: boolean = false,
 ): Promise<string | undefined> {
   if ((emailShortCache.get(email) ?? 0) > 5) {
     // A given email address is allowed at most 5 failed login attempts per minute
@@ -91,18 +90,15 @@ export async function signInCheck(
     // A given ip address is allowed at most 200 failed login attempts per hour.
     return `Too many attempts per hour to sign in from your computer. Wait about an hour, then try again.`;
   }
-  // unless user has an auth token, we check if the email address is part of an exclusive SSO mechanism (and block password sign ins)
-  if (!auth_token) {
-    const exclusiveSSO = await isExclusiveEmail(email);
-    if (exclusiveSSO != null) {
-      const name = exclusiveSSO.display ?? exclusiveSSO.name;
-      await logSsoRequiredPasswordBlock({
-        email,
-        ip,
-        strategy: exclusiveSSO,
-      });
-      return `You have to sign in using the Single-Sign-On mechanism "${name}" of your institution.`;
-    }
+  const exclusiveSSO = await isExclusiveEmail(email);
+  if (exclusiveSSO != null) {
+    const name = exclusiveSSO.display ?? exclusiveSSO.name;
+    await logSsoRequiredPasswordBlock({
+      email,
+      ip,
+      strategy: exclusiveSSO,
+    });
+    return `You have to sign in using the Single-Sign-On mechanism "${name}" of your institution.`;
   }
 }
 
