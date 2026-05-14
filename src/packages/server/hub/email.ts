@@ -15,7 +15,6 @@ import * as fs from "fs";
 import { isEqual, template } from "lodash";
 import { createTransport } from "nodemailer";
 import * as os_path from "path";
-import sanitizeHtml from "sanitize-html";
 import { promisify } from "util";
 import base_path from "@cocalc/backend/base-path";
 import { secrets } from "@cocalc/backend/data";
@@ -38,6 +37,7 @@ import {
   SITE_NAME,
 } from "@cocalc/util/theme";
 import siteUrl from "@cocalc/server/hub/site-url";
+import { sanitizeEmailHtml } from "./html-sanitize";
 
 const fs_readFile_prom = promisify(fs.readFile);
 
@@ -79,7 +79,7 @@ export function escape_email_body(body: string, allow_urls: boolean): string {
   if (allow_urls) {
     allowedTags.push("a");
   }
-  return sanitizeHtml(body, { allowedTags });
+  return sanitizeEmailHtml(body, { allowedTags, allowUrls: allow_urls });
 }
 
 function fallback(val: string | undefined, alt: string) {
