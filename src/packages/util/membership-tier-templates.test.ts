@@ -28,6 +28,10 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(
       (tier.usage_limits as Record<string, unknown>)?.shared_compute_priority,
     ).toBeGreaterThan(0);
+    expect(
+      (tier.usage_limits as Record<string, unknown>)
+        ?.max_sponsored_running_projects,
+    ).toBe(10);
     expect((tier.usage_limits as Record<string, unknown>)?.rootfs_count).toBe(
       250,
     );
@@ -59,6 +63,7 @@ describe("applyMembershipTierTemplateFallbacks", () => {
     expect(tier.usage_limits).toEqual(
       expect.objectContaining({
         shared_compute_priority: 99,
+        max_sponsored_running_projects: 3,
         notification_email_send_limit_5h: 200,
         notification_email_send_limit_7d: 1000,
         prepaid_host_usage_limit_5h_usd: 300,

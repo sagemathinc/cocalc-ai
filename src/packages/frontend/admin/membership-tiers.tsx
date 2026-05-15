@@ -201,6 +201,9 @@ function useMembershipTiers() {
         usage_limit_max_projects: normalizedOptionalNumber(
           editing.usage_limits?.max_projects,
         ),
+        usage_limit_max_sponsored_running_projects: normalizedOptionalNumber(
+          editing.usage_limits?.max_sponsored_running_projects,
+        ),
         usage_limit_max_snapshots_per_project: normalizedOptionalNumber(
           editing.usage_limits?.max_snapshots_per_project,
         ),
@@ -290,6 +293,11 @@ function useMembershipTiers() {
         usage_limits,
         "max_projects",
         values.usage_limit_max_projects,
+      );
+      setOrDeleteUsageLimit(
+        usage_limits,
+        "max_sponsored_running_projects",
+        values.usage_limit_max_sponsored_running_projects,
       );
       setOrDeleteUsageLimit(
         usage_limits,
@@ -655,6 +663,12 @@ export function MembershipTiers() {
             <InputNumber min={0} step={0.1} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item name="usage_limit_max_projects" label="Max projects">
+            <InputNumber min={0} step={1} />
+          </Form.Item>
+          <Form.Item
+            name="usage_limit_max_sponsored_running_projects"
+            label="Max sponsored running projects"
+          >
             <InputNumber min={0} step={1} />
           </Form.Item>
           <Form.Item

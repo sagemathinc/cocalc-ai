@@ -55,6 +55,7 @@ Table({
       "host_id", // project-host placement lookup
       "owning_bay_id", // owning control-plane bay lookup
       "usage_account_id", // membership usage, storage, and egress attribution
+      "runtime_sponsor_account_id", // runtime admission, priority, and RAM-limit attribution
     ],
 
     crm_indexes: ["last_edited"],
@@ -409,6 +410,11 @@ Table({
     usage_account_id: {
       type: "uuid",
       desc: "Optional account id that should be charged membership usage, storage, and managed egress for this project.",
+      render: { type: "account", editable: false },
+    },
+    runtime_sponsor_account_id: {
+      type: "uuid",
+      desc: "Optional account id whose membership sponsors runtime admission, shared compute priority, and RAM limits for this project. If unset, this defaults to usage_account_id, then the project owner.",
       render: { type: "account", editable: false },
     },
   },

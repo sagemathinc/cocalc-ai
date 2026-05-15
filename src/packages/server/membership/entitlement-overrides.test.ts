@@ -29,11 +29,13 @@ function membership(
       },
       usage_limits: {
         max_projects: 10,
+        max_sponsored_running_projects: 3,
         credit_spend_limit_7d_usd: 100,
       },
     },
     effective_limits: {
       max_projects: 10,
+      max_sponsored_running_projects: 3,
       credit_spend_limit_7d_usd: 100,
     },
     ...overrides,
@@ -71,6 +73,7 @@ describe("admin entitlement overrides", () => {
         features: { create_hosts: true },
         usage_limits: {
           max_projects: { mode: "maximum", value: 5 },
+          max_sponsored_running_projects: { mode: "set", value: 2 },
           credit_spend_limit_7d_usd: { mode: "minimum", value: 300 },
         },
         project_defaults: {
@@ -87,6 +90,7 @@ describe("admin entitlement overrides", () => {
     expect(result.entitlements.features?.create_hosts).toBe(true);
     expect(result.effective_limits).toMatchObject({
       max_projects: 5,
+      max_sponsored_running_projects: 2,
       credit_spend_limit_7d_usd: 300,
     });
     expect(result.entitlements.project_defaults).toMatchObject({

@@ -156,6 +156,19 @@ const NUMERIC_FIELDS: NumericOverrideField[] = [
         .adminDescription,
   },
   {
+    id: "max_sponsored_running_projects",
+    section: "usage_limits",
+    key: "max_sponsored_running_projects",
+    label:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .max_sponsored_running_projects.label,
+    unit: MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .max_sponsored_running_projects.unit,
+    description:
+      MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+        .max_sponsored_running_projects.adminDescription,
+  },
+  {
     id: "max_snapshots_per_project",
     section: "usage_limits",
     key: "max_snapshots_per_project",
@@ -426,6 +439,7 @@ const PROJECT_FIELD_IDS = new Set([
   "project_memory",
   "project_memory_request",
   "max_projects",
+  "max_sponsored_running_projects",
   "max_snapshots_per_project",
   "max_backups_per_project",
 ]);

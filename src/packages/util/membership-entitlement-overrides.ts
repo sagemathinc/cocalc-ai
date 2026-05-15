@@ -68,6 +68,14 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
         "Maximum number of projects this account can own. Collaborating on someone else's project does not count.",
       userDescription: "Maximum number of projects this account can own.",
     },
+    max_sponsored_running_projects: {
+      label: "Sponsored running projects",
+      unit: "projects",
+      adminDescription:
+        "Maximum number of simultaneously starting or running projects whose runtime is sponsored by this account. Runtime sponsorship controls shared-compute admission, priority, and RAM limits; it does not meter storage or egress.",
+      userDescription:
+        "Maximum number of projects this account can sponsor at the same time while they are starting or running.",
+    },
     max_snapshots_per_project: {
       label: "Snapshots per project",
       unit: "snapshots",
