@@ -16,6 +16,7 @@ import {
 import { ProjectSettingsHealthRail } from "./health-rail";
 
 const { Paragraph, Text, Title } = Typography;
+const HEADER_LINK_IDS = ["resources", "people", "recovery", "danger"] as const;
 
 interface Props {
   project_id: string;
@@ -39,6 +40,10 @@ export function ProjectSettingsPageShell({
   const hidden = !!project.get("hidden");
   const screens = Grid.useBreakpoint();
   const wide = !!screens.xl;
+  const headerLinks = HEADER_LINK_IDS.flatMap((id) => {
+    const item = navItems.find((item) => item.id === id);
+    return item == null ? [] : [item];
+  });
 
   return (
     <div
@@ -97,15 +102,16 @@ export function ProjectSettingsPageShell({
             </div>
           </div>
           <Space wrap>
-            <Button href={`#resources`} icon={<Icon name="server" />}>
-              Resources
-            </Button>
-            <Button href={`#recovery`} icon={<Icon name="life-ring" />}>
-              Recovery
-            </Button>
-            <Button href={`#danger`} danger icon={<Icon name="warning" />}>
-              Danger Zone
-            </Button>
+            {headerLinks.map((item) => (
+              <Button
+                key={item.id}
+                href={`#${item.id}`}
+                danger={item.danger}
+                icon={<Icon name={item.icon} />}
+              >
+                {item.label}
+              </Button>
+            ))}
           </Space>
         </div>
       </Card>
