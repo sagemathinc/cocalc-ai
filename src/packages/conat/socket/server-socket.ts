@@ -106,6 +106,7 @@ export class ServerSocket extends EventEmitter {
       role: this.conatSocket.role,
       reset: this.close,
       send: this.send,
+      canSend: () => this.state == "ready",
       size: this.conatSocket.maxQueueSize,
     });
     this.conatSocket.client.on(
