@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert as AntdAlert, Space } from "antd";
+import { Alert as AntdAlert, Space, Typography } from "antd";
 import { List, Map } from "immutable";
 import { join } from "path";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -22,7 +22,13 @@ import {
   redux,
   useState,
 } from "@cocalc/frontend/app-framework";
-import { ErrorDisplay, Gap, Icon, TimeAgo } from "@cocalc/frontend/components";
+import {
+  ErrorDisplay,
+  Gap,
+  Icon,
+  LabeledRow,
+  TimeAgo,
+} from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
@@ -441,6 +447,19 @@ export function AccountSettings(props: Readonly<Props>) {
     );
   }
 
+  function render_account_id(): Rendered {
+    if (!props.account_id || lite) {
+      return;
+    }
+    return (
+      <LabeledRow label="Account ID">
+        <Typography.Text code copyable={{ text: props.account_id }}>
+          {props.account_id}
+        </Typography.Text>
+      </LabeledRow>
+    );
+  }
+
   function render_name(): Rendered {
     return (
       <>
@@ -557,6 +576,7 @@ will no longer work (automatic redirects are not implemented), so change with ca
 
   return (
     <Panel header={render_header()}>
+      {render_account_id()}
       {render_name()}
       {render_email_address()}
       {render_unlisted()}

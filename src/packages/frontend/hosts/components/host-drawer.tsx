@@ -21,8 +21,10 @@ import {
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import SelectUser from "@cocalc/frontend/messages/select-users";
+import { User } from "@cocalc/frontend/users/user";
+import { actions as usersActions } from "@cocalc/frontend/users/actions";
+import { shouldHydrateUserIdentity } from "@cocalc/frontend/users/store";
 import type {
   Host,
   HostAccessEntry,
@@ -48,14 +50,8 @@ import type {
   ManagedComponentRuntimeState,
   ManagedComponentUpgradePolicy,
 } from "@cocalc/conat/project-host/api";
-import {
-  humanSize,
-  is_valid_email_address,
-  is_valid_uuid_string,
-  trunc_middle,
-} from "@cocalc/util/misc";
+import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLogEntry } from "../hooks/use-host-log";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
@@ -94,6 +90,7 @@ import {
   getHostRamGiB,
   getHostSizeDisplay,
 } from "../utils/format";
+import { canManageHostLifecycle } from "../utils/access";
 import type { HostDeleteOptions } from "../types";
 import {
   currentProjectHostRolloutPhase,
@@ -256,126 +253,19 @@ type HostDrawerViewModel = {
   };
 };
 
-function HostAccessAccountSelect({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  disabled?: boolean;
-}) {
-  const [search, setSearch] = React.useState("");
-  const [loading, setLoading] = React.useState(false);
-  const [results, setResults] = React.useState<UserSearchResult[]>([]);
-  const latestSearchRef = React.useRef("");
-
-  const doSearch = React.useCallback(async (query: string) => {
-    const cleaned = query.trim();
-    latestSearchRef.current = cleaned;
-    setSearch(cleaned);
-    if (!cleaned) {
-      setResults([]);
-      return;
+function HostAccessUser({ account_id }: { account_id: string }) {
+  const userMap = useTypedRedux("users", "user_map");
+  const user = userMap?.get(account_id);
+  React.useEffect(() => {
+    if (user == null || shouldHydrateUserIdentity(user)) {
+      usersActions.fetch_non_collaborator(account_id).catch(() => {});
     }
-    setLoading(true);
-    try {
-      const rows = await webapp_client.users_client.user_search({
-        query: cleaned,
-        limit: 20,
-      });
-      if (latestSearchRef.current === cleaned) {
-        setResults(rows.filter((row) => row.account_id));
-      }
-    } finally {
-      if (latestSearchRef.current === cleaned) {
-        setLoading(false);
-      }
-    }
-  }, []);
+  }, [account_id, user]);
 
-  const rawOption =
-    search &&
-    (is_valid_uuid_string(search) || is_valid_email_address(search)) &&
-    !results.some(
-      (row) => row.account_id === search || row.email_address === search,
-    )
-      ? search
-      : undefined;
-
-  return (
-    <Select
-      showSearch
-      allowClear
-      value={value || undefined}
-      disabled={disabled}
-      loading={loading}
-      filterOption={false}
-      onSearch={doSearch}
-      onChange={(next) => onChange(next ?? "")}
-      optionLabelProp="label"
-      placeholder="Search by name, email, or account ID..."
-      style={{ width: "100%" }}
-      notFoundContent={
-        search ? "No matching users" : "Type to search for a user"
-      }
-    >
-      {rawOption && (
-        <Select.Option
-          key={`raw-${rawOption}`}
-          value={rawOption}
-          label={trunc_middle(rawOption, 28)}
-        >
-          <Typography.Text>{rawOption}</Typography.Text>
-        </Select.Option>
-      )}
-      {results.map((row) => {
-        const accountId = row.account_id!;
-        const fullName =
-          `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
-          "Unnamed user";
-        const extra: string[] = [];
-        if (row.email_address) {
-          extra.push(
-            row.email_address_verified
-              ? `${row.email_address} - verified`
-              : row.email_address,
-          );
-        }
-        if (row.last_active) {
-          extra.push(
-            `active ${new Date(row.last_active).toLocaleDateString()}`,
-          );
-        }
-        return (
-          <Select.Option key={accountId} value={accountId} label={fullName}>
-            <Space>
-              <Avatar
-                size={28}
-                no_tooltip
-                account_id={accountId}
-                first_name={row.first_name}
-                last_name={row.last_name}
-              />
-              <span>
-                <Typography.Text>{fullName}</Typography.Text>
-                {extra.length > 0 && (
-                  <Typography.Text type="secondary">
-                    {" "}
-                    ({extra.join(", ")})
-                  </Typography.Text>
-                )}
-                <br />
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {accountId}
-                </Typography.Text>
-              </span>
-            </Space>
-          </Select.Option>
-        );
-      })}
-    </Select>
-  );
+  if (user == null) {
+    return <Typography.Text type="secondary">User</Typography.Text>;
+  }
+  return <User account_id={account_id} show_avatar avatarSize={18} />;
 }
 
 type HostConfigSpec = {
@@ -1391,7 +1281,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   );
   const [accessLoading, setAccessLoading] = React.useState(false);
   const [accessSavingKey, setAccessSavingKey] = React.useState<string>();
-  const [accessAccountId, setAccessAccountId] = React.useState("");
+  const [accessAccountIds, setAccessAccountIds] = React.useState<string[]>([]);
+  const [accessPickerKey, setAccessPickerKey] = React.useState(0);
   const [accessRole, setAccessRole] = React.useState<HostAccessRole>("user");
   const [projectRamLimitMb, setProjectRamLimitMb] = React.useState<
     number | null
@@ -1410,7 +1301,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     setRuntimeLogLines(200);
     setRuntimeLogRequest(undefined);
     setAccessEntries([]);
-    setAccessAccountId("");
+    setAccessAccountIds([]);
+    setAccessPickerKey((key) => key + 1);
     setAccessRole("user");
   }, [vm.host?.id]);
   const handleResize = React.useCallback((next: number) => {
@@ -1464,8 +1356,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const hostRamMb = host?.host_ram_mb ?? (hostRam ? hostRam * 1024 : undefined);
   const maxProjectRamMb =
     hostRamMb != null ? Math.max(0, Math.floor(hostRamMb - 3072)) : undefined;
-  const canEditOwnerSpend =
-    host?.access_role === "owner" || host?.access_role === "admin";
+  const canManageLifecycle = canManageHostLifecycle(host);
+  const canEditOwnerSpend = canManageLifecycle;
   const ownerSpendLimitStateColor =
     host?.owner_spend_limit_state === "stopped_limit_exceeded"
       ? "red"
@@ -1489,7 +1381,15 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     }
     setAccessLoading(true);
     try {
-      setAccessEntries(await onListHostAccess(host.id));
+      const entries = await onListHostAccess(host.id);
+      await Promise.all(
+        entries.map((entry) =>
+          usersActions
+            .fetch_non_collaborator(entry.account_id)
+            .catch(() => undefined),
+        ),
+      );
+      setAccessEntries(entries);
     } finally {
       setAccessLoading(false);
     }
@@ -1643,7 +1543,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       ) : null
     ) : null;
   const canForceDeprovision =
-    !!host && isSelfHost && !host.deleted && host.status !== "deprovisioned";
+    canManageLifecycle &&
+    !!host &&
+    isSelfHost &&
+    !host.deleted &&
+    host.status !== "deprovisioned";
   const canReconcile =
     !!host &&
     !host.deleted &&
@@ -2061,9 +1965,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             <>
               <Divider style={{ margin: "8px 0" }} />
               <Space.Compact style={{ width: "100%" }}>
-                <HostAccessAccountSelect
-                  value={accessAccountId}
-                  onChange={setAccessAccountId}
+                <SelectUser
+                  key={`${host.id}-${accessPickerKey}`}
+                  placeholder="Search for users by name, email, or account id..."
+                  style={{ width: "100%" }}
+                  onChange={(accountIds) =>
+                    setAccessAccountIds(accountIds ?? [])
+                  }
                   disabled={accessSavingKey === "add"}
                 />
                 <Select
@@ -2078,18 +1986,18 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 <Button
                   type="primary"
                   loading={accessSavingKey === "add"}
-                  disabled={!accessAccountId.trim()}
+                  disabled={accessAccountIds.length === 0}
                   onClick={async () => {
                     setAccessSavingKey("add");
                     try {
-                      const principal = accessAccountId.trim();
-                      await onSetHostAccess(host.id, {
-                        ...(principal.includes("@")
-                          ? { target_email_address: principal }
-                          : { target_account_id: principal }),
-                        role: accessRole,
-                      });
-                      setAccessAccountId("");
+                      for (const accountId of accessAccountIds) {
+                        await onSetHostAccess(host.id, {
+                          target_account_id: accountId,
+                          role: accessRole,
+                        });
+                      }
+                      setAccessAccountIds([]);
+                      setAccessPickerKey((key) => key + 1);
                       await refreshHostAccess();
                     } finally {
                       setAccessSavingKey(undefined);
@@ -2099,11 +2007,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   Add
                 </Button>
               </Space.Compact>
-              {accessLoading ? (
-                <Typography.Text type="secondary">
-                  Loading access list...
-                </Typography.Text>
-              ) : accessEntries.length ? (
+              {accessEntries.length ? (
                 <Space
                   orientation="vertical"
                   style={{ width: "100%" }}
@@ -2115,7 +2019,12 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       style={{ justifyContent: "space-between", width: "100%" }}
                     >
                       <Space>
-                        <Typography.Text copyable={{ text: entry.account_id }}>
+                        <HostAccessUser account_id={entry.account_id} />
+                        <Typography.Text
+                          type="secondary"
+                          copyable={{ text: entry.account_id }}
+                          style={{ fontSize: 12 }}
+                        >
                           {entry.account_id}
                         </Typography.Text>
                         <Tag
@@ -2153,7 +2062,16 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       )}
                     </Space>
                   ))}
+                  {accessLoading && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Refreshing access list...
+                    </Typography.Text>
+                  )}
                 </Space>
+              ) : accessLoading ? (
+                <Typography.Text type="secondary">
+                  Loading access list...
+                </Typography.Text>
               ) : (
                 <Typography.Text type="secondary">
                   No delegated access configured.
@@ -2299,97 +2217,107 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       </Card>
     </Space>
   ) : null;
-  const dangerContent = host ? (
-    <Space orientation="vertical" style={{ width: "100%" }} size="middle">
-      {!host.deleted ? (
-        <Card
-          size="small"
-          title="Host lifecycle"
-          styles={{ body: { padding: 12 } }}
-        >
-          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            <Typography.Text type="secondary">
-              Deprovisioning removes the host from service. Permanently deleting
-              is only available after the host is already deprovisioned.
-            </Typography.Text>
-            {isDeprovisioned ? (
-              <Popconfirm
-                title={deleteTitle}
-                okText={deleteOkText}
-                cancelText="Cancel"
-                onConfirm={() => onDelete?.(host.id)}
-                okButtonProps={{ danger: true }}
-              >
+  const dangerContent =
+    host && canManageLifecycle ? (
+      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+        {!host.deleted ? (
+          <Card
+            size="small"
+            title="Host lifecycle"
+            styles={{ body: { padding: 12 } }}
+          >
+            <Space
+              orientation="vertical"
+              size="small"
+              style={{ width: "100%" }}
+            >
+              <Typography.Text type="secondary">
+                Deprovisioning removes the host from service. Permanently
+                deleting is only available after the host is already
+                deprovisioned.
+              </Typography.Text>
+              {isDeprovisioned ? (
+                <Popconfirm
+                  title={deleteTitle}
+                  okText={deleteOkText}
+                  cancelText="Cancel"
+                  onConfirm={() => onDelete?.(host.id)}
+                  okButtonProps={{ danger: true }}
+                >
+                  <Button
+                    size="small"
+                    danger
+                    disabled={hostOpActive || !onDelete}
+                  >
+                    {deleteLabel}
+                  </Button>
+                </Popconfirm>
+              ) : (
                 <Button
                   size="small"
                   danger
                   disabled={hostOpActive || !onDelete}
+                  onClick={() =>
+                    onDelete &&
+                    confirmHostDeprovision({
+                      host,
+                      onConfirm: (opts) => onDelete(host.id, opts),
+                    })
+                  }
                 >
                   {deleteLabel}
                 </Button>
-              </Popconfirm>
-            ) : (
-              <Button
-                size="small"
-                danger
-                disabled={hostOpActive || !onDelete}
-                onClick={() =>
-                  onDelete &&
-                  confirmHostDeprovision({
-                    host,
-                    onConfirm: (opts) => onDelete(host.id, opts),
-                  })
-                }
-              >
-                {deleteLabel}
-              </Button>
-            )}
-          </Space>
-        </Card>
-      ) : (
-        <Typography.Text type="secondary">
-          Deleted hosts do not expose further destructive actions.
-        </Typography.Text>
-      )}
-      {isSelfHost && selfHost && !host.deleted ? (
-        <Card
-          size="small"
-          title="Connector actions"
-          styles={{ body: { padding: 12 } }}
-        >
-          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            <Typography.Text type="secondary">
-              These actions affect the self-host connector relationship rather
-              than the cloud host lifecycle itself.
-            </Typography.Text>
-            <Space wrap>
-              <Button
-                size="small"
-                danger
-                disabled={hostOpActive}
-                onClick={() => selfHost.onRemove(host)}
-              >
-                Remove connector
-              </Button>
-              {canForceDeprovision && (
-                <Popconfirm
-                  title="Force deprovision this host without contacting your machine?"
-                  okText="Force deprovision"
-                  cancelText="Cancel"
-                  onConfirm={() => selfHost.onForceDeprovision(host)}
-                  okButtonProps={{ danger: true }}
-                >
-                  <Button size="small" disabled={hostOpActive}>
-                    Force deprovision
-                  </Button>
-                </Popconfirm>
               )}
             </Space>
-          </Space>
-        </Card>
-      ) : null}
-    </Space>
-  ) : null;
+          </Card>
+        ) : (
+          <Typography.Text type="secondary">
+            Deleted hosts do not expose further destructive actions.
+          </Typography.Text>
+        )}
+        {isSelfHost && selfHost && !host.deleted ? (
+          <Card
+            size="small"
+            title="Connector actions"
+            styles={{ body: { padding: 12 } }}
+          >
+            <Space
+              orientation="vertical"
+              size="small"
+              style={{ width: "100%" }}
+            >
+              <Typography.Text type="secondary">
+                These actions affect the self-host connector relationship rather
+                than the cloud host lifecycle itself.
+              </Typography.Text>
+              <Space wrap>
+                <Button
+                  size="small"
+                  danger
+                  disabled={hostOpActive}
+                  onClick={() => selfHost.onRemove(host)}
+                >
+                  Remove connector
+                </Button>
+                {canForceDeprovision && (
+                  <Popconfirm
+                    title="Force deprovision this host without contacting your machine?"
+                    okText="Force deprovision"
+                    cancelText="Cancel"
+                    onConfirm={() => selfHost.onForceDeprovision(host)}
+                    okButtonProps={{ danger: true }}
+                  >
+                    <Button size="small" disabled={hostOpActive}>
+                      Force deprovision
+                    </Button>
+                  </Popconfirm>
+                )}
+              </Space>
+            </Space>
+          </Card>
+        ) : null}
+      </Space>
+    ) : null;
   const tabItems = [
     {
       key: "overview",
@@ -4346,12 +4274,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       label: "Logs",
       children: logsContent,
     },
-    {
+  ];
+  if (canManageLifecycle) {
+    tabItems.push({
       key: "danger",
       label: "Danger",
       children: dangerContent,
-    },
-  ];
+    });
+  }
   return (
     <Drawer
       size={drawerWidth}
@@ -4377,14 +4307,16 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             </Tag>
           </Tooltip>
           {onlineTag}
-          <Button
-            type="link"
-            size="small"
-            disabled={!!host.deleted || hostOpActive}
-            onClick={() => onEdit(host)}
-          >
-            Edit
-          </Button>
+          {canManageLifecycle && (
+            <Button
+              type="link"
+              size="small"
+              disabled={!!host.deleted || hostOpActive}
+              onClick={() => onEdit(host)}
+            >
+              Edit
+            </Button>
+          )}
         </Space>
       }
       onClose={onClose}

@@ -1,6 +1,8 @@
 import { isValidUUID } from "@cocalc/util/misc";
 import getPool from "@cocalc/database/pool";
+import { recordAccountRevocation } from "@cocalc/server/accounts/revocation";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
+import { revokeAllAuthSessions } from "@cocalc/server/auth/auth-sessions";
 import { deleteAllRememberMe } from "@cocalc/server/auth/remember-me";
 import { StripeClient } from "@cocalc/server/stripe/client";
 
@@ -14,6 +16,11 @@ export default async function deleteAccount(account_id: string): Promise<void> {
 
   // Invalidate all sign ins (without this user can delete account, but could still be signed in).
   await deleteAllRememberMe(account_id);
+  // Do this before marking the account deleted; account-scoped write fences
+  // intentionally stop resolving deleted accounts.
+  await revokeAllAuthSessions(account_id);
+  // Revoke host-level persistent sessions/tokens issued before this delete.
+  await recordAccountRevocation(account_id, Date.now());
 
   // Mark the account as deleted -- do this last since once done, user is locked out.
   // Any step above could fail, and user could just try again in that case.

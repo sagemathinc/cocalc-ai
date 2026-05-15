@@ -8,6 +8,7 @@ import isPost from "@cocalc/http-api/lib/api/is-post";
 import { apiRoute, apiRouteOperation } from "@cocalc/http-api/lib/api";
 import { SuccessStatus } from "@cocalc/http-api/lib/api/status";
 import { DeleteAccountOutputSchema } from "@cocalc/http-api/lib/api/schema/accounts/delete";
+import clearAuthCookies from "@cocalc/server/auth/clear-auth-cookies";
 
 async function handle(req, res) {
   try {
@@ -17,6 +18,7 @@ async function handle(req, res) {
         throw Error("must be signed in");
       }
       await deleteAccount(account_id);
+      await clearAuthCookies({ req, res });
       res.json(SuccessStatus);
     } else {
       throw Error("must be a POST request");

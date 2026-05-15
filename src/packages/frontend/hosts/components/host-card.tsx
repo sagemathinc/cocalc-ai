@@ -49,6 +49,7 @@ import {
 } from "./host-confirm";
 import { COLORS } from "@cocalc/util/theme";
 import { getHostSizeDisplay } from "../utils/format";
+import { canManageHostLifecycle } from "../utils/access";
 import { HostCurrentMetrics } from "./host-current-metrics";
 import { HostPlacementSummary, HostPressureTag } from "../pressure-ui";
 import {
@@ -184,6 +185,7 @@ export const HostCard: React.FC<HostCardProps> = ({
     (host.status === "running" || host.status === "error") &&
     (supportsRestart || supportsHardRestart) &&
     !hostOpActive;
+  const canManageLifecycle = canManageHostLifecycle(host);
   const deleteLabel = isDeleted
     ? "Deleted"
     : host.status === "deprovisioned"
@@ -262,19 +264,21 @@ export const HostCard: React.FC<HostCardProps> = ({
         Restart
       </Button>
     ),
-    <Button
-      key="drain"
-      type="link"
-      disabled={isDeleted || hostOpActive}
-      onClick={() =>
-        confirmHostDrain({
-          host,
-          onConfirm: (opts) => onDrain(host.id, opts),
-        })
-      }
-    >
-      Drain
-    </Button>,
+    canManageLifecycle ? (
+      <Button
+        key="drain"
+        type="link"
+        disabled={isDeleted || hostOpActive}
+        onClick={() =>
+          confirmHostDrain({
+            host,
+            onConfirm: (opts) => onDrain(host.id, opts),
+          })
+        }
+      >
+        Drain
+      </Button>
+    ) : null,
     canCancelBackups && displayHostOp ? (
       <Popconfirm
         key="cancel"
@@ -286,14 +290,16 @@ export const HostCard: React.FC<HostCardProps> = ({
         <Button type="link">Cancel</Button>
       </Popconfirm>
     ) : null,
-    <Button
-      key="edit"
-      type="link"
-      disabled={isDeleted}
-      onClick={() => onEdit(host)}
-    >
-      Edit
-    </Button>,
+    canManageLifecycle ? (
+      <Button
+        key="edit"
+        type="link"
+        disabled={isDeleted}
+        onClick={() => onEdit(host)}
+      >
+        Edit
+      </Button>
+    ) : null,
     canRefreshCloudStatus ? (
       <Popconfirm
         key="refresh-cloud"
@@ -309,7 +315,7 @@ export const HostCard: React.FC<HostCardProps> = ({
     <Button key="details" type="link" onClick={() => onDetails(host)}>
       Details
     </Button>,
-    isDeprovisioned ? (
+    canManageLifecycle && isDeprovisioned ? (
       <Popconfirm
         key="delete"
         title={deleteTitle}
@@ -323,7 +329,7 @@ export const HostCard: React.FC<HostCardProps> = ({
           {deleteLabel}
         </Button>
       </Popconfirm>
-    ) : (
+    ) : canManageLifecycle ? (
       <Button
         key="delete"
         type="link"
@@ -338,7 +344,7 @@ export const HostCard: React.FC<HostCardProps> = ({
       >
         {deleteLabel}
       </Button>
-    ),
+    ) : null,
   ];
   const visibleActions = actions.filter(Boolean) as React.ReactNode[];
 
