@@ -35,6 +35,9 @@ export type Project = TypedMap<{
   users: Map<string, UserRecord>;
   state?: { state: "opened" | "running" | "starting" | "stopping" };
   settings: ProjectSettings;
+  usage_account_id?: string;
+  runtime_sponsor_account_id?: string;
+  allow_collaborator_starts_using_sponsor?: boolean;
   rootfs_image?: string;
   rootfs_image_id?: string;
 }>;

@@ -31,6 +31,15 @@ function isUserGroup(group: unknown): group is string {
   return typeof group === "string" && PROJECT_GROUPS.includes(group);
 }
 
+function currentCollaboratorSponsor(
+  account_id: unknown,
+  users: Record<string, { group?: string }> | undefined,
+): string | undefined {
+  if (typeof account_id !== "string" || !account_id) return;
+  const group = users?.[account_id]?.group;
+  return group === "owner" || group === "collaborator" ? account_id : undefined;
+}
+
 Table({
   name: "projects",
   rules: {
@@ -77,6 +86,9 @@ Table({
           deleted: null,
           host_id: null,
           owning_bay_id: null,
+          usage_account_id: null,
+          runtime_sponsor_account_id: null,
+          allow_collaborator_starts_using_sponsor: null,
           state: null,
           last_edited: null,
           last_active: null,
@@ -97,6 +109,11 @@ Table({
           manage_users_owner_only(obj, db) {
             return db._user_set_query_project_manage_users_owner_only(obj);
           },
+          allow_collaborator_starts_using_sponsor(obj, db) {
+            return db._user_set_query_project_allow_collaborator_starts_using_sponsor(
+              obj,
+            );
+          },
           rootfs_image: true,
           rootfs_image_id: true,
           env: true,
@@ -109,37 +126,75 @@ Table({
           project_id: true,
         },
         async check_hook(db, obj, account_id, _project_id, cb) {
-          // Validate manage_users_owner_only permission if it's being changed
-          if (obj.manage_users_owner_only !== undefined) {
+          // Validate owner/sponsor-managed project policy settings.
+          if (
+            obj.manage_users_owner_only !== undefined ||
+            obj.allow_collaborator_starts_using_sponsor !== undefined
+          ) {
             try {
-              // Require actor identity before hitting the database
               if (!account_id) {
                 throw Error(
-                  "account_id is required to change manage_users_owner_only",
+                  "account_id is required to change project collaborator policy settings",
                 );
               }
 
-              const siteSettings =
-                (await callback2(db.get_server_settings_cached, {})) ?? {};
-              const siteEnforced =
-                !!siteSettings.strict_collaborator_management;
-              if (siteEnforced && obj.manage_users_owner_only !== true) {
-                throw Error(
-                  "Collaborator management is enforced by the site administrator and cannot be disabled.",
-                );
+              if (obj.manage_users_owner_only !== undefined) {
+                const siteSettings =
+                  (await callback2(db.get_server_settings_cached, {})) ?? {};
+                const siteEnforced =
+                  !!siteSettings.strict_collaborator_management;
+                if (siteEnforced && obj.manage_users_owner_only !== true) {
+                  throw Error(
+                    "Collaborator management is enforced by the site administrator and cannot be disabled.",
+                  );
+                }
               }
 
               const { rows } = await db.async_query({
-                query: "SELECT users FROM projects WHERE project_id = $1",
+                query:
+                  "SELECT users, runtime_sponsor_account_id, usage_account_id FROM projects WHERE project_id = $1",
                 params: [obj.project_id],
               });
               const users = rows?.[0]?.users ?? {};
+              const row = rows?.[0] ?? {};
+              const admin = await new Promise<boolean>((resolve, reject) => {
+                db.is_admin({
+                  account_id,
+                  cb: (err, value) => {
+                    if (err) {
+                      reject(err);
+                    } else {
+                      resolve(!!value);
+                    }
+                  },
+                });
+              });
 
-              // Check that the user making the change is an owner
               const group = users?.[account_id]?.group;
-              if (!isUserGroup(group) || group !== "owner") {
+              const owner =
+                isUserGroup(group) && group === "owner" ? account_id : null;
+              const sponsor =
+                currentCollaboratorSponsor(
+                  row.runtime_sponsor_account_id,
+                  users,
+                ) ?? currentCollaboratorSponsor(row.usage_account_id, users);
+              if (
+                obj.manage_users_owner_only !== undefined &&
+                !admin &&
+                owner !== account_id
+              ) {
                 throw Error(
-                  "Only project owners can change collaborator management settings",
+                  "Only project owners and administrators can change collaborator management settings",
+                );
+              }
+              if (
+                obj.allow_collaborator_starts_using_sponsor !== undefined &&
+                !admin &&
+                owner !== account_id &&
+                sponsor !== account_id
+              ) {
+                throw Error(
+                  "Only project owners, runtime sponsors, and administrators can change collaborator start settings",
                 );
               }
             } catch (err) {
@@ -231,6 +286,11 @@ Table({
       // It does not yet enforce collaborator-management security by itself.
       // Do not rely on this flag as a security control.
       desc: "If true, only project owners can add or remove collaborators. Collaborators can still remove themselves. Disabled by default (undefined or false means current behavior where collaborators can manage other collaborators).",
+      render: { type: "boolean", editable: true },
+    },
+    allow_collaborator_starts_using_sponsor: {
+      type: "boolean",
+      desc: "If false, ordinary collaborators cannot start or restart this project using the runtime sponsor's membership. Project owners, the runtime sponsor, and administrators can still start it. Defaults to true when unset.",
       render: { type: "boolean", editable: true },
     },
     invite: {

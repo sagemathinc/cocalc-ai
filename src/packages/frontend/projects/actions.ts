@@ -1487,6 +1487,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
   };
 
+  set_project_allow_collaborator_starts_using_sponsor = async (
+    project_id: string,
+    allow_collaborator_starts_using_sponsor: boolean,
+  ): Promise<void> => {
+    if (!(await this.have_project(project_id))) {
+      console.warn(
+        `Can't set collaborator start policy -- you are not a collaborator on project '${project_id}'.`,
+      );
+      return;
+    }
+    await this.projects_table_set({
+      project_id,
+      allow_collaborator_starts_using_sponsor,
+    });
+  };
+
   setProjectTheme = async (
     project_id: string,
     theme: ProjectTheme | null,

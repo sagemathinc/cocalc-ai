@@ -46,7 +46,11 @@ import isAdmin from "@cocalc/server/accounts/is-admin";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import { setProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
-import { resolveRuntimeSponsorAccountId } from "@cocalc/server/projects/runtime-sponsor";
+import {
+  canActorStartUsingRuntimeSponsor,
+  collaboratorSponsorStartDisabledError,
+  resolveRuntimeSponsorAccountId,
+} from "@cocalc/server/projects/runtime-sponsor";
 import {
   heartbeatProjectRuntimeSlot,
   releaseProjectRuntimeSlot,
@@ -119,16 +123,20 @@ async function loadProjectRuntimeSponsor(project_id: string): Promise<{
   sponsor_account_id: string;
   owning_bay_id: string;
   host_id?: string | null;
+  users?: Record<string, { group?: string }> | null;
+  allow_collaborator_starts_using_sponsor?: boolean | null;
 }> {
   const { rows } = await getPool().query<{
     runtime_sponsor_account_id?: string | null;
     usage_account_id?: string | null;
+    allow_collaborator_starts_using_sponsor?: boolean | null;
     users?: Record<string, { group?: string }> | null;
     owning_bay_id?: string | null;
     host_id?: string | null;
   }>(
     `
-      SELECT runtime_sponsor_account_id, usage_account_id, users,
+      SELECT runtime_sponsor_account_id, usage_account_id,
+             allow_collaborator_starts_using_sponsor, users,
              owning_bay_id, host_id
         FROM projects
        WHERE project_id=$1
@@ -148,7 +156,30 @@ async function loadProjectRuntimeSponsor(project_id: string): Promise<{
     sponsor_account_id,
     owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
     host_id: row.host_id ?? null,
+    users: row.users,
+    allow_collaborator_starts_using_sponsor:
+      row.allow_collaborator_starts_using_sponsor,
   };
+}
+
+async function assertCanStartUsingRuntimeSponsor({
+  sponsor,
+  account_id,
+}: {
+  sponsor: Awaited<ReturnType<typeof loadProjectRuntimeSponsor>>;
+  account_id?: string;
+}): Promise<void> {
+  const is_admin = account_id ? await isAdmin(account_id) : false;
+  if (
+    !canActorStartUsingRuntimeSponsor({
+      project: sponsor,
+      actor_account_id: account_id,
+      sponsor_account_id: sponsor.sponsor_account_id,
+      is_admin,
+    })
+  ) {
+    throw collaboratorSponsorStartDisabledError();
+  }
 }
 
 export async function handleProjectControlStart(
@@ -179,6 +210,10 @@ export async function handleProjectControlStart(
   });
   let reservedSlot = false;
   try {
+    await assertCanStartUsingRuntimeSponsor({
+      sponsor,
+      account_id: req.account_id,
+    });
     await reserveProjectRuntimeSlot({
       ...sponsor,
       project_id: req.project_id,
@@ -284,6 +319,10 @@ export async function handleProjectControlRestart(
   });
   let reservedSlot = false;
   try {
+    await assertCanStartUsingRuntimeSponsor({
+      sponsor,
+      account_id: req.account_id,
+    });
     await reserveProjectRuntimeSlot({
       ...sponsor,
       project_id: req.project_id,

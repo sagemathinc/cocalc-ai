@@ -27,6 +27,7 @@ import MoveProject from "./move-project";
 import { Project } from "./types";
 import RootFilesystemImage from "./root-filesystem-image";
 import ProjectControlError from "./project-control-error";
+import { RuntimeSponsorControls } from "./runtime-sponsor-controls";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
@@ -316,6 +317,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         style={{ width: "100%" }}
       >
         {render_lifecycle_actions()}
+        <RuntimeSponsorControls project={project} project_id={project_id} />
         {render_archived_note()}
         <section>{render_status_summary()}</section>
         {render_runtime_diagnostics()}

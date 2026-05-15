@@ -8,6 +8,7 @@ export type ProjectUsers = Record<string, { group?: string }> | null;
 export interface RuntimeSponsorProjectFields {
   runtime_sponsor_account_id?: string | null;
   usage_account_id?: string | null;
+  allow_collaborator_starts_using_sponsor?: boolean | null;
   users?: ProjectUsers;
 }
 
@@ -44,4 +45,31 @@ export function resolveRuntimeSponsorAccountId(
     return usageSponsor;
   }
   return getProjectOwnerAccountId(project.users);
+}
+
+export function canActorStartUsingRuntimeSponsor({
+  project,
+  actor_account_id,
+  sponsor_account_id,
+  is_admin = false,
+}: {
+  project: RuntimeSponsorProjectFields;
+  actor_account_id?: string | null;
+  sponsor_account_id?: string;
+  is_admin?: boolean;
+}): boolean {
+  if (is_admin) return true;
+  const actor = nonemptyString(actor_account_id);
+  if (!actor) {
+    return project.allow_collaborator_starts_using_sponsor !== false;
+  }
+  if (actor === sponsor_account_id) return true;
+  if (actor === getProjectOwnerAccountId(project.users)) return true;
+  return project.allow_collaborator_starts_using_sponsor !== false;
+}
+
+export function collaboratorSponsorStartDisabledError(): Error {
+  return new Error(
+    "Collaborator starts using the runtime sponsor's membership are disabled for this project. Ask a project owner or the runtime sponsor to start it, or ask them to enable collaborator starts.",
+  );
 }

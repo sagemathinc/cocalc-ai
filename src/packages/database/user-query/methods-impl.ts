@@ -11,6 +11,7 @@ import { withAccountRehomeUserQueryFence } from "@cocalc/database/postgres/accou
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { withProjectRehomeWriteFence } from "@cocalc/database/postgres/project-rehome-fence";
 import { sanitizeManageUsersOwnerOnly } from "@cocalc/database/postgres/project/manage-users-owner-only";
+import { sanitizeAllowCollaboratorStartsUsingSponsor } from "@cocalc/database/postgres/project/collaborator-starts-using-sponsor";
 import { sanitizeUserSetQueryProjectUsers } from "@cocalc/database/postgres/project/user-set-query-project-users";
 import { all_results } from "@cocalc/database/postgres/utils/all-results";
 import { count_result } from "@cocalc/database/postgres/utils/count-result";
@@ -1410,6 +1411,21 @@ export function _user_set_query_project_manage_users_owner_only(
   return sanitizeManageUsersOwnerOnly(obj);
 }
 
+export function _user_set_query_project_allow_collaborator_starts_using_sponsor(
+  this: UserQueryContext,
+  obj: AnyRecord,
+) {
+  const hasGetter = typeof obj?.get === "function";
+  const hasField = Object.prototype.hasOwnProperty.call(
+    obj ?? {},
+    "allow_collaborator_starts_using_sponsor",
+  );
+  if (!hasGetter && !hasField) {
+    return undefined;
+  }
+  return sanitizeAllowCollaboratorStartsUsingSponsor(obj);
+}
+
 // This hook is called *before* the user commits a change to a project in the database
 // via a user set query.
 // TODO: Add a pre-check here as well that total upgrade isn't going to be exceeded.
@@ -2551,6 +2567,7 @@ type UserQueryMethods = {
   _user_get_query_set_defaults: typeof _user_get_query_set_defaults;
   _user_set_query_project_users: typeof _user_set_query_project_users;
   _user_set_query_project_manage_users_owner_only: typeof _user_set_query_project_manage_users_owner_only;
+  _user_set_query_project_allow_collaborator_starts_using_sponsor: typeof _user_set_query_project_allow_collaborator_starts_using_sponsor;
   _user_set_query_project_change_before: typeof _user_set_query_project_change_before;
   _user_set_query_project_change_after: typeof _user_set_query_project_change_after;
   _user_set_query_account_change_after: typeof _user_set_query_account_change_after;

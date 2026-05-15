@@ -19,6 +19,10 @@ class ClientDB {
       this._user_set_query_project_users.bind(this);
     this._user_set_query_project_manage_users_owner_only =
       this._user_set_query_project_manage_users_owner_only.bind(this);
+    this._user_set_query_project_allow_collaborator_starts_using_sponsor =
+      this._user_set_query_project_allow_collaborator_starts_using_sponsor.bind(
+        this,
+      );
     this._user_set_query_project_change_after =
       this._user_set_query_project_change_after.bind(this);
     this._user_set_query_account_change_after =
@@ -61,6 +65,20 @@ class ClientDB {
     }
     if (typeof value !== "boolean") {
       throw Error("manage_users_owner_only must be a boolean");
+    }
+    return value;
+  }
+
+  _user_set_query_project_allow_collaborator_starts_using_sponsor(obj) {
+    const value =
+      obj != null && typeof obj.get === "function"
+        ? obj.get("allow_collaborator_starts_using_sponsor")
+        : obj?.allow_collaborator_starts_using_sponsor;
+    if (value == null) {
+      return undefined;
+    }
+    if (typeof value !== "boolean") {
+      throw Error("allow_collaborator_starts_using_sponsor must be a boolean");
     }
     return value;
   }

@@ -845,6 +845,9 @@ export interface PostgreSQLMethods extends EventEmitter {
   _user_set_query_project_manage_users_owner_only(
     obj: any,
   ): boolean | undefined;
+  _user_set_query_project_allow_collaborator_starts_using_sponsor(
+    obj: any,
+  ): boolean | undefined;
 }
 
 // This is an extension of BaseProject in projects/control/base.ts

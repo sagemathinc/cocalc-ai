@@ -11,6 +11,9 @@ Implementation notes:
   structured LRO result with privacy-filtered visible project details, frontend
   stop actions, sponsor upgrade routing, and CLI rendering. Explicit
   sponsor-change actions remain Phase 5 follow-up work.
+- Phase 4 complete: project owners, runtime sponsors, and administrators can
+  disable ordinary collaborator starts that consume the runtime sponsor's
+  simultaneous running-project slots.
 - Runtime sponsor resolution enforces the core invariant that explicit runtime
   sponsors and `usage_account_id` sponsors must be current project
   owners/collaborators; otherwise resolution falls back to the project owner.
@@ -427,6 +430,9 @@ Implementation:
 - if false, collaborator start attempts fail unless actor is sponsor or an
   explicit self-sponsor path exists
 - add project settings explanation
+- Phase 4 note: the first implementation treats unset as true, stores the
+  setting on the authoritative project row, and enforces it on the owning bay
+  before runtime-slot reservation.
 
 Validation:
 
