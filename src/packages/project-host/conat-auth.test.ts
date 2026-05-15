@@ -162,6 +162,33 @@ describe("project-host Conat auth", () => {
     });
   });
 
+  it("accepts a valid duplicate browser-session cookie after a stale duplicate", async () => {
+    const { getUser } = createProjectHostConatAuth({ host_id });
+    const browserSession = createProjectHostBrowserSessionToken({
+      account_id,
+      now_ms: Date.now(),
+    });
+
+    await expect(
+      getUser(
+        {
+          handshake: {
+            headers: {
+              cookie: [
+                "cocalc_project_host_session=stale-browser-session",
+                `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+              ].join("; "),
+            },
+          },
+        } as any,
+        undefined as any,
+      ),
+    ).resolves.toMatchObject({
+      account_id,
+      auth_iat_s: expect.any(Number),
+    });
+  });
+
   it("only allows project-scoped auth from trusted local addresses", async () => {
     mockGetProject.mockReturnValue({
       project_id,
