@@ -130,6 +130,7 @@ export class ConatSocketClient extends ConatSocketBase {
       role: this.role,
       reset: this.disconnect,
       send: this.sendToServer,
+      canSend: () => this.state == "ready",
       size: this.maxQueueSize,
     });
 

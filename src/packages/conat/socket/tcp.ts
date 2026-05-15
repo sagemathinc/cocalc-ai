@@ -22,9 +22,23 @@ export interface TCP {
   recv: Receiver;
 }
 
-export function createTCP({ request, send, reset, role, size }): TCP {
+export function createTCP({
+  request,
+  send,
+  reset,
+  role,
+  size,
+  canSend,
+}: {
+  request;
+  send: (mesg: Message) => void;
+  reset;
+  role: Role;
+  size: number;
+  canSend?: () => boolean;
+}): TCP {
   return {
-    send: new Sender(send, role, size),
+    send: new Sender(send, role, size, canSend),
     recv: new Receiver(request, reset, role),
   };
 }
@@ -177,6 +191,7 @@ export class Sender extends EventEmitter {
     private send: (mesg: Message) => void,
     public readonly role: Role,
     private size: number,
+    private canSend: () => boolean = () => true,
   ) {
     super();
   }
@@ -217,6 +232,7 @@ export class Sender extends EventEmitter {
     if (this.lastAcked()) {
       // console.log("resendLast -- nothing to do");
       // no-op
+      return;
     }
     // console.log("resendLast -- resending");
     this.send(this.outgoing[this.seq]);
@@ -230,6 +246,9 @@ export class Sender extends EventEmitter {
           if (this.outgoing === undefined || this.lastAcked()) {
             // done -- condition satisfied
             return true;
+          }
+          if (!this.canSend()) {
+            return false;
           }
           this.resendLast();
           return false;

@@ -680,10 +680,20 @@ export interface AccountLocalReserveProjectRuntimeSlotResult {
 export interface AccountLocalHeartbeatProjectRuntimeSlotRequest {
   sponsor_account_id: string;
   project_id: string;
+  owning_bay_id?: string;
   state?: Extract<ProjectRuntimeSlotState, "starting" | "running">;
   host_id?: string | null;
   ttl_ms?: number;
   metadata?: Record<string, unknown>;
+}
+
+export interface AccountLocalHeartbeatProjectRuntimeSlotsBatchRequest {
+  slots: AccountLocalHeartbeatProjectRuntimeSlotRequest[];
+  ttl_ms?: number;
+}
+
+export interface AccountLocalHeartbeatProjectRuntimeSlotsBatchResult {
+  heartbeated: number;
 }
 
 export interface AccountLocalReleaseProjectRuntimeSlotRequest {
@@ -1088,6 +1098,7 @@ export type AccountLocalMethod =
   | "close-dedicated-host-purchase-session"
   | "reserve-project-runtime-slot"
   | "heartbeat-project-runtime-slot"
+  | "heartbeat-project-runtime-slots-batch"
   | "release-project-runtime-slot"
   | "list-project-runtime-slots"
   | "upsert-membership-grant"
@@ -1817,6 +1828,9 @@ export interface InterBayAccountLocalApi {
   heartbeatProjectRuntimeSlot: (
     opts: AccountLocalHeartbeatProjectRuntimeSlotRequest,
   ) => Promise<boolean>;
+  heartbeatProjectRuntimeSlotsBatch: (
+    opts: AccountLocalHeartbeatProjectRuntimeSlotsBatchRequest,
+  ) => Promise<AccountLocalHeartbeatProjectRuntimeSlotsBatchResult>;
   releaseProjectRuntimeSlot: (
     opts: AccountLocalReleaseProjectRuntimeSlotRequest,
   ) => Promise<boolean>;
@@ -3165,6 +3179,15 @@ export function createInterBayAccountLocalClient({
       method: "heartbeat-project-runtime-slot",
     }),
   });
+  const heartbeatProjectRuntimeSlotsBatchClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "heartbeatProjectRuntimeSlotsBatch">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "heartbeat-project-runtime-slots-batch",
+    }),
+  });
   const releaseProjectRuntimeSlotClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "releaseProjectRuntimeSlot">
   >({
@@ -3347,6 +3370,10 @@ export function createInterBayAccountLocalClient({
       await reserveProjectRuntimeSlotClient.reserveProjectRuntimeSlot(opts),
     heartbeatProjectRuntimeSlot: async (opts) =>
       await heartbeatProjectRuntimeSlotClient.heartbeatProjectRuntimeSlot(opts),
+    heartbeatProjectRuntimeSlotsBatch: async (opts) =>
+      await heartbeatProjectRuntimeSlotsBatchClient.heartbeatProjectRuntimeSlotsBatch(
+        opts,
+      ),
     releaseProjectRuntimeSlot: async (opts) =>
       await releaseProjectRuntimeSlotClient.releaseProjectRuntimeSlot(opts),
     listProjectRuntimeSlots: async (opts) =>
@@ -3571,6 +3598,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         heartbeatProjectRuntimeSlot: async (opts) =>
           await impl.heartbeatProjectRuntimeSlot(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "heartbeatProjectRuntimeSlotsBatch">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "heartbeat-project-runtime-slots-batch",
+      }),
+      impl: {
+        heartbeatProjectRuntimeSlotsBatch: async (opts) =>
+          await impl.heartbeatProjectRuntimeSlotsBatch(opts),
       },
     }),
     createServiceHandler<

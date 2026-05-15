@@ -132,6 +132,7 @@ import {
 } from "@cocalc/server/project-host/spend";
 import {
   heartbeatProjectRuntimeSlotLocal,
+  heartbeatProjectRuntimeSlotsBatchLocal,
   listProjectRuntimeSlotsLocal,
   releaseProjectRuntimeSlotLocal,
   reserveProjectRuntimeSlotLocal,
@@ -528,6 +529,8 @@ async function startAccountLocalService(): Promise<void> {
       await reserveProjectRuntimeSlotLocal(opts),
     heartbeatProjectRuntimeSlot: async (opts) =>
       await heartbeatProjectRuntimeSlotLocal(opts),
+    heartbeatProjectRuntimeSlotsBatch: async (opts) =>
+      await heartbeatProjectRuntimeSlotsBatchLocal(opts),
     releaseProjectRuntimeSlot: async (opts) =>
       await releaseProjectRuntimeSlotLocal(opts),
     listProjectRuntimeSlots: async (opts) =>

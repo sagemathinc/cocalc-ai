@@ -39,6 +39,11 @@ import {
 } from "./explorer/lro-timeline-utils";
 import { progressBarStatus } from "@cocalc/frontend/lro/utils";
 import { useProjectActiveOperation } from "./use-project-active-op";
+import {
+  formatRuntimeSponsorDenial,
+  type RuntimeSponsorDenial,
+} from "@cocalc/util/runtime-sponsor-denial";
+import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 
 const STYLE: CSSProperties = {
   fontSize: "40px",
@@ -103,6 +108,8 @@ export function StartButton({
       startLro.summary.status === "running");
   const startLroSummary = startLro?.summary;
   const startLroError = `${startLroSummary?.error ?? ""}`.trim();
+  const runtimeSponsorDenial = startLroSummary?.result
+    ?.runtime_sponsor_denial as RuntimeSponsorDenial | undefined;
   const startFailed = startLroSummary?.status === "failed" && !!startLroError;
   const moveActive =
     moveLro != null &&
@@ -267,7 +274,15 @@ export function StartButton({
             type="error"
             showIcon
             title="Project start failed"
-            description={startLroError}
+            description={
+              runtimeSponsorDenial ? (
+                <RuntimeSponsorDenialDescription
+                  denial={runtimeSponsorDenial}
+                />
+              ) : (
+                startLroError
+              )
+            }
             action={
               <Button
                 size="small"
@@ -491,5 +506,39 @@ function MoveProgressInline({ moveLro }: { moveLro: MoveLroState }) {
         />
       )}
     </Space>
+  );
+}
+
+function RuntimeSponsorDenialDescription({
+  denial,
+}: {
+  denial: RuntimeSponsorDenial;
+}) {
+  const visibleProjects = denial.active_projects.filter(
+    (project) => project.visible !== false,
+  );
+  const nonCollaboratorCount =
+    denial.active_projects.length - visibleProjects.length;
+  return (
+    <div>
+      <div>{formatRuntimeSponsorDenial(denial)}</div>
+      {visibleProjects.length > 0 && (
+        <ul style={{ margin: "8px 0 0 18px", padding: 0 }}>
+          {visibleProjects.map((project) => (
+            <li key={project.project_id}>
+              <ProjectTitle project_id={project.project_id} trunc={60} />
+              {project.state ? ` (${project.state})` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+      {nonCollaboratorCount > 0 && (
+        <div style={{ marginTop: "8px" }}>
+          {nonCollaboratorCount} sponsored running{" "}
+          {nonCollaboratorCount === 1 ? "project is" : "projects are"} not shown
+          here because your account is not a collaborator.
+        </div>
+      )}
+    </div>
   );
 }

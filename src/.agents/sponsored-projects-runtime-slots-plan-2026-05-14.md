@@ -1,6 +1,16 @@
 # Sponsored Projects Runtime Slots Plan
 
-Status: draft for review, 2026-05-14.
+Status: implementation in progress, 2026-05-14.
+
+Implementation notes:
+
+- Phase 0 complete.
+- Phase 1 complete.
+- Phase 2 complete, including batched cross-bay runtime slot heartbeats.
+- Phase 3 is in progress: start/restart slot exhaustion now propagates as a
+  structured LRO result with privacy-filtered visible project details. Stop
+  buttons, upgrade links, CLI rendering, and sponsor-change actions remain
+  follow-up work.
 
 This document defines a phased design for limiting simultaneous running projects
 without making collaboration confusing. It is a follow-up to
