@@ -115,6 +115,71 @@ test("cloudflare teardown review fetches saved plan", async () => {
   assert.deepEqual(capturedArgs, { plan_id: "plan-1" });
 });
 
+test("cloudflare teardown apply starts LRO", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        startCloudflareTeardownApply: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            op_id: "teardown-apply-1",
+            scope_type: "account",
+            scope_id: "acct",
+            service: "persist",
+            stream_name: "lro:teardown-apply-1",
+          };
+        },
+      },
+      lro: {
+        get: async () => ({
+          op_id: "teardown-apply-1",
+          status: "succeeded",
+          result: {
+            plan_id: "plan-1",
+            applied_at: "2026-05-13T00:00:00.000Z",
+            deleted_dns_records: 2,
+            deleted_tunnels: 1,
+            skipped_r2_buckets: 0,
+            actions: [],
+            notes: [],
+          },
+          progress_summary: {
+            phase: "done",
+            plan_id: "plan-1",
+            deleted_dns_records: 2,
+            total_dns_records: 2,
+            deleted_tunnels: 1,
+            total_tunnels: 1,
+            skipped_r2_buckets: 0,
+            total_r2_buckets: 0,
+          },
+        }),
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "teardown",
+    "apply",
+    "plan-1",
+    "--confirm",
+    "delete 1 tunnels, 2 dns records, 0 r2 buckets",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    plan_id: "plan-1",
+    confirm: "delete 1 tunnels, 2 dns records, 0 r2 buckets",
+    delete_r2_contents: false,
+    reset_local_settings: false,
+  });
+});
+
 test("cloudflare r2 usage requests usage summary", async () => {
   let capturedArgs: any;
   const program = new Command();
@@ -340,6 +405,78 @@ test("cloudflare r2 audit passes cache controls", async () => {
   });
 });
 
+test("cloudflare r2 audit can show rustic repository kind groups", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        auditCloudflareR2Bucket: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            account_id: "acct",
+            bucket: opts.bucket,
+            scanned_at: "2026-05-12T00:00:00.000Z",
+            cache: {
+              hit: true,
+              max_age_minutes: 60,
+              expires_at: "2026-05-12T01:00:00.000Z",
+            },
+            object_count: 3,
+            total_bytes: 6144,
+            rustic_repos: [
+              {
+                repo: "rustic/shared-wnam-0001",
+                kind: "project-backup",
+                object_count: 1,
+                total_bytes: 1024,
+                examples: [],
+              },
+              {
+                repo: "rustic/shared-wnam-0002",
+                kind: "project-backup",
+                object_count: 1,
+                total_bytes: 2048,
+                examples: [],
+              },
+              {
+                repo: "rustic/bay-backups/bay-1",
+                kind: "bay-backup",
+                object_count: 1,
+                total_bytes: 3072,
+                examples: [],
+              },
+            ],
+            categories: [],
+            top_prefixes: [],
+            top_objects: [],
+            warnings: [],
+            notes: [],
+          };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "r2",
+    "audit",
+    "alpha-wnam",
+    "--rustic-kinds",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bucket: "alpha-wnam",
+    prefix: undefined,
+    refresh: false,
+    max_age_minutes: undefined,
+  });
+});
+
 test("cloudflare r2 audit refresh starts LRO", async () => {
   let capturedArgs: any;
   const program = new Command();
@@ -413,5 +550,130 @@ test("cloudflare r2 audit refresh starts LRO", async () => {
     prefix: "rustic/",
     refresh: true,
     max_age_minutes: 5,
+  });
+});
+
+test("cloudflare r2 bay-backups plan forwards bucket and prefix", async () => {
+  let capturedArgs: any;
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        getCloudflareR2BayBackupCleanupPlan: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            bucket: opts.bucket,
+            prefix: opts.prefix,
+            checked_at: "2026-05-13T00:00:00.000Z",
+            object_count: 2,
+            total_bytes: 4096,
+            wal_object_count: 2,
+            wal_total_bytes: 4096,
+            manifest_object_count: 0,
+            manifest_total_bytes: 0,
+            other_object_count: 0,
+            other_total_bytes: 0,
+            bay_prefixes: [],
+            confirmation_text:
+              "delete direct bay backups from lite4b-wnam/bay-backups/: 2 objects 4096 bytes",
+            warnings: [],
+            notes: [],
+          };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "r2",
+    "bay-backups",
+    "plan",
+    "lite4b-wnam",
+    "--prefix",
+    "bay-backups/bay-0/",
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bucket: "lite4b-wnam",
+    prefix: "bay-backups/bay-0/",
+  });
+});
+
+test("cloudflare r2 bay-backups delete starts LRO", async () => {
+  let capturedArgs: any;
+  const confirm =
+    "delete direct bay backups from lite4b-wnam/bay-backups/: 2 objects 4096 bytes";
+  const program = new Command();
+  registerCloudflareCommand(
+    program,
+    deps({
+      system: {
+        startCloudflareR2BayBackupCleanup: async (opts: any) => {
+          capturedArgs = opts;
+          return {
+            op_id: "cleanup-op-1",
+            scope_type: "account",
+            scope_id: "acct",
+            service: "persist",
+            stream_name: "lro:cleanup-op-1",
+          };
+        },
+      },
+      lro: {
+        get: async () => ({
+          op_id: "cleanup-op-1",
+          status: "succeeded",
+          result: {
+            bucket: "lite4b-wnam",
+            prefix: "bay-backups/",
+            checked_at: "2026-05-13T00:00:00.000Z",
+            object_count: 2,
+            total_bytes: 4096,
+            wal_object_count: 2,
+            wal_total_bytes: 4096,
+            manifest_object_count: 0,
+            manifest_total_bytes: 0,
+            other_object_count: 0,
+            other_total_bytes: 0,
+            bay_prefixes: [],
+            confirmation_text: confirm,
+            warnings: [],
+            notes: [],
+            deleted_object_count: 2,
+            deleted_total_bytes: 4096,
+          },
+          progress_summary: {
+            phase: "done",
+            bucket: "lite4b-wnam",
+            prefix: "bay-backups/",
+            objects_seen: 2,
+            objects_deleted: 2,
+            bytes_deleted: 4096,
+          },
+        }),
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "cloudflare",
+    "r2",
+    "bay-backups",
+    "delete",
+    "lite4b-wnam",
+    "--confirm",
+    confirm,
+  ]);
+
+  assert.deepEqual(capturedArgs, {
+    bucket: "lite4b-wnam",
+    prefix: "bay-backups/",
+    confirm,
   });
 });

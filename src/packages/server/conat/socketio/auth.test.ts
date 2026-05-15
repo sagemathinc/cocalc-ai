@@ -19,6 +19,13 @@ jest.mock("@cocalc/server/auth/get-account", () => ({
 
 jest.mock("@cocalc/server/auth/remember-me", () => ({
   __esModule: true,
+  getRememberMeCookieValuesFromHeader: jest.fn((header?: string) =>
+    `${header ?? ""}`
+      .split(";")
+      .map((part) => part.trim())
+      .filter((part) => part.startsWith("remember_me="))
+      .map((part) => part.slice("remember_me=".length)),
+  ),
   getRememberMeHashFromCookieValue: jest.fn(),
 }));
 
@@ -35,7 +42,10 @@ jest.mock("@cocalc/server/projects/control/secret-token", () => ({
 import { hasProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
-import { getRememberMeHashFromCookieValue } from "@cocalc/server/auth/remember-me";
+import {
+  getRememberMeCookieValuesFromHeader,
+  getRememberMeHashFromCookieValue,
+} from "@cocalc/server/auth/remember-me";
 
 const getHubManagedEgressBlockedMessageMock = jest.fn();
 
@@ -507,5 +517,64 @@ describe("managed egress blocking for browser-facing hub sockets", () => {
       code: 429,
       authFailure: false,
     });
+  });
+});
+
+describe("remember_me socket auth", () => {
+  beforeEach(() => {
+    (getAccountIdFromRememberMe as jest.Mock).mockReset();
+    (getRememberMeCookieValuesFromHeader as jest.Mock).mockClear();
+    (getRememberMeHashFromCookieValue as jest.Mock).mockReset();
+    getHubManagedEgressBlockedMessageMock.mockReset();
+  });
+
+  it("accepts a later duplicate remember_me cookie when an earlier duplicate is stale", async () => {
+    (getRememberMeHashFromCookieValue as jest.Mock).mockImplementation(
+      (value: string) => `${value}-hash`,
+    );
+    (getAccountIdFromRememberMe as jest.Mock).mockImplementation(
+      async (hash: string) => (hash === "valid-token-hash" ? account_id : null),
+    );
+    const socket = {
+      handshake: {
+        auth: {},
+        headers: {
+          cookie: "remember_me=stale-token; other=x; remember_me=valid-token",
+        },
+      },
+    };
+
+    await expect(getUser(socket)).resolves.toEqual({
+      account_id,
+      auth_session_hash: "valid-token-hash",
+    });
+    expect(getAccountIdFromRememberMe).toHaveBeenCalledWith("stale-token-hash");
+    expect(getAccountIdFromRememberMe).toHaveBeenCalledWith("valid-token-hash");
+  });
+
+  it("ignores malformed duplicate remember_me cookies when another duplicate is valid", async () => {
+    (getRememberMeHashFromCookieValue as jest.Mock).mockImplementation(
+      (value: string) => {
+        if (value === "bad-token") {
+          throw new Error("badly formatted remember_me cookie");
+        }
+        return `${value}-hash`;
+      },
+    );
+    (getAccountIdFromRememberMe as jest.Mock).mockResolvedValue(account_id);
+    const socket = {
+      handshake: {
+        auth: {},
+        headers: {
+          cookie: "remember_me=bad-token; remember_me=valid-token",
+        },
+      },
+    };
+
+    await expect(getUser(socket)).resolves.toEqual({
+      account_id,
+      auth_session_hash: "valid-token-hash",
+    });
+    expect(getAccountIdFromRememberMe).toHaveBeenCalledTimes(1);
   });
 });

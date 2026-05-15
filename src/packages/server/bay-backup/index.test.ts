@@ -18,7 +18,7 @@ let getSingleBayInfoMock: jest.Mock;
 let ensureRusticInitializedMock: jest.Mock;
 let whichMock: jest.Mock;
 let listObjectsMock: jest.Mock;
-let deleteObjectMock: jest.Mock;
+let deleteObjectsMock: jest.Mock;
 let issueSignedObjectDownloadMock: jest.Mock;
 let oldFetch: typeof global.fetch | undefined;
 
@@ -79,7 +79,7 @@ jest.mock("@cocalc/backend/which", () => ({
 jest.mock("@cocalc/server/project-backup/r2", () => ({
   __esModule: true,
   createBucket: jest.fn(),
-  deleteObject: (...args: any[]) => deleteObjectMock(...args),
+  deleteObjects: (...args: any[]) => deleteObjectsMock(...args),
   listBuckets: jest.fn(async () => []),
   listObjects: (...args: any[]) => listObjectsMock(...args),
   issueSignedObjectDownload: (...args: any[]) =>
@@ -233,7 +233,7 @@ describe("bay-backup runner", () => {
     ensureRusticInitializedMock = jest.fn(async () => undefined);
     whichMock = jest.fn(async (binary: string) => `/usr/bin/${binary}`);
     listObjectsMock = jest.fn(async () => []);
-    deleteObjectMock = jest.fn(async () => undefined);
+    deleteObjectsMock = jest.fn(async () => undefined);
     issueSignedObjectDownloadMock = jest.fn(({ key }: { key: string }) => ({
       url: `https://example.invalid/${key}`,
       headers: {},
@@ -1721,9 +1721,8 @@ describe("bay-backup runner", () => {
 
     await runBayBackup();
 
-    expect(
-      deleteObjectMock.mock.calls.map((call) => call[0].key).sort(),
-    ).toEqual([
+    expect(deleteObjectsMock).toHaveBeenCalledTimes(1);
+    expect(deleteObjectsMock.mock.calls[0][0].keys.sort()).toEqual([
       "bay-backups/bay-0/wal/000000010000000000000001",
       "bay-backups/bay-0/wal/000000010000000000000002",
       "bay-backups/bay-0/wal/000000010000000000000003",

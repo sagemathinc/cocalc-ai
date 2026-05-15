@@ -12,6 +12,7 @@ import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import { getProjectBackupConfigForRepo } from "@cocalc/server/project-backup";
 
 const RUSTIC_TIMEOUT_MS = 30 * 60 * 1000;
+const RUSTIC_FORGET_BATCH_SIZE = 100;
 
 function backupIndexHost(project_id: string): string {
   return `project-${project_id}-index`;
@@ -63,9 +64,10 @@ async function forgetAllSnapshotsForHost({
   if (!ids.length) {
     return 0;
   }
-  for (const id of ids) {
+  for (let i = 0; i < ids.length; i += RUSTIC_FORGET_BATCH_SIZE) {
+    const batch = ids.slice(i, i + RUSTIC_FORGET_BATCH_SIZE);
     parseOutput(
-      await rustic(["forget", id], {
+      await rustic(["forget", ...batch], {
         repo,
         host,
         timeout: RUSTIC_TIMEOUT_MS,

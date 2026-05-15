@@ -85,12 +85,16 @@ import {
 import {
   createCloudflareTeardownPlan as createCloudflareTeardownPlan0,
   getCloudflareTeardownPlan as getCloudflareTeardownPlan0,
+  runCloudflareTeardownApplyLro,
   type CloudflareTeardownPlan,
 } from "@cocalc/server/cloud/cloudflare-teardown";
 import {
   auditCloudflareR2Bucket as auditCloudflareR2Bucket0,
+  getCloudflareR2BayBackupCleanupPlan as getCloudflareR2BayBackupCleanupPlan0,
   getCloudflareR2Usage as getCloudflareR2Usage0,
+  runCloudflareR2BayBackupCleanupLro,
   runCloudflareR2AuditLro,
+  type CloudflareR2BayBackupCleanupPlan,
   type CloudflareR2AuditResult,
   type CloudflareR2UsageResult,
 } from "@cocalc/server/cloud/cloudflare-r2-usage";
@@ -3441,6 +3445,91 @@ export async function getCloudflareTeardownPlan({
   return await getCloudflareTeardownPlan0({ account_id, plan_id });
 }
 
+export async function startCloudflareTeardownApply({
+  account_id,
+  session_hash,
+  plan_id,
+  confirm,
+  delete_r2_contents,
+  reset_local_settings,
+}: {
+  account_id?: string;
+  session_hash?: string;
+  plan_id: string;
+  confirm: string;
+  delete_r2_contents?: boolean;
+  reset_local_settings?: boolean;
+}): Promise<{
+  op_id: string;
+  scope_type: "account";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const cleanedSessionHash = `${session_hash ?? ""}`.trim();
+  if (!cleanedSessionHash) {
+    throw Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+  }
+  const session = await requireFreshAuthForSessionHash({
+    account_id,
+    session_hash: cleanedSessionHash,
+  });
+  if (!(await hasActiveSecondFactor(account_id))) {
+    throw Object.assign(
+      new Error(
+        "admins must enable two-factor authentication before applying Cloudflare teardown",
+      ),
+      { code: "two_factor_required" },
+    );
+  }
+  if ((session.factor_level ?? "none") === "none") {
+    throw Object.assign(
+      new Error("recent admin two-factor verification is required"),
+      { code: "fresh_auth_required" },
+    );
+  }
+  const op = await createLro({
+    kind: CLOUDFLARE_TEARDOWN_APPLY_LRO_KIND,
+    scope_type: "account",
+    scope_id: account_id,
+    created_by: account_id,
+    routing: "hub",
+    input: {
+      plan_id,
+      confirm,
+      delete_r2_contents: !!delete_r2_contents,
+      reset_local_settings: !!reset_local_settings,
+    },
+    status: "queued",
+  });
+  await publishQueuedLroSafe({ op });
+  void runCloudflareTeardownApplyLro({
+    op_id: op.op_id,
+    account_id,
+    plan_id,
+    confirm,
+    delete_r2_contents,
+    reset_local_settings,
+  }).catch((err) =>
+    logger.warn("failed to run Cloudflare teardown apply LRO", {
+      op_id: op.op_id,
+      err,
+    }),
+  );
+  return {
+    op_id: op.op_id,
+    scope_type: "account",
+    scope_id: account_id,
+    service: PERSIST_SERVICE,
+    stream_name: lroStreamName(op.op_id),
+  };
+}
+
 export async function getCloudflareR2Usage({
   account_id,
   all_buckets,
@@ -3490,6 +3579,9 @@ export async function auditCloudflareR2Bucket({
 }
 
 const CLOUDFLARE_R2_AUDIT_LRO_KIND = "cloudflare-r2-audit";
+const CLOUDFLARE_R2_BAY_BACKUP_CLEANUP_LRO_KIND =
+  "cloudflare-r2-bay-backup-cleanup";
+const CLOUDFLARE_TEARDOWN_APPLY_LRO_KIND = "cloudflare-teardown-apply";
 
 export async function startCloudflareR2Audit({
   account_id,
@@ -3536,6 +3628,75 @@ export async function startCloudflareR2Audit({
     max_age_minutes,
   }).catch((err) =>
     logger.warn("failed to run Cloudflare R2 audit LRO", {
+      op_id: op.op_id,
+      err,
+    }),
+  );
+  return {
+    op_id: op.op_id,
+    scope_type: "account",
+    scope_id: account_id,
+    service: PERSIST_SERVICE,
+    stream_name: lroStreamName(op.op_id),
+  };
+}
+
+export async function getCloudflareR2BayBackupCleanupPlan({
+  account_id,
+  bucket,
+  prefix,
+}: {
+  account_id?: string;
+  bucket: string;
+  prefix?: string;
+}): Promise<CloudflareR2BayBackupCleanupPlan> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await getCloudflareR2BayBackupCleanupPlan0({ bucket, prefix });
+}
+
+export async function startCloudflareR2BayBackupCleanup({
+  account_id,
+  bucket,
+  prefix,
+  confirm,
+}: {
+  account_id?: string;
+  bucket: string;
+  prefix?: string;
+  confirm: string;
+}): Promise<{
+  op_id: string;
+  scope_type: "account";
+  scope_id: string;
+  service: string;
+  stream_name: string;
+}> {
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const op = await createLro({
+    kind: CLOUDFLARE_R2_BAY_BACKUP_CLEANUP_LRO_KIND,
+    scope_type: "account",
+    scope_id: account_id,
+    created_by: account_id,
+    routing: "hub",
+    input: {
+      bucket,
+      prefix,
+      confirm,
+    },
+    status: "queued",
+  });
+  await publishQueuedLroSafe({ op });
+  void runCloudflareR2BayBackupCleanupLro({
+    op_id: op.op_id,
+    bucket,
+    prefix,
+    confirm,
+  }).catch((err) =>
+    logger.warn("failed to run Cloudflare R2 bay backup cleanup LRO", {
       op_id: op.op_id,
       err,
     }),

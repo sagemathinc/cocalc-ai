@@ -134,7 +134,10 @@ register({
               alt={alt}
               title={title}
               style={{
-                height: height ?? node.height,
+                height:
+                  (width ?? node.width) == null
+                    ? (height ?? node.height)
+                    : undefined,
                 width: width ?? node.width,
                 maxWidth: "100%",
                 maxHeight: "100%",

@@ -1058,6 +1058,7 @@ export class JupyterActions extends Actions<JupyterStoreState> {
       // delete cell
       this.deleteRuntimeRecord(jupyterRuntimeCellKey(id));
       this.reset_more_output(id); // free up memory locally
+      this.handleCellDeleted(id);
       if (old_cell != null) {
         const cell_list = this.store.get_cell_list().filter((x) => x !== id);
         this.setState({ cells: cells.delete(id), cell_list });
@@ -1100,6 +1101,11 @@ export class JupyterActions extends Actions<JupyterStoreState> {
 
     return cell_list_needs_recompute;
   };
+
+  protected handleCellDeleted(_id: string): void {
+    // Hook for project/browser implementations.  In the project backend this
+    // cancels queued execution and interrupts the active kernel execution.
+  }
 
   _syncdb_change = (changes: any) => {
     if (this.syncdb == null) return;

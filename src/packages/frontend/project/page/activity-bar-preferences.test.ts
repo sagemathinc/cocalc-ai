@@ -95,6 +95,25 @@ describe("activity-bar preferences", () => {
     });
   });
 
+  it("drops the retired users tab from stored activity bar preferences", () => {
+    expect(
+      normalizeFixedTabOrder(["files", "users", "settings"], {
+        liteMode: false,
+      }),
+    ).toEqual([
+      "files",
+      "settings",
+      "workspaces",
+      "agents",
+      "new",
+      "search",
+      "active",
+      "log",
+      "servers",
+      "info",
+    ]);
+  });
+
   it("moves tabs while preserving the rest of the order", () => {
     expect(moveFixedTab(["workspaces", "agents", "files"], 2, 0)).toEqual([
       "files",

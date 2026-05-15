@@ -267,7 +267,22 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
           }}
         >
           <section>
-            <h3 style={SECTION_TITLE_STYLE}>Available Features</h3>
+            {mode === "flyout" ? (
+              <div
+                style={{
+                  alignItems: "center",
+                  display: "flex",
+                  gap: 8,
+                  justifyContent: "space-between",
+                  marginBottom: 12,
+                }}
+              >
+                <h3 style={{ ...SECTION_TITLE_STYLE, margin: 0 }}>
+                  Available Features
+                </h3>
+                {render_reload("icon")}
+              </div>
+            ) : undefined}
             {features}
           </section>
           <section>
@@ -294,14 +309,18 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
       pa.reload_configuration();
     }
 
-    function render_reload(): Rendered {
+    function render_reload(display: "button" | "icon" = "button"): Rendered {
       return (
         <Button
+          aria-label={
+            display === "icon" ? "Refresh available features" : undefined
+          }
+          size={display === "icon" ? "small" : undefined}
           onClick={() => reload()}
           icon={<ReloadOutlined />}
           disabled={configuration_loading}
         >
-          Refresh
+          {display === "button" ? "Refresh" : undefined}
         </Button>
       );
     }
@@ -317,7 +336,7 @@ export const ProjectCapabilities: React.FC<ReactProps> = React.memo(
             width: "100%",
           }}
         >
-          <span>Features and Configuration</span>
+          <span>Available Features</span>
           {render_reload()}
         </div>
       );

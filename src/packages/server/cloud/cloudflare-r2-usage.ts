@@ -5,7 +5,11 @@
 
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { scanR2Objects, type R2ObjectListEntry } from "@cocalc/backend/r2";
+import {
+  deleteR2ObjectsConcurrently,
+  scanR2Objects,
+  type R2ObjectListEntry,
+} from "@cocalc/backend/r2";
 import getLogger from "@cocalc/backend/logger";
 import { updateLro } from "@cocalc/server/lro/lro-db";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
@@ -18,6 +22,8 @@ const MAX_TOP_OBJECTS = 20;
 const MAX_TOP_PREFIXES = 30;
 const R2_AUDIT_SCHEMA_VERSION = 4;
 const R2_AUDIT_PROGRESS_INTERVAL_MS = 2000;
+const BAY_BACKUP_CLEANUP_PROGRESS_INTERVAL_MS = 2000;
+const BAY_BACKUP_CLEANUP_DELETE_CONCURRENCY = 32;
 
 const logger = getLogger("server:cloud:cloudflare-r2-usage");
 
@@ -187,6 +193,39 @@ export type CloudflareR2AuditProgress = {
   message: string;
 };
 
+export type CloudflareR2BayBackupCleanupPlan = {
+  bucket: string;
+  prefix: string;
+  checked_at: string;
+  object_count: number;
+  total_bytes: number;
+  wal_object_count: number;
+  wal_total_bytes: number;
+  manifest_object_count: number;
+  manifest_total_bytes: number;
+  other_object_count: number;
+  other_total_bytes: number;
+  bay_prefixes: CloudflareR2AuditPrefix[];
+  confirmation_text: string;
+  warnings: string[];
+  notes: string[];
+};
+
+export type CloudflareR2BayBackupCleanupProgress = {
+  phase: "starting" | "scanning" | "deleting" | "done";
+  bucket: string;
+  prefix: string;
+  objects_total?: number;
+  bytes_total?: number;
+  objects_seen: number;
+  bytes_seen: number;
+  objects_deleted: number;
+  bytes_deleted: number;
+  elapsed_ms: number;
+  objects_per_second?: number;
+  message: string;
+};
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -207,8 +246,47 @@ function normalizePrefix(prefix?: string): string | undefined {
   return value.replace(/^\/+/, "");
 }
 
+function normalizeBayBackupCleanupPrefix(prefix?: string): string {
+  const normalized = normalizePrefix(prefix) ?? "bay-backups/";
+  const withSlash = normalized.endsWith("/") ? normalized : `${normalized}/`;
+  if (!withSlash.startsWith("bay-backups/")) {
+    throw new Error("bay backup cleanup prefix must start with 'bay-backups/'");
+  }
+  if (withSlash.startsWith("rustic/")) {
+    throw new Error("refusing to cleanup rustic backup repositories");
+  }
+  return withSlash;
+}
+
 function r2Endpoint(accountId: string, configured?: string): string {
   return clean(configured) ?? `https://${accountId}.r2.cloudflarestorage.com`;
+}
+
+export async function getR2S3Auth(bucket: string) {
+  const bucketName = clean(bucket);
+  if (!bucketName) throw new Error("bucket is required");
+  const settings = await getServerSettings();
+  const accountId =
+    clean(settings.r2_account_id) ??
+    clean(settings.project_hosts_cloudflare_tunnel_account_id);
+  const accessKey = clean(settings.r2_access_key_id);
+  const secretKey = clean(settings.r2_secret_access_key);
+  const bucketPrefix = clean(settings.r2_bucket_prefix);
+  if (!accountId) throw new Error("missing r2_account_id");
+  if (!accessKey) throw new Error("missing r2_access_key_id");
+  if (!secretKey) throw new Error("missing r2_secret_access_key");
+  return {
+    bucketName,
+    accountId,
+    bucketPrefix,
+    auth: {
+      endpoint: r2Endpoint(accountId),
+      accessKey,
+      secretKey,
+      bucket: bucketName,
+      region: "auto" as const,
+    },
+  };
 }
 
 async function cloudflareRequest<T>(token: string, path: string): Promise<T> {
@@ -963,17 +1041,7 @@ export async function auditCloudflareR2Bucket({
   expected_total_bytes?: number;
   onProgress?: (progress: CloudflareR2AuditProgress) => void | Promise<void>;
 }): Promise<CloudflareR2AuditResult> {
-  const bucketName = clean(bucket);
-  if (!bucketName) throw new Error("bucket is required");
-  const settings = await getServerSettings();
-  const accountId =
-    clean(settings.r2_account_id) ??
-    clean(settings.project_hosts_cloudflare_tunnel_account_id);
-  const accessKey = clean(settings.r2_access_key_id);
-  const secretKey = clean(settings.r2_secret_access_key);
-  if (!accountId) throw new Error("missing r2_account_id");
-  if (!accessKey) throw new Error("missing r2_access_key_id");
-  if (!secretKey) throw new Error("missing r2_secret_access_key");
+  const { bucketName, accountId, auth } = await getR2S3Auth(bucket);
 
   await ensureAuditCacheTable();
   const normalizedPrefix = normalizePrefix(prefix) ?? "";
@@ -1067,13 +1135,7 @@ export async function auditCloudflareR2Bucket({
 
   await publishProgress("starting", true);
   const { objectCount, totalSize } = await scanR2Objects({
-    auth: {
-      endpoint: r2Endpoint(accountId),
-      accessKey,
-      secretKey,
-      bucket: bucketName,
-      region: "auto",
-    },
+    auth,
     prefix: normalizedPrefix || undefined,
     onPage: async (entries) => {
       pagesSeen += 1;
@@ -1165,6 +1227,25 @@ export async function auditCloudflareR2Bucket({
   await saveCachedAudit(result);
   await publishProgress("done", true);
   return result;
+}
+
+export async function getCachedCloudflareR2Audit({
+  bucket,
+  prefix,
+  max_age_minutes,
+}: {
+  bucket: string;
+  prefix?: string;
+  max_age_minutes?: number;
+}): Promise<CloudflareR2AuditResult | undefined> {
+  const { bucketName, accountId } = await getR2S3Auth(bucket);
+  await ensureAuditCacheTable();
+  return await getCachedAudit({
+    accountId,
+    bucket: bucketName,
+    prefix: normalizePrefix(prefix) ?? "",
+    maxAgeMinutes: cacheMaxAgeMinutes(max_age_minutes),
+  });
 }
 
 async function publishAuditLroSummary(summary?: LroSummary): Promise<void> {
@@ -1283,6 +1364,330 @@ export async function runCloudflareR2AuditLro({
         elapsed_ms: 0,
         message,
       },
+    });
+  }
+}
+
+function bayBackupCleanupConfirmation({
+  bucket,
+  prefix,
+  objectCount,
+  totalBytes,
+}: {
+  bucket: string;
+  prefix: string;
+  objectCount: number;
+  totalBytes: number;
+}): string {
+  return `delete direct bay backups from ${bucket}/${prefix}: ${objectCount} objects ${totalBytes} bytes`;
+}
+
+function classifyBayBackupCleanupKey(
+  key: string,
+): "wal" | "manifest" | "other" {
+  if (/^bay-backups\/[^/]+\/wal\/[^/]+$/.test(key)) return "wal";
+  if (/^bay-backups\/[^/]+\/[^/]+\/manifest\.json$/.test(key)) {
+    return "manifest";
+  }
+  return "other";
+}
+
+function bayPrefixForCleanupKey(key: string): string {
+  const parts = key.split("/").filter(Boolean);
+  return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : "bay-backups";
+}
+
+export async function getCloudflareR2BayBackupCleanupPlan({
+  bucket,
+  prefix,
+}: {
+  bucket: string;
+  prefix?: string;
+}): Promise<CloudflareR2BayBackupCleanupPlan> {
+  const { bucketName, bucketPrefix, auth } = await getR2S3Auth(bucket);
+  if (bucketPrefix && !bucketName.startsWith(`${bucketPrefix}-`)) {
+    throw new Error(
+      `refusing bay backup cleanup for bucket '${bucketName}' because it does not match configured r2_bucket_prefix '${bucketPrefix}-'`,
+    );
+  }
+  const cleanupPrefix = normalizeBayBackupCleanupPrefix(prefix);
+  const bayPrefixes = new Map<
+    string,
+    { object_count: number; total_bytes: number }
+  >();
+  let objectCount = 0;
+  let totalBytes = 0;
+  let walObjectCount = 0;
+  let walTotalBytes = 0;
+  let manifestObjectCount = 0;
+  let manifestTotalBytes = 0;
+  let otherObjectCount = 0;
+  let otherTotalBytes = 0;
+
+  await scanR2Objects({
+    auth,
+    prefix: cleanupPrefix,
+    onPage: (entries) => {
+      for (const entry of entries) {
+        objectCount += 1;
+        totalBytes += entry.size;
+        addToMap(bayPrefixes, bayPrefixForCleanupKey(entry.key), entry.size);
+        const kind = classifyBayBackupCleanupKey(entry.key);
+        if (kind === "wal") {
+          walObjectCount += 1;
+          walTotalBytes += entry.size;
+        } else if (kind === "manifest") {
+          manifestObjectCount += 1;
+          manifestTotalBytes += entry.size;
+        } else {
+          otherObjectCount += 1;
+          otherTotalBytes += entry.size;
+        }
+      }
+    },
+  });
+
+  return {
+    bucket: bucketName,
+    prefix: cleanupPrefix,
+    checked_at: new Date().toISOString(),
+    object_count: objectCount,
+    total_bytes: totalBytes,
+    wal_object_count: walObjectCount,
+    wal_total_bytes: walTotalBytes,
+    manifest_object_count: manifestObjectCount,
+    manifest_total_bytes: manifestTotalBytes,
+    other_object_count: otherObjectCount,
+    other_total_bytes: otherTotalBytes,
+    bay_prefixes: [...bayPrefixes.entries()]
+      .map(([prefixName, value]) => ({ prefix: prefixName, ...value }))
+      .sort((a, b) => b.total_bytes - a.total_bytes),
+    confirmation_text: bayBackupCleanupConfirmation({
+      bucket: bucketName,
+      prefix: cleanupPrefix,
+      objectCount,
+      totalBytes,
+    }),
+    warnings:
+      objectCount > 0
+        ? [
+            "Deleting these objects removes direct R2 WAL/PITR coverage for bay database backups under this prefix.",
+          ]
+        : [],
+    notes: [
+      "This plan only covers direct R2 objects under bay-backups/*.",
+      "It does not delete rustic bay backup repositories under rustic/bay-backups/*.",
+      "After deleting direct bay backup objects, run a fresh bay backup to start a new recoverable database backup chain.",
+    ],
+  };
+}
+
+function makeBayBackupCleanupProgress({
+  phase,
+  bucket,
+  prefix,
+  objectsTotal,
+  bytesTotal,
+  objectsSeen,
+  bytesSeen,
+  objectsDeleted,
+  bytesDeleted,
+  startedAt,
+}: {
+  phase: CloudflareR2BayBackupCleanupProgress["phase"];
+  bucket: string;
+  prefix: string;
+  objectsTotal?: number;
+  bytesTotal?: number;
+  objectsSeen: number;
+  bytesSeen: number;
+  objectsDeleted: number;
+  bytesDeleted: number;
+  startedAt: number;
+}): CloudflareR2BayBackupCleanupProgress {
+  const elapsedMs = Math.max(0, Date.now() - startedAt);
+  const elapsedSeconds = elapsedMs / 1000;
+  const objectsPerSecond =
+    elapsedSeconds > 0
+      ? Math.round((objectsDeleted / elapsedSeconds) * 10) / 10
+      : undefined;
+  return {
+    phase,
+    bucket,
+    prefix,
+    objects_total: objectsTotal,
+    bytes_total: bytesTotal,
+    objects_seen: objectsSeen,
+    bytes_seen: bytesSeen,
+    objects_deleted: objectsDeleted,
+    bytes_deleted: bytesDeleted,
+    elapsed_ms: elapsedMs,
+    objects_per_second: objectsPerSecond,
+    message:
+      phase === "done"
+        ? "bay backup cleanup complete"
+        : phase === "deleting"
+          ? "deleting direct bay backup objects"
+          : phase === "scanning"
+            ? "scanning direct bay backup objects"
+            : "starting bay backup cleanup",
+  };
+}
+
+async function updateBayBackupCleanupLro({
+  op_id,
+  status,
+  result,
+  error,
+  progress_summary,
+}: {
+  op_id: string;
+  status?: "running" | "succeeded" | "failed";
+  result?: any;
+  error?: string | null;
+  progress_summary?: CloudflareR2BayBackupCleanupProgress;
+}): Promise<LroSummary | undefined> {
+  const summary = await updateLro({
+    op_id,
+    status,
+    result,
+    error,
+    progress_summary,
+    heartbeat_at: new Date(),
+  });
+  await publishAuditLroSummary(summary);
+  if (summary && progress_summary) {
+    await publishLroEvent({
+      scope_type: summary.scope_type,
+      scope_id: summary.scope_id,
+      op_id,
+      event: {
+        type: "progress",
+        ts: Date.now(),
+        phase: progress_summary.phase,
+        message: progress_summary.message,
+        detail: progress_summary,
+      },
+    });
+  }
+  return summary;
+}
+
+export async function runCloudflareR2BayBackupCleanupLro({
+  op_id,
+  bucket,
+  prefix,
+  confirm,
+}: {
+  op_id: string;
+  bucket: string;
+  prefix?: string;
+  confirm: string;
+}): Promise<void> {
+  const startedAt = Date.now();
+  let lastProgressAt = 0;
+  let objectsSeen = 0;
+  let bytesSeen = 0;
+  let objectsDeleted = 0;
+  let bytesDeleted = 0;
+  try {
+    const plan = await getCloudflareR2BayBackupCleanupPlan({ bucket, prefix });
+    if (confirm !== plan.confirmation_text) {
+      throw new Error("confirmation text does not match cleanup plan");
+    }
+    const { auth } = await getR2S3Auth(plan.bucket);
+    const publishProgress = async (
+      phase: CloudflareR2BayBackupCleanupProgress["phase"],
+      force = false,
+    ) => {
+      const now = Date.now();
+      if (
+        !force &&
+        now - lastProgressAt < BAY_BACKUP_CLEANUP_PROGRESS_INTERVAL_MS
+      ) {
+        return;
+      }
+      lastProgressAt = now;
+      await updateBayBackupCleanupLro({
+        op_id,
+        status: "running",
+        progress_summary: makeBayBackupCleanupProgress({
+          phase,
+          bucket: plan.bucket,
+          prefix: plan.prefix,
+          objectsTotal: plan.object_count,
+          bytesTotal: plan.total_bytes,
+          objectsSeen,
+          bytesSeen,
+          objectsDeleted,
+          bytesDeleted,
+          startedAt,
+        }),
+      });
+    };
+    await publishProgress("starting", true);
+    await scanR2Objects({
+      auth,
+      prefix: plan.prefix,
+      onPage: async (entries) => {
+        objectsSeen += entries.length;
+        bytesSeen += entries.reduce((sum, entry) => sum + entry.size, 0);
+        await publishProgress("scanning");
+        const entryByKey = new Map(entries.map((entry) => [entry.key, entry]));
+        await deleteR2ObjectsConcurrently({
+          auth,
+          keys: entries.map((entry) => entry.key),
+          concurrency: BAY_BACKUP_CLEANUP_DELETE_CONCURRENCY,
+          onDeleted: async (key) => {
+            const entry = entryByKey.get(key);
+            objectsDeleted += 1;
+            bytesDeleted += entry?.size ?? 0;
+            await publishProgress("deleting");
+          },
+        });
+        await publishProgress("deleting");
+      },
+    });
+    const progress = makeBayBackupCleanupProgress({
+      phase: "done",
+      bucket: plan.bucket,
+      prefix: plan.prefix,
+      objectsTotal: plan.object_count,
+      bytesTotal: plan.total_bytes,
+      objectsSeen,
+      bytesSeen,
+      objectsDeleted,
+      bytesDeleted,
+      startedAt,
+    });
+    await updateBayBackupCleanupLro({
+      op_id,
+      status: "succeeded",
+      progress_summary: progress,
+      result: {
+        ...plan,
+        deleted_at: new Date().toISOString(),
+        deleted_object_count: objectsDeleted,
+        deleted_total_bytes: bytesDeleted,
+      },
+    });
+  } catch (err) {
+    const message = errorMessage(err);
+    logger.warn("R2 bay backup cleanup LRO failed", { op_id, bucket, err });
+    await updateBayBackupCleanupLro({
+      op_id,
+      status: "failed",
+      error: message,
+      progress_summary: makeBayBackupCleanupProgress({
+        phase: "done",
+        bucket,
+        prefix: prefix ?? "bay-backups/",
+        objectsSeen,
+        bytesSeen,
+        objectsDeleted,
+        bytesDeleted,
+        startedAt,
+      }),
     });
   }
 }

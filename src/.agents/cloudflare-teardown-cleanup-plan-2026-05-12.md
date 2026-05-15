@@ -1,6 +1,22 @@
 # Cloudflare Teardown And Cleanup Plan
 
-Status: proposed plan, 2026-05-12.
+Status: in progress, 2026-05-13.
+
+Current implementation status:
+
+- Phase 1 read-only planning and review is implemented.
+- Phase 2 safe-owned DNS/tunnel apply is implemented via a saved-plan LRO and
+  requires fresh admin two-factor authentication plus exact confirmation.
+- Phase 3 safe-owned R2 bucket empty/delete is implemented for CLI teardown
+  apply with `--delete-r2-contents`. It requires a saved `--include-r2` plan,
+  recent cached R2 audit usage for every selected bucket, reliable archived
+  project counting in the plan, exact confirmation, and streams LRO progress
+  while deleting objects concurrently.
+- Targeted direct `bay-backups/*` cleanup exists as a separate guarded command.
+- Optional local Cloudflare/R2 site setting reset is implemented for CLI
+  teardown apply with `--reset-local-settings`.
+- Cloudflare API token resource deletion and UI integration remain
+  unimplemented.
 
 Goal: make Launchpad Cloudflare teardown trustworthy, auditable, and safe
 enough for customer use. This is not a casual cleanup button. It is a staged
@@ -373,11 +389,24 @@ Production safety test:
 - Block unless archived-project counting is reliable.
 - Add resumable batch progress.
 
+Implementation status: implemented for CLI-only safe-owned R2 buckets in saved
+teardown plans. The implementation uses cached R2 audit data gathered by
+`cocalc cloudflare r2 audit <bucket> --refresh`, refuses R2 teardown when usage
+cache is missing, deletes objects with bounded concurrency, then deletes the
+empty bucket. Unknown/probably-owned buckets are still reported but not deleted.
+
 ### Phase 4: API Token Cleanup And Local Setting Reset
 
 - Delete CoCalc-created Cloudflare API tokens where possible.
 - Add optional local settings reset after successful teardown.
 - Keep managed transforms untouched by default.
+
+Implementation status: local settings reset is implemented as a CLI-only
+post-success option. It clears CoCalc's Cloudflare tunnel and R2 credentials and
+configuration from `server_settings`, while leaving the primary `dns` setting
+unchanged. Cloudflare API token deletion remains intentionally unimplemented
+because current durable tokens may not have token-management permissions and a
+manually pasted token may be shared outside this CoCalc deployment.
 
 ### Phase 5: UI Surface
 

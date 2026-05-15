@@ -23,7 +23,7 @@ import type {
 import { buildCloudInitStartupScript, handleBootstrap } from "./bootstrap-host";
 import { resolveLaunchpadBootstrapUrl } from "@cocalc/server/launchpad/bootstrap-url";
 import { bumpReconcile, DEFAULT_INTERVALS } from "./reconcile";
-import { normalizeProviderId } from "@cocalc/cloud";
+import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "./provider-context";
 import {
   computeSpotRetryDelayMs,
@@ -50,6 +50,15 @@ const pool = () => getPool();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const HOST_READY_VERIFY_DELAY_MS = 10_000;
 const HOST_READY_VERIFY_DEADLINE_MS = 10 * 60 * 1000;
+
+type ProviderReadyObservation = {
+  mapped_status?: "running" | "starting" | "off" | "stopped" | "error";
+  provider_status?: string;
+  instance_missing?: boolean;
+  public_ip?: string;
+  private_ip?: string;
+  internal_hostname?: string;
+};
 
 async function waitForProviderStatus(opts: {
   entry: Awaited<ReturnType<typeof getProviderContext>>["entry"];
@@ -156,6 +165,107 @@ async function waitForLambdaInstanceGone(opts: {
     await sleep(intervalMs);
   }
   return false;
+}
+
+async function observeProviderReadyStatus(opts: {
+  row: any;
+  providerId: ProviderId;
+}): Promise<ProviderReadyObservation | undefined> {
+  const runtime = opts.row.metadata?.runtime;
+  if (!runtime?.instance_id) return undefined;
+  try {
+    const { entry, creds } = await getProviderContext(opts.providerId, {
+      region: opts.row.region,
+    });
+    if (entry.provider.getInstance) {
+      const remote = await entry.provider.getInstance(runtime, creds);
+      if (!remote) {
+        return {
+          mapped_status: "stopped",
+          provider_status: "missing",
+          instance_missing: true,
+        };
+      }
+      const mapped =
+        (entry.provider.mapStatus?.(remote.status) as
+          | ProviderReadyObservation["mapped_status"]
+          | undefined) ??
+        (remote.status as ProviderReadyObservation["mapped_status"]);
+      return {
+        mapped_status: mapped,
+        provider_status: remote.status,
+        public_ip: remote.public_ip,
+        private_ip: remote.private_ip,
+        internal_hostname: remote.internal_hostname,
+      };
+    }
+    if (entry.provider.getStatus) {
+      const status = await entry.provider.getStatus(runtime, creds);
+      return {
+        mapped_status: status,
+        provider_status: status,
+      };
+    }
+  } catch (err) {
+    logger.warn("verify host ready provider status probe failed", {
+      host_id: opts.row.id,
+      provider: opts.providerId,
+      err,
+    });
+  }
+  return undefined;
+}
+
+function stoppedProviderStatus(
+  observation: ProviderReadyObservation | undefined,
+): "off" | "error" | undefined {
+  const status = observation?.mapped_status;
+  if (!status || status === "running" || status === "starting") {
+    return undefined;
+  }
+  if (status === "error") return "error";
+  if (status === "off" || status === "stopped") return "off";
+  return undefined;
+}
+
+function metadataForProviderStoppedBeforeReady(opts: {
+  metadata: any;
+  observation: ProviderReadyObservation | undefined;
+  message: string;
+}) {
+  const runtime = opts.metadata?.runtime;
+  return {
+    ...(opts.metadata ?? {}),
+    last_error: opts.message,
+    last_error_at: new Date().toISOString(),
+    ...(runtime
+      ? {
+          runtime: {
+            ...runtime,
+            ...(opts.observation?.provider_status
+              ? { provider_status: opts.observation.provider_status }
+              : {}),
+            ...(opts.observation?.public_ip
+              ? { public_ip: opts.observation.public_ip }
+              : opts.observation?.instance_missing
+                ? { public_ip: null }
+                : {}),
+            ...(opts.observation?.private_ip
+              ? { private_ip: opts.observation.private_ip }
+              : {}),
+            ...(opts.observation?.internal_hostname
+              ? { internal_hostname: opts.observation.internal_hostname }
+              : {}),
+            observed_at: new Date().toISOString(),
+          },
+        }
+      : {}),
+    bootstrap: {
+      status: "error",
+      message: opts.message,
+      updated_at: new Date().toISOString(),
+    },
+  };
 }
 
 async function loadHostRow(id: string) {
@@ -1795,6 +1905,57 @@ async function handleVerifyHostReady(row: any) {
       }
     }
     return;
+  }
+
+  if (providerId) {
+    const observation = await observeProviderReadyStatus({
+      row: host,
+      providerId,
+    });
+    const stoppedStatus = stoppedProviderStatus(observation);
+    if (stoppedStatus) {
+      const providerStatusText =
+        observation?.provider_status ??
+        observation?.mapped_status ??
+        stoppedStatus;
+      const message = observation?.instance_missing
+        ? "Cloud VM disappeared before the host became ready."
+        : `Cloud VM reported ${providerStatusText} before the host became ready.`;
+      logger.warn("verify host ready provider stopped before heartbeat", {
+        host_id: host.id,
+        provider: providerId,
+        started_at: startedAtIso || undefined,
+        status: stoppedStatus,
+        provider_status: observation?.provider_status,
+        instance_missing: observation?.instance_missing,
+      });
+      const nextMetadata = metadataForProviderStoppedBeforeReady({
+        metadata: host.metadata ?? {},
+        observation,
+        message,
+      });
+      await updateHostRow(host.id, {
+        status: stoppedStatus,
+        metadata: nextMetadata,
+        last_seen: null,
+        ...(observation?.instance_missing || !observation?.public_ip
+          ? { public_url: null, internal_url: null }
+          : {}),
+      });
+      await logCloudVmEvent({
+        vm_id: host.id,
+        action: "verify_host_ready",
+        status: "failure",
+        provider: providerId,
+        error: message,
+        runtime: {
+          provider_status: observation?.provider_status,
+          mapped_status: observation?.mapped_status,
+          instance_missing: observation?.instance_missing,
+        },
+      });
+      return;
+    }
   }
 
   const deadlineAt = deadlineAtIso ? new Date(deadlineAtIso) : undefined;

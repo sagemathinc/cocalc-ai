@@ -194,11 +194,18 @@ export class JupyterActions extends JupyterActions0 {
       reason: "jupyter_syncdb_disconnected",
     });
   };
-  private reconcileRunCellOverlay = (id: string, newCell: Map<string, any>) => {
+  private reconcileRunCellOverlay = (
+    id: string,
+    newCell?: Map<string, any>,
+  ) => {
     const overlays = this.store?.get("runCellOverlays") as
       | Map<string, Map<string, any>>
       | undefined;
     const overlay = overlays?.get(id);
+    if (newCell == null) {
+      this.clearRunCellOverlay(id);
+      return;
+    }
     if (
       overlay != null &&
       doesPersistentCellSatisfyRunCellOverlay(newCell, overlay)
@@ -212,6 +219,9 @@ export class JupyterActions extends JupyterActions0 {
     patch: { output?: any; exec_count?: number | null },
   ): boolean => {
     if (!id || this.isClosed()) {
+      return false;
+    }
+    if (this.store.getIn(["cells", id]) == null) {
       return false;
     }
     let nextPatch: Map<string, any> = Map();

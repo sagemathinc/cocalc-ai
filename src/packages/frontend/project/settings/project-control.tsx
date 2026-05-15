@@ -27,7 +27,6 @@ import MoveProject from "./move-project";
 import { Project } from "./types";
 import RootFilesystemImage from "./root-filesystem-image";
 import ProjectControlError from "./project-control-error";
-import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   evaluateHostOperational,
@@ -39,12 +38,20 @@ import {
 interface ReactProps {
   project: Project;
   mode?: "project" | "flyout";
+  showRootFilesystemImage?: boolean;
+  embedded?: boolean;
 }
 
 export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
-  const { project, mode = "project" } = props;
+  const {
+    project,
+    mode = "project",
+    showRootFilesystemImage = true,
+    embedded = false,
+  } = props;
   const { project_id } = useProjectContext();
   const isFlyout = mode === "flyout";
+  const isEmbedded = embedded || isFlyout;
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
@@ -123,7 +130,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     );
   }
 
-  function render_action_buttons(): Rendered {
+  function render_lifecycle_actions(): Rendered {
     const state = displayStateValue;
     const commands = (state &&
       COMPUTE_STATES[state] &&
@@ -135,30 +142,35 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
       );
     const archived = lifecycle.isRawArchived;
     return (
-      <Space.Compact
-        style={{ marginTop: "10px", marginBottom: "10px" }}
-        size={isFlyout ? "small" : "large"}
-      >
-        {render_restart_button(commands)}
-        {render_stop_button(commands)}
-        <ArchiveProject
-          project_id={project_id}
+      <section>
+        <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "8px" }}>
+          Use these controls when the project is stuck, needs to move hosts, or
+          should be archived.
+        </Paragraph>
+        <Space.Compact
+          style={{ marginTop: "4px", marginBottom: "10px" }}
           size={isFlyout ? "small" : "large"}
-          disabled={archiveDisabled}
-        />
-        <CloneProject project_id={project_id} disabled={archived} />
-        {!archived && (
-          <MoveProject
+        >
+          {render_restart_button(commands)}
+          {render_stop_button(commands)}
+          <ArchiveProject
             project_id={project_id}
-            disabled={
-              state == "starting" ||
-              state == "stopping" ||
-              state == "archiving" ||
-              state == "unarchiving"
-            }
+            size={isFlyout ? "small" : "large"}
+            disabled={archiveDisabled}
           />
-        )}
-      </Space.Compact>
+          {!archived && (
+            <MoveProject
+              project_id={project_id}
+              disabled={
+                state == "starting" ||
+                state == "stopping" ||
+                state == "archiving" ||
+                state == "unarchiving"
+              }
+            />
+          )}
+        </Space.Compact>
+      </section>
     );
   }
 
@@ -244,18 +256,9 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     };
   }
 
-  function renderBody() {
+  function render_status_summary() {
     return (
       <>
-        <div>
-          {render_action_buttons()}
-          {render_archived_note()}
-          <ProjectControlError
-            style={{ margin: "10px 0px" }}
-            showStopButton={project.getIn(["state", "state"]) == "running"}
-          />
-          <BootLog />
-        </div>
         <LabeledRow
           key="state"
           label="State"
@@ -272,7 +275,28 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         )}
         {render_uptime()}
         {render_cpu_usage()}
-        <hr />
+      </>
+    );
+  }
+
+  function render_runtime_diagnostics() {
+    return (
+      <section>
+        <ProjectControlError
+          style={{ margin: "10px 0px" }}
+          showStopButton={project.getIn(["state", "state"]) == "running"}
+        />
+        <BootLog />
+      </section>
+    );
+  }
+
+  function render_rootfs_details() {
+    if (!showRootFilesystemImage) {
+      return null;
+    }
+    return (
+      <section>
         <LabeledRow
           key="root_fs"
           label="Root Filesystem Image"
@@ -280,11 +304,27 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         >
           <RootFilesystemImage />
         </LabeledRow>
-      </>
+      </section>
     );
   }
 
-  if (mode === "flyout") {
+  function renderBody() {
+    return (
+      <Space
+        direction="vertical"
+        size={isFlyout ? 10 : 14}
+        style={{ width: "100%" }}
+      >
+        {render_lifecycle_actions()}
+        {render_archived_note()}
+        <section>{render_status_summary()}</section>
+        {render_runtime_diagnostics()}
+        {render_rootfs_details()}
+      </Space>
+    );
+  }
+
+  if (isEmbedded) {
     return renderBody();
   } else {
     return (

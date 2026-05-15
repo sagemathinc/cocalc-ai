@@ -148,9 +148,6 @@ export function ProjectActionsMenu({ record }: Props) {
       case "log":
         openProjectTab("log");
         break;
-      case "users":
-        openProjectTab("users");
-        break;
       case "move":
         await refreshProjectRegion();
         setMoveOpen(true);
@@ -275,11 +272,6 @@ export function ProjectActionsMenu({ record }: Props) {
       key: "log",
       label: "Log",
       icon: <Icon name={FIXED_PROJECT_TABS.log.icon} />,
-    },
-    {
-      key: "users",
-      label: "Users",
-      icon: <Icon name={FIXED_PROJECT_TABS.users.icon} />,
     },
     {
       key: "settings",

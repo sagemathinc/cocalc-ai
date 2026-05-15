@@ -107,9 +107,12 @@ export const system = {
   bootstrapCloudflareConfiguration: authFirst,
   createCloudflareTeardownPlan: authFirst,
   getCloudflareTeardownPlan: authFirst,
+  startCloudflareTeardownApply: authFirst,
   getCloudflareR2Usage: authFirst,
   auditCloudflareR2Bucket: authFirst,
   startCloudflareR2Audit: authFirst,
+  getCloudflareR2BayBackupCleanupPlan: authFirst,
+  startCloudflareR2BayBackupCleanup: authFirst,
   createProviderSetupChallenge: authFirst,
   getProviderSetupChallenge: authFirst,
   clearProviderSetupChallenge: authFirst,
@@ -215,6 +218,10 @@ export interface CloudflareTeardownPlanSummary {
     projects_with_backups: number;
     r2_bucket_records: number;
     cloudflare_r2_buckets: number;
+    r2_buckets_with_usage?: number;
+    r2_buckets_missing_usage?: number;
+    r2_objects?: number;
+    r2_total_bytes?: number;
   };
   warnings: string[];
   notes: string[];
@@ -346,6 +353,24 @@ export interface CloudflareR2AuditLroRef {
   scope_id: string;
   service: string;
   stream_name: string;
+}
+
+export interface CloudflareR2BayBackupCleanupPlan {
+  bucket: string;
+  prefix: string;
+  checked_at: string;
+  object_count: number;
+  total_bytes: number;
+  wal_object_count: number;
+  wal_total_bytes: number;
+  manifest_object_count: number;
+  manifest_total_bytes: number;
+  other_object_count: number;
+  other_total_bytes: number;
+  bay_prefixes: CloudflareR2AuditPrefix[];
+  confirmation_text: string;
+  warnings: string[];
+  notes: string[];
 }
 
 export interface AccountMembershipPortabilityRepairCounts {
@@ -1781,6 +1806,15 @@ export interface System {
     plan_id: string;
   }) => Promise<CloudflareTeardownPlan>;
 
+  startCloudflareTeardownApply: (opts: {
+    account_id?: string;
+    session_hash?: string;
+    plan_id: string;
+    confirm: string;
+    delete_r2_contents?: boolean;
+    reset_local_settings?: boolean;
+  }) => Promise<CloudflareR2AuditLroRef>;
+
   getCloudflareR2Usage: (opts: {
     account_id?: string;
     all_buckets?: boolean;
@@ -1803,6 +1837,19 @@ export interface System {
     prefix?: string;
     refresh?: boolean;
     max_age_minutes?: number;
+  }) => Promise<CloudflareR2AuditLroRef>;
+
+  getCloudflareR2BayBackupCleanupPlan: (opts: {
+    account_id?: string;
+    bucket: string;
+    prefix?: string;
+  }) => Promise<CloudflareR2BayBackupCleanupPlan>;
+
+  startCloudflareR2BayBackupCleanup: (opts: {
+    account_id?: string;
+    bucket: string;
+    prefix?: string;
+    confirm: string;
   }) => Promise<CloudflareR2AuditLroRef>;
 
   createProviderSetupChallenge: (opts: {

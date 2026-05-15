@@ -811,6 +811,33 @@ export async function deleteR2Object({
   throw createHttpStatusError(response.statusCode, response.body);
 }
 
+export async function deleteR2ObjectsConcurrently({
+  auth,
+  keys,
+  concurrency,
+  acceptMissing = true,
+  onDeleted,
+}: {
+  auth: R2ObjectStoreAuth;
+  keys: string[];
+  concurrency: number;
+  acceptMissing?: boolean;
+  onDeleted?: (key: string) => void | Promise<void>;
+}): Promise<void> {
+  let next = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), keys.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = next++;
+      const key = keys[index];
+      if (!key) return;
+      await deleteR2Object({ auth, key, acceptMissing });
+      await onDeleted?.(key);
+    }
+  });
+  await Promise.all(workers);
+}
+
 function parseBucketNamesFromListBucketsXml(xml: string): string[] {
   const scope = /<Buckets>([\s\S]*?)<\/Buckets>/i.exec(xml)?.[1] ?? xml;
   const names: string[] = [];

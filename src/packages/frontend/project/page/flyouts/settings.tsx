@@ -3,11 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { ReloadOutlined } from "@ant-design/icons";
 import { Button, Collapse, CollapseProps, Space } from "antd";
+import { ReloadOutlined } from "@ant-design/icons";
 import { useIntl } from "react-intl";
 import {
-  redux,
   useEffect,
   useState,
   useTypedRedux,
@@ -19,41 +18,18 @@ import {
   Title,
   Tooltip,
 } from "@cocalc/frontend/components";
-import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { IntlMessage, isIntlMessage } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import { AboutBox } from "@cocalc/frontend/project/settings/about-box";
-import CreateBackup from "@cocalc/frontend/project/backups/create";
-import CloneProject from "@cocalc/frontend/project/explorer/clone";
-import { Datastore } from "@cocalc/frontend/project/settings/datastore";
-import {
-  ENV_VARS_ICON,
-  Environment,
-} from "@cocalc/frontend/project/settings/environment";
-import {
-  PROJECT_SECRETS_ICON,
-  ProjectSecrets,
-} from "@cocalc/frontend/project/settings/secrets";
-import { HideDeleteBox } from "@cocalc/frontend/project/settings/hide-delete-box";
-import { ManagedEgress } from "@cocalc/frontend/project/settings/managed-egress";
-import { ProjectCapabilities } from "@cocalc/frontend/project/settings/project-capabilites";
-import { ProjectControl } from "@cocalc/frontend/project/settings/project-control";
 import { RestartProject } from "@cocalc/frontend/project/settings/restart-project";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
-import CreateSnapshot from "@cocalc/frontend/project/snapshots/create";
-import { SSHPanel } from "@cocalc/frontend/project/settings/ssh";
 import { StopProject } from "@cocalc/frontend/project/settings/stop-project";
-import { lite } from "@cocalc/frontend/lite";
 import { COMPUTE_STATES } from "@cocalc/util/compute-states";
-import {
-  DATASTORE_TITLE,
-  KUCALC_COCALC_COM,
-  KUCALC_ON_PREMISES,
-} from "@cocalc/util/db-schema/site-defaults";
+import { DATASTORE_TITLE } from "@cocalc/util/db-schema/site-defaults";
 import { FLYOUT_PADDING } from "./consts";
 import { getFlyoutSettings, storeFlyoutState } from "./state";
 import ProjectControlError from "@cocalc/frontend/project/settings/project-control-error";
 import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
+import { useProjectSettingsSections } from "@cocalc/frontend/project/settings/sections";
 
 interface Props {
   project_id: string;
@@ -70,17 +46,6 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
   const projectIsVisible = active_top_tab === project_id;
   const [datastoreReload, setDatastoreReload] = useState<number>(0);
   const [expandedPanels, setExpandedPanels] = useState<string[]>([]);
-  const configuration_loading = useTypedRedux(
-    { project_id },
-    "configuration_loading",
-  );
-  const kucalc = useTypedRedux("customize", "kucalc");
-  const datastore = useTypedRedux("customize", "datastore");
-  const student = useStudentProjectFunctionality(project_id);
-  const showSSH = !lite && !student.disableSSH;
-  const showDatastore =
-    kucalc === KUCALC_COCALC_COM ||
-    (kucalc === KUCALC_ON_PREMISES && datastore);
   const hostId = project?.get("host_id") as string | undefined;
   const hostInfo = hostId ? host_info?.get(hostId) : undefined;
   const effectiveState =
@@ -89,6 +54,14 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
       hostId,
       hostInfo,
     }) ?? status?.get("state");
+  const { sections } = useProjectSettingsSections({
+    project_id,
+    account_id,
+    project,
+    mode: "flyout",
+    datastoreReload,
+    recoveryExtra: renderDatastoreReload(),
+  });
 
   useEffect(() => {
     const state = getFlyoutSettings(project_id);
@@ -169,23 +142,6 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
     });
   }
 
-  function featuresReloadButton() {
-    return (
-      <Tooltip title="Reload features and configuration">
-        <Button
-          size="small"
-          onClick={(e) => {
-            e.stopPropagation();
-            const pa = redux.getProjectActions(project_id);
-            pa.reload_configuration();
-          }}
-          icon={<ReloadOutlined />}
-          disabled={configuration_loading}
-        />
-      </Tooltip>
-    );
-  }
-
   function renderDatastoreReload() {
     return (
       <Tooltip title={`Reload ${DATASTORE_TITLE} information`}>
@@ -204,167 +160,17 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
   function renderSettings() {
     if (project == null) return <Loading theme="medium" transparent />;
 
-    const items: CollapseProps["items"] = [
-      {
-        key: "about",
-        label: (
-          <>
-            <Icon name="file-alt" /> About
-          </>
-        ),
-        children:
-          project == null ? (
-            <Loading theme="medium" transparent />
-          ) : (
-            <AboutBox
-              mode="flyout"
-              project_id={project_id}
-              project_title={project.get("title") ?? ""}
-              description={project.get("description") ?? ""}
-              name={project.get("name")}
-              actions={redux.getActions("projects")}
-            />
-          ),
-      },
-
-      {
-        key: "control",
-        label: (
-          <>
-            <Icon name="gears" /> Control
-          </>
-        ),
-        children: <ProjectControl project={project} mode="flyout" />,
-      },
-
-      ...(!lite
-        ? [
-            {
-              key: "network-egress",
-              label: (
-                <>
-                  <Icon name="network" /> Network Egress
-                </>
-              ),
-              className: "cc-project-flyout-settings-panel",
-              children: <ManagedEgress project_id={project_id} />,
-            },
-          ]
-        : []),
-
-      {
-        key: "recovery",
-        label: (
-          <>
-            <Icon name="life-ring" /> Recovery and Copy
-          </>
-        ),
-        children: (
-          <Space wrap>
-            {!lite && <CreateSnapshot />}
-            {!lite && <CreateBackup />}
-            <CloneProject project_id={project_id} />
-          </Space>
-        ),
-      },
-
-      ...(showSSH
-        ? [
-            {
-              key: "ssh",
-              label: (
-                <>
-                  <Icon name="list-ul" /> SSH
-                </>
-              ),
-              children: (
-                <SSHPanel
-                  mode="flyout"
-                  key="ssh-keys"
-                  project={project}
-                  account_id={account_id}
-                />
-              ),
-            },
-          ]
-        : []),
-    ];
-
-    items.push({
-      key: "hide-delete",
+    const items: CollapseProps["items"] = sections.map((section) => ({
+      key: section.id,
       label: (
         <>
-          <Icon name="warning" /> Hide or Delete
+          <Icon name={section.icon} /> {section.title}
         </>
       ),
-      children: (
-        <HideDeleteBox
-          project={project}
-          actions={redux.getActions("projects")}
-          mode="flyout"
-        />
-      ),
-    });
-
-    items.push({
-      key: "env",
-      label: (
-        <>
-          <Icon name={ENV_VARS_ICON} /> Environment Variables
-        </>
-      ),
-      className: "cc-project-flyout-settings-panel",
-      children: <Environment project_id={project_id} mode="flyout" />,
-    });
-
-    items.push({
-      key: "secrets",
-      label: (
-        <>
-          <Icon name={PROJECT_SECRETS_ICON} /> Project Secrets
-        </>
-      ),
-      className: "cc-project-flyout-settings-panel",
-      children: <ProjectSecrets project_id={project_id} mode="flyout" />,
-    });
-
-    if (showDatastore) {
-      items.push({
-        key: "datastore",
-        label: (
-          <>
-            <Icon name="database" /> {DATASTORE_TITLE}
-          </>
-        ),
-        className: "cc-project-flyout-settings-panel",
-        extra: renderDatastoreReload(),
-        children: (
-          <Datastore
-            project_id={project_id}
-            mode="flyout"
-            reloadTrigger={datastoreReload}
-          />
-        ),
-      });
-    }
-
-    items.push({
-      key: "features",
-      label: (
-        <>
-          <Icon name="clipboard-check" /> Features and Configuration
-        </>
-      ),
-      style: { borderRadius: 0 },
-      extra: featuresReloadButton(),
-      children: (
-        <ProjectCapabilities
-          project={project}
-          project_id={project_id}
-          mode="flyout"
-        />
-      ),
-    });
+      className: section.className,
+      extra: section.extra,
+      children: section.children,
+    }));
 
     return (
       <Collapse

@@ -940,6 +940,9 @@ export class ProjectActions extends Actions<ProjectStoreState> {
       change_history: true,
     },
   ): void => {
+    if (key === "users") {
+      key = "settings";
+    }
     const store = this.get_store();
     if (store == undefined) return; // project closed
     const prev_active_project_tab = store.get("active_project_tab");

@@ -79,7 +79,6 @@ jest.mock("@cocalc/frontend/user-tracking", () => jest.fn());
 
 jest.mock("./flyouts", () => ({
   AgentsFlyout: () => null,
-  CollabsFlyout: () => null,
   FilesFlyout: () => null,
   LogFlyout: () => null,
   NewFlyout: () => null,

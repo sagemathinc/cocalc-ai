@@ -4,36 +4,16 @@
  */
 
 import React from "react";
-import { useIntl } from "react-intl";
 
-import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
-import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { Icon } from "@cocalc/frontend/components";
-import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
-import { labels } from "@cocalc/frontend/i18n";
-import { Customer, ProjectMap } from "@cocalc/frontend/todo-types";
-import { useProjectCourseInfo } from "../use-project-course";
-import {
-  KUCALC_COCALC_COM,
-  KUCALC_ON_PREMISES,
-} from "@cocalc/util/db-schema/site-defaults";
+import type { Customer, ProjectMap } from "@cocalc/frontend/todo-types";
 import { is_different } from "@cocalc/util/misc";
 import { NoNetworkProjectWarning } from "../warnings/no-network";
 import { NonMemberProjectWarning } from "../warnings/non-member";
-import { AboutBox } from "./about-box";
-import { LauncherDefaults } from "./launcher-defaults";
-import { Datastore } from "./datastore";
-import { Environment } from "./environment";
-import { HideDeleteBox } from "./hide-delete-box";
-import { ManagedEgress } from "./managed-egress";
-import { ProjectCapabilities } from "./project-capabilites";
-import { ProjectControl } from "./project-control";
-import { useRunQuota } from "./run-quota/hooks";
+import { ProjectSettingsPageShell } from "./page-shell";
 import SavingProjectSettingsError from "./saving-project-settings-error";
-import { ProjectSecrets } from "./secrets";
-import { SSHPanel } from "./ssh";
-import { Project } from "./types";
-import { lite } from "@cocalc/frontend/lite";
+import { ProjectSettingsSectionCard } from "./section-card";
+import { useProjectSettingsSections } from "./sections";
+import type { Project } from "./types";
 
 interface ReactProps {
   project_id: string;
@@ -53,83 +33,38 @@ const is_same = (prev: ReactProps, next: ReactProps) => {
 
 export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
   const { project_id, account_id, project } = props;
-  const intl = useIntl();
-  const projectLabel = intl.formatMessage(labels.project);
-  const kucalc = useTypedRedux("customize", "kucalc");
-  const runQuota = useRunQuota(project_id, null);
-  const { course } = useProjectCourseInfo(project_id);
-  const datastore = useTypedRedux("customize", "datastore");
-  const commercial = useTypedRedux("customize", "commercial");
-
-  // get the description of the share, in case the project is being shared
-  const id = project_id;
-
-  const student = useStudentProjectFunctionality(project_id);
-  const showDatastore =
-    kucalc === KUCALC_COCALC_COM ||
-    (kucalc === KUCALC_ON_PREMISES && datastore);
-
-  const isPaidStudentPayProject = !!course?.get("pay") && !!course.get("paid");
-  const showNonMemberWarning =
-    !isPaidStudentPayProject &&
-    commercial &&
-    runQuota != null &&
-    !runQuota.member_host;
-  const showNoInternetWarning =
-    !isPaidStudentPayProject &&
-    commercial &&
-    runQuota != null &&
-    !runQuota.network;
+  const { sections, navItems, showNoInternetWarning, showNonMemberWarning } =
+    useProjectSettingsSections({
+      project_id,
+      account_id,
+      project,
+      mode: "page",
+    });
 
   return (
-    <div>
+    <ProjectSettingsPageShell
+      project_id={project_id}
+      project={project}
+      navItems={navItems}
+      showNoInternetWarning={showNoInternetWarning}
+      showNonMemberWarning={showNonMemberWarning}
+    >
       {showNonMemberWarning ? <NonMemberProjectWarning /> : undefined}
       {showNoInternetWarning ? <NoNetworkProjectWarning /> : undefined}
-      <h1 style={{ marginTop: "0px" }}>
-        <Icon name="wrench" /> {projectLabel} Settings and Controls
-      </h1>
       <SavingProjectSettingsError project_id={project_id} />
-      <Row>
-        {lite && <Col sm={3} />}
-        <Col sm={6}>
-          <AboutBox
-            project_id={id}
-            project_title={project.get("title") ?? ""}
-            description={project.get("description") ?? ""}
-            name={project.get("name")}
-            actions={redux.getActions("projects")}
-          />
-          <LauncherDefaults project_id={id} />
-          {!lite && !student.disableSSH && (
-            <SSHPanel
-              key="ssh-keys"
-              project={project}
-              account_id={account_id}
-            />
-          )}
-          {!lite && <Environment key="environment" project_id={project_id} />}
-          {!lite && <ProjectSecrets key="secrets" project_id={project_id} />}
-          {!lite && showDatastore && (
-            <Datastore key="datastore" project_id={project_id} />
-          )}
-          <ProjectCapabilities
-            key={"capabilities"}
-            project={project}
-            project_id={project_id}
-          />
-        </Col>
-        {!lite && (
-          <Col sm={6}>
-            <ProjectControl key="control" project={project} />
-            <ManagedEgress project_id={project_id} />
-            <HideDeleteBox
-              key="hide-delete"
-              project={project}
-              actions={redux.getActions("projects")}
-            />
-          </Col>
-        )}
-      </Row>
-    </div>
+
+      {sections.map((section) => (
+        <ProjectSettingsSectionCard
+          key={section.id}
+          id={section.id}
+          icon={section.icon}
+          title={section.title}
+          description={section.description}
+          danger={section.danger}
+        >
+          {section.children}
+        </ProjectSettingsSectionCard>
+      ))}
+    </ProjectSettingsPageShell>
   );
 }, is_same);

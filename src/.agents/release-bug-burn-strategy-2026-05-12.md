@@ -177,6 +177,7 @@ Work here:
      is selected.
 
 10. Notification toast timing is wrong.
+
    - Toasts should appear when notifications arrive, not when notifications are
      marked read.
 
