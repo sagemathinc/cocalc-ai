@@ -106,6 +106,9 @@ jest.mock("@cocalc/frontend/project/context", () => ({
 jest.mock("@cocalc/frontend/project/settings/about-box", () => ({
   AboutBox: () => <div>AboutBox</div>,
 }));
+jest.mock("@cocalc/frontend/project/page/project-collaborators", () => ({
+  ProjectCollaboratorsContent: () => <div>ProjectCollaboratorsContent</div>,
+}));
 jest.mock("@cocalc/frontend/project/backups/create", () => ({
   __esModule: true,
   default: () => <button type="button">Create Backup</button>,
@@ -130,6 +133,9 @@ jest.mock("@cocalc/frontend/project/settings/hide-delete-box", () => ({
 }));
 jest.mock("@cocalc/frontend/project/settings/managed-egress", () => ({
   ManagedEgress: () => <div>ManagedEgress</div>,
+}));
+jest.mock("@cocalc/frontend/project/settings/launcher-defaults", () => ({
+  LauncherDefaults: () => <div>LauncherDefaults</div>,
 }));
 jest.mock("@cocalc/frontend/project/settings/project-capabilites", () => ({
   ProjectCapabilities: () => <div>ProjectCapabilities</div>,
@@ -165,6 +171,12 @@ jest.mock("@cocalc/frontend/project/settings/project-control-error", () => ({
   __esModule: true,
   default: () => null,
 }));
+jest.mock("@cocalc/frontend/project/settings/run-quota/hooks", () => ({
+  useRunQuota: () => ({ member_host: true, network: true }),
+}));
+jest.mock("@cocalc/frontend/project/use-project-course", () => ({
+  useProjectCourseInfo: () => ({ course: null }),
+}));
 jest.mock("@cocalc/frontend/projects/host-operational", () => ({
   normalizeProjectStateForDisplay: ({ projectState }: any) => projectState,
 }));
@@ -178,7 +190,7 @@ describe("SettingsFlyout", () => {
       />,
     );
 
-    expect(screen.getByText("Recovery and Copy")).toBeTruthy();
+    expect(screen.getByText("Recovery")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Create Snapshot" }),
     ).toBeTruthy();
@@ -186,7 +198,7 @@ describe("SettingsFlyout", () => {
     expect(screen.getByRole("button", { name: "Clone" })).toBeTruthy();
   });
 
-  it("shows SSH before Hide or Delete in flyout settings", () => {
+  it("shows SSH before Danger Zone in flyout settings", () => {
     const { container } = render(
       <SettingsFlyout
         project_id="project-1"
@@ -195,9 +207,9 @@ describe("SettingsFlyout", () => {
     );
 
     const text = container.textContent ?? "";
-    expect(text.indexOf("SSH")).toBeGreaterThan(-1);
-    expect(text.indexOf("Hide or Delete")).toBeGreaterThan(-1);
-    expect(text.indexOf("SSH")).toBeLessThan(text.indexOf("Hide or Delete"));
+    expect(text.indexOf("SSH & API")).toBeGreaterThan(-1);
+    expect(text.indexOf("Danger Zone")).toBeGreaterThan(-1);
+    expect(text.indexOf("SSH & API")).toBeLessThan(text.indexOf("Danger Zone"));
   });
 
   it("includes network egress in flyout settings", () => {
@@ -208,7 +220,19 @@ describe("SettingsFlyout", () => {
       />,
     );
 
-    expect(screen.getByText("Network Egress")).toBeTruthy();
+    expect(screen.getByText("Network")).toBeTruthy();
     expect(screen.getByText("ManagedEgress")).toBeTruthy();
+  });
+
+  it("includes collaborator management in flyout settings", () => {
+    render(
+      <SettingsFlyout
+        project_id="project-1"
+        wrap={(content) => <>{content}</>}
+      />,
+    );
+
+    expect(screen.getByText("People")).toBeTruthy();
+    expect(screen.getByText("ProjectCollaboratorsContent")).toBeTruthy();
   });
 });
