@@ -74,5 +74,38 @@ export function formatRuntimeSponsorDenial(
   const sponsor =
     `${denial.sponsor_display_name ?? ""}`.trim() ||
     "this project's runtime sponsor";
-  return `${sponsor} is using ${denial.current}/${denial.limit} sponsored running-project slots. Stop another project that runs on this membership, ask the sponsor to increase the limit, or change this project's runtime sponsor.`;
+  const actions: string[] = [];
+  if (
+    denial.active_projects.some(
+      (project) => project.visible !== false && project.can_stop !== false,
+    )
+  ) {
+    actions.push("stop another project that runs on this membership");
+  }
+  if (denial.can_upgrade) {
+    actions.push("increase the sponsor membership limit");
+  } else {
+    actions.push("ask the sponsor to increase the limit");
+  }
+  if (denial.can_change_sponsor) {
+    actions.push("change this project's runtime sponsor");
+  }
+  return `${sponsor} is using ${denial.current}/${denial.limit} sponsored running-project slots. ${capitalizeFirst(joinActions(actions))}.`;
+}
+
+function joinActions(actions: string[]): string {
+  if (actions.length === 0) {
+    return "try again after a sponsored project stops";
+  }
+  if (actions.length === 1) {
+    return actions[0];
+  }
+  if (actions.length === 2) {
+    return `${actions[0]} or ${actions[1]}`;
+  }
+  return `${actions.slice(0, -1).join(", ")}, or ${actions[actions.length - 1]}`;
+}
+
+function capitalizeFirst(value: string): string {
+  return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value;
 }

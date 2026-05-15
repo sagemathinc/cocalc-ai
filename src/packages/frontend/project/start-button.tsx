@@ -14,7 +14,7 @@ happens, and also when the system is heavily loaded.
 
 import { Alert, Button, Progress, Space, Spin } from "antd";
 import type { ButtonProps } from "antd";
-import { CSSProperties, useRef } from "react";
+import { CSSProperties, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, ProjectState, Tooltip } from "@cocalc/frontend/components";
@@ -514,11 +514,35 @@ function RuntimeSponsorDenialDescription({
 }: {
   denial: RuntimeSponsorDenial;
 }) {
+  const [stoppingProjectIds, setStoppingProjectIds] = useState<
+    Record<string, true>
+  >({});
+  const [stopError, setStopError] = useState<string>("");
   const visibleProjects = denial.active_projects.filter(
     (project) => project.visible !== false,
   );
   const nonCollaboratorCount =
     denial.active_projects.length - visibleProjects.length;
+  const canStopAnyVisibleProject = visibleProjects.some(
+    (project) => project.can_stop !== false,
+  );
+
+  async function stopProject(project_id: string) {
+    setStopError("");
+    setStoppingProjectIds((ids) => ({ ...ids, [project_id]: true }));
+    try {
+      await redux.getActions("projects").stop_project(project_id);
+    } catch (err) {
+      setStopError(`${err}`);
+    } finally {
+      setStoppingProjectIds((ids) => {
+        const next = { ...ids };
+        delete next[project_id];
+        return next;
+      });
+    }
+  }
+
   return (
     <div>
       <div>{formatRuntimeSponsorDenial(denial)}</div>
@@ -526,11 +550,42 @@ function RuntimeSponsorDenialDescription({
         <ul style={{ margin: "8px 0 0 18px", padding: 0 }}>
           {visibleProjects.map((project) => (
             <li key={project.project_id}>
-              <ProjectTitle project_id={project.project_id} trunc={60} />
-              {project.state ? ` (${project.state})` : ""}
+              <Space size="small" align="center" wrap>
+                <ProjectTitle project_id={project.project_id} trunc={60} />
+                {project.state && <span>({project.state})</span>}
+                {project.can_stop !== false && (
+                  <Button
+                    size="small"
+                    loading={!!stoppingProjectIds[project.project_id]}
+                    onClick={() => stopProject(project.project_id)}
+                  >
+                    Stop
+                  </Button>
+                )}
+              </Space>
             </li>
           ))}
         </ul>
+      )}
+      {canStopAnyVisibleProject && (
+        <div style={{ marginTop: "8px" }}>
+          Stop one of these projects, then try starting this project again.
+        </div>
+      )}
+      {denial.can_upgrade && (
+        <div style={{ marginTop: "8px" }}>
+          <Button
+            size="small"
+            onClick={() => redux.getActions("page").set_active_tab("account")}
+          >
+            Open membership details
+          </Button>
+        </div>
+      )}
+      {stopError && (
+        <div style={{ marginTop: "8px", color: COLORS.ANTD_RED_WARN }}>
+          Failed to stop project: {stopError}
+        </div>
       )}
       {nonCollaboratorCount > 0 && (
         <div style={{ marginTop: "8px" }}>

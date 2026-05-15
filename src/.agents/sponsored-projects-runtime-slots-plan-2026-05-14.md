@@ -1,16 +1,16 @@
 # Sponsored Projects Runtime Slots Plan
 
-Status: implementation in progress, 2026-05-14.
+Status: minimum release-worthy phases nearly complete, 2026-05-14.
 
 Implementation notes:
 
 - Phase 0 complete.
 - Phase 1 complete.
 - Phase 2 complete, including batched cross-bay runtime slot heartbeats.
-- Phase 3 is in progress: start/restart slot exhaustion now propagates as a
-  structured LRO result with privacy-filtered visible project details. Stop
-  buttons, upgrade links, CLI rendering, and sponsor-change actions remain
-  follow-up work.
+- Phase 3 is being completed: start/restart slot exhaustion propagates as a
+  structured LRO result with privacy-filtered visible project details, frontend
+  stop actions, sponsor upgrade routing, and CLI rendering. Explicit
+  sponsor-change actions remain Phase 5 follow-up work.
 - Runtime sponsor resolution enforces the core invariant that explicit runtime
   sponsors and `usage_account_id` sponsors must be current project
   owners/collaborators; otherwise resolution falls back to the project owner.
@@ -52,7 +52,7 @@ clear, enforceable abuse guardrail that users can understand.
 Every running project has one **runtime sponsor**.
 
 The runtime sponsor is the account whose membership is used for simultaneous
-running-project admission, shared-compute priority and RAM limits for that project.  The sponsor is not used for disk space or egress metering.
+running-project admission, shared-compute priority and RAM limits for that project. The sponsor is not used for disk space or egress metering.
 
 User-facing wording:
 
@@ -171,7 +171,7 @@ Future optional policy:
 Add a membership usage limit:
 
 ```ts
-max_sponsored_running_projects: number
+max_sponsored_running_projects: number;
 ```
 
 Meaning:
@@ -319,11 +319,11 @@ The UI should use this to show:
 
 Deliverables:
 
-- choose user-facing name: "runtime sponsor" or "compute sponsor"  ANS: "runtime sponsor"
-- decide whether v1 uses `usage_account_id ?? owner_account_id`   ANS: yes as the default; but I think we should implement the full spec. This is gold.
-- decide initial tier defaults   ANS: your suggestions are fine -- free = 1, standard/student=3,  pro=10.
+- choose user-facing name: "runtime sponsor" or "compute sponsor" ANS: "runtime sponsor"
+- decide whether v1 uses `usage_account_id ?? owner_account_id` ANS: yes as the default; but I think we should implement the full spec. This is gold.
+- decide initial tier defaults ANS: your suggestions are fine -- free = 1, standard/student=3, pro=10.
 - decide whether collaborator starts using owner/sponsor slots are enabled by
-  default  -- ANS: yes.
+  default -- ANS: yes.
 
 Recommendation:
 
@@ -401,6 +401,10 @@ Implementation:
 - show "ask sponsor to stop a project or increase membership" when actor is not
   sponsor
 - add CLI rendering for the same structured denial
+- Phase 3 note: the first implementation uses an inline failed-start alert
+  rather than a separate modal, because the start control already owns project
+  lifecycle feedback. Explicit "use my membership" sponsor-change UI is
+  deferred to Phase 5.
 
 Validation:
 
@@ -458,7 +462,7 @@ Security/policy requirements:
 - never silently change sponsor
 - show which account will sponsor future starts
 - record durable audit event
-- require fresh auth only if this becomes billing-sensitive enough to justify it - ANS: this is not billing sensitive at all; there's never ever any pay-as-you-go billing for running projects; that's entirely for dedicated hosts.  
+- require fresh auth only if this becomes billing-sensitive enough to justify it - ANS: this is not billing sensitive at all; there's never ever any pay-as-you-go billing for running projects; that's entirely for dedicated hosts.
 
 Validation:
 
@@ -566,15 +570,15 @@ Can defer:
 ## Open Questions For Review
 
 1. Should the first implementation use `usage_account_id ?? owner_account_id`,
-   or should it add a separate runtime sponsor column immediately?  Add runtime sponsor column.
-2. Should collaborator starts using sponsor slots be enabled by default?  YES
-3. What are the initial tier defaults for `max_sponsored_running_projects`?   See above -- 1, 3, 10 for now.  It's easy for admins to adjust.
+   or should it add a separate runtime sponsor column immediately? Add runtime sponsor column.
+2. Should collaborator starts using sponsor slots be enabled by default? YES
+3. What are the initial tier defaults for `max_sponsored_running_projects`? See above -- 1, 3, 10 for now. It's easy for admins to adjust.
 4. Should "use my membership for this project" be in the first release, or can
-   users clone/copy out as the first workaround?  ANS: it should be in the first release; being locked out and having to copy a lot of data, etc. (and even hitting your project limit) could be very frustrating.  E.g., user is at their project limit and copying is tedious, and cloning isn't allowed since already at the limit.  So too frustrated, especially given that they aren't running anything. 
+   users clone/copy out as the first workaround? ANS: it should be in the first release; being locked out and having to copy a lot of data, etc. (and even hitting your project limit) could be very frustrating. E.g., user is at their project limit and copying is tedious, and cloning isn't allowed since already at the limit. So too frustrated, especially given that they aren't running anything.
 5. Should sponsor-slot denial be a hard block for always-running projects, or
-   should always-running projects have a separate reserved-slot contract? ANS: the idea of an "always running" project should have been deleted.  If not, it should be deleted systematically everywhere.  We have replaced that by priorities.
+   should always-running projects have a separate reserved-slot contract? ANS: the idea of an "always running" project should have been deleted. If not, it should be deleted systematically everywhere. We have replaced that by priorities.
 6. Should autostart make-room behavior exist at launch, or remain explicitly
-   off?   ANS: this is fine to be explicitly off and not implemented -- it feels possibly too unpredictable to be useful.
+   off? ANS: this is fine to be explicitly off and not implemented -- it feels possibly too unpredictable to be useful.
 
 ## Risks
 

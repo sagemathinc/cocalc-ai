@@ -12,6 +12,11 @@ import type {
 
 import type { ProjectCommandDeps } from "../project";
 import { durationToMs } from "../../../core/utils";
+import {
+  extractRuntimeSponsorDenial,
+  formatRuntimeSponsorDenial,
+  type RuntimeSponsorDenial,
+} from "@cocalc/util/runtime-sponsor-denial";
 
 export function getProjectExecTimeoutSeconds(argv = process.argv): number {
   const timeout = extractProjectExecTimeout(argv);
@@ -73,6 +78,54 @@ function findProjectExecArgs(argv: string[]): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatRuntimeSponsorDenialForCli(
+  denial: RuntimeSponsorDenial,
+): string {
+  const lines = [formatRuntimeSponsorDenial(denial)];
+  const visibleProjects = denial.active_projects.filter(
+    (project) => project.visible !== false,
+  );
+  if (visibleProjects.length > 0) {
+    lines.push("Visible sponsored projects:");
+    for (const project of visibleProjects) {
+      const title = `${project.title ?? ""}`.trim() || project.project_id;
+      const state = project.state ? ` (${project.state})` : "";
+      const action =
+        project.can_stop === false ? "" : " -- stop it to free a slot";
+      lines.push(`- ${title}${state}: ${project.project_id}${action}`);
+    }
+  }
+  const hiddenCount = denial.active_projects.length - visibleProjects.length;
+  if (hiddenCount > 0) {
+    lines.push(
+      `${hiddenCount} sponsored running ${
+        hiddenCount === 1 ? "project is" : "projects are"
+      } not listed because this account is not a collaborator.`,
+    );
+  }
+  if (denial.can_upgrade) {
+    lines.push("Open account membership details to increase the limit.");
+  }
+  return lines.join("\n");
+}
+
+function projectStartFailureMessage({
+  action,
+  summary,
+}: {
+  action: "start" | "restart";
+  summary: { status: string; error?: string | null; result?: any };
+}): string {
+  const denial =
+    (summary.result?.runtime_sponsor_denial as
+      | RuntimeSponsorDenial
+      | undefined) ?? extractRuntimeSponsorDenial(summary.error);
+  if (denial != null) {
+    return `${action} failed: ${formatRuntimeSponsorDenialForCli(denial)}`;
+  }
+  return `${action} failed: status=${summary.status} error=${summary.error ?? "unknown"}`;
 }
 
 function isAsyncExecOutput(
@@ -436,7 +489,7 @@ export function registerProjectBasicCommands(
             }
             if (summary.status !== "succeeded") {
               throw new Error(
-                `start failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+                projectStartFailureMessage({ action: "start", summary }),
               );
             }
             return {
@@ -518,7 +571,7 @@ export function registerProjectBasicCommands(
             }
             if (summary.status !== "succeeded") {
               throw new Error(
-                `restart failed: status=${summary.status} error=${summary.error ?? "unknown"}`,
+                projectStartFailureMessage({ action: "restart", summary }),
               );
             }
             return {
