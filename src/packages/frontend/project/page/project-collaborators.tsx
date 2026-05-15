@@ -21,7 +21,6 @@ import {
 import { Alert } from "antd";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
-import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ICON_USERS, ROOT_STYLE } from "../servers/consts";
 import { useProject } from "./common";
 
@@ -97,9 +96,4 @@ export function ProjectCollaboratorsContent({
   );
 
   return wrap == null ? body : wrap(body);
-}
-
-export function ProjectCollaboratorsPage(): React.JSX.Element {
-  const { project_id } = useProjectContext();
-  return <ProjectCollaboratorsContent project_id={project_id} layout="page" />;
 }
