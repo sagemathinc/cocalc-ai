@@ -5,6 +5,7 @@
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -12,6 +13,7 @@ import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/eff
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 
 type Queryable = Pick<PoolClient, "query">;
+const logger = getLogger("projects:runtime-slots");
 
 export type ProjectRuntimeSlotState =
   | "starting"
@@ -79,6 +81,9 @@ export interface ReserveProjectRuntimeSlotResult {
 
 const ACTIVE_SLOT_STATES = ["starting", "running"] as const;
 const DEFAULT_RUNTIME_SLOT_TTL_MS = 15 * 60 * 1000;
+const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
+const HEARTBEAT_TTL_MS = 30 * 60 * 1000;
+let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
 function normalizePositiveInteger(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
@@ -372,4 +377,90 @@ export async function listProjectRuntimeSlots(
     return await listProjectRuntimeSlotsLocal(opts);
   }
   return await accountLocalClient(homeBay).listProjectRuntimeSlots(opts);
+}
+
+export async function heartbeatActiveProjectRuntimeSlotsOnOwningBay(): Promise<{
+  heartbeated: number;
+  missing_sponsor: number;
+  failed: number;
+}> {
+  const { rows } = await getPool().query<{
+    project_id: string;
+    runtime_sponsor_account_id?: string | null;
+    usage_account_id?: string | null;
+    users?: Record<string, { group?: string }> | null;
+    owning_bay_id?: string | null;
+    host_id?: string | null;
+    state?: { state?: string } | null;
+  }>(
+    `
+      SELECT project_id, runtime_sponsor_account_id, usage_account_id, users,
+             owning_bay_id, host_id, state
+        FROM projects
+       WHERE COALESCE(state->>'state', '') = ANY($1)
+         AND COALESCE(deleted, false) IS NOT TRUE
+    `,
+    [ACTIVE_SLOT_STATES],
+  );
+  let heartbeated = 0;
+  let missing_sponsor = 0;
+  let failed = 0;
+  const { resolveRuntimeSponsorAccountId } = await import("./runtime-sponsor");
+  for (const row of rows) {
+    const sponsor_account_id = resolveRuntimeSponsorAccountId(row);
+    if (!sponsor_account_id) {
+      missing_sponsor += 1;
+      continue;
+    }
+    const state = row.state?.state === "starting" ? "starting" : "running";
+    try {
+      const ok = await heartbeatProjectRuntimeSlot({
+        sponsor_account_id,
+        project_id: row.project_id,
+        host_id: row.host_id,
+        state,
+        ttl_ms: HEARTBEAT_TTL_MS,
+        metadata: {
+          heartbeated_by: "owning-bay",
+          owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
+        },
+      });
+      if (ok) {
+        heartbeated += 1;
+        continue;
+      }
+      await reserveProjectRuntimeSlot({
+        sponsor_account_id,
+        project_id: row.project_id,
+        owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
+        host_id: row.host_id,
+        reason: "runtime-slot-reconcile",
+        state,
+        ttl_ms: HEARTBEAT_TTL_MS,
+        metadata: {
+          heartbeated_by: "owning-bay",
+          owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
+        },
+      });
+      heartbeated += 1;
+    } catch (err) {
+      failed += 1;
+      logger.warn("failed to heartbeat project runtime slot", {
+        project_id: row.project_id,
+        sponsor_account_id,
+        err: `${err}`,
+      });
+    }
+  }
+  return { heartbeated, missing_sponsor, failed };
+}
+
+export function startProjectRuntimeSlotHeartbeat(): void {
+  if (heartbeatTimer) return;
+  heartbeatTimer = setInterval(() => {
+    heartbeatActiveProjectRuntimeSlotsOnOwningBay().catch((err) => {
+      logger.warn("project runtime slot heartbeat failed", { err: `${err}` });
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+  heartbeatTimer.unref?.();
 }

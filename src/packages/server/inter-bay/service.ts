@@ -135,6 +135,7 @@ import {
   listProjectRuntimeSlotsLocal,
   releaseProjectRuntimeSlotLocal,
   reserveProjectRuntimeSlotLocal,
+  startProjectRuntimeSlotHeartbeat,
 } from "@cocalc/server/projects/runtime-slots";
 import {
   resolveHostBayAcrossCluster,
@@ -286,6 +287,7 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectLroService();
     await startProjectCollabInviteService();
     startBayRegistrationHeartbeat();
+    startProjectRuntimeSlotHeartbeat();
     startManagedBayCloudflared();
   } catch (err) {
     serviceStarted = false;
