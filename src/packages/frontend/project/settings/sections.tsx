@@ -91,6 +91,7 @@ export function useProjectSettingsSections({
   const flyout = mode === "flyout";
   const sectionGap = flyout ? 10 : 16;
   const componentMode = flyout ? "flyout" : undefined;
+  const embeddedInSection = true;
 
   if (project == null) {
     return {
@@ -116,6 +117,7 @@ export function useProjectSettingsSections({
           description={project.get("description") ?? ""}
           name={project.get("name")}
           actions={redux.getActions("projects")}
+          embedded={embeddedInSection}
         />
       ),
     },
@@ -130,6 +132,7 @@ export function useProjectSettingsSections({
           project={project}
           mode={componentMode}
           showRootFilesystemImage={false}
+          embedded={embeddedInSection}
         />
       ),
     },
@@ -188,7 +191,9 @@ export function useProjectSettingsSections({
           "Outbound traffic, internet access, and metered egress signals.",
         warning: showNoInternetWarning || showNonMemberWarning,
         className: "cc-project-flyout-settings-panel",
-        children: <ManagedEgress project_id={project_id} />,
+        children: (
+          <ManagedEgress project_id={project_id} embedded={embeddedInSection} />
+        ),
       },
       {
         id: "recovery",
@@ -234,6 +239,7 @@ export function useProjectSettingsSections({
           mode={componentMode}
           project={project}
           account_id={account_id}
+          embedded={embeddedInSection}
         />
       ),
     });
@@ -268,6 +274,7 @@ export function useProjectSettingsSections({
         project={project}
         actions={redux.getActions("projects")}
         mode={componentMode}
+        embedded={embeddedInSection}
       />
     ),
   });

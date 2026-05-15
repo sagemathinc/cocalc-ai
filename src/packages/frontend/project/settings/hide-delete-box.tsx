@@ -27,11 +27,13 @@ interface Props {
   project: Project;
   actions: ProjectsActions;
   mode?: "project" | "flyout";
+  embedded?: boolean;
 }
 
 export function HideDeleteBox(props: Readonly<Props>) {
-  const { project, actions, mode = "project" } = props;
+  const { project, actions, mode = "project", embedded = false } = props;
   const isFlyout = mode === "flyout";
+  const isEmbedded = embedded || isFlyout;
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
@@ -247,7 +249,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
     return <span>Does not make sense for admin.</span>;
   }
   const hidden = user.get("hide");
-  if (isFlyout) {
+  if (isEmbedded) {
     return renderBody();
   } else {
     return (

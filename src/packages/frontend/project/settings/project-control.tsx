@@ -39,12 +39,19 @@ interface ReactProps {
   project: Project;
   mode?: "project" | "flyout";
   showRootFilesystemImage?: boolean;
+  embedded?: boolean;
 }
 
 export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
-  const { project, mode = "project", showRootFilesystemImage = true } = props;
+  const {
+    project,
+    mode = "project",
+    showRootFilesystemImage = true,
+    embedded = false,
+  } = props;
   const { project_id } = useProjectContext();
   const isFlyout = mode === "flyout";
+  const isEmbedded = embedded || isFlyout;
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
@@ -316,7 +323,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     );
   }
 
-  if (mode === "flyout") {
+  if (isEmbedded) {
     return renderBody();
   } else {
     return (

@@ -34,13 +34,18 @@ interface Props {
   project: Project;
   account_id?: string;
   mode?: "project" | "flyout";
+  embedded?: boolean;
 }
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-export function SSHPanel({ project, mode = "project" }: Props) {
+export function SSHPanel({
+  project,
+  mode = "project",
+  embedded = false,
+}: Props) {
   const intl = useIntl();
   const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
   const hostInfo = useHostInfo(project.get("host_id"));
@@ -151,6 +156,7 @@ export function SSHPanel({ project, mode = "project" }: Props) {
       mode={mode}
       allowAdd={!useCliSsh}
       title={useCliSsh ? "SSH" : undefined}
+      embedded={embedded}
     >
       <>
         {!useCliSsh && (

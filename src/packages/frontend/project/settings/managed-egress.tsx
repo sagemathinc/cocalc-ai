@@ -10,9 +10,15 @@ import {
   ManagedEgressRateSummary,
 } from "@cocalc/frontend/purchases/managed-egress-history";
 
-export function ManagedEgress({ project_id }: { project_id: string }) {
-  return (
-    <SettingBox title="Network Egress" icon="network">
+export function ManagedEgress({
+  project_id,
+  embedded = false,
+}: {
+  project_id: string;
+  embedded?: boolean;
+}) {
+  const body = (
+    <>
       <Paragraph style={{ marginBottom: "12px" }}>
         Review outbound network traffic attributed to this project across recent
         time windows. This includes metered downloads, proxy traffic,
@@ -31,6 +37,14 @@ export function ManagedEgress({ project_id }: { project_id: string }) {
           outbound traffic.
         </Text>
       </Space>
+    </>
+  );
+  if (embedded) {
+    return body;
+  }
+  return (
+    <SettingBox title="Network Egress" icon="network">
+      {body}
     </SettingBox>
   );
 }
