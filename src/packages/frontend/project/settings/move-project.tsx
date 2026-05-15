@@ -14,6 +14,10 @@ import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { useProjectRegion } from "../use-project-region";
 import { SpotHostAlert, SpotHostTag } from "@cocalc/frontend/hosts/spot-ui";
 import type { Host } from "@cocalc/conat/hub/api/hosts";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 
 interface Props {
   project_id: string;
@@ -38,6 +42,9 @@ export default function MoveProject({
   const [detailsOpen, setDetailsOpen] = useState<boolean>(false);
   const [detailsLoading, setDetailsLoading] = useState<boolean>(false);
   const [detailHost, setDetailHost] = useState<Host | undefined>();
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
   const actions = useActions("projects");
   const currentHostId = useTypedRedux("projects", "project_map")?.getIn([
     project_id,
@@ -130,6 +137,25 @@ export default function MoveProject({
     };
   }, [detailsOpen, currentHostId]);
 
+  async function moveToHost(dest_host_id: string, host?: Host) {
+    if (!actions) {
+      throw Error("project actions are not available");
+    }
+    setMoving(true);
+    try {
+      const destProjectRegion = host
+        ? mapCloudRegionToR2Region(host.region)
+        : undefined;
+      await actions.move_project_to_host(project_id, dest_host_id, {
+        backup_region_cutover:
+          destProjectRegion != null && destProjectRegion !== projectRegion,
+        dest_project_region: destProjectRegion,
+      });
+    } finally {
+      setMoving(false);
+    }
+  }
+
   return (
     <>
       <Button
@@ -212,23 +238,15 @@ export default function MoveProject({
         onSelect={async (dest_host_id, host) => {
           setPickerOpen(false);
           try {
-            setMoving(true);
-            const destProjectRegion = host
-              ? mapCloudRegionToR2Region(host.region)
-              : undefined;
-            await actions.move_project_to_host(project_id, dest_host_id, {
-              backup_region_cutover:
-                destProjectRegion != null &&
-                destProjectRegion !== projectRegion,
-              dest_project_region: destProjectRegion,
+            await runFreshAuthAction(async () => {
+              await moveToHost(dest_host_id, host);
             });
           } catch (err) {
             setError(`${err}`);
-          } finally {
-            setMoving(false);
           }
         }}
       />
+      <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
 }

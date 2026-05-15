@@ -278,6 +278,7 @@ export function StartButton({
               runtimeSponsorDenial ? (
                 <RuntimeSponsorDenialDescription
                   denial={runtimeSponsorDenial}
+                  project_id={resolvedProjectId}
                 />
               ) : (
                 startLroError
@@ -511,12 +512,15 @@ function MoveProgressInline({ moveLro }: { moveLro: MoveLroState }) {
 
 function RuntimeSponsorDenialDescription({
   denial,
+  project_id,
 }: {
   denial: RuntimeSponsorDenial;
+  project_id: string;
 }) {
   const [stoppingProjectIds, setStoppingProjectIds] = useState<
     Record<string, true>
   >({});
+  const [changingSponsor, setChangingSponsor] = useState(false);
   const [stopError, setStopError] = useState<string>("");
   const visibleProjects = denial.active_projects.filter(
     (project) => project.visible !== false,
@@ -540,6 +544,21 @@ function RuntimeSponsorDenialDescription({
         delete next[project_id];
         return next;
       });
+    }
+  }
+
+  async function useMyMembershipAndRetry() {
+    setStopError("");
+    setChangingSponsor(true);
+    try {
+      await redux
+        .getActions("projects")
+        .set_project_runtime_sponsor_to_me(project_id);
+      await redux.getActions("projects").start_project(project_id);
+    } catch (err) {
+      setStopError(`${err}`);
+    } finally {
+      setChangingSponsor(false);
     }
   }
 
@@ -579,6 +598,17 @@ function RuntimeSponsorDenialDescription({
             onClick={() => redux.getActions("page").set_active_tab("account")}
           >
             Open membership details
+          </Button>
+        </div>
+      )}
+      {denial.can_change_sponsor && (
+        <div style={{ marginTop: "8px" }}>
+          <Button
+            size="small"
+            loading={changingSponsor}
+            onClick={useMyMembershipAndRetry}
+          >
+            Use my membership and try again
           </Button>
         </div>
       )}

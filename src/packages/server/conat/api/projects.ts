@@ -206,7 +206,7 @@ async function enrichRuntimeSponsorDenial({
     ...denial,
     ...(sponsor_display_name ? { sponsor_display_name } : {}),
     can_upgrade: account_id === denial.sponsor_account_id,
-    can_change_sponsor: false,
+    can_change_sponsor: account_id !== denial.sponsor_account_id,
     active_projects,
   };
 }
