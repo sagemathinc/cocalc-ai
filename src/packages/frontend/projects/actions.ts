@@ -206,6 +206,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private static REALTIME_FEED_BATCH_MS = 50;
   private static CREATE_PROJECT_FEED_WAIT_TIMEOUT_S = 5;
   private static MOVE_TRANSITION_GRACE_MS = 5 * 60_000;
+  private static ACTIVE_MOVE_RETENTION_MS = 8 * 60 * 60_000;
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
@@ -231,6 +232,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
     Object.create(null);
   private recentProjectHostTransitionUntil: Record<string, number> =
     Object.create(null);
+  private recentProjectMoveTransitionUntil: Record<string, number> =
+    Object.create(null);
+  private recentProjectMoveSummaries: Record<string, LroSummary> =
+    Object.create(null);
   private recentHostInfoLookupFailureAt: Record<string, number> =
     Object.create(null);
 
@@ -240,6 +245,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
     };
     this.signedOutListener = () => {
       this.closeRealtimeFeed();
+      this.recentProjectMoveSummaries = Object.create(null);
+      this.recentProjectMoveTransitionUntil = Object.create(null);
     };
     this.conatConnectedListener = () => {
       void this.ensureRealtimeFeedForCurrentAccount();
@@ -389,6 +396,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
           project_id: event.project_id,
           fields: event.fields,
         });
+        break;
+      case "lro.summary":
+        this.noteProjectMoveSummary(event.summary, event.ts);
         break;
       default:
         break;
@@ -1039,6 +1049,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
           project_map = project_map.set(project_id, currentProject);
         } else if (
           !incomingProjectMap.has(project_id) &&
+          this.shouldRetainOpenProjectDuringMoveTransition(project_id)
+        ) {
+          project_map = project_map.set(project_id, currentProject);
+        } else if (
+          !incomingProjectMap.has(project_id) &&
           this.isProjectOpen(project_id)
         ) {
           projectsToClose.add(project_id);
@@ -1051,6 +1066,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
           !incomingProjectMap.has(project_id) &&
           currentProjectMap.get(project_id)?.get(PROJECTION_ONLY_FIELD) !== true
         ) {
+          if (this.shouldRetainOpenProjectDuringMoveTransition(project_id)) {
+            continue;
+          }
           project_map = project_map.remove(project_id);
           if (this.isProjectOpen(project_id)) {
             projectsToClose.add(project_id);
@@ -1224,6 +1242,39 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
   }
 
+  private noteProjectMoveSummary(
+    summary: LroSummary | undefined,
+    eventTs?: number,
+  ): void {
+    if (
+      summary?.kind !== "project-move" ||
+      summary.scope_type !== "project" ||
+      !summary.scope_id
+    ) {
+      return;
+    }
+    const project_id = summary.scope_id;
+    if (summary.dismissed_at != null) {
+      delete this.recentProjectMoveSummaries[project_id];
+      delete this.recentProjectMoveTransitionUntil[project_id];
+      return;
+    }
+    this.recentProjectMoveSummaries[project_id] = summary;
+    const baseMs =
+      eventTimeMs(summary.updated_at) ??
+      eventTimeMs(summary.finished_at) ??
+      eventTimeMs(eventTs) ??
+      Date.now();
+    const duration = isTerminal(summary.status)
+      ? ProjectsActions.MOVE_TRANSITION_GRACE_MS
+      : ProjectsActions.ACTIVE_MOVE_RETENTION_MS;
+    const nextDeadline = baseMs + duration;
+    const previousDeadline = this.recentProjectMoveTransitionUntil[project_id];
+    if (previousDeadline == null || previousDeadline < nextDeadline) {
+      this.recentProjectMoveTransitionUntil[project_id] = nextDeadline;
+    }
+  }
+
   private isProjectInRecentHostTransition(project_id: string): boolean {
     const deadline = this.recentProjectHostTransitionUntil[project_id];
     if (deadline == null) {
@@ -1231,6 +1282,19 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     if (deadline <= Date.now()) {
       delete this.recentProjectHostTransitionUntil[project_id];
+      return false;
+    }
+    return true;
+  }
+
+  private isProjectInRecentMoveTransition(project_id: string): boolean {
+    const deadline = this.recentProjectMoveTransitionUntil[project_id];
+    if (deadline == null) {
+      return false;
+    }
+    if (deadline <= Date.now()) {
+      delete this.recentProjectMoveTransitionUntil[project_id];
+      delete this.recentProjectMoveSummaries[project_id];
       return false;
     }
     return true;
@@ -1244,8 +1308,29 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     return (
       this.isProjectMoveInProgress(project_id) ||
-      this.isProjectInRecentHostTransition(project_id)
+      this.isProjectInRecentHostTransition(project_id) ||
+      this.isProjectInRecentMoveTransition(project_id)
     );
+  }
+
+  private hydrateProjectMoveState(project_actions: any, project_id: string) {
+    const summary = this.recentProjectMoveSummaries[project_id];
+    if (summary == null || !this.isProjectInRecentMoveTransition(project_id)) {
+      return;
+    }
+    project_actions?.setState?.({
+      move_lro: fromJS({
+        op_id: summary.op_id,
+        summary,
+      }),
+    });
+    if (!isTerminal(summary.status)) {
+      project_actions?.trackMoveOp?.({
+        op_id: summary.op_id,
+        scope_type: summary.scope_type,
+        scope_id: summary.scope_id,
+      });
+    }
   }
 
   private isProjectMoveInProgress(project_id: string): boolean {
@@ -1838,6 +1923,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     if (relation == null || ["public", "admin"].includes(relation)) {
       this.fetch_public_project_title(opts.project_id);
     }
+    this.hydrateProjectMoveState(project_actions, opts.project_id);
     if (!this.isProjectOpen(opts.project_id)) {
       this.setProjectOpen(opts.project_id);
       if (opts.restore_session) {
