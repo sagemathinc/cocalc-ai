@@ -1294,7 +1294,7 @@ export async function main(
           http_port: projectRow?.http_port,
           url: req.url,
         });
-        await hubApi.projects.start({ project_id });
+        await hubApi.projects.start({ project_id, autostart: true });
       }
       const upstreamSecret = getOrCreateProjectLocalSecretToken(project_id);
       req.headers[PROJECT_PROXY_AUTH_HEADER] = upstreamSecret;

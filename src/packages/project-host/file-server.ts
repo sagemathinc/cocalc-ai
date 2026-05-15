@@ -269,7 +269,7 @@ async function ensureProjectSshWake(
           host_id: hostId,
           state: row.state,
         });
-        await hubApi.projects.start({ project_id });
+        await hubApi.projects.start({ project_id, autostart: true });
       } catch (err) {
         logger.warn("ssh wake start project failed", {
           project_id,

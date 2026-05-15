@@ -4,7 +4,7 @@
  */
 
 import { CaretRightOutlined } from "@ant-design/icons";
-import { Button, Collapse, CollapseProps, Space } from "antd";
+import { Alert, Button, Collapse, CollapseProps, Space } from "antd";
 import immutable from "immutable";
 import { debounce } from "lodash";
 
@@ -15,8 +15,10 @@ import {
   useActions,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
+  useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { ConnectionStatus } from "@cocalc/frontend/app/store";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
@@ -45,6 +47,10 @@ import { TerminalFlyout } from "./files-terminal";
 import { getFlyoutFiles, storeFlyoutState } from "./state";
 import { useSingleFile } from "./utils";
 import { FilesSelectButtons } from "./files-select-extra";
+import {
+  formatProjectStartPolicyBlock,
+  getProjectStartPolicyBlock,
+} from "@cocalc/frontend/projects/runtime-start-policy";
 
 interface FilesBottomProps {
   project_id: string;
@@ -99,6 +105,20 @@ export function FilesBottom({
   const [sync, setSync] = useState<boolean>(true);
   const [requestedTerminalStart, setRequestedTerminalStart] =
     useState<boolean>(false);
+  const project_map = useTypedRedux("projects", "project_map");
+  const account_id = useTypedRedux("account", "account_id");
+  const isAdmin = !!useTypedRedux("account", "is_admin");
+  const project = project_map?.get(project_id);
+  const terminalStartPolicyBlock = useMemo(
+    () =>
+      getProjectStartPolicyBlock({
+        project,
+        account_id,
+        is_admin: isAdmin,
+        autostart: true,
+      }),
+    [project, account_id, isAdmin],
+  );
 
   const collapseRef = useRef<HTMLDivElement>(null);
 
@@ -138,11 +158,15 @@ export function FilesBottom({
       setRequestedTerminalStart(false);
       return;
     }
+    if (terminalStartPolicyBlock) {
+      setRequestedTerminalStart(false);
+      return;
+    }
     setRequestedTerminalStart(true);
     void redux
       .getActions("projects")
       .start_project(project_id, { autostart: true });
-  }, [activeKeys, projectIsRunning, project_id]);
+  }, [activeKeys, projectIsRunning, project_id, terminalStartPolicyBlock]);
 
   // useEffect(() => {
   //   // if any selected and nothing in state, open "selected".
@@ -183,9 +207,20 @@ export function FilesBottom({
     if (!projectIsRunning) {
       return (
         <div style={{ padding: FLYOUT_PADDING }}>
-          {requestedTerminalStart
-            ? "Starting the project so the terminal can connect..."
-            : "You have to start the project to be able to run a terminal."}
+          {terminalStartPolicyBlock ? (
+            <Alert
+              type="warning"
+              showIcon
+              message="Terminal cannot start this project automatically"
+              description={formatProjectStartPolicyBlock(
+                terminalStartPolicyBlock,
+              )}
+            />
+          ) : requestedTerminalStart ? (
+            "Starting the project so the terminal can connect..."
+          ) : (
+            "You have to start the project to be able to run a terminal."
+          )}
         </div>
       );
     }

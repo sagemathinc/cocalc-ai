@@ -8,6 +8,11 @@ import { useState } from "react";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Paragraph } from "@cocalc/frontend/components";
+import {
+  accountIsProjectCollaborator,
+  projectOwnerAccountId,
+  runtimeSponsorAccountId,
+} from "@cocalc/frontend/projects/runtime-start-policy";
 import { User } from "@cocalc/frontend/users/user";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -18,35 +23,6 @@ const { Text } = Typography;
 interface Props {
   project: Project;
   project_id: string;
-}
-
-function accountIsProjectCollaborator(
-  project: Project,
-  account_id: string | undefined,
-): boolean {
-  if (!account_id) return false;
-  const group = project.getIn(["users", account_id, "group"]);
-  return group === "owner" || group === "collaborator";
-}
-
-function projectOwnerAccountId(project: Project): string | undefined {
-  const users = project.get("users");
-  if (!users) return undefined;
-  return users
-    .keySeq()
-    .find((account_id) => users.getIn([account_id, "group"]) === "owner");
-}
-
-function runtimeSponsorAccountId(project: Project): string | undefined {
-  const explicitSponsor = `${project.get("runtime_sponsor_account_id") ?? ""}`;
-  if (accountIsProjectCollaborator(project, explicitSponsor)) {
-    return explicitSponsor;
-  }
-  const usageSponsor = `${project.get("usage_account_id") ?? ""}`;
-  if (accountIsProjectCollaborator(project, usageSponsor)) {
-    return usageSponsor;
-  }
-  return projectOwnerAccountId(project);
 }
 
 export function RuntimeSponsorControls({ project, project_id }: Props) {

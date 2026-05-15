@@ -1401,6 +1401,7 @@ export interface Hosts {
     authorized_keys?: string;
     run_quota?: any;
     env?: ProjectEnv;
+    autostart_enabled?: boolean | null;
     project_secrets_cache?: ProjectSecretsRuntimeCache;
   }>;
   updateCopyStatus: (opts: {

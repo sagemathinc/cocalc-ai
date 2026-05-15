@@ -1838,6 +1838,7 @@ export async function getProjectStartMetadata({
   authorized_keys?: string;
   run_quota?: any;
   env?: ProjectEnv;
+  autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
 }> {
   if (!host_id) {
@@ -1880,6 +1881,7 @@ export async function getProjectStartMetadataLocal({
   authorized_keys?: string;
   run_quota?: any;
   env?: ProjectEnv;
+  autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
 } | null> {
   if (!host_id) {
@@ -1889,7 +1891,8 @@ export async function getProjectStartMetadataLocal({
     throw new Error("project_id must be specified");
   }
   const { rows } = await pool().query(
-    `SELECT title, users, rootfs_image AS image, run_quota, env
+    `SELECT title, users, rootfs_image AS image, run_quota, env,
+            autostart_enabled
        FROM projects
       WHERE project_id=$1
         AND host_id=$2
@@ -1918,6 +1921,7 @@ export async function getProjectStartMetadataLocal({
     authorized_keys: authorized_keys || undefined,
     run_quota: row.run_quota ?? undefined,
     env: row.env ?? undefined,
+    autostart_enabled: row.autostart_enabled,
     project_secrets_cache: await getProjectSecretsRuntimeCache({ project_id }),
   };
 }

@@ -738,6 +738,50 @@ describe("project host start ACP rehydrate ordering", () => {
     );
   });
 
+  it("rejects local autostarts when master metadata disables automatic starts", async () => {
+    const runnerApi = {
+      start: jest.fn(async () => ({
+        state: "running",
+        http_port: 1234,
+        ssh_port: 2222,
+      })),
+      stop: jest.fn(),
+    } as any;
+    getProject.mockReturnValue({
+      image: customImage,
+      title: "dev",
+      authorized_keys: "ssh-ed25519 AAAATEST user@test",
+      run_quota: { memory_limit: 1234 },
+      env: { FOO: "bar" },
+    });
+    getMasterConatClient.mockReturnValue({ nats: true });
+    callHub.mockResolvedValue({
+      title: "dev",
+      users: { "test-account-id": { group: "owner" } },
+      image: customImage,
+      authorized_keys: "ssh-ed25519 AAAATEST user@test",
+      run_quota: { memory_limit: 1234 },
+      env: { FOO: "bar" },
+      autostart_enabled: false,
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(
+      hubApi.projects.start({ project_id, autostart: true }),
+    ).rejects.toThrow("Automatic starts are disabled");
+
+    expect(callHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host_id: "host-1",
+        name: "hosts.getProjectStartMetadata",
+        args: [{ project_id }],
+      }),
+    );
+    expect(runnerApi.start).not.toHaveBeenCalled();
+  });
+
   it("fails closed when cached secret names exist but master metadata is unavailable", async () => {
     const runnerApi = {
       start: jest.fn(async () => ({

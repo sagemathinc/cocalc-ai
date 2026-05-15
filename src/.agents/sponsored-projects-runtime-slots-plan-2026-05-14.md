@@ -17,11 +17,13 @@ Implementation notes:
 - Phase 5 complete: a current collaborator can explicitly make themself the
   runtime sponsor for future starts, including from the blocked-start recovery
   flow. Non-admin users cannot silently assign sponsorship to another account.
-- Phase 6 core policy complete: projects now have an `autostart_enabled`
+- Phase 6 complete pending live smoke tests: projects now have an `autostart_enabled`
   policy. Explicit manual starts remain allowed, while automatic start requests
   are denied before runtime-slot admission when the policy is disabled. Admin
   host-drain restore starts continue to bypass runtime-slot/autostart admission.
-  Remaining polish is protocol-specific SSH/HTTP denial wording and smoke tests.
+  Frontend Codex, Jupyter, terminal, project-host SSH, project-host HTTP proxy,
+  and project-host Codex runtime wake paths now mark starts as autostarts and
+  surface policy denial before doing expensive start work.
 - Runtime sponsor resolution enforces the core invariant that explicit runtime
   sponsors and `usage_account_id` sponsors must be current project
   owners/collaborators; otherwise resolution falls back to the project owner.
@@ -518,10 +520,12 @@ Default:
 
 Validation:
 
-- SSH wake denial smoke
-- HTTP/app wake denial smoke
-- UI autostart denial smoke
-- autostart disabled smoke
+- SSH wake denial smoke: pending live smoke test.
+- HTTP/app wake denial smoke: pending live smoke test.
+- UI autostart denial smoke: covered by focused frontend unit tests; pending
+  live smoke test.
+- autostart disabled smoke: covered by focused frontend/project-host unit
+  tests; pending live smoke test.
 
 ### Phase 7: Course/Team Polish
 

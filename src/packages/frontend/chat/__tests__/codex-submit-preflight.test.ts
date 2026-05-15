@@ -32,9 +32,15 @@ describe("Codex submit preflight", () => {
       return true;
     });
     const redux = {
-      getStore: () => ({
-        get_state: () => state,
-      }),
+      getStore: (name: string) =>
+        name === "projects"
+          ? {
+              get_state: () => state,
+            }
+          : {
+              get_state: () => undefined,
+              get: () => undefined,
+            },
       getActions: () => ({
         start_project: startProject,
       }),
@@ -46,7 +52,9 @@ describe("Codex submit preflight", () => {
       timeoutMs: 1000,
     });
 
-    expect(startProject).toHaveBeenCalledWith("project-1");
+    expect(startProject).toHaveBeenCalledWith("project-1", {
+      autostart: true,
+    });
   });
 
   it("fails quickly when start_project refuses to start", async () => {
@@ -66,5 +74,68 @@ describe("Codex submit preflight", () => {
         timeoutMs: 1000,
       }),
     ).rejects.toThrow("project did not start");
+  });
+
+  it("does not submit a Codex autostart when automatic starts are disabled", async () => {
+    const start_project = jest.fn();
+    const redux = {
+      getStore: (name: string) =>
+        name === "projects"
+          ? {
+              get_state: () => "opened",
+              getIn: () => ({ autostart_enabled: false }),
+            }
+          : {
+              get_state: () => undefined,
+              get: () => undefined,
+            },
+      getActions: () => ({ start_project }),
+    };
+
+    await expect(
+      ensureProjectRunningForCodex({
+        project_id: "project-1",
+        redux,
+        timeoutMs: 1000,
+      }),
+    ).rejects.toThrow("Automatic starts are disabled");
+    expect(start_project).not.toHaveBeenCalled();
+  });
+
+  it("does not submit a Codex autostart when collaborators cannot use sponsor slots", async () => {
+    const start_project = jest.fn();
+    const redux = {
+      getStore: (name: string) =>
+        name === "projects"
+          ? {
+              get_state: () => "opened",
+              getIn: () => ({
+                allow_collaborator_starts_using_sponsor: false,
+                users: {
+                  "owner-1": { group: "owner" },
+                  "user-1": { group: "collaborator" },
+                },
+              }),
+            }
+          : {
+              get_state: () => undefined,
+              get: (key: string) =>
+                key === "account_id"
+                  ? "user-1"
+                  : key === "is_admin"
+                    ? false
+                    : undefined,
+            },
+      getActions: () => ({ start_project }),
+    };
+
+    await expect(
+      ensureProjectRunningForCodex({
+        project_id: "project-1",
+        redux,
+        timeoutMs: 1000,
+      }),
+    ).rejects.toThrow("Collaborators cannot start this project");
+    expect(start_project).not.toHaveBeenCalled();
   });
 });
