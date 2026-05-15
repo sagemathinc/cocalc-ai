@@ -16,6 +16,7 @@ let loadProjectRuntimeSponsorMock: jest.Mock;
 let assertCanStartUsingRuntimeSponsorMock: jest.Mock;
 let reserveProjectRuntimeSlotMock: jest.Mock;
 let releaseProjectRuntimeSlotMock: jest.Mock;
+let getRoutedHostControlClientMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -68,6 +69,12 @@ jest.mock("@cocalc/server/project-host/control", () => ({
   __esModule: true,
   updateAuthorizedKeysOnHost: jest.fn(),
   takeStartProjectPhaseTimings: jest.fn(() => undefined),
+}));
+
+jest.mock("@cocalc/server/project-host/client", () => ({
+  __esModule: true,
+  getRoutedHostControlClient: (...args: any[]) =>
+    getRoutedHostControlClientMock(...args),
 }));
 
 jest.mock("@cocalc/server/projects/control", () => ({
@@ -234,6 +241,15 @@ describe("projects.getProjectState / getProjectAddress", () => {
       slot: {},
     }));
     releaseProjectRuntimeSlotMock = jest.fn(async () => undefined);
+    getRoutedHostControlClientMock = jest.fn(async () => ({
+      getProjectRuntimeLog: jest.fn(async () => ({
+        container: "project-proj-1",
+        lines: 200,
+        text: "runtime log",
+        found: true,
+        running: true,
+      })),
+    }));
   });
 
   it("routes project state reads through the owning bay", async () => {
@@ -291,6 +307,35 @@ describe("projects.getProjectState / getProjectAddress", () => {
       project_id: "proj-1",
       epoch: 7,
     });
+  });
+
+  it("does not contact a project host for runtime logs when the project is not running", async () => {
+    poolQueryMock = jest.fn(async () => ({
+      rows: [
+        {
+          host_id: "stale-host-1",
+          state: "opened",
+        },
+      ],
+    }));
+    const { getRuntimeLog } = await import("./projects");
+    await expect(
+      getRuntimeLog({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        lines: 50,
+      }),
+    ).resolves.toMatchObject({
+      project_id: "proj-1",
+      host_id: "stale-host-1",
+      lines: 50,
+      text: "",
+      found: false,
+      running: false,
+      available: false,
+      reason: "workspace is not running",
+    });
+    expect(getRoutedHostControlClientMock).not.toHaveBeenCalled();
   });
 
   it("routes project move requests through the owning bay", async () => {

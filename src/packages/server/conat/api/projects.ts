@@ -529,6 +529,33 @@ async function getProjectHostId(project_id: string): Promise<string> {
   return (await getAssignedProjectHostInfo(project_id)).host_id;
 }
 
+const PROJECT_RUNTIME_LOG_STATES = new Set([
+  "running",
+  "starting",
+  "restarting",
+]);
+
+async function getProjectRuntimeLogInfo(project_id: string): Promise<{
+  host_id: string | null;
+  state: string;
+} | null> {
+  const { rows } = await getPool().query<{
+    host_id: string | null;
+    state: string | null;
+  }>(
+    "SELECT host_id, COALESCE(state->>'state', '') AS state FROM projects WHERE project_id=$1 LIMIT 1",
+    [project_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    host_id: row.host_id ?? null,
+    state: row.state ?? "",
+  };
+}
+
 async function syncProjectSecretsCacheOnAssignedHost({
   project_id,
 }: {
@@ -1601,6 +1628,20 @@ export async function getRuntimeLog({
 }): Promise<ProjectRuntimeLog> {
   await assertCollab({ account_id, project_id });
   const tail = normalizeLogTail(lines);
+  const info = await getProjectRuntimeLogInfo(project_id);
+  if (info != null && !PROJECT_RUNTIME_LOG_STATES.has(info.state)) {
+    return {
+      project_id,
+      host_id: info.host_id,
+      container: `project-${project_id}`,
+      lines: tail,
+      text: "",
+      found: false,
+      running: false,
+      available: false,
+      reason: "workspace is not running",
+    };
+  }
   let host_id: string;
   try {
     host_id = (await getAssignedProjectHostInfo(project_id)).host_id;
