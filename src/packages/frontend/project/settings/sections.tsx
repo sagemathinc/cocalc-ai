@@ -49,7 +49,6 @@ interface Options {
   project?: Project;
   mode: ProjectSettingsLayoutMode;
   datastoreReload?: number;
-  environmentExtra?: ReactNode;
   recoveryExtra?: ReactNode;
 }
 
@@ -59,7 +58,6 @@ export function useProjectSettingsSections({
   project,
   mode,
   datastoreReload,
-  environmentExtra,
   recoveryExtra,
 }: Options): {
   sections: ProjectSettingsSection[];
@@ -156,7 +154,6 @@ export function useProjectSettingsSections({
         description:
           "Defaults, environment variables, secrets, and software capability checks.",
         className: "cc-project-flyout-settings-panel",
-        extra: environmentExtra,
         children: (
           <Space
             direction="vertical"

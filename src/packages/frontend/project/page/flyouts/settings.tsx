@@ -3,11 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { ReloadOutlined } from "@ant-design/icons";
 import { Button, Collapse, CollapseProps, Space } from "antd";
+import { ReloadOutlined } from "@ant-design/icons";
 import { useIntl } from "react-intl";
 import {
-  redux,
   useEffect,
   useState,
   useTypedRedux,
@@ -47,10 +46,6 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
   const projectIsVisible = active_top_tab === project_id;
   const [datastoreReload, setDatastoreReload] = useState<number>(0);
   const [expandedPanels, setExpandedPanels] = useState<string[]>([]);
-  const configuration_loading = useTypedRedux(
-    { project_id },
-    "configuration_loading",
-  );
   const hostId = project?.get("host_id") as string | undefined;
   const hostInfo = hostId ? host_info?.get(hostId) : undefined;
   const effectiveState =
@@ -65,7 +60,6 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
     project,
     mode: "flyout",
     datastoreReload,
-    environmentExtra: featuresReloadButton(),
     recoveryExtra: renderDatastoreReload(),
   });
 
@@ -146,23 +140,6 @@ export function SettingsFlyout(_: Readonly<Props>): React.JSX.Element {
     storeFlyoutState(project_id, "settings", {
       settings: keys,
     });
-  }
-
-  function featuresReloadButton() {
-    return (
-      <Tooltip title="Reload features and configuration">
-        <Button
-          size="small"
-          onClick={(e) => {
-            e.stopPropagation();
-            const pa = redux.getProjectActions(project_id);
-            pa.reload_configuration();
-          }}
-          icon={<ReloadOutlined />}
-          disabled={configuration_loading}
-        />
-      </Tooltip>
-    );
   }
 
   function renderDatastoreReload() {
