@@ -144,7 +144,8 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     return (
       <section>
         <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "8px" }}>
-          Start, stop, archive, or move the active runtime for this project.
+          Use these controls when the project is stuck, needs to move hosts, or
+          should be archived.
         </Paragraph>
         <Space.Compact
           style={{ marginTop: "4px", marginBottom: "10px" }}

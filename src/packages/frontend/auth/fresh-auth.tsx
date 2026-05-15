@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Checkbox, Input, Modal, Space } from "antd";
+import { Alert, Checkbox, Input, Modal, Radio, Space } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
@@ -174,20 +174,17 @@ export function FreshAuthModal({
                 (status?.methods ?? []).some(
                   (method) => method !== "passkey",
                 ) ? (
-                  <Space wrap>
-                    <Button
-                      type={usePasskey ? "primary" : "default"}
-                      onClick={() => setUsePasskey(true)}
-                    >
-                      Use passkey
-                    </Button>
-                    <Button
-                      type={!usePasskey ? "primary" : "default"}
-                      onClick={() => setUsePasskey(false)}
-                    >
-                      Use code
-                    </Button>
-                  </Space>
+                  <Radio.Group
+                    value={usePasskey ? "passkey" : "code"}
+                    optionType="button"
+                    buttonStyle="solid"
+                    onChange={(e) =>
+                      setUsePasskey(e.target.value === "passkey")
+                    }
+                  >
+                    <Radio.Button value="passkey">Use passkey</Radio.Button>
+                    <Radio.Button value="code">Use code</Radio.Button>
+                  </Radio.Group>
                 ) : undefined}
                 <Alert
                   type="info"

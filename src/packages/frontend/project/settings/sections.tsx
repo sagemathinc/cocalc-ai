@@ -124,9 +124,10 @@ export function useProjectSettingsSections({
     {
       id: "resources",
       icon: "server",
-      label: "Resources",
-      title: "Resources",
-      description: "Start, stop, move, archive, and inspect the runtime host.",
+      label: "Runtime",
+      title: "Runtime",
+      description:
+        "Control the active project process and review host diagnostics.",
       children: (
         <ProjectControl
           project={project}

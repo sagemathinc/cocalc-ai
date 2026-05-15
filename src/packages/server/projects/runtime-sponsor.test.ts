@@ -9,7 +9,11 @@ describe("runtime sponsor resolution", () => {
       resolveRuntimeSponsorAccountId({
         runtime_sponsor_account_id: "runtime-sponsor",
         usage_account_id: "usage-account",
-        users: { owner: { group: "owner" } },
+        users: {
+          "runtime-sponsor": { group: "collaborator" },
+          "usage-account": { group: "collaborator" },
+          owner: { group: "owner" },
+        },
       }),
     ).toBe("runtime-sponsor");
   });
@@ -18,9 +22,34 @@ describe("runtime sponsor resolution", () => {
     expect(
       resolveRuntimeSponsorAccountId({
         usage_account_id: "usage-account",
-        users: { owner: { group: "owner" } },
+        users: {
+          "usage-account": { group: "collaborator" },
+          owner: { group: "owner" },
+        },
       }),
     ).toBe("usage-account");
+  });
+
+  it("ignores an explicit runtime sponsor that is no longer a collaborator", () => {
+    expect(
+      resolveRuntimeSponsorAccountId({
+        runtime_sponsor_account_id: "former-collaborator",
+        usage_account_id: "usage-account",
+        users: {
+          "usage-account": { group: "collaborator" },
+          owner: { group: "owner" },
+        },
+      }),
+    ).toBe("usage-account");
+  });
+
+  it("ignores usage attribution when that account is not a collaborator", () => {
+    expect(
+      resolveRuntimeSponsorAccountId({
+        usage_account_id: "usage-account",
+        users: { owner: { group: "owner" } },
+      }),
+    ).toBe("owner");
   });
 
   it("falls back to the project owner", () => {

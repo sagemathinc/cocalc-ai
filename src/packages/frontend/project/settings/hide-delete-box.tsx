@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Popconfirm, Space, Switch, Typography } from "antd";
+import { Alert, Button, Popconfirm, Space, Switch } from "antd";
 import type { ReactNode } from "react";
 import { defineMessage, FormattedMessage, useIntl } from "react-intl";
 
@@ -13,15 +13,12 @@ import {
   SettingBox,
   type IconName,
 } from "@cocalc/frontend/components";
-import { HelpEmailLink } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 import { DeletedProjectWarning } from "../warnings/deleted";
 import { Project } from "./types";
-
-const { Text } = Typography;
 
 interface Props {
   project: Project;
@@ -37,7 +34,6 @@ export function HideDeleteBox(props: Readonly<Props>) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
-  const projectsLabelLower = intl.formatMessage(labels.projects).toLowerCase();
   const is_deleted = project.get("deleted");
 
   const deleteUndeleteMsg = (
@@ -222,19 +218,6 @@ export function HideDeleteBox(props: Readonly<Props>) {
           description={
             <Space direction="vertical" size={4}>
               <span>{delete_message()}</span>
-              <Text type="secondary">
-                <FormattedMessage
-                  id="project.settings.hide-delete-box.delete.disclaimer"
-                  defaultMessage={`{projectsLabel} are not immediately deleted.
-                  If you need to permanently and immediately delete some sensitive information in this {projectLabel},
-                  contact {help}.`}
-                  values={{
-                    help: <HelpEmailLink />,
-                    projectsLabel: projectsLabelLower,
-                    projectLabel: projectLabelLower,
-                  }}
-                />
-              </Text>
             </Space>
           }
           action={render_delete_undelete_button()}
