@@ -556,6 +556,37 @@ test("browser network trace --follow inherits explicit root timeout", async () =
   assert.equal((results[0] as any).printed, 0);
 });
 
+test("browser network summary respects duration while waiting for trace events", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const started = Date.now();
+  const { program, results } = makeProgram({
+    openFiles: [],
+    listNetworkTrace: async () =>
+      new Promise(() => {
+        // Simulate a browser-session RPC that is waiting for trace events.
+      }),
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "network",
+    "summary",
+    "--browser",
+    "browser-1",
+    "--duration",
+    "1s",
+    "--poll-ms",
+    "100ms",
+  ]);
+
+  assert.ok(Date.now() - started < 2_500);
+  assert.equal((results[0] as any).mode, "recorded-window");
+  assert.equal((results[0] as any).totals.messages, 0);
+});
+
 test("browser workspace-state falls back to a partial summary on transient browser auth failures", async () => {
   delete process.env.COCALC_CLI_AGENT_MODE;
   delete process.env.COCALC_AGENT_MODE;

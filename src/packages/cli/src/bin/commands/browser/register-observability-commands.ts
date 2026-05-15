@@ -1203,6 +1203,16 @@ export function registerBrowserObservabilityCommands({
             const events: BrowserNetworkTraceEvent[] = [];
             const startedAt = new Date();
             const startedMs = Date.now();
+            const deadlineAt = opts.existing
+              ? undefined
+              : startedMs + durationMs;
+            const closeRemoteClient = () => {
+              try {
+                (ctx.remote.client as any)?.close?.();
+              } catch {
+                // best effort: closing the client aborts an in-flight long poll
+              }
+            };
 
             if (opts.clear) {
               await browserClient.clearNetworkTrace();
@@ -1224,12 +1234,21 @@ export function registerBrowserObservabilityCommands({
             }
 
             for (;;) {
-              const result = await browserClient.listNetworkTrace({
-                ...(afterSeq != null ? { after_seq: afterSeq } : {}),
-                limit: maxEvents,
-                ...(protocols ? { protocols } : {}),
-                include_decoded: false,
+              const result = await fetchWithDeadline({
+                deadlineAt,
+                sleep,
+                onDeadline: closeRemoteClient,
+                fetch: () =>
+                  browserClient.listNetworkTrace({
+                    ...(afterSeq != null ? { after_seq: afterSeq } : {}),
+                    limit: maxEvents,
+                    ...(protocols ? { protocols } : {}),
+                    include_decoded: false,
+                  }),
               });
+              if (result == null) {
+                break;
+              }
               const batch = Array.isArray(result?.events) ? result.events : [];
               events.push(...batch);
               if (events.length > maxEvents) {
@@ -1241,9 +1260,12 @@ export function registerBrowserObservabilityCommands({
               if (opts.existing || Date.now() - startedMs >= durationMs) {
                 break;
               }
-              await sleep(
-                Math.min(pollMs, durationMs - (Date.now() - startedMs)),
-              );
+              const remainingMs =
+                deadlineAt == null ? pollMs : deadlineAt - Date.now();
+              if (remainingMs <= 0) {
+                break;
+              }
+              await sleep(Math.min(pollMs, remainingMs));
             }
 
             const finishedAt = new Date();
