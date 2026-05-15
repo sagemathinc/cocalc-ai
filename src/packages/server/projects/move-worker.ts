@@ -31,6 +31,10 @@ import {
   type MoveActiveDestinationHost,
 } from "./move-admission";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import {
+  heartbeatProjectRuntimeSlot,
+  releaseProjectRuntimeSlot,
+} from "./runtime-slots";
 
 const logger = getLogger("server:projects:move-worker");
 const pool = () => getPool();
@@ -43,6 +47,7 @@ const LEASE_MS = 120_000;
 const HEARTBEAT_MS = 15_000;
 const TICK_MS = 5_000;
 const DEFAULT_MAX_PARALLEL = 1;
+const PROJECT_MOVE_RUNTIME_SLOT_TTL_MS = 8 * 60 * 60 * 1000;
 
 const WORKER_ID = randomUUID();
 
@@ -89,6 +94,11 @@ type MoveClaimCandidateRecord = LroSummary & {
   project_region: string | null;
 };
 
+type MoveRuntimeSlotReservation = {
+  sponsor_account_id?: string | null;
+  existing?: boolean | null;
+};
+
 export function createNonOverlappingAsyncRunner(
   run: () => Promise<void>,
 ): () => Promise<boolean> {
@@ -112,6 +122,54 @@ function publishSummary(summary: LroSummary) {
     scope_type: summary.scope_type,
     scope_id: summary.scope_id,
     summary,
+  });
+}
+
+function getMoveRuntimeSlot(
+  input: any,
+): MoveRuntimeSlotReservation | undefined {
+  const slot = input?.runtime_slot;
+  if (!slot || typeof slot !== "object") return;
+  const sponsor_account_id = `${slot.sponsor_account_id ?? ""}`.trim();
+  if (!sponsor_account_id) return;
+  return {
+    sponsor_account_id,
+    existing: !!slot.existing,
+  };
+}
+
+async function isProjectRunning(project_id: string): Promise<boolean> {
+  const { rows } = await pool().query<{ state?: any }>(
+    "SELECT state FROM projects WHERE project_id=$1 LIMIT 1",
+    [project_id],
+  );
+  return rows[0]?.state?.state === "running";
+}
+
+async function releaseMoveRuntimeSlotIfSafe({
+  project_id,
+  runtimeSlot,
+  reason,
+}: {
+  project_id: string;
+  runtimeSlot?: MoveRuntimeSlotReservation;
+  reason: string;
+}): Promise<void> {
+  if (!runtimeSlot?.sponsor_account_id) return;
+  if (await isProjectRunning(project_id)) {
+    return;
+  }
+  await releaseProjectRuntimeSlot({
+    sponsor_account_id: runtimeSlot.sponsor_account_id,
+    project_id,
+    state: "failed",
+  }).catch((err) => {
+    logger.warn("failed to release project-move runtime slot", {
+      project_id,
+      sponsor_account_id: runtimeSlot.sponsor_account_id,
+      reason,
+      err: `${err}`,
+    });
   });
 }
 
@@ -193,6 +251,7 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
   const project_id = input.project_id;
   const dest_host_id = input.dest_host_id;
   const account_id = op.created_by ?? input.account_id;
+  const runtimeSlot = getMoveRuntimeSlot(input);
 
   if (!project_id || !account_id) {
     const updated = await updateLro({
@@ -217,6 +276,21 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
     touchLro({ op_id, owner_type: OWNER_TYPE, owner_id: WORKER_ID }).catch(
       (err) => logger.debug("move op heartbeat failed", { op_id, err }),
     );
+    if (runtimeSlot?.sponsor_account_id) {
+      heartbeatProjectRuntimeSlot({
+        sponsor_account_id: runtimeSlot.sponsor_account_id,
+        project_id,
+        state: "starting",
+        ttl_ms: PROJECT_MOVE_RUNTIME_SLOT_TTL_MS,
+      }).catch((err) =>
+        logger.debug("move op runtime slot heartbeat failed", {
+          op_id,
+          project_id,
+          sponsor_account_id: runtimeSlot.sponsor_account_id,
+          err,
+        }),
+      );
+    }
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
 
@@ -301,6 +375,11 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
     const isCanceled = (err as any)?.code === MOVE_CANCELED_CODE;
     if (isCanceled) {
       logger.info("move op canceled", { op_id });
+      await releaseMoveRuntimeSlotIfSafe({
+        project_id,
+        runtimeSlot,
+        reason: "canceled",
+      });
       const updated = await updateLro({
         op_id,
         status: "canceled",
@@ -314,6 +393,11 @@ async function handleMoveOp(op: LroSummary): Promise<void> {
       return;
     }
     logger.warn("move op failed", { op_id, err: `${err}` });
+    await releaseMoveRuntimeSlotIfSafe({
+      project_id,
+      runtimeSlot,
+      reason: "failed",
+    });
     const updated = await updateLro({
       op_id,
       status: "failed",

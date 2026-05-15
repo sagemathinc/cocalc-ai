@@ -164,4 +164,27 @@ describe("project-control runtime sponsor start policy", () => {
     );
     expect(startMock).toHaveBeenCalled();
   });
+
+  it("bypasses runtime sponsor admission for admin host drain restore starts", async () => {
+    mockProjectRow({ allowCollaboratorStarts: false });
+    const { handleProjectControlStart } = await import("./project-control");
+
+    await handleProjectControlStart({
+      project_id: "project-1",
+      account_id: "collaborator",
+      lro_op_id: "op-1",
+      source_bay_id: "bay-0",
+      managed_egress_override: "admin-host-drain",
+      epoch: 0,
+    });
+
+    expect(reserveSlotMock).not.toHaveBeenCalled();
+    expect(heartbeatSlotMock).not.toHaveBeenCalled();
+    expect(startMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: "collaborator",
+        managed_egress_override: "admin-host-drain",
+      }),
+    );
+  });
 });

@@ -156,6 +156,14 @@ import {
   requireDangerousProjectMutationAuth,
 } from "./project-dangerous-auth";
 import {
+  assertCanStartUsingRuntimeSponsor,
+  loadProjectRuntimeSponsor,
+} from "@cocalc/server/projects/runtime-sponsor-db";
+import {
+  releaseProjectRuntimeSlot,
+  reserveProjectRuntimeSlot,
+} from "@cocalc/server/projects/runtime-slots";
+import {
   extractRuntimeSponsorDenial,
   formatRuntimeSponsorDenial,
   type RuntimeSponsorDenial,
@@ -168,6 +176,7 @@ import {
 // worker still calls the typed inter-bay project-control service and must not
 // inherit the short default Conat request timeout.
 const PROJECT_START_CONTROL_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+const PROJECT_MOVE_RUNTIME_SLOT_TTL_MS = 8 * 60 * 60 * 1000;
 
 async function enrichRuntimeSponsorDenial({
   denial,
@@ -2481,27 +2490,86 @@ export async function moveProject({
       epoch: ownership.epoch,
     });
   }
+  const sponsor = await loadProjectRuntimeSponsor(project_id);
+  await assertCanStartUsingRuntimeSponsor({
+    sponsor,
+    account_id,
+  });
   const movePrecheck = await getMoveOfflinePrecheck({ project_id });
   if (!allow_offline) {
     await ensureMoveOfflineAllowed({
       movePrecheck,
     });
   }
+  const reservedRuntimeSlot = await reserveProjectRuntimeSlot({
+    ...sponsor,
+    project_id,
+    actor_account_id: account_id,
+    reason: "project-move",
+    state: "starting",
+    ttl_ms: PROJECT_MOVE_RUNTIME_SLOT_TTL_MS,
+    metadata: {
+      dest_host_id: dest_host_id ?? null,
+      backup_region_cutover: !!backup_region_cutover,
+    },
+  });
   const lroInput = {
     project_id,
     allow_offline,
     backup_region_cutover,
     source_host_id: movePrecheck.source_host_id,
+    runtime_slot: {
+      sponsor_account_id: sponsor.sponsor_account_id,
+      existing: reservedRuntimeSlot.existing,
+    },
     ...(dest_host_id ? { dest_host_id } : {}),
   };
-  const op = await createLro({
-    kind: "project-move",
-    scope_type: "project",
-    scope_id: project_id,
-    created_by: account_id,
-    routing: "hub",
-    input: lroInput,
-    status: "queued",
+  let op: LroSummary;
+  try {
+    op = await createLro({
+      kind: "project-move",
+      scope_type: "project",
+      scope_id: project_id,
+      created_by: account_id,
+      routing: "hub",
+      input: lroInput,
+      status: "queued",
+    });
+  } catch (err) {
+    if (!reservedRuntimeSlot.existing) {
+      await releaseProjectRuntimeSlot({
+        sponsor_account_id: sponsor.sponsor_account_id,
+        project_id,
+        state: "failed",
+      }).catch((releaseErr) => {
+        log.warn("failed to release runtime slot after move LRO create error", {
+          project_id,
+          sponsor_account_id: sponsor.sponsor_account_id,
+          err: `${releaseErr}`,
+        });
+      });
+    }
+    throw err;
+  }
+  await reserveProjectRuntimeSlot({
+    ...sponsor,
+    project_id,
+    actor_account_id: account_id,
+    reason: "project-move",
+    op_id: op.op_id,
+    state: "starting",
+    ttl_ms: PROJECT_MOVE_RUNTIME_SLOT_TTL_MS,
+    metadata: {
+      dest_host_id: dest_host_id ?? null,
+      backup_region_cutover: !!backup_region_cutover,
+    },
+  }).catch((err) => {
+    log.warn("failed to attach move op id to reserved runtime slot", {
+      project_id,
+      sponsor_account_id: sponsor.sponsor_account_id,
+      op_id: op.op_id,
+      err: `${err}`,
+    });
   });
   try {
     await publishLroSummary({

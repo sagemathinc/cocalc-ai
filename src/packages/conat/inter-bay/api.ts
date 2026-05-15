@@ -674,6 +674,7 @@ export interface AccountLocalReserveProjectRuntimeSlotResult {
   project_id: string;
   limit?: number;
   current: number;
+  existing: boolean;
   slot: ProjectRuntimeSlotWire;
 }
 
