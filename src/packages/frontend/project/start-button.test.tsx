@@ -95,6 +95,12 @@ jest.mock("@cocalc/frontend/projects/host-info", () => ({
   useHostInfo: () => undefined,
 }));
 
+jest.mock("@cocalc/frontend/projects/project-title", () => ({
+  ProjectTitle: ({ project_id }: { project_id: string }) => (
+    <span>{project_id}</span>
+  ),
+}));
+
 jest.mock("@cocalc/frontend/projects/host-operational", () => ({
   evaluateHostOperational: () => ({
     state: "available",
