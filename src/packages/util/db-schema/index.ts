@@ -71,6 +71,7 @@ import "./project-collab-invites";
 import "./project-events-outbox";
 import "./project-host-route-invalidations";
 import "./project-rootfs-states";
+import "./project-runtime-slots";
 import "./projects";
 import "./rootfs-image-events";
 import "./rootfs-images";
