@@ -414,11 +414,6 @@ async function runtimeSponsorHomeBays(
       `${account.home_bay_id ?? ""}`.trim() || getConfiguredBayId(),
     );
   }
-  for (const account_id of uniqueIds) {
-    if (!result.has(account_id)) {
-      result.set(account_id, getConfiguredBayId());
-    }
-  }
   return result;
 }
 
@@ -463,15 +458,27 @@ export async function heartbeatProjectRuntimeSlotsBatch({
     slots.map((slot) => slot.sponsor_account_id),
   );
   const grouped = new Map<string, ProjectRuntimeSlotHeartbeatInput[]>();
+  let missingHomeBay = 0;
   for (const slot of slots) {
-    const homeBay =
-      homeBays.get(slot.sponsor_account_id) ?? getConfiguredBayId();
+    const homeBay = homeBays.get(slot.sponsor_account_id);
+    if (!homeBay) {
+      missingHomeBay += 1;
+      continue;
+    }
     const group = grouped.get(homeBay);
     if (group) {
       group.push(slot);
     } else {
       grouped.set(homeBay, [slot]);
     }
+  }
+  if (missingHomeBay > 0) {
+    logger.warn(
+      "skipping runtime slot heartbeats for unknown sponsor accounts",
+      {
+        skipped: missingHomeBay,
+      },
+    );
   }
   let heartbeated = 0;
   for (const [homeBay, batch] of grouped) {
