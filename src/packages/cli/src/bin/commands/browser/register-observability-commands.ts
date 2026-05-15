@@ -214,6 +214,37 @@ function addNetworkSummaryEvent(
   bumpNetworkTrafficCounter(rows[key], event);
 }
 
+const fetchWithDeadline = async <T>({
+  fetch,
+  deadlineAt,
+  sleep,
+  onDeadline,
+}: {
+  fetch: () => Promise<T>;
+  deadlineAt?: number;
+  sleep: (ms: number) => Promise<void>;
+  onDeadline?: () => void;
+}): Promise<T | undefined> => {
+  if (deadlineAt == null) {
+    return await fetch();
+  }
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0) {
+    onDeadline?.();
+    return undefined;
+  }
+  const timeoutSentinel = { timeout: true };
+  const result: T | typeof timeoutSentinel = await Promise.race([
+    fetch(),
+    sleep(remainingMs).then(() => timeoutSentinel),
+  ]);
+  if (result === timeoutSentinel) {
+    onDeadline?.();
+    return undefined;
+  }
+  return result as T;
+};
+
 function finalizeNetworkTrafficRows(
   rows: Record<string, NetworkTrafficCounter>,
   durationSec: number,
@@ -400,12 +431,21 @@ export function registerBrowserObservabilityCommands({
             ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
             : undefined;
           const startedAt = Date.now();
+          const deadlineAt =
+            follow && timeoutMs != null ? startedAt + timeoutMs : undefined;
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
           });
+          const closeRemoteClient = () => {
+            try {
+              (ctx.remote.client as any)?.close?.();
+            } catch {
+              // best effort: closing the client aborts an in-flight long poll
+            }
+          };
           let printed = 0;
           let latestDropped = 0;
           let latestBuffered = 0;
@@ -425,12 +465,21 @@ export function registerBrowserObservabilityCommands({
             }
           };
           for (;;) {
-            const result = await browserClient.listRuntimeEvents({
-              ...(afterSeq != null ? { after_seq: afterSeq } : {}),
-              limit: Math.min(5_000, Math.max(1, Math.floor(lines))),
-              kinds: ["console"],
-              ...(levelFilter ? { levels: levelFilter } : {}),
+            const result = await fetchWithDeadline({
+              deadlineAt,
+              sleep,
+              onDeadline: closeRemoteClient,
+              fetch: () =>
+                browserClient.listRuntimeEvents({
+                  ...(afterSeq != null ? { after_seq: afterSeq } : {}),
+                  limit: Math.min(5_000, Math.max(1, Math.floor(lines))),
+                  kinds: ["console"],
+                  ...(levelFilter ? { levels: levelFilter } : {}),
+                }),
             });
+            if (result == null) {
+              break;
+            }
             const events = Array.isArray(result?.events) ? result.events : [];
             latestDropped = Number(result?.dropped ?? latestDropped);
             latestBuffered = Number(result?.total_buffered ?? latestBuffered);
@@ -444,7 +493,12 @@ export function registerBrowserObservabilityCommands({
             if (timeoutMs != null && Date.now() - startedAt >= timeoutMs) {
               break;
             }
-            await sleep(pollMs);
+            const remainingMs =
+              deadlineAt == null ? pollMs : deadlineAt - Date.now();
+            if (remainingMs <= 0) {
+              break;
+            }
+            await sleep(Math.min(pollMs, remainingMs));
           }
           const base = {
             browser_id: sessionInfo.browser_id,

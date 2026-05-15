@@ -19,12 +19,14 @@ function makeProgram({
   getWorkspaceSelection,
   getAutomationPolicyInfo,
   getExecApiDeclaration,
+  listRuntimeEvents,
 }: {
   openFiles: { project_id: string; title?: string; path: string }[];
   listBrowserSessions?: () => Promise<any[]>;
   getWorkspaceSelection?: (opts: { project_id: string }) => Promise<any>;
   getAutomationPolicyInfo?: () => Promise<any>;
   getExecApiDeclaration?: () => Promise<string>;
+  listRuntimeEvents?: (opts?: any) => Promise<any>;
 }): { program: Command; results: unknown[] } {
   const results: unknown[] = [];
   const program = new Command();
@@ -95,6 +97,14 @@ function makeProgram({
           getExecApiDeclaration ??
           (async () =>
             "export type BrowserExecApi = { listOpenFiles: () => unknown[]; };"),
+        listRuntimeEvents:
+          listRuntimeEvents ??
+          (async () => ({
+            events: [],
+            next_seq: 0,
+            dropped: 0,
+            total_buffered: 0,
+          })),
       }) as any,
   } as any);
   return { program, results };
@@ -389,6 +399,46 @@ test("browser exec-api reports the raw API when raw exec is allowed", async () =
   assert.match(output, /raw_exec_policy=enabled/);
   assert.match(output, /listOpenFiles/);
   assert.doesNotMatch(output, /QuickJS sandbox mode/);
+});
+
+test("browser logs tail --follow respects timeout while waiting for events", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const started = Date.now();
+  const { program, results } = makeProgram({
+    openFiles: [],
+    listRuntimeEvents: async () =>
+      new Promise(() => {
+        // Simulate a browser-session RPC that is waiting for new log events.
+      }),
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "logs",
+    "tail",
+    "--browser",
+    "browser-1",
+    "--follow",
+    "--timeout",
+    "1s",
+    "--poll-ms",
+    "100ms",
+  ]);
+
+  assert.ok(Date.now() - started < 2_500);
+  assert.deepEqual(results[0], {
+    browser_id: "browser-1",
+    printed: 0,
+    next_seq: 0,
+    dropped: 0,
+    total_buffered: 0,
+    target_api_url: "http://localhost:7003",
+    target_browser_id: "browser-1",
+    target_session_url: "",
+  });
 });
 
 test("browser workspace-state falls back to a partial summary on transient browser auth failures", async () => {
