@@ -101,7 +101,7 @@ export class AccountActions extends Actions<AccountState> {
     });
   }
 
-  // deletes the account and then signs out everywhere
+  // deletes the account and then locally tears down this signed-in session.
   public async delete_account(): Promise<void> {
     try {
       // actually request to delete the account
@@ -113,7 +113,11 @@ export class AccountActions extends Actions<AccountState> {
       });
       return;
     }
-    this.sign_out(true);
+    clearStoredControlPlaneOrigin();
+    deleteRememberMe(appBasePath);
+    delete (webapp_client as { account_id?: string }).account_id;
+    webapp_client.emit("signed_out");
+    this.finish_sign_out();
   }
 
   public async sign_out(
@@ -144,6 +148,10 @@ export class AccountActions extends Actions<AccountState> {
     // Invalidate the remember_me cookie and force a refresh, since otherwise there could be data
     // left in the DOM, which could lead to a vulnerability
     // or bleed into the next login somehow.
+    this.finish_sign_out(sign_in);
+  }
+
+  private finish_sign_out(sign_in: boolean = false): void {
     $(window).off("beforeunload", this.redux.getActions("page").check_unload);
     // redirect to sign in page if sign_in is true; otherwise, the landing page:
     window.location.href = join(appBasePath, sign_in ? "auth/sign-in" : "/");
