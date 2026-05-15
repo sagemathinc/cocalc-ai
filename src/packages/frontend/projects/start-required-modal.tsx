@@ -43,7 +43,7 @@ export function showProjectStartRequiredModal({
   const action = block?.action ?? "Start the project, then try again.";
   const okText =
     block?.code === "collaborator_sponsor_disabled"
-      ? "Open Start Options"
+      ? "Use my membership and start"
       : "Start Project";
 
   Modal.confirm({
@@ -57,6 +57,11 @@ export function showProjectStartRequiredModal({
       </Space>
     ),
     onOk: async () => {
+      if (block?.code === "collaborator_sponsor_disabled") {
+        await redux
+          .getActions("projects")
+          .set_project_runtime_sponsor_to_me(project_id);
+      }
       await redux
         .getActions("projects")
         .start_project(project_id, { autostart: false });
