@@ -41,6 +41,7 @@ export default function HomePage() {
   );
   const projectLabelLower = "project";
   const showLifecycleBanner = lifecycle.showLifecycleBanner;
+  const showHomeContent = lifecycle.canShowFilesystem;
 
   return (
     <Row
@@ -72,7 +73,7 @@ export default function HomePage() {
           </Title>
         </div>
       </Col>
-      {showLifecycleBanner ? (
+      {showLifecycleBanner && (
         <Col md={24}>
           <Alert
             style={{ width: "100%" }}
@@ -133,7 +134,7 @@ export default function HomePage() {
                   <FormattedMessage
                     id="project.home.stopped_project.warning"
                     defaultMessage={
-                      "<a>Start this project</a> to make the filesystem available again."
+                      "Files and existing Codex chats are available while the project is stopped. <a>Start this project</a> to use terminals, Jupyter, or run Codex turns."
                     }
                     values={{
                       a: (chunks) => (
@@ -158,7 +159,8 @@ export default function HomePage() {
             }
           />
         </Col>
-      ) : (
+      )}
+      {showHomeContent && (
         <>
           <Col md={24}>
             <NavigatorShell

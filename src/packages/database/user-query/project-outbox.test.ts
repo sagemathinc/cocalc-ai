@@ -79,6 +79,33 @@ describe("project user-query outbox hooks", () => {
     });
   });
 
+  it("emits project.membership_changed for users updates", async () => {
+    await runHook(
+      {
+        project_id: "11111111-1111-4111-8111-111111111111",
+        users: {
+          "22222222-2222-4222-8222-222222222222": { group: "owner" },
+        },
+      },
+      {
+        project_id: "11111111-1111-4111-8111-111111111111",
+        users: {
+          "22222222-2222-4222-8222-222222222222": { group: "owner" },
+          "33333333-3333-4333-8333-333333333333": {
+            group: "collaborator",
+          },
+        },
+      },
+    );
+    expect(appendProjectOutboxEventForProject).toHaveBeenCalledWith({
+      event_type: "project.membership_changed",
+      project_id: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(ctx.publishProjectAccountFeedEventsBestEffort).toHaveBeenCalledWith({
+      project_id: "11111111-1111-4111-8111-111111111111",
+    });
+  });
+
   it("does not emit an outbox event when summary fields did not change", async () => {
     await runHook(
       {
@@ -91,6 +118,8 @@ describe("project user-query outbox hooks", () => {
       },
     );
     expect(appendProjectOutboxEventForProject).not.toHaveBeenCalled();
-    expect(ctx.publishProjectAccountFeedEventsBestEffort).not.toHaveBeenCalled();
+    expect(
+      ctx.publishProjectAccountFeedEventsBestEffort,
+    ).not.toHaveBeenCalled();
   });
 });

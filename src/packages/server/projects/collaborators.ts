@@ -36,6 +36,7 @@ import { project_has_network_access } from "@cocalc/database/postgres/project/qu
 import { RESEND_INVITE_INTERVAL_DAYS } from "@cocalc/util/consts/invites";
 import { syncProjectUsersOnHost } from "@cocalc/server/project-host/control";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getClusterAccountById,
@@ -735,6 +736,7 @@ export async function createCollabInvite({
       project_id,
       "create-collab-invite-direct",
     );
+    await publishProjectAccountFeedEventsBestEffort({ project_id });
     const syntheticId = uuid();
     const now = new Date();
     const expires = new Date(
@@ -1044,7 +1046,8 @@ export async function respondCollabInviteCanonical({
        ) AS already`,
       [invite.project_id, account_id],
     );
-    if (!collabRows[0]?.already) {
+    const alreadyCollaborator = !!collabRows[0]?.already;
+    if (!alreadyCollaborator) {
       const database = db();
       await callback2(database.add_user_to_project, {
         project_id: invite.project_id,
@@ -1055,7 +1058,15 @@ export async function respondCollabInviteCanonical({
         invite.project_id,
         "respond-collab-invite-accept",
       );
+    } else {
+      await appendProjectOutboxEventForProject({
+        event_type: "project.membership_changed",
+        project_id: invite.project_id,
+      });
     }
+    await publishProjectAccountFeedEventsBestEffort({
+      project_id: invite.project_id,
+    });
     nextStatus = "accepted";
   } else if (normalizedAction === "block") {
     await pool.query(

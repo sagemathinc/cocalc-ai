@@ -347,7 +347,7 @@ describe("NavigatorShell keyboard suppression", () => {
       kind: "other",
       title: "Project filesystem is not available right now.",
       description:
-        "If this project is archived, start it to restore it from backup. If it is stopped, start it to make the filesystem available again.",
+        "If this project is archived, start it to restore it from backup. If it is stopped, files are still available; start it only for terminals, Jupyter, or running Codex turns.",
     });
   });
 

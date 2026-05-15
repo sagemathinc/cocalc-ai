@@ -1560,6 +1560,14 @@ export async function _user_set_query_project_change_after(
       "last_edited",
       "last_active",
     ];
+    if (JSON.stringify(new_val?.users) !== JSON.stringify(old_val?.users)) {
+      await appendProjectOutboxEventForProject({
+        event_type: "project.membership_changed",
+        project_id,
+      });
+      await publishImmediateFeed();
+      return cb();
+    }
     if (
       summaryFields.some(
         (field) =>
