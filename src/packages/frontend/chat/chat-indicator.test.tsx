@@ -129,4 +129,47 @@ describe("ChatIndicator", () => {
       }),
     );
   });
+
+  it("does not crash when side-chat initialization is temporarily unavailable", async () => {
+    jest.useFakeTimers();
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const actions = createMockChatActions("retry");
+      mockEnsureSideChatActions
+        .mockImplementationOnce(() => {
+          throw new Error("routing unavailable");
+        })
+        .mockReturnValueOnce(actions);
+
+      render(
+        <ChatIndicator project_id="project-1" path="/home/user/notes.md" />,
+      );
+
+      await act(async () => {});
+      expect(mockEnsureSideChatActions).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        "failed to initialize side chat actions",
+        expect.objectContaining({
+          project_id: "project-1",
+          path: "/home/user/notes.md",
+        }),
+      );
+
+      act(() => {
+        jest.advanceTimersByTime(3000);
+      });
+      await act(async () => {});
+
+      expect(mockEnsureSideChatActions).toHaveBeenCalledTimes(2);
+      await waitFor(() =>
+        expect(mockHasUnreadSideChat).toHaveBeenLastCalledWith({
+          actions,
+          account_id: "acct-1",
+        }),
+      );
+    } finally {
+      warn.mockRestore();
+      jest.useRealTimers();
+    }
+  });
 });
