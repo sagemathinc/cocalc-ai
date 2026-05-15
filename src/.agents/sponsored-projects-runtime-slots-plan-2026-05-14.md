@@ -11,6 +11,9 @@ Implementation notes:
   structured LRO result with privacy-filtered visible project details. Stop
   buttons, upgrade links, CLI rendering, and sponsor-change actions remain
   follow-up work.
+- Runtime sponsor resolution enforces the core invariant that explicit runtime
+  sponsors and `usage_account_id` sponsors must be current project
+  owners/collaborators; otherwise resolution falls back to the project owner.
 
 This document defines a phased design for limiting simultaneous running projects
 without making collaboration confusing. It is a follow-up to

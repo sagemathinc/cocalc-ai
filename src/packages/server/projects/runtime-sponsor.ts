@@ -15,6 +15,15 @@ function nonemptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function isProjectCollaborator(
+  users: ProjectUsers | undefined,
+  account_id: string | undefined,
+): boolean {
+  if (users == null || account_id == null) return false;
+  const group = users[account_id]?.group;
+  return group === "owner" || group === "collaborator";
+}
+
 export function getProjectOwnerAccountId(
   users: ProjectUsers | undefined,
 ): string | undefined {
@@ -26,9 +35,13 @@ export function getProjectOwnerAccountId(
 export function resolveRuntimeSponsorAccountId(
   project: RuntimeSponsorProjectFields,
 ): string | undefined {
-  return (
-    nonemptyString(project.runtime_sponsor_account_id) ??
-    nonemptyString(project.usage_account_id) ??
-    getProjectOwnerAccountId(project.users)
-  );
+  const runtimeSponsor = nonemptyString(project.runtime_sponsor_account_id);
+  if (isProjectCollaborator(project.users, runtimeSponsor)) {
+    return runtimeSponsor;
+  }
+  const usageSponsor = nonemptyString(project.usage_account_id);
+  if (isProjectCollaborator(project.users, usageSponsor)) {
+    return usageSponsor;
+  }
+  return getProjectOwnerAccountId(project.users);
 }
