@@ -2435,6 +2435,7 @@ export async function deleteProjectSshKey({
 
 export async function moveProject({
   account_id,
+  browser_id,
   session_hash,
   internalAuth,
   project_id,
@@ -2443,6 +2444,7 @@ export async function moveProject({
   backup_region_cutover,
 }: {
   account_id: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   internalAuth?: typeof PROJECT_DANGEROUS_INTERNAL_AUTH;
   project_id: string;
@@ -2456,11 +2458,13 @@ export async function moveProject({
   service: string;
   stream_name: string;
 }> {
-  await requireDangerousProjectMutationAuth({
+  const authSession = await requireDangerousProjectMutationAuth({
     account_id,
+    browser_id,
     session_hash,
     internalAuth,
   });
+  const actorSessionHash = authSession?.session_hash ?? session_hash;
   await assertCollab({ account_id, project_id });
   const ownership = await resolveProjectBay(project_id);
   if (ownership == null) {
@@ -2470,7 +2474,7 @@ export async function moveProject({
     return await getInterBayBridge().projectControl(ownership.bay_id).move({
       project_id,
       account_id,
-      session_hash,
+      session_hash: actorSessionHash,
       dest_host_id,
       allow_offline,
       backup_region_cutover,

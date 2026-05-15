@@ -176,6 +176,12 @@ function dateValueMs(value: unknown): number | undefined {
   return date != null ? date.getTime() : undefined;
 }
 
+function isFreshAuthRequiredError(err: unknown): boolean {
+  const code = `${(err as any)?.code ?? ""}`.trim().toLowerCase();
+  const message = `${(err as any)?.message ?? err ?? ""}`.toLowerCase();
+  return code === "fresh_auth_required" || message.includes("fresh auth");
+}
+
 type DirectProjectBootstrapRow = {
   project_id: string;
   title?: string | null;
@@ -2407,6 +2413,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
     try {
       return await webapp_client.conat_client.hub.projects.moveProject({
         project_id,
+        browser_id: webapp_client.browser_id,
         dest_host_id,
         allow_offline,
         backup_region_cutover,
@@ -2719,7 +2726,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
     } catch (err) {
       const error = `Error move project -- ${err}`;
-      actions.setState({ control_error: error });
+      if (!isFreshAuthRequiredError(err)) {
+        actions.setState({ control_error: error });
+      }
       throw err;
     }
     return true;
@@ -2757,7 +2766,9 @@ export class ProjectsActions extends Actions<ProjectsState> {
       } catch (err) {
         const error = `Error move project -- ${err}`;
         console.log(error);
-        actions?.setState({ control_error: error });
+        if (!isFreshAuthRequiredError(err)) {
+          actions?.setState({ control_error: error });
+        }
         throw err;
       }
       return true;
