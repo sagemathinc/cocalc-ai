@@ -42,6 +42,7 @@ describe("requireDangerousProjectMutationAuth", () => {
     expect(getBrowserAuthSessionHashMock).not.toHaveBeenCalled();
     expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
       account_id: "acct-1",
+      browser_id: "browser-1",
       session_hash: "cli-session",
       require_second_factor: true,
     });
@@ -56,13 +57,11 @@ describe("requireDangerousProjectMutationAuth", () => {
       browser_id: "browser-1",
     });
 
-    expect(getBrowserAuthSessionHashMock).toHaveBeenCalledWith({
-      account_id: "acct-1",
-      browser_id: "browser-1",
-    });
+    expect(getBrowserAuthSessionHashMock).not.toHaveBeenCalled();
     expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
       account_id: "acct-1",
-      session_hash: "browser-session",
+      browser_id: "browser-1",
+      session_hash: undefined,
       require_second_factor: true,
     });
   });

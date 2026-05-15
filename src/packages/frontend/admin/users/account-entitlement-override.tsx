@@ -30,6 +30,10 @@ import type {
   NumericLimitRuleMode,
 } from "@cocalc/conat/hub/api/purchases";
 import { ErrorDisplay } from "@cocalc/frontend/components";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { actions } from "./actions";
 import { MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS } from "@cocalc/util/membership-entitlement-overrides";
@@ -884,6 +888,14 @@ export function AccountEntitlementOverridePanel({
     AccountEntitlementOverride | undefined
   >();
   const [error, setError] = useState<string>("");
+  const [actionError, setActionError] = useState<string>("");
+  const [actionSuccess, setActionSuccess] = useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => {
+      setActionSuccess("");
+      setActionError(errorMessage(err));
+    },
+  });
 
   async function refresh() {
     setLoading(true);
@@ -901,8 +913,8 @@ export function AccountEntitlementOverridePanel({
   }
 
   async function save() {
-    setSaving(true);
-    setError("");
+    setActionError("");
+    setActionSuccess("");
     try {
       const values = form.getFieldsValue();
       const reason = `${values.reason ?? ""}`.trim();
@@ -915,48 +927,60 @@ export function AccountEntitlementOverridePanel({
           "Configure at least one entitlement override before saving. Use Clear active override to remove an existing override.",
         );
       }
-      const nextOverride = await actions.set_account_entitlement_override({
-        account_id,
-        override: builtOverride,
-        reason,
+      await runFreshAuthAction(async () => {
+        setSaving(true);
+        try {
+          const nextOverride = await actions.set_account_entitlement_override({
+            account_id,
+            override: builtOverride,
+            reason,
+          });
+          setOverride(nextOverride);
+          resetFormFields(form, undefined);
+          setActionSuccess("Account entitlement override updated.");
+          message.success("Account entitlement override updated.");
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new Event("cocalc:membership-changed"));
+          }
+          await onChanged?.();
+        } finally {
+          setSaving(false);
+        }
       });
-      setOverride(nextOverride);
-      resetFormFields(form, undefined);
-      message.success("Account entitlement override updated.");
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new Event("cocalc:membership-changed"));
-      }
-      await onChanged?.();
     } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSaving(false);
+      setActionError(errorMessage(err));
     }
   }
 
   async function clear() {
-    setClearing(true);
-    setError("");
+    setActionError("");
+    setActionSuccess("");
     try {
       const reason = `${form.getFieldValue("reason") ?? ""}`.trim();
       if (!reason) {
         throw Error("Reason is required to clear an override.");
       }
-      await actions.clear_account_entitlement_override({
-        account_id,
-        reason,
+      await runFreshAuthAction(async () => {
+        setClearing(true);
+        try {
+          await actions.clear_account_entitlement_override({
+            account_id,
+            reason,
+          });
+          setOverride(undefined);
+          resetFormFields(form, undefined);
+          setActionSuccess("Account entitlement override cleared.");
+          message.success("Account entitlement override cleared.");
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new Event("cocalc:membership-changed"));
+          }
+          await onChanged?.();
+        } finally {
+          setClearing(false);
+        }
       });
-      setOverride(undefined);
-      resetFormFields(form, undefined);
-      message.success("Account entitlement override cleared.");
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new Event("cocalc:membership-changed"));
-      }
-      await onChanged?.();
     } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setClearing(false);
+      setActionError(errorMessage(err));
     }
   }
 
@@ -1166,9 +1190,25 @@ export function AccountEntitlementOverridePanel({
                 Clear active override
               </Button>
             </Space>
+            {actionError && (
+              <ErrorDisplay
+                error={actionError}
+                onClose={() => setActionError("")}
+              />
+            )}
+            {actionSuccess && (
+              <Alert
+                type="success"
+                showIcon
+                message={actionSuccess}
+                closable
+                onClose={() => setActionSuccess("")}
+              />
+            )}
           </Space>
         )}
       </div>
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }
