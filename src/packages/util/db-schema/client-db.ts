@@ -23,6 +23,8 @@ class ClientDB {
       this._user_set_query_project_allow_collaborator_starts_using_sponsor.bind(
         this,
       );
+    this._user_set_query_project_runtime_sponsor_account_id =
+      this._user_set_query_project_runtime_sponsor_account_id.bind(this);
     this._user_set_query_project_change_after =
       this._user_set_query_project_change_after.bind(this);
     this._user_set_query_account_change_after =
@@ -79,6 +81,20 @@ class ClientDB {
     }
     if (typeof value !== "boolean") {
       throw Error("allow_collaborator_starts_using_sponsor must be a boolean");
+    }
+    return value;
+  }
+
+  _user_set_query_project_runtime_sponsor_account_id(obj) {
+    const value =
+      obj != null && typeof obj.get === "function"
+        ? obj.get("runtime_sponsor_account_id")
+        : obj?.runtime_sponsor_account_id;
+    if (value == null) {
+      return undefined;
+    }
+    if (typeof value !== "string" || value.length === 0) {
+      throw Error("runtime_sponsor_account_id must be a non-empty string");
     }
     return value;
   }

@@ -41,4 +41,16 @@ describe("validate_client_query projects set queries", () => {
       "allow_collaborator_starts_using_sponsor must be a boolean",
     );
   });
+
+  test("projects runtime_sponsor_account_id requires non-empty string", () => {
+    const query = {
+      projects: {
+        project_id: "4a9655b8-ed54-46b8-a453-e0ba5fd94936",
+        runtime_sponsor_account_id: "" as any,
+      },
+    };
+    expect(() => validate_client_query(query, accountId)).toThrow(
+      "runtime_sponsor_account_id must be a non-empty string",
+    );
+  });
 });

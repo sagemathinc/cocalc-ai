@@ -1426,6 +1426,31 @@ export function _user_set_query_project_allow_collaborator_starts_using_sponsor(
   return sanitizeAllowCollaboratorStartsUsingSponsor(obj);
 }
 
+export function _user_set_query_project_runtime_sponsor_account_id(
+  this: UserQueryContext,
+  obj: AnyRecord,
+) {
+  const hasGetter = typeof obj?.get === "function";
+  const hasField = Object.prototype.hasOwnProperty.call(
+    obj ?? {},
+    "runtime_sponsor_account_id",
+  );
+  if (!hasGetter && !hasField) {
+    return undefined;
+  }
+  const value = hasGetter
+    ? obj.get("runtime_sponsor_account_id")
+    : obj?.runtime_sponsor_account_id;
+  if (value == null) {
+    return undefined;
+  }
+  const sponsor = `${value}`.trim();
+  if (!misc.is_valid_uuid_string(sponsor)) {
+    throw Error("runtime_sponsor_account_id must be a valid account id");
+  }
+  return sponsor;
+}
+
 // This hook is called *before* the user commits a change to a project in the database
 // via a user set query.
 // TODO: Add a pre-check here as well that total upgrade isn't going to be exceeded.
@@ -2576,6 +2601,7 @@ type UserQueryMethods = {
   _user_set_query_project_users: typeof _user_set_query_project_users;
   _user_set_query_project_manage_users_owner_only: typeof _user_set_query_project_manage_users_owner_only;
   _user_set_query_project_allow_collaborator_starts_using_sponsor: typeof _user_set_query_project_allow_collaborator_starts_using_sponsor;
+  _user_set_query_project_runtime_sponsor_account_id: typeof _user_set_query_project_runtime_sponsor_account_id;
   _user_set_query_project_change_before: typeof _user_set_query_project_change_before;
   _user_set_query_project_change_after: typeof _user_set_query_project_change_after;
   _user_set_query_account_change_after: typeof _user_set_query_account_change_after;

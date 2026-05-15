@@ -114,6 +114,9 @@ Table({
               obj,
             );
           },
+          runtime_sponsor_account_id(obj, db) {
+            return db._user_set_query_project_runtime_sponsor_account_id(obj);
+          },
           rootfs_image: true,
           rootfs_image_id: true,
           env: true,
@@ -129,7 +132,8 @@ Table({
           // Validate owner/sponsor-managed project policy settings.
           if (
             obj.manage_users_owner_only !== undefined ||
-            obj.allow_collaborator_starts_using_sponsor !== undefined
+            obj.allow_collaborator_starts_using_sponsor !== undefined ||
+            obj.runtime_sponsor_account_id !== undefined
           ) {
             try {
               if (!account_id) {
@@ -196,6 +200,19 @@ Table({
                 throw Error(
                   "Only project owners, runtime sponsors, and administrators can change collaborator start settings",
                 );
+              }
+              if (obj.runtime_sponsor_account_id !== undefined) {
+                const nextSponsor = `${obj.runtime_sponsor_account_id ?? ""}`;
+                if (!currentCollaboratorSponsor(nextSponsor, users)) {
+                  throw Error(
+                    "The runtime sponsor must be a current project collaborator",
+                  );
+                }
+                if (!admin && nextSponsor !== account_id) {
+                  throw Error(
+                    "You can only change this project to use your own membership as runtime sponsor",
+                  );
+                }
               }
             } catch (err) {
               cb(err.toString());

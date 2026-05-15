@@ -3,11 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Space, Switch, Typography } from "antd";
+import { Alert, Button, Popconfirm, Space, Switch, Typography } from "antd";
 import { useState } from "react";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Paragraph } from "@cocalc/frontend/components";
+import { User } from "@cocalc/frontend/users/user";
 import { COLORS } from "@cocalc/util/theme";
 
 import type { Project } from "./types";
@@ -52,11 +53,14 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const [saving, setSaving] = useState(false);
+  const [changingSponsor, setChangingSponsor] = useState(false);
   const [error, setError] = useState("");
   const sponsorAccountId = runtimeSponsorAccountId(project);
   const isOwner = account_id === projectOwnerAccountId(project);
   const isSponsor = !!account_id && account_id === sponsorAccountId;
+  const isCollaborator = accountIsProjectCollaborator(project, account_id);
   const canEdit = isAdmin || isOwner || isSponsor;
+  const canSelfSponsor = isCollaborator && !isSponsor;
   const checked =
     project.get("allow_collaborator_starts_using_sponsor") !== false;
 
@@ -74,8 +78,51 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
     }
   }
 
+  async function useMyMembership() {
+    setError("");
+    setChangingSponsor(true);
+    try {
+      await redux
+        .getActions("projects")
+        .set_project_runtime_sponsor_to_me(project_id);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setChangingSponsor(false);
+    }
+  }
+
   return (
     <section>
+      <div style={{ marginBottom: 14 }}>
+        <Text strong>Runtime Sponsor</Text>
+        <Paragraph style={{ color: COLORS.GRAY_D, margin: "4px 0 0" }}>
+          This project starts and runs using{" "}
+          {sponsorAccountId ? (
+            <User account_id={sponsorAccountId} show_avatar avatarSize={18} />
+          ) : (
+            "the project owner's"
+          )}{" "}
+          membership. The sponsor&apos;s simultaneous running-project limit,
+          shared-compute priority, and RAM limits apply while this project is
+          running.
+        </Paragraph>
+        {canSelfSponsor && (
+          <div style={{ marginTop: 8 }}>
+            <Popconfirm
+              title="Use your membership as runtime sponsor?"
+              description="Future starts of this project will use your simultaneous running-project slots instead of the current sponsor's slots."
+              okText="Use my membership"
+              cancelText="Cancel"
+              onConfirm={useMyMembership}
+            >
+              <Button size="small" loading={changingSponsor}>
+                Use my membership for future starts
+              </Button>
+            </Popconfirm>
+          </div>
+        )}
+      </div>
       <Space
         align="start"
         style={{
@@ -85,16 +132,17 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
         }}
       >
         <div>
-          <Text strong>Collaborator Starts Using Sponsor</Text>
+          <Text strong>Collaborators may use sponsor slots</Text>
           <Paragraph style={{ color: COLORS.GRAY_D, margin: "4px 0 0" }}>
-            Allow collaborators to start or restart this project using the
-            runtime sponsor&apos;s membership. Turn this off when invited users
-            should not consume the sponsor&apos;s simultaneous running-project
-            slots.
+            When enabled, ordinary collaborators can start or restart this
+            project using the runtime sponsor&apos;s membership. Turn this off
+            when invited users should not consume the sponsor&apos;s
+            simultaneous running-project slots.
           </Paragraph>
           <Paragraph style={{ color: COLORS.GRAY_M, margin: "4px 0 0" }}>
             Project owners, the runtime sponsor, and administrators can still
-            start the project when this is off.
+            start the project when this is off. A collaborator can also make
+            themself the runtime sponsor explicitly.
           </Paragraph>
         </div>
         <Switch

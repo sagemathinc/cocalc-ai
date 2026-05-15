@@ -261,13 +261,13 @@ describe("projects.start", () => {
       ([opts]) => opts.status === "failed",
     )?.[0];
     expect(failedUpdate?.error).toBe(
-      "Runtime Sponsor is using 1/1 sponsored running-project slots. Stop another project that runs on this membership or ask the sponsor to increase the limit.",
+      "Runtime Sponsor is using 1/1 sponsored running-project slots. Stop another project that runs on this membership, ask the sponsor to increase the limit, or change this project's runtime sponsor.",
     );
     expect(failedUpdate?.result?.runtime_sponsor_denial).toMatchObject({
       code: "runtime_sponsor_slots_exhausted",
       sponsor_display_name: "Runtime Sponsor",
       can_upgrade: false,
-      can_change_sponsor: false,
+      can_change_sponsor: true,
       active_projects: [
         {
           project_id: "22222222-2222-4222-8222-222222222222",

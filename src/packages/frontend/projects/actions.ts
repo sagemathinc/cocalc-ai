@@ -1503,6 +1503,29 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
   };
 
+  set_project_runtime_sponsor_to_me = async (
+    project_id: string,
+  ): Promise<void> => {
+    if (!(await this.have_project(project_id))) {
+      console.warn(
+        `Can't set runtime sponsor -- you are not a collaborator on project '${project_id}'.`,
+      );
+      return;
+    }
+    const account_id = redux.getStore("account").get("account_id");
+    if (!is_valid_uuid_string(account_id)) {
+      throw Error("You must be signed in to sponsor project runtime.");
+    }
+    await this.projects_table_set({
+      project_id,
+      runtime_sponsor_account_id: account_id,
+    });
+    publishProjectDetailInvalidation({
+      project_id,
+      fields: ["runtime_sponsor_account_id"],
+    });
+  };
+
   setProjectTheme = async (
     project_id: string,
     theme: ProjectTheme | null,

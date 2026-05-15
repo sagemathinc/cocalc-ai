@@ -14,6 +14,9 @@ Implementation notes:
 - Phase 4 complete: project owners, runtime sponsors, and administrators can
   disable ordinary collaborator starts that consume the runtime sponsor's
   simultaneous running-project slots.
+- Phase 5 complete: a current collaborator can explicitly make themself the
+  runtime sponsor for future starts, including from the blocked-start recovery
+  flow. Non-admin users cannot silently assign sponsorship to another account.
 - Runtime sponsor resolution enforces the core invariant that explicit runtime
   sponsors and `usage_account_id` sponsors must be current project
   owners/collaborators; otherwise resolution falls back to the project owner.
@@ -446,6 +449,16 @@ Goal:
 
 - let paid collaborators intentionally use their own membership for a shared
   project
+
+Status:
+
+- Complete for v1 simple reassignment.
+- The implemented action is "use my membership", not arbitrary sponsor
+  selection.
+- Future starts use the new explicit `runtime_sponsor_account_id`.
+- The blocked-start UI can set the actor as sponsor and retry the start.
+- Project settings shows the current runtime sponsor and exposes the same
+  explicit self-sponsor action.
 
 Implementation options:
 
