@@ -22,7 +22,13 @@ import {
   redux,
   useState,
 } from "@cocalc/frontend/app-framework";
-import { ErrorDisplay, Gap, Icon, TimeAgo } from "@cocalc/frontend/components";
+import {
+  ErrorDisplay,
+  Gap,
+  Icon,
+  LabeledRow,
+  TimeAgo,
+} from "@cocalc/frontend/components";
 import { SiteName } from "@cocalc/frontend/customize";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { labels } from "@cocalc/frontend/i18n";
@@ -446,14 +452,11 @@ export function AccountSettings(props: Readonly<Props>) {
       return;
     }
     return (
-      <Row style={{ marginBottom: "15px" }}>
-        <Col md={4}>Account ID</Col>
-        <Col md={8}>
-          <Typography.Text code copyable={{ text: props.account_id }}>
-            {props.account_id}
-          </Typography.Text>
-        </Col>
-      </Row>
+      <LabeledRow label="Account ID">
+        <Typography.Text code copyable={{ text: props.account_id }}>
+          {props.account_id}
+        </Typography.Text>
+      </LabeledRow>
     );
   }
 
