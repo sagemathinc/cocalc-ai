@@ -10,6 +10,7 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
+  const Card = ({ children }: any) => <div>{children}</div>;
   const Collapse = ({ items }: any) => (
     <div>
       {items.map((item: any) => (
@@ -24,9 +25,13 @@ jest.mock("antd", () => {
   Space.Compact = ({ children }: any) => <div>{children}</div>;
   return {
     Button,
+    Card,
     Collapse,
     Space,
     Tooltip: ({ children }: any) => <>{children}</>,
+    Typography: {
+      Text: ({ children }: any) => <span>{children}</span>,
+    },
   };
 });
 
@@ -75,7 +80,12 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
   Loading: () => <div>Loading</div>,
+  SettingBox: ({ children }: any) => <div>{children}</div>,
   Title: ({ children }: any) => <div>{children}</div>,
+}));
+
+jest.mock("@ant-design/icons", () => ({
+  ReloadOutlined: () => null,
 }));
 
 jest.mock("@cocalc/frontend/course", () => ({
@@ -153,6 +163,14 @@ jest.mock("@cocalc/frontend/project/settings/move-project", () => ({
 jest.mock("@cocalc/frontend/project/snapshots/create", () => ({
   __esModule: true,
   default: () => <button type="button">Create Snapshot</button>,
+}));
+jest.mock("@cocalc/frontend/project/snapshots/restore", () => ({
+  __esModule: true,
+  default: () => <button type="button">Restore Snapshot</button>,
+}));
+jest.mock("@cocalc/frontend/project/settings/root-filesystem-image", () => ({
+  __esModule: true,
+  default: () => <div>RootFilesystemImage</div>,
 }));
 jest.mock("@cocalc/frontend/project/settings/ssh", () => ({
   SSHPanel: () => <div>SSHPanel</div>,
