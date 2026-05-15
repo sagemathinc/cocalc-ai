@@ -646,7 +646,7 @@ class PersistStreamClient extends EventEmitter {
     this.reconnecting = false;
     this.recoveryRegistration?.close();
     this.recoveryRegistration = undefined;
-    this.socket.close();
+    this.socket?.close();
   };
 
   // The changefeed is *guaranteed* to deliver every message
