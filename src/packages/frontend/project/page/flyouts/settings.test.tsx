@@ -207,9 +207,9 @@ describe("SettingsFlyout", () => {
     );
 
     const text = container.textContent ?? "";
-    expect(text.indexOf("SSH & API")).toBeGreaterThan(-1);
+    expect(text.indexOf("SSH")).toBeGreaterThan(-1);
     expect(text.indexOf("Danger Zone")).toBeGreaterThan(-1);
-    expect(text.indexOf("SSH & API")).toBeLessThan(text.indexOf("Danger Zone"));
+    expect(text.indexOf("SSH")).toBeLessThan(text.indexOf("Danger Zone"));
   });
 
   it("includes network egress in flyout settings", () => {

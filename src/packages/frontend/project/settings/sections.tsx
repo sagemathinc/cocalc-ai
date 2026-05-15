@@ -228,8 +228,8 @@ export function useProjectSettingsSections({
     sections.push({
       id: "ssh-api",
       icon: "key",
-      label: "SSH & API",
-      title: "SSH & API",
+      label: "SSH",
+      title: "SSH",
       description:
         "SSH access information and connection details for this project.",
       children: (
