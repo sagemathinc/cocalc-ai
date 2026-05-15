@@ -9,6 +9,7 @@ export interface RuntimeSponsorProjectFields {
   runtime_sponsor_account_id?: string | null;
   usage_account_id?: string | null;
   allow_collaborator_starts_using_sponsor?: boolean | null;
+  autostart_enabled?: boolean | null;
   users?: ProjectUsers;
 }
 
@@ -72,4 +73,12 @@ export function collaboratorSponsorStartDisabledError(): Error {
   return new Error(
     "Collaborator starts using the runtime sponsor's membership are disabled for this project. Ask a project owner or the runtime sponsor to start it, or ask them to enable collaborator starts.",
   );
+}
+
+export function projectAutostartDisabledError(): Error {
+  const err = new Error(
+    "Automatic starts are disabled for this project. Open the project and use the Start button, or ask a project owner to enable automatic starts.",
+  ) as Error & { code?: string };
+  err.code = "project_autostart_disabled";
+  return err;
 }

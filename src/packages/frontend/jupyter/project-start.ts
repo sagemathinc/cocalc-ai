@@ -12,7 +12,10 @@ export async function ensureProjectRunningForJupyter({
       get_state: (project_id: string) => string | undefined;
     };
     getActions: (name: string) => {
-      start_project: (project_id: string) => Promise<void> | void;
+      start_project: (
+        project_id: string,
+        opts?: { autostart?: boolean },
+      ) => Promise<void> | void;
     };
   };
   project_id: string;
@@ -24,7 +27,9 @@ export async function ensureProjectRunningForJupyter({
   const store = redux.getStore("projects");
   const state = store.get_state(project_id);
   if (state !== "running" && state !== "starting" && !isClosed()) {
-    await redux.getActions("projects").start_project(project_id);
+    await redux
+      .getActions("projects")
+      .start_project(project_id, { autostart: true });
   }
   await until(
     async () => {

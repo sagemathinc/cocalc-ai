@@ -139,7 +139,9 @@ export function FilesBottom({
       return;
     }
     setRequestedTerminalStart(true);
-    void redux.getActions("projects").start_project(project_id);
+    void redux
+      .getActions("projects")
+      .start_project(project_id, { autostart: true });
   }, [activeKeys, projectIsRunning, project_id]);
 
   // useEffect(() => {

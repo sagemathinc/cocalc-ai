@@ -36,7 +36,10 @@ export async function ensureProjectRunningForCodex({
       get_state: (project_id: string) => string | undefined;
     };
     getActions: (name: "projects") => {
-      start_project: (project_id: string) => Promise<boolean> | boolean;
+      start_project: (
+        project_id: string,
+        opts?: { autostart?: boolean },
+      ) => Promise<boolean> | boolean;
     };
   };
   timeoutMs?: number;
@@ -55,7 +58,7 @@ export async function ensureProjectRunningForCodex({
   if (initialState !== "starting") {
     const didStart = await redux
       .getActions("projects")
-      .start_project(normalizedProjectId);
+      .start_project(normalizedProjectId, { autostart: true });
     const stateAfterStart = getState();
     if (
       didStart === false &&

@@ -89,6 +89,7 @@ Table({
           usage_account_id: null,
           runtime_sponsor_account_id: null,
           allow_collaborator_starts_using_sponsor: null,
+          autostart_enabled: null,
           state: null,
           last_edited: null,
           last_active: null,
@@ -117,6 +118,9 @@ Table({
           runtime_sponsor_account_id(obj, db) {
             return db._user_set_query_project_runtime_sponsor_account_id(obj);
           },
+          autostart_enabled(obj, db) {
+            return db._user_set_query_project_autostart_enabled(obj);
+          },
           rootfs_image: true,
           rootfs_image_id: true,
           env: true,
@@ -133,7 +137,8 @@ Table({
           if (
             obj.manage_users_owner_only !== undefined ||
             obj.allow_collaborator_starts_using_sponsor !== undefined ||
-            obj.runtime_sponsor_account_id !== undefined
+            obj.runtime_sponsor_account_id !== undefined ||
+            obj.autostart_enabled !== undefined
           ) {
             try {
               if (!account_id) {
@@ -199,6 +204,15 @@ Table({
               ) {
                 throw Error(
                   "Only project owners, runtime sponsors, and administrators can change collaborator start settings",
+                );
+              }
+              if (
+                obj.autostart_enabled !== undefined &&
+                !admin &&
+                owner !== account_id
+              ) {
+                throw Error(
+                  "Only project owners and administrators can change automatic start settings",
                 );
               }
               if (obj.runtime_sponsor_account_id !== undefined) {
@@ -308,6 +322,11 @@ Table({
     allow_collaborator_starts_using_sponsor: {
       type: "boolean",
       desc: "If false, ordinary collaborators cannot start or restart this project using the runtime sponsor's membership. Project owners, the runtime sponsor, and administrators can still start it. Defaults to true when unset.",
+      render: { type: "boolean", editable: true },
+    },
+    autostart_enabled: {
+      type: "boolean",
+      desc: "If false, automatic project starts from SSH, HTTP/app access, Jupyter, terminals, and other wake-on-use paths are blocked. Manual starts remain allowed. Defaults to true when unset.",
       render: { type: "boolean", editable: true },
     },
     invite: {

@@ -851,6 +851,7 @@ export interface PostgreSQLMethods extends EventEmitter {
   _user_set_query_project_runtime_sponsor_account_id(
     obj: any,
   ): string | undefined;
+  _user_set_query_project_autostart_enabled(obj: any): boolean | undefined;
 }
 
 // This is an extension of BaseProject in projects/control/base.ts

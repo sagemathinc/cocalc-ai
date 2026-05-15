@@ -43,7 +43,9 @@ export async function jupyter_strip_notebook(
   project_id: string,
   path: string,
 ): Promise<string> {
-  await redux.getActions("projects").start_project(project_id);
+  await redux
+    .getActions("projects")
+    .start_project(project_id, { autostart: true });
   const api = await project_api(project_id);
   return await api.jupyter_strip_notebook(path);
 }
@@ -54,7 +56,9 @@ export async function jupyter_run_notebook(
 ): Promise<string> {
   // const log = (m) => console.log("jupyter_run_notebook", project_id, m);
   // log("start_project");
-  await redux.getActions("projects").start_project(project_id);
+  await redux
+    .getActions("projects")
+    .start_project(project_id, { autostart: true });
   // log("project_api");
   const api = await project_api(project_id);
   // log("jupyter_run_notebook");

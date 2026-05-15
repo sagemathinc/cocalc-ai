@@ -30,7 +30,7 @@ export default async function signInAction() {
   const project_id = await getProject();
   const actions = redux.getActions("projects");
   actions.open_project({ project_id, switch_to: true, target: "new" });
-  await actions.start_project(project_id);
+  await actions.start_project(project_id, { autostart: true });
 }
 
 async function create(title = DEFAULT_PROJECT_TITLE) {

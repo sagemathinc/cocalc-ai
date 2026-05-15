@@ -1617,6 +1617,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
   };
 
+  set_project_autostart_enabled = async (
+    project_id: string,
+    autostart_enabled: boolean,
+  ): Promise<void> => {
+    if (!(await this.have_project(project_id))) {
+      console.warn(
+        `Can't set autostart policy -- you are not a collaborator on project '${project_id}'.`,
+      );
+      return;
+    }
+    await this.projects_table_set({
+      project_id,
+      autostart_enabled,
+    });
+  };
+
   setProjectTheme = async (
     project_id: string,
     theme: ProjectTheme | null,
@@ -2187,7 +2203,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   // return true, if it actually started the project
   start_project = reuseInFlight(
-    async (project_id: string): Promise<boolean> => {
+    async (
+      project_id: string,
+      opts: { autostart?: boolean } = {},
+    ): Promise<boolean> => {
       if (!store.getIn(["project_map", project_id])) {
         return false;
       }
@@ -2237,6 +2256,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       try {
         const resp = await webapp_client.conat_client.hub.projects.start({
           project_id,
+          ...(opts.autostart ? { autostart: true } : {}),
           wait: false,
         });
         actions.trackStartOp(resp);

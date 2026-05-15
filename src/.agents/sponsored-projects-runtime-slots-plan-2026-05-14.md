@@ -17,6 +17,11 @@ Implementation notes:
 - Phase 5 complete: a current collaborator can explicitly make themself the
   runtime sponsor for future starts, including from the blocked-start recovery
   flow. Non-admin users cannot silently assign sponsorship to another account.
+- Phase 6 core policy complete: projects now have an `autostart_enabled`
+  policy. Explicit manual starts remain allowed, while automatic start requests
+  are denied before runtime-slot admission when the policy is disabled. Admin
+  host-drain restore starts continue to bypass runtime-slot/autostart admission.
+  Remaining polish is protocol-specific SSH/HTTP denial wording and smoke tests.
 - Runtime sponsor resolution enforces the core invariant that explicit runtime
   sponsors and `usage_account_id` sponsors must be current project
   owners/collaborators; otherwise resolution falls back to the project owner.

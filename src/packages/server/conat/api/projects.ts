@@ -1735,6 +1735,7 @@ export async function start({
   project_id,
   restore: _restore,
   restore_backup_id,
+  autostart,
   managed_egress_override,
   wait = true,
 }: {
@@ -1745,6 +1746,7 @@ export async function start({
   // not used; passed through for typing compatibility with project-host
   restore?: "none" | "auto" | "required";
   restore_backup_id?: string;
+  autostart?: boolean;
   managed_egress_override?: ManagedProjectEgressOverride;
   wait?: boolean;
 }): Promise<{
@@ -1759,6 +1761,7 @@ export async function start({
     account_id,
     project_id,
     restore_backup_id,
+    autostart,
     managed_egress_override,
     wait,
   });
@@ -1792,6 +1795,7 @@ async function runProjectStartLikeAction({
   account_id,
   project_id,
   restore_backup_id,
+  autostart,
   managed_egress_override,
   wait = true,
 }: {
@@ -1799,6 +1803,7 @@ async function runProjectStartLikeAction({
   account_id: string;
   project_id: string;
   restore_backup_id?: string;
+  autostart?: boolean;
   managed_egress_override?: ManagedProjectEgressOverride;
   wait?: boolean;
 }): Promise<{
@@ -1819,6 +1824,7 @@ async function runProjectStartLikeAction({
       project_id,
       action: kind,
       ...(restore_backup_id ? { restore_backup_id } : {}),
+      ...(autostart ? { autostart } : {}),
     },
     status: "queued",
   });
@@ -1892,6 +1898,7 @@ async function runProjectStartLikeAction({
           project_id,
           account_id,
           ...(restore_backup_id ? { restore_backup_id } : {}),
+          ...(autostart ? { autostart } : {}),
           lro_op_id: op.op_id,
           source_bay_id: getConfiguredBayId(),
           ...(managed_egress_override ? { managed_egress_override } : {}),

@@ -57,6 +57,7 @@ export async function touch_project(project_id: string): Promise<void> {
 export async function start_project(
   project_id: string,
   timeout: number = 60,
+  opts: { autostart?: boolean } = { autostart: true },
 ): Promise<boolean> {
   const store = redux.getStore("projects");
   function is_running() {
@@ -69,7 +70,7 @@ export async function start_project(
   // Start project running.
   const did_start = await redux
     .getActions("projects")
-    .start_project(project_id);
+    .start_project(project_id, opts);
   // Wait until running (or fails without timeout).
   await callback2(store.wait, { until: is_running, timeout });
   return did_start;

@@ -117,6 +117,7 @@ export interface ProjectControlStartRequest {
   restore_backup_id?: string;
   lro_op_id?: string;
   source_bay_id?: string;
+  autostart?: boolean;
   managed_egress_override?: "admin-host-drain";
   epoch?: number;
 }
