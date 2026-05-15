@@ -16,6 +16,28 @@ export interface ProjectStartPolicyBlock {
   sponsor_account_id?: string;
 }
 
+export class ProjectStartPolicyBlockError extends Error {
+  readonly projectStartPolicyBlock: ProjectStartPolicyBlock;
+
+  constructor(block: ProjectStartPolicyBlock) {
+    super(formatProjectStartPolicyBlock(block));
+    this.name = "ProjectStartPolicyBlockError";
+    this.projectStartPolicyBlock = block;
+  }
+}
+
+export function getProjectStartPolicyBlockFromError(
+  err: unknown,
+): ProjectStartPolicyBlock | undefined {
+  return (err as any)?.projectStartPolicyBlock;
+}
+
+export function throwProjectStartPolicyBlock(
+  block: ProjectStartPolicyBlock,
+): never {
+  throw new ProjectStartPolicyBlockError(block);
+}
+
 function getValue(obj: any, key: string): any {
   if (obj == null) return undefined;
   if (typeof obj.get === "function") return obj.get(key);
@@ -110,8 +132,7 @@ export function getProjectStartPolicyBlock({
   if (autostart && getValue(project, "autostart_enabled") === false) {
     return {
       code: "autostart_disabled",
-      message:
-        "Automatic starts are disabled for this project. Use the project Start button, then try again.",
+      message: "Automatic starts are disabled for this project.",
       action: "Start the project manually, then try again.",
     };
   }

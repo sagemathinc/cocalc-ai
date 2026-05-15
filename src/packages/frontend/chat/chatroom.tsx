@@ -101,6 +101,8 @@ import {
   isCodexPaymentSourceUsable,
   isCodexSubmitTarget,
 } from "./codex-submit-preflight";
+import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
+import { showProjectStartRequiredModal } from "@cocalc/frontend/projects/start-required-modal";
 import { tab_to_path } from "@cocalc/util/misc";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
 import type { ChatInputControl } from "./input";
@@ -1450,10 +1452,19 @@ export function ChatPanel({
       try {
         await ensureProjectRunningForCodex({ project_id, redux });
       } catch (err) {
-        Modal.error({
-          title: "Unable to start project for Codex",
-          content: `${err}`,
-        });
+        const block = getProjectStartPolicyBlockFromError(err);
+        if (block) {
+          showProjectStartRequiredModal({
+            project_id,
+            title: "Start project to use Codex",
+            block,
+          });
+        } else {
+          Modal.error({
+            title: "Unable to start project for Codex",
+            content: `${err}`,
+          });
+        }
         return;
       }
     }

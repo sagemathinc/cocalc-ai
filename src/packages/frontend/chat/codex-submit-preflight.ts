@@ -3,8 +3,8 @@ import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { lite } from "@cocalc/frontend/lite";
 import {
-  formatProjectStartPolicyBlock,
   getProjectStartPolicyBlock,
+  throwProjectStartPolicyBlock,
 } from "@cocalc/frontend/projects/runtime-start-policy";
 
 export function isCodexPaymentSourceUsable(
@@ -70,7 +70,7 @@ export async function ensureProjectRunningForCodex({
       autostart: true,
     });
     if (block) {
-      throw Error(formatProjectStartPolicyBlock(block));
+      throwProjectStartPolicyBlock(block);
     }
     const didStart = await redux
       .getActions("projects")

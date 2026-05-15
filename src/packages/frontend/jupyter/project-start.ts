@@ -2,8 +2,8 @@ import { once, until } from "@cocalc/util/async-utils";
 
 import { lite } from "@cocalc/frontend/lite";
 import {
-  formatProjectStartPolicyBlock,
   getProjectStartPolicyBlock,
+  throwProjectStartPolicyBlock,
 } from "@cocalc/frontend/projects/runtime-start-policy";
 
 export async function ensureProjectRunningForJupyter({
@@ -41,7 +41,7 @@ export async function ensureProjectRunningForJupyter({
       autostart: true,
     });
     if (block) {
-      throw Error(formatProjectStartPolicyBlock(block));
+      throwProjectStartPolicyBlock(block);
     }
     await redux
       .getActions("projects")
