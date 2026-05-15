@@ -517,7 +517,7 @@ function RuntimeSponsorDenialDescription({
   const visibleProjects = denial.active_projects.filter(
     (project) => project.visible !== false,
   );
-  const inaccessibleCount =
+  const nonCollaboratorCount =
     denial.active_projects.length - visibleProjects.length;
   return (
     <div>
@@ -532,11 +532,11 @@ function RuntimeSponsorDenialDescription({
           ))}
         </ul>
       )}
-      {inaccessibleCount > 0 && (
+      {nonCollaboratorCount > 0 && (
         <div style={{ marginTop: "8px" }}>
-          {inaccessibleCount} sponsored running{" "}
-          {inaccessibleCount === 1 ? "project is" : "projects are"} not
-          accessible to you.
+          {nonCollaboratorCount} sponsored running{" "}
+          {nonCollaboratorCount === 1 ? "project is" : "projects are"} not shown
+          here because your account is not a collaborator.
         </div>
       )}
     </div>
