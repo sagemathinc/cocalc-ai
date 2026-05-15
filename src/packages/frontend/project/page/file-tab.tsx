@@ -9,7 +9,7 @@ A single tab in a project.
    - There is ALSO one for each of the fixed tabs -- files, new, log, search, settings.
 */
 
-// cSpell:ignore fixedtab popout Collabs
+// cSpell:ignore fixedtab popout
 
 import { Popover, Tag } from "antd";
 import { CSSProperties, ReactNode } from "react";
@@ -33,7 +33,6 @@ import { useProjectContext } from "../context";
 import { generatedWorkspaceChatLabel } from "../workspaces/chat-display";
 import {
   AgentsFlyout,
-  CollabsFlyout,
   FilesFlyout,
   LogFlyout,
   NewFlyout,
@@ -165,9 +164,10 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
   users: {
     label: labels.users,
     icon: ICON_USERS,
-    flyout: CollabsFlyout,
+    flyout: SettingsFlyout,
     noAnonymous: false,
     noLite: true,
+    noFullPage: true,
   },
   info: {
     label: labels.project_info_title,

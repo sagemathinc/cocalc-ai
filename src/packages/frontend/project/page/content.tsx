@@ -48,7 +48,6 @@ import { useProjectContext } from "../context";
 import { AgentsPanel } from "./flyouts/agents";
 import getAnchorTagComponent from "./anchor-tag-component";
 import HomePage from "./home-page";
-import { ProjectCollaboratorsPage } from "./project-collaborators";
 import getUrlTransform from "./url-transform";
 
 // Default width of chat window as a fraction of the
@@ -189,7 +188,7 @@ const TabContent: React.FC<TabContentProps> = (props: TabContentProps) => {
     case "info":
       return <ProjectInfo project_id={project_id} />;
     case "users":
-      return <ProjectCollaboratorsPage />;
+      return <ProjectSettings project_id={project_id} />;
     case "agents":
       return <AgentsPanel project_id={project_id} layout="page" />;
     case "workspaces":

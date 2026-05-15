@@ -17,6 +17,7 @@ import {
 import { is_different } from "@cocalc/util/misc";
 import { NoNetworkProjectWarning } from "../warnings/no-network";
 import { NonMemberProjectWarning } from "../warnings/non-member";
+import { ProjectCollaboratorsContent } from "../page/project-collaborators";
 import { AboutBox } from "./about-box";
 import { LauncherDefaults } from "./launcher-defaults";
 import { Datastore } from "./datastore";
@@ -86,6 +87,7 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
   const extraNavItems: ProjectSettingsNavItem[] = [];
   if (!lite) {
     extraNavItems.push(
+      { id: "people", icon: "users", label: "People" },
       { id: "environment", icon: "terminal", label: "Environment" },
       {
         id: "network",
@@ -145,6 +147,20 @@ export const Body: React.FC<ReactProps> = React.memo((props: ReactProps) => {
       >
         <ProjectControl key="control" project={project} />
       </ProjectSettingsSectionCard>
+
+      {!lite && (
+        <ProjectSettingsSectionCard
+          id="people"
+          icon="users"
+          title="People"
+          description="Invite collaborators, review pending invitations, and manage human access to this project."
+        >
+          <ProjectCollaboratorsContent
+            project_id={project_id}
+            layout="flyout"
+          />
+        </ProjectSettingsSectionCard>
+      )}
 
       {!lite && (
         <ProjectSettingsSectionCard
