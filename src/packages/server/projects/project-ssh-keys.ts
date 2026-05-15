@@ -4,7 +4,9 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { assertProjectNotRehoming } from "@cocalc/database/postgres/project-rehome-fence";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 export async function upsertProjectSshKeyInDb({
@@ -24,6 +26,7 @@ export async function upsertProjectSshKeyInDb({
   };
 }): Promise<boolean> {
   const client = await getPool().connect();
+  let changed = false;
   try {
     await client.query("BEGIN");
     await assertProjectNotRehoming({
@@ -51,14 +54,29 @@ export async function upsertProjectSshKeyInDb({
         getConfiguredBayId(),
       ],
     );
+    changed = (result.rowCount ?? 0) > 0;
+    if (changed) {
+      await appendProjectOutboxEventForProject({
+        db: client,
+        event_type: "project.summary_changed",
+        project_id,
+        default_bay_id: getConfiguredBayId(),
+      });
+    }
     await client.query("COMMIT");
-    return (result.rowCount ?? 0) > 0;
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
   } finally {
     client.release();
   }
+  if (changed) {
+    await publishProjectAccountFeedEventsBestEffort({
+      project_id,
+      default_bay_id: getConfiguredBayId(),
+    });
+  }
+  return changed;
 }
 
 export async function deleteProjectSshKeyInDb({
@@ -71,6 +89,7 @@ export async function deleteProjectSshKeyInDb({
   fingerprint: string;
 }): Promise<boolean> {
   const client = await getPool().connect();
+  let changed = false;
   try {
     await client.query("BEGIN");
     await assertProjectNotRehoming({
@@ -95,12 +114,27 @@ export async function deleteProjectSshKeyInDb({
           AND (users -> $2::text ->> 'group') IN ('owner', 'collaborator')`,
       [project_id, account_id, fingerprint, getConfiguredBayId()],
     );
+    changed = (result.rowCount ?? 0) > 0;
+    if (changed) {
+      await appendProjectOutboxEventForProject({
+        db: client,
+        event_type: "project.summary_changed",
+        project_id,
+        default_bay_id: getConfiguredBayId(),
+      });
+    }
     await client.query("COMMIT");
-    return (result.rowCount ?? 0) > 0;
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
   } finally {
     client.release();
   }
+  if (changed) {
+    await publishProjectAccountFeedEventsBestEffort({
+      project_id,
+      default_bay_id: getConfiguredBayId(),
+    });
+  }
+  return changed;
 }
