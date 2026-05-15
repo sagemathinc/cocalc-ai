@@ -427,9 +427,15 @@ export function registerBrowserObservabilityCommands({
           }
           const follow = !!opts.follow;
           const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
-          const timeoutMs = `${opts.timeout ?? ""}`.trim()
-            ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
-            : undefined;
+          const explicitTimeout = `${opts.timeout ?? ""}`.trim();
+          const globalTimeout = `${ctx.globals?.timeout ?? ""}`.trim();
+          const inheritedGlobalTimeout =
+            !explicitTimeout && globalTimeout && globalTimeout !== "600s";
+          const timeoutMs = explicitTimeout
+            ? Math.max(1_000, durationToMs(explicitTimeout, ctx.timeoutMs))
+            : inheritedGlobalTimeout
+              ? Math.max(1_000, ctx.timeoutMs)
+              : undefined;
           const startedAt = Date.now();
           const deadlineAt =
             follow && timeoutMs != null ? startedAt + timeoutMs : undefined;

@@ -234,6 +234,7 @@ export type BrowserGlobals = GlobalAuthOptions & {
   output?: "table" | "json" | "yaml";
   hubPassword?: string;
   apiKey?: string;
+  timeout?: string;
 };
 
 export type BrowserCommandContext = {
