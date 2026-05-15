@@ -113,12 +113,14 @@ const QUICKJS_BROWSER_EXEC_API_DECLARATION = `/**
  * globals such as window and document are intentionally undefined. Scripts run
  * inside a QuickJS sandbox and can only use this constrained action API.
  *
- * Note: top-level await is not supported in this sandbox wrapper. Return a
- * Promise from the script when composing asynchronous actions.
+ * Note: top-level await is not supported in this sandbox wrapper. Action calls
+ * are synchronous from the script's point of view and return their result
+ * directly.
  *
  * Examples:
  *   return api.pageUrl;
- *   return api.waitForSelector("body").then(() => api.click("button"));
+ *   const found = api.waitForSelector("body");
+ *   return found.ok ? api.click("button") : found;
  */
 export type BrowserExecActionResult = {
   ok?: boolean;
@@ -129,18 +131,18 @@ export type BrowserExecApi = {
   projectId: string;
   pageUrl: string;
   origin: string;
-  action: (name: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
-  navigate: (url: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
-  click: (selector: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
-  clickAt: (x: number, y: number, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
-  drag: (opts: Record<string, unknown>) => Promise<BrowserExecActionResult>;
-  type: (text: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
-  press: (key: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
-  reload: (opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
-  scrollBy: (dy: number, dx?: number, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
-  scrollTo: (opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
-  waitForSelector: (selector: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
-  waitForUrl: (opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  action: (name: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  navigate: (url: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  click: (selector: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  clickAt: (x: number, y: number, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  drag: (opts: Record<string, unknown>) => BrowserExecActionResult;
+  type: (text: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  press: (key: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  reload: (opts?: Record<string, unknown>) => BrowserExecActionResult;
+  scrollBy: (dy: number, dx?: number, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  scrollTo: (opts?: Record<string, unknown>) => BrowserExecActionResult;
+  waitForSelector: (selector: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  waitForUrl: (opts?: Record<string, unknown>) => BrowserExecActionResult;
 };`;
 
 function rawBrowserExecAllowed(policyInfo: {

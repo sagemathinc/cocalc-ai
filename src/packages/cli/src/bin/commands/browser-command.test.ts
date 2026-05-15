@@ -353,7 +353,9 @@ test("browser exec-api reports the QuickJS sandbox API when raw exec is disabled
   assert.match(output, /raw_exec_policy=disabled/);
   assert.match(output, /QuickJS sandbox mode/);
   assert.match(output, /waitForSelector/);
+  assert.match(output, /BrowserExecActionResult;/);
   assert.doesNotMatch(output, /listOpenFiles/);
+  assert.doesNotMatch(output, /Promise<BrowserExecActionResult>/);
 });
 
 test("browser exec-api reports the raw API when raw exec is allowed", async () => {
