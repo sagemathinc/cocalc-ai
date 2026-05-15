@@ -8,6 +8,7 @@ import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import { getClusterAccountsByIds } from "@cocalc/server/inter-bay/accounts";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
@@ -77,6 +78,16 @@ export interface ReserveProjectRuntimeSlotResult {
   limit?: number;
   current: number;
   slot: ProjectRuntimeSlot;
+}
+
+export interface ProjectRuntimeSlotHeartbeatInput {
+  sponsor_account_id: string;
+  project_id: string;
+  owning_bay_id?: string;
+  host_id?: string | null;
+  state?: Extract<ProjectRuntimeSlotState, "starting" | "running">;
+  ttl_ms?: number;
+  metadata?: Record<string, unknown>;
 }
 
 const ACTIVE_SLOT_STATES = ["starting", "running"] as const;
@@ -267,6 +278,61 @@ export async function heartbeatProjectRuntimeSlotLocal({
   return (rowCount ?? 0) > 0;
 }
 
+export async function heartbeatProjectRuntimeSlotsBatchLocal({
+  slots,
+  ttl_ms,
+  client,
+}: {
+  slots: ProjectRuntimeSlotHeartbeatInput[];
+  ttl_ms?: number;
+  client?: PoolClient;
+}): Promise<{ heartbeated: number }> {
+  if (slots.length === 0) {
+    return { heartbeated: 0 };
+  }
+  const pool = client ?? getPool();
+  const payload = slots.map((slot) => ({
+    sponsor_account_id: slot.sponsor_account_id,
+    project_id: slot.project_id,
+    owning_bay_id: slot.owning_bay_id ?? getConfiguredBayId(),
+    host_id: slot.host_id ?? null,
+    state: slot.state === "starting" ? "starting" : "running",
+    metadata: slot.metadata ?? {},
+  }));
+  const { rowCount } = await pool.query(
+    `
+      WITH input AS (
+        SELECT *
+          FROM jsonb_to_recordset($1::jsonb) AS x(
+            sponsor_account_id uuid,
+            project_id uuid,
+            owning_bay_id text,
+            host_id uuid,
+            state text,
+            metadata jsonb
+          )
+      )
+      INSERT INTO project_runtime_slots
+        (sponsor_account_id, project_id, owning_bay_id, host_id, state,
+         acquired_at, heartbeat_at, expires_at, metadata)
+      SELECT sponsor_account_id, project_id, owning_bay_id, host_id,
+             CASE WHEN state='starting' THEN 'starting' ELSE 'running' END,
+             NOW(), NOW(), $2, COALESCE(metadata, '{}'::jsonb)
+        FROM input
+      ON CONFLICT (sponsor_account_id, project_id)
+      DO UPDATE SET
+        owning_bay_id=EXCLUDED.owning_bay_id,
+        host_id=EXCLUDED.host_id,
+        state=EXCLUDED.state,
+        heartbeat_at=NOW(),
+        expires_at=EXCLUDED.expires_at,
+        metadata=EXCLUDED.metadata
+    `,
+    [JSON.stringify(payload), expirationDate(ttl_ms)],
+  );
+  return { heartbeated: rowCount ?? 0 };
+}
+
 export async function releaseProjectRuntimeSlotLocal({
   sponsor_account_id,
   project_id,
@@ -332,6 +398,30 @@ async function runtimeSponsorHomeBay(
   return `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
 }
 
+async function runtimeSponsorHomeBays(
+  sponsor_account_ids: string[],
+): Promise<Map<string, string>> {
+  const uniqueIds = [...new Set(sponsor_account_ids.filter(Boolean))];
+  if (uniqueIds.length === 0) {
+    return new Map();
+  }
+  const accounts = await getClusterAccountsByIds(uniqueIds);
+  const result = new Map<string, string>();
+  for (const account of accounts) {
+    if (!account.account_id) continue;
+    result.set(
+      account.account_id,
+      `${account.home_bay_id ?? ""}`.trim() || getConfiguredBayId(),
+    );
+  }
+  for (const account_id of uniqueIds) {
+    if (!result.has(account_id)) {
+      result.set(account_id, getConfiguredBayId());
+    }
+  }
+  return result;
+}
+
 function accountLocalClient(dest_bay: string) {
   return createInterBayAccountLocalClient({
     client: getInterBayFabricClient(),
@@ -357,6 +447,44 @@ export async function heartbeatProjectRuntimeSlot(
     return await heartbeatProjectRuntimeSlotLocal(opts);
   }
   return await accountLocalClient(homeBay).heartbeatProjectRuntimeSlot(opts);
+}
+
+export async function heartbeatProjectRuntimeSlotsBatch({
+  slots,
+  ttl_ms,
+}: {
+  slots: ProjectRuntimeSlotHeartbeatInput[];
+  ttl_ms?: number;
+}): Promise<{ heartbeated: number }> {
+  if (slots.length === 0) {
+    return { heartbeated: 0 };
+  }
+  const homeBays = await runtimeSponsorHomeBays(
+    slots.map((slot) => slot.sponsor_account_id),
+  );
+  const grouped = new Map<string, ProjectRuntimeSlotHeartbeatInput[]>();
+  for (const slot of slots) {
+    const homeBay =
+      homeBays.get(slot.sponsor_account_id) ?? getConfiguredBayId();
+    const group = grouped.get(homeBay);
+    if (group) {
+      group.push(slot);
+    } else {
+      grouped.set(homeBay, [slot]);
+    }
+  }
+  let heartbeated = 0;
+  for (const [homeBay, batch] of grouped) {
+    const result =
+      homeBay === getConfiguredBayId()
+        ? await heartbeatProjectRuntimeSlotsBatchLocal({ slots: batch, ttl_ms })
+        : await accountLocalClient(homeBay).heartbeatProjectRuntimeSlotsBatch({
+            slots: batch,
+            ttl_ms,
+          });
+    heartbeated += result.heartbeated;
+  }
+  return { heartbeated };
 }
 
 export async function releaseProjectRuntimeSlot(
@@ -404,8 +532,8 @@ export async function heartbeatActiveProjectRuntimeSlotsOnOwningBay(): Promise<{
   );
   let heartbeated = 0;
   let missing_sponsor = 0;
-  let failed = 0;
   const { resolveRuntimeSponsorAccountId } = await import("./runtime-sponsor");
+  const slots: ProjectRuntimeSlotHeartbeatInput[] = [];
   for (const row of rows) {
     const sponsor_account_id = resolveRuntimeSponsorAccountId(row);
     if (!sponsor_account_id) {
@@ -413,44 +541,32 @@ export async function heartbeatActiveProjectRuntimeSlotsOnOwningBay(): Promise<{
       continue;
     }
     const state = row.state?.state === "starting" ? "starting" : "running";
-    try {
-      const ok = await heartbeatProjectRuntimeSlot({
-        sponsor_account_id,
-        project_id: row.project_id,
-        host_id: row.host_id,
-        state,
-        ttl_ms: HEARTBEAT_TTL_MS,
-        metadata: {
-          heartbeated_by: "owning-bay",
-          owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
-        },
-      });
-      if (ok) {
-        heartbeated += 1;
-        continue;
-      }
-      await reserveProjectRuntimeSlot({
-        sponsor_account_id,
-        project_id: row.project_id,
+    slots.push({
+      sponsor_account_id,
+      project_id: row.project_id,
+      owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
+      host_id: row.host_id,
+      state,
+      metadata: {
+        heartbeated_by: "owning-bay",
         owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
-        host_id: row.host_id,
-        reason: "runtime-slot-reconcile",
-        state,
+      },
+    });
+  }
+  let failed = 0;
+  try {
+    heartbeated = (
+      await heartbeatProjectRuntimeSlotsBatch({
+        slots,
         ttl_ms: HEARTBEAT_TTL_MS,
-        metadata: {
-          heartbeated_by: "owning-bay",
-          owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
-        },
-      });
-      heartbeated += 1;
-    } catch (err) {
-      failed += 1;
-      logger.warn("failed to heartbeat project runtime slot", {
-        project_id: row.project_id,
-        sponsor_account_id,
-        err: `${err}`,
-      });
-    }
+      })
+    ).heartbeated;
+  } catch (err) {
+    failed = slots.length;
+    logger.warn("failed to heartbeat project runtime slots batch", {
+      count: slots.length,
+      err: `${err}`,
+    });
   }
   return { heartbeated, missing_sponsor, failed };
 }
