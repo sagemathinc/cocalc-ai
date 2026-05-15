@@ -457,6 +457,72 @@ test("auth elevate approves the current CLI session via browser polling", async 
   }
 });
 
+test("auth elevate --dev approves the current CLI session with hub password", async () => {
+  const capture: { data?: any } = {};
+  let cookieGlobals: any;
+  const fetchCalls: Array<{ url: string; init: any }> = [];
+  const originalFetch = global.fetch;
+  global.fetch = (async (url: string | URL | Request, init?: any) => {
+    fetchCalls.push({ url: `${url}`, init });
+    if (`${url}`.endsWith("/api/v2/auth/cli/elevate/dev")) {
+      assert.equal(
+        init?.headers?.Cookie,
+        "remember_me=remember-cookie-1; hub_password=hub-secret",
+      );
+      assert.equal(JSON.parse(init.body).duration, "default");
+      return {
+        json: async () => ({
+          approved: true,
+          dev: true,
+          factor_level: "totp",
+          fresh_auth_until: "2026-05-08T18:00:00.000Z",
+        }),
+      } as any;
+    }
+    throw new Error(`unexpected fetch url ${url}`);
+  }) as any;
+  try {
+    const program = new Command();
+    registerAuthCommand(
+      program,
+      makeDeps(capture, {
+        env: {
+          COCALC_HUB_PASSWORD: "hub-secret",
+        },
+        applyAuthProfile: (globals: any) => ({
+          globals: {
+            ...globals,
+            api: "https://hub.example.test",
+            accountId: "acct-123",
+            cookie: "remember_me=remember-cookie-1",
+            disableEnvAuthDefaults: true,
+          },
+          profile: "default",
+          fromProfile: true,
+        }),
+        buildCookieHeader: (_apiBaseUrl: string, effective: any) => {
+          cookieGlobals = effective;
+          return `remember_me=remember-cookie-1; hub_password=${effective.hubPassword}`;
+        },
+        getExplicitAccountId: (globals: any) => globals.accountId,
+      }),
+    );
+    await program.parseAsync(["node", "test", "auth", "elevate", "--dev"]);
+    assert.equal(cookieGlobals.hubPassword, "hub-secret");
+    assert.equal(cookieGlobals.disableEnvAuthDefaults, false);
+    assert.equal(capture.data.interactive_session, true);
+    assert.equal(capture.data.dev, true);
+    assert.equal(capture.data.factor_level, "totp");
+    assert.equal(capture.data.fresh_auth_until, "2026-05-08T18:00:00.000Z");
+    assert.deepEqual(
+      fetchCalls.map((call) => call.url.replace(/^https?:\/\/[^/]+/, "")),
+      ["/api/v2/auth/cli/elevate/dev"],
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test("auth rename renames the selected profile and preserves current selection", async () => {
   const capture: { data?: any } = {};
   let config: any = {

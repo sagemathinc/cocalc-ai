@@ -665,10 +665,14 @@ Examples:
     .command("elevate")
     .description("elevate the current CLI session via browser approval")
     .option("--extended", "keep this elevation active for 8 hours")
+    .option(
+      "--dev",
+      "dev-only: elevate using the hub password instead of browser approval",
+    )
     .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
     .action(
       async (
-        opts: { extended?: boolean; pollMs?: string },
+        opts: { extended?: boolean; dev?: boolean; pollMs?: string },
         command: Command,
       ) => {
         await runLocalCommand(command, "auth elevate", async (globals: any) => {
@@ -676,11 +680,46 @@ Examples:
           const apiBaseUrl = effective.api
             ? normalizeUrl(effective.api)
             : defaultApiBaseUrl();
-          const cookieHeader = buildCookieHeader(apiBaseUrl, effective);
+          const cookieHeader = buildCookieHeader(
+            apiBaseUrl,
+            opts.dev
+              ? {
+                  ...effective,
+                  hubPassword:
+                    effective.hubPassword ??
+                    globals.hubPassword ??
+                    env.COCALC_HUB_PASSWORD,
+                  disableEnvAuthDefaults: false,
+                }
+              : effective,
+          );
           if (!cookieHeader) {
             throw new Error(
               "interactive CLI sign-in is required before elevation",
             );
+          }
+          if (opts.dev) {
+            const status = await postCliAuthApi<{
+              dev?: boolean;
+              factor_level?: string;
+              fresh_auth_until?: string | Date | null;
+            }>({
+              apiBaseUrl,
+              endpoint: "auth/cli/elevate/dev",
+              body: {
+                duration: opts.extended ? "extended" : "default",
+              },
+              cookieHeader,
+            });
+            return {
+              account_id: getExplicitAccountId(effective) ?? null,
+              factor_level: `${status.factor_level ?? ""}`.trim() || null,
+              fresh_auth_until: status.fresh_auth_until
+                ? new Date(status.fresh_auth_until).toISOString()
+                : null,
+              interactive_session: true,
+              dev: status.dev === true,
+            };
           }
           const start = await postCliAuthApi<CliChallengeStart>({
             apiBaseUrl,

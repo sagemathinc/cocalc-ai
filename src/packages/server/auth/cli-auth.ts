@@ -6,6 +6,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import basePath from "@cocalc/backend/base-path";
+import { conatPassword } from "@cocalc/backend/data";
 import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -103,6 +104,22 @@ function tokenMatches(raw: string, expectedHash: string): boolean {
   const actual = Buffer.from(hashToken(raw), "utf8");
   const expected = Buffer.from(`${expectedHash ?? ""}`, "utf8");
   return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function secretMatches(raw: string, expected: string): boolean {
+  const actual = Buffer.from(`${raw ?? ""}`, "utf8");
+  const target = Buffer.from(`${expected ?? ""}`, "utf8");
+  return actual.length === target.length && timingSafeEqual(actual, target);
+}
+
+function assertDevCliFreshAuthAllowed(hub_password: string): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("dev CLI fresh auth is disabled in production");
+  }
+  const expected = `${conatPassword ?? ""}`.trim();
+  if (!expected || !secretMatches(`${hub_password ?? ""}`.trim(), expected)) {
+    throw new Error("valid hub password is required for dev CLI fresh auth");
+  }
 }
 
 function isChallengeExpired(row: CliAuthChallengeRow): boolean {
@@ -778,6 +795,54 @@ export async function approveCliElevateChallenge({
   });
   return {
     approved: true,
+    factor_level,
+    fresh_auth_until,
+  };
+}
+
+export async function approveDevCliElevate({
+  account_id,
+  session_hash,
+  hub_password,
+  duration,
+}: {
+  account_id: string;
+  session_hash: string;
+  hub_password: string;
+  duration?: FreshAuthDuration;
+}): Promise<{
+  approved: true;
+  dev: true;
+  factor_level: AuthSessionFactorLevel;
+  fresh_auth_until: Date;
+}> {
+  assertDevCliFreshAuthAllowed(hub_password);
+  const target_session_hash = cleanSessionHash(session_hash);
+  await getCurrentAuthSessionForSessionHash({
+    account_id,
+    session_hash: target_session_hash,
+  });
+  const factor_level: AuthSessionFactorLevel = "totp";
+  const fresh_auth_until = new Date(
+    Date.now() +
+      resolveFreshAuthDurationMs({
+        duration: duration ?? "default",
+        factor_level,
+      }),
+  );
+  await setSessionFreshAuth({
+    account_id,
+    session_hash: target_session_hash,
+    factor_level,
+    fresh_auth_until,
+    metadata_patch: {
+      dev_cli_fresh_auth: true,
+      dev_cli_fresh_auth_at: new Date().toISOString(),
+    },
+  });
+  return {
+    approved: true,
+    dev: true,
     factor_level,
     fresh_auth_until,
   };
