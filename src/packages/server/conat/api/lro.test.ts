@@ -8,6 +8,7 @@ let dismissLroMock: jest.Mock;
 let publishLroSummaryMock: jest.Mock;
 let cancelCopiesByOpIdMock: jest.Mock;
 let cancelCourseCollectChildrenMock: jest.Mock;
+let cancelStaleProjectStartLrosMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -37,6 +38,12 @@ jest.mock("@cocalc/server/projects/course-collect-worker", () => ({
   COURSE_COLLECT_ASSIGNMENT_LRO_KIND: "course-collect-assignment",
   cancelCourseCollectChildren: (...args: any[]) =>
     cancelCourseCollectChildrenMock(...args),
+}));
+
+jest.mock("@cocalc/server/projects/start-lro-cleanup", () => ({
+  __esModule: true,
+  cancelStaleProjectStartLros: (...args: any[]) =>
+    cancelStaleProjectStartLrosMock(...args),
 }));
 
 jest.mock("./util", () => ({
@@ -69,6 +76,7 @@ describe("lro host authorization", () => {
     publishLroSummaryMock = jest.fn(async () => undefined);
     cancelCopiesByOpIdMock = jest.fn(async () => undefined);
     cancelCourseCollectChildrenMock = jest.fn(async () => undefined);
+    cancelStaleProjectStartLrosMock = jest.fn(async () => 0);
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (sql.includes("FROM project_hosts")) {
         return {
@@ -115,6 +123,27 @@ describe("lro host authorization", () => {
     expect(listLroMock).toHaveBeenCalledWith({
       scope_type: "host",
       scope_id: "host-1",
+      include_completed: true,
+    });
+    expect(cancelStaleProjectStartLrosMock).not.toHaveBeenCalled();
+  });
+
+  it("cleans orphaned project-start operations before listing project lros", async () => {
+    const { list } = await import("./lro");
+
+    await list({
+      account_id: "project-user",
+      scope_type: "project",
+      scope_id: "project-1",
+      include_completed: true,
+    });
+
+    expect(cancelStaleProjectStartLrosMock).toHaveBeenCalledWith({
+      project_id: "project-1",
+    });
+    expect(listLroMock).toHaveBeenCalledWith({
+      scope_type: "project",
+      scope_id: "project-1",
       include_completed: true,
     });
   });
