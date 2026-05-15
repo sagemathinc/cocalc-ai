@@ -1014,10 +1014,12 @@ async function maybeRequireFreshAuthForInteractiveHostAction({
 
 async function requireDangerousHostMutationAuth({
   account_id,
+  browser_id,
   session_hash,
   internalAuth,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
 }): Promise<void> {
@@ -1026,6 +1028,7 @@ async function requireDangerousHostMutationAuth({
   }
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: true,
   });
@@ -4683,17 +4686,20 @@ export async function drainHostInternal({
 
 export async function forceDeprovisionHost({
   account_id,
+  browser_id,
   session_hash,
   internalAuth,
   id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
 }): Promise<HostLroResponse> {
   await requireDangerousHostMutationAuth({
     account_id,
+    browser_id,
     session_hash,
     internalAuth,
   });
@@ -4703,6 +4709,7 @@ export async function forceDeprovisionHost({
       .hostConnection(remoteBay)
       .forceDeprovisionHost({
         account_id,
+        ...(browser_id ? { browser_id } : {}),
         session_hash,
         id,
       });
@@ -4930,17 +4937,20 @@ export async function forceDeprovisionHostInternal({
 
 export async function removeSelfHostConnector({
   account_id,
+  browser_id,
   session_hash,
   internalAuth,
   id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
 }): Promise<HostLroResponse> {
   await requireDangerousHostMutationAuth({
     account_id,
+    browser_id,
     session_hash,
     internalAuth,
   });
@@ -4950,6 +4960,7 @@ export async function removeSelfHostConnector({
       .hostConnection(remoteBay)
       .removeSelfHostConnector({
         account_id,
+        ...(browser_id ? { browser_id } : {}),
         session_hash,
         id,
       });
@@ -6619,12 +6630,14 @@ export async function rolloutHostManagedComponentsInternal({
 
 export async function deleteHost({
   account_id,
+  browser_id,
   session_hash,
   internalAuth,
   id,
   skip_backups,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   internalAuth?: typeof HOST_DANGEROUS_INTERNAL_AUTH;
   id: string;
@@ -6632,17 +6645,21 @@ export async function deleteHost({
 }): Promise<HostLroResponse> {
   await requireDangerousHostMutationAuth({
     account_id,
+    browser_id,
     session_hash,
     internalAuth,
   });
   const remoteBay = await resolveRemoteHostBayIfAuthoritative(id);
   if (remoteBay) {
-    return await getInterBayBridge().hostConnection(remoteBay).deleteHost({
-      account_id,
-      session_hash,
-      id,
-      skip_backups,
-    });
+    return await getInterBayBridge()
+      .hostConnection(remoteBay)
+      .deleteHost({
+        account_id,
+        ...(browser_id ? { browser_id } : {}),
+        session_hash,
+        id,
+        skip_backups,
+      });
   }
   const row = await loadOwnedHost(id, account_id);
   const kind =

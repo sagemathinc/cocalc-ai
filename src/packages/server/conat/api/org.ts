@@ -9,15 +9,18 @@ import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 
 type OrgAuthOpts = {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
 };
 
 async function requireOrgMutationAuth({
   account_id,
+  browser_id,
   session_hash,
 }: OrgAuthOpts): Promise<void> {
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: true,
   });

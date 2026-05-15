@@ -83,6 +83,30 @@ describe("requireDangerousSessionAuth", () => {
     expect(hasActiveSecondFactorMock).not.toHaveBeenCalled();
   });
 
+  it("resolves a browser session hash when only browser_id is provided", async () => {
+    const BROWSER_ID = "browser-1";
+    const { recordBrowserAuthSession } =
+      await import("@cocalc/server/conat/socketio/browser-auth-sessions");
+    recordBrowserAuthSession({
+      account_id: ACCOUNT_ID,
+      browser_id: BROWSER_ID,
+      session_hash: SESSION_HASH,
+    });
+    const { requireDangerousSessionAuth } =
+      await import("./dangerous-session-auth");
+
+    await requireDangerousSessionAuth({
+      account_id: ACCOUNT_ID,
+      browser_id: BROWSER_ID,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      session_hash: SESSION_HASH,
+      allow_actor_impersonation: true,
+    });
+  });
+
   it("requires the subject account to have 2FA enabled when 2FA is required", async () => {
     hasActiveSecondFactorMock = jest.fn(async () => false);
     const { requireDangerousSessionAuth } =

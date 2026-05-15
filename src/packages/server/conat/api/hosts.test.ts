@@ -1906,6 +1906,47 @@ describe("hosts browser fresh auth gating", () => {
     expect(createLroMock).not.toHaveBeenCalled();
   });
 
+  it("uses browser fresh auth before queueing host delete", async () => {
+    getBrowserAuthSessionHashMock = jest.fn(() => "session-hash");
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+        return {
+          rows: [
+            {
+              id: HOST_ID,
+              name: "host-name",
+              status: "off",
+              metadata: {
+                owner: ACCOUNT_ID,
+                machine: {
+                  cloud: "gcp",
+                  machine_type: "e2-standard-4",
+                },
+              },
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { deleteHost } = await import("./hosts");
+    await deleteHost({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      id: HOST_ID,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      allow_actor_impersonation: true,
+      session_hash: "session-hash",
+    });
+    expect(createLroMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "host-deprovision" }),
+    );
+  });
+
   it("cancels queued start and restart ops before queueing delete", async () => {
     listLroMock = jest.fn(async () => [
       {

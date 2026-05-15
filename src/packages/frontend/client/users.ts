@@ -88,15 +88,19 @@ export class UsersClient {
     expires_at?: Date | null;
     notes?: string | null;
   }): Promise<void> => {
-    await this.client.conat_client.hub.system.setAdminAssignedMembership(opts);
+    await this.client.conat_client.hub.system.setAdminAssignedMembership({
+      ...opts,
+      browser_id: this.client.browser_id,
+    });
   };
 
   clearAdminAssignedMembership = async (opts: {
     user_account_id: string;
   }): Promise<void> => {
-    await this.client.conat_client.hub.system.clearAdminAssignedMembership(
-      opts,
-    );
+    await this.client.conat_client.hub.system.clearAdminAssignedMembership({
+      ...opts,
+      browser_id: this.client.browser_id,
+    });
   };
 
   getAccountEntitlementOverride = reuseInFlight(
@@ -120,7 +124,7 @@ export class UsersClient {
     reason: string;
   }): Promise<AccountEntitlementOverride> => {
     return await this.client.conat_client.hub.system.setAccountEntitlementOverride(
-      opts,
+      { ...opts, browser_id: this.client.browser_id },
     );
   };
 
@@ -128,9 +132,10 @@ export class UsersClient {
     user_account_id: string;
     reason: string;
   }): Promise<void> => {
-    await this.client.conat_client.hub.system.clearAccountEntitlementOverride(
-      opts,
-    );
+    await this.client.conat_client.hub.system.clearAccountEntitlementOverride({
+      ...opts,
+      browser_id: this.client.browser_id,
+    });
   };
 
   // Gets username with given account_id.   We use caching and aggregate to

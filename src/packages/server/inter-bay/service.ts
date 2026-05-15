@@ -1060,24 +1060,43 @@ async function startHostConnectionService(): Promise<void> {
         components,
         reason,
       }),
-    deleteHost: async ({ account_id, session_hash, id, skip_backups }) =>
+    deleteHost: async ({
+      account_id,
+      browser_id,
+      session_hash,
+      id,
+      skip_backups,
+    }) =>
       await deleteHost({
         account_id,
+        browser_id,
         session_hash,
         internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
         skip_backups,
       }),
-    forceDeprovisionHost: async ({ account_id, session_hash, id }) =>
+    forceDeprovisionHost: async ({
+      account_id,
+      browser_id,
+      session_hash,
+      id,
+    }) =>
       await forceDeprovisionHost({
         account_id,
+        browser_id,
         session_hash,
         internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
       }),
-    removeSelfHostConnector: async ({ account_id, session_hash, id }) =>
+    removeSelfHostConnector: async ({
+      account_id,
+      browser_id,
+      session_hash,
+      id,
+    }) =>
       await removeSelfHostConnector({
         account_id,
+        browser_id,
         session_hash,
         internalAuth: HOST_DANGEROUS_INTERNAL_AUTH,
         id,
