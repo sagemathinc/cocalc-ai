@@ -148,7 +148,9 @@ export class Listings extends EventEmitter {
     }
     if (trigger_start_project) {
       if (
-        !(await redux.getActions("projects").start_project(this.project_id))
+        !(await redux
+          .getActions("projects")
+          .start_project(this.project_id, { autostart: true }))
       ) {
         return;
       }
@@ -224,7 +226,9 @@ export class Listings extends EventEmitter {
     // console.trace("getListingDirectly", { path });
     if (trigger_start_project) {
       if (
-        !(await redux.getActions("projects").start_project(this.project_id))
+        !(await redux
+          .getActions("projects")
+          .start_project(this.project_id, { autostart: true }))
       ) {
         throw Error("project not running");
       }

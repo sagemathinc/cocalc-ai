@@ -57,6 +57,11 @@ import {
 } from "@cocalc/server/membership/project-defaults";
 import { assertLocalProjectOwnership } from "@cocalc/server/conat/project-local-access";
 import type { ManagedProjectEgressOverride } from "@cocalc/conat/files/file-server";
+import {
+  getProjectOwnerAccountId,
+  resolveRuntimeSponsorAccountId,
+  type ProjectUsers,
+} from "@cocalc/server/projects/runtime-sponsor";
 export type { ProjectState, ProjectStatus };
 
 const logger = getLogger("project-control");
@@ -417,31 +422,71 @@ export class BaseProject extends EventEmitter {
     account_id?: string,
   ): Promise<void> => {
     await this.ensureLocalOwnership();
-    // If null we compute it based on membership + settings for the user who
-    // started the project (or best available fallback).
+    // If null we compute it based on membership + settings. Runtime capacity
+    // comes from the runtime sponsor, while disk quota stays with the storage
+    // sponsor so self-sponsoring cannot shrink an existing project volume.
     if (run_quota == null) {
-      const { settings, users, last_active, last_started_by } = await query({
+      const {
+        settings,
+        users,
+        last_active,
+        last_started_by,
+        runtime_sponsor_account_id,
+        usage_account_id,
+      } = await query({
         db: db(),
-        select: ["settings", "users", "last_active", "last_started_by"],
+        select: [
+          "settings",
+          "users",
+          "last_active",
+          "last_started_by",
+          "runtime_sponsor_account_id",
+          "usage_account_id",
+        ],
         table: "projects",
         where: { project_id: this.project_id },
         one: true,
       });
 
-      const selected_account_id = pickAccountForQuota({
-        account_id,
+      const runtime_account_id =
+        resolveRuntimeSponsorAccountId({
+          runtime_sponsor_account_id,
+          usage_account_id,
+          users,
+        }) ??
+        pickAccountForQuota({
+          account_id,
+          users,
+          last_active,
+          last_started_by,
+        });
+      const storage_account_id = pickStorageAccountForQuota({
+        usage_account_id,
         users,
         last_active,
         last_started_by,
       });
-      const membershipDefaults =
-        await getMembershipProjectDefaultsForAccount(selected_account_id);
-      const settingsWithMembership = mergeProjectSettingsWithMembership(
+      const runtimeDefaults =
+        await getMembershipProjectDefaultsForAccount(runtime_account_id);
+      const runtimeSettings = mergeProjectSettingsWithMembership(
         settings,
-        membershipDefaults,
+        runtimeDefaults,
       );
       const site_settings = await getQuotaSiteSettings(); // quick, usually cached
-      run_quota = quota(settingsWithMembership, undefined, site_settings);
+      run_quota = quota(runtimeSettings, undefined, site_settings);
+
+      if (storage_account_id && storage_account_id !== runtime_account_id) {
+        const storageDefaults =
+          await getMembershipProjectDefaultsForAccount(storage_account_id);
+        const storageSettings = mergeProjectSettingsWithMembership(
+          settings,
+          storageDefaults,
+        );
+        const storageQuota = quota(storageSettings, undefined, site_settings);
+        if (storageQuota.disk_quota != null) {
+          run_quota.disk_quota = storageQuota.disk_quota;
+        }
+      }
     }
 
     const set: Record<string, unknown> = { run_quota };
@@ -467,7 +512,7 @@ function pickAccountForQuota({
   last_started_by,
 }: {
   account_id?: string;
-  users?: Record<string, { group?: string }> | null;
+  users?: ProjectUsers;
   last_active?: Record<string, unknown> | null;
   last_started_by?: string | null;
 }): string | undefined {
@@ -488,9 +533,32 @@ function pickAccountForQuota({
   return user_ids.find((id) => users?.[id]?.group === "owner") ?? user_ids[0];
 }
 
+function pickStorageAccountForQuota({
+  usage_account_id,
+  users,
+  last_active,
+  last_started_by,
+}: {
+  usage_account_id?: string | null;
+  users?: ProjectUsers;
+  last_active?: Record<string, unknown> | null;
+  last_started_by?: string | null;
+}): string | undefined {
+  const usageAccount = `${usage_account_id ?? ""}`.trim();
+  if (usageAccount) return usageAccount;
+  return (
+    getProjectOwnerAccountId(users) ??
+    pickAccountForQuota({
+      users,
+      last_active,
+      last_started_by,
+    })
+  );
+}
+
 function pickLastActiveAccount(
   last_active?: Record<string, unknown> | null,
-  users?: Record<string, { group?: string }> | null,
+  users?: ProjectUsers,
 ): string | undefined {
   if (!last_active) return;
   let best_id: string | undefined;

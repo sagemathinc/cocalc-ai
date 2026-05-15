@@ -900,6 +900,15 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     );
   }
 
+  _user_set_query_project_autostart_enabled(
+    ...args: UserQueryMethodArgs<"_user_set_query_project_autostart_enabled">
+  ): UserQueryMethodReturn<"_user_set_query_project_autostart_enabled"> {
+    return userQuery._user_set_query_project_autostart_enabled.call(
+      this,
+      ...args,
+    );
+  }
+
   _user_set_query_project_change_before(
     ...args: UserQueryMethodArgs<"_user_set_query_project_change_before">
   ): UserQueryMethodReturn<"_user_set_query_project_change_before"> {

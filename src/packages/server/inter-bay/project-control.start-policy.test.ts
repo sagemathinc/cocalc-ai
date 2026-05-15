@@ -96,8 +96,10 @@ jest.mock("@cocalc/server/conat/api/projects", () => ({
 
 function mockProjectRow({
   allowCollaboratorStarts,
+  autostartEnabled,
 }: {
   allowCollaboratorStarts?: boolean | null;
+  autostartEnabled?: boolean | null;
 }) {
   poolQueryMock.mockResolvedValue({
     rows: [
@@ -105,6 +107,7 @@ function mockProjectRow({
         runtime_sponsor_account_id: "owner",
         usage_account_id: null,
         allow_collaborator_starts_using_sponsor: allowCollaboratorStarts,
+        autostart_enabled: autostartEnabled,
         users: {
           owner: { group: "owner" },
           collaborator: { group: "collaborator" },
@@ -165,13 +168,52 @@ describe("project-control runtime sponsor start policy", () => {
     expect(startMock).toHaveBeenCalled();
   });
 
+  it("blocks autostart when automatic starts are disabled", async () => {
+    mockProjectRow({ autostartEnabled: false });
+    const { handleProjectControlStart } = await import("./project-control");
+
+    await expect(
+      handleProjectControlStart({
+        project_id: "project-1",
+        account_id: "owner",
+        autostart: true,
+        lro_op_id: "op-1",
+        source_bay_id: "bay-0",
+        epoch: 0,
+      }),
+    ).rejects.toThrow("Automatic starts are disabled");
+
+    expect(reserveSlotMock).not.toHaveBeenCalled();
+    expect(startMock).not.toHaveBeenCalled();
+  });
+
+  it("allows explicit manual start when automatic starts are disabled", async () => {
+    mockProjectRow({ autostartEnabled: false });
+    const { handleProjectControlStart } = await import("./project-control");
+
+    await handleProjectControlStart({
+      project_id: "project-1",
+      account_id: "owner",
+      lro_op_id: "op-1",
+      source_bay_id: "bay-0",
+      epoch: 0,
+    });
+
+    expect(reserveSlotMock).toHaveBeenCalled();
+    expect(startMock).toHaveBeenCalled();
+  });
+
   it("bypasses runtime sponsor admission for admin host drain restore starts", async () => {
-    mockProjectRow({ allowCollaboratorStarts: false });
+    mockProjectRow({
+      allowCollaboratorStarts: false,
+      autostartEnabled: false,
+    });
     const { handleProjectControlStart } = await import("./project-control");
 
     await handleProjectControlStart({
       project_id: "project-1",
       account_id: "collaborator",
+      autostart: true,
       lro_op_id: "op-1",
       source_bay_id: "bay-0",
       managed_egress_override: "admin-host-drain",

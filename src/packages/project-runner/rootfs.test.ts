@@ -119,4 +119,22 @@ describe("rootfs overlay mount recovery", () => {
     expect(mockedRm).not.toHaveBeenCalledWith(upperdir, expect.anything());
     expect(executeCode).toHaveBeenCalledTimes(1);
   });
+
+  it("reports disk quota exhaustion when it cannot persist the current image", async () => {
+    mockedWriteFile.mockRejectedValueOnce(
+      Object.assign(new Error("Unknown system error -122"), { errno: -122 }),
+    );
+
+    const mod = await import("./run/rootfs");
+
+    await expect(
+      mod.mount({
+        project_id: "proj-quota",
+        home: "/mnt/cocalc/project-proj-quota",
+        config: { image: "docker.io/buildpack-deps:noble-scm" } as any,
+      }),
+    ).rejects.toThrow(/project disk quota is full/);
+
+    expect(executeCode).not.toHaveBeenCalled();
+  });
 });

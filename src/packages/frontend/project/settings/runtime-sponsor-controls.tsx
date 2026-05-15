@@ -8,6 +8,11 @@ import { useState } from "react";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Paragraph } from "@cocalc/frontend/components";
+import {
+  accountIsProjectCollaborator,
+  projectOwnerAccountId,
+  runtimeSponsorAccountId,
+} from "@cocalc/frontend/projects/runtime-start-policy";
 import { User } from "@cocalc/frontend/users/user";
 import { COLORS } from "@cocalc/util/theme";
 
@@ -20,39 +25,11 @@ interface Props {
   project_id: string;
 }
 
-function accountIsProjectCollaborator(
-  project: Project,
-  account_id: string | undefined,
-): boolean {
-  if (!account_id) return false;
-  const group = project.getIn(["users", account_id, "group"]);
-  return group === "owner" || group === "collaborator";
-}
-
-function projectOwnerAccountId(project: Project): string | undefined {
-  const users = project.get("users");
-  if (!users) return undefined;
-  return users
-    .keySeq()
-    .find((account_id) => users.getIn([account_id, "group"]) === "owner");
-}
-
-function runtimeSponsorAccountId(project: Project): string | undefined {
-  const explicitSponsor = `${project.get("runtime_sponsor_account_id") ?? ""}`;
-  if (accountIsProjectCollaborator(project, explicitSponsor)) {
-    return explicitSponsor;
-  }
-  const usageSponsor = `${project.get("usage_account_id") ?? ""}`;
-  if (accountIsProjectCollaborator(project, usageSponsor)) {
-    return usageSponsor;
-  }
-  return projectOwnerAccountId(project);
-}
-
 export function RuntimeSponsorControls({ project, project_id }: Props) {
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const [saving, setSaving] = useState(false);
+  const [savingAutostart, setSavingAutostart] = useState(false);
   const [changingSponsor, setChangingSponsor] = useState(false);
   const [error, setError] = useState("");
   const sponsorAccountId = runtimeSponsorAccountId(project);
@@ -60,9 +37,11 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
   const isSponsor = !!account_id && account_id === sponsorAccountId;
   const isCollaborator = accountIsProjectCollaborator(project, account_id);
   const canEdit = isAdmin || isOwner || isSponsor;
+  const canEditAutostart = isAdmin || isOwner;
   const canSelfSponsor = isCollaborator && !isSponsor;
   const checked =
     project.get("allow_collaborator_starts_using_sponsor") !== false;
+  const autostartChecked = project.get("autostart_enabled") !== false;
 
   async function setAllowCollaboratorStarts(value: boolean) {
     setError("");
@@ -89,6 +68,20 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
       setError(`${err}`);
     } finally {
       setChangingSponsor(false);
+    }
+  }
+
+  async function setAutostartEnabled(value: boolean) {
+    setError("");
+    setSavingAutostart(true);
+    try {
+      await redux
+        .getActions("projects")
+        .set_project_autostart_enabled(project_id, value);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSavingAutostart(false);
     }
   }
 
@@ -154,6 +147,36 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
           onChange={setAllowCollaboratorStarts}
         />
       </Space>
+      <Space
+        align="start"
+        style={{
+          width: "100%",
+          justifyContent: "space-between",
+          gap: 16,
+          marginTop: 16,
+        }}
+      >
+        <div>
+          <Text strong>Automatic starts</Text>
+          <Paragraph style={{ color: COLORS.GRAY_D, margin: "4px 0 0" }}>
+            Allow SSH, HTTP/app access, terminals, Jupyter, Codex, and other
+            wake-on-use paths to start this project automatically. Turn this off
+            when starts should only happen from an explicit Start button.
+          </Paragraph>
+          <Paragraph style={{ color: COLORS.GRAY_M, margin: "4px 0 0" }}>
+            Automatic starts still use the runtime sponsor&apos;s simultaneous
+            running-project slots. They never stop another project to make room.
+          </Paragraph>
+        </div>
+        <Switch
+          checked={autostartChecked}
+          loading={savingAutostart}
+          disabled={!canEditAutostart}
+          checkedChildren="Allowed"
+          unCheckedChildren="Blocked"
+          onChange={setAutostartEnabled}
+        />
+      </Space>
       {!canEdit && (
         <Alert
           style={{ marginTop: 10 }}
@@ -162,12 +185,20 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
           message="Only project owners, the runtime sponsor, and administrators can change this setting."
         />
       )}
+      {canEdit && !canEditAutostart && (
+        <Alert
+          style={{ marginTop: 10 }}
+          type="info"
+          showIcon
+          message="Only project owners and administrators can change automatic start settings."
+        />
+      )}
       {error && (
         <Alert
           style={{ marginTop: 10 }}
           type="error"
           showIcon
-          message="Unable to save collaborator start policy"
+          message="Unable to save runtime start policy"
           description={error}
         />
       )}

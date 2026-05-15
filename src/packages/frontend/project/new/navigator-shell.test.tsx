@@ -179,6 +179,12 @@ jest.mock("@cocalc/frontend/project/page/url-transform", () => ({
   default: () => (value: string) => value,
 }));
 
+jest.mock("@cocalc/frontend/project/start-button", () => ({
+  StartButton: ({ project_id }: { project_id: string }) => (
+    <button type="button">Start {project_id}</button>
+  ),
+}));
+
 const {
   NavigatorShell,
   classifyNavigatorCodexError,
@@ -351,6 +357,17 @@ describe("NavigatorShell keyboard suppression", () => {
     });
   });
 
+  it("classifies missing project volume errors as start-required", () => {
+    expect(
+      classifyNavigatorCodexError(
+        "Error: project volume does not exist: /mnt/cocalc/project-1",
+      ),
+    ).toMatchObject({
+      kind: "missing-volume",
+      title: "Project files are not available on this host yet.",
+    });
+  });
+
   it("retries Navigator chat initialization while the project is starting", () => {
     expect(
       isNavigatorChatInitRetryable({
@@ -358,6 +375,15 @@ describe("NavigatorShell keyboard suppression", () => {
         projectState: "starting",
       }),
     ).toBe(true);
+  });
+
+  it("does not retry missing project volume errors indefinitely", () => {
+    expect(
+      isNavigatorChatInitRetryable({
+        error: "Error: project volume does not exist: /mnt/cocalc/project-1",
+        projectState: "starting",
+      }),
+    ).toBe(false);
   });
 
   it("retries transient filesystem initialization errors after startup", () => {

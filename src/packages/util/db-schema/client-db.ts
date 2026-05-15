@@ -25,6 +25,8 @@ class ClientDB {
       );
     this._user_set_query_project_runtime_sponsor_account_id =
       this._user_set_query_project_runtime_sponsor_account_id.bind(this);
+    this._user_set_query_project_autostart_enabled =
+      this._user_set_query_project_autostart_enabled.bind(this);
     this._user_set_query_project_change_after =
       this._user_set_query_project_change_after.bind(this);
     this._user_set_query_account_change_after =
@@ -95,6 +97,20 @@ class ClientDB {
     }
     if (typeof value !== "string" || value.length === 0) {
       throw Error("runtime_sponsor_account_id must be a non-empty string");
+    }
+    return value;
+  }
+
+  _user_set_query_project_autostart_enabled(obj) {
+    const value =
+      obj != null && typeof obj.get === "function"
+        ? obj.get("autostart_enabled")
+        : obj?.autostart_enabled;
+    if (value == null) {
+      return undefined;
+    }
+    if (typeof value !== "boolean") {
+      throw Error("autostart_enabled must be a boolean");
     }
     return value;
   }

@@ -849,7 +849,7 @@ async function ensureProjectContainerRunning(projectId: string): Promise<void> {
       state,
     });
   }
-  await hubApi.projects.start({ project_id: projectId });
+  await hubApi.projects.start({ project_id: projectId, autostart: true });
 
   const deadline = Date.now() + PROJECT_START_TIMEOUT_MS;
   while (Date.now() < deadline) {

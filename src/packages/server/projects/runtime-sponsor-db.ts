@@ -9,6 +9,7 @@ import isAdmin from "@cocalc/server/accounts/is-admin";
 import {
   canActorStartUsingRuntimeSponsor,
   collaboratorSponsorStartDisabledError,
+  projectAutostartDisabledError,
   resolveRuntimeSponsorAccountId,
 } from "./runtime-sponsor";
 
@@ -18,6 +19,7 @@ export type ProjectRuntimeSponsor = {
   host_id?: string | null;
   users?: Record<string, { group?: string }> | null;
   allow_collaborator_starts_using_sponsor?: boolean | null;
+  autostart_enabled?: boolean | null;
 };
 
 export async function loadProjectRuntimeSponsor(
@@ -27,13 +29,14 @@ export async function loadProjectRuntimeSponsor(
     runtime_sponsor_account_id?: string | null;
     usage_account_id?: string | null;
     allow_collaborator_starts_using_sponsor?: boolean | null;
+    autostart_enabled?: boolean | null;
     users?: Record<string, { group?: string }> | null;
     owning_bay_id?: string | null;
     host_id?: string | null;
   }>(
     `
       SELECT runtime_sponsor_account_id, usage_account_id,
-             allow_collaborator_starts_using_sponsor, users,
+             allow_collaborator_starts_using_sponsor, autostart_enabled, users,
              owning_bay_id, host_id
         FROM projects
        WHERE project_id=$1
@@ -56,7 +59,18 @@ export async function loadProjectRuntimeSponsor(
     users: row.users,
     allow_collaborator_starts_using_sponsor:
       row.allow_collaborator_starts_using_sponsor,
+    autostart_enabled: row.autostart_enabled,
   };
+}
+
+export function assertProjectAutostartEnabled({
+  sponsor,
+}: {
+  sponsor: ProjectRuntimeSponsor;
+}): void {
+  if (sponsor.autostart_enabled === false) {
+    throw projectAutostartDisabledError();
+  }
 }
 
 export async function assertCanStartUsingRuntimeSponsor({

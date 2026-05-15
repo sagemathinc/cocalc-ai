@@ -35,6 +35,17 @@ const RECOVERABLE_OVERLAY_MOUNT_PATTERNS = [
 const PROJECT_ROOTS =
   process.env.COCALC_PROJECT_ROOTS ?? join(data, "cache", "project-roots");
 
+function isDiskQuotaError(err: unknown): boolean {
+  const anyErr = err as { code?: unknown; errno?: unknown; message?: unknown };
+  const text = `${anyErr?.message ?? err ?? ""}`.toLowerCase();
+  return (
+    anyErr?.code === "EDQUOT" ||
+    anyErr?.errno === -122 ||
+    text.includes("disk quota exceeded") ||
+    text.includes("unknown system error -122")
+  );
+}
+
 function getMergedPath(project_id) {
   return join(PROJECT_ROOTS, project_id);
 }
@@ -227,7 +238,16 @@ export async function mount({
     await mkdir(merged, { recursive: true });
 
     // Persist image info for later lookup (e.g., ephemeral exec when the container is stopped).
-    await writeFile(imageName, image);
+    try {
+      await writeFile(imageName, image);
+    } catch (err) {
+      if (isDiskQuotaError(err)) {
+        throw new Error(
+          "project disk quota is full while recording the RootFS image; free space or increase the project's disk quota, then start it again",
+        );
+      }
+      throw err;
+    }
 
     report({
       type: "mount-rootfs",

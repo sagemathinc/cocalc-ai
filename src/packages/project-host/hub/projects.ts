@@ -552,6 +552,7 @@ type StartMetadata = {
   authorized_keys?: string;
   run_quota?: any;
   env?: ProjectEnv;
+  autostart_enabled?: boolean | null;
   secrets?: Record<string, string>;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
   secret_names?: string[];
@@ -601,11 +602,13 @@ async function resolveStartMetadata({
   authorized_keys,
   run_quota,
   image,
+  autostart,
 }: {
   project_id: string;
   authorized_keys?: string;
   run_quota?: any;
   image?: string;
+  autostart?: boolean;
 }): Promise<StartMetadata> {
   const existing = getProject(project_id);
   const cachedSecretNames = (existing as any)?.secret_names;
@@ -631,6 +634,7 @@ async function resolveStartMetadata({
     run_quota: run_quota ?? (existing as any)?.run_quota,
     image: image ?? existing?.image ?? undefined,
     env: (existing as any)?.env,
+    autostart_enabled: (existing as any)?.autostart_enabled,
     secrets: cachedSecrets,
     secret_names: cachedSecretNames,
   };
@@ -640,6 +644,7 @@ async function resolveStartMetadata({
     resolved.run_quota == null ||
     resolved.env == null ||
     resolved.secrets == null ||
+    (autostart && resolved.autostart_enabled == null) ||
     !existing?.title;
   if (needsMaster) {
     try {
@@ -666,6 +671,8 @@ async function resolveStartMetadata({
             resolved.authorized_keys ?? authoritative.authorized_keys,
           run_quota: resolved.run_quota ?? authoritative.run_quota,
           env: resolved.env ?? authoritative.env,
+          autostart_enabled:
+            authoritative.autostart_enabled ?? resolved.autostart_enabled,
           secrets: secrets ?? resolved.secrets,
           secret_names,
         };
@@ -1235,6 +1242,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     restore,
     restore_backup_id,
     lro_op_id,
+    autostart,
     managed_egress_override,
   }: {
     project_id: string;
@@ -1244,6 +1252,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     restore?: "none" | "auto" | "required";
     restore_backup_id?: string;
     lro_op_id?: string;
+    autostart?: boolean;
     managed_egress_override?: ManagedProjectEgressOverride;
   }): Promise<{
     op_id: string;
@@ -1270,8 +1279,14 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         authorized_keys,
         run_quota,
         image,
+        autostart,
       });
       const startMetadata = resolved;
+      if (autostart && startMetadata.autostart_enabled === false) {
+        throw new Error(
+          "Automatic starts are disabled for this project. Use the project Start button, then try again.",
+        );
+      }
       upsertProjectStopState({
         project_id,
         last_started_ms: Date.now(),

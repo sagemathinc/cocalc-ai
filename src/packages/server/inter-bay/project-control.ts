@@ -47,6 +47,7 @@ import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-loc
 import { setProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import {
+  assertProjectAutostartEnabled,
   assertCanStartUsingRuntimeSponsor,
   loadProjectRuntimeSponsor,
 } from "@cocalc/server/projects/runtime-sponsor-db";
@@ -149,6 +150,9 @@ export async function handleProjectControlStart(
     req.managed_egress_override === "admin-host-drain";
   try {
     if (!bypassRuntimeSlotAdmission) {
+      if (req.autostart) {
+        assertProjectAutostartEnabled({ sponsor });
+      }
       await assertCanStartUsingRuntimeSponsor({
         sponsor,
         account_id: req.account_id,

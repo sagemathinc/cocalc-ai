@@ -12,7 +12,7 @@ It's really more than just that button, since it gives info as starting/stopping
 happens, and also when the system is heavily loaded.
 */
 
-import { Alert, Button, Progress, Space, Spin } from "antd";
+import { Alert, Button, Modal, Progress, Space, Spin } from "antd";
 import type { ButtonProps } from "antd";
 import { CSSProperties, useRef, useState } from "react";
 import { useIntl } from "react-intl";
@@ -44,6 +44,10 @@ import {
   type RuntimeSponsorDenial,
 } from "@cocalc/util/runtime-sponsor-denial";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
+import {
+  formatProjectStartPolicyBlock,
+  getProjectStartPolicyBlock,
+} from "@cocalc/frontend/projects/runtime-start-policy";
 
 const STYLE: CSSProperties = {
   fontSize: "40px",
@@ -72,9 +76,22 @@ export function StartButton({
   const project_id = projectIdProp ?? contextProjectId;
   const resolvedProjectId = project_id ?? "";
   const project_map = useTypedRedux("projects", "project_map");
+  const project = project_map?.get(resolvedProjectId);
+  const account_id = useTypedRedux("account", "account_id");
+  const isAdmin = !!useTypedRedux("account", "is_admin");
   const host_id = project_map?.get(resolvedProjectId)?.get("host_id") as
     | string
     | undefined;
+  const startPolicyBlock = useMemo(
+    () =>
+      getProjectStartPolicyBlock({
+        project,
+        account_id,
+        is_admin: isAdmin,
+        autostart: false,
+      }),
+    [project, account_id, isAdmin],
+  );
   const hostInfo = useHostInfo(host_id);
   const hostOperational = useMemo(
     () => evaluateHostOperational(hostInfo),
@@ -195,11 +212,45 @@ export function StartButton({
     );
 
     const startProject = async () => {
+      if (startPolicyBlock?.code === "collaborator_sponsor_disabled") {
+        Modal.confirm({
+          title: "Use your membership to start this project?",
+          content: (
+            <div>
+              <p>{startPolicyBlock.message}</p>
+              <p style={{ marginBottom: 0 }}>{startPolicyBlock.action}</p>
+            </div>
+          ),
+          okText: "Use my membership and start",
+          cancelText: "Cancel",
+          onOk: async () => {
+            try {
+              await redux
+                .getActions("projects")
+                .set_project_runtime_sponsor_to_me(project_id);
+              await redux.getActions("projects").start_project(project_id);
+            } catch (err) {
+              Modal.error({
+                title: "Unable to start project",
+                content: `${err}`,
+              });
+            }
+          },
+        });
+        return;
+      }
       try {
         await redux.getActions("projects").start_project(project_id);
       } catch (err) {
-        // maybe ui should show this some other way
-        console.warn("WARNING -- issue starting project ", err);
+        Modal.error({
+          title: "Unable to start project",
+          content:
+            err instanceof Error
+              ? err.message
+              : startPolicyBlock
+                ? formatProjectStartPolicyBlock(startPolicyBlock)
+                : `${err}`,
+        });
       }
     };
 

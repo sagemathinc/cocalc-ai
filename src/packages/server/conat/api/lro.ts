@@ -22,6 +22,7 @@ import {
   getHostAccessForAccount,
   hostAccessRoleCan,
 } from "@cocalc/server/project-host/access";
+import { cancelStaleProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
 
 const DISMISSABLE_STATUSES: LroStatus[] = [
   "succeeded",
@@ -122,6 +123,9 @@ export async function list({
   include_completed?: boolean;
 }): Promise<LroSummary[]> {
   await assertScopeAccess({ account_id, scope_type, scope_id, mode: "read" });
+  if (scope_type === "project") {
+    await cancelStaleProjectStartLros({ project_id: scope_id });
+  }
   return await listLro({ scope_type, scope_id, include_completed });
 }
 

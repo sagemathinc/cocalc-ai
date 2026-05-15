@@ -183,6 +183,17 @@ export function extend_PostgreSQL<TBase extends PostgreSQLConstructor>(
       );
     }
 
+    _user_set_query_project_autostart_enabled(
+      ...args: Parameters<
+        typeof userQuery._user_set_query_project_autostart_enabled
+      >
+    ) {
+      return userQuery._user_set_query_project_autostart_enabled.call(
+        this,
+        ...args,
+      );
+    }
+
     _user_set_query_project_change_before(
       ...args: Parameters<
         typeof userQuery._user_set_query_project_change_before

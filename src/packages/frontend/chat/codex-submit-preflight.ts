@@ -2,6 +2,10 @@ import { until } from "@cocalc/util/async-utils";
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { lite } from "@cocalc/frontend/lite";
+import {
+  getProjectStartPolicyBlock,
+  throwProjectStartPolicyBlock,
+} from "@cocalc/frontend/projects/runtime-start-policy";
 
 export function isCodexPaymentSourceUsable(
   paymentSource?: CodexPaymentSourceInfo,
@@ -32,11 +36,16 @@ export async function ensureProjectRunningForCodex({
 }: {
   project_id?: string;
   redux: {
-    getStore: (name: "projects") => {
+    getStore: (name: string) => {
       get_state: (project_id: string) => string | undefined;
+      get?: (key: string) => any;
+      getIn?: (path: string[]) => any;
     };
     getActions: (name: "projects") => {
-      start_project: (project_id: string) => Promise<boolean> | boolean;
+      start_project: (
+        project_id: string,
+        opts?: { autostart?: boolean },
+      ) => Promise<boolean> | boolean;
     };
   };
   timeoutMs?: number;
@@ -53,9 +62,19 @@ export async function ensureProjectRunningForCodex({
   if (initialState === "running") return;
 
   if (initialState !== "starting") {
+    const accountStore = redux.getStore("account");
+    const block = getProjectStartPolicyBlock({
+      project: store.getIn?.(["project_map", normalizedProjectId]),
+      account_id: accountStore?.get?.("account_id"),
+      is_admin: !!accountStore?.get?.("is_admin"),
+      autostart: true,
+    });
+    if (block) {
+      throwProjectStartPolicyBlock(block);
+    }
     const didStart = await redux
       .getActions("projects")
-      .start_project(normalizedProjectId);
+      .start_project(normalizedProjectId, { autostart: true });
     const stateAfterStart = getState();
     if (
       didStart === false &&

@@ -3,16 +3,24 @@
 import { EventEmitter } from "events";
 import { Map } from "immutable";
 
-function loadTerminalModule() {
+function loadTerminalModule({
+  projectState = "running",
+  project,
+}: {
+  projectState?: string;
+  project?: any;
+} = {}) {
   class MockProjectStore extends EventEmitter {
     private data = Map({
       status: Map({
-        state: "running",
+        state: projectState,
       }),
+      project_map: Map(project ? { "project-1": Map(project) } : {}),
     });
 
     get = (key: string) => this.data.get(key);
     getIn = (path: string[]) => this.data.getIn(path);
+    get_state = () => this.data.getIn(["status", "state"]);
     setStatus = (state: string) => {
       this.data = this.data.set("status", Map({ state }));
       this.emit("change", this.data);
@@ -41,6 +49,7 @@ function loadTerminalModule() {
   const availablePtys = [makePty(), makePty(), makePty()];
   const createdPtys = [...availablePtys];
   const terminalClient = jest.fn(() => availablePtys.shift() ?? makePty());
+  const showProjectStartRequiredModal = jest.fn();
   const reconnectResources: {
     requestReconnect: jest.Mock;
     close: jest.Mock;
@@ -115,11 +124,26 @@ function loadTerminalModule() {
     };
     return {
       redux: {
-        getStore: jest.fn(() => accountStore),
+        getStore: jest.fn((name: string) =>
+          name === "projects" ? projectStore : accountStore,
+        ),
+        getProjectsStore: jest.fn(() => projectStore),
         getProjectActions: jest.fn(() => projectActions),
       },
     };
   });
+
+  jest.doMock("@cocalc/frontend/projects/start-required-modal", () => ({
+    getAutostartProjectStartPolicyBlock: () =>
+      project?.autostart_enabled === false
+        ? {
+            code: "autostart_disabled",
+            message: "Automatic starts are disabled for this project.",
+            action: "Start the project manually, then try again.",
+          }
+        : undefined,
+    showProjectStartRequiredModal,
+  }));
 
   jest.doMock("./themes", () => ({
     setTheme: jest.fn(),
@@ -145,6 +169,7 @@ function loadTerminalModule() {
     ptys: createdPtys,
     projectStore,
     terminalClient,
+    showProjectStartRequiredModal,
     reconnectResources,
     registerReconnectResource,
   };
@@ -287,6 +312,48 @@ describe("connected terminal resizing", () => {
       reason: "terminal_became_visible",
       resetBackoff: true,
     });
+
+    terminal.close();
+  });
+
+  it("shows a manual-start modal instead of connecting when automatic starts are disabled", async () => {
+    const { Terminal, terminalClient, showProjectStartRequiredModal } =
+      loadTerminalModule({
+        projectState: "opened",
+        project: { autostart_enabled: false },
+      });
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const actions = {
+      project_id: "project-1",
+      path: "/tmp/example.term",
+      get_term_env: jest.fn(() => ({})),
+      set_connection_status: jest.fn(),
+      set_title: jest.fn(),
+      set_error: jest.fn(),
+      _tree_is_single_leaf: jest.fn(() => false),
+      close_frame: jest.fn(),
+      open_code_editor_frame: jest.fn(),
+      _get_project_actions: jest.fn(() => ({
+        flag_file_activity: jest.fn(),
+        open_file: jest.fn(),
+        close_tab: jest.fn(),
+        isTabClosed: jest.fn(() => false),
+        open_directory: jest.fn(),
+      })),
+    } as any;
+
+    const terminal = new Terminal(actions, 0, "term-1", parent);
+    await terminal.connect();
+
+    expect(terminalClient).not.toHaveBeenCalled();
+    expect(showProjectStartRequiredModal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "project-1",
+        title: "Start project to connect terminal",
+        block: expect.objectContaining({ code: "autostart_disabled" }),
+      }),
+    );
 
     terminal.close();
   });

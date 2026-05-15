@@ -197,4 +197,72 @@ describe("BaseProject.start RootFS sealing", () => {
     expect(stopProjectOnHostMock).not.toHaveBeenCalled();
     expect(setProjectRootfsImageWithRollbackMock).not.toHaveBeenCalled();
   });
+
+  it("uses runtime sponsor defaults without lowering storage sponsor disk quota", async () => {
+    const OWNER_ID = "33333333-3333-4333-8333-333333333333";
+    const RUNTIME_SPONSOR_ID = "44444444-4444-4444-8444-444444444444";
+    const ACTOR_ID = "55555555-5555-4555-8555-555555555555";
+    const updateCalls: any[] = [];
+
+    queryTableMock = jest.fn(async (opts: any) => {
+      if (opts?.select?.includes("runtime_sponsor_account_id")) {
+        return {
+          settings: {},
+          users: {
+            [OWNER_ID]: { group: "owner" },
+            [RUNTIME_SPONSOR_ID]: { group: "collaborator" },
+          },
+          last_active: null,
+          last_started_by: OWNER_ID,
+          runtime_sponsor_account_id: RUNTIME_SPONSOR_ID,
+          usage_account_id: null,
+        };
+      }
+      if (opts?.query === "UPDATE projects") {
+        updateCalls.push(opts);
+        return {};
+      }
+      throw new Error(`unexpected query table call: ${JSON.stringify(opts)}`);
+    });
+
+    const projectDefaults =
+      await import("@cocalc/server/membership/project-defaults");
+    jest
+      .mocked(projectDefaults.getMembershipProjectDefaultsForAccount)
+      .mockImplementation(async (account_id?: string) => {
+        if (account_id === RUNTIME_SPONSOR_ID) {
+          return { memory: 2000, disk_quota: 1000 };
+        }
+        if (account_id === OWNER_ID) {
+          return { memory: 16000, disk_quota: 10000 };
+        }
+        return {};
+      });
+    jest
+      .mocked(projectDefaults.mergeProjectSettingsWithMembership)
+      .mockImplementation((settings: any, defaults: any) => ({
+        ...(settings ?? {}),
+        ...(defaults ?? {}),
+      }));
+
+    const quotaModule = await import("@cocalc/util/upgrades/quota");
+    jest.mocked(quotaModule.quota).mockImplementation((settings: any) => ({
+      memory_limit: settings?.memory ?? 0,
+      disk_quota: settings?.disk_quota ?? 0,
+    }));
+
+    const { BaseProject } = await import("./base");
+    const project = new BaseProject(PROJECT_ID);
+
+    await project.computeQuota(ACTOR_ID);
+
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].set).toMatchObject({
+      last_started_by: ACTOR_ID,
+      run_quota: {
+        memory_limit: 2000,
+        disk_quota: 10000,
+      },
+    });
+  });
 });

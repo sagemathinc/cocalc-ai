@@ -773,6 +773,7 @@ describe("initCodexProjectRunner", () => {
 
     expect(hubApi.projects.start).toHaveBeenCalledWith({
       project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      autostart: true,
     });
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
@@ -814,6 +815,7 @@ describe("initCodexProjectRunner", () => {
 
     expect(hubApi.projects.start).toHaveBeenCalledWith({
       project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      autostart: true,
     });
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
@@ -822,7 +824,11 @@ describe("initCodexProjectRunner", () => {
     spawnMock.mockReturnValue(new FakeProc());
     execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
       if (args[0] === "inspect" && args[1] === "-f") {
-        cb(new Error("inspect transient failure"), "", "inspect transient failure");
+        cb(
+          new Error("inspect transient failure"),
+          "",
+          "inspect transient failure",
+        );
         return;
       }
       if (args[0] === "ps") {

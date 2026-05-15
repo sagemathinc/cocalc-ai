@@ -46,6 +46,10 @@ import { asyncDebounce, asyncThrottle } from "@cocalc/util/async-utils";
 import { path_split } from "@cocalc/util/misc";
 import { join } from "path";
 import { randomId } from "@cocalc/conat/names";
+import {
+  getAutostartProjectStartPolicyBlock,
+  showProjectStartRequiredModal,
+} from "@cocalc/frontend/projects/start-required-modal";
 //import { argsJoin } from "@cocalc/util/args";
 
 declare const $: any;
@@ -514,6 +518,25 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     if (this.isClosed() || this.ptyExited) return;
 
     try {
+      const projectState =
+        redux.getProjectsStore?.()?.get_state?.(this.project_id) ??
+        redux.getStore("projects")?.get_state?.(this.project_id);
+      const startPolicyBlock =
+        projectState !== "running" && projectState !== "starting"
+          ? getAutostartProjectStartPolicyBlock(this.project_id)
+          : undefined;
+      if (startPolicyBlock) {
+        await this.handleDataFromProject(
+          `\r\n${startPolicyBlock.message} ${startPolicyBlock.action ?? ""}\r\n`,
+        );
+        showProjectStartRequiredModal({
+          project_id: this.project_id,
+          title: "Start project to connect terminal",
+          block: startPolicyBlock,
+        });
+        return;
+      }
+
       if (this.pty != null) {
         this.pty.close();
         this.pty = null;

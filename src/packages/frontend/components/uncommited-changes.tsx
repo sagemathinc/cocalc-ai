@@ -60,7 +60,9 @@ export function UncommittedChanges({
           .getStore("projects")
           ?.getIn(["project_map", project_id, "state", "state"]) != "running"
       ) {
-        redux.getActions("projects").start_project(project_id);
+        redux
+          .getActions("projects")
+          .start_project(project_id, { autostart: true });
       }
     }
   };
