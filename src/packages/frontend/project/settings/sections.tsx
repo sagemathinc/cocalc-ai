@@ -10,9 +10,8 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { lite } from "@cocalc/frontend/lite";
 import { ProjectCollaboratorsContent } from "@cocalc/frontend/project/page/project-collaborators";
-import CreateBackup from "@cocalc/frontend/project/backups/create";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
-import CreateSnapshot from "@cocalc/frontend/project/snapshots/create";
+import { SettingBox } from "@cocalc/frontend/components";
 import {
   KUCALC_COCALC_COM,
   KUCALC_ON_PREMISES,
@@ -20,13 +19,14 @@ import {
 
 import { useProjectCourseInfo } from "../use-project-course";
 import { AboutBox } from "./about-box";
-import { Datastore } from "./datastore";
 import { Environment } from "./environment";
 import { HideDeleteBox } from "./hide-delete-box";
 import { LauncherDefaults } from "./launcher-defaults";
 import { ManagedEgress } from "./managed-egress";
 import { ProjectCapabilities } from "./project-capabilites";
 import { ProjectControl } from "./project-control";
+import { RecoveryPanel } from "./recovery-panel";
+import RootFilesystemImage from "./root-filesystem-image";
 import { useRunQuota } from "./run-quota/hooks";
 import { ProjectSecrets } from "./secrets";
 import type { ProjectSettingsNavItem } from "./section-nav";
@@ -124,9 +124,14 @@ export function useProjectSettingsSections({
       icon: "server",
       label: "Resources",
       title: "Resources",
-      description:
-        "Start, stop, move, archive, and inspect the runtime host and filesystem image.",
-      children: <ProjectControl project={project} mode={componentMode} />,
+      description: "Start, stop, move, archive, and inspect the runtime host.",
+      children: (
+        <ProjectControl
+          project={project}
+          mode={componentMode}
+          showRootFilesystemImage={false}
+        />
+      ),
     },
   ];
 
@@ -152,7 +157,7 @@ export function useProjectSettingsSections({
         label: "Environment",
         title: "Environment",
         description:
-          "Defaults, environment variables, secrets, and software capability checks.",
+          "Launcher defaults, environment variables, secrets, software capability checks, and the root filesystem image.",
         className: "cc-project-flyout-settings-panel",
         children: (
           <Space
@@ -168,6 +173,9 @@ export function useProjectSettingsSections({
               project_id={project_id}
               mode={componentMode}
             />
+            <SettingBox title="Root Filesystem Image" icon="disk-drive">
+              <RootFilesystemImage />
+            </SettingBox>
           </Space>
         ),
       },
@@ -192,24 +200,13 @@ export function useProjectSettingsSections({
         className: "cc-project-flyout-settings-panel",
         extra: showDatastore ? recoveryExtra : undefined,
         children: (
-          <Space
-            direction="vertical"
-            size={sectionGap}
-            style={{ width: "100%" }}
-          >
-            <Space wrap>
-              <CreateSnapshot />
-              <CreateBackup />
-              <CloneProject project_id={project_id} />
-            </Space>
-            {showDatastore && (
-              <Datastore
-                project_id={project_id}
-                mode={componentMode}
-                reloadTrigger={datastoreReload}
-              />
-            )}
-          </Space>
+          <RecoveryPanel
+            project_id={project_id}
+            project={project}
+            mode={componentMode}
+            showDatastore={showDatastore}
+            datastoreReload={datastoreReload}
+          />
         ),
       },
     );
