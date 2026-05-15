@@ -366,7 +366,7 @@ export function HostPickerModal({
       </Space>
       {noSelectableTarget && (
         <Alert
-          type="error"
+          type="warning"
           showIcon
           style={{ marginBottom: 12 }}
           title={

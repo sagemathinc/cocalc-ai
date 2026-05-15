@@ -1171,6 +1171,7 @@ export interface Projects {
 
   moveProject: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     project_id: string;
     dest_host_id?: string;

@@ -259,6 +259,7 @@ describe("projects.getProjectState / getProjectAddress", () => {
     });
     expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
       account_id: "acct-1",
+      browser_id: undefined,
       session_hash: "session-1",
       internalAuth: undefined,
     });
