@@ -23,6 +23,8 @@ import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import SelectUser from "@cocalc/frontend/messages/select-users";
 import { User } from "@cocalc/frontend/users/user";
+import { actions as usersActions } from "@cocalc/frontend/users/actions";
+import { shouldHydrateUserIdentity } from "@cocalc/frontend/users/store";
 import type {
   Host,
   HostAccessEntry,
@@ -250,6 +252,21 @@ type HostDrawerViewModel = {
     }) => void | Promise<void>;
   };
 };
+
+function HostAccessUser({ account_id }: { account_id: string }) {
+  const userMap = useTypedRedux("users", "user_map");
+  const user = userMap?.get(account_id);
+  React.useEffect(() => {
+    if (user == null || shouldHydrateUserIdentity(user)) {
+      usersActions.fetch_non_collaborator(account_id).catch(() => {});
+    }
+  }, [account_id, user]);
+
+  if (user == null) {
+    return <Typography.Text type="secondary">User</Typography.Text>;
+  }
+  return <User account_id={account_id} show_avatar avatarSize={18} />;
+}
 
 type HostConfigSpec = {
   cloud?: string | null;
@@ -1364,7 +1381,15 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     }
     setAccessLoading(true);
     try {
-      setAccessEntries(await onListHostAccess(host.id));
+      const entries = await onListHostAccess(host.id);
+      await Promise.all(
+        entries.map((entry) =>
+          usersActions
+            .fetch_non_collaborator(entry.account_id)
+            .catch(() => undefined),
+        ),
+      );
+      setAccessEntries(entries);
     } finally {
       setAccessLoading(false);
     }
@@ -1982,11 +2007,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                   Add
                 </Button>
               </Space.Compact>
-              {accessLoading ? (
-                <Typography.Text type="secondary">
-                  Loading access list...
-                </Typography.Text>
-              ) : accessEntries.length ? (
+              {accessEntries.length ? (
                 <Space
                   orientation="vertical"
                   style={{ width: "100%" }}
@@ -1998,11 +2019,7 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       style={{ justifyContent: "space-between", width: "100%" }}
                     >
                       <Space>
-                        <User
-                          account_id={entry.account_id}
-                          show_avatar
-                          avatarSize={18}
-                        />
+                        <HostAccessUser account_id={entry.account_id} />
                         <Typography.Text
                           type="secondary"
                           copyable={{ text: entry.account_id }}
@@ -2045,7 +2062,16 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       )}
                     </Space>
                   ))}
+                  {accessLoading && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      Refreshing access list...
+                    </Typography.Text>
+                  )}
                 </Space>
+              ) : accessLoading ? (
+                <Typography.Text type="secondary">
+                  Loading access list...
+                </Typography.Text>
               ) : (
                 <Typography.Text type="secondary">
                   No delegated access configured.
