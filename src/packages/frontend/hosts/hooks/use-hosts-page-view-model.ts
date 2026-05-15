@@ -1639,6 +1639,14 @@ export const useHostsPageViewModel = () => {
     },
     [hub, setHosts],
   );
+  const deprovisionOrDeleteHost = React.useCallback(
+    async (id: string, opts?: { skip_backups?: boolean }) => {
+      await runFreshAuthAction(async () => {
+        await removeHost(id, opts);
+      });
+    },
+    [removeHost, runFreshAuthAction],
+  );
 
   const hostListVm = useHostListViewModel({
     hosts,
@@ -1653,7 +1661,7 @@ export const useHostsPageViewModel = () => {
     onStop: (id: string, opts) => setStatus(id, "stop", opts),
     onRestart: restartHost,
     onDrain: (id: string, opts) => drainHost(id, opts),
-    onDelete: (id: string, opts) => removeHost(id, opts),
+    onDelete: deprovisionOrDeleteHost,
     onRefresh: refreshHostsNow,
     onCancelOp: cancelHostOp,
     onRefreshCloudStatus: isAdmin ? refreshHostCloudState : undefined,
@@ -1708,7 +1716,7 @@ export const useHostsPageViewModel = () => {
     hostOps,
     onClose: closeDetails,
     onEdit: openEdit,
-    onDelete: (id: string, opts) => removeHost(id, opts),
+    onDelete: deprovisionOrDeleteHost,
     onUpgrade: canMaintainSelectedHost ? upgradeHostSoftware : undefined,
     onUpgradeAll: canMaintainSelectedHost ? upgradeAllHostSoftware : undefined,
     onReconcile: canMaintainSelectedHost ? reconcileHostSoftware : undefined,
