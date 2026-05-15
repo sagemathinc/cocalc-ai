@@ -28,6 +28,16 @@ type ProjectLogStreamLike = {
   getAll: () => AsyncGenerator<ProjectLogStreamEntry, void, unknown>;
 };
 
+type ProjectRuntimeStateLike = {
+  state?: { state?: string } | null;
+};
+
+const PROJECT_LOG_RUNTIME_STATES = new Set([
+  "running",
+  "starting",
+  "restarting",
+]);
+
 export function getMovePlacementFallbackTimeoutMs(
   summary: Pick<LroStatus, "status" | "timedOut">,
   timeoutMs: number,
@@ -38,6 +48,20 @@ export function getMovePlacementFallbackTimeoutMs(
   // An explicit failed/canceled move can still leave placement eventually
   // updated, but waiting the full command timeout here wedges automation.
   return Math.min(timeoutMs, 10_000);
+}
+
+export function assertProjectLogRuntimeAvailable({
+  project,
+}: {
+  project: ProjectRuntimeStateLike;
+}): void {
+  const state = `${project.state?.state ?? ""}`.trim();
+  if (!state || PROJECT_LOG_RUNTIME_STATES.has(state)) {
+    return;
+  }
+  throw new Error(
+    `project activity log is unavailable because the project is ${state}; start the project and try again`,
+  );
 }
 
 export function assertProjectRehomeConfirmed({
@@ -629,9 +653,14 @@ export function registerProjectOpsCommands(
     .action(
       async (opts: { project?: string; limit?: string }, command: Command) => {
         await withContext(command, "project log", async (ctx) => {
-          const { project: ws, client } = await resolveProjectConatClient(
+          const project = await resolveProjectFromArgOrContext(
             ctx,
             opts.project,
+          );
+          assertProjectLogRuntimeAvailable({ project });
+          const { project: ws, client } = await resolveProjectConatClient(
+            ctx,
+            project.project_id,
           );
           const limit = parsePositiveInteger(opts.limit, 200, "--limit");
           const stream = astream<ProjectLogRow>({
