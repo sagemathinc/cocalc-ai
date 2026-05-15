@@ -226,7 +226,7 @@ export function useProjectSettingsSections({
 
   if (showSSH) {
     sections.push({
-      id: "ssh-api",
+      id: "ssh",
       icon: "key",
       label: "SSH",
       title: "SSH",
