@@ -85,6 +85,7 @@ import type {
   HostDrainOptions,
 } from "../types";
 import { getHostSizeDisplay } from "../utils/format";
+import { canManageHostLifecycle } from "../utils/access";
 import {
   currentProjectHostAutomaticRollback,
   currentProjectHostRolloutPhase,
@@ -639,14 +640,20 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
   const deprovisionTargets = React.useMemo(
     () =>
       selectedHosts.filter(
-        (host) => !host.deleted && host.status !== "deprovisioned",
+        (host) =>
+          canManageHostLifecycle(host) &&
+          !host.deleted &&
+          host.status !== "deprovisioned",
       ),
     [selectedHosts],
   );
   const deleteTargets = React.useMemo(
     () =>
       selectedHosts.filter(
-        (host) => !host.deleted && host.status === "deprovisioned",
+        (host) =>
+          canManageHostLifecycle(host) &&
+          !host.deleted &&
+          host.status === "deprovisioned",
       ),
     [selectedHosts],
   );
@@ -1055,6 +1062,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           (statusValue === "running" || statusValue === "error") &&
           (supportsRestart || supportsHardRestart) &&
           !hostOpActive;
+        const canManageLifecycle = canManageHostLifecycle(host);
         const deleteLabel = isDeleted
           ? "Deleted"
           : host.status === "deprovisioned"
@@ -1133,20 +1141,22 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               Restart
             </Button>
           ),
-          <Button
-            key="drain"
-            size="small"
-            type="link"
-            disabled={isDeleted || hostOpActive}
-            onClick={() =>
-              confirmHostDrain({
-                host,
-                onConfirm: (opts) => onDrain(host.id, opts),
-              })
-            }
-          >
-            Drain
-          </Button>,
+          canManageLifecycle ? (
+            <Button
+              key="drain"
+              size="small"
+              type="link"
+              disabled={isDeleted || hostOpActive}
+              onClick={() =>
+                confirmHostDrain({
+                  host,
+                  onConfirm: (opts) => onDrain(host.id, opts),
+                })
+              }
+            >
+              Drain
+            </Button>
+          ) : null,
           canCancelBackups && onCancelOp ? (
             <Popconfirm
               key="cancel"
@@ -1160,16 +1170,18 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
               </Button>
             </Popconfirm>
           ) : null,
-          <Button
-            key="edit"
-            size="small"
-            type="link"
-            disabled={isDeleted}
-            onClick={() => onEdit(host)}
-          >
-            Edit
-          </Button>,
-          isDeprovisioned ? (
+          canManageLifecycle ? (
+            <Button
+              key="edit"
+              size="small"
+              type="link"
+              disabled={isDeleted}
+              onClick={() => onEdit(host)}
+            >
+              Edit
+            </Button>
+          ) : null,
+          canManageLifecycle && isDeprovisioned ? (
             <Popconfirm
               key="delete"
               title={deleteTitle}
@@ -1188,7 +1200,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
                 {deleteLabel}
               </Button>
             </Popconfirm>
-          ) : (
+          ) : canManageLifecycle ? (
             <Button
               key="delete"
               size="small"
@@ -1204,7 +1216,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             >
               {deleteLabel}
             </Button>
-          ),
+          ) : null,
         ];
 
         return (

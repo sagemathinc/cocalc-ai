@@ -88,6 +88,7 @@ import {
   getHostRamGiB,
   getHostSizeDisplay,
 } from "../utils/format";
+import { canManageHostLifecycle } from "../utils/access";
 import type { HostDeleteOptions } from "../types";
 import {
   currentProjectHostRolloutPhase,
@@ -1338,8 +1339,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   const hostRamMb = host?.host_ram_mb ?? (hostRam ? hostRam * 1024 : undefined);
   const maxProjectRamMb =
     hostRamMb != null ? Math.max(0, Math.floor(hostRamMb - 3072)) : undefined;
-  const canEditOwnerSpend =
-    host?.access_role === "owner" || host?.access_role === "admin";
+  const canManageLifecycle = canManageHostLifecycle(host);
+  const canEditOwnerSpend = canManageLifecycle;
   const ownerSpendLimitStateColor =
     host?.owner_spend_limit_state === "stopped_limit_exceeded"
       ? "red"
@@ -1517,7 +1518,11 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       ) : null
     ) : null;
   const canForceDeprovision =
-    !!host && isSelfHost && !host.deleted && host.status !== "deprovisioned";
+    canManageLifecycle &&
+    !!host &&
+    isSelfHost &&
+    !host.deleted &&
+    host.status !== "deprovisioned";
   const canReconcile =
     !!host &&
     !host.deleted &&
@@ -2186,97 +2191,107 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       </Card>
     </Space>
   ) : null;
-  const dangerContent = host ? (
-    <Space orientation="vertical" style={{ width: "100%" }} size="middle">
-      {!host.deleted ? (
-        <Card
-          size="small"
-          title="Host lifecycle"
-          styles={{ body: { padding: 12 } }}
-        >
-          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            <Typography.Text type="secondary">
-              Deprovisioning removes the host from service. Permanently deleting
-              is only available after the host is already deprovisioned.
-            </Typography.Text>
-            {isDeprovisioned ? (
-              <Popconfirm
-                title={deleteTitle}
-                okText={deleteOkText}
-                cancelText="Cancel"
-                onConfirm={() => onDelete?.(host.id)}
-                okButtonProps={{ danger: true }}
-              >
+  const dangerContent =
+    host && canManageLifecycle ? (
+      <Space orientation="vertical" style={{ width: "100%" }} size="middle">
+        {!host.deleted ? (
+          <Card
+            size="small"
+            title="Host lifecycle"
+            styles={{ body: { padding: 12 } }}
+          >
+            <Space
+              orientation="vertical"
+              size="small"
+              style={{ width: "100%" }}
+            >
+              <Typography.Text type="secondary">
+                Deprovisioning removes the host from service. Permanently
+                deleting is only available after the host is already
+                deprovisioned.
+              </Typography.Text>
+              {isDeprovisioned ? (
+                <Popconfirm
+                  title={deleteTitle}
+                  okText={deleteOkText}
+                  cancelText="Cancel"
+                  onConfirm={() => onDelete?.(host.id)}
+                  okButtonProps={{ danger: true }}
+                >
+                  <Button
+                    size="small"
+                    danger
+                    disabled={hostOpActive || !onDelete}
+                  >
+                    {deleteLabel}
+                  </Button>
+                </Popconfirm>
+              ) : (
                 <Button
                   size="small"
                   danger
                   disabled={hostOpActive || !onDelete}
+                  onClick={() =>
+                    onDelete &&
+                    confirmHostDeprovision({
+                      host,
+                      onConfirm: (opts) => onDelete(host.id, opts),
+                    })
+                  }
                 >
                   {deleteLabel}
                 </Button>
-              </Popconfirm>
-            ) : (
-              <Button
-                size="small"
-                danger
-                disabled={hostOpActive || !onDelete}
-                onClick={() =>
-                  onDelete &&
-                  confirmHostDeprovision({
-                    host,
-                    onConfirm: (opts) => onDelete(host.id, opts),
-                  })
-                }
-              >
-                {deleteLabel}
-              </Button>
-            )}
-          </Space>
-        </Card>
-      ) : (
-        <Typography.Text type="secondary">
-          Deleted hosts do not expose further destructive actions.
-        </Typography.Text>
-      )}
-      {isSelfHost && selfHost && !host.deleted ? (
-        <Card
-          size="small"
-          title="Connector actions"
-          styles={{ body: { padding: 12 } }}
-        >
-          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            <Typography.Text type="secondary">
-              These actions affect the self-host connector relationship rather
-              than the cloud host lifecycle itself.
-            </Typography.Text>
-            <Space wrap>
-              <Button
-                size="small"
-                danger
-                disabled={hostOpActive}
-                onClick={() => selfHost.onRemove(host)}
-              >
-                Remove connector
-              </Button>
-              {canForceDeprovision && (
-                <Popconfirm
-                  title="Force deprovision this host without contacting your machine?"
-                  okText="Force deprovision"
-                  cancelText="Cancel"
-                  onConfirm={() => selfHost.onForceDeprovision(host)}
-                  okButtonProps={{ danger: true }}
-                >
-                  <Button size="small" disabled={hostOpActive}>
-                    Force deprovision
-                  </Button>
-                </Popconfirm>
               )}
             </Space>
-          </Space>
-        </Card>
-      ) : null}
-    </Space>
-  ) : null;
+          </Card>
+        ) : (
+          <Typography.Text type="secondary">
+            Deleted hosts do not expose further destructive actions.
+          </Typography.Text>
+        )}
+        {isSelfHost && selfHost && !host.deleted ? (
+          <Card
+            size="small"
+            title="Connector actions"
+            styles={{ body: { padding: 12 } }}
+          >
+            <Space
+              orientation="vertical"
+              size="small"
+              style={{ width: "100%" }}
+            >
+              <Typography.Text type="secondary">
+                These actions affect the self-host connector relationship rather
+                than the cloud host lifecycle itself.
+              </Typography.Text>
+              <Space wrap>
+                <Button
+                  size="small"
+                  danger
+                  disabled={hostOpActive}
+                  onClick={() => selfHost.onRemove(host)}
+                >
+                  Remove connector
+                </Button>
+                {canForceDeprovision && (
+                  <Popconfirm
+                    title="Force deprovision this host without contacting your machine?"
+                    okText="Force deprovision"
+                    cancelText="Cancel"
+                    onConfirm={() => selfHost.onForceDeprovision(host)}
+                    okButtonProps={{ danger: true }}
+                  >
+                    <Button size="small" disabled={hostOpActive}>
+                      Force deprovision
+                    </Button>
+                  </Popconfirm>
+                )}
+              </Space>
+            </Space>
+          </Card>
+        ) : null}
+      </Space>
+    ) : null;
   const tabItems = [
     {
       key: "overview",
@@ -4233,12 +4248,14 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
       label: "Logs",
       children: logsContent,
     },
-    {
+  ];
+  if (canManageLifecycle) {
+    tabItems.push({
       key: "danger",
       label: "Danger",
       children: dangerContent,
-    },
-  ];
+    });
+  }
   return (
     <Drawer
       size={drawerWidth}
@@ -4264,14 +4281,16 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             </Tag>
           </Tooltip>
           {onlineTag}
-          <Button
-            type="link"
-            size="small"
-            disabled={!!host.deleted || hostOpActive}
-            onClick={() => onEdit(host)}
-          >
-            Edit
-          </Button>
+          {canManageLifecycle && (
+            <Button
+              type="link"
+              size="small"
+              disabled={!!host.deleted || hostOpActive}
+              onClick={() => onEdit(host)}
+            >
+              Edit
+            </Button>
+          )}
         </Space>
       }
       onClose={onClose}
