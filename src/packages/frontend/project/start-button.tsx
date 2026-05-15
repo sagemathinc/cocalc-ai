@@ -43,6 +43,7 @@ import {
   formatRuntimeSponsorDenial,
   type RuntimeSponsorDenial,
 } from "@cocalc/util/runtime-sponsor-denial";
+import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 
 const STYLE: CSSProperties = {
   fontSize: "40px",
@@ -516,7 +517,8 @@ function RuntimeSponsorDenialDescription({
   const visibleProjects = denial.active_projects.filter(
     (project) => project.visible !== false,
   );
-  const hiddenCount = denial.active_projects.length - visibleProjects.length;
+  const inaccessibleCount =
+    denial.active_projects.length - visibleProjects.length;
   return (
     <div>
       <div>{formatRuntimeSponsorDenial(denial)}</div>
@@ -524,17 +526,17 @@ function RuntimeSponsorDenialDescription({
         <ul style={{ margin: "8px 0 0 18px", padding: 0 }}>
           {visibleProjects.map((project) => (
             <li key={project.project_id}>
-              {project.title || project.project_id}
+              <ProjectTitle project_id={project.project_id} trunc={60} />
               {project.state ? ` (${project.state})` : ""}
             </li>
           ))}
         </ul>
       )}
-      {hiddenCount > 0 && (
+      {inaccessibleCount > 0 && (
         <div style={{ marginTop: "8px" }}>
-          {hiddenCount} sponsored running{" "}
-          {hiddenCount === 1 ? "project is" : "projects are"} not visible to
-          you.
+          {inaccessibleCount} sponsored running{" "}
+          {inaccessibleCount === 1 ? "project is" : "projects are"} not
+          accessible to you.
         </div>
       )}
     </div>
