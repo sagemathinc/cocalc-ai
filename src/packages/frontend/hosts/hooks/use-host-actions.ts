@@ -59,6 +59,7 @@ type HubClient = {
     }) => Promise<HostAccessEntry[]>;
     setHostAccess?: (opts: {
       id: string;
+      browser_id?: string;
       target_account_id?: string;
       target_email_address?: string;
       role: HostAccessRole;
@@ -69,10 +70,12 @@ type HubClient = {
     }) => Promise<HostAccessEntry | undefined>;
     setHostProjectRamLimit?: (opts: {
       id: string;
+      browser_id?: string;
       project_ram_limit_mb?: number | null;
     }) => Promise<Host>;
     setHostOwnerSpendLimits?: (opts: {
       id: string;
+      browser_id?: string;
       owner_spend_limit_5h_usd?: number | null;
       owner_spend_limit_7d_usd?: number | null;
     }) => Promise<Host>;
@@ -423,7 +426,7 @@ export const useHostActions = ({
       return;
     }
     try {
-      await hub.hosts.setHostAccess({ id, ...opts });
+      await hub.hosts.setHostAccess({ id, browser_id, ...opts });
       await refresh();
     } catch (err) {
       if (isFreshAuthRequiredError(err)) {
@@ -461,7 +464,11 @@ export const useHostActions = ({
       return;
     }
     try {
-      await hub.hosts.setHostProjectRamLimit({ id, project_ram_limit_mb });
+      await hub.hosts.setHostProjectRamLimit({
+        id,
+        browser_id,
+        project_ram_limit_mb,
+      });
       await refresh();
     } catch (err) {
       if (isFreshAuthRequiredError(err)) {
@@ -486,7 +493,7 @@ export const useHostActions = ({
       return;
     }
     try {
-      await hub.hosts.setHostOwnerSpendLimits({ id, ...opts });
+      await hub.hosts.setHostOwnerSpendLimits({ id, browser_id, ...opts });
       await refresh();
     } catch (err) {
       if (isFreshAuthRequiredError(err)) {

@@ -522,6 +522,26 @@ async function cleanupDestinationOnFailure(
   });
 }
 
+async function releaseRuntimeSlotAfterMoveStop(project_id: string) {
+  try {
+    const [{ loadProjectRuntimeSponsor }, { releaseProjectRuntimeSlot }] =
+      await Promise.all([
+        import("./runtime-sponsor-db"),
+        import("./runtime-slots"),
+      ]);
+    const sponsor = await loadProjectRuntimeSponsor(project_id);
+    await releaseProjectRuntimeSlot({
+      sponsor_account_id: sponsor.sponsor_account_id,
+      project_id,
+    });
+  } catch (err) {
+    log.warn("moveProjectToHost failed to release runtime slot after stop", {
+      project_id,
+      err,
+    });
+  }
+}
+
 async function buildMoveProjectContext(
   input: MoveProjectToHostInput,
 ): Promise<MoveProjectContext> {
@@ -1730,6 +1750,7 @@ export async function moveProjectToHost(
           await stopProjectOnHost(context.project_id, {
             timeout_ms: MOVE_STOP_PROJECT_TIMEOUT_MS,
           });
+          await releaseRuntimeSlotAfterMoveStop(context.project_id);
           progress({
             step: "start-dest",
             message: "destination workspace stopped after restore",

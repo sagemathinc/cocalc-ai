@@ -73,6 +73,7 @@ export interface ReserveProjectRuntimeSlotResult {
   project_id: string;
   limit?: number;
   current: number;
+  existing: boolean;
   slot: ProjectRuntimeSlot;
 }
 
@@ -208,6 +209,7 @@ async function reserveProjectRuntimeSlotInTransaction(
     project_id: opts.project_id,
     limit,
     current,
+    existing: !!existingSlot,
     slot: rows[0],
   };
 }

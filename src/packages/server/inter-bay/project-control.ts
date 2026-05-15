@@ -47,10 +47,9 @@ import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-loc
 import { setProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
 import {
-  canActorStartUsingRuntimeSponsor,
-  collaboratorSponsorStartDisabledError,
-  resolveRuntimeSponsorAccountId,
-} from "@cocalc/server/projects/runtime-sponsor";
+  assertCanStartUsingRuntimeSponsor,
+  loadProjectRuntimeSponsor,
+} from "@cocalc/server/projects/runtime-sponsor-db";
 import {
   heartbeatProjectRuntimeSlot,
   releaseProjectRuntimeSlot,
@@ -119,69 +118,6 @@ async function assertCurrentProjectOwnership({
   }
 }
 
-async function loadProjectRuntimeSponsor(project_id: string): Promise<{
-  sponsor_account_id: string;
-  owning_bay_id: string;
-  host_id?: string | null;
-  users?: Record<string, { group?: string }> | null;
-  allow_collaborator_starts_using_sponsor?: boolean | null;
-}> {
-  const { rows } = await getPool().query<{
-    runtime_sponsor_account_id?: string | null;
-    usage_account_id?: string | null;
-    allow_collaborator_starts_using_sponsor?: boolean | null;
-    users?: Record<string, { group?: string }> | null;
-    owning_bay_id?: string | null;
-    host_id?: string | null;
-  }>(
-    `
-      SELECT runtime_sponsor_account_id, usage_account_id,
-             allow_collaborator_starts_using_sponsor, users,
-             owning_bay_id, host_id
-        FROM projects
-       WHERE project_id=$1
-       LIMIT 1
-    `,
-    [project_id],
-  );
-  const row = rows[0];
-  if (!row) {
-    throw new Error(`project ${project_id} not found`);
-  }
-  const sponsor_account_id = resolveRuntimeSponsorAccountId(row);
-  if (!sponsor_account_id) {
-    throw new Error(`project ${project_id} has no runtime sponsor`);
-  }
-  return {
-    sponsor_account_id,
-    owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
-    host_id: row.host_id ?? null,
-    users: row.users,
-    allow_collaborator_starts_using_sponsor:
-      row.allow_collaborator_starts_using_sponsor,
-  };
-}
-
-async function assertCanStartUsingRuntimeSponsor({
-  sponsor,
-  account_id,
-}: {
-  sponsor: Awaited<ReturnType<typeof loadProjectRuntimeSponsor>>;
-  account_id?: string;
-}): Promise<void> {
-  const is_admin = account_id ? await isAdmin(account_id) : false;
-  if (
-    !canActorStartUsingRuntimeSponsor({
-      project: sponsor,
-      actor_account_id: account_id,
-      sponsor_account_id: sponsor.sponsor_account_id,
-      is_admin,
-    })
-  ) {
-    throw collaboratorSponsorStartDisabledError();
-  }
-}
-
 export async function handleProjectControlStart(
   req: ProjectControlStartRequest,
 ): Promise<void> {
@@ -209,34 +145,40 @@ export async function handleProjectControlStart(
     source_bay_id: req.source_bay_id,
   });
   let reservedSlot = false;
+  const bypassRuntimeSlotAdmission =
+    req.managed_egress_override === "admin-host-drain";
   try {
-    await assertCanStartUsingRuntimeSponsor({
-      sponsor,
-      account_id: req.account_id,
-    });
-    await reserveProjectRuntimeSlot({
-      ...sponsor,
-      project_id: req.project_id,
-      actor_account_id: req.account_id,
-      reason: "project-start",
-      op_id: req.lro_op_id,
-      state: "starting",
-      ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
-    });
-    reservedSlot = true;
+    if (!bypassRuntimeSlotAdmission) {
+      await assertCanStartUsingRuntimeSponsor({
+        sponsor,
+        account_id: req.account_id,
+      });
+      await reserveProjectRuntimeSlot({
+        ...sponsor,
+        project_id: req.project_id,
+        actor_account_id: req.account_id,
+        reason: "project-start",
+        op_id: req.lro_op_id,
+        state: "starting",
+        ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
+      });
+      reservedSlot = true;
+    }
     await project.start({
       account_id: req.account_id,
       lro_op_id: req.lro_op_id,
       managed_egress_override: req.managed_egress_override,
       restore_backup_id: req.restore_backup_id,
     });
-    await heartbeatProjectRuntimeSlot({
-      sponsor_account_id: sponsor.sponsor_account_id,
-      project_id: req.project_id,
-      host_id: sponsor.host_id,
-      state: "running",
-      ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
-    });
+    if (!bypassRuntimeSlotAdmission) {
+      await heartbeatProjectRuntimeSlot({
+        sponsor_account_id: sponsor.sponsor_account_id,
+        project_id: req.project_id,
+        host_id: sponsor.host_id,
+        state: "running",
+        ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
+      });
+    }
   } catch (err) {
     if (reservedSlot) {
       await releaseProjectRuntimeSlot({

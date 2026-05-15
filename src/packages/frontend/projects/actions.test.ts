@@ -777,6 +777,53 @@ describe("ProjectsActions project metadata updates", () => {
     expect(actions.set_project_closed).toHaveBeenCalledWith(project_id);
   });
 
+  it("keeps an open project missing from a synced table snapshot while an account-level move is running", () => {
+    const projectMap = ImmutableMap<string, any>([
+      [
+        project_id,
+        ImmutableMap({
+          title: "Moving Project",
+        }),
+      ],
+    ]);
+    mockedStore.get.mockImplementation((key) =>
+      key === "project_map"
+        ? projectMap
+        : key === "open_projects"
+          ? [project_id]
+          : undefined,
+    );
+    mockedStore.getIn.mockImplementation((path) => {
+      if (path[0] !== "project_map") {
+        return undefined;
+      }
+      return projectMap.getIn(path.slice(1) as any);
+    });
+    const { actions, redux } = makeActions();
+    actions.set_project_closed = jest.fn();
+
+    actions.handleRealtimeFeedChange({
+      type: "lro.summary",
+      ts: Date.now(),
+      account_id: "acct-1",
+      summary: {
+        op_id: "move-op-1",
+        kind: "project-move",
+        scope_type: "project",
+        scope_id: project_id,
+        status: "running",
+        updated_at: new Date(),
+      },
+    });
+    actions.applyProjectsTableSnapshot(ImmutableMap<string, any>());
+
+    expect(redux._set_state).toHaveBeenCalled();
+    expect(
+      redux._set_state.mock.calls[0][0].projects.project_map.has(project_id),
+    ).toBe(true);
+    expect(actions.set_project_closed).not.toHaveBeenCalled();
+  });
+
   it("does not close an open project that is present in a synced table snapshot", () => {
     const projectMap = ImmutableMap<string, any>([
       [

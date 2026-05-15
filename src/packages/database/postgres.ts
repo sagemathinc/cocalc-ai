@@ -891,6 +891,15 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     );
   }
 
+  _user_set_query_project_runtime_sponsor_account_id(
+    ...args: UserQueryMethodArgs<"_user_set_query_project_runtime_sponsor_account_id">
+  ): UserQueryMethodReturn<"_user_set_query_project_runtime_sponsor_account_id"> {
+    return userQuery._user_set_query_project_runtime_sponsor_account_id.call(
+      this,
+      ...args,
+    );
+  }
+
   _user_set_query_project_change_before(
     ...args: UserQueryMethodArgs<"_user_set_query_project_change_before">
   ): UserQueryMethodReturn<"_user_set_query_project_change_before"> {
