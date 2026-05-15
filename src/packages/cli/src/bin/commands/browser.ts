@@ -106,6 +106,65 @@ import type {
 } from "./browser/types";
 export type { BrowserCommandDeps } from "./browser/types";
 
+const QUICKJS_BROWSER_EXEC_API_DECLARATION = `/**
+ * Browser exec API available in QuickJS sandbox mode.
+ *
+ * Raw browser JavaScript is not available for this selected browser session, so
+ * globals such as window and document are intentionally undefined. Scripts run
+ * inside a QuickJS sandbox and can only use this constrained action API.
+ *
+ * Note: top-level await is not supported in this sandbox wrapper. Return a
+ * Promise from the script when composing asynchronous actions.
+ *
+ * Examples:
+ *   return api.pageUrl;
+ *   return api.waitForSelector("body").then(() => api.click("button"));
+ */
+export type BrowserExecActionResult = {
+  ok?: boolean;
+  [key: string]: unknown;
+};
+
+export type BrowserExecApi = {
+  projectId: string;
+  pageUrl: string;
+  origin: string;
+  action: (name: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  navigate: (url: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  click: (selector: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  clickAt: (x: number, y: number, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  drag: (opts: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  type: (text: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  press: (key: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  reload: (opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  scrollBy: (dy: number, dx?: number, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  scrollTo: (opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  waitForSelector: (selector: string, opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+  waitForUrl: (opts?: Record<string, unknown>) => Promise<BrowserExecActionResult>;
+};`;
+
+function rawBrowserExecAllowed(policyInfo: {
+  raw_exec_policy?: string;
+  raw_exec_admin?: boolean;
+}): boolean {
+  return (
+    policyInfo.raw_exec_policy === "enabled" ||
+    (policyInfo.raw_exec_policy === "admin_only" && !!policyInfo.raw_exec_admin)
+  );
+}
+
+function browserExecApiDeclarationForPolicy({
+  policyInfo,
+  declaration,
+}: {
+  policyInfo?: { raw_exec_policy?: string; raw_exec_admin?: boolean };
+  declaration: string;
+}): string {
+  if (!policyInfo) return declaration;
+  if (rawBrowserExecAllowed(policyInfo)) return declaration;
+  return QUICKJS_BROWSER_EXEC_API_DECLARATION;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -440,7 +499,11 @@ export function registerBrowserCommand(
             browserClient.getAutomationPolicyInfo().catch(() => undefined),
             browserClient.getExecApiDeclaration(),
           ]);
-          if (!policyInfo) return declaration;
+          const effectiveDeclaration = browserExecApiDeclarationForPolicy({
+            policyInfo,
+            declaration,
+          });
+          if (!policyInfo) return effectiveDeclaration;
           return `/* Effective browser automation policy for this session:
  * raw_exec_policy=${policyInfo.raw_exec_policy}
  * raw_exec_admin=${policyInfo.raw_exec_admin}
@@ -451,7 +514,7 @@ export function registerBrowserCommand(
  * max_sandbox_actions=${policyInfo.max_sandbox_actions}
  */
 
-${declaration}`;
+${effectiveDeclaration}`;
         });
       },
     );

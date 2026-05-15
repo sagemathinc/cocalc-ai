@@ -17,10 +17,14 @@ function makeProgram({
   openFiles,
   listBrowserSessions,
   getWorkspaceSelection,
+  getAutomationPolicyInfo,
+  getExecApiDeclaration,
 }: {
   openFiles: { project_id: string; title?: string; path: string }[];
   listBrowserSessions?: () => Promise<any[]>;
   getWorkspaceSelection?: (opts: { project_id: string }) => Promise<any>;
+  getAutomationPolicyInfo?: () => Promise<any>;
+  getExecApiDeclaration?: () => Promise<string>;
 }): { program: Command; results: unknown[] } {
   const results: unknown[] = [];
   const program = new Command();
@@ -76,6 +80,21 @@ function makeProgram({
           (async () => {
             throw new Error("getWorkspaceSelection should not be called");
           }),
+        getAutomationPolicyInfo:
+          getAutomationPolicyInfo ??
+          (async () => ({
+            raw_exec_policy: "enabled",
+            raw_exec_admin: false,
+            max_active_exec_ops: 2,
+            max_active_actions: 8,
+            max_async_exec_ops: 256,
+            max_exec_code_length: 100000,
+            max_sandbox_actions: 512,
+          })),
+        getExecApiDeclaration:
+          getExecApiDeclaration ??
+          (async () =>
+            "export type BrowserExecApi = { listOpenFiles: () => unknown[]; };"),
       }) as any,
   } as any);
   return { program, results };
@@ -301,6 +320,73 @@ test("browser tabs is an alias for browser files", async () => {
   assert.equal((results[0] as unknown[]).length, 1);
   assert.equal((results[0] as { path: string }[])[0]?.path, "/home/user/a.md");
   assert.equal((results[0] as { kind: string }[])[0]?.kind, "file");
+});
+
+test("browser exec-api reports the QuickJS sandbox API when raw exec is disabled", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const { program, results } = makeProgram({
+    openFiles: [],
+    getAutomationPolicyInfo: async () => ({
+      raw_exec_policy: "disabled",
+      raw_exec_admin: true,
+      max_active_exec_ops: 2,
+      max_active_actions: 8,
+      max_async_exec_ops: 256,
+      max_exec_code_length: 100000,
+      max_sandbox_actions: 512,
+    }),
+    getExecApiDeclaration: async () =>
+      "export type BrowserExecApi = { listOpenFiles: () => unknown[]; };",
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "exec-api",
+    "--browser",
+    "browser-1",
+  ]);
+
+  const output = results[0] as string;
+  assert.match(output, /raw_exec_policy=disabled/);
+  assert.match(output, /QuickJS sandbox mode/);
+  assert.match(output, /waitForSelector/);
+  assert.doesNotMatch(output, /listOpenFiles/);
+});
+
+test("browser exec-api reports the raw API when raw exec is allowed", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const { program, results } = makeProgram({
+    openFiles: [],
+    getAutomationPolicyInfo: async () => ({
+      raw_exec_policy: "enabled",
+      raw_exec_admin: false,
+      max_active_exec_ops: 2,
+      max_active_actions: 8,
+      max_async_exec_ops: 256,
+      max_exec_code_length: 100000,
+      max_sandbox_actions: 512,
+    }),
+    getExecApiDeclaration: async () =>
+      "export type BrowserExecApi = { listOpenFiles: () => unknown[]; };",
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "exec-api",
+    "--browser",
+    "browser-1",
+  ]);
+
+  const output = results[0] as string;
+  assert.match(output, /raw_exec_policy=enabled/);
+  assert.match(output, /listOpenFiles/);
+  assert.doesNotMatch(output, /QuickJS sandbox mode/);
 });
 
 test("browser workspace-state falls back to a partial summary on transient browser auth failures", async () => {
