@@ -25,6 +25,7 @@ import type {
   ProjectControlStopRequest,
 } from "@cocalc/conat/inter-bay/api";
 import type { LroStatus, LroSummary } from "@cocalc/conat/hub/api/lro";
+import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import { publishLroEvent } from "@cocalc/server/lro/stream";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -45,6 +46,12 @@ import isAdmin from "@cocalc/server/accounts/is-admin";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
 import { setProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
 import type { ProjectState } from "@cocalc/util/db-schema/projects";
+import { resolveRuntimeSponsorAccountId } from "@cocalc/server/projects/runtime-sponsor";
+import {
+  heartbeatProjectRuntimeSlot,
+  releaseProjectRuntimeSlot,
+  reserveProjectRuntimeSlot,
+} from "@cocalc/server/projects/runtime-slots";
 import { createBackup as createBackupLocal } from "@cocalc/server/conat/api/project-backups";
 import { getLro } from "@cocalc/server/lro/lro-db";
 import { BACKUP_TIMEOUT_MS } from "@cocalc/server/projects/backup-lro";
@@ -61,6 +68,8 @@ const LRO_TERMINAL_STATUSES = new Set<LroStatus>([
   "expired",
 ]);
 const BACKUP_POLL_INTERVAL_MS = 1_000;
+const PROJECT_RUNTIME_SLOT_TTL_MS = 30 * 60 * 1000;
+const logger = getLogger("inter-bay:project-control");
 
 function staleRoutingError({
   project_id,
@@ -106,6 +115,42 @@ async function assertCurrentProjectOwnership({
   }
 }
 
+async function loadProjectRuntimeSponsor(project_id: string): Promise<{
+  sponsor_account_id: string;
+  owning_bay_id: string;
+  host_id?: string | null;
+}> {
+  const { rows } = await getPool().query<{
+    runtime_sponsor_account_id?: string | null;
+    usage_account_id?: string | null;
+    users?: Record<string, { group?: string }> | null;
+    owning_bay_id?: string | null;
+    host_id?: string | null;
+  }>(
+    `
+      SELECT runtime_sponsor_account_id, usage_account_id, users,
+             owning_bay_id, host_id
+        FROM projects
+       WHERE project_id=$1
+       LIMIT 1
+    `,
+    [project_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`project ${project_id} not found`);
+  }
+  const sponsor_account_id = resolveRuntimeSponsorAccountId(row);
+  if (!sponsor_account_id) {
+    throw new Error(`project ${project_id} has no runtime sponsor`);
+  }
+  return {
+    sponsor_account_id,
+    owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
+    host_id: row.host_id ?? null,
+  };
+}
+
 export async function handleProjectControlStart(
   req: ProjectControlStartRequest,
 ): Promise<void> {
@@ -114,6 +159,7 @@ export async function handleProjectControlStart(
     epoch: req.epoch,
   });
   const project = await getProject(req.project_id);
+  const sponsor = await loadProjectRuntimeSponsor(req.project_id);
   await upsertProjectActiveOperation({
     project_id: req.project_id,
     op_id: req.lro_op_id,
@@ -131,13 +177,46 @@ export async function handleProjectControlStart(
     op_id: req.lro_op_id,
     source_bay_id: req.source_bay_id,
   });
+  let reservedSlot = false;
   try {
+    await reserveProjectRuntimeSlot({
+      ...sponsor,
+      project_id: req.project_id,
+      actor_account_id: req.account_id,
+      reason: "project-start",
+      op_id: req.lro_op_id,
+      state: "starting",
+      ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
+    });
+    reservedSlot = true;
     await project.start({
       account_id: req.account_id,
       lro_op_id: req.lro_op_id,
       managed_egress_override: req.managed_egress_override,
       restore_backup_id: req.restore_backup_id,
     });
+    await heartbeatProjectRuntimeSlot({
+      sponsor_account_id: sponsor.sponsor_account_id,
+      project_id: req.project_id,
+      host_id: sponsor.host_id,
+      state: "running",
+      ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
+    });
+  } catch (err) {
+    if (reservedSlot) {
+      await releaseProjectRuntimeSlot({
+        sponsor_account_id: sponsor.sponsor_account_id,
+        project_id: req.project_id,
+        state: "failed",
+      }).catch((releaseErr) => {
+        logger.warn("failed to release runtime slot after start error", {
+          project_id: req.project_id,
+          sponsor_account_id: sponsor.sponsor_account_id,
+          err: `${releaseErr}`,
+        });
+      });
+    }
+    throw err;
   } finally {
     await stopForward();
     await clearProjectActiveOperation({
@@ -155,6 +234,7 @@ export async function handleProjectControlStop(
     epoch: req.epoch,
   });
   const project = await getProject(req.project_id);
+  const sponsor = await loadProjectRuntimeSponsor(req.project_id);
   await upsertProjectActiveOperation({
     project_id: req.project_id,
     kind: "project-stop",
@@ -165,6 +245,10 @@ export async function handleProjectControlStop(
   });
   try {
     await project.stop();
+    await releaseProjectRuntimeSlot({
+      sponsor_account_id: sponsor.sponsor_account_id,
+      project_id: req.project_id,
+    });
   } finally {
     await clearProjectActiveOperation({
       project_id: req.project_id,
@@ -180,6 +264,7 @@ export async function handleProjectControlRestart(
     epoch: req.epoch,
   });
   const project = await getProject(req.project_id);
+  const sponsor = await loadProjectRuntimeSponsor(req.project_id);
   await upsertProjectActiveOperation({
     project_id: req.project_id,
     op_id: req.lro_op_id,
@@ -197,11 +282,44 @@ export async function handleProjectControlRestart(
     op_id: req.lro_op_id,
     source_bay_id: req.source_bay_id,
   });
+  let reservedSlot = false;
   try {
+    await reserveProjectRuntimeSlot({
+      ...sponsor,
+      project_id: req.project_id,
+      actor_account_id: req.account_id,
+      reason: "project-restart",
+      op_id: req.lro_op_id,
+      state: "starting",
+      ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
+    });
+    reservedSlot = true;
     await project.restart({
       account_id: req.account_id,
       lro_op_id: req.lro_op_id,
     });
+    await heartbeatProjectRuntimeSlot({
+      sponsor_account_id: sponsor.sponsor_account_id,
+      project_id: req.project_id,
+      host_id: sponsor.host_id,
+      state: "running",
+      ttl_ms: PROJECT_RUNTIME_SLOT_TTL_MS,
+    });
+  } catch (err) {
+    if (reservedSlot) {
+      await releaseProjectRuntimeSlot({
+        sponsor_account_id: sponsor.sponsor_account_id,
+        project_id: req.project_id,
+        state: "failed",
+      }).catch((releaseErr) => {
+        logger.warn("failed to release runtime slot after restart error", {
+          project_id: req.project_id,
+          sponsor_account_id: sponsor.sponsor_account_id,
+          err: `${releaseErr}`,
+        });
+      });
+    }
+    throw err;
   } finally {
     await stopForward();
     await clearProjectActiveOperation({

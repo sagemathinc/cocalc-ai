@@ -634,6 +634,69 @@ export interface AccountLocalCloseDedicatedHostPurchaseSessionRequest {
   ended_at?: Date | string | number | null;
 }
 
+export type ProjectRuntimeSlotState =
+  | "starting"
+  | "running"
+  | "released"
+  | "expired"
+  | "failed";
+
+export interface ProjectRuntimeSlotWire {
+  sponsor_account_id: string;
+  project_id: string;
+  owning_bay_id: string;
+  host_id?: string | null;
+  state: ProjectRuntimeSlotState;
+  actor_account_id?: string | null;
+  reason?: string | null;
+  acquired_at: Date | string;
+  heartbeat_at: Date | string;
+  expires_at: Date | string;
+  op_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AccountLocalReserveProjectRuntimeSlotRequest {
+  sponsor_account_id: string;
+  project_id: string;
+  owning_bay_id: string;
+  host_id?: string | null;
+  actor_account_id?: string | null;
+  reason?: string | null;
+  op_id?: string | null;
+  state?: Extract<ProjectRuntimeSlotState, "starting" | "running">;
+  ttl_ms?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AccountLocalReserveProjectRuntimeSlotResult {
+  sponsor_account_id: string;
+  project_id: string;
+  limit?: number;
+  current: number;
+  slot: ProjectRuntimeSlotWire;
+}
+
+export interface AccountLocalHeartbeatProjectRuntimeSlotRequest {
+  sponsor_account_id: string;
+  project_id: string;
+  state?: Extract<ProjectRuntimeSlotState, "starting" | "running">;
+  host_id?: string | null;
+  ttl_ms?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AccountLocalReleaseProjectRuntimeSlotRequest {
+  sponsor_account_id: string;
+  project_id: string;
+  state?: Extract<ProjectRuntimeSlotState, "released" | "failed">;
+}
+
+export interface AccountLocalListProjectRuntimeSlotsRequest {
+  sponsor_account_id: string;
+  active_only?: boolean;
+}
+
 export interface AccountLocalCreateImpersonationGrantRequest {
   actor_account_id: string;
   subject_account_id: string;
@@ -1023,6 +1086,10 @@ export type AccountLocalMethod =
   | "verify-fresh-auth-credentials"
   | "reconcile-dedicated-host-purchase-session"
   | "close-dedicated-host-purchase-session"
+  | "reserve-project-runtime-slot"
+  | "heartbeat-project-runtime-slot"
+  | "release-project-runtime-slot"
+  | "list-project-runtime-slots"
   | "upsert-membership-grant"
   | "revoke-membership-grant"
   | "get-membership"
@@ -1744,6 +1811,18 @@ export interface InterBayAccountLocalApi {
   closeDedicatedHostPurchaseSession: (
     opts: AccountLocalCloseDedicatedHostPurchaseSessionRequest,
   ) => Promise<void>;
+  reserveProjectRuntimeSlot: (
+    opts: AccountLocalReserveProjectRuntimeSlotRequest,
+  ) => Promise<AccountLocalReserveProjectRuntimeSlotResult>;
+  heartbeatProjectRuntimeSlot: (
+    opts: AccountLocalHeartbeatProjectRuntimeSlotRequest,
+  ) => Promise<boolean>;
+  releaseProjectRuntimeSlot: (
+    opts: AccountLocalReleaseProjectRuntimeSlotRequest,
+  ) => Promise<boolean>;
+  listProjectRuntimeSlots: (
+    opts: AccountLocalListProjectRuntimeSlotsRequest,
+  ) => Promise<ProjectRuntimeSlotWire[]>;
   upsertMembershipGrant: (
     opts: AccountLocalUpsertMembershipGrantRequest,
   ) => Promise<{ grant_id: string }>;
@@ -3068,6 +3147,42 @@ export function createInterBayAccountLocalClient({
       method: "close-dedicated-host-purchase-session",
     }),
   });
+  const reserveProjectRuntimeSlotClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "reserveProjectRuntimeSlot">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "reserve-project-runtime-slot",
+    }),
+  });
+  const heartbeatProjectRuntimeSlotClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "heartbeatProjectRuntimeSlot">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "heartbeat-project-runtime-slot",
+    }),
+  });
+  const releaseProjectRuntimeSlotClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "releaseProjectRuntimeSlot">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "release-project-runtime-slot",
+    }),
+  });
+  const listProjectRuntimeSlotsClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "listProjectRuntimeSlots">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "list-project-runtime-slots",
+    }),
+  });
   const upsertMembershipGrantClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "upsertMembershipGrant">
   >({
@@ -3228,6 +3343,14 @@ export function createInterBayAccountLocalClient({
       await closeDedicatedHostPurchaseSessionClient.closeDedicatedHostPurchaseSession(
         opts,
       ),
+    reserveProjectRuntimeSlot: async (opts) =>
+      await reserveProjectRuntimeSlotClient.reserveProjectRuntimeSlot(opts),
+    heartbeatProjectRuntimeSlot: async (opts) =>
+      await heartbeatProjectRuntimeSlotClient.heartbeatProjectRuntimeSlot(opts),
+    releaseProjectRuntimeSlot: async (opts) =>
+      await releaseProjectRuntimeSlotClient.releaseProjectRuntimeSlot(opts),
+    listProjectRuntimeSlots: async (opts) =>
+      await listProjectRuntimeSlotsClient.listProjectRuntimeSlots(opts),
     upsertMembershipGrant: async (opts) =>
       await upsertMembershipGrantClient.upsertMembershipGrant(opts),
     revokeMembershipGrant: async (opts) =>
@@ -3420,6 +3543,62 @@ export function createInterBayAccountLocalHandler({
       impl: {
         closeDedicatedHostPurchaseSession: async (opts) =>
           await impl.closeDedicatedHostPurchaseSession(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "reserveProjectRuntimeSlot">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "reserve-project-runtime-slot",
+      }),
+      impl: {
+        reserveProjectRuntimeSlot: async (opts) =>
+          await impl.reserveProjectRuntimeSlot(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "heartbeatProjectRuntimeSlot">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "heartbeat-project-runtime-slot",
+      }),
+      impl: {
+        heartbeatProjectRuntimeSlot: async (opts) =>
+          await impl.heartbeatProjectRuntimeSlot(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "releaseProjectRuntimeSlot">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "release-project-runtime-slot",
+      }),
+      impl: {
+        releaseProjectRuntimeSlot: async (opts) =>
+          await impl.releaseProjectRuntimeSlot(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "listProjectRuntimeSlots">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "list-project-runtime-slots",
+      }),
+      impl: {
+        listProjectRuntimeSlots: async (opts) =>
+          await impl.listProjectRuntimeSlots(opts),
       },
     }),
     createServiceHandler<

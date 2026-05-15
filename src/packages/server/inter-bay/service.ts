@@ -131,6 +131,13 @@ import {
   reconcileDedicatedHostPurchaseSessionLocal,
 } from "@cocalc/server/project-host/spend";
 import {
+  heartbeatProjectRuntimeSlotLocal,
+  listProjectRuntimeSlotsLocal,
+  releaseProjectRuntimeSlotLocal,
+  reserveProjectRuntimeSlotLocal,
+  startProjectRuntimeSlotHeartbeat,
+} from "@cocalc/server/projects/runtime-slots";
+import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
   resolveProjectBayAcrossCluster,
@@ -280,6 +287,7 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectLroService();
     await startProjectCollabInviteService();
     startBayRegistrationHeartbeat();
+    startProjectRuntimeSlotHeartbeat();
     startManagedBayCloudflared();
   } catch (err) {
     serviceStarted = false;
@@ -516,6 +524,14 @@ async function startAccountLocalService(): Promise<void> {
     closeDedicatedHostPurchaseSession: async (opts) => {
       await closeDedicatedHostPurchaseSessionLocal(opts);
     },
+    reserveProjectRuntimeSlot: async (opts) =>
+      await reserveProjectRuntimeSlotLocal(opts),
+    heartbeatProjectRuntimeSlot: async (opts) =>
+      await heartbeatProjectRuntimeSlotLocal(opts),
+    releaseProjectRuntimeSlot: async (opts) =>
+      await releaseProjectRuntimeSlotLocal(opts),
+    listProjectRuntimeSlots: async (opts) =>
+      await listProjectRuntimeSlotsLocal(opts),
     upsertMembershipGrant: async (opts) => ({
       grant_id: await createMembershipGrant({
         ...opts,

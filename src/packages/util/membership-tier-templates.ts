@@ -15,10 +15,12 @@ const MIN_AI_LIMIT = 50;
 
 function usageLimitsTemplate(
   shared_compute_priority: number,
+  max_sponsored_running_projects: number,
   overrides: Record<string, number | boolean> = {},
 ) {
   return {
     shared_compute_priority,
+    max_sponsored_running_projects,
     notification_email_send_limit_5h: 10,
     notification_email_send_limit_7d: 40,
     ...overrides,
@@ -107,7 +109,7 @@ export const TIER_TEMPLATES = {
       create_hosts: false,
       project_host_tier: 0,
     },
-    usage_limits: usageLimitsTemplate(1, {
+    usage_limits: usageLimitsTemplate(1, 1, {
       ...acpUsageLimits({
         queuedPerAccount: 20,
         queuedPerThread: 5,
@@ -148,7 +150,7 @@ export const TIER_TEMPLATES = {
       create_hosts: false,
       project_host_tier: 0,
     },
-    usage_limits: usageLimitsTemplate(2, {
+    usage_limits: usageLimitsTemplate(2, 3, {
       notification_email_send_limit_5h: 50,
       notification_email_send_limit_7d: 200,
       ...acpUsageLimits({
@@ -192,7 +194,7 @@ export const TIER_TEMPLATES = {
       create_hosts: true,
       project_host_tier: 1,
     },
-    usage_limits: usageLimitsTemplate(3, {
+    usage_limits: usageLimitsTemplate(3, 3, {
       notification_email_send_limit_5h: 200,
       notification_email_send_limit_7d: 1000,
       prepaid_host_usage_limit_5h_usd: 300,
@@ -238,7 +240,7 @@ export const TIER_TEMPLATES = {
       create_hosts: true,
       project_host_tier: 2,
     },
-    usage_limits: usageLimitsTemplate(4, {
+    usage_limits: usageLimitsTemplate(4, 10, {
       notification_email_send_limit_5h: 1000,
       notification_email_send_limit_7d: 5000,
       credit_spend_limit_5h_usd: 300,
