@@ -74,4 +74,25 @@ describe("CoreStream history gap propagation", () => {
 
     expect(events).toEqual([]);
   });
+
+  it("stops retrying bootstrap when the persist client is closed", async () => {
+    const stream = createStream();
+    const persistClient = {
+      changefeed: jest.fn().mockResolvedValue({}),
+      close: jest.fn(),
+      getAllWithInfo: jest.fn().mockRejectedValue(new Error("closed")),
+    };
+    (stream as any).persistClient = persistClient;
+
+    await (stream as any).getAllFromPersist({
+      start_seq: 10,
+      noEmit: false,
+      includeConfig: false,
+      retry: true,
+    });
+
+    expect(persistClient.getAllWithInfo).toHaveBeenCalledTimes(1);
+    expect(persistClient.close).toHaveBeenCalledTimes(1);
+    expect((stream as any).client).toBeUndefined();
+  });
 });
