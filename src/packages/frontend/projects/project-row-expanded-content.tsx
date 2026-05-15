@@ -250,14 +250,6 @@ export function ProjectRowExpandedContent({ project_id }: Props) {
             <Button
               type="text"
               size="small"
-              onClick={() => openProjectTab("users")}
-              icon={<Icon name={FIXED_PROJECT_TABS.users.icon} />}
-            >
-              {displayI18N(FIXED_PROJECT_TABS.users.label)}
-            </Button>
-            <Button
-              type="text"
-              size="small"
               onClick={openProjectSettings}
               icon={<Icon name={FIXED_PROJECT_TABS.settings.icon} />}
             >

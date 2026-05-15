@@ -3,16 +3,15 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Popconfirm, Switch } from "antd";
+import { Alert, Button, Popconfirm, Space, Switch, Typography } from "antd";
+import type { ReactNode } from "react";
 import { defineMessage, FormattedMessage, useIntl } from "react-intl";
 
-import { Col, Row } from "@cocalc/frontend/antd-bootstrap";
 import {
-  HelpIcon,
   Icon,
   Paragraph,
   SettingBox,
-  Title,
+  type IconName,
 } from "@cocalc/frontend/components";
 import { HelpEmailLink } from "@cocalc/frontend/customize";
 import { labels } from "@cocalc/frontend/i18n";
@@ -22,15 +21,19 @@ import { COLORS } from "@cocalc/util/theme";
 import { DeletedProjectWarning } from "../warnings/deleted";
 import { Project } from "./types";
 
+const { Text } = Typography;
+
 interface Props {
   project: Project;
   actions: ProjectsActions;
   mode?: "project" | "flyout";
+  embedded?: boolean;
 }
 
 export function HideDeleteBox(props: Readonly<Props>) {
-  const { project, actions, mode = "project" } = props;
+  const { project, actions, mode = "project", embedded = false } = props;
   const isFlyout = mode === "flyout";
+  const isEmbedded = embedded || isFlyout;
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
@@ -187,78 +190,56 @@ export function HideDeleteBox(props: Readonly<Props>) {
       defaultMessage: `{hidden, select, true {Hidden} other {Visible}}`,
       description: "The project is either visible or hidden",
     });
-    const deleteHelpTitle = intl.formatMessage(
-      {
-        id: "project.settings.hide-delete-box.delete.help.title",
-        defaultMessage: "Delete this {projectLabel}",
-      },
-      { projectLabel: projectLabelLower },
-    );
 
     return (
-      <>
-        <Row style={{ color: COLORS.GRAY_M }}>
-          <Col sm={12}>
-            <Title level={4} style={{ marginBottom: 0, textAlign: "center" }}>
-              <Icon name={hidden ? "eye-slash" : "eye"} /> {hide_label}{" "}
-              <HelpIcon title={hide_label} placement="right">
-                {hide_message()}
-              </HelpIcon>
-            </Title>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                marginTop: "12px",
-              }}
-            >
-              <Switch
-                checked={hidden}
-                checkedChildren={intl.formatMessage(hide_switch, {
-                  hidden: true,
-                })}
-                unCheckedChildren={intl.formatMessage(hide_switch, {
-                  hidden: false,
-                })}
-                onChange={toggle_hide_project}
-              />
-            </div>
-          </Col>
-        </Row>
-        <hr />
-        <Row>
-          <Col sm={12}>
-            <Title level={4} style={{ marginBottom: 0, textAlign: "center" }}>
-              <Icon name="trash" /> {deleteUndeleteMsg}{" "}
-              <HelpIcon title={deleteHelpTitle} placement="right">
-                <div>{delete_message()}</div>
-                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                  <FormattedMessage
-                    id="project.settings.hide-delete-box.delete.disclaimer"
-                    defaultMessage={`{projectsLabel} are not immediately deleted.
-                    If you need to permanently and immediately delete some sensitive information in this {projectLabel},
-                    contact {help}.`}
-                    values={{
-                      help: <HelpEmailLink />,
-                      projectsLabel: projectsLabelLower,
-                      projectLabel: projectLabelLower,
-                    }}
-                  />
-                </Paragraph>
-              </HelpIcon>
-            </Title>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                marginTop: "12px",
-              }}
-            >
-              {render_delete_undelete_button()}
-            </div>
-          </Col>
-        </Row>
-      </>
+      <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <Alert
+          type="warning"
+          showIcon
+          message="Danger Zone"
+          description={`These actions change project visibility or lifecycle state. They are separated from normal settings so they are harder to trigger accidentally.`}
+        />
+        <DangerActionRow
+          icon={hidden ? "eye-slash" : "eye"}
+          title={hide_label}
+          description={hide_message()}
+          action={
+            <Switch
+              checked={hidden}
+              checkedChildren={intl.formatMessage(hide_switch, {
+                hidden: true,
+              })}
+              unCheckedChildren={intl.formatMessage(hide_switch, {
+                hidden: false,
+              })}
+              onChange={toggle_hide_project}
+            />
+          }
+        />
+        <DangerActionRow
+          icon="trash"
+          title={deleteUndeleteMsg}
+          description={
+            <Space direction="vertical" size={4}>
+              <span>{delete_message()}</span>
+              <Text type="secondary">
+                <FormattedMessage
+                  id="project.settings.hide-delete-box.delete.disclaimer"
+                  defaultMessage={`{projectsLabel} are not immediately deleted.
+                  If you need to permanently and immediately delete some sensitive information in this {projectLabel},
+                  contact {help}.`}
+                  values={{
+                    help: <HelpEmailLink />,
+                    projectsLabel: projectsLabelLower,
+                    projectLabel: projectLabelLower,
+                  }}
+                />
+              </Text>
+            </Space>
+          }
+          action={render_delete_undelete_button()}
+        />
+      </Space>
     );
   }
 
@@ -268,7 +249,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
     return <span>Does not make sense for admin.</span>;
   }
   const hidden = user.get("hide");
-  if (isFlyout) {
+  if (isEmbedded) {
     return renderBody();
   } else {
     return (
@@ -286,4 +267,47 @@ export function HideDeleteBox(props: Readonly<Props>) {
       </SettingBox>
     );
   }
+}
+
+function DangerActionRow({
+  icon,
+  title,
+  description,
+  action,
+}: {
+  icon: IconName;
+  title: ReactNode;
+  description: ReactNode;
+  action: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: 8,
+        padding: 12,
+        display: "grid",
+        gap: 12,
+        gridTemplateColumns: "minmax(0, 1fr) auto",
+        alignItems: "center",
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            color: COLORS.GRAY_M,
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            fontWeight: 600,
+            marginBottom: 4,
+          }}
+        >
+          <Icon name={icon} /> {title}
+        </div>
+        <div style={{ color: COLORS.GRAY_M }}>{description}</div>
+      </div>
+      <div>{action}</div>
+    </div>
+  );
 }

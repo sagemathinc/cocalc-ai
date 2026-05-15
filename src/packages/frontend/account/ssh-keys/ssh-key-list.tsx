@@ -29,6 +29,7 @@ interface SSHKeyListProps {
   mode?: "project" | "flyout";
   allowAdd?: boolean;
   title?: React.ReactNode;
+  embedded?: boolean;
 }
 
 // Children are rendered above the list of SSH Keys
@@ -41,6 +42,7 @@ export default function SSHKeyList({
   mode = "project",
   allowAdd = true,
   title,
+  embedded = false,
 }: SSHKeyListProps) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -156,7 +158,7 @@ export default function SSHKeyList({
     );
   }
 
-  if (isFlyout) {
+  if (embedded || isFlyout) {
     return renderBody();
   } else {
     return (

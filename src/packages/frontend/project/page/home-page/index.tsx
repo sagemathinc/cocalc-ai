@@ -199,13 +199,6 @@ export default function HomePage() {
             </Button>
             <Button
               type="text"
-              onClick={() => actions?.set_active_tab("users")}
-            >
-              <Icon name={FIXED_PROJECT_TABS.users.icon} />{" "}
-              {display(FIXED_PROJECT_TABS.users.label)}
-            </Button>
-            <Button
-              type="text"
               onClick={() => actions?.set_active_tab("settings")}
             >
               <Icon name={FIXED_PROJECT_TABS.settings.icon} />{" "}

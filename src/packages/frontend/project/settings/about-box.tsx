@@ -44,6 +44,7 @@ interface Props {
   description: string;
   actions: ProjectsActions;
   mode?: "project" | "flyout";
+  embedded?: boolean;
 }
 
 export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
@@ -54,7 +55,9 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
     description,
     actions,
     mode = "project",
+    embedded = false,
   } = props;
+  const isEmbedded = embedded || mode === "flyout";
   const isFlyout = mode === "flyout";
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
@@ -314,7 +317,7 @@ export const AboutBox: React.FC<Props> = (props: Readonly<Props>) => {
     );
   }
 
-  if (mode === "flyout") {
+  if (isEmbedded) {
     return renderBody();
   } else {
     return (

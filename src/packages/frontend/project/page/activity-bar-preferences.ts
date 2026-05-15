@@ -11,7 +11,6 @@ const DEFAULT_ORDER: readonly FixedTab[] = [
   "files",
   "new",
   "search",
-  "users",
   "settings",
   "active",
   "log",
