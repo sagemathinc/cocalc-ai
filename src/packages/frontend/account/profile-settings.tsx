@@ -4,7 +4,6 @@
  */
 
 import { useIntl } from "react-intl";
-import { Typography } from "antd";
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import { Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { ColorPicker } from "@cocalc/frontend/colorpicker";
@@ -64,11 +63,6 @@ export function ProfileSettings({ email_address }: Props) {
           email_address={email_address}
           profile={profile}
         />
-      </LabeledRow>
-      <LabeledRow label="Account ID">
-        <Typography.Text code copyable={{ text: account_id }}>
-          {account_id}
-        </Typography.Text>
       </LabeledRow>
     </Panel>
   );

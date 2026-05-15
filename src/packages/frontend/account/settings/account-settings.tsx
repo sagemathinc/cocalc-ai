@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert as AntdAlert, Space } from "antd";
+import { Alert as AntdAlert, Space, Typography } from "antd";
 import { List, Map } from "immutable";
 import { join } from "path";
 import { FormattedMessage, useIntl } from "react-intl";
@@ -441,6 +441,22 @@ export function AccountSettings(props: Readonly<Props>) {
     );
   }
 
+  function render_account_id(): Rendered {
+    if (!props.account_id || lite) {
+      return;
+    }
+    return (
+      <Row style={{ marginBottom: "15px" }}>
+        <Col md={4}>Account ID</Col>
+        <Col md={8}>
+          <Typography.Text code copyable={{ text: props.account_id }}>
+            {props.account_id}
+          </Typography.Text>
+        </Col>
+      </Row>
+    );
+  }
+
   function render_name(): Rendered {
     return (
       <>
@@ -557,6 +573,7 @@ will no longer work (automatic redirects are not implemented), so change with ca
 
   return (
     <Panel header={render_header()}>
+      {render_account_id()}
       {render_name()}
       {render_email_address()}
       {render_unlisted()}
