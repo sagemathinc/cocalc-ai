@@ -10,8 +10,10 @@ let projectStartMock: jest.Mock;
 let mirrorStartLroProgressMock: jest.Mock;
 let supersedeOlderProjectStartLrosMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
+let resolveProjectOwningBayMock: jest.Mock;
 let interBayStartMock: jest.Mock;
 let projectControlBridgeMock: jest.Mock;
+let getNameMock: jest.Mock;
 
 async function flushBackgroundStartTask() {
   for (let i = 0; i < 6; i += 1) {
@@ -78,6 +80,17 @@ jest.mock("@cocalc/server/projects/control", () => ({
 jest.mock("@cocalc/server/inter-bay/directory", () => ({
   __esModule: true,
   resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/bay-directory", () => ({
+  __esModule: true,
+  resolveProjectOwningBay: (...args: any[]) =>
+    resolveProjectOwningBayMock(...args),
+}));
+
+jest.mock("@cocalc/server/accounts/get-name", () => ({
+  __esModule: true,
+  default: (...args: any[]) => getNameMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
@@ -165,6 +178,14 @@ describe("projects.start", () => {
       bay_id: "bay-0",
       epoch: 0,
     }));
+    resolveProjectOwningBayMock = jest.fn(async ({ project_id }) => ({
+      project_id,
+      owning_bay_id: "bay-0",
+      host_id: "host-1",
+      title: "Visible Project",
+      source: "project-row",
+    }));
+    getNameMock = jest.fn(async () => "Runtime Sponsor");
     interBayStartMock = jest.fn(async () => undefined);
     projectControlBridgeMock = jest.fn(() => ({
       start: (...args: any[]) => interBayStartMock(...args),
@@ -206,5 +227,53 @@ describe("projects.start", () => {
       keep_op_id: "op-1",
     });
     expect(publishLroSummaryMock).toHaveBeenCalled();
+  });
+
+  it("stores structured runtime sponsor denial details on failed start lro", async () => {
+    const { encodeRuntimeSponsorDenial } =
+      await import("@cocalc/util/runtime-sponsor-denial");
+    interBayStartMock = jest.fn(async () => {
+      throw new Error(
+        encodeRuntimeSponsorDenial({
+          code: "runtime_sponsor_slots_exhausted",
+          sponsor_account_id: "11111111-1111-4111-8111-111111111111",
+          limit: 1,
+          current: 1,
+          active_projects: [
+            {
+              project_id: "22222222-2222-4222-8222-222222222222",
+              state: "running",
+            },
+          ],
+        }),
+      );
+    });
+    const { start } = await import("./projects");
+
+    await start({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      wait: false,
+    });
+    await flushBackgroundStartTask();
+
+    const failedUpdate = updateLroMock.mock.calls.find(
+      ([opts]) => opts.status === "failed",
+    )?.[0];
+    expect(failedUpdate?.error).toBe(
+      "Runtime Sponsor is using 1/1 sponsored running-project slots. Stop another project that runs on this membership, ask the sponsor to increase the limit, or change this project's runtime sponsor.",
+    );
+    expect(failedUpdate?.result?.runtime_sponsor_denial).toMatchObject({
+      code: "runtime_sponsor_slots_exhausted",
+      sponsor_display_name: "Runtime Sponsor",
+      active_projects: [
+        {
+          project_id: "22222222-2222-4222-8222-222222222222",
+          title: "Visible Project",
+          visible: true,
+          can_stop: true,
+        },
+      ],
+    });
   });
 });

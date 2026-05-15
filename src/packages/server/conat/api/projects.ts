@@ -148,11 +148,18 @@ import { loadProjectReadDetailsDirect } from "@cocalc/server/projects/details";
 import { fromWire as collabInviteFromWire } from "@cocalc/server/projects/collab-invite-inbox";
 import { deleteProjectDataOnHost } from "@cocalc/server/project-host/control";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
+import getName from "@cocalc/server/accounts/get-name";
+import { resolveProjectOwningBay } from "@cocalc/server/bay-directory";
 import dayjs from "dayjs";
 import {
   PROJECT_DANGEROUS_INTERNAL_AUTH,
   requireDangerousProjectMutationAuth,
 } from "./project-dangerous-auth";
+import {
+  extractRuntimeSponsorDenial,
+  formatRuntimeSponsorDenial,
+  type RuntimeSponsorDenial,
+} from "@cocalc/util/runtime-sponsor-denial";
 
 // Start/restart can legitimately take a long time because the owning bay may
 // need to provision storage, restore data, pull rootfs layers, or seal a
@@ -161,6 +168,46 @@ import {
 // worker still calls the typed inter-bay project-control service and must not
 // inherit the short default Conat request timeout.
 const PROJECT_START_CONTROL_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+
+async function enrichRuntimeSponsorDenial({
+  denial,
+  account_id,
+}: {
+  denial: RuntimeSponsorDenial;
+  account_id: string;
+}): Promise<RuntimeSponsorDenial> {
+  const sponsor_display_name = await getName(denial.sponsor_account_id).catch(
+    () => undefined,
+  );
+  const active_projects = await Promise.all(
+    denial.active_projects.map(async (project) => {
+      try {
+        const reference = await resolveProjectOwningBay({
+          account_id,
+          project_id: project.project_id,
+        });
+        return {
+          ...project,
+          title: reference.title || undefined,
+          visible: true,
+          can_stop: true,
+        };
+      } catch {
+        return {
+          project_id: project.project_id,
+          state: project.state,
+          visible: false,
+          can_stop: false,
+        };
+      }
+    }),
+  );
+  return {
+    ...denial,
+    ...(sponsor_display_name ? { sponsor_display_name } : {}),
+    active_projects,
+  };
+}
 
 async function projectFs(project_id: string) {
   return (await getExplicitProjectRoutedClient({ project_id })).fs({
@@ -1879,10 +1926,22 @@ async function runProjectStartLikeAction({
         keep_op_id: op.op_id,
       });
     } catch (err) {
+      const runtimeSponsorDenial = extractRuntimeSponsorDenial(err);
+      const enrichedRuntimeSponsorDenial = runtimeSponsorDenial
+        ? await enrichRuntimeSponsorDenial({
+            denial: runtimeSponsorDenial,
+            account_id,
+          })
+        : undefined;
       const updated = await updateLro({
         op_id: op.op_id,
         status: "failed",
-        error: `${err}`,
+        error: enrichedRuntimeSponsorDenial
+          ? formatRuntimeSponsorDenial(enrichedRuntimeSponsorDenial)
+          : `${err}`,
+        ...(enrichedRuntimeSponsorDenial
+          ? { result: { runtime_sponsor_denial: enrichedRuntimeSponsorDenial } }
+          : {}),
       });
       if (updated) {
         publishStartLroSummaryBestEffort({

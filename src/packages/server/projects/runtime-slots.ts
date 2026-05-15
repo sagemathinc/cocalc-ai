@@ -12,6 +12,10 @@ import { getClusterAccountsByIds } from "@cocalc/server/inter-bay/accounts";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import {
+  encodeRuntimeSponsorDenial,
+  type RuntimeSponsorDenial,
+} from "@cocalc/util/runtime-sponsor-denial";
 
 type Queryable = Pick<PoolClient, "query">;
 const logger = getLogger("projects:runtime-slots");
@@ -38,21 +42,13 @@ export interface ProjectRuntimeSlot {
   metadata?: Record<string, unknown> | null;
 }
 
-export interface RuntimeSponsorSlotDenial {
-  code: "runtime_sponsor_slots_exhausted";
-  sponsor_account_id: string;
-  limit: number;
-  current: number;
-  active_projects: ProjectRuntimeSlot[];
-}
+export type RuntimeSponsorSlotDenial = RuntimeSponsorDenial;
 
 export class RuntimeSponsorSlotsExhaustedError extends Error {
   public readonly denial: RuntimeSponsorSlotDenial;
 
   constructor(denial: RuntimeSponsorSlotDenial) {
-    super(
-      `runtime sponsor ${denial.sponsor_account_id} is using ${denial.current}/${denial.limit} running-project slots`,
-    );
+    super(encodeRuntimeSponsorDenial(denial));
     this.name = "RuntimeSponsorSlotsExhaustedError";
     this.denial = denial;
   }
@@ -164,7 +160,10 @@ async function reserveProjectRuntimeSlotInTransaction(
       sponsor_account_id: opts.sponsor_account_id,
       limit,
       current: activeSlots.length,
-      active_projects: activeSlots,
+      active_projects: activeSlots.map((slot) => ({
+        project_id: slot.project_id,
+        state: slot.state === "starting" ? "starting" : "running",
+      })),
     });
   }
 
