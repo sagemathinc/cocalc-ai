@@ -598,6 +598,23 @@ function RuntimeSponsorDenialDescription({
     }
   }
 
+  async function stopProjectAndRetry(projectToStopId: string) {
+    setStopError("");
+    setStoppingProjectIds((ids) => ({ ...ids, [projectToStopId]: true }));
+    try {
+      await redux.getActions("projects").stop_project(projectToStopId);
+      await redux.getActions("projects").start_project(project_id);
+    } catch (err) {
+      setStopError(`${err}`);
+    } finally {
+      setStoppingProjectIds((ids) => {
+        const next = { ...ids };
+        delete next[projectToStopId];
+        return next;
+      });
+    }
+  }
+
   async function useMyMembershipAndRetry() {
     setStopError("");
     setChangingSponsor(true);
@@ -624,13 +641,25 @@ function RuntimeSponsorDenialDescription({
                 <ProjectTitle project_id={project.project_id} trunc={60} />
                 {project.state && <span>({project.state})</span>}
                 {project.can_stop !== false && (
-                  <Button
-                    size="small"
-                    loading={!!stoppingProjectIds[project.project_id]}
-                    onClick={() => stopProject(project.project_id)}
-                  >
-                    Stop
-                  </Button>
+                  <>
+                    <Button
+                      size="small"
+                      loading={!!stoppingProjectIds[project.project_id]}
+                      onClick={() => stopProject(project.project_id)}
+                    >
+                      Stop
+                    </Button>
+                    {denial.can_change_sponsor !== true && (
+                      <Button
+                        size="small"
+                        type="primary"
+                        loading={!!stoppingProjectIds[project.project_id]}
+                        onClick={() => stopProjectAndRetry(project.project_id)}
+                      >
+                        Stop and start this project
+                      </Button>
+                    )}
+                  </>
                 )}
               </Space>
             </li>
@@ -640,6 +669,8 @@ function RuntimeSponsorDenialDescription({
       {canStopAnyVisibleProject && (
         <div style={{ marginTop: "8px" }}>
           Stop one of these projects, then try starting this project again.
+          {denial.can_change_sponsor !== true &&
+            " Or use one of the buttons above to do both in one step."}
         </div>
       )}
       {denial.can_upgrade && (
@@ -665,7 +696,7 @@ function RuntimeSponsorDenialDescription({
       )}
       {stopError && (
         <div style={{ marginTop: "8px", color: COLORS.ANTD_RED_WARN }}>
-          Failed to stop project: {stopError}
+          Runtime sponsor action failed: {stopError}
         </div>
       )}
       {nonCollaboratorCount > 0 && (

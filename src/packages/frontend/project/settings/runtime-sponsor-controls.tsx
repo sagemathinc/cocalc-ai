@@ -31,14 +31,17 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
   const [saving, setSaving] = useState(false);
   const [savingAutostart, setSavingAutostart] = useState(false);
   const [changingSponsor, setChangingSponsor] = useState(false);
+  const [revertingSponsor, setRevertingSponsor] = useState(false);
   const [error, setError] = useState("");
   const sponsorAccountId = runtimeSponsorAccountId(project);
-  const isOwner = account_id === projectOwnerAccountId(project);
+  const ownerAccountId = projectOwnerAccountId(project);
+  const isOwner = account_id === ownerAccountId;
   const isSponsor = !!account_id && account_id === sponsorAccountId;
   const isCollaborator = accountIsProjectCollaborator(project, account_id);
   const canEdit = isAdmin || isOwner || isSponsor;
   const canEditAutostart = isAdmin || isOwner;
   const canSelfSponsor = isCollaborator && !isSponsor;
+  const canStopSponsoring = isSponsor && !isOwner && !!ownerAccountId;
   const checked =
     project.get("allow_collaborator_starts_using_sponsor") !== false;
   const autostartChecked = project.get("autostart_enabled") !== false;
@@ -68,6 +71,23 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
       setError(`${err}`);
     } finally {
       setChangingSponsor(false);
+    }
+  }
+
+  async function stopSponsoring() {
+    setError("");
+    setRevertingSponsor(true);
+    try {
+      if (!ownerAccountId) {
+        throw Error("Project owner account id is not available.");
+      }
+      await redux
+        .getActions("projects")
+        .set_project_runtime_sponsor_to_owner(project_id, ownerAccountId);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setRevertingSponsor(false);
     }
   }
 
@@ -111,6 +131,21 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
             >
               <Button size="small" loading={changingSponsor}>
                 Use my membership for future starts
+              </Button>
+            </Popconfirm>
+          </div>
+        )}
+        {canStopSponsoring && (
+          <div style={{ marginTop: 8 }}>
+            <Popconfirm
+              title="Stop sponsoring this project?"
+              description="Future starts will use the project owner's membership again. This does not stop the project if it is already running."
+              okText="Stop sponsoring"
+              cancelText="Cancel"
+              onConfirm={stopSponsoring}
+            >
+              <Button size="small" loading={revertingSponsor}>
+                Stop sponsoring this project
               </Button>
             </Popconfirm>
           </div>
