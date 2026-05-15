@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { emitSuccess, printArrayTable } from "./cli-output";
+import { emitError, emitSuccess, printArrayTable } from "./cli-output";
 
 function withConsoleCapture(fn: () => void): string {
   const lines: string[] = [];
@@ -13,6 +13,20 @@ function withConsoleCapture(fn: () => void): string {
     fn();
   } finally {
     console.log = original;
+  }
+  return lines.join("\n");
+}
+
+function withStderrCapture(fn: () => void): string {
+  const lines: string[] = [];
+  const original = console.error;
+  console.error = (...args: any[]) => {
+    lines.push(args.map((x) => `${x ?? ""}`).join(" "));
+  };
+  try {
+    fn();
+  } finally {
+    console.error = original;
   }
   return lines.join("\n");
 }
@@ -99,4 +113,49 @@ test("printArrayTable wraps oversized multi-column cells generically", () => {
   assert.ok(maxLineLength <= 74, `line too wide: ${maxLineLength}`);
   assert.match(output, /row-1/);
   assert.ok(!output.includes("abcdefghijklmnopqrstuvwxyz".repeat(6)));
+});
+
+test("emitError preserves fresh-auth code and prints CLI elevation hint", () => {
+  const err = Object.assign(new Error("fresh auth is required"), {
+    code: "fresh_auth_required",
+  });
+
+  const output = withStderrCapture(() => {
+    emitError(
+      {
+        globals: { output: "table" },
+        apiBaseUrl: "https://lite.example.test",
+        accountId: "acct-1",
+      },
+      "host delete",
+      err,
+      (url) => url,
+    );
+  });
+
+  assert.match(output, /fresh auth is required/);
+  assert.match(output, /cocalc auth elevate/);
+  assert.match(output, /passkey\/TOTP/);
+});
+
+test("emitError emits structured fresh-auth hint in json mode", () => {
+  const output = withStderrCapture(() => {
+    emitError(
+      {
+        globals: { output: "json" },
+        apiBaseUrl: "https://lite.example.test",
+        accountId: "acct-1",
+      },
+      "project move",
+      new Error(
+        "fresh auth is required - callHub: subject='hub.account.acct-1.api', name='projects.moveProject', code='fresh_auth_required' ",
+      ),
+      (url) => url,
+    );
+  });
+
+  const parsed = JSON.parse(output);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.error.code, "fresh_auth_required");
+  assert.match(parsed.error.hint, /cocalc auth elevate/);
 });
