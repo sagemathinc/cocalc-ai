@@ -20,6 +20,7 @@ function makeProgram({
   getAutomationPolicyInfo,
   getExecApiDeclaration,
   listRuntimeEvents,
+  listNetworkTrace,
   globals,
 }: {
   openFiles: { project_id: string; title?: string; path: string }[];
@@ -28,6 +29,7 @@ function makeProgram({
   getAutomationPolicyInfo?: () => Promise<any>;
   getExecApiDeclaration?: () => Promise<string>;
   listRuntimeEvents?: (opts?: any) => Promise<any>;
+  listNetworkTrace?: (opts?: any) => Promise<any>;
   globals?: Record<string, unknown>;
 }): { program: Command; results: unknown[] } {
   const results: unknown[] = [];
@@ -101,6 +103,27 @@ function makeProgram({
             "export type BrowserExecApi = { listOpenFiles: () => unknown[]; };"),
         listRuntimeEvents:
           listRuntimeEvents ??
+          (async () => ({
+            events: [],
+            next_seq: 0,
+            dropped: 0,
+            total_buffered: 0,
+          })),
+        configureNetworkTrace: async () => ({
+          enabled: true,
+          include_decoded: false,
+          include_internal: false,
+          protocols: ["conat", "http", "ws"],
+          max_events: 1000,
+          max_preview_chars: 500,
+          subject_prefixes: [],
+          addresses: [],
+          buffered: 0,
+          dropped: 0,
+          next_seq: 0,
+        }),
+        listNetworkTrace:
+          listNetworkTrace ??
           (async () => ({
             events: [],
             next_seq: 0,
@@ -462,6 +485,66 @@ test("browser logs tail --follow inherits explicit root timeout", async () => {
     "browser",
     "logs",
     "tail",
+    "--browser",
+    "browser-1",
+    "--follow",
+    "--poll-ms",
+    "100ms",
+  ]);
+
+  assert.ok(Date.now() - started < 2_500);
+  assert.equal((results[0] as any).printed, 0);
+});
+
+test("browser logs uncaught --follow inherits explicit root timeout", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const started = Date.now();
+  const { program, results } = makeProgram({
+    openFiles: [],
+    globals: { timeout: "1s" },
+    listRuntimeEvents: async () =>
+      new Promise(() => {
+        // Simulate a browser-session RPC that is waiting for new log events.
+      }),
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "logs",
+    "uncaught",
+    "--browser",
+    "browser-1",
+    "--follow",
+    "--poll-ms",
+    "100ms",
+  ]);
+
+  assert.ok(Date.now() - started < 2_500);
+  assert.equal((results[0] as any).printed, 0);
+});
+
+test("browser network trace --follow inherits explicit root timeout", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const started = Date.now();
+  const { program, results } = makeProgram({
+    openFiles: [],
+    globals: { timeout: "1s" },
+    listNetworkTrace: async () =>
+      new Promise(() => {
+        // Simulate a browser-session RPC that is waiting for new trace events.
+      }),
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "network",
+    "trace",
     "--browser",
     "browser-1",
     "--follow",
