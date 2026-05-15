@@ -4,7 +4,6 @@
  */
 
 import type { AccountAuthSessionRow } from "@cocalc/server/auth/auth-sessions";
-import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 
 // Non-serializable capability used only by trusted in-process inter-bay
@@ -27,16 +26,10 @@ export async function requireDangerousProjectMutationAuth({
   if (internalAuth === PROJECT_DANGEROUS_INTERNAL_AUTH) {
     return;
   }
-  const cleanedSessionHash = `${session_hash ?? ""}`.trim();
-  const resolvedSessionHash =
-    cleanedSessionHash ||
-    getBrowserAuthSessionHash({
-      account_id: `${account_id ?? ""}`.trim(),
-      browser_id: `${browser_id ?? ""}`.trim(),
-    });
   return await requireDangerousSessionAuth({
     account_id,
-    session_hash: resolvedSessionHash,
+    browser_id,
+    session_hash,
     require_second_factor: true,
   });
 }

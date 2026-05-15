@@ -1482,6 +1482,7 @@ export interface System {
 
   deleteAccount: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     user_account_id: string;
     only_if_tag?: string;
@@ -1493,6 +1494,7 @@ export interface System {
 
   rehomeAccount: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     user_account_id: string;
     dest_bay_id: string;
@@ -1514,6 +1516,7 @@ export interface System {
 
   drainAccountRehome: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     source_bay_id?: string;
     dest_bay_id: string;
@@ -1526,6 +1529,7 @@ export interface System {
 
   repairAccountMembershipPortability: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     user_account_id: string;
     dry_run?: boolean;
@@ -1603,6 +1607,7 @@ export interface System {
   // Non-admins always get back an error.
   adminResetPasswordLink: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     user_account_id: string;
   }) => Promise<string>;
@@ -1643,6 +1648,7 @@ export interface System {
 
   setAdminAssignedMembership: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     user_account_id: string;
     membership_class: string;
@@ -1652,6 +1658,7 @@ export interface System {
 
   clearAdminAssignedMembership: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     user_account_id: string;
   }) => Promise<void>;
@@ -1663,6 +1670,7 @@ export interface System {
 
   setAccountEntitlementOverride: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     user_account_id: string;
     override: Omit<
@@ -1674,6 +1682,7 @@ export interface System {
 
   clearAccountEntitlementOverride: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     user_account_id: string;
     reason: string;
@@ -1737,6 +1746,7 @@ export interface System {
   saveRootfsCatalogEntry: (
     opts: RootfsCatalogSaveBody & {
       account_id?: string;
+      browser_id?: string | null;
       session_hash?: string | null;
     },
   ) => Promise<RootfsImageEntry>;
@@ -1745,12 +1755,14 @@ export interface System {
     image_id: string;
     reason?: string;
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
   }) => Promise<RootfsDeleteRequestResult>;
 
   runRootfsReleaseGc: (opts: {
     limit?: number;
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
   }) => Promise<RootfsReleaseGcRunResult>;
 
@@ -1808,6 +1820,7 @@ export interface System {
 
   startCloudflareTeardownApply: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string;
     plan_id: string;
     confirm: string;

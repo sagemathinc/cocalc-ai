@@ -1547,6 +1547,7 @@ export interface Hosts {
   }) => Promise<HostLroResponse>;
   forceDeprovisionHost: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     id: string;
   }) => Promise<HostLroResponse>;
@@ -1580,6 +1581,7 @@ export interface Hosts {
   }) => Promise<HostCloudOrphansResult>;
   removeSelfHostConnector: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     id: string;
   }) => Promise<HostLroResponse>;
@@ -1647,6 +1649,7 @@ export interface Hosts {
   }) => Promise<void>;
   deleteHost: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     id: string;
     skip_backups?: boolean;

@@ -1689,16 +1689,18 @@ async function isAdminMutatingNonOwnedRootfsEntry({
 export async function saveRootfsCatalogEntry(
   opts: RootfsCatalogSaveBody & {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
   },
 ) {
-  const { account_id, session_hash, ...body } = opts;
+  const { account_id, browser_id, session_hash, ...body } = opts;
   if (!account_id) {
     throw Error("user must be signed in");
   }
   const admin = await isAdmin(account_id);
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor:
       (admin && hasRootfsAdminCatalogField(body)) ||
@@ -1712,16 +1714,18 @@ export async function saveRootfsCatalogEntry(
 
 export async function requestRootfsImageDeletion(opts: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   image_id: string;
   reason?: string;
 }) {
-  const { account_id, session_hash, image_id, reason } = opts;
+  const { account_id, browser_id, session_hash, image_id, reason } = opts;
   if (!account_id) {
     throw Error("user must be signed in");
   }
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: await isAdminMutatingNonOwnedRootfsEntry({
       account_id,
@@ -1737,15 +1741,17 @@ export async function requestRootfsImageDeletion(opts: {
 
 export async function runRootfsReleaseGc(opts: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   limit?: number;
 }) {
-  const { account_id, session_hash, limit } = opts;
+  const { account_id, browser_id, session_hash, limit } = opts;
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: true,
   });
@@ -2005,10 +2011,12 @@ import getEmailAddress from "@cocalc/server/accounts/get-email-address";
 import { createReset } from "@cocalc/server/auth/password-reset";
 export async function adminResetPasswordLink({
   account_id,
+  browser_id,
   session_hash,
   user_account_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   user_account_id: string;
 }): Promise<string> {
@@ -2017,6 +2025,7 @@ export async function adminResetPasswordLink({
   }
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: true,
   });
@@ -2121,11 +2130,13 @@ export async function adminCreateUser({
 
 export async function deleteAccount({
   account_id,
+  browser_id,
   session_hash,
   user_account_id,
   only_if_tag,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   user_account_id: string;
   only_if_tag?: string;
@@ -2146,6 +2157,7 @@ export async function deleteAccount({
   }
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: targetAccountId !== account_id,
   });
@@ -2157,6 +2169,7 @@ export async function deleteAccount({
 
 export async function rehomeAccount({
   account_id,
+  browser_id,
   session_hash,
   user_account_id,
   dest_bay_id,
@@ -2164,6 +2177,7 @@ export async function rehomeAccount({
   campaign_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   user_account_id: string;
   dest_bay_id: string;
@@ -2172,6 +2186,7 @@ export async function rehomeAccount({
 }) {
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: true,
   });
@@ -2220,6 +2235,7 @@ export async function reconcileAccountRehome({
 
 export async function drainAccountRehome({
   account_id,
+  browser_id,
   session_hash,
   source_bay_id,
   dest_bay_id,
@@ -2230,6 +2246,7 @@ export async function drainAccountRehome({
   only_if_tag,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   source_bay_id?: string;
   dest_bay_id: string;
@@ -2241,6 +2258,7 @@ export async function drainAccountRehome({
 }) {
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: true,
   });
@@ -2258,12 +2276,14 @@ export async function drainAccountRehome({
 
 export async function repairAccountMembershipPortability({
   account_id,
+  browser_id,
   session_hash,
   user_account_id,
   dry_run,
   clear_stale,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   user_account_id: string;
   dry_run?: boolean;
@@ -2271,6 +2291,7 @@ export async function repairAccountMembershipPortability({
 }) {
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: true,
   });
@@ -2340,6 +2361,7 @@ export async function getAdminAssignedMembership({
 
 export async function setAdminAssignedMembership({
   account_id,
+  browser_id,
   session_hash,
   user_account_id,
   membership_class,
@@ -2347,6 +2369,7 @@ export async function setAdminAssignedMembership({
   notes,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   user_account_id: string;
   membership_class: string;
@@ -2358,6 +2381,7 @@ export async function setAdminAssignedMembership({
   }
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: true,
   });
@@ -2388,10 +2412,12 @@ export async function setAdminAssignedMembership({
 
 export async function clearAdminAssignedMembership({
   account_id,
+  browser_id,
   session_hash,
   user_account_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   user_account_id: string;
 }): Promise<void> {
@@ -2400,6 +2426,7 @@ export async function clearAdminAssignedMembership({
   }
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: true,
   });
@@ -2452,12 +2479,14 @@ export async function getAccountEntitlementOverride({
 
 export async function setAccountEntitlementOverride({
   account_id,
+  browser_id,
   session_hash,
   user_account_id,
   override,
   reason,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   user_account_id: string;
   override: AccountEntitlementOverrideInput;
@@ -2468,6 +2497,7 @@ export async function setAccountEntitlementOverride({
   }
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: true,
   });
@@ -2492,11 +2522,13 @@ export async function setAccountEntitlementOverride({
 
 export async function clearAccountEntitlementOverride({
   account_id,
+  browser_id,
   session_hash,
   user_account_id,
   reason,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   user_account_id: string;
   reason: string;
@@ -2506,6 +2538,7 @@ export async function clearAccountEntitlementOverride({
   }
   await requireDangerousSessionAuth({
     account_id,
+    browser_id,
     session_hash,
     require_second_factor: true,
   });
@@ -3447,6 +3480,7 @@ export async function getCloudflareTeardownPlan({
 
 export async function startCloudflareTeardownApply({
   account_id,
+  browser_id,
   session_hash,
   plan_id,
   confirm,
@@ -3454,6 +3488,7 @@ export async function startCloudflareTeardownApply({
   reset_local_settings,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string;
   plan_id: string;
   confirm: string;
@@ -3469,7 +3504,12 @@ export async function startCloudflareTeardownApply({
   if (!account_id || !(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
-  const cleanedSessionHash = `${session_hash ?? ""}`.trim();
+  const cleanedSessionHash =
+    `${session_hash ?? ""}`.trim() ||
+    getBrowserAuthSessionHash({
+      account_id,
+      browser_id: `${browser_id ?? ""}`.trim(),
+    });
   if (!cleanedSessionHash) {
     throw Object.assign(new Error("fresh auth is required"), {
       code: "fresh_auth_required",

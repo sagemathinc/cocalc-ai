@@ -47,11 +47,16 @@ type HubClient = {
     }) => Promise<HostLroResponse>;
     deleteHost: (opts: {
       id: string;
+      browser_id?: string;
       skip_backups?: boolean;
     }) => Promise<HostLroResponse>;
-    forceDeprovisionHost?: (opts: { id: string }) => Promise<HostLroResponse>;
+    forceDeprovisionHost?: (opts: {
+      id: string;
+      browser_id?: string;
+    }) => Promise<HostLroResponse>;
     removeSelfHostConnector?: (opts: {
       id: string;
+      browser_id?: string;
     }) => Promise<HostLroResponse>;
     listHostAccess?: (opts: {
       id: string;
@@ -205,6 +210,7 @@ export const useHostActions = ({
     try {
       const op = await hub.hosts.deleteHost({
         id,
+        browser_id,
         skip_backups: opts?.skip_backups,
       });
       onHostOp?.(id, op);
@@ -380,7 +386,7 @@ export const useHostActions = ({
       return;
     }
     try {
-      const op = await hub.hosts.forceDeprovisionHost({ id });
+      const op = await hub.hosts.forceDeprovisionHost({ id, browser_id });
       onHostOp?.(id, op);
       await refresh();
     } catch (err) {
@@ -396,7 +402,7 @@ export const useHostActions = ({
       return;
     }
     try {
-      const op = await hub.hosts.removeSelfHostConnector({ id });
+      const op = await hub.hosts.removeSelfHostConnector({ id, browser_id });
       onHostOp?.(id, op);
       await refresh();
     } catch (err) {
