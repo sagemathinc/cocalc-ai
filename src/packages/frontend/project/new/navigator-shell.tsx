@@ -43,6 +43,7 @@ import { CodexCredentialsPanel } from "@cocalc/frontend/account/codex-credential
 import { path_split } from "@cocalc/util/misc";
 import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { StartButton } from "@cocalc/frontend/project/start-button";
 import {
   NAVIGATOR_SUBMIT_PROMPT_EVENT,
   queueNavigatorPromptIntent,
@@ -70,11 +71,15 @@ const NAVIGATOR_CHAT_INIT_RETRY_MS = 2000;
 const NAVIGATOR_CHAT_READY_STALE_RETRY_MS = 15_000;
 
 type NavigatorCodexErrorPresentation = {
-  kind: "missing-auth" | "expired-auth" | "other";
+  kind: "missing-auth" | "expired-auth" | "missing-volume" | "other";
   title: string;
   description?: string;
   actionLabel?: string;
 };
+
+function isMissingProjectVolumeError(error: string): boolean {
+  return error.toLowerCase().includes("project volume does not exist");
+}
 
 function sanitizeAccountId(accountId: string): string {
   return accountId.replace(/[^a-zA-Z0-9_.-]/g, "-");
@@ -105,6 +110,9 @@ export function isNavigatorChatInitRetryable({
 }): boolean {
   const normalizedState = `${projectState ?? ""}`.trim().toLowerCase();
   const normalizedError = `${error ?? ""}`.trim().toLowerCase();
+  if (isMissingProjectVolumeError(normalizedError)) {
+    return false;
+  }
   if (normalizedState === "starting" || normalizedState === "opening") {
     return true;
   }
@@ -282,6 +290,14 @@ export function classifyNavigatorCodexError(
 ): NavigatorCodexErrorPresentation {
   const raw = `${error ?? ""}`;
   const normalized = raw.toLowerCase();
+  if (isMissingProjectVolumeError(normalized)) {
+    return {
+      kind: "missing-volume",
+      title: "Project files are not available on this host yet.",
+      description:
+        "This can happen after a project host is reprovisioned or when a project has not been restored on its assigned host. Start the project to provision or restore its filesystem.",
+    };
+  }
   if (
     normalized.includes("openat2 is required in safe mode") &&
     normalized.includes("native addon initialization failed")
@@ -1457,7 +1473,9 @@ export function NavigatorShell({
             )
           }
           action={
-            presentedError?.actionLabel ? (
+            presentedError?.kind === "missing-volume" ? (
+              <StartButton project_id={project_id} minimal />
+            ) : presentedError?.actionLabel ? (
               <Button size="small" onClick={() => setCodexAuthOpen(true)}>
                 {presentedError.actionLabel}
               </Button>
