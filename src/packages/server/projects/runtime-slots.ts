@@ -4,6 +4,10 @@
  */
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 
@@ -311,4 +315,61 @@ export async function listProjectRuntimeSlotsLocal({
     [sponsor_account_id],
   );
   return rows;
+}
+
+async function runtimeSponsorHomeBay(
+  sponsor_account_id: string,
+): Promise<string> {
+  const location = await resolveAccountHomeBay({
+    account_id: sponsor_account_id,
+    user_account_id: sponsor_account_id,
+  });
+  return `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+}
+
+function accountLocalClient(dest_bay: string) {
+  return createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay,
+  });
+}
+
+export async function reserveProjectRuntimeSlot(
+  opts: ReserveProjectRuntimeSlotOptions,
+): Promise<ReserveProjectRuntimeSlotResult> {
+  const homeBay = await runtimeSponsorHomeBay(opts.sponsor_account_id);
+  if (homeBay === getConfiguredBayId()) {
+    return await reserveProjectRuntimeSlotLocal(opts);
+  }
+  return await accountLocalClient(homeBay).reserveProjectRuntimeSlot(opts);
+}
+
+export async function heartbeatProjectRuntimeSlot(
+  opts: Parameters<typeof heartbeatProjectRuntimeSlotLocal>[0],
+): Promise<boolean> {
+  const homeBay = await runtimeSponsorHomeBay(opts.sponsor_account_id);
+  if (homeBay === getConfiguredBayId()) {
+    return await heartbeatProjectRuntimeSlotLocal(opts);
+  }
+  return await accountLocalClient(homeBay).heartbeatProjectRuntimeSlot(opts);
+}
+
+export async function releaseProjectRuntimeSlot(
+  opts: Parameters<typeof releaseProjectRuntimeSlotLocal>[0],
+): Promise<boolean> {
+  const homeBay = await runtimeSponsorHomeBay(opts.sponsor_account_id);
+  if (homeBay === getConfiguredBayId()) {
+    return await releaseProjectRuntimeSlotLocal(opts);
+  }
+  return await accountLocalClient(homeBay).releaseProjectRuntimeSlot(opts);
+}
+
+export async function listProjectRuntimeSlots(
+  opts: Parameters<typeof listProjectRuntimeSlotsLocal>[0],
+): Promise<ProjectRuntimeSlot[]> {
+  const homeBay = await runtimeSponsorHomeBay(opts.sponsor_account_id);
+  if (homeBay === getConfiguredBayId()) {
+    return await listProjectRuntimeSlotsLocal(opts);
+  }
+  return await accountLocalClient(homeBay).listProjectRuntimeSlots(opts);
 }

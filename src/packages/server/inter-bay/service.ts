@@ -131,6 +131,12 @@ import {
   reconcileDedicatedHostPurchaseSessionLocal,
 } from "@cocalc/server/project-host/spend";
 import {
+  heartbeatProjectRuntimeSlotLocal,
+  listProjectRuntimeSlotsLocal,
+  releaseProjectRuntimeSlotLocal,
+  reserveProjectRuntimeSlotLocal,
+} from "@cocalc/server/projects/runtime-slots";
+import {
   resolveHostBayAcrossCluster,
   resolveHostBayDirect,
   resolveProjectBayAcrossCluster,
@@ -516,6 +522,14 @@ async function startAccountLocalService(): Promise<void> {
     closeDedicatedHostPurchaseSession: async (opts) => {
       await closeDedicatedHostPurchaseSessionLocal(opts);
     },
+    reserveProjectRuntimeSlot: async (opts) =>
+      await reserveProjectRuntimeSlotLocal(opts),
+    heartbeatProjectRuntimeSlot: async (opts) =>
+      await heartbeatProjectRuntimeSlotLocal(opts),
+    releaseProjectRuntimeSlot: async (opts) =>
+      await releaseProjectRuntimeSlotLocal(opts),
+    listProjectRuntimeSlots: async (opts) =>
+      await listProjectRuntimeSlotsLocal(opts),
     upsertMembershipGrant: async (opts) => ({
       grant_id: await createMembershipGrant({
         ...opts,
