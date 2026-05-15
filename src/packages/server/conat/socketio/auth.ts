@@ -4,7 +4,10 @@
 // src/packages/conat/auth/subject-policy.ts.
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import { parse } from "cookie";
-import { getRememberMeHashFromCookieValue } from "@cocalc/server/auth/remember-me";
+import {
+  getRememberMeCookieValuesFromHeader,
+  getRememberMeHashFromCookieValue,
+} from "@cocalc/server/auth/remember-me";
 import LRU from "lru-cache";
 import { conatPassword } from "@cocalc/backend/data";
 import {
@@ -230,26 +233,41 @@ export async function getUser(
     }
   }
 
-  const value = cookies[REMEMBER_ME_COOKIE_NAME];
-  if (!value) {
+  const values = getRememberMeCookieValuesFromHeader(
+    socket.handshake.headers.cookie,
+  );
+  if (values.length === 0) {
     throw Error(`must set one of the following cookies: ${COOKIES}`);
   }
-  const hash = getRememberMeHashFromCookieValue(value);
-  if (!hash) {
+  let sawValidHash = false;
+  for (const value of values) {
+    let hash: string | undefined;
+    try {
+      hash = getRememberMeHashFromCookieValue(value);
+    } catch {
+      continue;
+    }
+    if (!hash) {
+      continue;
+    }
+    sawValidHash = true;
+    const account_id = await getAccountIdFromRememberMe(hash);
+    if (!account_id) {
+      continue;
+    }
+    recordBrowserAuthSession({
+      account_id,
+      browser_id: readBrowserId(socket),
+      session_hash: hash,
+    });
+    const user = { account_id, auth_session_hash: hash };
+    assertHubInteractiveEgressAllowed(socket, user);
+    return user;
+  }
+  if (!sawValidHash) {
     throw Error("invalid remember me cookie");
   }
-  const account_id = await getAccountIdFromRememberMe(hash);
-  if (!account_id) {
-    throw Error("remember me cookie expired");
-  }
-  recordBrowserAuthSession({
-    account_id,
-    browser_id: readBrowserId(socket),
-    session_hash: hash,
-  });
-  const user = { account_id, auth_session_hash: hash };
-  assertHubInteractiveEgressAllowed(socket, user);
-  return user;
+  throw Error("remember me cookie expired");
 }
 
 function getBearerToken(socket): string | undefined {

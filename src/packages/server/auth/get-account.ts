@@ -5,7 +5,7 @@
 
 import getPool from "@cocalc/database/pool";
 import { getAccountFromApiKey } from "@cocalc/server/auth/api";
-import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
+import { getRememberMeHashes } from "@cocalc/server/auth/remember-me";
 import getLogger from "@cocalc/backend/logger";
 import isBanned from "@cocalc/server/accounts/is-banned";
 import { trunc } from "@cocalc/util/misc";
@@ -27,7 +27,8 @@ export default async function getAccountId(
   // caching a bit --  We thus want the query below to happen rarely.  We also
   // get expire field as well (since it is usually there) so that the result isn't empty
   // (hence not cached) when a cookie has expired.
-  const hash = getRememberMeHash(req);
+  const hashes = getRememberMeHashes(req);
+  const hash = hashes[0];
   logger.debug(
     `hash: ${trunc(hash, 10)} auth: ${trunc(req.header("Authorization"), 10)}`,
   );
@@ -47,7 +48,12 @@ export default async function getAccountId(
     }
     return;
   }
-  return await getAccountIdFromRememberMe(hash, opts);
+  for (const hash of hashes) {
+    const account_id = await getAccountIdFromRememberMe(hash, opts);
+    if (account_id) {
+      return account_id;
+    }
+  }
 }
 
 export async function getAccountIdFromRememberMe(

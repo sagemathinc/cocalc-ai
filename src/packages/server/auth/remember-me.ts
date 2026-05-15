@@ -85,12 +85,65 @@ export async function deleteOtherRememberMe(
 }
 
 export function getRememberMeHash(req: Request): string | undefined {
+  return getRememberMeHashes(req)[0];
+}
+
+export function getRememberMeHashes(req: Request): string[] {
+  return getRememberMeCookieValues(req).flatMap((rememberMe) => {
+    try {
+      const hash = getRememberMeHashFromCookieValue(rememberMe);
+      return hash ? [hash] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+export function getRememberMeCookieValues(req: Request): string[] {
+  const header =
+    typeof (req as any)?.header === "function"
+      ? (req as any).header("cookie")
+      : (req as any)?.headers?.cookie;
+  const values = getRememberMeCookieValuesFromHeader(header);
+  if (values.length > 0) {
+    return values;
+  }
   const cookies = new Cookies(req);
   const rememberMe = cookies.get(REMEMBER_ME_COOKIE_NAME);
-  if (!rememberMe) {
-    return;
+  return rememberMe ? [rememberMe] : [];
+}
+
+export function getRememberMeCookieValuesFromHeader(
+  cookieHeader?: string,
+): string[] {
+  if (!cookieHeader) {
+    return [];
   }
-  return getRememberMeHashFromCookieValue(rememberMe);
+  const values: string[] = [];
+  const seen = new Set<string>();
+  for (const part of cookieHeader.split(";")) {
+    const index = part.indexOf("=");
+    if (index < 0) {
+      continue;
+    }
+    const name = part.slice(0, index).trim();
+    if (name !== REMEMBER_ME_COOKIE_NAME) {
+      continue;
+    }
+    const rawValue = part.slice(index + 1).trim();
+    let value = rawValue;
+    try {
+      value = decodeURIComponent(rawValue);
+    } catch {
+      // Use the raw value below. An invalid candidate should not prevent
+      // another duplicate remember_me cookie from authenticating.
+    }
+    if (!seen.has(value)) {
+      seen.add(value);
+      values.push(value);
+    }
+  }
+  return values;
 }
 
 export function getRememberMeHashFromCookieValue(

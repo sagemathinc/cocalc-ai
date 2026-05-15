@@ -10,7 +10,7 @@ import {
   withAccountRehomeWriteFence,
   assertAccountWriteOnHomeBay,
 } from "@cocalc/server/accounts/rehome-fence";
-import { getRememberMeHash } from "@cocalc/server/auth/remember-me";
+import { getRememberMeHashes } from "@cocalc/server/auth/remember-me";
 import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
 import { isValidUUID } from "@cocalc/util/misc";
 
@@ -279,21 +279,24 @@ export async function getCurrentAuthSession({
   if (!isValidUUID(account_id)) {
     throw new Error("invalid account_id");
   }
-  const session_hash = getRememberMeHash(req);
-  if (!session_hash) {
+  const session_hashes = getRememberMeHashes(req);
+  if (session_hashes.length === 0) {
     throw new Error("browser sign-in is required");
   }
-  const row = await ensureAuthSessionForRememberMeHash({ session_hash, req });
-  if (!row || row.account_id !== account_id) {
-    throw new Error("current browser session not found");
+  for (const session_hash of session_hashes) {
+    const row = await ensureAuthSessionForRememberMeHash({ session_hash, req });
+    if (!row || row.account_id !== account_id) {
+      continue;
+    }
+    if (row.revoked_at) {
+      throw new Error("current browser session has been revoked");
+    }
+    if (row.expire && new Date(row.expire).valueOf() <= Date.now()) {
+      throw new Error("current browser session has expired");
+    }
+    return row;
   }
-  if (row.revoked_at) {
-    throw new Error("current browser session has been revoked");
-  }
-  if (row.expire && new Date(row.expire).valueOf() <= Date.now()) {
-    throw new Error("current browser session has expired");
-  }
-  return row;
+  throw new Error("current browser session not found");
 }
 
 export async function getCurrentAuthSessionForSessionHash({
@@ -336,7 +339,8 @@ export async function setCurrentSessionFreshAuth({
   factor_level: AuthSessionFactorLevel;
   fresh_auth_until: Date;
 }): Promise<void> {
-  const session_hash = getRememberMeHash(req);
+  const session_hash = (await getCurrentAuthSession({ req, account_id }))
+    .session_hash;
   if (!session_hash) {
     throw new Error("browser sign-in is required");
   }
