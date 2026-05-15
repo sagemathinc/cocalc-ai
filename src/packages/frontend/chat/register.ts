@@ -124,7 +124,9 @@ export function initChat(
   const sync = webapp_client.conat_client.projectConatSync({
     project_id,
     caller: "chat.syncdb",
-    requireRouting: true,
+    // Chat should keep working during brief project-host routing gaps, e.g.
+    // immediately after a hub restart before host routes are repopulated.
+    requireRouting: false,
   }).sync;
   const syncdb = sync.immer({
     project_id,

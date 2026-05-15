@@ -162,6 +162,11 @@ describe("chat/register", () => {
 
     expect(actions).not.toBe(stale);
     expect(stale.dispose).toHaveBeenCalledTimes(1);
+    expect(projectConatSyncMock).toHaveBeenCalledWith({
+      project_id: "project-1",
+      caller: "chat.syncdb",
+      requireRouting: false,
+    });
     expect(createActionsMock).toHaveBeenCalledWith(name, expect.any(Function));
     expect(actions.setState).toHaveBeenCalledWith({
       project_id: "project-1",
