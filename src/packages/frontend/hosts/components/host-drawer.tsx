@@ -21,8 +21,8 @@ import {
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { Avatar } from "@cocalc/frontend/account/avatar/avatar";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
+import SelectUser from "@cocalc/frontend/messages/select-users";
+import { User } from "@cocalc/frontend/users/user";
 import type {
   Host,
   HostAccessEntry,
@@ -48,14 +48,8 @@ import type {
   ManagedComponentRuntimeState,
   ManagedComponentUpgradePolicy,
 } from "@cocalc/conat/project-host/api";
-import {
-  humanSize,
-  is_valid_email_address,
-  is_valid_uuid_string,
-  trunc_middle,
-} from "@cocalc/util/misc";
+import { humanSize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import type { HostLogEntry } from "../hooks/use-host-log";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
@@ -255,128 +249,6 @@ type HostDrawerViewModel = {
     }) => void | Promise<void>;
   };
 };
-
-function HostAccessAccountSelect({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  disabled?: boolean;
-}) {
-  const [search, setSearch] = React.useState("");
-  const [loading, setLoading] = React.useState(false);
-  const [results, setResults] = React.useState<UserSearchResult[]>([]);
-  const latestSearchRef = React.useRef("");
-
-  const doSearch = React.useCallback(async (query: string) => {
-    const cleaned = query.trim();
-    latestSearchRef.current = cleaned;
-    setSearch(cleaned);
-    if (!cleaned) {
-      setResults([]);
-      return;
-    }
-    setLoading(true);
-    try {
-      const rows = await webapp_client.users_client.user_search({
-        query: cleaned,
-        limit: 20,
-      });
-      if (latestSearchRef.current === cleaned) {
-        setResults(rows.filter((row) => row.account_id));
-      }
-    } finally {
-      if (latestSearchRef.current === cleaned) {
-        setLoading(false);
-      }
-    }
-  }, []);
-
-  const rawOption =
-    search &&
-    (is_valid_uuid_string(search) || is_valid_email_address(search)) &&
-    !results.some(
-      (row) => row.account_id === search || row.email_address === search,
-    )
-      ? search
-      : undefined;
-
-  return (
-    <Select
-      showSearch
-      allowClear
-      value={value || undefined}
-      disabled={disabled}
-      loading={loading}
-      filterOption={false}
-      onSearch={doSearch}
-      onChange={(next) => onChange(next ?? "")}
-      optionLabelProp="label"
-      placeholder="Search by name, email, or account ID..."
-      style={{ width: "100%" }}
-      notFoundContent={
-        search ? "No matching users" : "Type to search for a user"
-      }
-    >
-      {rawOption && (
-        <Select.Option
-          key={`raw-${rawOption}`}
-          value={rawOption}
-          label={trunc_middle(rawOption, 28)}
-        >
-          <Typography.Text>{rawOption}</Typography.Text>
-        </Select.Option>
-      )}
-      {results.map((row) => {
-        const accountId = row.account_id!;
-        const fullName =
-          `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
-          "Unnamed user";
-        const extra: string[] = [];
-        if (row.email_address) {
-          extra.push(
-            row.email_address_verified
-              ? `${row.email_address} - verified`
-              : row.email_address,
-          );
-        }
-        if (row.last_active) {
-          extra.push(
-            `active ${new Date(row.last_active).toLocaleDateString()}`,
-          );
-        }
-        return (
-          <Select.Option key={accountId} value={accountId} label={fullName}>
-            <Space>
-              <Avatar
-                size={28}
-                no_tooltip
-                account_id={accountId}
-                first_name={row.first_name}
-                last_name={row.last_name}
-              />
-              <span>
-                <Typography.Text>{fullName}</Typography.Text>
-                {extra.length > 0 && (
-                  <Typography.Text type="secondary">
-                    {" "}
-                    ({extra.join(", ")})
-                  </Typography.Text>
-                )}
-                <br />
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {accountId}
-                </Typography.Text>
-              </span>
-            </Space>
-          </Select.Option>
-        );
-      })}
-    </Select>
-  );
-}
 
 type HostConfigSpec = {
   cloud?: string | null;
@@ -1391,7 +1263,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
   );
   const [accessLoading, setAccessLoading] = React.useState(false);
   const [accessSavingKey, setAccessSavingKey] = React.useState<string>();
-  const [accessAccountId, setAccessAccountId] = React.useState("");
+  const [accessAccountIds, setAccessAccountIds] = React.useState<string[]>([]);
+  const [accessPickerKey, setAccessPickerKey] = React.useState(0);
   const [accessRole, setAccessRole] = React.useState<HostAccessRole>("user");
   const [projectRamLimitMb, setProjectRamLimitMb] = React.useState<
     number | null
@@ -1410,7 +1283,8 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
     setRuntimeLogLines(200);
     setRuntimeLogRequest(undefined);
     setAccessEntries([]);
-    setAccessAccountId("");
+    setAccessAccountIds([]);
+    setAccessPickerKey((key) => key + 1);
     setAccessRole("user");
   }, [vm.host?.id]);
   const handleResize = React.useCallback((next: number) => {
@@ -2061,9 +1935,13 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
             <>
               <Divider style={{ margin: "8px 0" }} />
               <Space.Compact style={{ width: "100%" }}>
-                <HostAccessAccountSelect
-                  value={accessAccountId}
-                  onChange={setAccessAccountId}
+                <SelectUser
+                  key={`${host.id}-${accessPickerKey}`}
+                  placeholder="Search for users by name, email, or account id..."
+                  style={{ width: "100%" }}
+                  onChange={(accountIds) =>
+                    setAccessAccountIds(accountIds ?? [])
+                  }
                   disabled={accessSavingKey === "add"}
                 />
                 <Select
@@ -2078,18 +1956,18 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                 <Button
                   type="primary"
                   loading={accessSavingKey === "add"}
-                  disabled={!accessAccountId.trim()}
+                  disabled={accessAccountIds.length === 0}
                   onClick={async () => {
                     setAccessSavingKey("add");
                     try {
-                      const principal = accessAccountId.trim();
-                      await onSetHostAccess(host.id, {
-                        ...(principal.includes("@")
-                          ? { target_email_address: principal }
-                          : { target_account_id: principal }),
-                        role: accessRole,
-                      });
-                      setAccessAccountId("");
+                      for (const accountId of accessAccountIds) {
+                        await onSetHostAccess(host.id, {
+                          target_account_id: accountId,
+                          role: accessRole,
+                        });
+                      }
+                      setAccessAccountIds([]);
+                      setAccessPickerKey((key) => key + 1);
                       await refreshHostAccess();
                     } finally {
                       setAccessSavingKey(undefined);
@@ -2115,7 +1993,16 @@ export const HostDrawer: React.FC<{ vm: HostDrawerViewModel }> = ({ vm }) => {
                       style={{ justifyContent: "space-between", width: "100%" }}
                     >
                       <Space>
-                        <Typography.Text copyable={{ text: entry.account_id }}>
+                        <User
+                          account_id={entry.account_id}
+                          show_avatar
+                          avatarSize={18}
+                        />
+                        <Typography.Text
+                          type="secondary"
+                          copyable={{ text: entry.account_id }}
+                          style={{ fontSize: 12 }}
+                        >
                           {entry.account_id}
                         </Typography.Text>
                         <Tag
