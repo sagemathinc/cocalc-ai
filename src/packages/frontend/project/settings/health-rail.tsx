@@ -16,6 +16,7 @@ import {
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import useDiskUsage from "@cocalc/frontend/project/disk-usage/use-disk-usage";
+import { ManagedEgressRateSummary } from "@cocalc/frontend/purchases/managed-egress-history";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   hostLabel,
@@ -140,13 +141,17 @@ export function ProjectSettingsHealthRail({
         )}
         <StorageHealthRow project_id={project_id} />
         <HealthRow label="Network">
-          {runQuota.network == null ? (
-            <Tag>Unknown</Tag>
-          ) : (
-            <Tag color={runQuota.network ? "green" : "warning"}>
-              {runQuota.network ? "Enabled" : "Disabled"}
-            </Tag>
-          )}
+          <Space direction="vertical" size={2}>
+            <ManagedEgressRateSummary project_id={project_id} />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Internet:{" "}
+              {runQuota.network == null
+                ? "Unknown"
+                : runQuota.network
+                  ? "Enabled"
+                  : "Disabled"}
+            </Text>
+          </Space>
         </HealthRow>
         {runQuota.member_host != null && (
           <HealthRow label="Member host">
