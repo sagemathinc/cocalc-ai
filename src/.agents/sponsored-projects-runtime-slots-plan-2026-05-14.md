@@ -1,29 +1,35 @@
 # Sponsored Projects Runtime Slots Plan
 
-Status: minimum release-worthy phases nearly complete, 2026-05-14.
+Status: implementation complete through Phase 8 basic reporting, 2026-05-16.
 
 Implementation notes:
 
 - Phase 0 complete.
 - Phase 1 complete.
 - Phase 2 complete, including batched cross-bay runtime slot heartbeats.
-- Phase 3 is being completed: start/restart slot exhaustion propagates as a
+- Phase 3 complete: start/restart slot exhaustion propagates as a
   structured LRO result with privacy-filtered visible project details, frontend
-  stop actions, sponsor upgrade routing, and CLI rendering. Explicit
-  sponsor-change actions remain Phase 5 follow-up work.
+  stop actions, sponsor upgrade routing, and CLI rendering.
 - Phase 4 complete: project owners, runtime sponsors, and administrators can
   disable ordinary collaborator starts that consume the runtime sponsor's
   simultaneous running-project slots.
 - Phase 5 complete: a current collaborator can explicitly make themself the
   runtime sponsor for future starts, including from the blocked-start recovery
   flow. Non-admin users cannot silently assign sponsorship to another account.
-- Phase 6 complete pending live smoke tests: projects now have an `autostart_enabled`
+- Phase 6 complete: projects now have an `autostart_enabled`
   policy. Explicit manual starts remain allowed, while automatic start requests
   are denied before runtime-slot admission when the policy is disabled. Admin
   host-drain restore starts continue to bypass runtime-slot/autostart admission.
   Frontend Codex, Jupyter, terminal, project-host SSH, project-host HTTP proxy,
   and project-host Codex runtime wake paths now mark starts as autostarts and
   surface policy denial before doing expensive start work.
+- Phase 7 complete for release: course-linked project settings now explain
+  runtime sponsorship and show sponsor slot usage alongside the course policy
+  context. Deeper course/team dashboards and bulk classroom operations remain
+  follow-up polish.
+- Phase 8 complete for basic operations: runtime slot reserve/deny/release/expire
+  events are written to central_log, admins can query an active-slot report via
+  the hub system API, and the CLI exposes `cocalc project runtime-slots`.
 - Runtime sponsor resolution enforces the core invariant that explicit runtime
   sponsors and `usage_account_id` sponsors must be current project
   owners/collaborators; otherwise resolution falls back to the project owner.
@@ -520,12 +526,12 @@ Default:
 
 Validation:
 
-- SSH wake denial smoke: pending live smoke test.
-- HTTP/app wake denial smoke: pending live smoke test.
-- UI autostart denial smoke: covered by focused frontend unit tests; pending
-  live smoke test.
-- autostart disabled smoke: covered by focused frontend/project-host unit
-  tests; pending live smoke test.
+- SSH wake denial smoke: manually smoke-tested during Phase 6.
+- HTTP/app wake denial smoke: manually smoke-tested during Phase 6.
+- UI autostart denial smoke: covered by focused frontend unit tests and manual
+  testing.
+- autostart disabled smoke: covered by focused frontend/project-host unit tests
+  and manual testing.
 
 ### Phase 7: Course/Team Polish
 
@@ -544,7 +550,7 @@ Implementation:
 Validation:
 
 - course create/copy workflows preserve expected sponsor
-- instructor bulk stop works
+- instructor bulk stop works: deferred to deeper course dashboard follow-up
 - student blocked-start messaging is understandable
 
 ### Phase 8: Observability And Abuse Operations
@@ -590,10 +596,8 @@ Strongly recommended before public launch:
 
 Can defer:
 
-- Phase 5 explicit sponsor change
-- Phase 7 course/team polish beyond clear sponsor display
+- deeper Phase 7 course/team dashboards and bulk controls
 - automatic make-room autostart policy
-- separate `runtime_sponsor_account_id` column
 
 ## Open Questions For Review
 

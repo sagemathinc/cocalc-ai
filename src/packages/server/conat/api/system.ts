@@ -37,6 +37,7 @@ import manageApiKeys from "@cocalc/server/api/manage";
 export { manageApiKeys };
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import isAdmin from "@cocalc/server/accounts/is-admin";
+import getName from "@cocalc/server/accounts/get-name";
 import type { AccountEntitlementOverride } from "@cocalc/conat/hub/api/purchases";
 import {
   clearAccountEntitlementOverrideLocal,
@@ -182,6 +183,8 @@ import { getAccountCollaboratorIndexProjectionMaintenanceStatus } from "@cocalc/
 import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-notification-index-maintenance";
 import { getManagedProjectEgressPolicy as getManagedProjectEgressPolicyRaw } from "@cocalc/server/membership/managed-egress-policy";
 import { recordManagedProjectEgress as recordManagedProjectEgressRaw } from "@cocalc/server/membership/managed-egress";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import sshKeys from "@cocalc/server/projects/get-ssh-keys";
 import { getAppFeedData as listAppNews0 } from "@cocalc/database/postgres/news";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
@@ -203,6 +206,9 @@ import type {
   BayLoadProjectionStatus,
   AcpAdmissionDenialReport,
   AcpAdmissionDenialSummary,
+  ProjectRuntimeSlotReport,
+  ProjectRuntimeSlotReportSlot,
+  ProjectRuntimeSlotReportSponsor,
   ServiceAdmissionDenialReport,
   ServiceAdmissionDenialSummary,
   ProjectBackupShardAdminStatus,
@@ -1084,6 +1090,183 @@ export async function getServiceAdmissionDenialReport({
     window_minutes: windowMinutes,
     min_count: minCount,
     groups: rows.map(parseServiceDenialSummaryRow),
+  };
+}
+
+function dateToIso(value: unknown): string {
+  return value instanceof Date ? value.toISOString() : `${value}`;
+}
+
+async function runtimeSponsorLimit(
+  sponsor_account_id: string,
+): Promise<number | null> {
+  try {
+    const membership = await resolveMembershipForAccount(sponsor_account_id);
+    const limit =
+      getEffectiveMembershipUsageLimits(
+        membership,
+      ).max_sponsored_running_projects;
+    return typeof limit === "number" && Number.isFinite(limit) ? limit : null;
+  } catch (err) {
+    logger.warn("failed to resolve runtime sponsor limit", {
+      sponsor_account_id,
+      err: `${err}`,
+    });
+    return null;
+  }
+}
+
+export async function getProjectRuntimeSlotReport({
+  account_id,
+  sponsor_account_id,
+  active_only = true,
+  window_minutes,
+  limit,
+}: {
+  account_id?: string;
+  sponsor_account_id?: string | null;
+  active_only?: boolean;
+  window_minutes?: number;
+  limit?: number;
+} = {}): Promise<ProjectRuntimeSlotReport> {
+  await assertAdmin(account_id);
+  const rowLimit = boundedPositiveInteger({
+    value: limit,
+    fallback: 100,
+    max: 1000,
+  });
+  const windowMinutes = boundedPositiveInteger({
+    value: window_minutes,
+    fallback: 24 * 60,
+    max: 30 * 24 * 60,
+  });
+  const sponsorFilter = optionalFilter(sponsor_account_id);
+  const params: any[] = [rowLimit];
+  const conditions: string[] = [];
+  if (active_only) {
+    conditions.push("s.state = ANY($2)");
+    params.push(["starting", "running"]);
+  }
+  if (sponsorFilter) {
+    params.push(sponsorFilter);
+    conditions.push(`s.sponsor_account_id = $${params.length}`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const { rows: slotRows } =
+    await getPool().query<ProjectRuntimeSlotReportSlot>(
+      `
+      SELECT s.sponsor_account_id, s.project_id, p.title, s.owning_bay_id,
+             s.host_id, s.state, s.actor_account_id, s.reason,
+             s.acquired_at, s.heartbeat_at, s.expires_at, s.op_id
+        FROM project_runtime_slots s
+        LEFT JOIN projects p ON p.project_id = s.project_id
+        ${where}
+       ORDER BY s.heartbeat_at DESC, s.acquired_at DESC
+       LIMIT $1
+    `,
+      params,
+    );
+
+  const sponsorRows = new Map<string, ProjectRuntimeSlotReportSponsor>();
+  for (const row of slotRows) {
+    const sponsor = sponsorRows.get(row.sponsor_account_id) ?? {
+      sponsor_account_id: row.sponsor_account_id,
+      current: 0,
+      active_projects: 0,
+      starting: 0,
+      running: 0,
+      oldest_heartbeat_at: null,
+      newest_heartbeat_at: null,
+    };
+    if (row.state === "starting" || row.state === "running") {
+      sponsor.current += 1;
+      sponsor.active_projects += 1;
+      if (row.state === "starting") sponsor.starting += 1;
+      if (row.state === "running") sponsor.running += 1;
+    }
+    const heartbeat = dateToIso(row.heartbeat_at);
+    if (
+      sponsor.oldest_heartbeat_at == null ||
+      heartbeat < sponsor.oldest_heartbeat_at
+    ) {
+      sponsor.oldest_heartbeat_at = heartbeat;
+    }
+    if (
+      sponsor.newest_heartbeat_at == null ||
+      heartbeat > sponsor.newest_heartbeat_at
+    ) {
+      sponsor.newest_heartbeat_at = heartbeat;
+    }
+    sponsorRows.set(row.sponsor_account_id, sponsor);
+  }
+
+  const top_sponsors = await Promise.all(
+    [...sponsorRows.values()]
+      .sort((a, b) => b.current - a.current)
+      .slice(0, rowLimit)
+      .map(async (sponsor) => ({
+        ...sponsor,
+        sponsor_display_name: await getName(sponsor.sponsor_account_id).catch(
+          () => null,
+        ),
+        limit: await runtimeSponsorLimit(sponsor.sponsor_account_id),
+      })),
+  );
+
+  const eventParams: any[] = [windowMinutes];
+  const eventConditions = [
+    "event = ANY($2)",
+    `"time" >= NOW() - ($1::int * INTERVAL '1 minute')`,
+  ];
+  eventParams.push([
+    "project_runtime_slot_reserved",
+    "project_runtime_slot_denied",
+    "project_runtime_slot_released",
+    "project_runtime_slot_expired",
+  ]);
+  if (sponsorFilter) {
+    eventParams.push(sponsorFilter);
+    eventConditions.push(
+      `value->>'sponsor_account_id' = $${eventParams.length}`,
+    );
+  }
+  const { rows: eventRows } = await getPool().query<{
+    event: string;
+    count: number;
+    first_time: Date;
+    last_time: Date;
+  }>(
+    `
+      SELECT event, COUNT(*)::int AS count, MIN("time") AS first_time,
+             MAX("time") AS last_time
+        FROM central_log
+       WHERE ${eventConditions.join(" AND ")}
+       GROUP BY event
+       ORDER BY event
+    `,
+    eventParams,
+  );
+
+  const checkedAt = new Date();
+  return {
+    checked_at: checkedAt.toISOString(),
+    bay_id: getConfiguredBayId(),
+    since: new Date(checkedAt.valueOf() - windowMinutes * 60_000).toISOString(),
+    window_minutes: windowMinutes,
+    active_only,
+    slots: slotRows.map((row) => ({
+      ...row,
+      acquired_at: dateToIso(row.acquired_at),
+      heartbeat_at: dateToIso(row.heartbeat_at),
+      expires_at: dateToIso(row.expires_at),
+    })),
+    top_sponsors,
+    recent_events: eventRows.map((row) => ({
+      event: row.event,
+      count: Number(row.count) || 0,
+      first_time: dateToIso(row.first_time),
+      last_time: dateToIso(row.last_time),
+    })),
   };
 }
 

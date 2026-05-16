@@ -8,6 +8,7 @@ let publishLroEventMock: jest.Mock;
 let mirrorStartLroProgressMock: jest.Mock;
 let supersedeOlderProjectStartLrosMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
+let interBayCheckStartAdmissionMock: jest.Mock;
 let interBayRestartMock: jest.Mock;
 let projectControlBridgeMock: jest.Mock;
 
@@ -86,6 +87,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
 }));
 
 projectControlBridgeMock = jest.fn(() => ({
+  checkStartAdmission: (...args: any[]) =>
+    interBayCheckStartAdmissionMock(...args),
   restart: (...args: any[]) => interBayRestartMock(...args),
 }));
 
@@ -162,8 +165,11 @@ describe("projects.restart", () => {
       bay_id: "bay-1",
       epoch: 4,
     }));
+    interBayCheckStartAdmissionMock = jest.fn(async () => undefined);
     interBayRestartMock = jest.fn(async () => undefined);
     projectControlBridgeMock = jest.fn(() => ({
+      checkStartAdmission: (...args: any[]) =>
+        interBayCheckStartAdmissionMock(...args),
       restart: (...args: any[]) => interBayRestartMock(...args),
     }));
   });
@@ -184,6 +190,12 @@ describe("projects.restart", () => {
       scope_id: "proj-1",
       service: "persist-service",
       stream_name: "stream:op-2",
+    });
+    expect(interBayCheckStartAdmissionMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      source_bay_id: "bay-0",
+      epoch: 4,
     });
     expect(interBayRestartMock).toHaveBeenCalledWith({
       project_id: "proj-1",

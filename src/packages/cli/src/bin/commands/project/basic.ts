@@ -159,6 +159,7 @@ export function registerProjectBasicCommands(
     waitForProjectNotRunning,
     resolveProjectProjectApi,
     runLocalCommand,
+    resolveAccountByIdentifier,
   } = deps;
 
   project
@@ -222,6 +223,37 @@ export function registerProjectBasicCommands(
         };
       });
     });
+
+  project
+    .command("runtime-slots")
+    .description("admin report for sponsored project runtime slots")
+    .option("--sponsor <account>", "filter by sponsor account id or email")
+    .option("--all", "include released, failed, and expired slot rows")
+    .option("--window-minutes <n>", "central-log event window", "1440")
+    .option("--limit <n>", "maximum slot rows", "100")
+    .action(
+      async (
+        opts: {
+          sponsor?: string;
+          all?: boolean;
+          windowMinutes?: string;
+          limit?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "project runtime-slots", async (ctx) => {
+          const sponsor = `${opts.sponsor ?? ""}`.trim()
+            ? await resolveAccountByIdentifier(ctx, opts.sponsor!.trim())
+            : undefined;
+          return await ctx.hub.system.getProjectRuntimeSlotReport({
+            sponsor_account_id: sponsor?.account_id,
+            active_only: !opts.all,
+            window_minutes: Number(opts.windowMinutes ?? "1440") || 1440,
+            limit: Number(opts.limit ?? "100") || 100,
+          });
+        });
+      },
+    );
 
   project
     .command("where")

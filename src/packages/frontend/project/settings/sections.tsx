@@ -4,7 +4,7 @@
  */
 
 import { Space } from "antd";
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
@@ -32,6 +32,11 @@ import { ProjectSecrets } from "./secrets";
 import type { ProjectSettingsNavItem } from "./section-nav";
 import { SSHPanel } from "./ssh";
 import type { Project } from "./types";
+
+const CourseRuntimeSponsorSummary = lazy(async () => {
+  const module = await import("./runtime-sponsor-controls");
+  return { default: module.CourseRuntimeSponsorSummary };
+});
 
 export type ProjectSettingsLayoutMode = "page" | "flyout";
 
@@ -254,10 +259,17 @@ export function useProjectSettingsSections({
       title: "Course",
       description:
         "Course-managed restrictions and inherited settings for this project.",
-      children: student.disableSSH ? (
-        <p>SSH access is disabled by the course configuration.</p>
-      ) : (
-        <p>This project is linked to a course.</p>
+      children: (
+        <Space direction="vertical" size={sectionGap} style={{ width: "100%" }}>
+          {student.disableSSH ? (
+            <p>SSH access is disabled by the course configuration.</p>
+          ) : (
+            <p>This project is linked to a course.</p>
+          )}
+          <Suspense fallback={null}>
+            <CourseRuntimeSponsorSummary project_id={project_id} />
+          </Suspense>
+        </Space>
       ),
     });
   }
