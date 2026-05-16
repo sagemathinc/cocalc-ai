@@ -142,7 +142,7 @@ export function HardDeleteProjectModal({
               );
             }}
           >
-            Permanently Delete
+            Permanently Delete Project
           </Button>,
         ]}
       >
@@ -155,6 +155,9 @@ export function HardDeleteProjectModal({
               description={error}
             />
           ) : undefined}
+          <div style={{ color: COLORS.GRAY_M }}>
+            Review exactly what will be removed before confirming.
+          </div>
           <InfoSection
             icon="warning"
             tone="danger"
@@ -172,7 +175,7 @@ export function HardDeleteProjectModal({
           <InfoSection
             icon="check-circle"
             tone="positive"
-            title="What this frees up"
+            title="What this cleans up"
           >
             <InfoRow icon="project-outlined">
               Immediately frees one of your project slots
@@ -194,27 +197,30 @@ export function HardDeleteProjectModal({
           >
             <div style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
               Type{" "}
-              <code style={{ userSelect: "all" }}>{confirmationTarget}</code> to
-              confirm.
+              <code style={{ userSelect: "all" }}>
+                &quot;{confirmationTarget}&quot;
+              </code>{" "}
+              to confirm.
             </div>
             <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
               After deletion begins, this {projectLabelLower} cannot be opened
               or started.
             </div>
+            <Input
+              value={confirmation}
+              disabled={deleting}
+              placeholder={confirmationTarget}
+              style={{ marginTop: 10 }}
+              onChange={(e) => setConfirmation(e.target.value)}
+              onPressEnter={() => {
+                if (confirmationMatches && !deleting) {
+                  void permanentlyDeleteProject().catch((err) =>
+                    setError(`${err}`),
+                  );
+                }
+              }}
+            />
           </div>
-          <Input
-            value={confirmation}
-            disabled={deleting}
-            placeholder={confirmationTarget}
-            onChange={(e) => setConfirmation(e.target.value)}
-            onPressEnter={() => {
-              if (confirmationMatches && !deleting) {
-                void permanentlyDeleteProject().catch((err) =>
-                  setError(`${err}`),
-                );
-              }
-            }}
-          />
           {deleting ? (
             <div>
               <div style={{ marginBottom: 8 }}>
@@ -317,14 +323,15 @@ const SECTION_STYLE: CSSProperties = {
 
 const DANGER_SECTION_STYLE: CSSProperties = {
   ...SECTION_STYLE,
-  background: COLORS.ANTD_BG_RED_L,
-  border: `1px solid ${COLORS.ANTD_BG_RED_M}`,
+  background: "white",
+  border: `1px solid ${COLORS.GRAY_LL}`,
+  borderLeft: `4px solid ${COLORS.FG_RED}`,
 };
 
 const POSITIVE_SECTION_STYLE: CSSProperties = {
   ...SECTION_STYLE,
   background: COLORS.YELL_LLL,
-  border: `1px solid ${COLORS.YELL_LL}`,
+  border: `1px solid ${COLORS.GRAY_LL}`,
 };
 
 const TITLE_STYLE: CSSProperties = {
