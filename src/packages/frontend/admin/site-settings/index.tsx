@@ -497,7 +497,7 @@ export default function SiteSettings({ close }) {
   function formatEmailTestStep(step: any): string {
     switch (step?.source) {
       case "primary-smtp":
-        return "primary smtp";
+        return "smtp";
       case "default-fallback":
         return `fallback ${step.backend}`;
       default:
@@ -549,12 +549,11 @@ export default function SiteSettings({ close }) {
                   <code>{emailTestResult.resolved_backend || "none"}</code>
                 </div>
                 <div>
-                  Primary SMTP is used when a lane resolves to{" "}
-                  <code>smtp</code>.
+                  SMTP is used when a lane resolves to <code>smtp</code>.
                 </div>
                 {primarySmtp != null && (
                   <div>
-                    Primary SMTP: server{" "}
+                    SMTP: server{" "}
                     <code>{primarySmtp.server ? "set" : "missing"}</code>, from{" "}
                     <code>{primarySmtp.from ? "set" : "missing"}</code>,
                     username{" "}
