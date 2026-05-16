@@ -4,16 +4,18 @@
  */
 
 import { Alert, Button, Input, Modal, Progress, Space } from "antd";
-import { useState } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { useIntl } from "react-intl";
 
 import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
+import { Icon, type IconName } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { LroEvent } from "@cocalc/conat/hub/api/lro";
+import { COLORS } from "@cocalc/util/theme";
 
 interface Props {
   open: boolean;
@@ -104,7 +106,25 @@ export function HardDeleteProjectModal({
     <>
       <Modal
         open={open}
-        title={`Permanently delete ${projectLabelLower}`}
+        width={560}
+        title={
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <IconBadge icon="trash" tone="danger" />
+            <div>
+              <div>Permanently delete {projectLabelLower}</div>
+              <div
+                style={{
+                  color: COLORS.GRAY_M,
+                  fontSize: 13,
+                  fontWeight: 400,
+                  marginTop: 2,
+                }}
+              >
+                This cannot be undone.
+              </div>
+            </div>
+          </div>
+        }
         onCancel={close}
         footer={[
           <Button key="cancel" disabled={deleting} onClick={close}>
@@ -135,30 +155,52 @@ export function HardDeleteProjectModal({
               description={error}
             />
           ) : undefined}
-          <Alert
-            showIcon
-            type="error"
-            message="This cannot be undone"
-            description={
-              <Space direction="vertical" size={8}>
-                <div>
-                  Deleting this {projectLabelLower} permanently removes its
-                  files, collaborators, invitations, shares, project secrets,
-                  SSH keys, metadata, and all TimeTravel edit history for every
-                  document in the {projectLabelLower}. This {projectLabelLower}{" "}
-                  cannot be opened or started after deletion begins.
-                </div>
-                <div>
-                  It also immediately frees one of your project slots, frees the
-                  storage used by this {projectLabelLower} as cleanup runs, and
-                  deletes all backups soon to reduce retained private data.
-                </div>
-              </Space>
-            }
-          />
-          <div>
-            Type <code style={{ userSelect: "all" }}>{confirmationTarget}</code>{" "}
-            to confirm.
+          <InfoSection
+            icon="warning"
+            tone="danger"
+            title="What will be deleted"
+          >
+            <InfoRow icon="file">Files, folders, and project metadata</InfoRow>
+            <InfoRow icon="users">
+              Collaborator access, invitations, and shares
+            </InfoRow>
+            <InfoRow icon="key">Project secrets and SSH keys</InfoRow>
+            <InfoRow icon="history">
+              All TimeTravel edit history for every document
+            </InfoRow>
+          </InfoSection>
+          <InfoSection
+            icon="check-circle"
+            tone="positive"
+            title="What this frees up"
+          >
+            <InfoRow icon="project-outlined">
+              Immediately frees one of your project slots
+            </InfoRow>
+            <InfoRow icon="hdd">
+              Frees the storage used by this {projectLabelLower} as cleanup runs
+            </InfoRow>
+            <InfoRow icon="lock">
+              Deletes all backups soon, reducing retained private data
+            </InfoRow>
+          </InfoSection>
+          <div
+            style={{
+              background: COLORS.GRAY_LLL,
+              border: `1px solid ${COLORS.GRAY_LL}`,
+              borderRadius: 8,
+              padding: 12,
+            }}
+          >
+            <div style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
+              Type{" "}
+              <code style={{ userSelect: "all" }}>{confirmationTarget}</code> to
+              confirm.
+            </div>
+            <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
+              After deletion begins, this {projectLabelLower} cannot be opened
+              or started.
+            </div>
           </div>
           <Input
             value={confirmation}
@@ -187,3 +229,118 @@ export function HardDeleteProjectModal({
     </>
   );
 }
+
+function IconBadge({
+  icon,
+  tone,
+}: {
+  icon: IconName;
+  tone: "danger" | "positive";
+}) {
+  const style = tone === "danger" ? DANGER_BADGE_STYLE : POSITIVE_BADGE_STYLE;
+  return (
+    <span style={style}>
+      <Icon name={icon} />
+    </span>
+  );
+}
+
+function InfoSection({
+  icon,
+  title,
+  tone,
+  children,
+}: {
+  icon: IconName;
+  title: string;
+  tone: "danger" | "positive";
+  children: ReactNode;
+}) {
+  const sectionStyle =
+    tone === "danger" ? DANGER_SECTION_STYLE : POSITIVE_SECTION_STYLE;
+  const titleStyle =
+    tone === "danger" ? DANGER_TITLE_STYLE : POSITIVE_TITLE_STYLE;
+  return (
+    <div style={sectionStyle}>
+      <div style={titleStyle}>
+        <IconBadge icon={icon} tone={tone} />
+        {title}
+      </div>
+      <Space direction="vertical" size={8} style={{ width: "100%" }}>
+        {children}
+      </Space>
+    </div>
+  );
+}
+
+function InfoRow({ icon, children }: { icon: IconName; children: ReactNode }) {
+  return (
+    <div
+      style={{
+        color: COLORS.GRAY_D,
+        display: "grid",
+        gap: 8,
+        gridTemplateColumns: "20px minmax(0, 1fr)",
+        alignItems: "start",
+      }}
+    >
+      <Icon name={icon} style={{ color: COLORS.GRAY_M, marginTop: 2 }} />
+      <div>{children}</div>
+    </div>
+  );
+}
+
+const BADGE_STYLE: CSSProperties = {
+  borderRadius: "50%",
+  display: "inline-grid",
+  height: 32,
+  placeItems: "center",
+  width: 32,
+};
+
+const DANGER_BADGE_STYLE: CSSProperties = {
+  ...BADGE_STYLE,
+  background: COLORS.ANTD_BG_RED_L,
+  color: COLORS.FG_RED,
+};
+
+const POSITIVE_BADGE_STYLE: CSSProperties = {
+  ...BADGE_STYLE,
+  background: COLORS.YELL_LLL,
+  color: COLORS.BRWN,
+};
+
+const SECTION_STYLE: CSSProperties = {
+  borderRadius: 10,
+  padding: 14,
+};
+
+const DANGER_SECTION_STYLE: CSSProperties = {
+  ...SECTION_STYLE,
+  background: COLORS.ANTD_BG_RED_L,
+  border: `1px solid ${COLORS.ANTD_BG_RED_M}`,
+};
+
+const POSITIVE_SECTION_STYLE: CSSProperties = {
+  ...SECTION_STYLE,
+  background: COLORS.YELL_LLL,
+  border: `1px solid ${COLORS.YELL_LL}`,
+};
+
+const TITLE_STYLE: CSSProperties = {
+  alignItems: "center",
+  display: "flex",
+  fontWeight: 700,
+  gap: 10,
+  marginBottom: 10,
+};
+
+const DANGER_TITLE_STYLE: CSSProperties = {
+  ...TITLE_STYLE,
+  color: COLORS.FG_RED,
+};
+
+const POSITIVE_TITLE_STYLE: CSSProperties = {
+  ...TITLE_STYLE,
+  color: COLORS.BRWN,
+};
