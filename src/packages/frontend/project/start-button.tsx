@@ -103,6 +103,7 @@ export function StartButton({
     hostOperational.reason ?? "Assigned host is unavailable.";
   const assignedHostLabel = hostLabel(hostInfo, host_id);
   const lastNotRunningRef = useRef<null | number>(null);
+  const [membershipDetailsOpen, setMembershipDetailsOpen] = useState(false);
   const startLroRecord = useTypedRedux(
     { project_id: resolvedProjectId },
     "start_lro",
@@ -217,6 +218,10 @@ export function StartButton({
       <RuntimeSponsorDenialDescription
         denial={runtimeSponsorDenial}
         project_id={resolvedProjectId}
+        onOpenMembershipDetails={() => {
+          Modal.destroyAll();
+          setMembershipDetailsOpen(true);
+        }}
       />
     ) : (
       startLroError
@@ -229,6 +234,10 @@ export function StartButton({
       <RuntimeSponsorDenialDescription
         denial={denial}
         project_id={resolvedProjectId}
+        onOpenMembershipDetails={() => {
+          Modal.destroyAll();
+          setMembershipDetailsOpen(true);
+        }}
       />
     ) : err instanceof Error ? (
       err.message
@@ -416,7 +425,15 @@ export function StartButton({
   }
 
   if (minimal) {
-    return render_start_project_button();
+    return (
+      <>
+        {render_start_project_button()}
+        <MembershipDetailsModal
+          open={membershipDetailsOpen}
+          onClose={() => setMembershipDetailsOpen(false)}
+        />
+      </>
+    );
   }
 
   // In case user is admin viewing another user's project, we provide a
@@ -521,7 +538,33 @@ export function StartButton({
       {state == null && redux.getStore("account")?.get("is_admin")
         ? render_admin_view()
         : render_normal_view()}
+      <MembershipDetailsModal
+        open={membershipDetailsOpen}
+        onClose={() => setMembershipDetailsOpen(false)}
+      />
     </div>
+  );
+}
+
+function MembershipDetailsModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+
+  return (
+    <Modal
+      width={800}
+      title="Membership"
+      open={open}
+      onCancel={onClose}
+      onOk={onClose}
+    >
+      <MembershipStatusPanel showHeader={false} />
+    </Modal>
   );
 }
 
@@ -626,9 +669,11 @@ function MoveProgressInline({ moveLro }: { moveLro: MoveLroState }) {
 function RuntimeSponsorDenialDescription({
   denial,
   project_id,
+  onOpenMembershipDetails,
 }: {
   denial: RuntimeSponsorDenial;
   project_id: string;
+  onOpenMembershipDetails: () => void;
 }) {
   const [stoppingProjectIds, setStoppingProjectIds] = useState<
     Record<string, true>
@@ -683,18 +728,6 @@ function RuntimeSponsorDenialDescription({
     } finally {
       setChangingSponsor(false);
     }
-  }
-
-  function openMembershipDetails() {
-    Modal.destroyAll();
-    setTimeout(() => {
-      Modal.info({
-        title: "Membership",
-        content: <MembershipStatusPanel showHeader={false} />,
-        width: 900,
-        okText: "Close",
-      });
-    }, 0);
   }
 
   const sponsorName = denial.sponsor_display_name ?? "The runtime sponsor";
@@ -769,7 +802,7 @@ function RuntimeSponsorDenialDescription({
       {(denial.can_upgrade || denial.can_change_sponsor) && (
         <Space size="small" style={{ marginTop: "12px" }} wrap>
           {denial.can_upgrade && (
-            <Button size="small" onClick={openMembershipDetails}>
+            <Button size="small" onClick={onOpenMembershipDetails}>
               Open membership details
             </Button>
           )}

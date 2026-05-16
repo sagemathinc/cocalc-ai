@@ -129,7 +129,7 @@ jest.mock("@cocalc/frontend/projects/host-operational", () => ({
 jest.mock("@cocalc/frontend/project/settings/move-project", () => () => null);
 
 jest.mock("@cocalc/frontend/account/membership-status", () => ({
-  MembershipStatusPanel: () => null,
+  MembershipStatusPanel: () => <div>membership status panel</div>,
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -373,5 +373,44 @@ describe("StartButton", () => {
         }),
       );
     });
+  });
+
+  it("opens membership details from sponsor recovery inside the normal React tree", async () => {
+    startLroRecord = undefined;
+    mockStartProject.mockRejectedValue(
+      new Error(
+        'COCALC_RUNTIME_SPONSOR_DENIAL:{"code":"runtime_sponsor_slots_exhausted","sponsor_account_id":"user-1","limit":1,"current":1,"active_projects":[],"sponsor_display_name":"Bella Boo","can_upgrade":true,"can_change_sponsor":false}',
+      ),
+    );
+
+    const view = render(
+      <IntlProvider locale="en">
+        <StartButton />
+      </IntlProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /start project/i }));
+
+    let content: React.ReactElement | undefined;
+    await waitFor(() => {
+      content = (Modal.info as jest.Mock).mock.calls[0][0].content;
+      expect(content).toBeTruthy();
+    });
+
+    view.rerender(
+      <IntlProvider locale="en">
+        <StartButton />
+        {content}
+      </IntlProvider>,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /open membership details/i,
+      }),
+    );
+
+    expect(Modal.destroyAll).toHaveBeenCalled();
+    expect(screen.getByText("membership status panel")).toBeTruthy();
   });
 });
