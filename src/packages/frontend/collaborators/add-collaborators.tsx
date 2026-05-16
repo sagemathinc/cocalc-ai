@@ -21,7 +21,7 @@ import {
   useState,
 } from "../app-framework";
 import { Well } from "../antd-bootstrap";
-import { A, Icon, Loading, ErrorDisplay, Gap } from "../components";
+import { Icon, Loading, ErrorDisplay, Gap } from "../components";
 import { webapp_client } from "../webapp-client";
 import { SITE_NAME } from "@cocalc/util/theme";
 import {
@@ -508,14 +508,9 @@ export const AddCollaborators: React.FC<Props> = ({
           render_select_list_button()
         ) : (
           <>
-            Who would you like to collaborate with?{" "}
-            <b>
-              NOTE: If you are teaching,{" "}
-              <A href="https://doc.cocalc.com/teaching-create-course.html#add-students-to-the-course">
-                add your students to your course
-              </A>
-              , NOT HERE.
-            </b>
+            Collaborators can view, edit, run code, manage files, and add or
+            remove other collaborators in this project. For teaching, add
+            students through the course.
           </>
         )}
       </div>
