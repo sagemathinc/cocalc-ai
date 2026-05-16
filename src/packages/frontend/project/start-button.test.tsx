@@ -375,6 +375,35 @@ describe("StartButton", () => {
     });
   });
 
+  it("renders structured project start infrastructure errors as user-facing text", () => {
+    startLroRecord = {
+      toJS: () => ({
+        summary: {
+          status: "failed",
+          op_id: "op-1",
+          scope_type: "project",
+          scope_id: "project-1",
+          error: JSON.stringify({
+            error:
+              "Unknown system error -122: Unknown system error -122, open '/mnt/cocalc/project-1/.local/share/cocalc/rootfs/current-image.txt'",
+            event: { type: "error" },
+          }),
+        },
+      }),
+    };
+
+    render(
+      <IntlProvider locale="en">
+        <StartButton />
+      </IntlProvider>,
+    );
+
+    expect(
+      screen.getByText(/could not finish preparing the project software/i),
+    ).toBeTruthy();
+    expect(screen.getByText("Technical details")).toBeTruthy();
+  });
+
   it("opens membership details from sponsor recovery inside the normal React tree", async () => {
     startLroRecord = undefined;
     mockStartProject.mockRejectedValue(

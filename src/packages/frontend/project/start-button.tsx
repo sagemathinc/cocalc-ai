@@ -224,7 +224,7 @@ export function StartButton({
         }}
       />
     ) : (
-      startLroError
+      <ProjectStartFailureDescription error={startLroError} />
     );
   }
 
@@ -240,11 +240,11 @@ export function StartButton({
         }}
       />
     ) : err instanceof Error ? (
-      err.message
+      <ProjectStartFailureDescription error={err.message} />
     ) : startPolicyBlock ? (
       formatProjectStartPolicyBlock(startPolicyBlock)
     ) : (
-      `${err}`
+      <ProjectStartFailureDescription error={`${err}`} />
     );
   }
 
@@ -566,6 +566,119 @@ function MembershipDetailsModal({
       <MembershipStatusPanel showHeader={false} />
     </Modal>
   );
+}
+
+function ProjectStartFailureDescription({ error }: { error: string }) {
+  const { message, technical } = getProjectStartErrorDisplay(error);
+  const showTechnical =
+    !!technical &&
+    normalizeErrorText(technical) !== normalizeErrorText(message);
+
+  return (
+    <div>
+      <div>{message}</div>
+      {showTechnical && (
+        <details style={{ marginTop: "8px", fontSize: "12px" }}>
+          <summary>Technical details</summary>
+          <pre
+            style={{
+              background: COLORS.GRAY_LLL,
+              border: `1px solid ${COLORS.GRAY_LL}`,
+              borderRadius: "4px",
+              marginTop: "6px",
+              maxHeight: "160px",
+              overflow: "auto",
+              padding: "8px",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {technical}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function getProjectStartErrorDisplay(error: string): {
+  message: string;
+  technical: string;
+} {
+  const technical = `${error ?? ""}`.trim();
+  const extracted = extractErrorMessage(technical);
+  const lower = extracted.toLowerCase();
+
+  if (
+    lower.includes("current-image.txt") ||
+    lower.includes("unknown system error -122")
+  ) {
+    return {
+      message:
+        "CoCalc could not finish preparing the project software environment on this host. Try starting the project again; if it keeps failing, the project may need to be restored or moved to a healthy host.",
+      technical,
+    };
+  }
+
+  if (lower.includes("project volume does not exist")) {
+    return {
+      message:
+        "This project does not currently have an active filesystem volume on this host. Starting it should restore or provision the project from backup; if it keeps failing, the host or backup state needs attention.",
+      technical,
+    };
+  }
+
+  return {
+    message: extracted || "The project did not start.",
+    technical,
+  };
+}
+
+function extractErrorMessage(error: string): string {
+  const trimmed = stripErrorPrefix(error.trim());
+  if (!trimmed) return "";
+  const parsed = parseMaybeJson(trimmed);
+  if (parsed == null) return trimmed;
+  return extractErrorMessageFromValue(parsed) ?? trimmed;
+}
+
+function extractErrorMessageFromValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = stripErrorPrefix(value.trim());
+    const parsed = parseMaybeJson(trimmed);
+    if (parsed != null) {
+      return extractErrorMessageFromValue(parsed);
+    }
+    return trimmed || undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  for (const key of ["message", "error", "reason", "stderr"]) {
+    const extracted = extractErrorMessageFromValue(record[key]);
+    if (extracted) return extracted;
+  }
+  for (const key of ["event", "detail", "result"]) {
+    const extracted = extractErrorMessageFromValue(record[key]);
+    if (extracted) return extracted;
+  }
+  return undefined;
+}
+
+function parseMaybeJson(value: string): unknown | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+}
+
+function stripErrorPrefix(value: string): string {
+  return value.replace(/^error:\s*/i, "").trim();
+}
+
+function normalizeErrorText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 const START_PHASE_LABELS: Record<string, string> = {
