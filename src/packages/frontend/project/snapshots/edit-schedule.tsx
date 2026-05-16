@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Flex, InputNumber, Modal, Spin, Switch } from "antd";
+import { Alert, Button, Flex, InputNumber, Modal, Spin, Switch } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
@@ -18,8 +18,15 @@ export default function EditSchedule() {
   const [showHelp, setShowHelp] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const openSchedule = useTypedRedux({ project_id }, "open_snapshot_schedule");
+  const account_id = useTypedRedux("account", "account_id");
+  const isAdmin = !!useTypedRedux("account", "is_admin");
+  const project = useTypedRedux("projects", "project_map")?.get(project_id);
   const [schedule0, setSchedule] = useState<SnapshotSchedule | null>(null);
   const [limit, setLimit] = useState<number | null>(null);
+  const canEditSchedule =
+    isAdmin ||
+    project?.getIn(["users", account_id, "group"]) === "owner" ||
+    project?.get("allow_collaborator_destructive_storage_actions") === true;
 
   async function loadSchedule(): Promise<SnapshotSchedule> {
     const counts =
@@ -83,6 +90,11 @@ export default function EditSchedule() {
     try {
       setLoading(true);
       setError("");
+      if (!canEditSchedule) {
+        throw new Error(
+          "Only project owners can change snapshot schedules unless the owner allows collaborators to manage storage history.",
+        );
+      }
       if (overLimit) {
         throw new Error(
           `automatic snapshots total ${total} exceeds project limit ${limit}`,
@@ -120,6 +132,7 @@ export default function EditSchedule() {
                 checkedChildren="Enabled"
                 unCheckedChildren="Disabled"
                 checked={!schedule?.disabled}
+                disabled={!canEditSchedule || loading}
                 onChange={(enabled) =>
                   setSchedule({ ...schedule, disabled: !enabled })
                 }
@@ -148,18 +161,31 @@ export default function EditSchedule() {
                 setOpen(false);
               }}
             >
-              Cancel
+              {canEditSchedule ? "Cancel" : "Close"}
             </Button>,
-            <Button
-              disabled={loading}
-              key="create"
-              type="primary"
-              onClick={saveSchedule}
-            >
-              Save
-            </Button>,
+            ...(canEditSchedule
+              ? [
+                  <Button
+                    disabled={loading}
+                    key="create"
+                    type="primary"
+                    onClick={saveSchedule}
+                  >
+                    Save
+                  </Button>,
+                ]
+              : []),
           ]}
         >
+          {!canEditSchedule ? (
+            <Alert
+              showIcon
+              type="info"
+              style={{ marginBottom: "15px" }}
+              message="Schedule is read-only"
+              description="Only project owners can change automatic snapshot schedules unless the owner allows collaborators to manage storage history."
+            />
+          ) : undefined}
           {showHelp && (
             <p>
               Projects have rolling instant lightweight automatic snapshots of
@@ -189,6 +215,7 @@ export default function EditSchedule() {
                   step={1}
                   min={0}
                   max={limit ?? undefined}
+                  disabled={!canEditSchedule || loading}
                   value={schedule.frequent ?? DEFAULT_SNAPSHOT_COUNTS.frequent}
                   onChange={(frequent) => {
                     if (frequent != null) {
@@ -208,6 +235,7 @@ export default function EditSchedule() {
                   step={1}
                   min={0}
                   max={limit ?? undefined}
+                  disabled={!canEditSchedule || loading}
                   value={schedule.daily ?? DEFAULT_SNAPSHOT_COUNTS.daily}
                   onChange={(daily) => {
                     if (daily != null) {
@@ -227,6 +255,7 @@ export default function EditSchedule() {
                   step={1}
                   min={0}
                   max={limit ?? undefined}
+                  disabled={!canEditSchedule || loading}
                   value={schedule.weekly ?? DEFAULT_SNAPSHOT_COUNTS.weekly}
                   onChange={(weekly) => {
                     if (weekly != null) {
@@ -246,6 +275,7 @@ export default function EditSchedule() {
                   step={1}
                   min={0}
                   max={limit ?? undefined}
+                  disabled={!canEditSchedule || loading}
                   value={schedule.monthly ?? DEFAULT_SNAPSHOT_COUNTS.monthly}
                   onChange={(monthly) => {
                     if (monthly != null) {

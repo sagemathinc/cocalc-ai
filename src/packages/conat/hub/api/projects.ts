@@ -1065,7 +1065,14 @@ export interface Projects {
   getSnapshotQuota: (opts: {
     account_id?: string;
     project_id: string;
-  }) => Promise<{ limit: number }>;
+  }) => Promise<{
+    limit: number;
+    manual?: {
+      limit: number;
+      current: number;
+      rolling_reserved: number;
+    };
+  }>;
 
   allSnapshotUsage: (opts: { project_id: string }) => Promise<SnapshotUsage[]>;
 
@@ -1156,6 +1163,7 @@ export interface Projects {
   }) => Promise<void>;
   hardDeleteProject: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     project_id: string;
     backup_retention_days?: number;

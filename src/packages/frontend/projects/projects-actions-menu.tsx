@@ -10,7 +10,7 @@
  * - Open project
  * - Open settings
  * - Hide/Unhide (conditional)
- * - Delete/Undelete (conditional)
+ * - Permanent delete (owner only)
  */
 
 import type { ProjectTableRecord } from "./projects-table-columns";
@@ -41,10 +41,8 @@ import {
   mapCloudRegionToR2Region,
 } from "@cocalc/util/consts";
 import { useProjectRegion } from "@cocalc/frontend/project/use-project-region";
-import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
+import { HardDeleteProjectModal } from "./hard-delete-project-modal";
+import { confirmRemoveMyselfFromProject } from "./remove-myself";
 
 const FILES_SUBMENU_LIST_STYLE: CSS = {
   maxWidth: "80vw",
@@ -62,14 +60,7 @@ interface Props {
 export function ProjectActionsMenu({ record }: Props) {
   const [open, setOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => {
-      Modal.error({
-        title: "Unable to change project deletion state",
-        content: `${err}`,
-      });
-    },
-  });
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const intl = useIntl();
   const actions = useActions("projects");
   const account_id = useTypedRedux("account", "account_id");
@@ -175,59 +166,14 @@ export function ProjectActionsMenu({ record }: Props) {
         await actions.toggle_hide_project(record.project_id);
         break;
       case "delete":
-        if (!record.deleted) {
-          setOpen(false);
-          Modal.confirm({
-            title: `Delete this ${projectLabelLower}?`,
-            content: (
-              <div>
-                <p>Are you sure you want to delete this {projectLabelLower}?</p>
-                <p>
-                  You can undo this for a few days before deletion becomes
-                  permanent.
-                </p>
-              </div>
-            ),
-            okText: "Delete",
-            okButtonProps: { danger: true },
-            onOk: async () => {
-              await runFreshAuthAction(async () => {
-                await actions.toggle_delete_project(record.project_id);
-              });
-            },
-          });
-          return;
-        }
-        await runFreshAuthAction(async () => {
-          await actions.toggle_delete_project(record.project_id);
-        });
+        setDeleteOpen(true);
         break;
       case "remove-self":
-        Modal.confirm({
-          title: `Remove Myself from ${projectLabel}`,
-          content: (
-            <div>
-              <p>
-                Are you sure you want to remove yourself from this{" "}
-                {projectLabelLower}?
-              </p>
-              <p>
-                <strong>
-                  You will no longer have access and cannot add yourself back.
-                </strong>
-              </p>
-            </div>
-          ),
-          okText: "Yes, Remove Me",
-          okButtonProps: { danger: true },
-          onOk: async () => {
-            try {
-              await actions.remove_collaborator(record.project_id, account_id);
-              redux.getActions("page").close_project_tab(record.project_id);
-            } catch (error) {
-              console.error("Failed to remove collaborator:", error);
-            }
-          },
+        confirmRemoveMyselfFromProject({
+          project_id: record.project_id,
+          account_id,
+          projectLabel,
+          projectLabelLower,
         });
         break;
       default:
@@ -320,14 +266,16 @@ export function ProjectActionsMenu({ record }: Props) {
       label: record.hidden ? `Unhide ${projectLabel}` : `Hide ${projectLabel}`,
       icon: <Icon name={record.hidden ? "eye" : "eye-slash"} />,
     },
-    {
-      key: "delete",
-      label: record.deleted
-        ? `Undelete ${projectLabel}`
-        : `Delete ${projectLabel}`,
-      icon: <Icon name={record.deleted ? "undo" : "trash"} />,
-      danger: !record.deleted,
-    },
+    ...(isOwner
+      ? [
+          {
+            key: "delete",
+            label: `Delete ${projectLabel}`,
+            icon: <Icon name="trash" />,
+            danger: true,
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -389,7 +337,15 @@ export function ProjectActionsMenu({ record }: Props) {
           <Icon name="ellipsis" rotate="90" />
         </span>
       </Dropdown>
-      <FreshAuthModal {...freshAuthModalProps} />
+      <HardDeleteProjectModal
+        open={deleteOpen}
+        project_id={record.project_id}
+        title={record.title}
+        onCancel={() => setDeleteOpen(false)}
+        onDeleted={() => {
+          redux.getActions("page").close_project_tab(record.project_id);
+        }}
+      />
     </div>
   );
 }

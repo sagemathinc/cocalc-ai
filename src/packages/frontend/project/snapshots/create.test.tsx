@@ -4,7 +4,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import CreateSnapshot from "./create";
 
 const createSnapshot = jest.fn(async (_opts?: any) => undefined);
-const getSnapshotQuota = jest.fn(async () => ({ limit: 8 }));
+const getSnapshotQuota = jest.fn(async () => ({
+  limit: 8,
+  manual: { limit: 6, current: 1, rolling_reserved: 2 },
+}));
 const setState = jest.fn();
 const originalGetComputedStyle = window.getComputedStyle;
 
@@ -75,7 +78,10 @@ describe("CreateSnapshot", () => {
     );
     expect(
       screen.getByText(/can keep up to/i, { selector: "p" }),
-    ).toHaveTextContent("8");
+    ).toHaveTextContent("8 snapshots in total");
+    expect(
+      screen.getByText(/can keep up to/i, { selector: "p" }),
+    ).toHaveTextContent("leaving 6 named snapshot slots");
     fireEvent.change(input, { target: { value: "snapshot-1" } });
     fireEvent.click(
       screen.getAllByRole("button", { name: /Create Snapshot/i }).slice(-1)[0],

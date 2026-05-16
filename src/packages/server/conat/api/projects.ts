@@ -5,6 +5,7 @@ import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/contro
 import deleteProjectControl from "@cocalc/server/projects/delete";
 import { setProjectDeleted as setProjectDeletedControl } from "@cocalc/server/projects/delete";
 import { assertHardDeleteProjectPermission } from "@cocalc/server/projects/hard-delete";
+import { assertProjectHardDeleteAdmission } from "@cocalc/server/projects/hard-delete-admission";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 export * from "@cocalc/server/projects/collaborators";
@@ -2356,12 +2357,14 @@ export async function setProjectDeleted({
 
 export async function hardDeleteProject({
   account_id,
+  browser_id,
   session_hash,
   project_id,
   backup_retention_days,
   purge_backups_now,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   project_id: string;
   backup_retention_days?: number;
@@ -2378,9 +2381,14 @@ export async function hardDeleteProject({
   }
   await requireDangerousProjectMutationAuth({
     account_id,
+    browser_id,
     session_hash,
   });
   await assertHardDeleteProjectPermission({
+    project_id,
+    account_id,
+  });
+  await assertProjectHardDeleteAdmission({
     project_id,
     account_id,
   });

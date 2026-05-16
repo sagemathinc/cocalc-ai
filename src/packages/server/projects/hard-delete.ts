@@ -6,7 +6,6 @@ import getLogger from "@cocalc/backend/logger";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import getPool from "@cocalc/database/pool";
-import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import {
   deleteProjectDataOnHost,
   stopProjectOnHost,
@@ -46,7 +45,6 @@ type ProjectRow = {
 
 type ProjectAccess = {
   project: ProjectRow;
-  admin: boolean;
 };
 
 export type HardDeleteProjectProgressUpdate = {
@@ -228,13 +226,10 @@ async function getProjectAccess({
 }): Promise<ProjectAccess | null> {
   const project = await loadProject(project_id);
   if (!project) return null;
-  const admin = await userIsInGroup(account_id, "admin");
-  if (admin || isOwner(project.users, account_id)) {
-    return { project, admin };
+  if (isOwner(project.users, account_id)) {
+    return { project };
   }
-  throw new Error(
-    "must be a project owner (or admin) to permanently delete a workspace",
-  );
+  throw new Error("must be a project owner to permanently delete a workspace");
 }
 
 export async function assertHardDeleteProjectPermission({

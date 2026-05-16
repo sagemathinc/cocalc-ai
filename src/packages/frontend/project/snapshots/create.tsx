@@ -8,7 +8,7 @@ The Snapshots button pops up a model that:
 
 import { useEffect, useRef, useState } from "react";
 import type { InputRef } from "antd";
-import { Button, Input, Modal, Spin } from "antd";
+import { Alert, Button, Input, Modal, Spin } from "antd";
 import { Icon } from "@cocalc/frontend/components/icon";
 import ShowError from "@cocalc/frontend/components/error";
 import { useProjectContext } from "@cocalc/frontend/project/context";
@@ -27,6 +27,9 @@ export default function CreateSnapshot({
   const [error, setError] = useState<string>("");
   const [showHelp, setShowHelp] = useState<boolean>(false);
   const [limit, setLimit] = useState<number | null>(null);
+  const [manualLimit, setManualLimit] = useState<number | null>(null);
+  const [manualCurrent, setManualCurrent] = useState<number | null>(null);
+  const [rollingReserved, setRollingReserved] = useState<number | null>(null);
   const openCreate = useTypedRedux({ project_id }, "open_create_snapshot");
   const inputRef = useRef<InputRef>(null);
 
@@ -55,12 +58,15 @@ export default function CreateSnapshot({
     (async () => {
       try {
         setLoading(true);
-        const { limit } =
+        const { limit, manual } =
           await webapp_client.conat_client.hub.projects.getSnapshotQuota({
             project_id,
           });
         if (!canceled) {
           setLimit(limit);
+          setManualLimit(manual?.limit ?? null);
+          setManualCurrent(manual?.current ?? null);
+          setRollingReserved(manual?.rolling_reserved ?? null);
         }
       } catch (err) {
         if (!canceled) {
@@ -111,7 +117,7 @@ export default function CreateSnapshot({
         <Modal
           afterOpenChange={async (open) => {
             if (!open) return;
-            setName(new Date().toISOString());
+            setName(`manual-${new Date().toISOString()}`);
             inputRef.current?.focus({
               cursor: "all",
             });
@@ -153,7 +159,12 @@ export default function CreateSnapshot({
               key="create"
               type="primary"
               onClick={createSnapshot}
-              disabled={!name.trim()}
+              disabled={
+                !name.trim() ||
+                (manualLimit != null &&
+                  manualCurrent != null &&
+                  manualCurrent >= manualLimit)
+              }
             >
               Create Snapshot
             </Button>,
@@ -161,8 +172,21 @@ export default function CreateSnapshot({
         >
           <p>
             This project can keep up to <b>{limit ?? "..."}</b> snapshots in
-            total. Automatic and manually named snapshots share the same cap.
+            total. Automatic rolling snapshots reserve{" "}
+            <b>{rollingReserved ?? "..."}</b> slots, leaving{" "}
+            <b>{manualLimit ?? "..."}</b> named snapshot slots.
           </p>
+          {manualLimit != null &&
+            manualCurrent != null &&
+            manualCurrent >= manualLimit && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 10 }}
+                message="Manual snapshot limit reached"
+                description="Delete a named snapshot or ask the owner to increase the snapshot limit before creating another named snapshot."
+              />
+            )}
           {showHelp && (
             <p>
               Create instant lightweight snapshots of the exact state of all

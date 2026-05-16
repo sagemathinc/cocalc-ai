@@ -482,3 +482,123 @@ test("project runtime-slots resolves sponsor filters and calls admin report API"
     limit: 5,
   });
 });
+
+test("project delete defaults to irreversible hard delete", async () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  let hardDeleteOpts: any;
+  let returned: any;
+
+  const deps = {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        timeoutMs: 600_000,
+        pollMs: 1_000,
+        hub: {
+          projects: {
+            deleteProject: async () => {
+              throw new Error("soft delete must not be called");
+            },
+            hardDeleteProject: async (opts) => {
+              hardDeleteOpts = opts;
+              return {
+                op_id: "op-1",
+                scope_type: "account",
+                scope_id: "account-1",
+                service: "lro",
+                stream_name: "stream-1",
+              };
+            },
+          },
+        },
+      };
+      returned = await fn(ctx);
+    },
+    resolveProject: async (_ctx, project) => ({
+      project_id: project,
+      title: "Delete Me",
+    }),
+    isValidUUID: (value) => value === projectId,
+    confirmHardProjectDelete: async () => {
+      throw new Error("confirmation should be skipped by --yes");
+    },
+  };
+
+  const program = new Command();
+  const project = program.command("project");
+  registerProjectBasicCommands(project, deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "project",
+    "delete",
+    "--project",
+    projectId,
+    "--yes",
+  ]);
+
+  assert.deepEqual(hardDeleteOpts, {
+    project_id: projectId,
+    backup_retention_days: 7,
+    purge_backups_now: false,
+  });
+  assert.equal(returned?.mode, "hard");
+  assert.equal(returned?.status, "queued");
+  assert.equal(returned?.op_id, "op-1");
+});
+
+test("project delete asks for hard-delete confirmation unless --yes is used", async () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  let confirmationOpts: any;
+
+  const deps = {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        timeoutMs: 600_000,
+        pollMs: 1_000,
+        hub: {
+          projects: {
+            hardDeleteProject: async () => ({
+              op_id: "op-1",
+              scope_type: "account",
+              scope_id: "account-1",
+              service: "lro",
+              stream_name: "stream-1",
+            }),
+          },
+        },
+      };
+      await fn(ctx);
+    },
+    resolveProject: async (_ctx, project) => ({
+      project_id: project,
+      title: "Delete Me",
+    }),
+    isValidUUID: (value) => value === projectId,
+    confirmHardProjectDelete: async (opts) => {
+      confirmationOpts = opts;
+    },
+  };
+
+  const program = new Command();
+  const project = program.command("project");
+  registerProjectBasicCommands(project, deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "project",
+    "delete",
+    "--project",
+    projectId,
+    "--backup-retention-days",
+    "3",
+  ]);
+
+  assert.deepEqual(confirmationOpts, {
+    project_id: projectId,
+    title: "Delete Me",
+    backupRetentionDays: 3,
+    purgeBackupsNow: false,
+  });
+});

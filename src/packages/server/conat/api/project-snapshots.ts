@@ -6,12 +6,20 @@ import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { type SnapshotRestoreMode } from "@cocalc/conat/files/file-server";
 import { assertCollab } from "./util";
 import { getProjectFileServerClient } from "@cocalc/server/conat/file-server-client";
+import getPool from "@cocalc/database/pool";
 import {
   assertProjectOwnerCanIncreaseAccountStorage,
   getProjectSnapshotLimit,
 } from "@cocalc/server/membership/project-limits";
 import { requireDangerousProjectMutationAuth } from "./project-dangerous-auth";
 import { assertCanPerformDestructiveStorageAction } from "@cocalc/server/projects/destructive-storage-actions";
+import {
+  assertManualSnapshotCreateAllowed,
+  manualSnapshotQuota,
+  normalizeManualSnapshotName,
+  type ManualSnapshotQuota,
+} from "@cocalc/server/projects/manual-snapshot-admission";
+import type { SnapshotSchedule } from "@cocalc/util/consts/snapshots";
 
 // NOTES about snapshots:
 
@@ -20,6 +28,24 @@ import { assertCanPerformDestructiveStorageAction } from "@cocalc/server/project
 
 async function projectClient(project_id: string, account_id?: string) {
   return await getProjectFileServerClient({ project_id, account_id });
+}
+
+async function getProjectSnapshotScheduleLocal(
+  project_id: string,
+): Promise<Partial<SnapshotSchedule> | null> {
+  const { rows } = await getPool().query<{
+    snapshots: Partial<SnapshotSchedule> | null;
+  }>(
+    `
+      SELECT snapshots
+      FROM projects
+      WHERE project_id = $1
+        AND deleted IS NOT TRUE
+      LIMIT 1
+    `,
+    [project_id],
+  );
+  return rows[0]?.snapshots ?? null;
 }
 
 async function publishQueuedLroSafe({ op }: { op: LroSummary }) {
@@ -57,11 +83,20 @@ export async function createSnapshot({
 }) {
   await assertCollab({ account_id, project_id });
   const limit = await getProjectSnapshotLimit({ project_id });
-  await (
-    await projectClient(project_id, account_id)
-  ).createSnapshot({
+  const client = await projectClient(project_id, account_id);
+  const nameToCreate = normalizeManualSnapshotName(name);
+  const [schedule, existingSnapshots] = await Promise.all([
+    getProjectSnapshotScheduleLocal(project_id),
+    client.allSnapshotUsage({ project_id }),
+  ]);
+  assertManualSnapshotCreateAllowed({
+    totalLimit: limit,
+    schedule,
+    snapshotNames: existingSnapshots.map(({ name }) => name),
+  });
+  await client.createSnapshot({
     project_id,
-    name,
+    name: nameToCreate,
     limit,
   });
 }
@@ -100,9 +135,27 @@ export async function getSnapshotQuota({
 }: {
   account_id?: string;
   project_id: string;
-}) {
+}): Promise<
+  { limit: number } & {
+    manual?: ManualSnapshotQuota;
+  }
+> {
   await assertCollab({ account_id, project_id });
-  return { limit: await getProjectSnapshotLimit({ project_id }) };
+  const limit = await getProjectSnapshotLimit({ project_id });
+  const [schedule, existingSnapshots] = await Promise.all([
+    getProjectSnapshotScheduleLocal(project_id),
+    (await projectClient(project_id, account_id)).allSnapshotUsage({
+      project_id,
+    }),
+  ]);
+  return {
+    limit,
+    manual: manualSnapshotQuota({
+      totalLimit: limit,
+      schedule,
+      snapshotNames: existingSnapshots.map(({ name }) => name),
+    }),
+  };
 }
 
 export async function allSnapshotUsage({
