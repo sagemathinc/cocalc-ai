@@ -489,9 +489,12 @@ export async function handleProjectReferenceGet(
     });
     const { rows } = await getPool().query<{
       users: Record<string, any> | null;
+      allow_collaborator_destructive_storage_actions: boolean | null;
     }>(
       `
-        SELECT COALESCE(users, '{}'::jsonb) AS users
+        SELECT
+          COALESCE(users, '{}'::jsonb) AS users,
+          allow_collaborator_destructive_storage_actions
         FROM projects
         WHERE project_id = $1
           AND deleted IS NOT TRUE
@@ -505,6 +508,8 @@ export async function handleProjectReferenceGet(
       host_id: project.host_id,
       owning_bay_id: project.owning_bay_id,
       users: rows[0]?.users ?? {},
+      allow_collaborator_destructive_storage_actions:
+        rows[0]?.allow_collaborator_destructive_storage_actions ?? null,
     };
   } catch {
     return null;

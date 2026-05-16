@@ -27,6 +27,7 @@ import {
 } from "@cocalc/server/membership/project-limits";
 import { capitalize, humanSize } from "@cocalc/util/misc";
 import { requireDangerousProjectMutationAuth } from "./project-dangerous-auth";
+import { assertCanPerformDestructiveStorageAction } from "@cocalc/server/projects/destructive-storage-actions";
 const log = getLogger("server:conat:api:project-backups");
 const BACKUP_CONTROL_TIMEOUT_MS = BACKUP_TIMEOUT_MS + 60_000;
 
@@ -403,7 +404,11 @@ export async function deleteBackup({
     account_id,
     session_hash,
   });
-  await assertCollab({ account_id, project_id });
+  await assertCanPerformDestructiveStorageAction({
+    account_id,
+    project_id,
+    action: "delete backups",
+  });
   await (
     await projectClient(project_id, account_id)
   ).deleteBackup({

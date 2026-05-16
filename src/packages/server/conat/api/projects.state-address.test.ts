@@ -17,6 +17,7 @@ let assertCanStartUsingRuntimeSponsorMock: jest.Mock;
 let reserveProjectRuntimeSlotMock: jest.Mock;
 let releaseProjectRuntimeSlotMock: jest.Mock;
 let getRoutedHostControlClientMock: jest.Mock;
+let assertCanPerformDestructiveStorageActionMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -168,6 +169,12 @@ jest.mock("@cocalc/server/projects/runtime-slots", () => ({
     releaseProjectRuntimeSlotMock(...args),
 }));
 
+jest.mock("@cocalc/server/projects/destructive-storage-actions", () => ({
+  __esModule: true,
+  assertCanPerformDestructiveStorageAction: (...args: any[]) =>
+    assertCanPerformDestructiveStorageActionMock(...args),
+}));
+
 describe("projects.getProjectState / getProjectAddress", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -233,6 +240,9 @@ describe("projects.getProjectState / getProjectAddress", () => {
       users: { "acct-1": { group: "owner" } },
     }));
     assertCanStartUsingRuntimeSponsorMock = jest.fn(async () => undefined);
+    assertCanPerformDestructiveStorageActionMock = jest.fn(
+      async () => undefined,
+    );
     reserveProjectRuntimeSlotMock = jest.fn(async () => ({
       sponsor_account_id: "sponsor-1",
       project_id: "proj-1",

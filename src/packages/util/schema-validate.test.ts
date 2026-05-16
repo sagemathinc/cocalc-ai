@@ -42,6 +42,18 @@ describe("validate_client_query projects set queries", () => {
     );
   });
 
+  test("projects allow_collaborator_destructive_storage_actions requires boolean", () => {
+    const query = {
+      projects: {
+        project_id: "4a9655b8-ed54-46b8-a453-e0ba5fd94936",
+        allow_collaborator_destructive_storage_actions: "yes" as any,
+      },
+    };
+    expect(() => validate_client_query(query, accountId)).toThrow(
+      "allow_collaborator_destructive_storage_actions must be a boolean",
+    );
+  });
+
   test("projects runtime_sponsor_account_id requires non-empty string", () => {
     const query = {
       projects: {

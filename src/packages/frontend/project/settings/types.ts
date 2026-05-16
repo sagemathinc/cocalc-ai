@@ -38,6 +38,7 @@ export type Project = TypedMap<{
   usage_account_id?: string;
   runtime_sponsor_account_id?: string;
   allow_collaborator_starts_using_sponsor?: boolean;
+  allow_collaborator_destructive_storage_actions?: boolean;
   autostart_enabled?: boolean;
   rootfs_image?: string;
   rootfs_image_id?: string;

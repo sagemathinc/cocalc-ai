@@ -16,6 +16,7 @@ import { sanitizeUserSetQueryProjectUsers } from "@cocalc/database/postgres/proj
 import { all_results } from "@cocalc/database/postgres/utils/all-results";
 import { count_result } from "@cocalc/database/postgres/utils/count-result";
 import { sanitizeAutostartEnabled } from "../postgres/project/autostart-enabled";
+import { sanitizeAllowCollaboratorDestructiveStorageActions } from "../postgres/project/destructive-storage-actions";
 import { one_result } from "@cocalc/database/postgres/utils/one-result";
 import { pg_type } from "@cocalc/database/postgres/utils/pg-type";
 import { quote_field } from "@cocalc/database/postgres/utils/quote-field";
@@ -1427,6 +1428,21 @@ export function _user_set_query_project_allow_collaborator_starts_using_sponsor(
   return sanitizeAllowCollaboratorStartsUsingSponsor(obj);
 }
 
+export function _user_set_query_project_allow_collaborator_destructive_storage_actions(
+  this: UserQueryContext,
+  obj: AnyRecord,
+) {
+  const hasGetter = typeof obj?.get === "function";
+  const hasField = Object.prototype.hasOwnProperty.call(
+    obj ?? {},
+    "allow_collaborator_destructive_storage_actions",
+  );
+  if (!hasGetter && !hasField) {
+    return undefined;
+  }
+  return sanitizeAllowCollaboratorDestructiveStorageActions(obj);
+}
+
 export function _user_set_query_project_runtime_sponsor_account_id(
   this: UserQueryContext,
   obj: AnyRecord,
@@ -2617,6 +2633,7 @@ type UserQueryMethods = {
   _user_set_query_project_users: typeof _user_set_query_project_users;
   _user_set_query_project_manage_users_owner_only: typeof _user_set_query_project_manage_users_owner_only;
   _user_set_query_project_allow_collaborator_starts_using_sponsor: typeof _user_set_query_project_allow_collaborator_starts_using_sponsor;
+  _user_set_query_project_allow_collaborator_destructive_storage_actions: typeof _user_set_query_project_allow_collaborator_destructive_storage_actions;
   _user_set_query_project_runtime_sponsor_account_id: typeof _user_set_query_project_runtime_sponsor_account_id;
   _user_set_query_project_autostart_enabled: typeof _user_set_query_project_autostart_enabled;
   _user_set_query_project_change_before: typeof _user_set_query_project_change_before;

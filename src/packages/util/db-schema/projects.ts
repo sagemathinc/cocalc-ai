@@ -100,6 +100,7 @@ Table({
           usage_account_id: null,
           runtime_sponsor_account_id: null,
           allow_collaborator_starts_using_sponsor: null,
+          allow_collaborator_destructive_storage_actions: null,
           autostart_enabled: null,
           state: null,
           last_edited: null,
@@ -126,6 +127,11 @@ Table({
               obj,
             );
           },
+          allow_collaborator_destructive_storage_actions(obj, db) {
+            return db._user_set_query_project_allow_collaborator_destructive_storage_actions(
+              obj,
+            );
+          },
           runtime_sponsor_account_id(obj, db) {
             return db._user_set_query_project_runtime_sponsor_account_id(obj);
           },
@@ -148,6 +154,7 @@ Table({
           if (
             obj.manage_users_owner_only !== undefined ||
             obj.allow_collaborator_starts_using_sponsor !== undefined ||
+            obj.allow_collaborator_destructive_storage_actions !== undefined ||
             obj.runtime_sponsor_account_id !== undefined ||
             obj.autostart_enabled !== undefined
           ) {
@@ -225,6 +232,16 @@ Table({
               ) {
                 throw Error(
                   "Only project owners and administrators can change automatic start settings",
+                );
+              }
+              if (
+                obj.allow_collaborator_destructive_storage_actions !==
+                  undefined &&
+                !admin &&
+                owner !== account_id
+              ) {
+                throw Error(
+                  "Only project owners and administrators can change destructive storage-history settings",
                 );
               }
               if (obj.runtime_sponsor_account_id !== undefined) {
@@ -338,6 +355,11 @@ Table({
     allow_collaborator_starts_using_sponsor: {
       type: "boolean",
       desc: "If false, ordinary collaborators cannot start or restart this project using the runtime sponsor's membership. Project owners, the runtime sponsor, and administrators can still start it. Defaults to true when unset.",
+      render: { type: "boolean", editable: true },
+    },
+    allow_collaborator_destructive_storage_actions: {
+      type: "boolean",
+      desc: "If true, collaborators can delete snapshots and backups and can move or archive the project. If unset or false, only project owners and administrators can perform these destructive storage-history actions.",
       render: { type: "boolean", editable: true },
     },
     autostart_enabled: {

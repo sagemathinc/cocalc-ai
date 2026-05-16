@@ -113,6 +113,7 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
   const isAdmin = !!useTypedRedux("account", "is_admin");
   const [saving, setSaving] = useState(false);
   const [savingAutostart, setSavingAutostart] = useState(false);
+  const [savingStorageHistory, setSavingStorageHistory] = useState(false);
   const [changingSponsor, setChangingSponsor] = useState(false);
   const [revertingSponsor, setRevertingSponsor] = useState(false);
   const [error, setError] = useState("");
@@ -123,11 +124,14 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
   const isCollaborator = accountIsProjectCollaborator(project, account_id);
   const canEdit = isAdmin || isOwner || isSponsor;
   const canEditAutostart = isAdmin || isOwner;
+  const canEditStorageHistory = isAdmin || isOwner;
   const canSelfSponsor = isCollaborator && !isSponsor;
   const canStopSponsoring = isSponsor && !isOwner && !!ownerAccountId;
   const checked =
     project.get("allow_collaborator_starts_using_sponsor") !== false;
   const autostartChecked = project.get("autostart_enabled") !== false;
+  const storageHistoryChecked =
+    project.get("allow_collaborator_destructive_storage_actions") === true;
 
   async function setAllowCollaboratorStarts(value: boolean) {
     setError("");
@@ -185,6 +189,23 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
       setError(`${err}`);
     } finally {
       setSavingAutostart(false);
+    }
+  }
+
+  async function setAllowCollaboratorDestructiveStorageActions(value: boolean) {
+    setError("");
+    setSavingStorageHistory(true);
+    try {
+      await redux
+        .getActions("projects")
+        .set_project_allow_collaborator_destructive_storage_actions(
+          project_id,
+          value,
+        );
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setSavingStorageHistory(false);
     }
   }
 
@@ -280,6 +301,26 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
             />
           }
         />
+        <SponsorRow
+          icon={<Icon name="history" style={{ color: COLORS.BS_RED }} />}
+          title="Storage history"
+          summary={
+            storageHistoryChecked
+              ? "Collaborators may delete recovery history and move or archive the project."
+              : "Only owners can delete recovery history or move/archive the project."
+          }
+          details="Collaborators can still edit and delete ordinary files. This protects snapshots, backups, archive, and move actions because those can remove recovery history."
+          action={
+            <Switch
+              checked={storageHistoryChecked}
+              loading={savingStorageHistory}
+              disabled={!canEditStorageHistory}
+              checkedChildren="Allowed"
+              unCheckedChildren="Owner only"
+              onChange={setAllowCollaboratorDestructiveStorageActions}
+            />
+          }
+        />
       </Space>
       {!canEdit && (
         <Alert
@@ -289,12 +330,12 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
           message="Only project owners, the runtime sponsor, and administrators can change this setting."
         />
       )}
-      {canEdit && !canEditAutostart && (
+      {canEdit && (!canEditAutostart || !canEditStorageHistory) && (
         <Alert
           style={{ marginTop: 10 }}
           type="info"
           showIcon
-          message="Only project owners and administrators can change automatic start settings."
+          message="Only project owners and administrators can change automatic start and storage-history settings."
         />
       )}
       {error && (

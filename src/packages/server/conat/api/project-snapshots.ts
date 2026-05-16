@@ -11,6 +11,7 @@ import {
   getProjectSnapshotLimit,
 } from "@cocalc/server/membership/project-limits";
 import { requireDangerousProjectMutationAuth } from "./project-dangerous-auth";
+import { assertCanPerformDestructiveStorageAction } from "@cocalc/server/projects/destructive-storage-actions";
 
 // NOTES about snapshots:
 
@@ -80,7 +81,11 @@ export async function deleteSnapshot({
     account_id,
     session_hash,
   });
-  await assertCollab({ account_id, project_id });
+  await assertCanPerformDestructiveStorageAction({
+    account_id,
+    project_id,
+    action: "delete snapshots",
+  });
   await (
     await projectClient(project_id, account_id)
   ).deleteSnapshot({

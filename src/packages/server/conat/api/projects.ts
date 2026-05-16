@@ -64,6 +64,7 @@ import {
   assertCanIncreaseAccountStorage,
   getProjectOwnerAccountId,
 } from "@cocalc/server/membership/project-limits";
+import { assertCanPerformDestructiveStorageAction } from "@cocalc/server/projects/destructive-storage-actions";
 import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
 import {
   drainProjectRehome as drainProjectRehomeControl,
@@ -228,32 +229,6 @@ async function projectFs(project_id: string) {
   return (await getExplicitProjectRoutedClient({ project_id })).fs({
     project_id,
   });
-}
-
-async function assertOwnerOrAdminForProjectAction({
-  account_id,
-  project_id,
-  action,
-}: {
-  account_id?: string;
-  project_id: string;
-  action: string;
-}): Promise<void> {
-  if (!account_id) {
-    throw new Error("must be signed in");
-  }
-  const admin = await isAdmin(account_id);
-  let owner = false;
-  if (!admin) {
-    const { rows } = await getPool().query<{ group: string | null }>(
-      "SELECT users #>> ARRAY[$2::text, 'group'] AS \"group\" FROM projects WHERE project_id=$1 AND deleted IS NULL",
-      [project_id, account_id],
-    );
-    owner = rows[0]?.group === "owner";
-  }
-  if (!admin && !owner) {
-    throw new Error(`must be an owner (or admin) to ${action}`);
-  }
 }
 
 export async function copyPathBetweenProjects({
@@ -2143,10 +2118,10 @@ export async function archiveProject({
   account_id?: string;
   project_id: string;
 }): Promise<void> {
-  await assertOwnerOrAdminForProjectAction({
+  await assertCanPerformDestructiveStorageAction({
     account_id,
     project_id,
-    action: "archive a project",
+    action: "archive this project",
   });
 
   const { rows } = await getPool().query<{
@@ -2635,6 +2610,11 @@ export async function moveProject({
       epoch: ownership.epoch,
     });
   }
+  await assertCanPerformDestructiveStorageAction({
+    account_id,
+    project_id,
+    action: "move this project",
+  });
   const sponsor = await loadProjectRuntimeSponsor(project_id);
   await assertCanStartUsingRuntimeSponsor({
     sponsor,

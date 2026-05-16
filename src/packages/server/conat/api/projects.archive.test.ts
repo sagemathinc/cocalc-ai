@@ -12,6 +12,7 @@ let appendProjectOutboxEventForProjectMock: jest.Mock;
 let assertProjectNotRehomingMock: jest.Mock;
 let publishProjectAccountFeedEventsBestEffortMock: jest.Mock;
 let routedClientCloseMock: jest.Mock;
+let assertCanPerformDestructiveStorageActionMock: jest.Mock;
 
 jest.mock("@cocalc/server/projects/create", () => ({
   __esModule: true,
@@ -161,6 +162,12 @@ jest.mock("@cocalc/server/account/project-detail-feed", () => ({
   publishProjectDetailInvalidationBestEffort: jest.fn(),
 }));
 
+jest.mock("@cocalc/server/projects/destructive-storage-actions", () => ({
+  __esModule: true,
+  assertCanPerformDestructiveStorageAction: (...args: any[]) =>
+    assertCanPerformDestructiveStorageActionMock(...args),
+}));
+
 jest.mock("./util", () => ({
   __esModule: true,
   assertCollab: jest.fn(),
@@ -194,21 +201,22 @@ describe("projects.archiveProject", () => {
       async () => undefined,
     );
     routedClientCloseMock = jest.fn();
+    assertCanPerformDestructiveStorageActionMock = jest.fn(
+      async () => undefined,
+    );
   });
 
   it("archives a provisioned project after confirming backups exist", async () => {
-    poolQueryMock
-      .mockResolvedValueOnce({ rows: [{ group: "owner" }] })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            host_id: "host-1",
-            backup_repo_id: "repo-1",
-            provisioned: true,
-            state: { state: "running" },
-          },
-        ],
-      });
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          host_id: "host-1",
+          backup_repo_id: "repo-1",
+          provisioned: true,
+          state: { state: "running" },
+        },
+      ],
+    });
 
     const { archiveProject } = await import("./projects");
     await expect(
@@ -218,6 +226,11 @@ describe("projects.archiveProject", () => {
       }),
     ).resolves.toBeUndefined();
 
+    expect(assertCanPerformDestructiveStorageActionMock).toHaveBeenCalledWith({
+      account_id: "owner-1",
+      project_id: "proj-1",
+      action: "archive this project",
+    });
     expect(getBackupsMock).toHaveBeenCalledWith({
       client: expect.any(Object),
       project_id: "proj-1",
@@ -251,18 +264,16 @@ describe("projects.archiveProject", () => {
   });
 
   it("refuses to archive when no backups exist yet", async () => {
-    poolQueryMock
-      .mockResolvedValueOnce({ rows: [{ group: "owner" }] })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            host_id: "host-1",
-            backup_repo_id: "repo-1",
-            provisioned: true,
-            state: { state: "opened" },
-          },
-        ],
-      });
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          host_id: "host-1",
+          backup_repo_id: "repo-1",
+          provisioned: true,
+          state: { state: "opened" },
+        },
+      ],
+    });
     getBackupsMock = jest.fn(async () => []);
 
     const { archiveProject } = await import("./projects");

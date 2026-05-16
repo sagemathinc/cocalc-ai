@@ -172,6 +172,17 @@ export function extend_PostgreSQL<TBase extends PostgreSQLConstructor>(
       );
     }
 
+    _user_set_query_project_allow_collaborator_destructive_storage_actions(
+      ...args: Parameters<
+        typeof userQuery._user_set_query_project_allow_collaborator_destructive_storage_actions
+      >
+    ) {
+      return userQuery._user_set_query_project_allow_collaborator_destructive_storage_actions.call(
+        this,
+        ...args,
+      );
+    }
+
     _user_set_query_project_runtime_sponsor_account_id(
       ...args: Parameters<
         typeof userQuery._user_set_query_project_runtime_sponsor_account_id

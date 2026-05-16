@@ -848,6 +848,9 @@ export interface PostgreSQLMethods extends EventEmitter {
   _user_set_query_project_allow_collaborator_starts_using_sponsor(
     obj: any,
   ): boolean | undefined;
+  _user_set_query_project_allow_collaborator_destructive_storage_actions(
+    obj: any,
+  ): boolean | undefined;
   _user_set_query_project_runtime_sponsor_account_id(
     obj: any,
   ): string | undefined;

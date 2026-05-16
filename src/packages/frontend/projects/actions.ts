@@ -1619,6 +1619,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
   };
 
+  set_project_allow_collaborator_destructive_storage_actions = async (
+    project_id: string,
+    allow_collaborator_destructive_storage_actions: boolean,
+  ): Promise<void> => {
+    if (!(await this.have_project(project_id))) {
+      console.warn(
+        `Can't set destructive storage-history policy -- you are not a collaborator on project '${project_id}'.`,
+      );
+      return;
+    }
+    await this.projects_table_set({
+      project_id,
+      allow_collaborator_destructive_storage_actions,
+    });
+  };
+
   set_project_runtime_sponsor_to_me = async (
     project_id: string,
   ): Promise<void> => {

@@ -87,6 +87,7 @@ export interface ProjectReference {
   host_id: string | null;
   owning_bay_id: string;
   users?: Record<string, any>;
+  allow_collaborator_destructive_storage_actions?: boolean | null;
 }
 
 export interface ProjectDetails {

@@ -23,6 +23,10 @@ class ClientDB {
       this._user_set_query_project_allow_collaborator_starts_using_sponsor.bind(
         this,
       );
+    this._user_set_query_project_allow_collaborator_destructive_storage_actions =
+      this._user_set_query_project_allow_collaborator_destructive_storage_actions.bind(
+        this,
+      );
     this._user_set_query_project_runtime_sponsor_account_id =
       this._user_set_query_project_runtime_sponsor_account_id.bind(this);
     this._user_set_query_project_autostart_enabled =
@@ -83,6 +87,22 @@ class ClientDB {
     }
     if (typeof value !== "boolean") {
       throw Error("allow_collaborator_starts_using_sponsor must be a boolean");
+    }
+    return value;
+  }
+
+  _user_set_query_project_allow_collaborator_destructive_storage_actions(obj) {
+    const value =
+      obj != null && typeof obj.get === "function"
+        ? obj.get("allow_collaborator_destructive_storage_actions")
+        : obj?.allow_collaborator_destructive_storage_actions;
+    if (value == null) {
+      return undefined;
+    }
+    if (typeof value !== "boolean") {
+      throw Error(
+        "allow_collaborator_destructive_storage_actions must be a boolean",
+      );
     }
     return value;
   }
