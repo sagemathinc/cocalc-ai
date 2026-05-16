@@ -20,7 +20,7 @@ import {
 import { useProjectCourseInfo } from "../use-project-course";
 import { AboutBox } from "./about-box";
 import { Environment } from "./environment";
-import { HideDeleteBox } from "./hide-delete-box";
+import { ProjectLocationBox } from "./hide-delete-box";
 import { LauncherDefaults } from "./launcher-defaults";
 import { ManagedEgress } from "./managed-egress";
 import { ProjectCapabilities } from "./project-capabilites";
@@ -263,15 +263,14 @@ export function useProjectSettingsSections({
   }
 
   sections.push({
-    id: "danger",
-    icon: "warning",
-    label: "Danger Zone",
-    title: "Danger Zone",
+    id: "location",
+    icon: "servers",
+    label: "Location",
+    title: "Location",
     description:
-      "Hide, archive, or delete this project. These actions are intentionally separated from normal settings.",
-    danger: true,
+      "Hide, move, archive, or delete this project. These actions change where the project is available.",
     children: (
-      <HideDeleteBox
+      <ProjectLocationBox
         project={project}
         actions={redux.getActions("projects")}
         mode={componentMode}

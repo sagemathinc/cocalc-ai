@@ -362,3 +362,190 @@ For visual QA:
 
 The first three commits should already make the page materially better without changing backend behavior.
 
+## Follow-Up Implementation Plan: Location And Health Rail
+
+This section reflects the state after the first settings-page redesign commits
+and the additional product decisions from review.
+
+### Product Decisions
+
+The current `Runtime` section should mean "operate the active runtime now":
+
+- start
+- stop
+- restart
+- runtime state
+- boot/runtime diagnostics
+- runtime sponsor controls
+
+Do not change `RuntimeSponsorControls` in this pass. Another implementation
+thread is actively working on runtime sponsor behavior.
+
+Archive and move do not belong in ordinary runtime controls. Both are
+disruptive location/lifecycle operations:
+
+- Archive removes the active project from the host, deletes snapshots, and makes
+  the project potentially much slower to access later because it must be
+  restored from backup.
+- Move makes the project unavailable for a while and also removes snapshots.
+- Delete moves the project to "nowhere" from a user perspective.
+- Hide changes whether the project appears in normal listings.
+
+Use a separate `Location` section for these operations rather than overloading
+`Danger Zone` with every disruptive lifecycle action. `Danger Zone` can remain
+reserved for irreversible or deletion-oriented warnings if later needed, but
+for the next pass the practical user-facing grouping should be:
+
+- `Runtime`: start/stop/restart/current runtime diagnostics.
+- `Location`: hide, move, archive, delete.
+
+This grouping is more accurate than `Resources` or a broad `Disruptive Actions`
+label because all four actions answer "where is this project and how reachable
+is it?"
+
+### Health Rail Principles
+
+The health rail must not invent partial resource accounting. It should be a
+compact summary and navigation surface for existing authoritative project tools.
+
+Remove the current disk row that comes from `useCurrentUsage(...).disk_quota`.
+That path is a quota/current-usage approximation and can be misleading for
+CoCalc storage because CoCalc project storage includes live files plus retained
+snapshot/history/storage categories. If any health-rail-only code was added
+only to support that misleading disk display, delete it as part of the cleanup.
+
+The health rail should instead surface:
+
+- Storage from the same source as `DiskUsage`, i.e.
+  `project/disk-usage/use-disk-usage.ts`.
+- Network egress from `ManagedEgressRateSummary` or a small shared summary hook
+  extracted from `purchases/managed-egress-history.tsx`.
+- CPU/memory/process data from the existing project info/process monitor
+  pipeline used by the Processes flyout and project info page.
+- Backup freshness from existing project map backup state.
+- Snapshot/backups entry points using the existing explorer open-directory
+  actions.
+
+Each row should link to or open the canonical detailed tool instead of becoming
+a second incomplete implementation.
+
+### Existing Programmatic Entry Points
+
+Use these existing flows instead of hard-coded URLs:
+
+- Snapshots directory: `redux.getProjectActions(project_id).open_directory(SNAPSHOTS)`
+  with `SNAPSHOTS` from `@cocalc/util/consts/snapshots`.
+- Backups directory: `redux.getProjectActions(project_id).open_directory(BACKUPS)`
+  with `BACKUPS` from `@cocalc/util/consts/backups`.
+- Create snapshot: open the snapshots directory and set
+  `{ open_create_snapshot: true }`.
+- Restore snapshot: open the snapshots directory and set
+  `{ open_restore_snapshot: true }`.
+- Configure snapshots: open the snapshots directory and set
+  `{ open_snapshot_schedule: true }`.
+- Create backup: open the backups directory and set
+  `{ open_create_backup: true }`.
+- Configure backups: open the backups directory and set
+  `{ open_backup_schedule: true }`.
+
+These flows already exist in
+`project/explorer/misc-side-buttons.tsx` and related files. Reuse or extract
+them so health-rail buttons behave like the existing "Open Snapshots" and
+"Open Backups" controls. Avoid direct string URLs such as
+`/projects/<id>/files/.snapshots/` in component logic.
+
+### Four-Commit Implementation Sequence
+
+#### Commit 1: Split Runtime And Location
+
+Goal: move disruptive location/lifecycle operations out of `Runtime`.
+
+Changes:
+
+- Remove `ArchiveProject` and `MoveProject` from `ProjectControl`.
+- Keep start, stop, restart, state, boot log, runtime diagnostics, and
+  `RuntimeSponsorControls` in `Runtime`.
+- Add a `Location` section to `sections.tsx`.
+- Move hide, move, archive, and delete controls into the `Location` section.
+- Preserve existing confirmations and disabled-state logic.
+- Consider renaming the existing `danger` section id only if the routing impact
+  is small; otherwise keep the old id internally and change the visible label
+  in a compatibility-friendly way.
+
+Validation:
+
+- Focused settings/flyout tests.
+- Typecheck and frontend lint.
+- Manual visual check that archive/move are no longer adjacent to start/stop.
+
+#### Commit 2: Replace Misleading Disk Health With CoCalc Storage Summary
+
+Goal: use CoCalc storage accounting instead of filesystem/quota approximation.
+
+Changes:
+
+- Remove the health rail disk row based on `useCurrentUsage(...).disk_quota`.
+- Reuse `useDiskUsage({ project_id })` or extract a small
+  `DiskUsageSummary`/`useDiskUsageSummary` helper from the existing disk usage
+  component.
+- Render a compact storage row/card in the health rail using the same live,
+  retained, visible, and quota values as `DiskUsage`.
+- Add an action that opens the full disk usage modal/tool. The current
+  `DiskUsage` component is clickable but visually too large for the health
+  rail, so either add a compact/health mode or extract the summary and modal
+  trigger into a smaller component.
+- If health-rail-specific code was added only to support the old misleading
+  disk display, delete it.
+
+Validation:
+
+- Disk usage component tests if touched.
+- Health rail handles missing storage data and loading state.
+
+#### Commit 3: Add Network Egress Summary To Health Rail
+
+Goal: show the concrete network information already available in the Network
+card.
+
+Changes:
+
+- Reuse `ManagedEgressRateSummary` directly if it fits the health rail.
+- If not, extract a small shared hook/summary presenter from
+  `purchases/managed-egress-history.tsx`.
+- Keep the full Network section as the detailed view with history/modal.
+- Health rail row should link/scroll to `#network` or open the egress history
+  modal using the existing button component when practical.
+
+Validation:
+
+- Existing managed egress tests if touched.
+- Health rail degrades cleanly when egress data is unavailable.
+
+#### Commit 4: Add Process/CPU/Memory Summary And Recovery Links
+
+Goal: make the health rail reflect active runtime load and recovery posture
+using existing project info/process tooling.
+
+Changes:
+
+- Reuse the process monitor data source used by the Processes flyout/project
+  info page, or extract a cheap summary helper if needed.
+- Show compact CPU, memory/RSS, and process count. Avoid polling more often
+  than the existing process monitor already does.
+- Link/open the existing process monitor for details.
+- Add backup and snapshot rows:
+  - Backup row shows last backup when available and opens `.backups` using the
+    existing `BACKUPS` open-directory action.
+  - Snapshot row shows the most recent snapshot if that data is cheaply
+    available; otherwise show a neutral "Open snapshots" row until a cheap data
+    source exists.
+  - Snapshot row opens `.snapshots` using the existing `SNAPSHOTS`
+    open-directory action.
+- The create backup flow should open `.backups` and set
+  `open_create_backup`, so the running LRO is visible on the backups page.
+
+Validation:
+
+- Project info/process summary tests if helpers are extracted.
+- Health rail tests for absent process data, stopped project, and running
+  project.
