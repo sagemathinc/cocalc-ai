@@ -627,11 +627,15 @@ export default function DiskUsage({
   style,
   compact = false,
   current_path,
+  buttonText,
+  buttonSize,
 }: {
   project_id: string;
   style?;
   compact?: boolean;
   current_path?: string;
+  buttonText?: string;
+  buttonSize?: "small" | "middle" | "large";
 }) {
   const projectMap = useTypedRedux("projects", "project_map");
   const lastBackup = projectMap?.getIn([project_id, "last_backup"]);
@@ -934,7 +938,17 @@ export default function DiskUsage({
     }
   }
 
-  const summary = (
+  const summary = buttonText ? (
+    <Button
+      onClick={() => {
+        setExpand(!expand);
+      }}
+      size={buttonSize}
+      style={style}
+    >
+      {buttonText}
+    </Button>
+  ) : (
     <Button
       onClick={() => {
         setExpand(!expand);

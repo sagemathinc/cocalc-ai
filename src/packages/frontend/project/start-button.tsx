@@ -340,9 +340,9 @@ export function StartButton({
           type="primary"
           size={size}
           style={{
-            ...style,
             width: "112px",
             whiteSpace: "nowrap",
+            ...style,
           }}
           title={
             starting ? `${projectLabel} is starting` : `Start ${projectLabel}`
