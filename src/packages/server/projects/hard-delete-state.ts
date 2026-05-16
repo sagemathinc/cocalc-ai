@@ -45,7 +45,7 @@ export async function markProjectHardDeleteAccepted({
          SET state = COALESCE(state, '{}'::jsonb) || jsonb_build_object(
            'state', 'deleting',
            'time', NOW(),
-           'hard_delete_op_id', $2
+           'hard_delete_op_id', $2::text
          )
        WHERE project_id = $1
          AND deleted IS NOT TRUE
@@ -74,12 +74,12 @@ export async function markProjectHardDeleteFailed({
          SET state = COALESCE(state, '{}'::jsonb) || jsonb_build_object(
            'state', 'delete_failed',
            'time', NOW(),
-           'hard_delete_op_id', $2,
-           'hard_delete_error', $3
+           'hard_delete_op_id', $2::text,
+           'hard_delete_error', $3::text
          )
        WHERE project_id = $1
          AND deleted IS NOT TRUE
-         AND state ->> 'hard_delete_op_id' = $2
+         AND state ->> 'hard_delete_op_id' = $2::text
     `,
     [project_id, op_id, error],
   );
