@@ -3,8 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Card, Progress, Space, Tag, Typography } from "antd";
+import { Alert, Button, Card, Modal, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
+import { useState } from "react";
 
 import {
   CopyToClipBoard,
@@ -13,14 +14,16 @@ import {
   TimeAgo,
 } from "@cocalc/frontend/components";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
+import useDiskUsage from "@cocalc/frontend/project/disk-usage/use-disk-usage";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
-import { COLORS } from "@cocalc/util/theme";
 import { Project } from "./types";
-import { useCurrentUsage, useRunQuota } from "./run-quota/hooks";
+import { human_readable_size } from "@cocalc/util/misc";
+import { useRunQuota } from "./run-quota/hooks";
 
 const { Text, Title } = Typography;
 
@@ -53,34 +56,6 @@ function HealthRow({
   );
 }
 
-function usagePercent(display?: string): number | undefined {
-  const match = `${display ?? ""}`.match(/\((?:>|~)?([0-9.]+)%\)/);
-  if (!match?.[1]) return;
-  const value = Number(match[1]);
-  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : undefined;
-}
-
-function UsageLine({ label, usage }: { label: string; usage?: any }) {
-  if (!usage?.display) return null;
-  const percent = usagePercent(usage.display);
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-        <Text type="secondary">{label}</Text>
-        <Text style={{ fontSize: 12 }}>{usage.display}</Text>
-      </div>
-      {percent != null && (
-        <Progress
-          percent={percent}
-          showInfo={false}
-          size="small"
-          strokeColor={percent > 90 ? COLORS.BS_RED : COLORS.BS_GREEN_D}
-        />
-      )}
-    </div>
-  );
-}
-
 export function ProjectSettingsHealthRail({
   project_id,
   project,
@@ -104,7 +79,6 @@ export function ProjectSettingsHealthRail({
     return rawState.set("state", "opened");
   })();
   const runQuota = useRunQuota(project_id, null);
-  const currentUsage = useCurrentUsage({ project_id, shortStr: true });
   const lastBackup =
     projectMap?.getIn([project_id, "last_backup"]) ??
     (project as any).get("last_backup");
@@ -164,11 +138,7 @@ export function ProjectSettingsHealthRail({
             <TimeAgo date={lastBackup as any} />
           </HealthRow>
         )}
-        <div>
-          <UsageLine label="CPU" usage={(currentUsage as any).cores} />
-          <UsageLine label="Memory" usage={(currentUsage as any).memory} />
-          <UsageLine label="Disk" usage={(currentUsage as any).disk_quota} />
-        </div>
+        <StorageHealthRow project_id={project_id} />
         <HealthRow label="Network">
           {runQuota.network == null ? (
             <Tag>Unknown</Tag>
@@ -199,5 +169,55 @@ export function ProjectSettingsHealthRail({
         )}
       </Space>
     </Card>
+  );
+}
+
+function StorageHealthRow({ project_id }: { project_id: string }) {
+  const [open, setOpen] = useState<boolean>(false);
+  const { quotas, live, retained, loading } = useDiskUsage({ project_id });
+  const quota = quotas[0];
+  const quotaLabel =
+    quota == null || quota.size <= 0
+      ? undefined
+      : `${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`;
+  const liveLabel = live ? human_readable_size(live.bytes) : undefined;
+  const retainedLabel = retained
+    ? human_readable_size(retained.bytes)
+    : undefined;
+
+  return (
+    <>
+      <HealthRow label="Storage">
+        <Space direction="vertical" size={2} style={{ width: "100%" }}>
+          {quotaLabel ? (
+            <Text>{quotaLabel}</Text>
+          ) : loading ? (
+            <Text type="secondary">Loading...</Text>
+          ) : (
+            <Text type="secondary">Unknown</Text>
+          )}
+          {(liveLabel || retainedLabel) && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {liveLabel ? `Live ${liveLabel}` : ""}
+              {liveLabel && retainedLabel ? " · " : ""}
+              {retainedLabel ? `Retained ${retainedLabel}` : ""}
+            </Text>
+          )}
+          <Button size="small" onClick={() => setOpen(true)}>
+            Disk usage
+          </Button>
+        </Space>
+      </HealthRow>
+      <Modal
+        open={open}
+        title="Disk Usage"
+        width={760}
+        footer={null}
+        onCancel={() => setOpen(false)}
+        destroyOnHidden
+      >
+        <DiskUsage project_id={project_id} compact />
+      </Modal>
+    </>
   );
 }
