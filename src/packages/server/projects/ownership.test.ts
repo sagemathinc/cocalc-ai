@@ -79,6 +79,7 @@ function projectRow(users: Record<string, { group: string }>) {
     project_id: PROJECT_ID,
     title: "Project",
     users,
+    last_active: {},
     usage_account_id: OWNER_ID,
     runtime_sponsor_account_id: OWNER_ID,
   };
@@ -158,7 +159,26 @@ describe("project ownership", () => {
     );
   });
 
-  it("uses a deterministic collaborator fallback for ownership transfer", async () => {
+  it("chooses the most recently active collaborator for ownership transfer", async () => {
+    const { chooseProjectOwnershipTransferTarget } =
+      await import("./ownership");
+    expect(
+      chooseProjectOwnershipTransferTarget(
+        {
+          [OWNER_ID]: { group: "owner" },
+          [OTHER_COLLABORATOR_ID]: { group: "collaborator" },
+          [COLLABORATOR_ID]: { group: "collaborator" },
+        },
+        OWNER_ID,
+        {
+          [OTHER_COLLABORATOR_ID]: "2026-05-16T12:00:00.000Z",
+          [COLLABORATOR_ID]: "2026-05-16T11:00:00.000Z",
+        },
+      ),
+    ).toBe(OTHER_COLLABORATOR_ID);
+  });
+
+  it("uses account id as the transfer tie-breaker when activity is unavailable", async () => {
     const { chooseProjectOwnershipTransferTarget } =
       await import("./ownership");
     expect(

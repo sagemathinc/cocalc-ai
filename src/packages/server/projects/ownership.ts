@@ -27,6 +27,7 @@ type ProjectOwnershipRow = {
   project_id: string;
   title: string | null;
   users: any;
+  last_active: Record<string, unknown> | null;
   usage_account_id: string | null;
   runtime_sponsor_account_id: string | null;
 };
@@ -120,16 +121,37 @@ export function getProjectCollaboratorAccountIdsFromUsers(
     .sort();
 }
 
+function lastActiveTime(
+  lastActive: Record<string, unknown> | null | undefined,
+  account_id: string,
+): number {
+  const value = lastActive?.[account_id];
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return 0;
+}
+
 export function chooseProjectOwnershipTransferTarget(
   usersRaw: any,
   excluding_account_id: string,
+  lastActive?: Record<string, unknown> | null,
 ): string | undefined {
-  // TODO: rank by unused global storage quota once there is a cheap cluster-wide
-  // primitive for that. Until then use a deterministic order so account deletion
-  // cannot create ownerless projects.
-  return getProjectCollaboratorAccountIdsFromUsers(usersRaw).filter(
-    (account_id) => account_id !== excluding_account_id,
-  )[0];
+  return getProjectCollaboratorAccountIdsFromUsers(usersRaw)
+    .filter((account_id) => account_id !== excluding_account_id)
+    .sort((a, b) => {
+      const c = lastActiveTime(lastActive, b) - lastActiveTime(lastActive, a);
+      return c || a.localeCompare(b);
+    })[0];
 }
 
 async function publishOldOwnerRemoval({
@@ -183,6 +205,7 @@ async function loadProjectForUpdate(
         project_id,
         title,
         users,
+        last_active,
         usage_account_id::text AS usage_account_id,
         runtime_sponsor_account_id::text AS runtime_sponsor_account_id
       FROM projects
@@ -356,6 +379,7 @@ async function listOwnedProjectsForAccount(
         project_id,
         title,
         users,
+        last_active,
         usage_account_id::text AS usage_account_id,
         runtime_sponsor_account_id::text AS runtime_sponsor_account_id
       FROM projects
@@ -379,6 +403,7 @@ export async function disposeOwnedProjectsForAccountDeletion(
       const newOwner = chooseProjectOwnershipTransferTarget(
         row.users,
         account_id,
+        row.last_active,
       );
       if (newOwner) {
         await transferProjectOwnership({
@@ -429,6 +454,7 @@ async function loadProject(
         project_id,
         title,
         users,
+        last_active,
         usage_account_id::text AS usage_account_id,
         runtime_sponsor_account_id::text AS runtime_sponsor_account_id
       FROM projects
@@ -463,6 +489,7 @@ export async function leaveOrDeleteProjectForAccount({
       const newOwner = chooseProjectOwnershipTransferTarget(
         row.users,
         account_id,
+        row.last_active,
       );
       if (newOwner) {
         await transferProjectOwnership({
