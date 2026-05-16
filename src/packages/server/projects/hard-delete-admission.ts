@@ -76,6 +76,10 @@ function asInteger(value: unknown): number {
   return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
 }
 
+function limitReached(count: number, limit: number): boolean {
+  return limit > 0 && count >= limit;
+}
+
 function deny({
   code,
   message,
@@ -241,19 +245,19 @@ export async function assertProjectHardDeleteAdmission({
   if (counts.same_project_active > 0) {
     return counts;
   }
-  if (counts.account_inflight >= limits.account_inflight) {
+  if (limitReached(counts.account_inflight, limits.account_inflight)) {
     deny({
       code: "project_delete_rate_limited_account_inflight",
       message: accountInflightMessage({ counts, limits }),
     });
   }
-  if (counts.account_recent >= limits.account_recent) {
+  if (limitReached(counts.account_recent, limits.account_recent)) {
     deny({
       code: "project_delete_rate_limited_account_recent",
       message: accountRecentMessage({ counts, limits }),
     });
   }
-  if (counts.global_inflight >= limits.global_inflight) {
+  if (limitReached(counts.global_inflight, limits.global_inflight)) {
     deny({
       code: "project_delete_rate_limited_global_inflight",
       message: globalInflightMessage({ counts, limits }),

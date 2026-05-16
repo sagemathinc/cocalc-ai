@@ -135,6 +135,35 @@ describe("hard-delete admission", () => {
     ).resolves.toMatchObject({ same_project_active: 1 });
   });
 
+  it("treats zero limits as disabled rather than deny-all", async () => {
+    queryMock.mockResolvedValueOnce(
+      counts({
+        account_inflight: 10,
+        account_recent: 20,
+        global_inflight: 30,
+      }),
+    );
+
+    const { assertProjectHardDeleteAdmission } =
+      await import("./hard-delete-admission");
+    await expect(
+      assertProjectHardDeleteAdmission({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        limits: {
+          account_inflight: 0,
+          account_recent: 0,
+          account_recent_window_seconds: 60 * 60,
+          global_inflight: 0,
+        },
+      }),
+    ).resolves.toMatchObject({
+      account_inflight: 10,
+      account_recent: 20,
+      global_inflight: 30,
+    });
+  });
+
   it.each([
     [
       "account_inflight",
