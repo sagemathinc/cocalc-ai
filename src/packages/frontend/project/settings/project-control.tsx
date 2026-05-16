@@ -5,7 +5,6 @@
 
 import { Space } from "antd";
 import { FormattedMessage, useIntl } from "react-intl";
-import BootLog from "../bootlog";
 import { React, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   Icon,
@@ -256,15 +255,12 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     );
   }
 
-  function render_runtime_diagnostics() {
+  function render_control_error() {
     return (
-      <section>
-        <ProjectControlError
-          style={{ margin: "10px 0px" }}
-          showStopButton={project.getIn(["state", "state"]) == "running"}
-        />
-        <BootLog />
-      </section>
+      <ProjectControlError
+        style={{ margin: "10px 0px" }}
+        showStopButton={project.getIn(["state", "state"]) == "running"}
+      />
     );
   }
 
@@ -296,7 +292,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         <RuntimeSponsorControls project={project} project_id={project_id} />
         {render_archived_note()}
         <section>{render_status_summary()}</section>
-        {render_runtime_diagnostics()}
+        {render_control_error()}
         {render_rootfs_details()}
       </Space>
     );
