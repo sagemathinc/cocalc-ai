@@ -1,4 +1,5 @@
 import { Button, Popconfirm } from "antd";
+import type { ReactNode } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -8,9 +9,13 @@ import { Icon } from "@cocalc/frontend/components";
 export default function RemoveMyself({
   project_ids,
   size,
+  danger,
+  label,
 }: {
   project_ids: string[];
   size?: "small";
+  danger?: boolean;
+  label?: ReactNode;
 }) {
   const account_id = useTypedRedux("account", "account_id");
   const intl = useIntl();
@@ -55,11 +60,13 @@ export default function RemoveMyself({
       okText={intl.formatMessage(labels.yes)}
       cancelText={intl.formatMessage(labels.no)}
     >
-      <Button size={size} icon={<Icon name="times-circle" />}>
-        <FormattedMessage
-          id="projects.remove-myself.button"
-          defaultMessage="Remove Myself..."
-        />
+      <Button size={size} danger={danger} icon={<Icon name="times-circle" />}>
+        {label ?? (
+          <FormattedMessage
+            id="projects.remove-myself.button"
+            defaultMessage="Remove Myself..."
+          />
+        )}
       </Button>
     </Popconfirm>
   );

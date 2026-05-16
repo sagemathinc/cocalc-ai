@@ -13,6 +13,7 @@ import { ProjectsActions } from "@cocalc/frontend/todo-types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 import { HardDeleteProjectModal } from "@cocalc/frontend/projects/hard-delete-project-modal";
+import RemoveMyself from "@cocalc/frontend/projects/remove-myself";
 import { ArchiveProject } from "./archive-project";
 import MoveProject from "./move-project";
 import { Project } from "./types";
@@ -140,7 +141,21 @@ export function HideDeleteBox(props: Readonly<Props>) {
               </Button>
             }
           />
-        ) : undefined}
+        ) : (
+          <DangerActionRow
+            icon="user-times"
+            title="Remove Myself as Collaborator"
+            description={`Leave this ${projectLabelLower}. You will no longer have access and cannot add yourself back.`}
+            action={
+              <RemoveMyself
+                project_ids={[project_id]}
+                size={isFlyout ? "small" : undefined}
+                danger
+                label="Remove Myself as Collaborator"
+              />
+            }
+          />
+        )}
         <HardDeleteProjectModal
           open={deleteModalOpen}
           project_id={project_id}
