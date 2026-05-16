@@ -91,7 +91,7 @@ export function ProjectCollaboratorsContent({
         <InviteInboxPanel
           project_id={project.get("project_id")}
           mode="project"
-          showWhenEmpty
+          showWhenEmpty={false}
         />
         <CurrentCollaboratorsPanel
           key="current-collabs"

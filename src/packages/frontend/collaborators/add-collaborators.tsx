@@ -524,17 +524,14 @@ export const AddCollaborators: React.FC<Props> = ({
   }
 
   function render_search(): React.JSX.Element | undefined {
+    if (state == "searched") {
+      return;
+    }
     return (
       <div style={{ marginBottom: "15px" }}>
-        {state == "searched" ? (
-          render_select_list_button()
-        ) : (
-          <>
-            Collaborators can view, edit, run code, manage files, and add or
-            remove other collaborators in this project. For teaching, add
-            students through the course.
-          </>
-        )}
+        Collaborators can view, edit, run code, manage files, and add or remove
+        other collaborators in this project. For teaching, add students through
+        the course.
       </div>
     );
   }

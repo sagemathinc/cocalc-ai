@@ -486,7 +486,7 @@ export const InviteInboxPanel: React.FC<Props> = ({
     set_expanded(projectMode ? outgoing.length > 0 : incoming.length > 0);
   }, [expanded, incoming.length, loading, outgoing.length, projectMode]);
 
-  if (!loading && !error && total === 0 && !showWhenEmpty) {
+  if (!error && total === 0 && !showWhenEmpty) {
     return null;
   }
 
