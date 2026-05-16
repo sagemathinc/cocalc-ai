@@ -196,11 +196,9 @@ export function HardDeleteProjectModal({
             }}
           >
             <div style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
-              Type{" "}
-              <code style={{ userSelect: "all" }}>
-                &quot;{confirmationTarget}&quot;
-              </code>{" "}
-              to confirm.
+              Type &quot;
+              <code style={{ userSelect: "all" }}>{confirmationTarget}</code>
+              &quot; to confirm.
             </div>
             <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
               After deletion begins, this {projectLabelLower} cannot be opened
