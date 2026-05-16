@@ -108,8 +108,8 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
           borderRadius: 10,
           boxShadow: isFlyout ? undefined : "0 1px 2px rgba(14, 43, 89, 0.04)",
           display: "grid",
-          gap: isFlyout ? 10 : 14,
-          gridTemplateColumns: "minmax(0, 1fr) auto auto",
+          gap: isFlyout ? 10 : 16,
+          gridTemplateColumns: `minmax(0, 1fr) ${isFlyout ? "146px" : "190px"}`,
           marginBottom: is_last ? 0 : 8,
           padding: isFlyout ? "8px 10px" : "11px 12px",
         }}
@@ -131,9 +131,19 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
             {render_last_active(user.account_id, user.last_active)}
           </div>
         </div>
-        {render_role(user.group)}
-        <div style={{ minWidth: isFlyout ? 54 : 78, textAlign: "right" }}>
-          {user_remove_button(user.account_id, user.group)}
+        <div
+          style={{
+            alignItems: "center",
+            display: "grid",
+            gap: 8,
+            gridTemplateColumns: `${isFlyout ? "82px" : "102px"} ${isFlyout ? "54px" : "80px"}`,
+            justifyContent: "end",
+          }}
+        >
+          <div style={{ textAlign: "right" }}>{render_role(user.group)}</div>
+          <div style={{ textAlign: "right" }}>
+            {user_remove_button(user.account_id, user.group)}
+          </div>
         </div>
       </div>
     );

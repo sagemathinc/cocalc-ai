@@ -593,6 +593,11 @@ export const AddCollaborators: React.FC<Props> = ({
         return <Alert type="info" title={"Press enter to search..."} />;
       }
     }
+    const hasSearchContentBelow =
+      showSelector ||
+      (focused && results.length === 0) ||
+      selected_entries.length > 0 ||
+      state == "searched";
 
     return (
       <div
@@ -604,7 +609,13 @@ export const AddCollaborators: React.FC<Props> = ({
           padding: 12,
         }}
       >
-        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            marginBottom: hasSearchContentBelow ? 10 : 0,
+          }}
+        >
           <Input
             autoFocus={autoFocus}
             placeholder="Search by name or email address..."
