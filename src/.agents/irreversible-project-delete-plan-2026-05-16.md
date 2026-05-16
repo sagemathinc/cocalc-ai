@@ -177,6 +177,34 @@ shape is:
 - Work is sharded by bay/host where possible.
 - Expensive cleanup stages have their own bounded concurrency.
 
+### Destructive Storage-History Actions Are Owner-Controlled
+
+Project owners need to be able to invite collaborators without trusting them
+with irreversible recovery-data destruction. Normal file deletion is part of
+collaboration and is recoverable through snapshots/backups, but deleting the
+recovery mechanisms themselves is a different trust boundary.
+
+Default policy:
+
+- Collaborators can edit and delete ordinary files.
+- Collaborators cannot delete snapshots.
+- Collaborators cannot delete backups.
+- Collaborators cannot archive the project.
+- Collaborators cannot move the project to a different host, because moving
+  removes snapshots.
+- Project owners and admins can perform these actions.
+
+Add one owner-controlled project setting:
+
+- `allow_collaborator_destructive_storage_actions`
+- Default: `false`.
+- User-facing wording should be direct, e.g.
+  "Allow collaborators to delete snapshots/backups and move or archive this
+  project."
+
+This should not be split into several granular permissions initially. The common
+trust question is whether collaborators may destroy or invalidate recovery data.
+
 ## Target Behavior
 
 ### Project Settings Delete
@@ -220,6 +248,28 @@ bulk flow. Initial implementation should either:
 
 Recommendation for first implementation: remove/disable bulk hard delete until
 single-project delete is polished.
+
+### Destructive Storage-History Controls
+
+The project settings UI should expose an owner-only switch near other project
+trust/lifecycle controls:
+
+- Label: "Collaborators may manage storage history"
+- Default off.
+- Description: "When enabled, collaborators can delete snapshots and backups,
+  archive the project, and move it to another host. When disabled, collaborators
+  can still edit files, but only owners can remove recovery data or perform
+  lifecycle actions that remove snapshots."
+
+When the switch is off, collaborator UI should hide or disable:
+
+- snapshot delete buttons;
+- backup delete buttons;
+- archive project controls;
+- move project controls.
+
+Backend authorization must still enforce the policy even if the frontend is
+wrong or stale.
 
 ### CLI Delete
 
@@ -329,7 +379,28 @@ document tables intentionally retained for audit.
 Add regression tests that fail when the cleanup list misses core projection and
 runtime-slot tables.
 
-### Phase 5: Replace Frontend Soft Delete
+### Phase 5: Add Owner-Controlled Storage-History Destruction
+
+- Add `allow_collaborator_destructive_storage_actions` to the project schema and
+  projection/read paths needed by frontend settings.
+- Add a backend authorization helper, e.g.
+  `assertCanPerformDestructiveStorageAction({ project_id, account_id })`.
+- Helper behavior:
+  - owner: allowed;
+  - admin: allowed;
+  - collaborator: allowed only when the project setting is true;
+  - non-collaborator: denied.
+- Apply the helper to:
+  - snapshot delete;
+  - backup delete;
+  - archive project admission;
+  - move project admission.
+- Add frontend switch in project settings.
+- Hide or disable protected controls for collaborators when the switch is off.
+- Add tests for each backend enforcement point.
+- Add frontend tests for owner/collaborator visibility where practical.
+
+### Phase 6: Replace Frontend Soft Delete
 
 - Add a reusable `HardDeleteProjectModal`.
 - Integrate with `useFreshAuthAction`.
@@ -342,7 +413,7 @@ runtime-slot tables.
 - Ensure course UI does not offer student-owned destructive delete paths that
   violate instructor evidence preservation.
 
-### Phase 6: Update CLI
+### Phase 7: Update CLI
 
 - Make CLI delete call `hardDeleteProject` by default.
 - Keep typed project-id confirmation.
@@ -356,7 +427,7 @@ runtime-slot tables.
   - rate-limit denial display;
   - LRO wait success/failure.
 
-### Phase 7: Remove or Quarantine Soft Delete
+### Phase 8: Remove or Quarantine Soft Delete
 
 Options:
 
@@ -371,13 +442,14 @@ Recommendation:
 - Delete frontend undelete and reversible-delete flows.
 - Update old copy: no more "deleted projects can be undeleted after a few days."
 
-### Phase 8: Observability
+### Phase 9: Observability
 
 Emit structured events for:
 
 - hard-delete requested;
 - hard-delete admitted/denied with reason;
 - hard-delete LRO started/succeeded/failed;
+- destructive storage-history action admitted/denied with reason;
 - host data cleanup failed;
 - backup snapshot purge scheduled/succeeded/failed;
 - DB cleanup table failures.
@@ -420,6 +492,8 @@ Add operator CLI/report:
 - A single account cannot enqueue unbounded delete work.
 - Delete worker throughput is configurable and observable.
 - Hard delete works when home bay and owning bay differ.
+- Collaborator snapshot/backup delete, archive, and move are blocked by default
+  unless the owner enables the destructive storage-history setting.
 - Core project-scoped projection/runtime-slot rows are removed.
 - Frontend and CLI show clear structured errors for not-owner, fresh-auth, and
   rate-limit denials.
