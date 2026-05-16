@@ -945,6 +945,7 @@ export interface ProjectCollabInviteRespondRequest {
   account_id: string;
   action: ProjectCollabInviteAction;
   include_email?: boolean;
+  trusted_product_access_checked?: boolean;
 }
 
 export interface ProjectCollabInviteCreateRequest {

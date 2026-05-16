@@ -905,13 +905,20 @@ async function startProjectCollabInviteService(): Promise<void> {
     removeCollaborator: async (opts) => {
       await removeCollaborator(opts);
     },
-    respond: async ({ account_id, invite_id, action, include_email }) =>
+    respond: async ({
+      account_id,
+      invite_id,
+      action,
+      include_email,
+      trusted_product_access_checked,
+    }) =>
       collabInviteToWire(
         await respondCollabInviteCanonical({
           account_id,
           invite_id,
           action,
           includeEmail: !!include_email,
+          trustedProductAccessChecked: !!trusted_product_access_checked,
         }),
       ),
   };
