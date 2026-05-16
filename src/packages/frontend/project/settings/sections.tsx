@@ -26,6 +26,7 @@ import { ManagedEgress } from "./managed-egress";
 import { ProjectCapabilities } from "./project-capabilites";
 import { ProjectControl } from "./project-control";
 import { RecoveryPanel } from "./recovery-panel";
+import { CourseRuntimeSponsorSummary } from "./runtime-sponsor-controls";
 import RootFilesystemImage from "./root-filesystem-image";
 import { useRunQuota } from "./run-quota/hooks";
 import { ProjectSecrets } from "./secrets";
@@ -254,10 +255,15 @@ export function useProjectSettingsSections({
       title: "Course",
       description:
         "Course-managed restrictions and inherited settings for this project.",
-      children: student.disableSSH ? (
-        <p>SSH access is disabled by the course configuration.</p>
-      ) : (
-        <p>This project is linked to a course.</p>
+      children: (
+        <Space direction="vertical" size={sectionGap} style={{ width: "100%" }}>
+          {student.disableSSH ? (
+            <p>SSH access is disabled by the course configuration.</p>
+          ) : (
+            <p>This project is linked to a course.</p>
+          )}
+          <CourseRuntimeSponsorSummary project_id={project_id} />
+        </Space>
       ),
     });
   }

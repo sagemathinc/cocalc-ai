@@ -3,11 +3,21 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Popconfirm, Space, Switch, Typography } from "antd";
-import { useState } from "react";
+import {
+  Alert,
+  Button,
+  List,
+  Popconfirm,
+  Space,
+  Switch,
+  Tag,
+  Typography,
+} from "antd";
+import { useEffect, useState } from "react";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Paragraph } from "@cocalc/frontend/components";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   accountIsProjectCollaborator,
   projectOwnerAccountId,
@@ -15,6 +25,7 @@ import {
 } from "@cocalc/frontend/projects/runtime-start-policy";
 import { User } from "@cocalc/frontend/users/user";
 import { COLORS } from "@cocalc/util/theme";
+import type { ProjectRuntimeSponsorStatus } from "@cocalc/conat/hub/api/projects";
 
 import type { Project } from "./types";
 
@@ -120,6 +131,11 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
           shared-compute priority, and RAM limits apply while this project is
           running.
         </Paragraph>
+        <RuntimeSponsorUsageSummary
+          project_id={project_id}
+          refreshKey={`${sponsorAccountId ?? ""}:${checked}:${autostartChecked}`}
+          compact
+        />
         {canSelfSponsor && (
           <div style={{ marginTop: 8 }}>
             <Popconfirm
@@ -238,5 +254,139 @@ export function RuntimeSponsorControls({ project, project_id }: Props) {
         />
       )}
     </section>
+  );
+}
+
+export function RuntimeSponsorUsageSummary({
+  project_id,
+  refreshKey,
+  compact = false,
+}: {
+  project_id: string;
+  refreshKey?: string;
+  compact?: boolean;
+}) {
+  const [status, setStatus] = useState<ProjectRuntimeSponsorStatus | null>(
+    null,
+  );
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    setError("");
+    webapp_client.conat_client.hub.projects
+      .getProjectRuntimeSponsorStatus({ project_id })
+      .then((status) => {
+        if (mounted) setStatus(status);
+      })
+      .catch((err) => {
+        if (mounted) setError(`${err}`);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [project_id, refreshKey]);
+
+  if (error) {
+    return compact ? null : (
+      <Alert
+        type="warning"
+        showIcon
+        message="Unable to load runtime sponsor usage"
+        description={error}
+      />
+    );
+  }
+  if (status == null) return null;
+
+  const limit = status.limit ?? undefined;
+  const hiddenCount = status.active_projects.filter(
+    (project) => project.visible === false,
+  ).length;
+  const visibleProjects = status.active_projects.filter(
+    (project) => project.visible !== false,
+  );
+  const full = limit != null && status.current >= limit;
+
+  return (
+    <div style={{ marginTop: compact ? 8 : 0 }}>
+      <Alert
+        type={full ? "warning" : "info"}
+        showIcon={!compact}
+        message={
+          <span>
+            Runtime sponsor usage:{" "}
+            <Text strong>
+              {status.current}/{limit ?? "unlimited"}
+            </Text>{" "}
+            sponsored running-project slots
+          </span>
+        }
+        description={
+          <div>
+            <div>
+              Sponsor:{" "}
+              <User
+                account_id={status.sponsor_account_id}
+                show_avatar
+                avatarSize={18}
+              />
+              {!status.allow_collaborator_starts_using_sponsor && (
+                <Tag color="orange" style={{ marginLeft: 8 }}>
+                  collaborator starts blocked
+                </Tag>
+              )}
+              {!status.autostart_enabled && (
+                <Tag color="orange" style={{ marginLeft: 8 }}>
+                  automatic starts blocked
+                </Tag>
+              )}
+            </div>
+            {!compact && visibleProjects.length > 0 && (
+              <List
+                size="small"
+                style={{ marginTop: 8 }}
+                dataSource={visibleProjects}
+                renderItem={(project) => (
+                  <List.Item>
+                    <Space>
+                      <Tag>{project.state}</Tag>
+                      <Text>
+                        {`${project.title ?? ""}`.trim() || project.project_id}
+                      </Text>
+                    </Space>
+                  </List.Item>
+                )}
+              />
+            )}
+            {hiddenCount > 0 && (
+              <div style={{ color: COLORS.GRAY_M, marginTop: 4 }}>
+                {hiddenCount} sponsored running{" "}
+                {hiddenCount === 1 ? "project is" : "projects are"} hidden
+                because you are not a collaborator.
+              </div>
+            )}
+          </div>
+        }
+      />
+    </div>
+  );
+}
+
+export function CourseRuntimeSponsorSummary({
+  project_id,
+}: {
+  project_id: string;
+}) {
+  return (
+    <Space direction="vertical" style={{ width: "100%" }} size={10}>
+      <Alert
+        type="info"
+        showIcon
+        message="Course runtime sponsorship"
+        description="Course projects run on the runtime sponsor's membership. For teaching, this makes it explicit when student or shared projects consume instructor, team, or student running-project slots."
+      />
+      <RuntimeSponsorUsageSummary project_id={project_id} />
+    </Space>
   );
 }

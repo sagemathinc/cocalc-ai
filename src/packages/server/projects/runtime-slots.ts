@@ -4,6 +4,7 @@
  */
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import centralLog from "@cocalc/database/postgres/central-log";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -99,6 +100,18 @@ const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 const HEARTBEAT_TTL_MS = 30 * 60 * 1000;
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
+function logRuntimeSlotEvent(
+  event: string,
+  value: Record<string, unknown>,
+): void {
+  centralLog({ event, value }).catch((err) => {
+    logger.warn("failed to write runtime slot central log event", {
+      event,
+      err: `${err}`,
+    });
+  });
+}
+
 function normalizePositiveInteger(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return undefined;
@@ -111,16 +124,28 @@ function expirationDate(ttl_ms: number | undefined): Date {
 }
 
 async function expireStaleRuntimeSlots(client: Queryable): Promise<void> {
-  await client.query(
+  const { rows } = await client.query<{
+    sponsor_account_id: string;
+    project_id: string;
+    owning_bay_id: string;
+    host_id?: string | null;
+    state: string;
+  }>(
     `
       UPDATE project_runtime_slots
          SET state='expired',
              metadata=COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('expired_by', 'runtime-slot-admission')
        WHERE state = ANY($1)
          AND expires_at < NOW()
+       RETURNING sponsor_account_id, project_id, owning_bay_id, host_id, state
     `,
     [ACTIVE_SLOT_STATES],
   );
+  if (rows.length === 0) return;
+  logRuntimeSlotEvent("project_runtime_slot_expired", {
+    count: rows.length,
+    sample: rows.slice(0, 20),
+  });
 }
 
 async function loadActiveSlotsForSponsor(
@@ -220,6 +245,16 @@ async function reserveProjectRuntimeSlotInTransaction(
       limit,
     });
     if (denial) {
+      logRuntimeSlotEvent("project_runtime_slot_denied", {
+        sponsor_account_id: opts.sponsor_account_id,
+        project_id: opts.project_id,
+        owning_bay_id: opts.owning_bay_id,
+        host_id: opts.host_id ?? null,
+        actor_account_id: opts.actor_account_id ?? null,
+        reason: opts.reason ?? null,
+        limit,
+        current: activeSlots.length,
+      });
       throw new RuntimeSponsorSlotsExhaustedError(denial);
     }
   }
@@ -282,6 +317,18 @@ export async function reserveProjectRuntimeSlotLocal(
     try {
       const result = await reserveProjectRuntimeSlotInTransaction(client, opts);
       await client.query("COMMIT");
+      logRuntimeSlotEvent("project_runtime_slot_reserved", {
+        sponsor_account_id: result.sponsor_account_id,
+        project_id: result.project_id,
+        owning_bay_id: result.slot.owning_bay_id,
+        host_id: result.slot.host_id ?? null,
+        actor_account_id: result.slot.actor_account_id ?? null,
+        reason: result.slot.reason ?? null,
+        state: result.slot.state,
+        limit: result.limit ?? null,
+        current: result.current,
+        existing: result.existing,
+      });
       return result;
     } catch (err) {
       await client.query("ROLLBACK");
@@ -332,7 +379,15 @@ export async function heartbeatProjectRuntimeSlotLocal({
       ACTIVE_SLOT_STATES,
     ],
   );
-  return (rowCount ?? 0) > 0;
+  const released = (rowCount ?? 0) > 0;
+  if (released) {
+    logRuntimeSlotEvent("project_runtime_slot_released", {
+      sponsor_account_id,
+      project_id,
+      state,
+    });
+  }
+  return released;
 }
 
 export async function heartbeatProjectRuntimeSlotsBatchLocal({

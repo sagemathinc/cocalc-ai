@@ -42,6 +42,7 @@ export const system = {
   getBayBackups: authFirst,
   getAcpAdmissionDenialReport: authFirstRequireAccount,
   getServiceAdmissionDenialReport: authFirstRequireAccount,
+  getProjectRuntimeSlotReport: authFirstRequireAccount,
   getProjectBackupShards: authFirst,
   runBayBackup: authFirst,
   runBayRestore: authFirst,
@@ -504,6 +505,51 @@ export interface ServiceAdmissionDenialReport {
   window_minutes: number;
   min_count: number;
   groups: ServiceAdmissionDenialSummary[];
+}
+
+export interface ProjectRuntimeSlotReportSlot {
+  sponsor_account_id: string;
+  project_id: string;
+  title?: string | null;
+  owning_bay_id: string;
+  host_id?: string | null;
+  state: string;
+  actor_account_id?: string | null;
+  reason?: string | null;
+  acquired_at: string;
+  heartbeat_at: string;
+  expires_at: string;
+  op_id?: string | null;
+}
+
+export interface ProjectRuntimeSlotReportSponsor {
+  sponsor_account_id: string;
+  sponsor_display_name?: string | null;
+  current: number;
+  limit?: number | null;
+  active_projects: number;
+  starting: number;
+  running: number;
+  oldest_heartbeat_at?: string | null;
+  newest_heartbeat_at?: string | null;
+}
+
+export interface ProjectRuntimeSlotEventSummary {
+  event: string;
+  count: number;
+  first_time: string;
+  last_time: string;
+}
+
+export interface ProjectRuntimeSlotReport {
+  checked_at: string;
+  bay_id: string;
+  since: string;
+  window_minutes: number;
+  active_only: boolean;
+  slots: ProjectRuntimeSlotReportSlot[];
+  top_sponsors: ProjectRuntimeSlotReportSponsor[];
+  recent_events: ProjectRuntimeSlotEventSummary[];
 }
 
 export interface BrowserSignInCookieInfo {
@@ -1327,6 +1373,14 @@ export interface System {
     denial_limit?: string | null;
     source?: string | null;
   }) => Promise<ServiceAdmissionDenialReport>;
+
+  getProjectRuntimeSlotReport: (opts?: {
+    account_id?: string;
+    sponsor_account_id?: string | null;
+    active_only?: boolean;
+    window_minutes?: number;
+    limit?: number;
+  }) => Promise<ProjectRuntimeSlotReport>;
 
   getProjectBackupShards: (opts?: {
     account_id?: string;
