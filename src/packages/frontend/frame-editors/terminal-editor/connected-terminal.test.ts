@@ -355,9 +355,15 @@ describe("connected terminal resizing", () => {
     );
     expect(terminal["terminal"].write).toHaveBeenCalledTimes(1);
     expect(terminal["terminal"].write).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "This terminal can't connect because the project is stopped.",
-      ),
+      expect.stringContaining("Project stopped"),
+      expect.any(Function),
+    );
+    expect(terminal["terminal"].write).toHaveBeenCalledWith(
+      expect.stringContaining("Start the project to use this terminal."),
+      expect.any(Function),
+    );
+    expect(terminal["terminal"].write).toHaveBeenCalledWith(
+      expect.stringContaining("connect automatically"),
       expect.any(Function),
     );
 
@@ -397,9 +403,11 @@ describe("connected terminal resizing", () => {
     expect(terminalClient).not.toHaveBeenCalled();
     expect(showProjectStartRequiredModal).not.toHaveBeenCalled();
     expect(terminal["terminal"].write).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "This terminal can't connect because the project is stopped.",
-      ),
+      expect.stringContaining("Project stopped"),
+      expect.any(Function),
+    );
+    expect(terminal["terminal"].write).toHaveBeenCalledWith(
+      expect.stringContaining("Start the project to use this terminal."),
       expect.any(Function),
     );
 

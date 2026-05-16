@@ -57,6 +57,11 @@ const SPAWN_TIMEOUT = 5000;
 
 const EXIT_MESSAGE = "\r\n[Process completed - press any key]\r\n";
 const CONNECTING_MESSAGE = `\r\n\x1b[1;37m[\x1b[0m\x1b[36m CONNECTING{TARGET}... \x1b[0m\x1b[1;37m]\x1b[0m\r\n\r\n`;
+const ANSI_RESET = "\x1b[0m";
+const ANSI_DIM_CYAN = "\x1b[2;36m";
+const ANSI_BOLD_CYAN = "\x1b[1;36m";
+const ANSI_WHITE = "\x1b[37m";
+const ANSI_DIM = "\x1b[2m";
 
 const ENABLE_WEBGL = false;
 
@@ -94,6 +99,58 @@ function normalizeTerminalArgs(args: any): string[] | undefined {
     return undefined;
   }
   return plain.map((x) => `${x}`);
+}
+
+function visibleLength(s: string): number {
+  return s.replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+
+function borderLine({
+  left,
+  fill,
+  right,
+  width,
+}: {
+  left: string;
+  fill: string;
+  right: string;
+  width: number;
+}): string {
+  return `${ANSI_DIM_CYAN}${left}${fill.repeat(width - 2)}${right}${ANSI_RESET}`;
+}
+
+function boxLine(content: string, width: number): string {
+  const length = visibleLength(content);
+  const padding = Math.max(0, width - 2 - length);
+  const left = Math.floor(padding / 2);
+  const right = padding - left;
+  return `${ANSI_DIM_CYAN}│${ANSI_RESET}${" ".repeat(left)}${content}${" ".repeat(right)}${ANSI_DIM_CYAN}│${ANSI_RESET}`;
+}
+
+function stoppedProjectTerminalMessage(cols: number | undefined): string {
+  const terminalWidth = Math.max(40, Math.min(88, cols ?? 80));
+  const width = Math.max(40, Math.min(62, terminalWidth - 6));
+  const indent = " ".repeat(
+    Math.max(0, Math.floor((terminalWidth - width) / 2)),
+  );
+  const lines = [
+    borderLine({ left: "╭", fill: "─", right: "╮", width }),
+    boxLine("", width),
+    boxLine(`${ANSI_BOLD_CYAN}▷  Project stopped${ANSI_RESET}`, width),
+    boxLine("", width),
+    boxLine(
+      `${ANSI_WHITE}Start the project to use this terminal.${ANSI_RESET}`,
+      width,
+    ),
+    boxLine(
+      `${ANSI_DIM}This terminal will connect automatically${ANSI_RESET}`,
+      width,
+    ),
+    boxLine(`${ANSI_DIM}after the project starts.${ANSI_RESET}`, width),
+    boxLine("", width),
+    borderLine({ left: "╰", fill: "─", right: "╯", width }),
+  ];
+  return `\r\n\r\n${lines.map((line) => `${indent}${line}`).join("\r\n")}\r\n`;
 }
 
 export class Terminal<T extends CodeEditorState = CodeEditorState> {
@@ -542,7 +599,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
     this.manualStartMessageShown = true;
     await this.handleDataFromProject(
-      "\r\nThis terminal can't connect because the project is stopped. Start the project to use the terminal.\r\n",
+      stoppedProjectTerminalMessage(this.terminal.cols),
     );
   };
 
