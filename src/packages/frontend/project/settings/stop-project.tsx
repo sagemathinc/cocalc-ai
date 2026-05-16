@@ -17,9 +17,16 @@ interface Props {
   disabled?: boolean;
   size?;
   force?: boolean;
+  compact?: boolean;
 }
 
-export function StopProject({ project_id, disabled, size, force }: Props) {
+export function StopProject({
+  project_id,
+  disabled,
+  size,
+  force,
+  compact,
+}: Props) {
   const actions = useActions("projects");
   const intl = useIntl();
   const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
@@ -56,7 +63,11 @@ export function StopProject({ project_id, disabled, size, force }: Props) {
     >
       <Button disabled={disabled || actions == null} size={size} danger={force}>
         <StopOutlined /> {force && "Force "}
-        <FormattedMessage {...labels.project_settings_stop_project_label} />
+        {compact ? (
+          "Stop"
+        ) : (
+          <FormattedMessage {...labels.project_settings_stop_project_label} />
+        )}
       </Button>
     </Popconfirm>
   );

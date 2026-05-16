@@ -30,6 +30,8 @@ import { human_readable_size } from "@cocalc/util/misc";
 import { useRunQuota } from "./run-quota/hooks";
 import MoveProject from "./move-project";
 import type { IconName } from "@cocalc/frontend/components/icon";
+import { StartButton } from "@cocalc/frontend/project/start-button";
+import { StopProject } from "./stop-project";
 
 const { Text } = Typography;
 
@@ -99,6 +101,7 @@ export function ProjectSettingsHealthRail({
     if (displayStateValue !== "opened") return rawState;
     return rawState.set("state", "opened");
   })();
+  const rawProjectState = `${(project as any).getIn(["state", "state"]) ?? ""}`;
   const runQuota = useRunQuota(project_id, null);
   const lastBackup =
     projectMap?.getIn([project_id, "last_backup"]) ??
@@ -130,7 +133,17 @@ export function ProjectSettingsHealthRail({
         </Text>
       </div>
       <Space direction="vertical" style={{ width: "100%" }} size={10}>
-        <RailRow icon="heart" label="State">
+        <RailRow
+          icon="heart"
+          label="State"
+          action={
+            rawProjectState === "running" ? (
+              <StopProject project_id={project_id} size="small" compact />
+            ) : (
+              <StartButton project_id={project_id} size="small" minimal />
+            )
+          }
+        >
           {displayProjectState ? (
             <>
               <ProjectState show_desc={false} state={displayProjectState} />
@@ -171,7 +184,7 @@ export function ProjectSettingsHealthRail({
             icon="users"
             label="People"
             action={
-              <Button size="small" type="link" href="#people">
+              <Button size="small" href="#people">
                 Open
               </Button>
             }
@@ -324,7 +337,6 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
     );
   }
 
-  const processCount = rows?.length ?? 0;
   const cpuPct =
     rows == null
       ? undefined
@@ -345,11 +357,8 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
       }
     >
       <Space direction="vertical" size={0}>
-        <Text>
-          {processCount} process{processCount === 1 ? "" : "es"}
-        </Text>
         {cpuPct != null && memoryBytes != null && (
-          <Text type="secondary" style={{ fontSize: 12 }}>
+          <Text>
             CPU {cpuPct.toFixed(1)}% · Memory {human_readable_size(memoryBytes)}
           </Text>
         )}
@@ -359,7 +368,7 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
 }
 
 function StorageHealthRow({ project_id }: { project_id: string }) {
-  const { quotas, live, retained, loading } = useDiskUsage({ project_id });
+  const { quotas, loading } = useDiskUsage({ project_id });
   const quota = quotas[0];
   const percent =
     quota == null || quota.size <= 0
@@ -369,10 +378,6 @@ function StorageHealthRow({ project_id }: { project_id: string }) {
     quota == null || quota.size <= 0
       ? undefined
       : `${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`;
-  const liveLabel = live ? human_readable_size(live.bytes) : undefined;
-  const retainedLabel = retained
-    ? human_readable_size(retained.bytes)
-    : undefined;
 
   return (
     <RailRow
@@ -403,13 +408,6 @@ function StorageHealthRow({ project_id }: { project_id: string }) {
         ) : (
           <Text type="secondary">Unknown</Text>
         )}
-        {(liveLabel || retainedLabel) && (
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {liveLabel ? `Live ${liveLabel}` : ""}
-            {liveLabel && retainedLabel ? " · " : ""}
-            {retainedLabel ? `Retained ${retainedLabel}` : ""}
-          </Text>
-        )}
       </Space>
     </RailRow>
   );
@@ -439,29 +437,20 @@ function NetworkHealthRow({
         />
       }
     >
-      <Space direction="vertical" size={3} style={{ width: "100%" }}>
-        <div style={{ display: "flex", alignItems: "end", gap: 3, height: 22 }}>
-          {activityBars.map((height, i) => (
-            <div
-              key={i}
-              style={{
-                background: networkEnabled === false ? "#d9d9d9" : "#1677ff",
-                borderRadius: 2,
-                height: `${height}%`,
-                opacity: 0.35 + i * 0.07,
-                width: 8,
-              }}
-            />
-          ))}
-        </div>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {networkEnabled == null
-            ? "Internet unknown"
-            : networkEnabled
-              ? "Internet enabled"
-              : "Internet disabled"}
-        </Text>
-      </Space>
+      <div style={{ display: "flex", alignItems: "end", gap: 3, height: 22 }}>
+        {activityBars.map((height, i) => (
+          <div
+            key={i}
+            style={{
+              background: networkEnabled === false ? "#d9d9d9" : "#1677ff",
+              borderRadius: 2,
+              height: `${height}%`,
+              opacity: 0.35 + i * 0.07,
+              width: 8,
+            }}
+          />
+        ))}
+      </div>
     </RailRow>
   );
 }
