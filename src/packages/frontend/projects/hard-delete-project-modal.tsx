@@ -162,6 +162,7 @@ export function HardDeleteProjectModal({
             icon="warning"
             tone="danger"
             title="What will be deleted"
+            plainIcon
           >
             <InfoRow icon="file">Files, folders, and project metadata</InfoRow>
             <InfoRow icon="users">
@@ -175,7 +176,8 @@ export function HardDeleteProjectModal({
           <InfoSection
             icon="check-circle"
             tone="positive"
-            title="What this cleans up"
+            title="What you get back"
+            plainIcon
           >
             <InfoRow icon="project-outlined">
               Immediately frees one of your project slots
@@ -196,7 +198,7 @@ export function HardDeleteProjectModal({
             }}
           >
             <div style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
-              Type &quot;
+              Type the exact project name &quot;
               <code style={{ userSelect: "all" }}>{confirmationTarget}</code>
               &quot; to confirm.
             </div>
@@ -207,7 +209,7 @@ export function HardDeleteProjectModal({
             <Input
               value={confirmation}
               disabled={deleting}
-              placeholder={confirmationTarget}
+              placeholder="Project name"
               style={{ marginTop: 10 }}
               onChange={(e) => setConfirmation(e.target.value)}
               onPressEnter={() => {
@@ -253,11 +255,13 @@ function InfoSection({
   icon,
   title,
   tone,
+  plainIcon,
   children,
 }: {
   icon: IconName;
   title: string;
   tone: "danger" | "positive";
+  plainIcon?: boolean;
   children: ReactNode;
 }) {
   const sectionStyle =
@@ -267,7 +271,11 @@ function InfoSection({
   return (
     <div style={sectionStyle}>
       <div style={titleStyle}>
-        <IconBadge icon={icon} tone={tone} />
+        {plainIcon ? (
+          <Icon name={icon} />
+        ) : (
+          <IconBadge icon={icon} tone={tone} />
+        )}
         {title}
       </div>
       <Space direction="vertical" size={8} style={{ width: "100%" }}>
@@ -328,8 +336,9 @@ const DANGER_SECTION_STYLE: CSSProperties = {
 
 const POSITIVE_SECTION_STYLE: CSSProperties = {
   ...SECTION_STYLE,
-  background: COLORS.YELL_LLL,
+  background: "white",
   border: `1px solid ${COLORS.GRAY_LL}`,
+  borderLeft: `4px solid ${COLORS.YELL_LL}`,
 };
 
 const TITLE_STYLE: CSSProperties = {
