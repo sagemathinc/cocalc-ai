@@ -247,6 +247,7 @@ import {
   removeCollaborator,
   respondCollabInviteCanonical,
 } from "@cocalc/server/projects/collaborators";
+import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
 import {
   BAY_OPS_INTERNAL_AUTH,
   getBayBackups,
@@ -896,6 +897,11 @@ async function startProjectCollabInviteService(): Promise<void> {
     removeCollaborator: async (opts) => {
       await removeCollaborator(opts);
     },
+    leaveOrDeleteProjects: async ({ account_id, project_ids }) =>
+      await leaveOrDeleteProjectsForAccount({
+        account_id,
+        project_ids,
+      }),
     respond: async ({ account_id, invite_id, action, include_email }) =>
       collabInviteToWire(
         await respondCollabInviteCanonical({

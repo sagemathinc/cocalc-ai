@@ -17,6 +17,10 @@ import {
   removeCollaborator as removeCollaboratorLocal,
   respondCollabInvite as respondCollabInviteLocal,
 } from "@cocalc/server/projects/collaborators";
+import {
+  leaveOrDeleteProjectsForAccount,
+  type ProjectLeaveOrDeleteResult,
+} from "@cocalc/server/projects/ownership";
 import { type CopyOptions } from "@cocalc/conat/files/fs";
 export * from "@cocalc/server/conat/api/project-snapshots";
 export * from "@cocalc/server/conat/api/project-backups";
@@ -2422,6 +2426,107 @@ export async function hardDeleteProject({
     service: PERSIST_SERVICE,
     stream_name: lroStreamName(op.op_id),
   };
+}
+
+export async function leaveOrDeleteProjects({
+  account_id,
+  browser_id,
+  session_hash,
+  project_ids,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  project_ids: string[];
+}): Promise<ProjectLeaveOrDeleteResult[]> {
+  if (!account_id) {
+    throw new Error("must be signed in");
+  }
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
+
+  const localProjectIds: string[] = [];
+  const remoteProjectIdsByBay = new Map<string, string[]>();
+  for (const project_id of [...new Set(project_ids)]) {
+    const ownership = await resolveProjectBay(project_id);
+    if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
+      localProjectIds.push(project_id);
+      continue;
+    }
+    remoteProjectIdsByBay.set(ownership.bay_id, [
+      ...(remoteProjectIdsByBay.get(ownership.bay_id) ?? []),
+      project_id,
+    ]);
+  }
+
+  const results: ProjectLeaveOrDeleteResult[] = [];
+  if (localProjectIds.length > 0) {
+    results.push(
+      ...(await leaveOrDeleteProjectsForAccount({
+        account_id,
+        project_ids: localProjectIds,
+        hardDeleteOwnedProject: async (project_id) =>
+          await hardDeleteProject({
+            account_id,
+            browser_id,
+            session_hash,
+            project_id,
+          }),
+      })),
+    );
+  }
+  for (const [bay_id, remoteProjectIds] of remoteProjectIdsByBay.entries()) {
+    const remoteResults = await getInterBayBridge()
+      .projectCollabInvite(bay_id)
+      .leaveOrDeleteProjects({
+        account_id,
+        project_ids: remoteProjectIds,
+      });
+    for (const result of remoteResults) {
+      switch (result.action) {
+        case "removed_self":
+        case "hard_deleted":
+          results.push({
+            project_id: result.project_id,
+            action: result.action,
+          });
+          break;
+        case "hard_delete_queued":
+          results.push({
+            project_id: result.project_id,
+            action: result.action,
+            op_id: result.op_id,
+          });
+          break;
+        case "transferred":
+          if (result.new_owner_account_id) {
+            results.push({
+              project_id: result.project_id,
+              action: result.action,
+              new_owner_account_id: result.new_owner_account_id,
+            });
+          } else {
+            results.push({
+              project_id: result.project_id,
+              action: "error",
+              error: "remote transfer result missing new owner account id",
+            });
+          }
+          break;
+        case "error":
+          results.push({
+            project_id: result.project_id,
+            action: "error",
+            error: result.error ?? "unknown remote project leave/delete error",
+          });
+          break;
+      }
+    }
+  }
+  return results;
 }
 
 export async function updateAuthorizedKeysOnHost({
