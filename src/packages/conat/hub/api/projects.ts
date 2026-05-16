@@ -95,6 +95,22 @@ export interface ProjectRuntimeLog {
   reason?: string;
 }
 
+export interface ProjectRuntimeSponsorStatus {
+  sponsor_account_id: string;
+  sponsor_display_name?: string;
+  limit?: number | null;
+  current: number;
+  active_projects: Array<{
+    project_id: string;
+    title?: string;
+    state: "starting" | "running";
+    visible: boolean;
+    can_stop: boolean;
+  }>;
+  allow_collaborator_starts_using_sponsor: boolean;
+  autostart_enabled: boolean;
+}
+
 export interface ImportPublicUrlResult {
   project_id: string;
   path: string;
@@ -509,6 +525,7 @@ export const projects = {
   getProjectRootfs: authFirstRequireAccount,
   getProjectSettings: authFirstRequireAccount,
   getProjectCourseInfo: authFirstRequireAccount,
+  getProjectRuntimeSponsorStatus: authFirstRequireAccount,
   getCourseStudentAccess: authFirstRequireAccount,
   getProjectSnapshotSchedule: authFirstRequireAccount,
   getProjectBackupSchedule: authFirstRequireAccount,
@@ -729,6 +746,11 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectCourseInfo>;
+
+  getProjectRuntimeSponsorStatus: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<ProjectRuntimeSponsorStatus>;
 
   getCourseStudentAccess: (opts: {
     account_id?: string;

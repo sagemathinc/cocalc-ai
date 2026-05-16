@@ -434,3 +434,51 @@ test("project where returns the owning bay for the resolved project", async () =
   assert.equal(captured?.project_id, "project-id");
   assert.equal(captured?.owning_bay_id, "bay-0");
 });
+
+test("project runtime-slots resolves sponsor filters and calls admin report API", async () => {
+  let captured: any;
+
+  const deps = {
+    withContext: async (_command, _label, fn) => {
+      const ctx = {
+        hub: {
+          system: {
+            getProjectRuntimeSlotReport: async (opts) => {
+              captured = opts;
+              return { checked_at: "now", slots: [] };
+            },
+          },
+        },
+      };
+      await fn(ctx);
+    },
+    resolveAccountByIdentifier: async (_ctx, identifier) => ({
+      account_id: `acct:${identifier}`,
+    }),
+  };
+
+  const program = new Command();
+  const project = program.command("project");
+  registerProjectBasicCommands(project, deps as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "project",
+    "runtime-slots",
+    "--sponsor",
+    "teacher@example.com",
+    "--all",
+    "--window-minutes",
+    "30",
+    "--limit",
+    "5",
+  ]);
+
+  assert.deepEqual(captured, {
+    sponsor_account_id: "acct:teacher@example.com",
+    active_only: false,
+    window_minutes: 30,
+    limit: 5,
+  });
+});

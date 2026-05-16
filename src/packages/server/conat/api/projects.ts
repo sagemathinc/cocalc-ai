@@ -95,6 +95,7 @@ import type {
   ProjectCopyDestination,
   ProjectCopyRow,
   ProjectRuntimeLog,
+  ProjectRuntimeSponsorStatus,
   ProjectAddress,
   ProjectLauncherSettings,
   ProjectRegion,
@@ -160,9 +161,11 @@ import {
   loadProjectRuntimeSponsor,
 } from "@cocalc/server/projects/runtime-sponsor-db";
 import {
+  listProjectRuntimeSlots,
   releaseProjectRuntimeSlot,
   reserveProjectRuntimeSlot,
 } from "@cocalc/server/projects/runtime-slots";
+import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import {
   encodeRuntimeSponsorDenial,
   extractRuntimeSponsorDenial,
@@ -1337,6 +1340,64 @@ export async function getProjectCourseInfo({
 }): Promise<ProjectCourseInfo> {
   return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
     .course;
+}
+
+export async function getProjectRuntimeSponsorStatus({
+  account_id,
+  project_id,
+}: {
+  account_id: string;
+  project_id: string;
+}): Promise<ProjectRuntimeSponsorStatus> {
+  await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  const sponsor = await loadProjectRuntimeSponsor(project_id);
+  const [slots, membership, sponsor_display_name] = await Promise.all([
+    listProjectRuntimeSlots({
+      sponsor_account_id: sponsor.sponsor_account_id,
+      active_only: true,
+    }),
+    resolveMembershipForAccount(sponsor.sponsor_account_id),
+    getName(sponsor.sponsor_account_id).catch(() => undefined),
+  ]);
+  const active_projects = await Promise.all(
+    slots.map(async (slot) => {
+      const state: "starting" | "running" =
+        slot.state === "starting" ? "starting" : "running";
+      try {
+        const reference = await resolveProjectOwningBay({
+          account_id,
+          project_id: slot.project_id,
+        });
+        return {
+          project_id: slot.project_id,
+          title: reference.title || undefined,
+          state,
+          visible: true,
+          can_stop: true,
+        };
+      } catch {
+        return {
+          project_id: slot.project_id,
+          state,
+          visible: false,
+          can_stop: false,
+        };
+      }
+    }),
+  );
+  const limit =
+    getEffectiveMembershipUsageLimits(membership)
+      .max_sponsored_running_projects ?? null;
+  return {
+    sponsor_account_id: sponsor.sponsor_account_id,
+    ...(sponsor_display_name ? { sponsor_display_name } : {}),
+    limit,
+    current: slots.length,
+    active_projects,
+    allow_collaborator_starts_using_sponsor:
+      sponsor.allow_collaborator_starts_using_sponsor !== false,
+    autostart_enabled: sponsor.autostart_enabled !== false,
+  };
 }
 
 export async function getCourseStudentAccess({
