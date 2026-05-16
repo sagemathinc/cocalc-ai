@@ -373,17 +373,17 @@ export function registerProjectBasicCommands(
 
   project
     .command("delete")
-    .description("delete a project (soft by default; permanent with --hard)")
+    .description("permanently delete a project")
     .requiredOption("-w, --project <project_id>", "project project_id (UUID)")
-    .option("--hard", "permanently delete project data and metadata")
+    .option("--hard", "deprecated; delete is always permanent")
     .option(
       "--backup-retention-days <days>",
-      "when --hard, keep backups this many days before purge (default: 7)",
+      "keep backups this many days before purge (default: 7)",
       "7",
     )
-    .option("--purge-backups-now", "when --hard, purge backups immediately")
-    .option("--wait", "when --hard, wait for delete completion")
-    .option("-y, --yes", "when --hard, skip interactive confirmation")
+    .option("--purge-backups-now", "purge backups immediately")
+    .option("--wait", "wait for delete completion")
+    .option("-y, --yes", "skip interactive confirmation")
     .action(
       async (
         opts: {
@@ -402,16 +402,6 @@ export function registerProjectBasicCommands(
             throw new Error("--project must be a project project_id UUID");
           }
           const ws = await resolveProject(ctx, projectId);
-          if (!opts.hard) {
-            await ctx.hub.projects.deleteProject({
-              project_id: ws.project_id,
-            });
-            return {
-              project_id: ws.project_id,
-              status: "deleted",
-              mode: "soft",
-            };
-          }
 
           const retentionRaw = Number(opts.backupRetentionDays ?? "7");
           if (!Number.isFinite(retentionRaw) || retentionRaw < 0) {
@@ -472,28 +462,6 @@ export function registerProjectBasicCommands(
         });
       },
     );
-
-  project
-    .command("undelete")
-    .description("undelete a project")
-    .requiredOption("-w, --project <project_id>", "project project_id (UUID)")
-    .action(async (opts: { project: string }, command: Command) => {
-      await withContext(command, "project undelete", async (ctx) => {
-        const projectId = `${opts.project ?? ""}`.trim();
-        if (!isValidUUID(projectId)) {
-          throw new Error("--project must be a project project_id UUID");
-        }
-        await ctx.hub.projects.setProjectDeleted({
-          project_id: projectId,
-          deleted: false,
-        });
-        return {
-          project_id: projectId,
-          status: "active",
-          mode: "soft",
-        };
-      });
-    });
 
   project
     .command("start")
