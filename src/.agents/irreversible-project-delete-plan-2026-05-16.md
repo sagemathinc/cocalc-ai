@@ -82,6 +82,52 @@ Rationale:
 - Owners are the only normal users with legitimate authority to destroy the
   entire project.
 
+### Account Deletion Transfers Shared Projects
+
+When an account is deleted, projects owned by that account need explicit
+ownership-transfer semantics. We must not create indefinitely ownerless projects,
+because somebody has to be responsible for storage and quota.
+
+Policy:
+
+- If the deleting account owns a project with no other collaborators, hard-delete
+  the project as part of account deletion.
+- If the deleting account owns a project with one or more remaining
+  collaborators, automatically transfer ownership to a remaining collaborator.
+- Choose the new owner as the remaining collaborator with the most unused global
+  storage quota.
+- If storage/quota data cannot be computed, fall back to a deterministic order:
+  oldest collaborator first, then account id.
+- If the project exceeds the new owner's quota, still transfer it. The new owner
+  is then over quota and can resolve that by deleting the project, upgrading, or
+  reducing storage.
+- Notify the new owner that ownership and storage responsibility were
+  transferred to them because the previous owner account was deleted.
+
+Rationale:
+
+- User A deleting their account should not unexpectedly destroy documents that
+  collaborator B helped create in project P.
+- Keeping P forever after A is deleted creates an impossible-to-delete and
+  impossible-to-bill orphan.
+- Blocking inactive-account deletion on user response is not viable because
+  account deletion can happen automatically when inactive accounts stop paying.
+- Transferring ownership keeps the project available while preserving a single
+  responsible storage/quota account.
+
+Implementation requirements:
+
+- Add a backend-only `transferProjectOwnership` operation.
+- Update `projects.users` atomically so the old owner is removed and the chosen
+  collaborator has `group: "owner"`.
+- Update ownership-derived attribution such as `usage_account_id` when it is
+  unset or points at the deleted account.
+- If `runtime_sponsor_account_id` points at the deleted account, move runtime
+  sponsorship to the new owner.
+- Emit project outbox/projection invalidations for all affected accounts.
+- Write an audit/central-log event and send a notification to the new owner.
+- The operation must run on the authoritative owning bay.
+
 ### Delete Is Immediately Irreversible
 
 Once delete is accepted:
@@ -199,10 +245,24 @@ should be admin/debug-only and clearly named `project soft-delete`.
 - Add a separate admin-only internal API or CLI flag for support/admin deletion.
 - Ensure course student projects are owned by the intended instructor/course
   owner account, not by students, for delete authorization purposes.
+- Define account-deletion ownership transfer:
+  - hard-delete owned projects with no other collaborators;
+  - transfer owned projects with remaining collaborators to the collaborator
+    with the most unused global storage quota;
+  - notify the new owner;
+  - do not block transfer if the project puts the new owner over quota.
+- Add backend-only `transferProjectOwnership` with multibay-safe routing and
+  projection invalidation.
 - Add tests:
   - owner can enqueue hard delete;
   - collaborator cannot;
   - admin cannot use normal user path unless using explicit admin path;
+  - account deletion hard-deletes owner-only projects;
+  - account deletion transfers shared projects to the collaborator with the most
+    unused storage quota;
+  - transfer falls back deterministically when quota data is unavailable;
+  - transfer updates storage and runtime sponsorship attribution from the deleted
+    account to the new owner;
   - deleted/missing project returns stable errors.
 
 ### Phase 2: Add Hard-Delete Admission Limits
@@ -350,6 +410,9 @@ Add operator CLI/report:
 - A collaborator cannot delete a project they do not own.
 - A project owner can irreversibly delete a project after fresh auth and typed
   confirmation.
+- Deleting an account hard-deletes owner-only projects.
+- Deleting an account transfers projects with remaining collaborators to a new
+  owner/storage-responsible collaborator.
 - There is no normal user-facing undelete.
 - The deleted project is immediately not openable/startable.
 - Project limit cannot be bypassed by cycling projects through reversible
