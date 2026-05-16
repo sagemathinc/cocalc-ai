@@ -64,6 +64,10 @@ export default function SiteSettings({ close }) {
   const [emailTestLoading, setEmailTestLoading] = useState<boolean>(false);
   const [emailTestResult, setEmailTestResult] = useState<any>(null);
   const [emailTestError, setEmailTestError] = useState<string>("");
+  const [settingsSyncLoading, setSettingsSyncLoading] =
+    useState<boolean>(false);
+  const [settingsSyncResult, setSettingsSyncResult] = useState<any>(null);
+  const [settingsSyncError, setSettingsSyncError] = useState<string>("");
   const [data, setData] = useState<Data | null>(null);
   const [isSet, setIsSet] = useState<IsSet | null>(null);
   const [filterStr, setFilterStr] = useState<string>("");
@@ -447,6 +451,7 @@ export default function SiteSettings({ close }) {
         <CancelButton />
         <Gap />
         <SaveButton />
+        <SiteSettingsSync />
       </div>
     );
   }
@@ -495,27 +500,17 @@ export default function SiteSettings({ close }) {
   }
 
   async function syncSiteSettingsToBays(): Promise<void> {
-    setEmailTestLoading(true);
-    setEmailTestError("");
-    setEmailTestResult(null);
+    setSettingsSyncLoading(true);
+    setSettingsSyncError("");
+    setSettingsSyncResult(null);
     try {
       const sync =
         await webapp_client.conat_client.hub.system.syncSiteSettingsToBays({});
-      setEmailTestResult({
-        mode: "settings sync",
-        success: !sync.bays.some(({ status }) => status === "failed"),
-        route: sync.bays.map((bay) => ({
-          backend: "settings",
-          source: bay.bay_id,
-          status: bay.status === "failed" ? "failed" : "accepted",
-          error: bay.error,
-        })),
-        sync,
-      });
+      setSettingsSyncResult(sync);
     } catch (err) {
-      setEmailTestError(err instanceof Error ? err.message : `${err}`);
+      setSettingsSyncError(err instanceof Error ? err.message : `${err}`);
     } finally {
-      setEmailTestLoading(false);
+      setSettingsSyncLoading(false);
     }
   }
 
@@ -541,10 +536,63 @@ export default function SiteSettings({ close }) {
       case "default-fallback":
         return `fallback ${step.backend}`;
       default:
-        return step?.backend === "settings"
-          ? `${step.source} settings`
-          : (step?.backend ?? "backend");
+        return step?.backend ?? "backend";
     }
+  }
+
+  function SiteSettingsSync() {
+    const failed = settingsSyncResult?.bays?.filter(
+      ({ status }) => status === "failed",
+    );
+    return (
+      <div style={{ marginTop: "8px", maxWidth: "900px" }}>
+        <Button
+          size="small"
+          icon={<Icon name="refresh" />}
+          loading={settingsSyncLoading}
+          onClick={syncSiteSettingsToBays}
+        >
+          Sync Site Settings to Bays
+        </Button>
+        <span style={{ marginLeft: "8px", color: COLORS.GRAY_M }}>
+          Push all configured site settings from this admin bay to every
+          registered bay. New saves sync automatically.
+        </span>
+        {settingsSyncResult != null && (
+          <Alert
+            showIcon
+            style={{ marginTop: "8px" }}
+            type={failed?.length ? "error" : "success"}
+            message={
+              failed?.length
+                ? "Some bays failed to sync"
+                : "Site settings synced"
+            }
+            description={
+              <div>
+                Synced <code>{settingsSyncResult.count}</code> configured
+                settings from <code>{settingsSyncResult.local_bay_id}</code>.
+                {settingsSyncResult.bays?.map((bay) => (
+                  <div key={bay.bay_id}>
+                    <code>{bay.bay_id}</code>: {bay.status}
+                    {bay.error ? ` -- ${bay.error}` : ""}
+                  </div>
+                ))}
+              </div>
+            }
+          />
+        )}
+        {settingsSyncError && (
+          <Alert
+            showIcon
+            style={{ marginTop: "8px" }}
+            type="error"
+            message="Site settings sync failed"
+            description={settingsSyncError}
+          />
+        )}
+      </div>
+    );
   }
 
   function EmailTest() {
@@ -569,15 +617,6 @@ export default function SiteSettings({ close }) {
         >
           Send Verification Test
         </Button>
-        <Button
-          size="small"
-          style={{ marginLeft: "8px" }}
-          icon={<Icon name="refresh" />}
-          loading={emailTestLoading}
-          onClick={syncSiteSettingsToBays}
-        >
-          Sync Settings to Bays
-        </Button>
         <span style={{ marginLeft: "8px", color: COLORS.GRAY_M }}>
           Sends to <code>{email || "your account"}</code>. Verification uses the
           critical email route.
@@ -595,25 +634,15 @@ export default function SiteSettings({ close }) {
                     Recipient: <code>{emailTestResult.to}</code>
                   </div>
                 )}
-                {emailTestResult.sync ? (
-                  <div>
-                    Synced <code>{emailTestResult.sync.count}</code> configured
-                    settings from{" "}
-                    <code>{emailTestResult.sync.local_bay_id}</code>.
-                  </div>
-                ) : (
-                  <>
-                    <div>
-                      Settings: default{" "}
-                      <code>{emailTestResult.default_backend}</code>, critical{" "}
-                      <code>{emailTestResult.lane_backend}</code>, resolved{" "}
-                      <code>{emailTestResult.resolved_backend || "none"}</code>
-                    </div>
-                    <div>
-                      SMTP is used when a lane resolves to <code>smtp</code>.
-                    </div>
-                  </>
-                )}
+                <div>
+                  Settings: default{" "}
+                  <code>{emailTestResult.default_backend}</code>, critical{" "}
+                  <code>{emailTestResult.lane_backend}</code>, resolved{" "}
+                  <code>{emailTestResult.resolved_backend || "none"}</code>
+                </div>
+                <div>
+                  SMTP is used when a lane resolves to <code>smtp</code>.
+                </div>
                 {primarySmtp != null && (
                   <div>
                     SMTP: server{" "}
