@@ -81,7 +81,7 @@ function loadTerminalModule({
       onData = jest.fn();
       onTitleChange = jest.fn();
       attachCustomKeyEventHandler = jest.fn();
-      write = (_data: string, cb?: () => void) => cb?.();
+      write = jest.fn((_data: string, cb?: () => void) => cb?.());
       reset = jest.fn();
       resize = jest.fn((cols: number, rows: number) => {
         this.cols = cols;
@@ -316,7 +316,7 @@ describe("connected terminal resizing", () => {
     terminal.close();
   });
 
-  it("shows a manual-start modal instead of connecting when automatic starts are disabled", async () => {
+  it("shows an inline manual-start message instead of connecting when automatic starts are disabled", async () => {
     const { Terminal, terminalClient, showProjectStartRequiredModal } =
       loadTerminalModule({
         projectState: "opened",
@@ -344,15 +344,21 @@ describe("connected terminal resizing", () => {
     } as any;
 
     const terminal = new Terminal(actions, 0, "term-1", parent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await terminal.connect();
 
     expect(terminalClient).not.toHaveBeenCalled();
-    expect(showProjectStartRequiredModal).toHaveBeenCalledWith(
-      expect.objectContaining({
-        project_id: "project-1",
-        title: "Start project to connect terminal",
-        block: expect.objectContaining({ code: "autostart_disabled" }),
-      }),
+    expect(showProjectStartRequiredModal).not.toHaveBeenCalled();
+    expect(actions.set_connection_status).toHaveBeenCalledWith(
+      "term-1",
+      "disconnected",
+    );
+    expect(terminal["terminal"].write).toHaveBeenCalledTimes(1);
+    expect(terminal["terminal"].write).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "This terminal can't connect because the project is stopped.",
+      ),
+      expect.any(Function),
     );
 
     terminal.close();

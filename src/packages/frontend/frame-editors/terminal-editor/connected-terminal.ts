@@ -46,10 +46,7 @@ import { asyncDebounce, asyncThrottle } from "@cocalc/util/async-utils";
 import { path_split } from "@cocalc/util/misc";
 import { join } from "path";
 import { randomId } from "@cocalc/conat/names";
-import {
-  getAutostartProjectStartPolicyBlock,
-  showProjectStartRequiredModal,
-} from "@cocalc/frontend/projects/start-required-modal";
+import { getAutostartProjectStartPolicyBlock } from "@cocalc/frontend/projects/start-required-modal";
 //import { argsJoin } from "@cocalc/util/args";
 
 declare const $: any;
@@ -513,6 +510,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   };
 
   private ptyExited = false;
+  private manualStartMessageShown = false;
 
   connect = reuseInFlight(async () => {
     if (this.isClosed() || this.ptyExited) return;
@@ -526,16 +524,16 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
           ? getAutostartProjectStartPolicyBlock(this.project_id)
           : undefined;
       if (startPolicyBlock) {
-        await this.handleDataFromProject(
-          `\r\n${startPolicyBlock.message} ${startPolicyBlock.action ?? ""}\r\n`,
-        );
-        showProjectStartRequiredModal({
-          project_id: this.project_id,
-          title: "Start project to connect terminal",
-          block: startPolicyBlock,
-        });
+        this.set_connection_status("disconnected");
+        if (!this.manualStartMessageShown) {
+          this.manualStartMessageShown = true;
+          await this.handleDataFromProject(
+            "\r\nThis terminal can't connect because the project is stopped. Start the project to use the terminal.\r\n",
+          );
+        }
         return;
       }
+      this.manualStartMessageShown = false;
 
       if (this.pty != null) {
         this.pty.close();
