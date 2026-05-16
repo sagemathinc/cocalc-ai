@@ -549,3 +549,51 @@ Validation:
 - Project info/process summary tests if helpers are extracted.
 - Health rail tests for absent process data, stopped project, and running
   project.
+
+## Follow-Up Implementation Plan: Runtime Sponsor Density
+
+The upstream runtime sponsor work has landed, so the earlier "do not change
+RuntimeSponsorControls" constraint is obsolete. The behavior is useful, but the
+current full-page presentation is too text-heavy for the redesigned settings
+page.
+
+### Product Direction
+
+Keep the runtime sponsor behavior exactly as implemented:
+
+- project starts use the runtime sponsor's membership limits and priority
+- collaborators may or may not consume sponsor slots
+- automatic starts may be allowed or blocked
+- owners/admins/sponsors keep the existing edit permissions
+- existing Popconfirm flows and error handling remain in place
+
+Change only the presentation:
+
+- Render a compact status/settings card instead of several paragraphs.
+- Use rows: `Sponsor`, `Collaborator starts`, and `Automatic starts`.
+- Put primary state on the left and actions/switches on the right.
+- Move long explanatory copy into concise secondary text or a small details
+  popover.
+- Preserve all existing disabled-state explanations and save errors.
+
+### Suggested Commit
+
+Commit 5: Compact runtime sponsor controls
+
+Goal: reduce vertical space and make the runtime sponsor controls match the
+row-based design language used by the rest of the redesigned settings page.
+
+Changes:
+
+- Refactor `RuntimeSponsorControls` into small internal row components.
+- Keep `Use my membership` and `Stop sponsoring` actions adjacent to the
+  current sponsor row.
+- Replace paragraph blocks under each switch with one concise sentence and
+  optional detail popover text.
+- Keep permission and save-error alerts below the rows.
+
+Validation:
+
+- Focused settings/flyout tests.
+- Start button tests if any shared sponsor wording/types are touched.
+- Frontend typecheck and lint.
