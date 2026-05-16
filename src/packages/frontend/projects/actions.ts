@@ -1404,12 +1404,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   in the projects table!  Otherwise, bad things will happen.
   */
   private async have_project(project_id: string): Promise<boolean> {
-    const table = await this.getProjectTable();
-    if (!table) {
-      return false;
-    }
-    const t = table._table;
-    return t.get(project_id) != null;
+    return !!store.get("project_map")?.has(project_id);
   }
 
   private setProjectLocalScalarField = (
@@ -1423,6 +1418,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     this.setState({
       project_map: project_map.setIn([project_id, field], value),
+    } as ProjectsState);
+  };
+
+  private setProjectLocalTheme = (
+    project_id: string,
+    theme: ProjectTheme | null | undefined,
+  ): void => {
+    const project_map = store.get("project_map");
+    if (project_map == null || !project_map.has(project_id)) {
+      return;
+    }
+    this.setState({
+      project_map: project_map.setIn(
+        [project_id, "theme"],
+        theme == null ? theme : fromJS(theme),
+      ),
     } as ProjectsState);
   };
 
@@ -1484,7 +1495,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.setProjectLocalScalarField(project_id, field, before);
       throw err;
     }
-    await this.redux.getProjectActions(project_id).async_log({
+    void this.redux.getProjectActions(project_id)?.async_log({
       event: "set",
       [field]: value,
     });
@@ -1676,22 +1687,20 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const before = store.getIn(["project_map", project_id, "theme"]);
     const beforeJS = before?.toJS?.() ?? before ?? null;
     if (isEqual(beforeJS, normalizedTheme)) return;
+    this.setProjectLocalTheme(project_id, normalizedTheme);
     try {
-      await this.projects_table_set({
+      await this.projects_query_set({
         project_id,
-        theme: normalizedTheme,
-      });
-      await this.redux.getProjectActions(project_id).async_log({
-        event: "set",
         theme: normalizedTheme,
       });
     } catch (err) {
-      await this.projects_table_set({
-        project_id,
-        theme: beforeJS ?? {},
-      });
+      this.setProjectLocalTheme(project_id, beforeJS);
       throw err;
     }
+    void this.redux.getProjectActions(project_id)?.async_log({
+      event: "set",
+      theme: normalizedTheme,
+    });
   };
 
   add_ssh_key_to_project = async (opts: {
