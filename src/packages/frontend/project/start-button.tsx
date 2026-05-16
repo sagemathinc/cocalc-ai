@@ -574,9 +574,113 @@ function ProjectStartFailureDescription({ error }: { error: string }) {
     !!technical &&
     normalizeErrorText(technical) !== normalizeErrorText(message);
 
+  if (isEmailVerificationRequiredError(message)) {
+    return (
+      <EmailVerificationRequiredStartFailure
+        technical={technical}
+        showTechnical={showTechnical}
+      />
+    );
+  }
+
   return (
     <div>
       <div>{message}</div>
+      {showTechnical && (
+        <details style={{ marginTop: "8px", fontSize: "12px" }}>
+          <summary>Technical details</summary>
+          <pre
+            style={{
+              background: COLORS.GRAY_LLL,
+              border: `1px solid ${COLORS.GRAY_LL}`,
+              borderRadius: "4px",
+              marginTop: "6px",
+              maxHeight: "160px",
+              overflow: "auto",
+              padding: "8px",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {technical}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function EmailVerificationRequiredStartFailure({
+  technical,
+  showTechnical,
+}: {
+  technical: string;
+  showTechnical: boolean;
+}) {
+  const email_address = useTypedRedux("account", "email_address") as
+    | string
+    | undefined;
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
+
+  async function sendVerificationEmail() {
+    setError("");
+    setSending(true);
+    try {
+      await webapp_client.account_client.send_verification_email();
+      setSent(true);
+    } catch (err) {
+      setSent(false);
+      setError(`${err}`);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div>
+      <Alert
+        type="warning"
+        showIcon
+        message="Email verification required"
+        description={
+          <div>
+            <div>
+              You are signed in, but CoCalc blocks project runtimes until your
+              account email address is verified.
+            </div>
+            {email_address && (
+              <div style={{ marginTop: "6px" }}>
+                Verification address: <b>{email_address}</b>
+              </div>
+            )}
+            <div style={{ marginTop: "6px" }}>
+              After you click the verification link in your email, start this
+              project again.
+            </div>
+            {sent && (
+              <div style={{ color: COLORS.ANTD_GREEN, marginTop: "6px" }}>
+                Verification email sent. Check your inbox and spam folder.
+              </div>
+            )}
+            {error && (
+              <div style={{ color: COLORS.ANTD_RED_WARN, marginTop: "6px" }}>
+                Could not send verification email: {error}
+              </div>
+            )}
+          </div>
+        }
+        action={
+          <Button
+            size="small"
+            loading={sending}
+            disabled={sending}
+            onClick={sendVerificationEmail}
+          >
+            Send verification email
+          </Button>
+        }
+      />
       {showTechnical && (
         <details style={{ marginTop: "8px", fontSize: "12px" }}>
           <summary>Technical details</summary>
@@ -679,6 +783,12 @@ function stripErrorPrefix(value: string): string {
 
 function normalizeErrorText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function isEmailVerificationRequiredError(value: string): boolean {
+  return normalizeErrorText(value)
+    .toLowerCase()
+    .includes("verify your email address before you");
 }
 
 const START_PHASE_LABELS: Record<string, string> = {

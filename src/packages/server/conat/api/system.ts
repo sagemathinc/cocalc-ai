@@ -2487,6 +2487,28 @@ export async function repairAccountMembershipPortability({
 }
 
 import sendEmailVerification0 from "@cocalc/server/accounts/send-email-verification";
+import {
+  sendTestEmail as sendTestEmail0,
+  type TestEmailResult,
+} from "@cocalc/server/email/test-email";
+import { getEmailLaneDiagnostic } from "@cocalc/server/email/send-email";
+import type { EmailLane } from "@cocalc/util/notification-email";
+
+export async function sendTestEmail({
+  account_id,
+  lane,
+}: {
+  account_id?: string;
+  lane?: EmailLane;
+}): Promise<TestEmailResult> {
+  if (!account_id) {
+    throw Error("must be signed in");
+  }
+  if (!(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  return await sendTestEmail0({ account_id, lane });
+}
 
 export async function sendEmailVerification({
   account_id,
@@ -2500,7 +2522,13 @@ export async function sendEmailVerification({
   }
   const resp = await sendEmailVerification0(account_id, only_verify);
   if (resp) {
-    throw Error(resp);
+    let diagnostic = "";
+    try {
+      diagnostic = await getEmailLaneDiagnostic("critical");
+    } catch (_) {
+      // Preserve the original verification error if diagnostic collection fails.
+    }
+    throw Error(diagnostic ? `${resp} (${diagnostic})` : resp);
   }
 }
 

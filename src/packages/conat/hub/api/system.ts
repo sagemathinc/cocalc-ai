@@ -80,6 +80,7 @@ export const system = {
   drainAccountRehome: authFirstRequireAccount,
   repairAccountMembershipPortability: authFirstRequireAccount,
   adminResetPasswordLink: authFirst,
+  sendTestEmail: authFirst,
   sendEmailVerification: authFirst,
   deletePassport: authFirst,
   getAdminAssignedMembership: authFirst,
@@ -1665,6 +1666,40 @@ export interface System {
     session_hash?: string | null;
     user_account_id: string;
   }) => Promise<string>;
+
+  sendTestEmail: (opts: {
+    account_id?: string;
+    lane?: "critical" | "transactional" | "notification" | "marketing";
+  }) => Promise<{
+    to: string;
+    lane: "critical" | "transactional" | "notification" | "marketing";
+    success: boolean;
+    resolved_backend: "" | "none" | "sendgrid" | "smtp";
+    default_backend: "" | "none" | "sendgrid" | "smtp";
+    lane_backend: "default" | "" | "none" | "sendgrid" | "smtp";
+    configured: {
+      sendgrid_key: boolean;
+      primary_smtp: {
+        server: boolean;
+        from: boolean;
+        login: boolean;
+        password: boolean;
+      };
+      secondary_smtp: {
+        enabled: boolean;
+        server: boolean;
+        from: boolean;
+        login: boolean;
+        password: boolean;
+      };
+    };
+    route: {
+      backend: "sendgrid" | "smtp";
+      source: "lane" | "default-fallback";
+      status: "accepted" | "failed" | "skipped";
+      error?: string;
+    }[];
+  }>;
 
   // user must be an admin or get an error. Sync's the given salesloft accounts.
   adminSalesloftSync: (opts: {

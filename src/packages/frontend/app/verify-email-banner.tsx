@@ -55,14 +55,17 @@ function VerifyEmailModal({
   const [sent, setSent] = useState<boolean>(false);
 
   async function verify(): Promise<void> {
+    setError("");
+    setSending(true);
     try {
-      setSending(true);
       await webapp_client.account_client.send_verification_email();
+      setSent(true);
     } catch (err) {
       const errMsg = `Problem sending email verification: ${err}`;
       setError(errMsg);
+      setSent(false);
     } finally {
-      setSent(true);
+      setSending(false);
     }
   }
 

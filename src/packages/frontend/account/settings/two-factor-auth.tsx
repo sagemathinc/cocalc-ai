@@ -13,6 +13,7 @@ import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { SettingBox } from "@cocalc/frontend/components";
 import CopyButton from "@cocalc/frontend/components/copy-button";
 import { postAuthApi } from "@cocalc/frontend/auth/api";
+import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
 
 type PasskeyStatus = {
   id: string;
@@ -65,6 +66,7 @@ function RecoveryCodesBlock({ codes }: { codes: string[] }) {
 }
 
 export default function TwoFactorAuthSetting() {
+  const authApiOrigin = getControlPlaneOrigin();
   const rawImpersonation = useTypedRedux("account", "impersonation") as any;
   const impersonation =
     rawImpersonation?.toJS?.() ?? rawImpersonation ?? undefined;
@@ -93,6 +95,7 @@ export default function TwoFactorAuthSetting() {
       setStatus(
         await postAuthApi<TwoFactorStatus>({
           endpoint: "auth/2fa/status",
+          origin: authApiOrigin,
           body: {},
         }),
       );
@@ -114,6 +117,7 @@ export default function TwoFactorAuthSetting() {
       setSetup(
         await postAuthApi<SetupState>({
           endpoint: "auth/2fa/setup/start",
+          origin: authApiOrigin,
           body: {},
         }),
       );
@@ -134,6 +138,7 @@ export default function TwoFactorAuthSetting() {
     try {
       const result = await postAuthApi<{ recovery_codes: string[] }>({
         endpoint: "auth/2fa/setup/confirm",
+        origin: authApiOrigin,
         body: {
           factor_id: setup.factor_id,
           code: setupCode,
@@ -153,6 +158,7 @@ export default function TwoFactorAuthSetting() {
   async function rotateRecoveryCodes() {
     const result = await postAuthApi<{ recovery_codes: string[] }>({
       endpoint: "auth/2fa/recovery-codes/rotate",
+      origin: authApiOrigin,
       body: {},
     });
     setRecoveryCodes(result.recovery_codes ?? []);
@@ -160,7 +166,7 @@ export default function TwoFactorAuthSetting() {
   }
 
   async function addPasskey() {
-    const result = await registerPasskey();
+    const result = await registerPasskey({ origin: authApiOrigin });
     setRecoveryCodes(result.recovery_codes ?? []);
     await loadStatus();
   }
@@ -168,6 +174,7 @@ export default function TwoFactorAuthSetting() {
   async function disablePasskey(factor_id: string) {
     await postAuthApi({
       endpoint: "auth/2fa/passkeys/disable",
+      origin: authApiOrigin,
       body: { factor_id },
     });
     await loadStatus();
@@ -179,6 +186,7 @@ export default function TwoFactorAuthSetting() {
     try {
       await postAuthApi({
         endpoint: "auth/2fa/passkeys/rename",
+        origin: authApiOrigin,
         body: { factor_id, label },
       });
       setRenamePasskeyId("");
@@ -194,6 +202,7 @@ export default function TwoFactorAuthSetting() {
   async function disableTwoFactor() {
     await postAuthApi({
       endpoint: "auth/2fa/disable",
+      origin: authApiOrigin,
       body: {},
     });
     setRecoveryCodes([]);
@@ -408,6 +417,7 @@ export default function TwoFactorAuthSetting() {
         <RecoveryCodesBlock codes={recoveryCodes} />
       </Space>
       <FreshAuthModal
+        origin={authApiOrigin}
         open={freshAction != null && !isImpersonating}
         onCancel={() => setFreshAction(null)}
         onSuccess={async () => {
