@@ -28,8 +28,6 @@ import {
   only_cocalc_com,
   only_commercial,
   only_for_password_reset_smtp,
-  only_for_sendgrid,
-  only_for_smtp,
   only_nonneg_int,
   parsableJson,
   toFloat,
@@ -78,6 +76,26 @@ const custom_openai_enabled = (conf: SiteSettings) =>
 
 const cloudflare_mode = (conf: SiteSettings): string =>
   `${conf.cloudflare_mode ?? "none"}`.trim().toLowerCase();
+
+function emailBackendSelected(
+  conf: Record<string, any>,
+  backend: string,
+): boolean {
+  if (!is_email_enabled(conf)) return false;
+  return (
+    conf.email_backend === backend ||
+    conf.notification_email_critical_backend === backend ||
+    conf.notification_email_transactional_backend === backend ||
+    conf.notification_email_notification_backend === backend ||
+    conf.notification_email_marketing_backend === backend
+  );
+}
+
+const only_for_email_smtp = (conf: Record<string, any>): boolean =>
+  emailBackendSelected(conf, "smtp");
+
+const only_for_email_sendgrid = (conf: Record<string, any>): boolean =>
+  emailBackendSelected(conf, "sendgrid");
 const cloudflare_self_mode = (conf: SiteSettings): boolean =>
   cloudflare_mode(conf) === "self";
 
@@ -830,7 +848,7 @@ export const EXTRAS: SettingsExtras = {
     desc: "You need a Sendgrid account and then enter a valid API key here",
     password: true,
     default: "",
-    show: only_for_sendgrid,
+    show: only_for_email_sendgrid,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "SendGrid",
@@ -840,7 +858,7 @@ export const EXTRAS: SettingsExtras = {
     name: "SMTP server (for email)",
     desc: "the hostname to talk to",
     default: "",
-    show: only_for_smtp,
+    show: only_for_email_smtp,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "SMTP",
@@ -851,7 +869,7 @@ export const EXTRAS: SettingsExtras = {
     desc: "the FROM and REPLYTO email address",
     default: "",
     valid: is_valid_email_address,
-    show: only_for_smtp,
+    show: only_for_email_smtp,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "SMTP",
@@ -861,7 +879,7 @@ export const EXTRAS: SettingsExtras = {
     name: "SMTP username (for email)",
     desc: "the username, for PLAIN login",
     default: "",
-    show: only_for_smtp,
+    show: only_for_email_smtp,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "SMTP",
@@ -871,7 +889,7 @@ export const EXTRAS: SettingsExtras = {
     name: "SMTP password (for email)",
     desc: "the password, for PLAIN login",
     default: "",
-    show: only_for_smtp,
+    show: only_for_email_smtp,
     password: true,
     tags: ["Email"],
     group: "Messaging & Email",
@@ -884,7 +902,7 @@ export const EXTRAS: SettingsExtras = {
     default: "465",
     to_val: to_int,
     valid: only_nonneg_int,
-    show: only_for_smtp,
+    show: only_for_email_smtp,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "SMTP",
@@ -896,7 +914,7 @@ export const EXTRAS: SettingsExtras = {
     default: "true",
     valid: only_booleans,
     to_val: to_bool,
-    show: only_for_smtp,
+    show: only_for_email_smtp,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "SMTP",

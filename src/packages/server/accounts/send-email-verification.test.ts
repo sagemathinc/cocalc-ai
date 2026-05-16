@@ -107,6 +107,34 @@ describe("sendEmailVerification", () => {
     expect(sendEmailMock).not.toHaveBeenCalled();
   });
 
+  it("falls back to the critical lane when secondary SMTP verification mail fails", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      site_name: "Alpha",
+      password_reset_override: "smtp",
+    });
+    sendViaSMTPMock.mockRejectedValueOnce(Error("secondary smtp failed"));
+    const { default: sendEmailVerification } =
+      await import("./send-email-verification");
+
+    await expect(sendEmailVerification(account_id)).resolves.toBe("");
+
+    expect(sendViaSMTPMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "user@example.com",
+        subject: "Verify your email address on Alpha",
+      }),
+      "password_reset",
+    );
+    expect(sendEmailMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "user@example.com",
+        subject: "Verify your email address on Alpha",
+      }),
+      account_id,
+      "critical",
+    );
+  });
+
   it("returns the send error instead of reporting success", async () => {
     sendEmailMock.mockRejectedValueOnce(Error("no email backend configured"));
     const { default: sendEmailVerification } =

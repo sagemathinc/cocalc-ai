@@ -861,7 +861,18 @@ export default function SiteSettings({ close }) {
         ))}
       </>
     );
-  }, [state, data, isSet, filterStr, filterTag, showHidden, showAdvanced]);
+  }, [
+    state,
+    data,
+    isSet,
+    filterStr,
+    filterTag,
+    showHidden,
+    showAdvanced,
+    emailTestLoading,
+    emailTestResult,
+    emailTestError,
+  ]);
 
   const activeFilter = !filterStr.trim() || filterTag;
 

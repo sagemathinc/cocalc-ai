@@ -54,7 +54,14 @@ export default async function sendEmailVerification(
         asm_group: 147985,
       };
       if (settings.password_reset_override === "smtp") {
-        await sendViaSMTP(message, "password_reset");
+        try {
+          await sendViaSMTP(message, "password_reset");
+        } catch (err) {
+          logger.debug(
+            `verification email via secondary smtp failed for account_id=${account_id}; falling back to critical lane -- ${err}`,
+          );
+          await sendEmail(message, account_id, "critical");
+        }
       } else {
         await sendEmail(message, account_id, "critical");
       }
