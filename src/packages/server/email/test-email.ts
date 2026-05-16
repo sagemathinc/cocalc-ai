@@ -20,12 +20,15 @@ import sendViaSendgrid from "./sendgrid";
 
 export interface TestEmailRouteStep {
   backend: Exclude<EmailBackend, "" | "none">;
-  source: "lane" | "default-fallback";
+  source: "lane" | "primary-smtp" | "secondary-smtp" | "default-fallback";
   status: "accepted" | "failed" | "skipped";
   error?: string;
 }
 
+export type TestEmailMode = "critical" | "verification";
+
 export interface TestEmailResult {
+  mode: TestEmailMode;
   to: string;
   lane: EmailLane;
   success: boolean;
@@ -98,6 +101,16 @@ function backendLabel(backend: EmailBackend): backend is "sendgrid" | "smtp" {
   return backend === "sendgrid" || backend === "smtp";
 }
 
+function normalizeTestEmailMode(mode: unknown): TestEmailMode {
+  switch (mode) {
+    case "critical":
+    case "verification":
+      return mode;
+    default:
+      throw Error(`invalid test email mode '${mode ?? ""}'`);
+  }
+}
+
 async function sendViaBackend(
   message: Message,
   backend: "sendgrid" | "smtp",
@@ -112,14 +125,59 @@ async function sendViaBackend(
   }
 }
 
+async function sendViaCriticalRoute({
+  message,
+  route,
+  resolved_backend,
+  default_backend,
+}: {
+  message: Message;
+  route: TestEmailRouteStep[];
+  resolved_backend: EmailBackend;
+  default_backend: EmailBackend;
+}): Promise<boolean> {
+  const fallback_backend =
+    resolved_backend === "smtp" && default_backend !== "smtp"
+      ? default_backend
+      : "";
+  const backends = [resolved_backend, fallback_backend].filter(
+    (backend): backend is "sendgrid" | "smtp" => backendLabel(backend),
+  );
+
+  for (const backend of backends) {
+    const source =
+      backend === resolved_backend
+        ? backend === "smtp"
+          ? "primary-smtp"
+          : "lane"
+        : "default-fallback";
+    try {
+      await sendViaBackend({ ...message }, backend);
+      route.push({ backend, source, status: "accepted" });
+      return true;
+    } catch (err) {
+      route.push({
+        backend,
+        source,
+        status: "failed",
+        error: sanitizeError(err),
+      });
+    }
+  }
+  return false;
+}
+
 export async function sendTestEmail({
   account_id,
   lane = "critical",
+  mode = "critical",
 }: {
   account_id: string;
   lane?: EmailLane;
+  mode?: TestEmailMode;
 }): Promise<TestEmailResult> {
   const normalizedLane = normalizeEmailLane(lane);
+  const normalizedMode = normalizeTestEmailMode(mode);
   const [settings, to] = await Promise.all([
     getServerSettings(),
     getAccountEmailAddress(account_id),
@@ -131,65 +189,65 @@ export async function sendTestEmail({
   }` as EmailLaneBackend;
   const configured = getConfigured(settings);
   const resolved_backend = resolveEmailBackendForLane(settings, normalizedLane);
-  const fallback_backend =
-    resolved_backend === "smtp" && default_backend !== "smtp"
-      ? default_backend
-      : "";
   const route: TestEmailRouteStep[] = [];
-  const backends = [resolved_backend, fallback_backend].filter(
-    (backend): backend is "sendgrid" | "smtp" => backendLabel(backend),
-  );
-
-  if (backends.length === 0) {
-    return {
-      to,
-      lane: normalizedLane,
-      success: false,
-      resolved_backend,
-      default_backend,
-      lane_backend,
-      configured,
-      route,
-    };
-  }
 
   const message: Message = {
     to,
-    subject: `CoCalc test email from ${siteName}`,
-    text: `This is a test email from ${siteName}.\n\nIf you received this, the ${normalizedLane} email route is working.`,
-    html: `<p>This is a test email from ${siteName}.</p><p>If you received this, the <b>${normalizedLane}</b> email route is working.</p>`,
-    categories: ["admin-test"],
+    subject:
+      normalizedMode === "verification"
+        ? `CoCalc verification test email from ${siteName}`
+        : `CoCalc test email from ${siteName}`,
+    text:
+      normalizedMode === "verification"
+        ? `This is a verification-route test email from ${siteName}.\n\nIf you received this, the email verification route is working.`
+        : `This is a test email from ${siteName}.\n\nIf you received this, the ${normalizedLane} email route is working.`,
+    html:
+      normalizedMode === "verification"
+        ? `<p>This is a verification-route test email from ${siteName}.</p><p>If you received this, the email verification route is working.</p>`
+        : `<p>This is a test email from ${siteName}.</p><p>If you received this, the <b>${normalizedLane}</b> email route is working.</p>`,
+    categories:
+      normalizedMode === "verification"
+        ? ["verify", "admin-test"]
+        : ["admin-test"],
   };
 
-  for (const backend of backends) {
-    const source = backend === resolved_backend ? "lane" : "default-fallback";
+  let success = false;
+  if (
+    normalizedMode === "verification" &&
+    settings.password_reset_override === "smtp"
+  ) {
     try {
-      await sendViaBackend({ ...message }, backend);
-      route.push({ backend, source, status: "accepted" });
-      return {
-        to,
-        lane: normalizedLane,
-        success: true,
-        resolved_backend,
-        default_backend,
-        lane_backend,
-        configured,
-        route,
-      };
+      await sendViaSMTP({ ...message }, "password_reset");
+      route.push({
+        backend: "smtp",
+        source: "secondary-smtp",
+        status: "accepted",
+      });
+      success = true;
     } catch (err) {
       route.push({
-        backend,
-        source,
+        backend: "smtp",
+        source: "secondary-smtp",
         status: "failed",
         error: sanitizeError(err),
       });
     }
   }
 
+  if (!success) {
+    success = await sendViaCriticalRoute({
+      message,
+      route,
+      resolved_backend,
+      default_backend,
+    });
+  }
+
   return {
+    mode: normalizedMode,
     to,
     lane: normalizedLane,
-    success: false,
+    success,
     resolved_backend,
     default_backend,
     lane_backend,

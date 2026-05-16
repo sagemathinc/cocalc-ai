@@ -1670,7 +1670,9 @@ export interface System {
   sendTestEmail: (opts: {
     account_id?: string;
     lane?: "critical" | "transactional" | "notification" | "marketing";
+    mode?: "critical" | "verification";
   }) => Promise<{
+    mode: "critical" | "verification";
     to: string;
     lane: "critical" | "transactional" | "notification" | "marketing";
     success: boolean;
@@ -1695,7 +1697,7 @@ export interface System {
     };
     route: {
       backend: "sendgrid" | "smtp";
-      source: "lane" | "default-fallback";
+      source: "lane" | "primary-smtp" | "secondary-smtp" | "default-fallback";
       status: "accepted" | "failed" | "skipped";
       error?: string;
     }[];

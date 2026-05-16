@@ -460,13 +460,16 @@ export default function SiteSettings({ close }) {
     }
   }
 
-  async function sendTestEmail(): Promise<void> {
+  async function sendTestEmail(
+    mode: "critical" | "verification",
+  ): Promise<void> {
     setEmailTestLoading(true);
     setEmailTestError("");
     setEmailTestResult(null);
     try {
       const result = await webapp_client.conat_client.hub.system.sendTestEmail({
         lane: "critical",
+        mode,
       });
       setEmailTestResult(result);
     } catch (err) {
@@ -479,16 +482,29 @@ export default function SiteSettings({ close }) {
   function formatEmailTestRoute(result: any): string {
     const route = result?.route ?? [];
     if (!route.length) {
-      return `${result?.lane ?? "critical"} -> no backend configured`;
+      return `${result?.mode ?? result?.lane ?? "critical"} -> no backend configured`;
     }
     return [
-      result.lane,
+      result.mode ?? result.lane,
       ...route.map((step) =>
         step.status === "accepted"
-          ? `${step.backend} accepted`
-          : `${step.backend} failed`,
+          ? `${formatEmailTestStep(step)} accepted`
+          : `${formatEmailTestStep(step)} failed`,
       ),
     ].join(" -> ");
+  }
+
+  function formatEmailTestStep(step: any): string {
+    switch (step?.source) {
+      case "primary-smtp":
+        return "primary smtp";
+      case "secondary-smtp":
+        return "secondary smtp";
+      case "default-fallback":
+        return `fallback ${step.backend}`;
+      default:
+        return step?.backend ?? "backend";
+    }
   }
 
   function EmailTest() {
@@ -501,12 +517,22 @@ export default function SiteSettings({ close }) {
           size="small"
           icon={<Icon name="mail" />}
           loading={emailTestLoading}
-          onClick={sendTestEmail}
+          onClick={() => sendTestEmail("critical")}
         >
-          Send Test Email
+          Send Critical Test
+        </Button>
+        <Button
+          size="small"
+          style={{ marginLeft: "8px" }}
+          icon={<Icon name="mail" />}
+          loading={emailTestLoading}
+          onClick={() => sendTestEmail("verification")}
+        >
+          Send Verification Test
         </Button>
         <span style={{ marginLeft: "8px", color: COLORS.GRAY_M }}>
-          Sends a critical-lane test to <code>{email || "your account"}</code>.
+          Sends to <code>{email || "your account"}</code>. Verification uses
+          Secondary SMTP first when that override is enabled.
         </span>
         {emailTestResult != null && (
           <Alert
@@ -524,6 +550,11 @@ export default function SiteSettings({ close }) {
                   <code>{emailTestResult.default_backend}</code>, critical{" "}
                   <code>{emailTestResult.lane_backend}</code>, resolved{" "}
                   <code>{emailTestResult.resolved_backend || "none"}</code>
+                </div>
+                <div>
+                  Primary SMTP is used when a lane resolves to <code>smtp</code>
+                  . Secondary SMTP is only used by password reset/email
+                  verification when its override is <code>smtp</code>.
                 </div>
                 {primarySmtp != null && (
                   <div>
@@ -550,7 +581,7 @@ export default function SiteSettings({ close }) {
                 {emailTestResult.route?.map((step, i) =>
                   step.error ? (
                     <div key={i}>
-                      <code>{step.backend}</code>: {step.error}
+                      <code>{formatEmailTestStep(step)}</code>: {step.error}
                     </div>
                   ) : null,
                 )}

@@ -2490,6 +2490,7 @@ import sendEmailVerification0 from "@cocalc/server/accounts/send-email-verificat
 import {
   sendTestEmail as sendTestEmail0,
   type TestEmailResult,
+  type TestEmailMode,
 } from "@cocalc/server/email/test-email";
 import { getEmailLaneDiagnostic } from "@cocalc/server/email/send-email";
 import type { EmailLane } from "@cocalc/util/notification-email";
@@ -2497,9 +2498,11 @@ import type { EmailLane } from "@cocalc/util/notification-email";
 export async function sendTestEmail({
   account_id,
   lane,
+  mode,
 }: {
   account_id?: string;
   lane?: EmailLane;
+  mode?: TestEmailMode;
 }): Promise<TestEmailResult> {
   if (!account_id) {
     throw Error("must be signed in");
@@ -2507,7 +2510,7 @@ export async function sendTestEmail({
   if (!(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
-  return await sendTestEmail0({ account_id, lane });
+  return await sendTestEmail0({ account_id, lane, mode });
 }
 
 export async function sendEmailVerification({
