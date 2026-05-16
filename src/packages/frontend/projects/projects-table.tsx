@@ -268,6 +268,7 @@ export function ProjectsTable({
       rowKey="project_id"
       rowSelection={{
         selectedRowKeys: selectedProjectIds,
+        columnWidth: 36,
         preserveSelectedRowKeys: false,
         onChange: (keys) =>
           onSelectedProjectIdsChange(keys.map((key) => `${key}`)),
