@@ -18,7 +18,7 @@ import {
   SettingBox,
   Title,
 } from "@cocalc/frontend/components";
-import { Alert } from "antd";
+import { Alert, Space } from "antd";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
 import { ICON_USERS, ROOT_STYLE } from "../servers/consts";
@@ -45,6 +45,7 @@ export function ProjectCollaboratorsContent({
   const disableCollaborators =
     accountCustomize?.disableCollaborators || student.disableCollaborators;
   const isFlyout = layout === "flyout";
+  const componentMode = isFlyout ? "flyout" : "project";
 
   const contentStyle = isFlyout ? { padding: "0 12px 12px 12px" } : ROOT_STYLE;
 
@@ -60,13 +61,32 @@ export function ProjectCollaboratorsContent({
       />
     );
   } else {
-    content = (
-      <>
+    const inviteControls = (
+      <AddCollaborators
+        project_id={project.get("project_id")}
+        where="project-settings"
+        mode={componentMode}
+      />
+    );
+    content = isFlyout ? (
+      <Space direction="vertical" size={12} style={{ width: "100%" }}>
+        <CurrentCollaboratorsPanel
+          key="current-collabs"
+          project={project}
+          user_map={user_map}
+          mode={componentMode}
+        />
+        {inviteControls}
+        <InviteInboxPanel
+          project_id={project.get("project_id")}
+          mode="project"
+          showWhenEmpty={false}
+        />
+      </Space>
+    ) : (
+      <div>
         <SettingBox title="Invite Collaborators" icon="UserAddOutlined">
-          <AddCollaborators
-            project_id={project.get("project_id")}
-            where="project-settings"
-          />
+          {inviteControls}
         </SettingBox>
         <InviteInboxPanel
           project_id={project.get("project_id")}
@@ -78,7 +98,7 @@ export function ProjectCollaboratorsContent({
           project={project}
           user_map={user_map}
         />
-      </>
+      </div>
     );
   }
 
@@ -89,7 +109,9 @@ export function ProjectCollaboratorsContent({
           <Icon name={ICON_USERS} /> {intl.formatMessage(labels.users)}
         </Title>
       )}
-      <Paragraph>{intl.formatMessage(labels.collabs_info)}</Paragraph>
+      {isFlyout ? null : (
+        <Paragraph>{intl.formatMessage(labels.collabs_info)}</Paragraph>
+      )}
       {group !== "admin" ? null : <AdminWarning />}
       {content}
     </div>
