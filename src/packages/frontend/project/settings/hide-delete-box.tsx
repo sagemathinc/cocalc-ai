@@ -4,7 +4,7 @@
  */
 
 import { Alert, Button, Popconfirm, Space, Switch } from "antd";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { defineMessage, FormattedMessage, useIntl } from "react-intl";
 
 import {
@@ -14,6 +14,10 @@ import {
   type IconName,
 } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
@@ -35,6 +39,10 @@ export function HideDeleteBox(props: Readonly<Props>) {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const is_deleted = project.get("deleted");
+  const [error, setError] = useState("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => setError(`${err}`),
+  });
 
   const deleteUndeleteMsg = (
     <FormattedMessage
@@ -44,8 +52,15 @@ export function HideDeleteBox(props: Readonly<Props>) {
     />
   );
 
-  function toggle_delete_project(): void {
-    actions.toggle_delete_project(project.get("project_id"));
+  async function toggle_delete_project(): Promise<void> {
+    setError("");
+    try {
+      await runFreshAuthAction(async () => {
+        await actions.toggle_delete_project(project.get("project_id"));
+      });
+    } catch (err) {
+      setError(`${err}`);
+    }
   }
 
   function toggle_hide_project(): void {
@@ -195,6 +210,16 @@ export function HideDeleteBox(props: Readonly<Props>) {
           message="Danger Zone"
           description={`These actions change project visibility or lifecycle state. They are separated from normal settings so they are harder to trigger accidentally.`}
         />
+        {error ? (
+          <Alert
+            type="error"
+            showIcon
+            message="Unable to change project deletion state"
+            description={error}
+            closable
+            onClose={() => setError("")}
+          />
+        ) : undefined}
         <DangerActionRow
           icon={hidden ? "eye-slash" : "eye"}
           title={hide_label}
@@ -222,6 +247,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
           }
           action={render_delete_undelete_button()}
         />
+        <FreshAuthModal {...freshAuthModalProps} />
       </Space>
     );
   }

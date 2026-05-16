@@ -16,6 +16,10 @@ import { useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
@@ -39,6 +43,14 @@ export function ProjectsOperations({
   const projectLabelLower = projectLabel.toLowerCase();
   const projectsLabelLower = projectsLabel.toLowerCase();
   const actions = useActions("projects");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => {
+      Modal.error({
+        title: "Unable to change project deletion state",
+        content: `${err}`,
+      });
+    },
+  });
 
   const deleted = useTypedRedux("projects", "deleted");
   const hidden = useTypedRedux("projects", "hidden");
@@ -286,10 +298,12 @@ export function ProjectsOperations({
         { deleted: !!deleted },
       ),
       okButtonProps: { danger: true },
-      onOk: () => {
-        for (const project_id of visible_projects) {
-          actions.toggle_delete_project(project_id);
-        }
+      onOk: async () => {
+        await runFreshAuthAction(async () => {
+          for (const project_id of visible_projects) {
+            await actions.toggle_delete_project(project_id);
+          }
+        });
       },
     });
   }
@@ -365,97 +379,100 @@ export function ProjectsOperations({
   }
 
   return (
-    <Alert
-      type={visible_projects.length === 0 ? "warning" : "info"}
-      showIcon
-      title={
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "16px",
-          }}
-        >
-          <div>
-            <FormattedMessage
-              id="projects.operations.status"
-              defaultMessage={`Showing {count, plural, one {# {projectLabel}} other {# {projectsLabel}}}{filterText, select, empty {} other { ({filterText})}}{searchHashtagText, select, empty {} other { matching {searchHashtagText}}}`}
-              values={{
-                count: visible_projects.length,
-                filterText: filterText || "empty",
-                searchHashtagText: searchHashtagText || "empty",
-                projectLabel: projectLabelLower,
-                projectsLabel: projectsLabelLower,
-              }}
-            />
-          </div>
-          <Button
-            size="small"
-            type={visible_projects.length === 0 ? "primary" : undefined}
-            icon={<Icon name="user-times" />}
-            onClick={handleClearFilters}
+    <>
+      <Alert
+        type={visible_projects.length === 0 ? "warning" : "info"}
+        showIcon
+        title={
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "16px",
+            }}
           >
-            <FormattedMessage
-              id="projects.operations.clear-filter"
-              defaultMessage="Clear Filter"
-            />
-          </Button>
-        </div>
-      }
-      description={
-        visible_projects.length > 0 ? (
-          <Space wrap style={{ marginTop: "8px" }}>
+            <div>
+              <FormattedMessage
+                id="projects.operations.status"
+                defaultMessage={`Showing {count, plural, one {# {projectLabel}} other {# {projectsLabel}}}{filterText, select, empty {} other { ({filterText})}}{searchHashtagText, select, empty {} other { matching {searchHashtagText}}}`}
+                values={{
+                  count: visible_projects.length,
+                  filterText: filterText || "empty",
+                  searchHashtagText: searchHashtagText || "empty",
+                  projectLabel: projectLabelLower,
+                  projectsLabel: projectsLabelLower,
+                }}
+              />
+            </div>
             <Button
               size="small"
-              icon={<Icon name={hidden ? "eye" : "eye-slash"} />}
-              onClick={handleToggleHide}
+              type={visible_projects.length === 0 ? "primary" : undefined}
+              icon={<Icon name="user-times" />}
+              onClick={handleClearFilters}
             >
               <FormattedMessage
-                id="projects.operations.hide.button"
-                defaultMessage="{hidden, select, true {Unhide All} other {Hide All}}"
-                values={{ hidden: !!hidden }}
+                id="projects.operations.clear-filter"
+                defaultMessage="Clear Filter"
               />
             </Button>
+          </div>
+        }
+        description={
+          visible_projects.length > 0 ? (
+            <Space wrap style={{ marginTop: "8px" }}>
+              <Button
+                size="small"
+                icon={<Icon name={hidden ? "eye" : "eye-slash"} />}
+                onClick={handleToggleHide}
+              >
+                <FormattedMessage
+                  id="projects.operations.hide.button"
+                  defaultMessage="{hidden, select, true {Unhide All} other {Hide All}}"
+                  values={{ hidden: !!hidden }}
+                />
+              </Button>
 
-            <Button
-              size="small"
-              icon={<Icon name={deleted ? "undo" : "trash"} />}
-              onClick={handleToggleDelete}
-            >
-              <FormattedMessage
-                id="projects.operations.delete.button"
-                defaultMessage="{deleted, select, true {Undelete All} other {Delete All}}"
-                values={{ deleted: !!deleted }}
-              />
-            </Button>
+              <Button
+                size="small"
+                icon={<Icon name={deleted ? "undo" : "trash"} />}
+                onClick={handleToggleDelete}
+              >
+                <FormattedMessage
+                  id="projects.operations.delete.button"
+                  defaultMessage="{deleted, select, true {Undelete All} other {Delete All}}"
+                  values={{ deleted: !!deleted }}
+                />
+              </Button>
 
-            <Button
-              size="small"
-              icon={<Icon name="stop" />}
-              onClick={handleStopAll}
-            >
-              <FormattedMessage
-                id="projects.operations.stop.button"
-                defaultMessage="Stop All"
-              />
-            </Button>
+              <Button
+                size="small"
+                icon={<Icon name="stop" />}
+                onClick={handleStopAll}
+              >
+                <FormattedMessage
+                  id="projects.operations.stop.button"
+                  defaultMessage="Stop All"
+                />
+              </Button>
 
-            <Button
-              size="small"
-              icon={<Icon name="sync-alt" />}
-              onClick={handleRestartAll}
-            >
-              <FormattedMessage
-                id="projects.operations.restart.button"
-                defaultMessage="Restart All"
-              />
-            </Button>
+              <Button
+                size="small"
+                icon={<Icon name="sync-alt" />}
+                onClick={handleRestartAll}
+              >
+                <FormattedMessage
+                  id="projects.operations.restart.button"
+                  defaultMessage="Restart All"
+                />
+              </Button>
 
-            <RemoveMyself project_ids={visible_projects} size="small" />
-          </Space>
-        ) : undefined
-      }
-    />
+              <RemoveMyself project_ids={visible_projects} size="small" />
+            </Space>
+          ) : undefined
+        }
+      />
+      <FreshAuthModal {...freshAuthModalProps} />
+    </>
   );
 }

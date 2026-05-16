@@ -2978,6 +2978,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   public async delete_project(project_id: string): Promise<void> {
     await webapp_client.conat_client.hub.projects.setProjectDeleted({
       project_id,
+      browser_id: webapp_client.browser_id,
       deleted: true,
     });
     await this.project_log(project_id, { event: "delete_project" });
@@ -2989,6 +2990,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
     await webapp_client.conat_client.hub.projects.setProjectDeleted({
       project_id,
+      browser_id: webapp_client.browser_id,
       deleted: !is_deleted,
     });
     await this.project_log(project_id, {
