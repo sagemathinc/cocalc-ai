@@ -72,7 +72,9 @@ import {
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
+import { EXTRAS as SITE_SETTINGS_EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { is_valid_email_address } from "@cocalc/util/misc";
+import { site_settings_conf } from "@cocalc/util/schema";
 import { v4 as uuid } from "uuid";
 import { secureRandomString } from "@cocalc/backend/misc";
 import {
@@ -212,6 +214,7 @@ import type {
   ServiceAdmissionDenialReport,
   ServiceAdmissionDenialSummary,
   ProjectBackupShardAdminStatus,
+  SiteSettingsSyncResult,
 } from "@cocalc/conat/hub/api/system";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getClusterConfig } from "@cocalc/server/cluster-config";
@@ -522,6 +525,120 @@ export async function getBayOpsDetail({
     load_error: settledError(loadResult),
     backups_error: settledError(backupsResult),
   };
+}
+
+type SiteSettingUpdate = { name: string; value: string };
+
+const SITE_SETTING_NAMES = new Set<string>([
+  ...Object.keys(site_settings_conf),
+  ...Object.keys(SITE_SETTINGS_EXTRAS),
+]);
+
+function normalizeSiteSettingUpdate({
+  name,
+  value,
+}: SiteSettingUpdate): SiteSettingUpdate {
+  const normalizedName = `${name ?? ""}`.trim();
+  if (!SITE_SETTING_NAMES.has(normalizedName)) {
+    throw Error(`setting name='${normalizedName}' not allowed`);
+  }
+  return { name: normalizedName, value: `${value ?? ""}` };
+}
+
+async function assertSiteSettingWritable(name: string): Promise<void> {
+  const { rows } = await getPool().query(
+    "SELECT readonly FROM server_settings WHERE name=$1 LIMIT 1",
+    [name],
+  );
+  if (rows[0]?.readonly === true) {
+    throw Error(`setting name='${name}' is readonly`);
+  }
+}
+
+async function setSiteSettingLocal(update: SiteSettingUpdate): Promise<void> {
+  const normalized = normalizeSiteSettingUpdate(update);
+  await assertSiteSettingWritable(normalized.name);
+  await callback2(db().set_server_setting, normalized);
+}
+
+async function getConfiguredSiteSettingUpdates(): Promise<SiteSettingUpdate[]> {
+  const settings: SiteSettingUpdate[] = [];
+  for (const name of [...SITE_SETTING_NAMES].sort()) {
+    const value = await callback2(db().get_server_setting, { name });
+    if (value != null) {
+      settings.push({ name, value });
+    }
+  }
+  return settings;
+}
+
+async function propagateSiteSettingsToBays(
+  settings: SiteSettingUpdate[],
+): Promise<SiteSettingsSyncResult> {
+  const local_bay_id = getConfiguredBayId();
+  const registry = await listClusterBayRegistry();
+  const remoteBayIds = [
+    ...new Set(registry.map(({ bay_id }) => bay_id).filter(Boolean)),
+  ]
+    .filter((bay_id) => bay_id !== local_bay_id)
+    .sort();
+  const bays: SiteSettingsSyncResult["bays"] = [
+    { bay_id: local_bay_id, status: "local", count: settings.length },
+  ];
+  if (!remoteBayIds.length) {
+    return { local_bay_id, count: settings.length, bays };
+  }
+
+  const results = await Promise.allSettled(
+    remoteBayIds.map(async (bay_id) => {
+      const api = getInterBayBridge().bayOps(bay_id, { timeout_ms: 15_000 });
+      for (const setting of settings) {
+        await api.setServerSetting(setting);
+      }
+      return bay_id;
+    }),
+  );
+  for (let i = 0; i < remoteBayIds.length; i += 1) {
+    const bay_id = remoteBayIds[i];
+    const result = results[i];
+    bays.push(
+      result.status === "fulfilled"
+        ? { bay_id, status: "applied", count: settings.length }
+        : {
+            bay_id,
+            status: "failed",
+            count: settings.length,
+            error: `${result.reason}`,
+          },
+    );
+  }
+  return { local_bay_id, count: settings.length, bays };
+}
+
+export async function setSiteSettings({
+  account_id,
+  settings,
+}: {
+  account_id?: string;
+  settings: SiteSettingUpdate[];
+}): Promise<SiteSettingsSyncResult> {
+  await assertAdmin(account_id);
+  const updates = settings.map(normalizeSiteSettingUpdate);
+  for (const update of updates) {
+    await setSiteSettingLocal(update);
+  }
+  return await propagateSiteSettingsToBays(updates);
+}
+
+export async function syncSiteSettingsToBays({
+  account_id,
+}: {
+  account_id?: string;
+} = {}): Promise<SiteSettingsSyncResult> {
+  await assertAdmin(account_id);
+  return await propagateSiteSettingsToBays(
+    await getConfiguredSiteSettingUpdates(),
+  );
 }
 
 export async function setBayProjectOwnershipAdmission({
@@ -2490,6 +2607,7 @@ import sendEmailVerification0 from "@cocalc/server/accounts/send-email-verificat
 import {
   sendTestEmail as sendTestEmail0,
   type TestEmailResult,
+  type TestEmailMode,
 } from "@cocalc/server/email/test-email";
 import { getEmailLaneDiagnostic } from "@cocalc/server/email/send-email";
 import type { EmailLane } from "@cocalc/util/notification-email";
@@ -2497,9 +2615,11 @@ import type { EmailLane } from "@cocalc/util/notification-email";
 export async function sendTestEmail({
   account_id,
   lane,
+  mode,
 }: {
   account_id?: string;
   lane?: EmailLane;
+  mode?: TestEmailMode;
 }): Promise<TestEmailResult> {
   if (!account_id) {
     throw Error("must be signed in");
@@ -2507,7 +2627,7 @@ export async function sendTestEmail({
   if (!(await isAdmin(account_id))) {
     throw Error("must be an admin");
   }
-  return await sendTestEmail0({ account_id, lane });
+  return await sendTestEmail0({ account_id, lane, mode });
 }
 
 export async function sendEmailVerification({

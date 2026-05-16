@@ -190,8 +190,6 @@ export const only_for_smtp = (conf): boolean =>
   is_email_enabled(conf) && conf.email_backend === "smtp";
 export const only_for_sendgrid = (conf): boolean =>
   is_email_enabled(conf) && conf.email_backend === "sendgrid";
-export const only_for_password_reset_smtp = (conf): boolean =>
-  to_bool(conf.email_enabled) && conf.password_reset_override === "smtp";
 export const only_onprem = (conf): boolean =>
   conf.kucalc === KUCALC_ON_PREMISES;
 export const only_cocalc_com = (conf): boolean =>

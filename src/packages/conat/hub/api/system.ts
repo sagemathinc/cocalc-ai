@@ -81,6 +81,8 @@ export const system = {
   repairAccountMembershipPortability: authFirstRequireAccount,
   adminResetPasswordLink: authFirst,
   sendTestEmail: authFirst,
+  setSiteSettings: authFirst,
+  syncSiteSettingsToBays: authFirst,
   sendEmailVerification: authFirst,
   deletePassport: authFirst,
   getAdminAssignedMembership: authFirst,
@@ -701,6 +703,19 @@ export interface BayOpsDetail {
   load_error?: string | null;
   backups_error?: string | null;
   routed: boolean;
+}
+
+export interface SiteSettingsSyncBayResult {
+  bay_id: string;
+  status: "applied" | "failed" | "local" | "skipped";
+  count?: number;
+  error?: string;
+}
+
+export interface SiteSettingsSyncResult {
+  local_bay_id: string;
+  count: number;
+  bays: SiteSettingsSyncBayResult[];
 }
 
 export interface BayLoadBrowserControlStatus {
@@ -1670,7 +1685,9 @@ export interface System {
   sendTestEmail: (opts: {
     account_id?: string;
     lane?: "critical" | "transactional" | "notification" | "marketing";
+    mode?: "critical" | "verification";
   }) => Promise<{
+    mode: "critical" | "verification";
     to: string;
     lane: "critical" | "transactional" | "notification" | "marketing";
     success: boolean;
@@ -1685,21 +1702,23 @@ export interface System {
         login: boolean;
         password: boolean;
       };
-      secondary_smtp: {
-        enabled: boolean;
-        server: boolean;
-        from: boolean;
-        login: boolean;
-        password: boolean;
-      };
     };
     route: {
       backend: "sendgrid" | "smtp";
-      source: "lane" | "default-fallback";
+      source: "lane" | "primary-smtp" | "default-fallback";
       status: "accepted" | "failed" | "skipped";
       error?: string;
     }[];
   }>;
+
+  setSiteSettings: (opts: {
+    account_id?: string;
+    settings: { name: string; value: string }[];
+  }) => Promise<SiteSettingsSyncResult>;
+
+  syncSiteSettingsToBays: (opts?: {
+    account_id?: string;
+  }) => Promise<SiteSettingsSyncResult>;
 
   // user must be an admin or get an error. Sync's the given salesloft accounts.
   adminSalesloftSync: (opts: {

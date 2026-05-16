@@ -1,9 +1,8 @@
 /* Send a password reset email */
 
 import siteURL from "@cocalc/database/settings/site-url";
-import sendViaSMTP from "./smtp";
-import sendViaSendgrid from "./sendgrid";
 import { getServerSettings } from "@cocalc/database/settings";
+import sendEmail from "./send-email";
 
 export default async function sendPasswordResetEmail(
   email_address: string, // target email_address of user who will receive the password reset email
@@ -12,14 +11,7 @@ export default async function sendPasswordResetEmail(
   const subject = "Password Reset";
   const { html, text } = await getMessage(email_address, id);
   const message = { to: email_address, subject, html, text };
-  try {
-    await sendViaSMTP(message, "password_reset");
-  } catch (err) {
-    console.log(
-      `sending password reset via secondary smtp server failed; trying sendgrid -- ${err}`,
-    );
-    await sendViaSendgrid(message);
-  }
+  await sendEmail(message, undefined, "critical");
 }
 
 async function getMessage(

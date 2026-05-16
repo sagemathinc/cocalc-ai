@@ -49,19 +49,19 @@ describe("sendTestEmail", () => {
 
     await expect(sendTestEmail({ account_id })).resolves.toMatchObject({
       to: "admin@example.com",
+      mode: "critical",
       lane: "critical",
       success: true,
       resolved_backend: "smtp",
       default_backend: "sendgrid",
       lane_backend: "smtp",
-      route: [{ backend: "smtp", source: "lane", status: "accepted" }],
+      route: [{ backend: "smtp", source: "primary-smtp", status: "accepted" }],
     });
     expect(sendViaSMTPMock).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "admin@example.com",
         subject: "CoCalc test email from Alpha",
       }),
-      "email",
     );
     expect(sendViaSendgridMock).not.toHaveBeenCalled();
   });
@@ -78,7 +78,7 @@ describe("sendTestEmail", () => {
     expect(result.route).toEqual([
       {
         backend: "smtp",
-        source: "lane",
+        source: "primary-smtp",
         status: "failed",
         error: "SMTP authentication failed password=[redacted]",
       },
@@ -122,6 +122,25 @@ describe("sendTestEmail", () => {
       route: [],
     });
     expect(sendViaSMTPMock).not.toHaveBeenCalled();
+    expect(sendViaSendgridMock).not.toHaveBeenCalled();
+  });
+
+  it("tests the verification route through the critical lane", async () => {
+    const { sendTestEmail } = await import("./test-email");
+
+    await expect(
+      sendTestEmail({ account_id, mode: "verification" }),
+    ).resolves.toMatchObject({
+      mode: "verification",
+      success: true,
+      route: [{ backend: "smtp", source: "primary-smtp", status: "accepted" }],
+    });
+    expect(sendViaSMTPMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "admin@example.com",
+        subject: "CoCalc verification test email from Alpha",
+      }),
+    );
     expect(sendViaSendgridMock).not.toHaveBeenCalled();
   });
 });

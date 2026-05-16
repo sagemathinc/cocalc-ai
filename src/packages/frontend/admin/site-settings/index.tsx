@@ -247,6 +247,26 @@ export default function SiteSettings({ close }) {
     return `${rawValue}`.trim() === "";
   }
 
+  function assertSettingsSyncSucceeded(result: any): void {
+    const failed = result?.bays?.filter(({ status }) => status === "failed");
+    if (failed?.length) {
+      throw Error(
+        failed
+          .map(({ bay_id, error }) => `${bay_id}: ${error ?? "sync failed"}`)
+          .join("; "),
+      );
+    }
+  }
+
+  async function saveSiteSettings(
+    settings: { name: string; value: string }[],
+  ): Promise<void> {
+    const result = await webapp_client.conat_client.hub.system.setSiteSettings({
+      settings,
+    });
+    assertSettingsSyncSucceeded(result);
+  }
+
   function getModifiedSettings() {
     if (data == null || editedRef.current == null || savedRef.current == null)
       return [];
@@ -266,30 +286,29 @@ export default function SiteSettings({ close }) {
   async function store(): Promise<void> {
     if (data == null || editedRef.current == null || savedRef.current == null)
       return;
-    for (const { name, value } of getModifiedSettings()) {
+    const updates = getModifiedSettings().map(({ name, value }) => {
+      const clearing = !!clearSecretsRef.current?.[name];
+      return { name, value: clearing ? "" : value };
+    });
+    try {
+      await saveSiteSettings(updates);
+    } catch (err) {
+      setState("error");
+      setError(err);
+      return;
+    }
+    for (const { name, value: outgoingValue } of updates) {
       const spec = site_settings_conf[name] ?? EXTRAS[name];
       const clearing = !!clearSecretsRef.current?.[name];
-      const outgoingValue = clearing ? "" : value;
-      try {
-        await query({
-          query: {
-            site_settings: { name, value: outgoingValue },
-          },
-        });
-        savedRef.current[name] = outgoingValue;
-        if (clearing) {
-          clearSecretsRef.current[name] = false;
-        }
-        if (spec?.password && isSet != null) {
-          setIsSet((prev) => ({
-            ...(prev ?? {}),
-            [name]: outgoingValue !== "",
-          }));
-        }
-      } catch (err) {
-        setState("error");
-        setError(err);
-        return;
+      savedRef.current[name] = outgoingValue;
+      if (clearing) {
+        clearSecretsRef.current[name] = false;
+      }
+      if (spec?.password && isSet != null) {
+        setIsSet((prev) => ({
+          ...(prev ?? {}),
+          [name]: outgoingValue !== "",
+        }));
       }
     }
     // success save of everything, so clear error message
@@ -347,11 +366,7 @@ export default function SiteSettings({ close }) {
     const outgoingValue = clearing ? "" : value;
     setState("save");
     try {
-      await query({
-        query: {
-          site_settings: { name, value: outgoingValue },
-        },
-      });
+      await saveSiteSettings([{ name, value: outgoingValue }]);
       savedRef.current[name] = outgoingValue;
       if (clearing) {
         clearSecretsRef.current[name] = false;
@@ -460,15 +475,43 @@ export default function SiteSettings({ close }) {
     }
   }
 
-  async function sendTestEmail(): Promise<void> {
+  async function sendTestEmail(
+    mode: "critical" | "verification",
+  ): Promise<void> {
     setEmailTestLoading(true);
     setEmailTestError("");
     setEmailTestResult(null);
     try {
       const result = await webapp_client.conat_client.hub.system.sendTestEmail({
         lane: "critical",
+        mode,
       });
       setEmailTestResult(result);
+    } catch (err) {
+      setEmailTestError(err instanceof Error ? err.message : `${err}`);
+    } finally {
+      setEmailTestLoading(false);
+    }
+  }
+
+  async function syncSiteSettingsToBays(): Promise<void> {
+    setEmailTestLoading(true);
+    setEmailTestError("");
+    setEmailTestResult(null);
+    try {
+      const sync =
+        await webapp_client.conat_client.hub.system.syncSiteSettingsToBays({});
+      setEmailTestResult({
+        mode: "settings sync",
+        success: !sync.bays.some(({ status }) => status === "failed"),
+        route: sync.bays.map((bay) => ({
+          backend: "settings",
+          source: bay.bay_id,
+          status: bay.status === "failed" ? "failed" : "accepted",
+          error: bay.error,
+        })),
+        sync,
+      });
     } catch (err) {
       setEmailTestError(err instanceof Error ? err.message : `${err}`);
     } finally {
@@ -479,34 +522,65 @@ export default function SiteSettings({ close }) {
   function formatEmailTestRoute(result: any): string {
     const route = result?.route ?? [];
     if (!route.length) {
-      return `${result?.lane ?? "critical"} -> no backend configured`;
+      return `${result?.mode ?? result?.lane ?? "critical"} -> no backend configured`;
     }
     return [
-      result.lane,
+      result.mode ?? result.lane,
       ...route.map((step) =>
         step.status === "accepted"
-          ? `${step.backend} accepted`
-          : `${step.backend} failed`,
+          ? `${formatEmailTestStep(step)} accepted`
+          : `${formatEmailTestStep(step)} failed`,
       ),
     ].join(" -> ");
+  }
+
+  function formatEmailTestStep(step: any): string {
+    switch (step?.source) {
+      case "primary-smtp":
+        return "smtp";
+      case "default-fallback":
+        return `fallback ${step.backend}`;
+      default:
+        return step?.backend === "settings"
+          ? `${step.source} settings`
+          : (step?.backend ?? "backend");
+    }
   }
 
   function EmailTest() {
     const email = redux.getStore("account").get("email_address");
     const primarySmtp = emailTestResult?.configured?.primary_smtp;
-    const secondarySmtp = emailTestResult?.configured?.secondary_smtp;
     return (
       <div style={{ margin: "4px 0 12px 0", maxWidth: "900px" }}>
         <Button
           size="small"
           icon={<Icon name="mail" />}
           loading={emailTestLoading}
-          onClick={sendTestEmail}
+          onClick={() => sendTestEmail("critical")}
         >
-          Send Test Email
+          Send Critical Test
+        </Button>
+        <Button
+          size="small"
+          style={{ marginLeft: "8px" }}
+          icon={<Icon name="mail" />}
+          loading={emailTestLoading}
+          onClick={() => sendTestEmail("verification")}
+        >
+          Send Verification Test
+        </Button>
+        <Button
+          size="small"
+          style={{ marginLeft: "8px" }}
+          icon={<Icon name="refresh" />}
+          loading={emailTestLoading}
+          onClick={syncSiteSettingsToBays}
+        >
+          Sync Settings to Bays
         </Button>
         <span style={{ marginLeft: "8px", color: COLORS.GRAY_M }}>
-          Sends a critical-lane test to <code>{email || "your account"}</code>.
+          Sends to <code>{email || "your account"}</code>. Verification uses the
+          critical email route.
         </span>
         {emailTestResult != null && (
           <Alert
@@ -516,18 +590,33 @@ export default function SiteSettings({ close }) {
             message={formatEmailTestRoute(emailTestResult)}
             description={
               <div>
-                <div>
-                  Recipient: <code>{emailTestResult.to}</code>
-                </div>
-                <div>
-                  Settings: default{" "}
-                  <code>{emailTestResult.default_backend}</code>, critical{" "}
-                  <code>{emailTestResult.lane_backend}</code>, resolved{" "}
-                  <code>{emailTestResult.resolved_backend || "none"}</code>
-                </div>
+                {emailTestResult.to && (
+                  <div>
+                    Recipient: <code>{emailTestResult.to}</code>
+                  </div>
+                )}
+                {emailTestResult.sync ? (
+                  <div>
+                    Synced <code>{emailTestResult.sync.count}</code> configured
+                    settings from{" "}
+                    <code>{emailTestResult.sync.local_bay_id}</code>.
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      Settings: default{" "}
+                      <code>{emailTestResult.default_backend}</code>, critical{" "}
+                      <code>{emailTestResult.lane_backend}</code>, resolved{" "}
+                      <code>{emailTestResult.resolved_backend || "none"}</code>
+                    </div>
+                    <div>
+                      SMTP is used when a lane resolves to <code>smtp</code>.
+                    </div>
+                  </>
+                )}
                 {primarySmtp != null && (
                   <div>
-                    Primary SMTP: server{" "}
+                    SMTP: server{" "}
                     <code>{primarySmtp.server ? "set" : "missing"}</code>, from{" "}
                     <code>{primarySmtp.from ? "set" : "missing"}</code>,
                     username{" "}
@@ -536,21 +625,10 @@ export default function SiteSettings({ close }) {
                     <code>{primarySmtp.password ? "set" : "missing"}</code>
                   </div>
                 )}
-                {secondarySmtp?.enabled && (
-                  <div>
-                    Secondary SMTP: server{" "}
-                    <code>{secondarySmtp.server ? "set" : "missing"}</code>,
-                    from <code>{secondarySmtp.from ? "set" : "missing"}</code>,
-                    username{" "}
-                    <code>{secondarySmtp.login ? "set" : "missing"}</code>,
-                    password{" "}
-                    <code>{secondarySmtp.password ? "set" : "missing"}</code>
-                  </div>
-                )}
                 {emailTestResult.route?.map((step, i) =>
                   step.error ? (
                     <div key={i}>
-                      <code>{step.backend}</code>: {step.error}
+                      <code>{formatEmailTestStep(step)}</code>: {step.error}
                     </div>
                   ) : null,
                 )}

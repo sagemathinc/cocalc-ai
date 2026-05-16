@@ -887,6 +887,12 @@ export interface BayOpsHealthRequest {
   account_id?: string;
 }
 
+export interface BayOpsSetServerSettingRequest {
+  name: string;
+  value: string;
+  readonly?: boolean;
+}
+
 export interface AuthTokenRequiresRequest {}
 
 export interface AuthTokenRedeemRequest {
@@ -1127,7 +1133,7 @@ export type AuthTokenMethod =
   | "disable"
   | "delete";
 export type BayRegistryMethod = "register" | "list";
-export type BayOpsMethod = "get-load" | "get-backups";
+export type BayOpsMethod = "get-load" | "get-backups" | "set-server-setting";
 export type ProjectCollabInviteMethod =
   | "upsert-inbox"
   | "delete-inbox"
@@ -1899,6 +1905,7 @@ export interface InterBayBayRegistryApi {
 export interface InterBayBayOpsApi {
   getLoad: (opts: BayOpsHealthRequest) => Promise<BayLoadInfo>;
   getBackups: (opts: BayOpsHealthRequest) => Promise<BayBackupsInfo>;
+  setServerSetting: (opts: BayOpsSetServerSettingRequest) => Promise<void>;
 }
 
 export interface InterBayAuthTokenApi {
@@ -3933,9 +3940,17 @@ export function createInterBayBayOpsClient({
     ...serviceClientOptions({ client, timeout }),
     subject: bayOpsSubject({ dest_bay, method: "get-backups" }),
   });
+  const setServerSettingClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "setServerSetting">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({ dest_bay, method: "set-server-setting" }),
+  });
   return {
     getLoad: async (opts) => await loadClient.getLoad(opts),
     getBackups: async (opts) => await backupsClient.getBackups(opts),
+    setServerSetting: async (opts) =>
+      await setServerSettingClient.setServerSetting(opts),
   };
 }
 
@@ -3988,6 +4003,17 @@ export function createInterBayBayOpsHandlers({
       subject: bayOpsSubject({ dest_bay: bay_id, method: "get-backups" }),
       impl: {
         getBackups: async (opts) => await impl.getBackups(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayBayOpsApi, "setServerSetting">>({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "set-server-setting",
+      }),
+      impl: {
+        setServerSetting: async (opts) => await impl.setServerSetting(opts),
       },
     }),
   ];
