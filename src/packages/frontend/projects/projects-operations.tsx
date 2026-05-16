@@ -30,6 +30,10 @@ import {
   LeaveOrDeleteProjectsModal,
   type LeaveOrDeleteProjectsPlan,
 } from "./leave-or-delete-projects-modal";
+import {
+  ArchiveProjectModal,
+  type ArchiveProjectModalItem,
+} from "./archive-project-modal";
 
 interface Props {
   visible_projects: string[];
@@ -55,6 +59,7 @@ export function ProjectsOperations({
   const projectsLabelLower = projectsLabel.toLowerCase();
   const actions = useActions("projects");
   const [leaveDeleteModalOpen, setLeaveDeleteModalOpen] = useState(false);
+  const [archiveModalOpen, setArchiveModalOpen] = useState(false);
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
@@ -176,6 +181,19 @@ export function ProjectsOperations({
     return archiveIds;
   }, [selected_project_ids, project_map, account_id, isAdmin]);
 
+  const selectedArchiveProjects: ArchiveProjectModalItem[] = useMemo(
+    () =>
+      selectedArchiveIds.map((project_id) => {
+        const project = project_map?.get(project_id);
+        return {
+          project_id,
+          title: project?.get("title"),
+          state: `${project?.getIn(["state", "state"]) ?? ""}`,
+        };
+      }),
+    [selectedArchiveIds, project_map],
+  );
+
   function selectedTitle(project_id: string): string {
     return project_map?.get(project_id)?.get("title") ?? project_id;
   }
@@ -219,9 +237,8 @@ export function ProjectsOperations({
     });
   }
 
-  function confirmSelectedArchive() {
+  function openSelectedArchive() {
     const projectIds = selectedArchiveIds;
-    const skipped = selected_project_ids.length - projectIds.length;
     if (projectIds.length === 0) {
       Modal.warning({
         title: `No selected ${projectsLabelLower} can be archived`,
@@ -230,68 +247,44 @@ export function ProjectsOperations({
       });
       return;
     }
-    Modal.confirm({
-      title: `Archive selected ${projectsLabelLower}`,
-      icon: <Icon name="file-archive" style={{ color: COLORS.BRWN }} />,
-      width: 560,
-      content: (
-        <Space direction="vertical" style={{ width: "100%" }}>
-          <div>
-            Archive {projectIds.length} selected {projectsLabelLower}? CoCalc
-            will stop each project if needed, create a final backup when needed,
-            then remove the active copy from its host.
-          </div>
-          <div style={{ color: COLORS.GRAY_M }}>
-            Archived {projectsLabelLower} restore from backup when started
-            later. They do not count toward active storage usage while archived.
-          </div>
-          {skipped > 0 ? (
-            <div style={{ color: COLORS.GRAY_M }}>
-              {skipped} selected {projectsLabelLower} will be skipped because
-              they are already archived, busy, or you do not have permission to
-              archive them.
-            </div>
-          ) : undefined}
-        </Space>
-      ),
-      okText: "Archive",
-      onOk: async () => {
-        const succeeded: string[] = [];
-        const errors: Array<{ project_id: string; error: string }> = [];
-        for (const project_id of projectIds) {
-          try {
-            await actions.archive_project(project_id);
-            succeeded.push(project_id);
-          } catch (err) {
-            errors.push({ project_id, error: `${err}` });
-          }
-        }
-        onSelectionChange(
-          selected_project_ids.filter((id) => !succeeded.includes(id)),
-        );
-        alert_message({
-          type: errors.length > 0 ? "warning" : "success",
-          message:
-            errors.length > 0
-              ? `Archived ${succeeded.length} project(s); ${errors.length} failed.`
-              : `Archived ${succeeded.length} selected project(s).`,
-        });
-        if (errors.length > 0) {
-          Modal.error({
-            title: "Some projects could not be archived",
-            content: (
-              <ul>
-                {errors.map((result) => (
-                  <li key={result.project_id}>
-                    {selectedTitle(result.project_id)}: {result.error}
-                  </li>
-                ))}
-              </ul>
-            ),
-          });
-        }
-      },
+    setArchiveModalOpen(true);
+  }
+
+  async function archiveSelectedProjects(projectIds: string[]) {
+    const succeeded: string[] = [];
+    const errors: Array<{ project_id: string; error: string }> = [];
+    for (const project_id of projectIds) {
+      try {
+        await actions.archive_project(project_id);
+        succeeded.push(project_id);
+      } catch (err) {
+        errors.push({ project_id, error: `${err}` });
+      }
+    }
+    onSelectionChange(
+      selected_project_ids.filter((id) => !succeeded.includes(id)),
+    );
+    alert_message({
+      type: errors.length > 0 ? "warning" : "success",
+      message:
+        errors.length > 0
+          ? `Archived ${succeeded.length} project(s); ${errors.length} failed.`
+          : `Archived ${succeeded.length} selected project(s).`,
     });
+    if (errors.length > 0) {
+      Modal.error({
+        title: "Some projects could not be archived",
+        content: (
+          <ul>
+            {errors.map((result) => (
+              <li key={result.project_id}>
+                {selectedTitle(result.project_id)}: {result.error}
+              </li>
+            ))}
+          </ul>
+        ),
+      });
+    }
   }
 
   function confirmSelectedRemoveMyself() {
@@ -465,7 +458,7 @@ export function ProjectsOperations({
               size="small"
               icon={<Icon name="file-archive" />}
               disabled={selectedArchiveIds.length === 0}
-              onClick={confirmSelectedArchive}
+              onClick={openSelectedArchive}
             >
               Archive...
             </Button>
@@ -509,6 +502,13 @@ export function ProjectsOperations({
         projectTitle={selectedTitle}
         onCancel={() => setLeaveDeleteModalOpen(false)}
         onConfirm={leaveOrDeleteSelected}
+      />
+      <ArchiveProjectModal
+        open={archiveModalOpen}
+        projects={selectedArchiveProjects}
+        skippedCount={selected_project_ids.length - selectedArchiveIds.length}
+        onCancel={() => setArchiveModalOpen(false)}
+        onArchive={archiveSelectedProjects}
       />
       <FreshAuthModal {...freshAuthModalProps} />
     </>

@@ -11,18 +11,6 @@ jest.mock("antd", () => ({
       {children}
     </button>
   ),
-  Popconfirm: ({ children, onConfirm }: any) => (
-    <div>
-      {children}
-      <button type="button" onClick={onConfirm}>
-        confirm
-      </button>
-    </div>
-  ),
-}));
-
-jest.mock("@ant-design/icons", () => ({
-  InboxOutlined: () => null,
 }));
 
 jest.mock("react-intl", () => ({
@@ -42,18 +30,25 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useActions: () => ({
     archive_project: (...args: any[]) => archiveProjectMock(...args),
   }),
+  useTypedRedux: () => undefined,
 }));
 
-jest.mock("@cocalc/frontend/i18n", () => ({
-  labels: {
-    project: {
-      defaultMessage: "Project",
-    },
-  },
+jest.mock("@cocalc/frontend/components", () => ({
+  Icon: () => null,
 }));
 
-jest.mock("@cocalc/frontend/i18n/components", () => ({
-  CancelText: () => <>Cancel</>,
+jest.mock("@cocalc/frontend/projects/archive-project-modal", () => ({
+  ArchiveProjectModal: ({ open, onArchive, projects }: any) =>
+    open ? (
+      <button
+        type="button"
+        onClick={() =>
+          onArchive(projects.map((project: any) => project.project_id))
+        }
+      >
+        confirm
+      </button>
+    ) : null,
 }));
 
 describe("ArchiveProject", () => {
@@ -64,6 +59,7 @@ describe("ArchiveProject", () => {
   it("calls the projects archive action when confirmed", () => {
     render(<ArchiveProject project_id="project-1" />);
 
+    fireEvent.click(screen.getByText("Archive"));
     fireEvent.click(screen.getByText("confirm"));
     expect(archiveProjectMock).toHaveBeenCalledWith("project-1");
   });

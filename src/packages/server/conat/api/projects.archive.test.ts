@@ -292,4 +292,39 @@ describe("projects.archiveProject", () => {
       expect.anything(),
     );
   });
+
+  it("continues when archive-info is temporarily unavailable", async () => {
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          host_id: "host-1",
+          backup_repo_id: "repo-1",
+          provisioned: true,
+          state: { state: "opened" },
+        },
+      ],
+    });
+    getBackupsMock = jest.fn(async () => {
+      throw new Error(
+        "request -- no subscribers matching 'project.proj-1.archive-info.-'",
+      );
+    });
+
+    const { archiveProject } = await import("./projects");
+    await expect(
+      archiveProject({
+        account_id: "owner-1",
+        project_id: "proj-1",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(deleteProjectDataOnHostMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      host_id: "host-1",
+    });
+    expect(poolConnectQueryMock).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE projects"),
+      expect.anything(),
+    );
+  });
 });

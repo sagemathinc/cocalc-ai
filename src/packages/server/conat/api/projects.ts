@@ -2167,15 +2167,25 @@ export async function archiveProject({
     account_id: account_id!,
   });
   try {
-    const backups = await getBackups({
-      client: routedClient,
-      project_id,
-      indexed_only: true,
-    });
-    if (!backups.length) {
-      throw new Error(
-        "project must have at least one backup before it can be archived",
-      );
+    try {
+      const backups = await getBackups({
+        client: routedClient,
+        project_id,
+        indexed_only: true,
+      });
+      if (!backups.length) {
+        throw new Error(
+          "project must have at least one backup before it can be archived",
+        );
+      }
+    } catch (err) {
+      if (!isArchiveInfoUnavailableError(err)) {
+        throw err;
+      }
+      log.warn("archiveProject: unable to verify indexed backups", {
+        project_id,
+        error: `${err}`,
+      });
     }
   } finally {
     try {
@@ -2253,6 +2263,14 @@ export async function archiveProject({
     project_id,
     default_bay_id: getConfiguredBayId(),
   });
+}
+
+function isArchiveInfoUnavailableError(err: unknown): boolean {
+  const message = `${err}`;
+  return (
+    message.includes("no subscribers matching") &&
+    message.includes(".archive-info.")
+  );
 }
 
 export async function getProjectState({

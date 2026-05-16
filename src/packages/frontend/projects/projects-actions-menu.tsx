@@ -40,8 +40,8 @@ import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
 } from "@cocalc/util/consts";
-import { COLORS } from "@cocalc/util/theme";
 import { useProjectRegion } from "@cocalc/frontend/project/use-project-region";
+import { ArchiveProjectModal } from "./archive-project-modal";
 import { HardDeleteProjectModal } from "./hard-delete-project-modal";
 import { confirmRemoveMyselfFromProject } from "./remove-myself";
 
@@ -62,6 +62,7 @@ export function ProjectActionsMenu({ record }: Props) {
   const [open, setOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const intl = useIntl();
   const actions = useActions("projects");
   const account_id = useTypedRedux("account", "account_id");
@@ -181,36 +182,7 @@ export function ProjectActionsMenu({ record }: Props) {
         break;
       case "archive":
         if (archiveDisabled) break;
-        Modal.confirm({
-          title: `Archive ${projectLabelLower}`,
-          icon: <Icon name="file-archive" style={{ color: COLORS.BRWN }} />,
-          width: 520,
-          content: (
-            <div>
-              <p>
-                Archiving removes the active copy from the project host. CoCalc
-                will stop the {projectLabelLower} if needed, create a final
-                backup when needed, then archive it.
-              </p>
-              <p style={{ color: COLORS.GRAY_M }}>
-                Starting it later restores it from backup, which is slower, but
-                archived {projectLabelLower}s do not count toward active storage
-                usage.
-              </p>
-            </div>
-          ),
-          okText: "Archive",
-          onOk: async () => {
-            try {
-              await actions.archive_project(record.project_id);
-            } catch (err) {
-              Modal.error({
-                title: "Archive failed",
-                content: `${err}`,
-              });
-            }
-          },
-        });
+        setArchiveOpen(true);
         break;
       case "settings":
         if (isDeleting) break;
@@ -434,6 +406,20 @@ export function ProjectActionsMenu({ record }: Props) {
         onCancel={() => setDeleteOpen(false)}
         onDeleted={() => {
           redux.getActions("page").close_project_tab(record.project_id);
+        }}
+      />
+      <ArchiveProjectModal
+        open={archiveOpen}
+        projects={[
+          {
+            project_id: record.project_id,
+            title: record.title,
+            state: record.state?.get?.("state"),
+          },
+        ]}
+        onCancel={() => setArchiveOpen(false)}
+        onArchive={async ([project_id]) => {
+          await actions.archive_project(project_id);
         }}
       />
     </div>

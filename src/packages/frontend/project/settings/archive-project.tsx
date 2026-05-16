@@ -3,13 +3,14 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { InboxOutlined } from "@ant-design/icons";
-import { Button, Popconfirm } from "antd";
+import { Button } from "antd";
 import type { ButtonProps } from "antd";
-import { FormattedMessage, useIntl } from "react-intl";
-import { useActions } from "@cocalc/frontend/app-framework";
-import { labels } from "@cocalc/frontend/i18n";
-import { CancelText } from "@cocalc/frontend/i18n/components";
+import { useState } from "react";
+import { FormattedMessage } from "react-intl";
+
+import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { Icon } from "@cocalc/frontend/components";
+import { ArchiveProjectModal } from "@cocalc/frontend/projects/archive-project-modal";
 
 interface Props {
   project_id: string;
@@ -18,43 +19,38 @@ interface Props {
 }
 
 export function ArchiveProject({ project_id, disabled, size }: Props) {
+  const [open, setOpen] = useState(false);
   const actions = useActions("projects");
-  const intl = useIntl();
-  const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
-
-  const explanation = (
-    <div style={{ maxWidth: "320px" }}>
-      <FormattedMessage
-        id="project.settings.archive-project.explanation"
-        defaultMessage="Archiving removes the active copy of this {projectLabelLower} from the project host. If the latest backup is older than the latest edits, CoCalc will stop the {projectLabelLower}, create a final backup, then archive it. Starting it again later will restore it from backup, which takes longer, but archived {projectLabelLower}s do not count toward active storage usage."
-        values={{ projectLabelLower }}
-      />
-    </div>
-  );
+  const project_map = useTypedRedux("projects", "project_map");
+  const project = project_map?.get(project_id);
 
   return (
-    <Popconfirm
-      placement="bottom"
-      arrow={{ pointAtCenter: true }}
-      title={explanation}
-      icon={<InboxOutlined />}
-      onConfirm={() => actions?.archive_project(project_id)}
-      okText={
-        <FormattedMessage
-          id="project.settings.archive-project.ok"
-          defaultMessage="Archive {projectLabelLower}"
-          values={{ projectLabelLower }}
-        />
-      }
-      cancelText={<CancelText />}
-    >
-      <Button disabled={disabled || actions == null} size={size}>
-        <InboxOutlined />{" "}
+    <>
+      <Button
+        disabled={disabled || actions == null}
+        size={size}
+        onClick={() => setOpen(true)}
+      >
+        <Icon name="file-archive" />{" "}
         <FormattedMessage
           id="project.settings.archive-project.label"
           defaultMessage="Archive"
         />
       </Button>
-    </Popconfirm>
+      <ArchiveProjectModal
+        open={open}
+        projects={[
+          {
+            project_id,
+            title: project?.get("title"),
+            state: `${project?.getIn(["state", "state"]) ?? ""}`,
+          },
+        ]}
+        onCancel={() => setOpen(false)}
+        onArchive={async ([id]) => {
+          await actions?.archive_project(id);
+        }}
+      />
+    </>
   );
 }
