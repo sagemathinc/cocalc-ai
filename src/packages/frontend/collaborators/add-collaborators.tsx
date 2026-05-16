@@ -36,7 +36,6 @@ import {
 } from "@cocalc/util/misc";
 import { Project } from "../projects/store";
 import { Avatar } from "../account/avatar/avatar";
-import { ProjectInviteTokens } from "./project-invite-tokens";
 import { alert_message } from "../alerts";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
@@ -692,7 +691,6 @@ export const AddCollaborators: React.FC<Props> = ({
       {render_select_list()}
       {render_send_email()}
       {render_invite_result()}
-      <ProjectInviteTokens project_id={project?.get("project_id")} />
     </div>
   );
 };

@@ -36,7 +36,6 @@ import { init as initMarkdown } from "./markdown/markdown-input/main";
 import { init as initIframeComm } from "./iframe-communication";
 import { init as initCrashBanner } from "./crash-banner";
 import { init as initCustomize } from "./customize";
-import { init as initProjectInviteToken } from "./collaborators/handle-project-invite";
 
 // Should be loaded last
 import { init as initLast } from "./last";
@@ -56,7 +55,6 @@ export async function init() {
   }
   initMarkdown();
   initCustomize();
-  initProjectInviteToken();
   if (COCALC_MINIMAL) {
     initIframeComm();
   }

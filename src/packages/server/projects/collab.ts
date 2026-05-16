@@ -13,20 +13,17 @@ export async function add_collaborators_to_projects(
   db: PostgreSQL,
   account_id: string,
   accounts: string[],
-  projects: string[], // can be empty strings if tokens specified (since they determine project_id)
-  tokens?: string[], // must be all specified or none
+  projects: string[],
 ): Promise<void> {
   try {
-    // In case of project tokens, this mutates the projects array:
-    await verify_write_access_to_projects(db, account_id, projects, tokens);
+    await verify_write_access_to_projects(account_id, projects);
   } catch (err) {
     // There is one case where a user can add themself to a project that they
     // are not a collaborator on, which is a TA can add themself to a course project.
     // Technically this is the case when accounts[0] == account_id and
     // projects[0] points to a course in project_id where account_id is a
-    // collaborator on project_id.    We only support one accounts/projects
-    // and no use of tokens for this.
-    if (accounts.length == 1 && account_id == accounts[0] && tokens == null) {
+    // collaborator on project_id. We only support one accounts/projects.
+    if (accounts.length == 1 && account_id == accounts[0]) {
       await verify_course_access_to_project(db, account_id, projects[0]);
     } else {
       throw err;
@@ -38,8 +35,7 @@ export async function add_collaborators_to_projects(
     Also, the input is uuid's, which typescript can't check. */
   verify_types(account_id, accounts, projects);
 
-  // We now know that account_id is allowed to add users to all of the projects,
-  // *OR* at that there are valid tokens to permit adding users.
+  // We now know that account_id is allowed to add users to all of the projects.
 
   // Now we just need to do the actual collab add.  This could be done in many
   // ways that are more parallel, or via a single transaction, etc... but for
@@ -50,18 +46,14 @@ export async function add_collaborators_to_projects(
   for (const i in projects) {
     const project_id: string = projects[i];
     const account_id: string = accounts[i];
-    const token_id: string | undefined = tokens?.[i];
     if (await callback2(db.user_is_collaborator, { project_id, account_id })) {
-      // nothing to do since user is already on the given project -- won't use up token.
+      // Nothing to do since user is already on the given project.
       continue;
     }
     await callback2(db.add_user_to_project, {
       project_id,
       account_id,
     });
-    if (token_id != null) {
-      await increment_project_invite_token_counter(db, token_id);
-    }
   }
   for (const project_id of new Set(projects)) {
     await syncProjectUsersOnHost({ project_id });
@@ -72,12 +64,12 @@ export async function remove_collaborators_from_projects(
   db: PostgreSQL,
   account_id: string,
   accounts: string[],
-  projects: string[], // can be empty strings if tokens specified (since they determine project_id)
+  projects: string[],
 ): Promise<void> {
   try {
     // Ensure user is allowed to modify project(s)
     //
-    await verify_write_access_to_projects(db, account_id, projects);
+    await verify_write_access_to_projects(account_id, projects);
   } catch (err) {
     // Users can always remove themselves from a project.
     //
@@ -112,31 +104,11 @@ export async function remove_collaborators_from_projects(
 // This is only meant to be used here in support of
 // add_collaborators_to_projects -- do not export it.
 async function verify_write_access_to_projects(
-  db: PostgreSQL,
   account_id: string,
   projects: string[],
-  tokens?: string[],
 ): Promise<void> {
   // Also, we are not doing this in parallel, but could. Let's not
   // put undue load on the server for this.
-  if (tokens != null) {
-    // Using tokens for adding users to projects...
-    for (let i = 0; i < projects.length; i++) {
-      if (tokens[i] == null) {
-        throw Error("If tokens are specified, they must all be non-null.");
-      }
-      const { project_id, error } = await project_invite_token_project_id(
-        db,
-        tokens[i],
-      );
-      if (error || !project_id) {
-        throw Error(`Project invite token is not valid - ${error}`);
-      }
-      projects[i] = project_id;
-    }
-    return;
-  }
-  // Not using tokens:
   // Note that projects are likely to be repeated, so we use a Set.
   for (const project_id of new Set(projects)) {
     try {
@@ -179,44 +151,6 @@ function verify_types(
         `all project id's must be valid uuid's (or empty), but "${x}" is not`,
       );
   }
-}
-
-// Returns {error:"..."} if token is not valid.
-// Returns {project_id:"...."} with project_id of the project if the token is valid.
-async function project_invite_token_project_id(
-  db: PostgreSQL,
-  token: string,
-): Promise<{ project_id?: string; error?: string }> {
-  let v;
-  try {
-    v = await db.async_query({
-      table: "project_invite_tokens",
-      select: ["expires", "counter", "usage_limit", "project_id"],
-      where: { token },
-    });
-  } catch (err) {
-    return { error: `problem querying the database -- ${err}` };
-  }
-  if (v.rows.length == 0) return { error: "no such token" };
-  const { expires, counter, usage_limit, project_id } = v.rows[0];
-  if (expires != null && expires <= new Date()) {
-    return { error: "the token already expired" };
-  }
-  if (usage_limit != null && counter >= usage_limit) {
-    return { error: `the token can only be used ${usage_limit} times` };
-  }
-  return { project_id };
-}
-
-async function increment_project_invite_token_counter(
-  db: PostgreSQL,
-  token: string,
-): Promise<void> {
-  await db.async_query({
-    query:
-      "UPDATE project_invite_tokens SET counter=coalesce(counter, 0)+1 WHERE token=$1",
-    params: [token],
-  });
 }
 
 async function verify_course_access_to_project(
