@@ -1495,11 +1495,24 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.setProjectLocalScalarField(project_id, field, before);
       throw err;
     }
-    void this.redux.getProjectActions(project_id)?.async_log({
+    this.logProjectMetadataUpdate(project_id, {
       event: "set",
       [field]: value,
     });
   };
+
+  private logProjectMetadataUpdate(project_id: string, event: any): void {
+    this.redux
+      .getProjectActions(project_id)
+      ?.async_log(event)
+      .catch((err) => {
+        console.warn("error recording project metadata log entry", {
+          project_id,
+          err,
+          event,
+        });
+      });
+  }
 
   set_project_title = async (
     project_id: string,
@@ -1697,7 +1710,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.setProjectLocalTheme(project_id, beforeJS);
       throw err;
     }
-    void this.redux.getProjectActions(project_id)?.async_log({
+    this.logProjectMetadataUpdate(project_id, {
       event: "set",
       theme: normalizedTheme,
     });

@@ -172,6 +172,41 @@ describe("ProjectsActions project metadata updates", () => {
     ).toEqual(theme);
   });
 
+  it("does not reject metadata saves when best-effort logging fails", async () => {
+    const { actions, redux } = makeActions();
+    const err = Error("log failed");
+    const async_log = jest.fn(async () => {
+      throw err;
+    });
+    const warn = jest
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    redux.getProjectActions.mockReturnValue({ async_log });
+    actions.projects_query_set = jest.fn(async () => undefined);
+
+    await expect(
+      actions.set_project_title(project_id, "New title"),
+    ).resolves.toBeUndefined();
+    await Promise.resolve();
+
+    expect(async_log).toHaveBeenCalledWith({
+      event: "set",
+      title: "New title",
+    });
+    expect(warn).toHaveBeenCalledWith(
+      "error recording project metadata log entry",
+      {
+        project_id,
+        err,
+        event: {
+          event: "set",
+          title: "New title",
+        },
+      },
+    );
+    warn.mockRestore();
+  });
+
   it("updates the local project store immediately after adding a project SSH key", async () => {
     const projectMapWithUsers = ImmutableMap([
       [
