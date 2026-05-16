@@ -40,6 +40,7 @@ import {
 import { progressBarStatus } from "@cocalc/frontend/lro/utils";
 import { useProjectActiveOperation } from "./use-project-active-op";
 import {
+  extractRuntimeSponsorDenial,
   formatRuntimeSponsorDenial,
   type RuntimeSponsorDenial,
 } from "@cocalc/util/runtime-sponsor-denial";
@@ -128,7 +129,7 @@ export function StartButton({
   const runtimeSponsorDenial = startLroSummary?.result
     ?.runtime_sponsor_denial as RuntimeSponsorDenial | undefined;
   const startFailed = startLroSummary?.status === "failed" && !!startLroError;
-  const lastMinimalStartFailureOpIdRef = useRef<string | undefined>(undefined);
+  const minimalStartAttemptOpIdsRef = useRef<Set<string>>(new Set());
   const moveActive =
     moveLro != null &&
     (!moveLro.summary ||
@@ -173,10 +174,10 @@ export function StartButton({
 
   useEffect(() => {
     if (!minimal || !startFailed || !startLroSummary || !project_id) return;
-    if (lastMinimalStartFailureOpIdRef.current === startLroSummary.op_id) {
+    if (!minimalStartAttemptOpIdsRef.current.has(startLroSummary.op_id)) {
       return;
     }
-    lastMinimalStartFailureOpIdRef.current = startLroSummary.op_id;
+    minimalStartAttemptOpIdsRef.current.delete(startLroSummary.op_id);
     Modal.error({
       title: "Project start failed",
       content: renderStartFailureDescription(),
@@ -215,6 +216,40 @@ export function StartButton({
     ) : (
       startLroError
     );
+  }
+
+  function renderStartErrorDescription(err: unknown) {
+    const denial = extractRuntimeSponsorDenial(err);
+    return denial ? (
+      <RuntimeSponsorDenialDescription
+        denial={denial}
+        project_id={resolvedProjectId}
+      />
+    ) : err instanceof Error ? (
+      err.message
+    ) : startPolicyBlock ? (
+      formatProjectStartPolicyBlock(startPolicyBlock)
+    ) : (
+      `${err}`
+    );
+  }
+
+  function showStartError(err: unknown) {
+    Modal.error({
+      title: "Unable to start project",
+      content: renderStartErrorDescription(err),
+      width: extractRuntimeSponsorDenial(err) ? 720 : undefined,
+    });
+  }
+
+  async function requestProjectStart() {
+    await redux.getActions("projects").start_project(project_id, {
+      onStartOp: (op) => {
+        if (minimal && op.op_id) {
+          minimalStartAttemptOpIdsRef.current.add(op.op_id);
+        }
+      },
+    });
   }
 
   function render_start_project_button() {
@@ -261,29 +296,18 @@ export function StartButton({
               await redux
                 .getActions("projects")
                 .set_project_runtime_sponsor_to_me(project_id);
-              await redux.getActions("projects").start_project(project_id);
+              await requestProjectStart();
             } catch (err) {
-              Modal.error({
-                title: "Unable to start project",
-                content: `${err}`,
-              });
+              showStartError(err);
             }
           },
         });
         return;
       }
       try {
-        await redux.getActions("projects").start_project(project_id);
+        await requestProjectStart();
       } catch (err) {
-        Modal.error({
-          title: "Unable to start project",
-          content:
-            err instanceof Error
-              ? err.message
-              : startPolicyBlock
-                ? formatProjectStartPolicyBlock(startPolicyBlock)
-                : `${err}`,
-        });
+        showStartError(err);
       }
     };
 
@@ -654,6 +678,11 @@ function RuntimeSponsorDenialDescription({
     }
   }
 
+  function openMembershipDetails() {
+    Modal.destroyAll();
+    redux.getActions("page").set_active_tab("account");
+  }
+
   return (
     <div>
       <div>{formatRuntimeSponsorDenial(denial)}</div>
@@ -699,10 +728,7 @@ function RuntimeSponsorDenialDescription({
       )}
       {denial.can_upgrade && (
         <div style={{ marginTop: "8px" }}>
-          <Button
-            size="small"
-            onClick={() => redux.getActions("page").set_active_tab("account")}
-          >
+          <Button size="small" onClick={openMembershipDetails}>
             Open membership details
           </Button>
         </div>

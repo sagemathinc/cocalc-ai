@@ -2228,7 +2228,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
   start_project = reuseInFlight(
     async (
       project_id: string,
-      opts: { autostart?: boolean } = {},
+      opts: {
+        autostart?: boolean;
+        onStartOp?: (op: { op_id?: string }) => void;
+      } = {},
     ): Promise<boolean> => {
       if (!store.getIn(["project_map", project_id])) {
         return false;
@@ -2283,6 +2286,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           wait: false,
         });
         actions.trackStartOp(resp);
+        opts.onStartOp?.(resp);
         const host_id = store.getIn(["project_map", project_id, "host_id"]) as
           | string
           | undefined;

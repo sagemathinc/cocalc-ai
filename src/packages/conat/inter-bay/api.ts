@@ -966,6 +966,7 @@ export interface ProjectRemoveCollaboratorRequest {
 }
 
 export type ProjectControlMethod =
+  | "check-start-admission"
   | "start"
   | "stop"
   | "restart"
@@ -1161,6 +1162,7 @@ export interface InterBayDirectoryApi {
 }
 
 export interface InterBayProjectControlApi {
+  checkStartAdmission: (opts: ProjectControlStartRequest) => Promise<void>;
   start: (opts: ProjectControlStartRequest) => Promise<void>;
   stop: (opts: ProjectControlStopRequest) => Promise<void>;
   restart: (opts: ProjectControlRestartRequest) => Promise<void>;
@@ -2364,6 +2366,15 @@ export function createInterBayProjectControlClient({
     ...serviceClientOptions({ client, timeout }),
     subject: projectControlSubject({ dest_bay, method: "start" }),
   });
+  const checkStartAdmissionClient = createServiceClient<
+    Pick<InterBayProjectControlApi, "checkStartAdmission">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: projectControlSubject({
+      dest_bay,
+      method: "check-start-admission",
+    }),
+  });
   const stopClient = createServiceClient<
     Pick<InterBayProjectControlApi, "stop">
   >({
@@ -2428,6 +2439,8 @@ export function createInterBayProjectControlClient({
     subject: projectControlSubject({ dest_bay, method: "active-op" }),
   });
   return {
+    checkStartAdmission: async (opts) =>
+      await checkStartAdmissionClient.checkStartAdmission(opts),
     start: async (opts) => await startClient.start(opts),
     stop: async (opts) => await stopClient.stop(opts),
     restart: async (opts) => await restartClient.restart(opts),
@@ -2457,6 +2470,29 @@ export function createInterBayProjectControlHandler({
     subject: projectControlSubject({ dest_bay: bay_id, method: "start" }),
     impl: {
       start: async (opts) => await impl.start(opts),
+    },
+  });
+}
+
+export function createInterBayProjectControlCheckStartAdmissionHandler({
+  bay_id,
+  impl,
+  ...options
+}: ServiceHandlerOptions & {
+  bay_id: string;
+  impl: InterBayProjectControlApi;
+}): ConatService {
+  return createServiceHandler<
+    Pick<InterBayProjectControlApi, "checkStartAdmission">
+  >({
+    ...options,
+    service: "inter-bay-project-control",
+    subject: projectControlSubject({
+      dest_bay: bay_id,
+      method: "check-start-admission",
+    }),
+    impl: {
+      checkStartAdmission: async (opts) => await impl.checkStartAdmission(opts),
     },
   });
 }

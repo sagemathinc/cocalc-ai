@@ -164,6 +164,7 @@ import {
   reserveProjectRuntimeSlot,
 } from "@cocalc/server/projects/runtime-slots";
 import {
+  encodeRuntimeSponsorDenial,
   extractRuntimeSponsorDenial,
   formatRuntimeSponsorDenial,
   type RuntimeSponsorDenial,
@@ -1855,6 +1856,35 @@ async function runProjectStartLikeAction({
   stream_name: string;
 }> {
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  try {
+    const ownership = await resolveProjectBay(project_id);
+    if (ownership == null) {
+      throw new Error(`project ${project_id} not found`);
+    }
+    await getInterBayBridge()
+      .projectControl(ownership.bay_id, {
+        timeout_ms: PROJECT_START_CONTROL_TIMEOUT_MS,
+      })
+      .checkStartAdmission({
+        project_id,
+        account_id,
+        ...(restore_backup_id ? { restore_backup_id } : {}),
+        ...(autostart ? { autostart } : {}),
+        source_bay_id: getConfiguredBayId(),
+        ...(managed_egress_override ? { managed_egress_override } : {}),
+        epoch: ownership.epoch,
+      });
+  } catch (err) {
+    const runtimeSponsorDenial = extractRuntimeSponsorDenial(err);
+    if (runtimeSponsorDenial) {
+      const enrichedRuntimeSponsorDenial = await enrichRuntimeSponsorDenial({
+        denial: runtimeSponsorDenial,
+        account_id,
+      });
+      throw new Error(encodeRuntimeSponsorDenial(enrichedRuntimeSponsorDenial));
+    }
+    throw err;
+  }
   const op = await createLro({
     kind: "project-start",
     scope_type: "project",

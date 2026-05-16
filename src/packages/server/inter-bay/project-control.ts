@@ -52,9 +52,11 @@ import {
   loadProjectRuntimeSponsor,
 } from "@cocalc/server/projects/runtime-sponsor-db";
 import {
+  getProjectRuntimeSlotDenial,
   heartbeatProjectRuntimeSlot,
   releaseProjectRuntimeSlot,
   reserveProjectRuntimeSlot,
+  RuntimeSponsorSlotsExhaustedError,
 } from "@cocalc/server/projects/runtime-slots";
 import { createBackup as createBackupLocal } from "@cocalc/server/conat/api/project-backups";
 import { getLro } from "@cocalc/server/lro/lro-db";
@@ -204,6 +206,35 @@ export async function handleProjectControlStart(
       project_id: req.project_id,
       op_id: req.lro_op_id,
     });
+  }
+}
+
+export async function handleProjectControlCheckStartAdmission(
+  req: ProjectControlStartRequest,
+): Promise<void> {
+  await assertCurrentProjectOwnership({
+    project_id: req.project_id,
+    epoch: req.epoch,
+  });
+  const sponsor = await loadProjectRuntimeSponsor(req.project_id);
+  const bypassRuntimeSlotAdmission =
+    req.managed_egress_override === "admin-host-drain";
+  if (bypassRuntimeSlotAdmission) {
+    return;
+  }
+  if (req.autostart) {
+    assertProjectAutostartEnabled({ sponsor });
+  }
+  await assertCanStartUsingRuntimeSponsor({
+    sponsor,
+    account_id: req.account_id,
+  });
+  const denial = await getProjectRuntimeSlotDenial({
+    sponsor_account_id: sponsor.sponsor_account_id,
+    project_id: req.project_id,
+  });
+  if (denial) {
+    throw new RuntimeSponsorSlotsExhaustedError(denial);
   }
 }
 
@@ -527,9 +558,19 @@ export async function dispatchProjectControlRpc(
 ): Promise<unknown> {
   const expected = projectControlSubject({
     dest_bay: getConfiguredBayId(),
-    method: "start",
+    method: "check-start-admission",
   });
   if (subject === expected) {
+    await handleProjectControlCheckStartAdmission(
+      payload as ProjectControlStartRequest,
+    );
+    return null;
+  }
+  const startExpected = projectControlSubject({
+    dest_bay: getConfiguredBayId(),
+    method: "start",
+  });
+  if (subject === startExpected) {
     await handleProjectControlStart(payload as ProjectControlStartRequest);
     return null;
   }
