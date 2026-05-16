@@ -19,7 +19,7 @@ import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { linearList } from "@cocalc/frontend/project/info/utils";
 import useDiskUsage from "@cocalc/frontend/project/disk-usage/use-disk-usage";
 import useProjectInfo from "@cocalc/frontend/project/info/use-project-info";
-import { ManagedEgressCompactButton } from "@cocalc/frontend/purchases/managed-egress-history";
+import { ManagedEgressHistoryButton } from "@cocalc/frontend/purchases/managed-egress-history";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -29,6 +29,7 @@ import { Project } from "./types";
 import { human_readable_size } from "@cocalc/util/misc";
 import { useRunQuota } from "./run-quota/hooks";
 import MoveProject from "./move-project";
+import type { IconName } from "@cocalc/frontend/components/icon";
 
 const { Text } = Typography;
 
@@ -40,10 +41,12 @@ interface Props {
 }
 
 function RailRow({
+  icon,
   label,
   children,
   action,
 }: {
+  icon: IconName;
   label: string;
   children: ReactNode;
   action?: ReactNode;
@@ -52,25 +55,25 @@ function RailRow({
     <div
       style={{
         borderTop: "1px solid #edf2f7",
-        paddingTop: 10,
+        display: "grid",
+        gap: 8,
+        gridTemplateColumns: "22px minmax(0, 1fr) auto",
+        alignItems: "center",
         lineHeight: 1.35,
+        minWidth: 0,
+        paddingTop: 8,
       }}
     >
-      <div
-        style={{
-          alignItems: "center",
-          display: "flex",
-          gap: 8,
-          justifyContent: "space-between",
-          marginBottom: 4,
-        }}
-      >
-        <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>
-          {label}
-        </Text>
-        {action}
+      <Icon name={icon} style={{ color: "#6b7280" }} />
+      <div style={{ minWidth: 0 }}>
+        <div>
+          <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>
+            {label}
+          </Text>
+        </div>
+        <div style={{ minWidth: 0 }}>{children}</div>
       </div>
-      <div style={{ minWidth: 0 }}>{children}</div>
+      {action ? <div style={{ justifySelf: "end" }}>{action}</div> : null}
     </div>
   );
 }
@@ -127,22 +130,34 @@ export function ProjectSettingsHealthRail({
         </Text>
       </div>
       <Space direction="vertical" style={{ width: "100%" }} size={10}>
-        <RailRow label="State">
+        <RailRow icon="heart" label="State">
           {displayProjectState ? (
-            <ProjectState show_desc={false} state={displayProjectState} />
+            <>
+              <ProjectState show_desc={false} state={displayProjectState} />
+              {typeof startTs === "number" &&
+                displayStateValue === "running" && (
+                  <Text
+                    type="secondary"
+                    style={{ fontSize: 12, marginLeft: 8 }}
+                  >
+                    <TimeAgo date={new Date(startTs)} />
+                  </Text>
+                )}
+            </>
           ) : (
             <Text type="secondary">Unknown</Text>
           )}
         </RailRow>
-        <RailRow label="Host">
-          <MoveProject project_id={project_id} size="small" />
+        <RailRow
+          icon="server"
+          label="Host"
+          action={<MoveProject project_id={project_id} size="small" />}
+        >
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            Details and move
+          </Text>
         </RailRow>
-        {typeof startTs === "number" && displayStateValue === "running" && (
-          <RailRow label="Uptime">
-            <TimeAgo date={new Date(startTs)} />
-          </RailRow>
-        )}
-        <RailRow label="Project ID">
+        <RailRow icon="copy" label="Project ID">
           <CopyToClipBoard
             value={project_id}
             display={project_id}
@@ -152,10 +167,18 @@ export function ProjectSettingsHealthRail({
           />
         </RailRow>
         {typeof userCount === "number" && (
-          <RailRow label="People">
-            <Button type="link" href="#people" style={{ padding: 0 }}>
+          <RailRow
+            icon="users"
+            label="People"
+            action={
+              <Button size="small" type="link" href="#people">
+                Open
+              </Button>
+            }
+          >
+            <Text>
               {userCount} collaborator{userCount === 1 ? "" : "s"}
-            </Button>
+            </Text>
           </RailRow>
         )}
         <BackupHealthRow project_id={project_id} lastBackup={lastBackup} />
@@ -193,19 +216,20 @@ function BackupHealthRow({
   lastBackup: unknown;
 }) {
   return (
-    <RailRow label="Backups">
-      <Space direction="vertical" size={2}>
-        {lastBackup ? (
-          <Text>
-            Last backup <TimeAgo date={lastBackup as any} />
-          </Text>
-        ) : (
-          <Text type="secondary">No backup recorded</Text>
-        )}
+    <RailRow
+      icon="cloud-upload"
+      label="Backup"
+      action={
         <Button size="small" onClick={() => openDirectory(project_id, BACKUPS)}>
-          Open backups
+          Open
         </Button>
-      </Space>
+      }
+    >
+      {lastBackup ? (
+        <TimeAgo date={lastBackup as any} />
+      ) : (
+        <Text type="secondary">None recorded</Text>
+      )}
     </RailRow>
   );
 }
@@ -253,24 +277,25 @@ function SnapshotHealthRow({ project_id }: { project_id: string }) {
   }, [project_id]);
 
   return (
-    <RailRow label="Snapshots">
-      <Space direction="vertical" size={2}>
-        {snapshot ? (
-          <Text>
-            Last snapshot <TimeAgo date={snapshot.name as any} />
-          </Text>
-        ) : loading ? (
-          <Text type="secondary">Loading...</Text>
-        ) : (
-          <Text type="secondary">No snapshots found</Text>
-        )}
+    <RailRow
+      icon="disk-snapshot"
+      label="Snapshot"
+      action={
         <Button
           size="small"
           onClick={() => openDirectory(project_id, SNAPSHOTS)}
         >
-          Open snapshots
+          Open
         </Button>
-      </Space>
+      }
+    >
+      {snapshot ? (
+        <TimeAgo date={snapshot.name as any} />
+      ) : loading ? (
+        <Text type="secondary">Loading...</Text>
+      ) : (
+        <Text type="secondary">None found</Text>
+      )}
     </RailRow>
   );
 }
@@ -285,13 +310,16 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
 
   if (disconnected && rows == null) {
     return (
-      <RailRow label="Processes">
-        <Space direction="vertical" size={2}>
-          <Text type="secondary">Unavailable</Text>
+      <RailRow
+        icon="info-circle"
+        label="Processes"
+        action={
           <Button size="small" onClick={() => openInfoPage(project_id)}>
-            Process monitor
+            Monitor
           </Button>
-        </Space>
+        }
+      >
+        <Text type="secondary">Unavailable</Text>
       </RailRow>
     );
   }
@@ -307,8 +335,16 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
       : rows.reduce((total, process) => total + process.mem, 0);
 
   return (
-    <RailRow label="Processes">
-      <Space direction="vertical" size={2}>
+    <RailRow
+      icon="info-circle"
+      label="Processes"
+      action={
+        <Button size="small" onClick={() => openInfoPage(project_id)}>
+          Monitor
+        </Button>
+      }
+    >
+      <Space direction="vertical" size={0}>
         <Text>
           {processCount} process{processCount === 1 ? "" : "es"}
         </Text>
@@ -317,9 +353,6 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
             CPU {cpuPct.toFixed(1)}% · Memory {human_readable_size(memoryBytes)}
           </Text>
         )}
-        <Button size="small" onClick={() => openInfoPage(project_id)}>
-          Process monitor
-        </Button>
       </Space>
     </RailRow>
   );
@@ -342,8 +375,19 @@ function StorageHealthRow({ project_id }: { project_id: string }) {
     : undefined;
 
   return (
-    <RailRow label="Storage">
-      <Space direction="vertical" size={5} style={{ width: "100%" }}>
+    <RailRow
+      icon="disk-round"
+      label="Storage"
+      action={
+        <DiskUsage
+          project_id={project_id}
+          compact
+          buttonText="Details"
+          buttonSize="small"
+        />
+      }
+    >
+      <Space direction="vertical" size={3} style={{ width: "100%" }}>
         {quotaLabel ? (
           <>
             <Text>{quotaLabel}</Text>
@@ -366,7 +410,6 @@ function StorageHealthRow({ project_id }: { project_id: string }) {
             {retainedLabel ? `Retained ${retainedLabel}` : ""}
           </Text>
         )}
-        <DiskUsage project_id={project_id} compact style={{ width: "100%" }} />
       </Space>
     </RailRow>
   );
@@ -385,8 +428,18 @@ function NetworkHealthRow({
 }) {
   const activityBars = [30, 58, 38, 72, 46, 88, 54];
   return (
-    <RailRow label="Network">
-      <Space direction="vertical" size={6} style={{ width: "100%" }}>
+    <RailRow
+      icon="network"
+      label="Network"
+      action={
+        <ManagedEgressHistoryButton
+          project_id={project_id}
+          buttonText="Egress"
+          size="small"
+        />
+      }
+    >
+      <Space direction="vertical" size={3} style={{ width: "100%" }}>
         <div style={{ display: "flex", alignItems: "end", gap: 3, height: 22 }}>
           {activityBars.map((height, i) => (
             <div
@@ -402,14 +455,12 @@ function NetworkHealthRow({
           ))}
         </div>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          Internet{" "}
           {networkEnabled == null
-            ? "unknown"
+            ? "Internet unknown"
             : networkEnabled
-              ? "enabled"
-              : "disabled"}
+              ? "Internet enabled"
+              : "Internet disabled"}
         </Text>
-        <ManagedEgressCompactButton project_id={project_id} label="Egress" />
       </Space>
     </RailRow>
   );
