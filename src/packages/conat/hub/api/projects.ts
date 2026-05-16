@@ -569,6 +569,7 @@ export const projects = {
   getProjectActiveOperation: authFirstRequireAccount,
   updateAuthorizedKeysOnHost: authFirstRequireAccount,
   hardDeleteProject: authFirstRequireAccount,
+  leaveOrDeleteProjects: authFirstRequireAccount,
   setProjectHidden: authFirstRequireAccount,
   setProjectSshKey: authFirstRequireAccount,
   deleteProjectSshKey: authFirstRequireAccount,
@@ -1160,6 +1161,25 @@ export interface Projects {
     service: string;
     stream_name: string;
   }>;
+  leaveOrDeleteProjects: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    project_ids: string[];
+  }) => Promise<
+    {
+      project_id: string;
+      action:
+        | "removed_self"
+        | "transferred"
+        | "hard_deleted"
+        | "hard_delete_queued"
+        | "error";
+      new_owner_account_id?: string;
+      op_id?: string;
+      error?: string;
+    }[]
+  >;
   setProjectHidden: (opts: {
     account_id?: string;
     project_id: string;

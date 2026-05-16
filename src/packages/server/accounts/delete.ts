@@ -4,6 +4,7 @@ import { recordAccountRevocation } from "@cocalc/server/accounts/revocation";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { revokeAllAuthSessions } from "@cocalc/server/auth/auth-sessions";
 import { deleteAllRememberMe } from "@cocalc/server/auth/remember-me";
+import { disposeOwnedProjectsForAccountDeletion } from "@cocalc/server/projects/ownership";
 import { StripeClient } from "@cocalc/server/stripe/client";
 
 export default async function deleteAccount(account_id: string): Promise<void> {
@@ -21,6 +22,11 @@ export default async function deleteAccount(account_id: string): Promise<void> {
   await revokeAllAuthSessions(account_id);
   // Revoke host-level persistent sessions/tokens issued before this delete.
   await recordAccountRevocation(account_id, Date.now());
+
+  // Owned projects must be resolved before the account is marked deleted:
+  // owner-only projects are hard-deleted, and shared projects transfer to a
+  // remaining collaborator so they never become ownerless storage.
+  await disposeOwnedProjectsForAccountDeletion(account_id);
 
   // Mark the account as deleted -- do this last since once done, user is locked out.
   // Any step above could fail, and user could just try again in that case.
