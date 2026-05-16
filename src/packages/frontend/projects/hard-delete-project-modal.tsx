@@ -198,7 +198,7 @@ export function HardDeleteProjectModal({
             }}
           >
             <div style={{ color: COLORS.GRAY_D, fontWeight: 600 }}>
-              Type the exact project name &quot;
+              Type this exact text &quot;
               <code style={{ userSelect: "all" }}>{confirmationTarget}</code>
               &quot; to confirm.
             </div>
@@ -338,7 +338,7 @@ const POSITIVE_SECTION_STYLE: CSSProperties = {
   ...SECTION_STYLE,
   background: "white",
   border: `1px solid ${COLORS.GRAY_LL}`,
-  borderLeft: `4px solid ${COLORS.YELL_LL}`,
+  borderLeft: `4px solid ${COLORS.YELL_L}`,
 };
 
 const TITLE_STYLE: CSSProperties = {
