@@ -123,6 +123,7 @@ export const AddCollaborators: React.FC<Props> = ({
   const [email_body, set_email_body] = useState<string>("");
   const [email_body_error, set_email_body_error] = useState<string>("");
   const [email_body_editing, set_email_body_editing] = useState<boolean>(false);
+  const [customize_email, set_customize_email] = useState<boolean>(false);
   const [invite_result, set_invite_result] = useState<string>("");
 
   const isMountedRef = useIsMountedRef();
@@ -146,6 +147,7 @@ export const AddCollaborators: React.FC<Props> = ({
     set_email_body("");
     set_email_body_error("");
     set_email_body_editing(false);
+    set_customize_email(false);
     set_select_open(false);
   }
 
@@ -229,6 +231,7 @@ export const AddCollaborators: React.FC<Props> = ({
     set_err(err);
     set_results(search_results);
     set_email_to("");
+    set_customize_email(false);
     set_select_open(true);
     select_ref.current?.focus();
   }
@@ -316,6 +319,7 @@ export const AddCollaborators: React.FC<Props> = ({
 
   function add_selected(): void {
     let errors = "";
+    const number_selected = selected_entries.length;
     for (const x of selected_entries) {
       try {
         if (is_valid_email_address(x)) {
@@ -338,10 +342,7 @@ export const AddCollaborators: React.FC<Props> = ({
       set_state("invited_errors");
     } else {
       set_invite_result(
-        `Successfully sent ${selected_entries.length} ${plural(
-          selected_entries.length,
-          "invitation",
-        )}.`,
+        `${number_selected} ${plural(number_selected, "invitation")} sent.`,
       );
       set_state("invited");
     }
@@ -451,6 +452,35 @@ export const AddCollaborators: React.FC<Props> = ({
     );
   }
 
+  function render_customize_message(): React.JSX.Element {
+    return (
+      <div style={{ marginTop: "8px" }}>
+        <Button
+          type="link"
+          style={{ padding: 0 }}
+          onClick={() => set_customize_email(!customize_email)}
+        >
+          <Icon name={customize_email ? "caret-down" : "caret-right"} />{" "}
+          Customize invite message
+        </Button>
+        {customize_email && (
+          <div
+            style={{
+              border: "1px solid lightgrey",
+              padding: "10px",
+              borderRadius: "5px",
+              backgroundColor: "white",
+              marginTop: "8px",
+            }}
+          >
+            {render_email_body_error()}
+            {render_email_textarea()}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function render_send_email(): React.JSX.Element | undefined {
     if (!email_to) {
       return;
@@ -467,22 +497,14 @@ export const AddCollaborators: React.FC<Props> = ({
             onChange={(e) => set_email_to((e.target as any).value)}
             autoFocus
           />
-          <div
-            style={{
-              padding: "20px 0",
-              backgroundColor: "white",
-              marginBottom: "15px",
-            }}
-          >
-            {render_email_body_error()}
-            {render_email_textarea()}
-          </div>
-          <div style={{ display: "flex" }}>
+          {render_customize_message()}
+          <div style={{ display: "flex", marginTop: "10px" }}>
             <Button
               onClick={() => {
                 set_email_to("");
                 set_email_body("");
                 set_email_body_editing(false);
+                set_customize_email(false);
               }}
             >
               {intl.formatMessage(labels.cancel)}
@@ -603,20 +625,7 @@ export const AddCollaborators: React.FC<Props> = ({
           </Select>
         )}
         {render_search_help()}
-        {selected_entries.length > 0 && (
-          <div
-            style={{
-              border: "1px solid lightgrey",
-              padding: "10px",
-              borderRadius: "5px",
-              backgroundColor: "white",
-              margin: "10px 0",
-            }}
-          >
-            {render_email_body_error()}
-            {render_email_textarea()}
-          </div>
-        )}
+        {selected_entries.length > 0 && render_customize_message()}
         {state == "searched" && render_select_list_button()}
       </div>
     );
@@ -662,17 +671,17 @@ export const AddCollaborators: React.FC<Props> = ({
   }
 
   function render_invite_result(): React.JSX.Element | undefined {
-    if (state != "invited") {
+    if (state != "invited" && state != "invited_errors") {
       return;
     }
     return (
       <Alert
-        style={{ margin: "5px 0" }}
+        style={{ margin: "8px 0" }}
         showIcon
         closable
         onClose={reset}
-        type="success"
-        title={invite_result}
+        type={state == "invited_errors" ? "error" : "success"}
+        message={invite_result}
       />
     );
   }
