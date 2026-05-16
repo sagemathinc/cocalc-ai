@@ -4,6 +4,7 @@ import callHub from "@cocalc/conat/hub/call-hub";
 import { recordProjectHostRpcTraffic } from "./rpc-traffic-audit";
 import { getMasterConatClient } from "./master-status";
 import { getLocalHostId } from "./sqlite/hosts";
+import { isValidUUID } from "@cocalc/util/misc";
 
 const logger = getLogger("project-host:last-edited");
 const TOUCH_TTL_MS = 30_000;
@@ -12,17 +13,30 @@ const touchCache = new TTL<string, true>({ ttl: TOUCH_TTL_MS });
 const runningTouchCache = new TTL<string, true>({ ttl: RUNNING_TOUCH_TTL_MS });
 const runningGeneration = new Map<string, number>();
 const pendingProjectTouches = new Set<string>();
+const pendingProjectTouchAccounts = new Map<string, Set<string>>();
 
 export async function touchProjectLastEdited(
   project_id: string,
   _reason?: string,
-  opts?: { force?: boolean; flushNow?: boolean },
+  opts?: { account_id?: string; force?: boolean; flushNow?: boolean },
 ): Promise<void> {
-  if (!opts?.force && touchCache.has(project_id)) {
+  const cacheKey =
+    opts?.account_id && isValidUUID(opts.account_id)
+      ? `${project_id}:${opts.account_id}`
+      : project_id;
+  if (!opts?.force && touchCache.has(cacheKey)) {
     return;
   }
-  touchCache.set(project_id, true);
+  touchCache.set(cacheKey, true);
   pendingProjectTouches.add(project_id);
+  if (opts?.account_id && isValidUUID(opts.account_id)) {
+    let accounts = pendingProjectTouchAccounts.get(project_id);
+    if (accounts == null) {
+      accounts = new Set<string>();
+      pendingProjectTouchAccounts.set(project_id, accounts);
+    }
+    accounts.add(opts.account_id);
+  }
   if (opts?.flushNow) {
     await reportPendingProjectTouches();
   }
@@ -38,7 +52,11 @@ export async function reportPendingProjectTouches(): Promise<void> {
     return;
   }
   for (const project_id of Array.from(pendingProjectTouches)) {
-    const request = { project_id };
+    const account_ids = Array.from(
+      pendingProjectTouchAccounts.get(project_id) ?? [],
+    );
+    const request =
+      account_ids.length === 0 ? { project_id } : { project_id, account_ids };
     const started = Date.now();
     try {
       await callHub({
@@ -55,6 +73,7 @@ export async function reportPendingProjectTouches(): Promise<void> {
         duration_ms: Date.now() - started,
       });
       pendingProjectTouches.delete(project_id);
+      pendingProjectTouchAccounts.delete(project_id);
     } catch (err) {
       recordProjectHostRpcTraffic({
         channel: "hub-api",

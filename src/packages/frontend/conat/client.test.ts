@@ -758,7 +758,7 @@ describe("ConatClient routed project-host reconnect", () => {
 
     expect(routedClient.request).toHaveBeenCalledWith(
       "project.00000000-0000-4000-8000-000000000001.touch.-",
-      ["touch", []],
+      ["touch", [{ account_id: "acct-1" }]],
       { timeout: 15000, waitForInterest: true },
     );
   });

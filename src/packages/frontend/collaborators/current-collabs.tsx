@@ -125,7 +125,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
               marginTop: 2,
             }}
           >
-            {render_last_active(user.last_active)}
+            {render_last_active(user.account_id, user.last_active)}
           </div>
         </div>
         {render_role(user.group)}
@@ -136,9 +136,17 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     );
   }
 
-  function render_last_active(last_active?: Date | number) {
+  function render_last_active(account_id: string, last_active?: Date | number) {
     if (!last_active) {
-      return "No recent project activity";
+      const accountLastActive = user_map?.getIn?.([account_id, "last_active"]);
+      if (accountLastActive) {
+        return (
+          <>
+            Account active <TimeAgo date={accountLastActive} />
+          </>
+        );
+      }
+      return "No project activity yet";
     }
     return (
       <>
