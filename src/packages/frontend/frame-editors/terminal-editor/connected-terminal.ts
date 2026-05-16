@@ -46,7 +46,6 @@ import { asyncDebounce, asyncThrottle } from "@cocalc/util/async-utils";
 import { path_split } from "@cocalc/util/misc";
 import { join } from "path";
 import { randomId } from "@cocalc/conat/names";
-import { getAutostartProjectStartPolicyBlock } from "@cocalc/frontend/projects/start-required-modal";
 //import { argsJoin } from "@cocalc/util/args";
 
 declare const $: any;
@@ -536,6 +535,17 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private ptyExited = false;
   private manualStartMessageShown = false;
 
+  private showManualStartMessage = async (): Promise<void> => {
+    this.set_connection_status("disconnected");
+    if (this.manualStartMessageShown) {
+      return;
+    }
+    this.manualStartMessageShown = true;
+    await this.handleDataFromProject(
+      "\r\nThis terminal can't connect because the project is stopped. Start the project to use the terminal.\r\n",
+    );
+  };
+
   connect = reuseInFlight(async () => {
     if (this.isClosed() || this.ptyExited) return;
 
@@ -543,23 +553,13 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       const projectState =
         redux.getProjectsStore?.()?.get_state?.(this.project_id) ??
         redux.getStore("projects")?.get_state?.(this.project_id);
-      const startPolicyBlock =
-        projectState !== "running"
-          ? getAutostartProjectStartPolicyBlock(this.project_id)
-          : undefined;
-      if (startPolicyBlock) {
-        this.set_connection_status("disconnected");
-        if (!this.manualStartMessageShown) {
-          this.manualStartMessageShown = true;
-          await this.handleDataFromProject(
-            "\r\nThis terminal can't connect because the project is stopped. Start the project to use the terminal.\r\n",
-          );
-        }
-        return;
-      }
       if (projectState === "starting") {
         this.set_connection_status("disconnected");
         this.scheduleProjectStartingRetry();
+        return;
+      }
+      if (projectState !== "running") {
+        await this.showManualStartMessage();
         return;
       }
       this.clearProjectStartingRetry();

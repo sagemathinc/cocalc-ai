@@ -364,6 +364,48 @@ describe("connected terminal resizing", () => {
     terminal.close();
   });
 
+  it("shows an inline manual-start message instead of connecting for any stopped project", async () => {
+    const { Terminal, terminalClient, showProjectStartRequiredModal } =
+      loadTerminalModule({
+        projectState: "opened",
+        project: { autostart_enabled: true },
+      });
+    const parent = document.createElement("div");
+    document.body.appendChild(parent);
+    const actions = {
+      project_id: "project-1",
+      path: "/tmp/example.term",
+      get_term_env: jest.fn(() => ({})),
+      set_connection_status: jest.fn(),
+      set_title: jest.fn(),
+      set_error: jest.fn(),
+      _tree_is_single_leaf: jest.fn(() => false),
+      close_frame: jest.fn(),
+      open_code_editor_frame: jest.fn(),
+      _get_project_actions: jest.fn(() => ({
+        flag_file_activity: jest.fn(),
+        open_file: jest.fn(),
+        close_tab: jest.fn(),
+        isTabClosed: jest.fn(() => false),
+        open_directory: jest.fn(),
+      })),
+    } as any;
+
+    const terminal = new Terminal(actions, 0, "term-1", parent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(terminalClient).not.toHaveBeenCalled();
+    expect(showProjectStartRequiredModal).not.toHaveBeenCalled();
+    expect(terminal["terminal"].write).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "This terminal can't connect because the project is stopped.",
+      ),
+      expect.any(Function),
+    );
+
+    terminal.close();
+  });
+
   it("waits during project startup and connects promptly when the project becomes running", async () => {
     let terminal: any;
     try {
