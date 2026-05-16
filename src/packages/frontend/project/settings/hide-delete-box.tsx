@@ -3,20 +3,16 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Input, Modal, Progress, Space, Switch } from "antd";
+import { Alert, Button, Space, Switch } from "antd";
 import { useState, type ReactNode } from "react";
 import { defineMessage, FormattedMessage, useIntl } from "react-intl";
 
 import { Icon, SettingBox, type IconName } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import { COLORS } from "@cocalc/util/theme";
+import { HardDeleteProjectModal } from "@cocalc/frontend/projects/hard-delete-project-modal";
 import { ArchiveProject } from "./archive-project";
 import MoveProject from "./move-project";
 import { Project } from "./types";
@@ -50,50 +46,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
   const project_id = project.get("project_id");
   const projectTitle = `${project.get("title") ?? ""}`.trim();
   const projectName = `${project.get("name") ?? ""}`.trim();
-  const confirmationTarget = projectTitle || projectName || project_id;
-  const [error, setError] = useState("");
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [deleteConfirmation, setDeleteConfirmation] = useState("");
-  const [deleting, setDeleting] = useState(false);
-  const [deleteProgress, setDeleteProgress] = useState<
-    Extract<LroEvent, { type: "progress" }> | undefined
-  >();
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => setError(`${err}`),
-  });
-
-  async function permanentlyDeleteProject(): Promise<void> {
-    setError("");
-    const action = async () => {
-      setDeleting(true);
-      setDeleteProgress(undefined);
-      try {
-        const op =
-          await webapp_client.conat_client.hub.projects.hardDeleteProject({
-            project_id,
-            browser_id: webapp_client.browser_id,
-          });
-        const summary = await webapp_client.conat_client.lroWait({
-          op_id: op.op_id,
-          stream_name: op.stream_name,
-          scope_type: op.scope_type,
-          scope_id: op.scope_id,
-          onProgress: setDeleteProgress,
-        });
-        if (summary.status !== "succeeded") {
-          throw new Error(summary.error ?? `project delete ${summary.status}`);
-        }
-        setDeleteModalOpen(false);
-        setDeleteConfirmation("");
-      } finally {
-        setDeleting(false);
-      }
-    };
-    const accepted = await runFreshAuthAction(action);
-    if (!accepted) {
-      setDeleting(false);
-    }
-  }
 
   function toggle_hide_project(): void {
     actions.toggle_hide_project(project_id);
@@ -125,91 +78,6 @@ export function HideDeleteBox(props: Readonly<Props>) {
     return <span>{msg}</span>;
   }
 
-  function renderDeleteModal(): React.JSX.Element {
-    const confirmationMatches =
-      deleteConfirmation.trim() === confirmationTarget ||
-      deleteConfirmation.trim() === project_id;
-    const progressPhase = deleteProgress?.phase ?? deleteProgress?.message;
-    const progressPercent =
-      deleteProgress?.progress == null
-        ? undefined
-        : Math.max(0, Math.min(100, Math.round(deleteProgress.progress)));
-    return (
-      <Modal
-        open={deleteModalOpen}
-        title={`Permanently delete ${projectLabelLower}`}
-        onCancel={() => {
-          if (!deleting) {
-            setDeleteModalOpen(false);
-            setDeleteConfirmation("");
-            setDeleteProgress(undefined);
-          }
-        }}
-        footer={[
-          <Button
-            key="cancel"
-            disabled={deleting}
-            onClick={() => {
-              setDeleteModalOpen(false);
-              setDeleteConfirmation("");
-              setDeleteProgress(undefined);
-            }}
-          >
-            {intl.formatMessage(labels.cancel)}
-          </Button>,
-          <Button
-            key="delete"
-            danger
-            type="primary"
-            loading={deleting}
-            disabled={!confirmationMatches || deleting}
-            onClick={() => {
-              void permanentlyDeleteProject().catch((err) =>
-                setError(`${err}`),
-              );
-            }}
-          >
-            Permanently Delete
-          </Button>,
-        ]}
-      >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          <Alert
-            showIcon
-            type="error"
-            message="This cannot be undone"
-            description={`Deleting this ${projectLabelLower} permanently removes its files, collaborators, invitations, shares, project secrets, API keys, and metadata. Backups are cleaned up asynchronously and this ${projectLabelLower} cannot be opened or started after deletion begins.`}
-          />
-          <div>
-            Type <code style={{ userSelect: "all" }}>{confirmationTarget}</code>{" "}
-            to confirm.
-          </div>
-          <Input
-            value={deleteConfirmation}
-            disabled={deleting}
-            placeholder={confirmationTarget}
-            onChange={(e) => setDeleteConfirmation(e.target.value)}
-            onPressEnter={() => {
-              if (confirmationMatches && !deleting) {
-                void permanentlyDeleteProject().catch((err) =>
-                  setError(`${err}`),
-                );
-              }
-            }}
-          />
-          {deleting ? (
-            <div>
-              <div style={{ marginBottom: 8 }}>
-                {progressPhase ? `${progressPhase}` : "Deleting project..."}
-              </div>
-              <Progress percent={progressPercent ?? 0} status="active" />
-            </div>
-          ) : undefined}
-        </Space>
-      </Modal>
-    );
-  }
-
   function renderBody() {
     const hide_label = intl.formatMessage(
       {
@@ -233,16 +101,6 @@ export function HideDeleteBox(props: Readonly<Props>) {
           message={introMessage}
           description={introDescription}
         />
-        {error ? (
-          <Alert
-            type="error"
-            showIcon
-            message="Unable to delete project"
-            description={error}
-            closable
-            onClose={() => setError("")}
-          />
-        ) : undefined}
         <DangerActionRow
           icon={hidden ? "eye-slash" : "eye"}
           title={hide_label}
@@ -275,8 +133,6 @@ export function HideDeleteBox(props: Readonly<Props>) {
                 danger
                 icon={<Icon name="trash" />}
                 onClick={() => {
-                  setError("");
-                  setDeleteProgress(undefined);
                   setDeleteModalOpen(true);
                 }}
               >
@@ -285,8 +141,13 @@ export function HideDeleteBox(props: Readonly<Props>) {
             }
           />
         ) : undefined}
-        {renderDeleteModal()}
-        <FreshAuthModal {...freshAuthModalProps} />
+        <HardDeleteProjectModal
+          open={deleteModalOpen}
+          project_id={project_id}
+          title={projectTitle}
+          name={projectName}
+          onCancel={() => setDeleteModalOpen(false)}
+        />
       </Space>
     );
   }

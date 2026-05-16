@@ -16,10 +16,6 @@ import { useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
-import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
 import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
@@ -43,14 +39,6 @@ export function ProjectsOperations({
   const projectLabelLower = projectLabel.toLowerCase();
   const projectsLabelLower = projectsLabel.toLowerCase();
   const actions = useActions("projects");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
-    onUnhandledError: (err) => {
-      Modal.error({
-        title: "Unable to change project deletion state",
-        content: `${err}`,
-      });
-    },
-  });
 
   const deleted = useTypedRedux("projects", "deleted");
   const hidden = useTypedRedux("projects", "hidden");
@@ -59,9 +47,6 @@ export function ProjectsOperations({
     "projects",
     "selected_hashtags",
   );
-  const project_map = useTypedRedux("projects", "project_map");
-  const account_id = useTypedRedux("account", "account_id");
-
   const filter = useMemo(() => {
     return `${!!hidden}-${!!deleted}`;
   }, [hidden, deleted]);
@@ -86,15 +71,6 @@ export function ProjectsOperations({
     selected_hashtags_for_filter,
     filteredCollaborators,
   ]);
-
-  // Count owned projects for delete confirmation
-  const ownedProjectCount = useMemo(() => {
-    return visible_projects.filter(
-      (project_id) =>
-        project_map?.getIn([project_id, "users", account_id, "group"]) ===
-        "owner",
-    ).length;
-  }, [visible_projects, project_map, account_id]);
 
   if (!isFiltered) {
     return null;
@@ -207,103 +183,6 @@ export function ProjectsOperations({
         for (const project_id of visible_projects) {
           actions.toggle_hide_project(project_id);
         }
-      },
-    });
-  }
-
-  // Handle Delete/Undelete All
-  function handleToggleDelete() {
-    const ownedText = intl.formatMessage(
-      {
-        id: "projects.operations.delete.ownership",
-        defaultMessage: `{ownership, select,
-          none {You do not own any of the listed {projectsLabel}.}
-          some {You are the owner of {ownedCount} of the {totalCount} listed {projectsLabel}.}
-          all {You are the owner of every listed {projectLabel}.}
-          other {}
-          }`,
-      },
-      {
-        ownership:
-          ownedProjectCount === 0
-            ? "none"
-            : ownedProjectCount < visible_projects.length
-              ? "some"
-              : "all",
-        ownedCount: ownedProjectCount,
-        totalCount: visible_projects.length,
-        projectLabel: projectLabelLower,
-        projectsLabel: projectsLabelLower,
-      },
-    );
-
-    const description = intl.formatMessage(
-      {
-        id: "projects.operations.delete.description",
-        defaultMessage:
-          "Are you sure you want to {deleted, select, true {undelete} other {delete}} {count, plural, one {# {projectLabel}} other {# {projectsLabel}}}?",
-      },
-      {
-        deleted: !!deleted,
-        count: visible_projects.length,
-        projectLabel: projectLabelLower,
-        projectsLabel: projectsLabelLower,
-      },
-    );
-
-    const warning = intl.formatMessage(
-      {
-        id: "projects.operations.delete.warning",
-        defaultMessage:
-          "This will {deleted, select, true {restore} other {delete}} the {count, plural, one {{projectLabel}} other {{projectsLabel}}} for all collaborators.",
-      },
-      {
-        deleted: !!deleted,
-        count: visible_projects.length,
-        projectLabel: projectLabelLower,
-        projectsLabel: projectsLabelLower,
-      },
-    );
-
-    const undoable = intl.formatMessage({
-      id: "projects.operations.undoable",
-      defaultMessage: "This can be undone in project settings.",
-    });
-
-    Modal.confirm({
-      title: intl.formatMessage(
-        {
-          id: "projects.operations.delete.title",
-          defaultMessage:
-            "{deleted, select, true {Undelete} other {Delete}} {projectsLabel}",
-        },
-        { deleted: !!deleted, projectsLabel },
-      ),
-      content: (
-        <div>
-          <p>{ownedText}</p>
-          <p>{description}</p>
-          <p>
-            <strong>{warning}</strong>
-          </p>
-          <p style={{ fontSize: "0.9em", color: COLORS.GRAY_M }}>{undoable}</p>
-        </div>
-      ),
-      okText: intl.formatMessage(
-        {
-          id: "projects.operations.delete.confirm",
-          defaultMessage:
-            "Yes, {deleted, select, true {undelete} other {delete}}",
-        },
-        { deleted: !!deleted },
-      ),
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        await runFreshAuthAction(async () => {
-          for (const project_id of visible_projects) {
-            await actions.toggle_delete_project(project_id);
-          }
-        });
       },
     });
   }
@@ -435,18 +314,6 @@ export function ProjectsOperations({
 
               <Button
                 size="small"
-                icon={<Icon name={deleted ? "undo" : "trash"} />}
-                onClick={handleToggleDelete}
-              >
-                <FormattedMessage
-                  id="projects.operations.delete.button"
-                  defaultMessage="{deleted, select, true {Undelete All} other {Delete All}}"
-                  values={{ deleted: !!deleted }}
-                />
-              </Button>
-
-              <Button
-                size="small"
                 icon={<Icon name="stop" />}
                 onClick={handleStopAll}
               >
@@ -472,7 +339,6 @@ export function ProjectsOperations({
           ) : undefined
         }
       />
-      <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
 }
