@@ -40,7 +40,6 @@ export function ProjectsOperations({
   const projectsLabelLower = projectsLabel.toLowerCase();
   const actions = useActions("projects");
 
-  const deleted = useTypedRedux("projects", "deleted");
   const hidden = useTypedRedux("projects", "hidden");
   const search: string = useTypedRedux("projects", "search");
   const selected_hashtags: Map<string, Set<string>> = useTypedRedux(
@@ -48,8 +47,8 @@ export function ProjectsOperations({
     "selected_hashtags",
   );
   const filter = useMemo(() => {
-    return `${!!hidden}-${!!deleted}`;
-  }, [hidden, deleted]);
+    return `${!!hidden}`;
+  }, [hidden]);
 
   const selected_hashtags_for_filter: string[] = useMemo(() => {
     return selected_hashtags?.get(filter)?.toJS() ?? [];
@@ -58,19 +57,12 @@ export function ProjectsOperations({
   // Only show when filters/search/hashtags/collaborators are active
   const isFiltered = useMemo(() => {
     return (
-      !!deleted ||
       !!hidden ||
       !!search?.trim() ||
       selected_hashtags_for_filter.length > 0 ||
       (filteredCollaborators && filteredCollaborators.length > 0)
     );
-  }, [
-    deleted,
-    hidden,
-    search,
-    selected_hashtags_for_filter,
-    filteredCollaborators,
-  ]);
+  }, [hidden, search, selected_hashtags_for_filter, filteredCollaborators]);
 
   if (!isFiltered) {
     return null;
@@ -78,7 +70,6 @@ export function ProjectsOperations({
 
   // Build status message parts
   const filterParts: string[] = [];
-  if (deleted) filterParts.push("deleted");
   if (hidden) filterParts.push("hidden");
   const filterText = filterParts.join(" and ");
 
@@ -102,8 +93,6 @@ export function ProjectsOperations({
 
     // Clear filter switches
     actions.display_hidden_projects(false);
-    actions.display_deleted_projects(false);
-
     // Clear hashtags for current filter state
     if (selected_hashtags && selected_hashtags_for_filter.length > 0) {
       actions.setState({

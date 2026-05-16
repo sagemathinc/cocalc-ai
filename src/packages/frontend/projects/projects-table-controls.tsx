@@ -52,14 +52,13 @@ export function ProjectsTableControls({
   // Redux state
   const search = useTypedRedux("projects", "search");
   const hidden = useTypedRedux("projects", "hidden");
-  const deleted = useTypedRedux("projects", "deleted");
   const selected_hashtags = useTypedRedux("projects", "selected_hashtags");
   const project_map = useTypedRedux("projects", "project_map");
 
   // Get filter key for current state
   const filter = useMemo(() => {
-    return `${!!hidden}-${!!deleted}`;
-  }, [hidden, deleted]);
+    return `${!!hidden}`;
+  }, [hidden]);
 
   // Get all available hashtags
   const visible_hashtags = useMemo(() => {
@@ -143,18 +142,6 @@ export function ProjectsTableControls({
             unCheckedChildren={intl.formatMessage({
               id: "projects.table-controls.hidden.label",
               defaultMessage: "Hidden",
-            })}
-          />
-          <Switch
-            checked={deleted}
-            onChange={(checked) => actions.display_deleted_projects(checked)}
-            checkedChildren={intl.formatMessage({
-              id: "projects.table-controls.deleted.label",
-              defaultMessage: "Deleted",
-            })}
-            unCheckedChildren={intl.formatMessage({
-              id: "projects.table-controls.deleted.label",
-              defaultMessage: "Deleted",
             })}
           />
         </Space>

@@ -107,7 +107,7 @@ import {
 import { conatWithProjectRouting } from "@cocalc/server/conat/route-client";
 import { materializeProjectHost } from "@cocalc/server/conat/route-project";
 import { savePlacement } from "@cocalc/server/project-host/control";
-import deleteProject from "@cocalc/server/projects/delete";
+import { hardDeleteProject } from "@cocalc/server/projects/hard-delete";
 import { normalizeProviderId, type ProviderId } from "@cocalc/cloud";
 import { getProviderContext } from "@cocalc/server/cloud/provider-context";
 import admins from "@cocalc/server/accounts/admins";
@@ -2430,7 +2430,12 @@ async function runSmokeSteps({
     if (cleanup_on_success) {
       await runStep("cleanup", async () => {
         if (project_id) {
-          await deleteProject({ project_id, skipPermissionCheck: true });
+          await hardDeleteProject({
+            project_id,
+            account_id,
+            backup_retention_days: 0,
+            purge_backups_now: true,
+          });
         }
         if (cleanup_host ?? createdHost) {
           if (!host_id) throw new Error("missing host_id for cleanup");
@@ -3095,14 +3100,10 @@ async function runSmokeStepsViaCli({
               "--wait",
             ]);
           } catch (hardErr) {
-            logger.warn(
-              "cloud smoke cleanup hard delete failed; falling back to soft delete",
-              {
-                workspace_id: workspaceId,
-                err: getErrorMessage(hardErr),
-              },
-            );
-            await runCli(cli, ["project", "delete", "--project", workspaceId]);
+            logger.warn("cloud smoke cleanup hard delete failed", {
+              workspace_id: workspaceId,
+              err: getErrorMessage(hardErr),
+            });
           }
         }
         if (cleanup_host ?? createdHost) {
@@ -3856,19 +3857,10 @@ async function runAppSmokeScenarioViaCli({
               "--wait",
             ]);
           } catch (hardErr) {
-            logger.warn(
-              "cloud smoke app cleanup hard delete failed; using soft delete",
-              {
-                workspace_id: workspaceId,
-                err: getErrorMessage(hardErr),
-              },
-            );
-            await runCli(cli, [
-              "workspace",
-              "delete",
-              "--workspace",
-              workspaceId,
-            ]);
+            logger.warn("cloud smoke app cleanup hard delete failed", {
+              workspace_id: workspaceId,
+              err: getErrorMessage(hardErr),
+            });
           }
         }
         for (const cleanupHostId of cleanupHostIds) {

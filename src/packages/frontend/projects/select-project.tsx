@@ -31,8 +31,6 @@ export function SelectProject({
 }: Props) {
   const project_map = useTypedRedux("projects", "project_map");
 
-  // include deleted projects in the selector
-  const [include_deleted, set_include_deleted] = useState<boolean>(false);
   // include hidden projects in the selector
   const [include_hidden, set_include_hidden] = useState<boolean>(false);
 
@@ -77,17 +75,16 @@ export function SelectProject({
 
     const others: ProjectSelectionList = [];
     for (let i of v) {
-      const is_deleted = !!i.deleted;
       const is_hidden = !!i.users?.[account_id ?? ""]?.hide;
       if (
         i.project_id == value ||
-        (is_deleted == include_deleted && is_hidden == include_hidden)
+        (!i.deleted && is_hidden == include_hidden)
       ) {
         others.push({ id: i.project_id, title: i.title });
       }
     }
     return data.concat(others);
-  }, [project_map, exclude, at_top, include_deleted, include_hidden, value]);
+  }, [project_map, exclude, at_top, include_hidden, value]);
 
   if (data == null) {
     return <Loading />;
@@ -125,12 +122,6 @@ export function SelectProject({
             onChange={(e) => set_include_hidden(e.target.checked)}
           >
             Hidden
-          </Checkbox>
-          <Checkbox
-            checked={include_deleted}
-            onChange={(e) => set_include_deleted(e.target.checked)}
-          >
-            Deleted
           </Checkbox>
         </div>
       </div>

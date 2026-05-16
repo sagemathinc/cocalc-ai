@@ -117,7 +117,6 @@ Table({
           title: true,
           name: true,
           description: true,
-          deleted: "project_owner",
           invite_requests: true, // project collabs can modify this (e.g., to remove from it once user added or rejected)
           manage_users_owner_only(obj, db) {
             return db._user_set_query_project_manage_users_owner_only(obj);
@@ -391,8 +390,8 @@ Table({
     },
     deleted: {
       type: "boolean",
-      desc: "Whether or not this project is deleted.",
-      render: { type: "boolean", editable: true },
+      desc: "Legacy deletion marker. Normal project deletion is irreversible and removes the project row.",
+      render: { type: "boolean", editable: false },
     },
     host_id: {
       type: "uuid",
@@ -803,7 +802,6 @@ Table({
           name: true,
           title: true,
           description: true,
-          deleted: true,
           notes: true,
         },
       },

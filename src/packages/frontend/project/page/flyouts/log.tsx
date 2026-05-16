@@ -156,7 +156,6 @@ const PROJECT_EVENTS = [
   "start_project",
   "upgrade",
   "delete_project",
-  "undelete_project",
   "hide_project",
   "unhide_project",
 ] as const;

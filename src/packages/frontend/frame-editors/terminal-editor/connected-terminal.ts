@@ -46,10 +46,6 @@ import { asyncDebounce, asyncThrottle } from "@cocalc/util/async-utils";
 import { path_split } from "@cocalc/util/misc";
 import { join } from "path";
 import { randomId } from "@cocalc/conat/names";
-import {
-  getAutostartProjectStartPolicyBlock,
-  showProjectStartRequiredModal,
-} from "@cocalc/frontend/projects/start-required-modal";
 //import { argsJoin } from "@cocalc/util/args";
 
 declare const $: any;
@@ -60,7 +56,11 @@ const MAX_HISTORY_LENGTH = 100 * SCROLLBACK;
 const SPAWN_TIMEOUT = 5000;
 
 const EXIT_MESSAGE = "\r\n[Process completed - press any key]\r\n";
-const CONNECTING_MESSAGE = `\r\n\x1b[1;37m[\x1b[0m\x1b[36m CONNECTING{TARGET}... \x1b[0m\x1b[1;37m]\x1b[0m\r\n\r\n`;
+const ANSI_RESET = "\x1b[0m";
+const ANSI_DIM_CYAN = "\x1b[2;36m";
+const ANSI_BOLD_CYAN = "\x1b[1;36m";
+const ANSI_BOLD_WHITE = "\x1b[1;37m";
+const ANSI_DIM = "\x1b[2m";
 
 const ENABLE_WEBGL = false;
 
@@ -98,6 +98,92 @@ function normalizeTerminalArgs(args: any): string[] | undefined {
     return undefined;
   }
   return plain.map((x) => `${x}`);
+}
+
+function visibleLength(s: string): number {
+  return s.replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+
+function borderLine({
+  left,
+  fill,
+  right,
+  width,
+}: {
+  left: string;
+  fill: string;
+  right: string;
+  width: number;
+}): string {
+  return `${ANSI_DIM_CYAN}${left}${fill.repeat(width - 2)}${right}${ANSI_RESET}`;
+}
+
+function boxLine(content: string, width: number): string {
+  const length = visibleLength(content);
+  const padding = Math.max(0, width - 2 - length);
+  const left = Math.floor(padding / 2);
+  const right = padding - left;
+  return `${ANSI_DIM_CYAN}│${ANSI_RESET}${" ".repeat(left)}${content}${" ".repeat(right)}${ANSI_DIM_CYAN}│${ANSI_RESET}`;
+}
+
+function dividerLine(width: number): string {
+  return boxLine(
+    `${ANSI_DIM_CYAN}${"─".repeat(Math.max(18, Math.min(28, width - 20)))}${ANSI_RESET}`,
+    width,
+  );
+}
+
+function stoppedProjectTerminalMessage(cols: number | undefined): string {
+  return terminalStatusBox(cols, {
+    title: "Project is stopped",
+    primary: "Start the project to use this terminal.",
+    secondary: [
+      "This terminal will connect automatically",
+      "after the project starts.",
+    ],
+  });
+}
+
+function connectingTerminalMessage(cols: number | undefined): string {
+  return terminalStatusBox(cols, {
+    title: "Connecting terminal",
+    primary: "Preparing your terminal session...",
+    secondary: ["This usually takes a few seconds."],
+  });
+}
+
+function terminalStatusBox(
+  cols: number | undefined,
+  {
+    title,
+    primary,
+    secondary,
+  }: {
+    title: string;
+    primary: string;
+    secondary: string[];
+  },
+): string {
+  const terminalWidth = Math.max(40, Math.min(88, cols ?? 80));
+  const width = Math.max(40, Math.min(62, terminalWidth - 6));
+  const indent = " ".repeat(
+    Math.max(0, Math.floor((terminalWidth - width) / 2)),
+  );
+  const lines = [
+    borderLine({ left: "╭", fill: "─", right: "╮", width }),
+    boxLine("", width),
+    boxLine(`${ANSI_BOLD_CYAN}>_  ${title}${ANSI_RESET}`, width),
+    dividerLine(width),
+    boxLine("", width),
+    boxLine(`${ANSI_BOLD_WHITE}${primary}${ANSI_RESET}`, width),
+    boxLine("", width),
+    ...secondary.map((line) =>
+      boxLine(`${ANSI_DIM}${line}${ANSI_RESET}`, width),
+    ),
+    boxLine("", width),
+    borderLine({ left: "╰", fill: "─", right: "╯", width }),
+  ];
+  return `\r\n${lines.map((line) => `${indent}${line}`).join("\r\n")}\r\n`;
 }
 
 export class Terminal<T extends CodeEditorState = CodeEditorState> {
@@ -155,6 +241,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private title?: string;
   private projectsStore?;
   private lastProjectState?: string;
+  private projectStartingRetryTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     actions: Actions<T>,
@@ -426,6 +513,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
     this.reconnectResource?.close();
     this.reconnectResource = undefined;
+    this.clearProjectStartingRetry();
     this.pty?.close();
     this.pty = null;
     this.set_connection_status("disconnected");
@@ -470,11 +558,33 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
 
     if (prevState !== "running" && nextState === "running") {
+      this.clearProjectStartingRetry();
+      void this.connect();
       this.reconnectResource?.requestReconnect({
         reason: "project_became_running",
         resetBackoff: true,
       });
     }
+  };
+
+  private clearProjectStartingRetry = (): void => {
+    if (this.projectStartingRetryTimer != null) {
+      clearTimeout(this.projectStartingRetryTimer);
+      this.projectStartingRetryTimer = undefined;
+    }
+  };
+
+  private scheduleProjectStartingRetry = (): void => {
+    if (this.projectStartingRetryTimer != null) {
+      return;
+    }
+    this.projectStartingRetryTimer = setTimeout(() => {
+      this.projectStartingRetryTimer = undefined;
+      if (!this.isClosed()) {
+        void this.connect();
+      }
+    }, 1000);
+    this.projectStartingRetryTimer.unref?.();
   };
 
   private update_settings = (): void => {
@@ -513,6 +623,18 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   };
 
   private ptyExited = false;
+  private manualStartMessageShown = false;
+
+  private showManualStartMessage = async (): Promise<void> => {
+    this.set_connection_status("disconnected");
+    if (this.manualStartMessageShown) {
+      return;
+    }
+    this.manualStartMessageShown = true;
+    await this.handleDataFromProject(
+      stoppedProjectTerminalMessage(this.terminal.cols),
+    );
+  };
 
   connect = reuseInFlight(async () => {
     if (this.isClosed() || this.ptyExited) return;
@@ -521,21 +643,17 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
       const projectState =
         redux.getProjectsStore?.()?.get_state?.(this.project_id) ??
         redux.getStore("projects")?.get_state?.(this.project_id);
-      const startPolicyBlock =
-        projectState !== "running" && projectState !== "starting"
-          ? getAutostartProjectStartPolicyBlock(this.project_id)
-          : undefined;
-      if (startPolicyBlock) {
-        await this.handleDataFromProject(
-          `\r\n${startPolicyBlock.message} ${startPolicyBlock.action ?? ""}\r\n`,
-        );
-        showProjectStartRequiredModal({
-          project_id: this.project_id,
-          title: "Start project to connect terminal",
-          block: startPolicyBlock,
-        });
+      if (projectState === "starting") {
+        this.set_connection_status("disconnected");
+        this.scheduleProjectStartingRetry();
         return;
       }
+      if (projectState !== "running") {
+        await this.showManualStartMessage();
+        return;
+      }
+      this.clearProjectStartingRetry();
+      this.manualStartMessageShown = false;
 
       if (this.pty != null) {
         this.pty.close();
@@ -544,7 +662,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
       this.terminal.reset();
       await this.handleDataFromProject(
-        CONNECTING_MESSAGE.replace("{TARGET}", ""),
+        connectingTerminalMessage(this.terminal.cols),
       );
 
       const pty = webapp_client.conat_client.terminalClient({

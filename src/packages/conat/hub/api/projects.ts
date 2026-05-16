@@ -567,8 +567,6 @@ export const projects = {
   getProjectState: authFirstRequireAccount,
   getProjectAddress: authFirstRequireAccount,
   getProjectActiveOperation: authFirstRequireAccount,
-  deleteProject: authFirstRequireAccount,
-  setProjectDeleted: authFirstRequireAccount,
   updateAuthorizedKeysOnHost: authFirstRequireAccount,
   hardDeleteProject: authFirstRequireAccount,
   setProjectHidden: authFirstRequireAccount,
@@ -1144,19 +1142,6 @@ export interface Projects {
     account_id?: string;
     project_id: string;
   }) => Promise<ProjectActiveOperationSummary | null>;
-  deleteProject: (opts: {
-    account_id?: string;
-    browser_id?: string | null;
-    session_hash?: string | null;
-    project_id: string;
-  }) => Promise<void>;
-  setProjectDeleted: (opts: {
-    account_id?: string;
-    browser_id?: string | null;
-    session_hash?: string | null;
-    project_id: string;
-    deleted: boolean;
-  }) => Promise<void>;
   updateAuthorizedKeysOnHost: (opts: {
     project_id: string;
     account_id?: string;

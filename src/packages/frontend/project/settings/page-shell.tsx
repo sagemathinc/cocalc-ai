@@ -41,7 +41,6 @@ export function ProjectSettingsPageShell({
   showNonMemberWarning,
 }: Props) {
   const title = project.get("title") || "Untitled Project";
-  const deleted = !!project.get("deleted");
   const hidden = !!project.get("hidden");
   const screens = Grid.useBreakpoint();
   const wide = !!screens.xl;
@@ -78,8 +77,8 @@ export function ProjectSettingsPageShell({
         >
           <div style={{ minWidth: 0 }}>
             <Space size={8} wrap style={{ marginBottom: 8 }}>
-              <Tag color={deleted ? "red" : hidden ? "warning" : "green"}>
-                {deleted ? "Deleted" : hidden ? "Hidden" : "Active"}
+              <Tag color={hidden ? "warning" : "green"}>
+                {hidden ? "Hidden" : "Active"}
               </Tag>
               <Tag>Project</Tag>
             </Space>

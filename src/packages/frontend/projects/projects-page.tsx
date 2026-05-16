@@ -166,10 +166,9 @@ export const ProjectsPage: React.FC = () => {
 
   // status of filters
   const hidden = !!useTypedRedux("projects", "hidden");
-  const deleted = !!useTypedRedux("projects", "deleted");
   const filter = useMemo(() => {
-    return `${!!hidden}-${!!deleted}`;
-  }, [hidden, deleted]);
+    return `${!!hidden}`;
+  }, [hidden]);
   const search: string = useTypedRedux("projects", "search");
   const inviteState = useInviteInboxState({
     includeOutgoing: false,
@@ -193,7 +192,6 @@ export const ProjectsPage: React.FC = () => {
       user_map,
       selected_hashtags?.get(filter),
       search,
-      deleted,
       hidden,
       "last_edited" /* "user_last_active" was confusing */,
     );
@@ -201,7 +199,6 @@ export const ProjectsPage: React.FC = () => {
     project_map,
     host_info,
     user_map,
-    deleted,
     hidden,
     filter,
     selected_hashtags,

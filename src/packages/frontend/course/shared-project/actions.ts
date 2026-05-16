@@ -218,7 +218,7 @@ export class SharedProjectActions {
     }
     const project_actions = redux.getActions("projects");
     // delete project
-    await project_actions.delete_project(shared_id);
+    await project_actions.hard_delete_project(shared_id);
 
     // remove student collabs
     const ids = store.get_student_ids({ deleted: false });

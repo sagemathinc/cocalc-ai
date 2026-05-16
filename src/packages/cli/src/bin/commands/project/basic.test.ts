@@ -495,9 +495,6 @@ test("project delete defaults to irreversible hard delete", async () => {
         pollMs: 1_000,
         hub: {
           projects: {
-            deleteProject: async () => {
-              throw new Error("soft delete must not be called");
-            },
             hardDeleteProject: async (opts) => {
               hardDeleteOpts = opts;
               return {

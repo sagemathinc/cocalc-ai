@@ -109,7 +109,6 @@ import {
 } from "./run-batch-order";
 import { ensureProjectRunningForJupyter } from "./project-start";
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
-import { showProjectStartRequiredModal } from "@cocalc/frontend/projects/start-required-modal";
 
 const dmpFileWatcher = new DiffMatchPatch({
   matchThreshold: 1,
@@ -2151,29 +2150,24 @@ export class JupyterActions extends JupyterActions0 {
   }
 
   waitUntilProjectIsRunning = reuseInFlight(async () => {
-    try {
-      await ensureProjectRunningForJupyter({
-        redux: this.redux,
-        project_id: this.project_id,
-        isClosed: () => this.isClosed(),
-      });
-    } catch (err) {
-      const block = getProjectStartPolicyBlockFromError(err);
-      if (block && !this.isClosed()) {
-        showProjectStartRequiredModal({
-          project_id: this.project_id,
-          title: "Start project to use Jupyter",
-          block,
-        });
-      }
-      throw err;
-    }
+    await ensureProjectRunningForJupyter({
+      redux: this.redux,
+      project_id: this.project_id,
+      isClosed: () => this.isClosed(),
+    });
   });
 
   fetch_jupyter_kernels = async ({
     noCache,
   }: { noCache?: boolean } = {}): Promise<void> => {
-    await this.waitUntilProjectIsRunning();
+    try {
+      await this.waitUntilProjectIsRunning();
+    } catch (err) {
+      if (getProjectStartPolicyBlockFromError(err)) {
+        return;
+      }
+      throw err;
+    }
     if (this.isClosed()) return;
 
     let data;

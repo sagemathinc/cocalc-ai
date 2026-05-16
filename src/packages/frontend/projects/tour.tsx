@@ -125,21 +125,14 @@ export default function ProjectsPageTour({
     },
 
     {
-      title: `Hidden and Deleted ${projectsLabelLower}`,
+      title: `Hidden ${projectsLabelLower}`,
       description: (
         <>
           <p>
-            Hidden and deleted {projectsLabelLower} in CoCalc allow you to
-            organized and efficient project by selectively displaying relevant
-            {projectsLabelLower} and removing outdated ones. Utilize hidden{" "}
-            {projectsLabelLower} to declutter your {projectLabelLower} list,
-            while deleted {projectsLabelLower} help manage storage capacity and
-            prioritize essential work.
-          </p>
-          <p>
-            Clicking the checkbox shows only deleted {projectsLabelLower}. When
-            you delete a {projectLabelLower}, it is only permanently deleted
-            after 30 days so you have a chance to undelete it here.
+            Hidden {projectsLabelLower} in CoCalc help keep your{" "}
+            {projectLabelLower} list organized by selectively displaying the
+            work that is currently relevant. Hiding a {projectLabelLower} only
+            affects your own list and can be undone here.
           </p>
         </>
       ),

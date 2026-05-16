@@ -631,7 +631,7 @@ export class StudentProjectsActions {
         .getActions("projects")
         .remove_collaborator(student_project_id, student_account_id);
     }
-    await redux.getActions("projects").delete_project(student_project_id);
+    await redux.getActions("projects").hard_delete_project(student_project_id);
     this.course_actions.set({
       create_project: null,
       project_id: null,

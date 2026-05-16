@@ -3045,35 +3045,16 @@ export class ProjectsActions extends Actions<ProjectsState> {
     await this.set_project_hide(account_id, project_id, !hide);
   }
 
-  public async delete_project(project_id: string): Promise<void> {
-    await webapp_client.conat_client.hub.projects.setProjectDeleted({
+  public async hard_delete_project(project_id: string): Promise<void> {
+    await webapp_client.conat_client.hub.projects.hardDeleteProject({
       project_id,
       browser_id: webapp_client.browser_id,
-      deleted: true,
     });
     await this.project_log(project_id, { event: "delete_project" });
   }
 
-  // Toggle whether or not project is deleted.
-  public async toggle_delete_project(project_id: string): Promise<void> {
-    const is_deleted = store.is_deleted(project_id);
-
-    await webapp_client.conat_client.hub.projects.setProjectDeleted({
-      project_id,
-      browser_id: webapp_client.browser_id,
-      deleted: !is_deleted,
-    });
-    await this.project_log(project_id, {
-      event: is_deleted ? "undelete_project" : "delete_project",
-    });
-  }
-
   public display_hidden_projects(hidden: boolean): void {
     this.setState({ hidden });
-  }
-
-  public display_deleted_projects(deleted): void {
-    this.setState({ deleted });
   }
 
   public toggle_hashtag(filter: string, tag: string): void {
