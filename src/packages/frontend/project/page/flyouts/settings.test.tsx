@@ -139,7 +139,7 @@ jest.mock("@cocalc/frontend/project/settings/secrets", () => ({
   ProjectSecrets: () => <div>ProjectSecrets</div>,
 }));
 jest.mock("@cocalc/frontend/project/settings/hide-delete-box", () => ({
-  HideDeleteBox: () => <div>HideDeleteBox</div>,
+  ProjectLocationBox: () => <div>ProjectLocationBox</div>,
 }));
 jest.mock("@cocalc/frontend/project/settings/managed-egress", () => ({
   ManagedEgress: () => <div>ManagedEgress</div>,
@@ -159,6 +159,9 @@ jest.mock("@cocalc/frontend/project/settings/restart-project", () => ({
 jest.mock("@cocalc/frontend/project/settings/move-project", () => ({
   __esModule: true,
   default: () => <button type="button">Move</button>,
+}));
+jest.mock("@cocalc/frontend/project/settings/archive-project", () => ({
+  ArchiveProject: () => <button type="button">Archive</button>,
 }));
 jest.mock("@cocalc/frontend/project/snapshots/create", () => ({
   __esModule: true,
@@ -216,7 +219,7 @@ describe("SettingsFlyout", () => {
     expect(screen.getByRole("button", { name: "Clone" })).toBeTruthy();
   });
 
-  it("shows SSH before Danger Zone in flyout settings", () => {
+  it("shows SSH before Location in flyout settings", () => {
     const { container } = render(
       <SettingsFlyout
         project_id="project-1"
@@ -226,8 +229,8 @@ describe("SettingsFlyout", () => {
 
     const text = container.textContent ?? "";
     expect(text.indexOf("SSH")).toBeGreaterThan(-1);
-    expect(text.indexOf("Danger Zone")).toBeGreaterThan(-1);
-    expect(text.indexOf("SSH")).toBeLessThan(text.indexOf("Danger Zone"));
+    expect(text.indexOf("Location")).toBeGreaterThan(-1);
+    expect(text.indexOf("SSH")).toBeLessThan(text.indexOf("Location"));
   });
 
   it("includes network egress in flyout settings", () => {

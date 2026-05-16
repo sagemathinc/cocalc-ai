@@ -3,8 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Card, Progress, Space, Tag, Typography } from "antd";
+import { Alert, Button, Card, Modal, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 
 import {
   CopyToClipBoard,
@@ -12,15 +13,24 @@ import {
   ProjectState,
   TimeAgo,
 } from "@cocalc/frontend/components";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
+import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
+import { linearList } from "@cocalc/frontend/project/info/utils";
+import useDiskUsage from "@cocalc/frontend/project/disk-usage/use-disk-usage";
+import useProjectInfo from "@cocalc/frontend/project/info/use-project-info";
+import { ManagedEgressRateSummary } from "@cocalc/frontend/purchases/managed-egress-history";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
-import { COLORS } from "@cocalc/util/theme";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { BACKUPS } from "@cocalc/util/consts/backups";
+import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { Project } from "./types";
-import { useCurrentUsage, useRunQuota } from "./run-quota/hooks";
+import { human_readable_size } from "@cocalc/util/misc";
+import { useRunQuota } from "./run-quota/hooks";
 
 const { Text, Title } = Typography;
 
@@ -53,34 +63,6 @@ function HealthRow({
   );
 }
 
-function usagePercent(display?: string): number | undefined {
-  const match = `${display ?? ""}`.match(/\((?:>|~)?([0-9.]+)%\)/);
-  if (!match?.[1]) return;
-  const value = Number(match[1]);
-  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : undefined;
-}
-
-function UsageLine({ label, usage }: { label: string; usage?: any }) {
-  if (!usage?.display) return null;
-  const percent = usagePercent(usage.display);
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-        <Text type="secondary">{label}</Text>
-        <Text style={{ fontSize: 12 }}>{usage.display}</Text>
-      </div>
-      {percent != null && (
-        <Progress
-          percent={percent}
-          showInfo={false}
-          size="small"
-          strokeColor={percent > 90 ? COLORS.BS_RED : COLORS.BS_GREEN_D}
-        />
-      )}
-    </div>
-  );
-}
-
 export function ProjectSettingsHealthRail({
   project_id,
   project,
@@ -104,7 +86,6 @@ export function ProjectSettingsHealthRail({
     return rawState.set("state", "opened");
   })();
   const runQuota = useRunQuota(project_id, null);
-  const currentUsage = useCurrentUsage({ project_id, shortStr: true });
   const lastBackup =
     projectMap?.getIn([project_id, "last_backup"]) ??
     (project as any).get("last_backup");
@@ -159,24 +140,22 @@ export function ProjectSettingsHealthRail({
             </Tag>
           </HealthRow>
         )}
-        {lastBackup && (
-          <HealthRow label="Last backup">
-            <TimeAgo date={lastBackup as any} />
-          </HealthRow>
-        )}
-        <div>
-          <UsageLine label="CPU" usage={(currentUsage as any).cores} />
-          <UsageLine label="Memory" usage={(currentUsage as any).memory} />
-          <UsageLine label="Disk" usage={(currentUsage as any).disk_quota} />
-        </div>
+        <BackupHealthRow project_id={project_id} lastBackup={lastBackup} />
+        <SnapshotHealthRow project_id={project_id} />
+        <StorageHealthRow project_id={project_id} />
+        <ProcessHealthRow project_id={project_id} />
         <HealthRow label="Network">
-          {runQuota.network == null ? (
-            <Tag>Unknown</Tag>
-          ) : (
-            <Tag color={runQuota.network ? "green" : "warning"}>
-              {runQuota.network ? "Enabled" : "Disabled"}
-            </Tag>
-          )}
+          <Space direction="vertical" size={2}>
+            <ManagedEgressRateSummary project_id={project_id} />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Internet:{" "}
+              {runQuota.network == null
+                ? "Unknown"
+                : runQuota.network
+                  ? "Enabled"
+                  : "Disabled"}
+            </Text>
+          </Space>
         </HealthRow>
         {runQuota.member_host != null && (
           <HealthRow label="Member host">
@@ -199,5 +178,199 @@ export function ProjectSettingsHealthRail({
         )}
       </Space>
     </Card>
+  );
+}
+
+function openDirectory(project_id: string, path: string) {
+  void redux.getProjectActions(project_id).open_directory(path, true, true);
+}
+
+function BackupHealthRow({
+  project_id,
+  lastBackup,
+}: {
+  project_id: string;
+  lastBackup: unknown;
+}) {
+  return (
+    <HealthRow label="Backups">
+      <Space direction="vertical" size={2}>
+        {lastBackup ? (
+          <Text>
+            Last backup <TimeAgo date={lastBackup as any} />
+          </Text>
+        ) : (
+          <Text type="secondary">No backup recorded</Text>
+        )}
+        <Button size="small" onClick={() => openDirectory(project_id, BACKUPS)}>
+          Open backups
+        </Button>
+      </Space>
+    </HealthRow>
+  );
+}
+
+function newestSnapshot(snapshots: SnapshotUsage[]): SnapshotUsage | undefined {
+  return snapshots.reduce<SnapshotUsage | undefined>((newest, snapshot) => {
+    const snapshotTime = new Date(snapshot.name).getTime();
+    if (!Number.isFinite(snapshotTime)) return newest;
+    if (newest == null) return snapshot;
+    const newestTime = new Date(newest.name).getTime();
+    return snapshotTime > newestTime ? snapshot : newest;
+  }, undefined);
+}
+
+function SnapshotHealthRow({ project_id }: { project_id: string }) {
+  const [loading, setLoading] = useState<boolean>(true);
+  const [snapshot, setSnapshot] = useState<SnapshotUsage | undefined>();
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setSnapshot(undefined);
+    (async () => {
+      try {
+        const usage =
+          await webapp_client.conat_client.hub.projects.allSnapshotUsage({
+            project_id,
+          });
+        if (!cancelled) {
+          setSnapshot(newestSnapshot(usage));
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setSnapshot(undefined);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [project_id]);
+
+  return (
+    <HealthRow label="Snapshots">
+      <Space direction="vertical" size={2}>
+        {snapshot ? (
+          <Text>
+            Last snapshot <TimeAgo date={snapshot.name as any} />
+          </Text>
+        ) : loading ? (
+          <Text type="secondary">Loading...</Text>
+        ) : (
+          <Text type="secondary">No snapshots found</Text>
+        )}
+        <Button
+          size="small"
+          onClick={() => openDirectory(project_id, SNAPSHOTS)}
+        >
+          Open snapshots
+        </Button>
+      </Space>
+    </HealthRow>
+  );
+}
+
+function ProcessHealthRow({ project_id }: { project_id: string }) {
+  const { info, disconnected } = useProjectInfo({
+    project_id,
+    intervalVisible: 10000,
+    intervalHidden: 60000,
+  });
+  const rows = info?.processes == null ? undefined : linearList(info.processes);
+
+  if (disconnected && rows == null) {
+    return (
+      <HealthRow label="Processes">
+        <Space direction="vertical" size={2}>
+          <Text type="secondary">Unavailable</Text>
+          <Button size="small" href="#runtime">
+            Open runtime
+          </Button>
+        </Space>
+      </HealthRow>
+    );
+  }
+
+  const processCount = rows?.length ?? 0;
+  const cpuPct =
+    rows == null
+      ? undefined
+      : rows.reduce((total, process) => total + process.cpu_pct, 0);
+  const memoryBytes =
+    rows == null
+      ? undefined
+      : rows.reduce((total, process) => total + process.mem, 0);
+
+  return (
+    <HealthRow label="Processes">
+      <Space direction="vertical" size={2}>
+        <Text>
+          {processCount} process{processCount === 1 ? "" : "es"}
+        </Text>
+        {cpuPct != null && memoryBytes != null && (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            CPU {cpuPct.toFixed(1)}% · Memory {human_readable_size(memoryBytes)}
+          </Text>
+        )}
+        <Button size="small" href="#runtime">
+          Open runtime
+        </Button>
+      </Space>
+    </HealthRow>
+  );
+}
+
+function StorageHealthRow({ project_id }: { project_id: string }) {
+  const [open, setOpen] = useState<boolean>(false);
+  const { quotas, live, retained, loading } = useDiskUsage({ project_id });
+  const quota = quotas[0];
+  const quotaLabel =
+    quota == null || quota.size <= 0
+      ? undefined
+      : `${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`;
+  const liveLabel = live ? human_readable_size(live.bytes) : undefined;
+  const retainedLabel = retained
+    ? human_readable_size(retained.bytes)
+    : undefined;
+
+  return (
+    <>
+      <HealthRow label="Storage">
+        <Space direction="vertical" size={2} style={{ width: "100%" }}>
+          {quotaLabel ? (
+            <Text>{quotaLabel}</Text>
+          ) : loading ? (
+            <Text type="secondary">Loading...</Text>
+          ) : (
+            <Text type="secondary">Unknown</Text>
+          )}
+          {(liveLabel || retainedLabel) && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {liveLabel ? `Live ${liveLabel}` : ""}
+              {liveLabel && retainedLabel ? " · " : ""}
+              {retainedLabel ? `Retained ${retainedLabel}` : ""}
+            </Text>
+          )}
+          <Button size="small" onClick={() => setOpen(true)}>
+            Disk usage
+          </Button>
+        </Space>
+      </HealthRow>
+      <Modal
+        open={open}
+        title="Disk Usage"
+        width={760}
+        footer={null}
+        onCancel={() => setOpen(false)}
+        destroyOnHidden
+      >
+        <DiskUsage project_id={project_id} compact />
+      </Modal>
+    </>
   );
 }

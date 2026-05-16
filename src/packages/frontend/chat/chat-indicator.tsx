@@ -94,7 +94,29 @@ function ChatButton({ project_id, path, chatState }) {
       setChatActions(undefined);
       return;
     }
-    setChatActions(ensureSideChatActions(project_id, path));
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const acquire = () => {
+      if (cancelled) return;
+      try {
+        setChatActions(ensureSideChatActions(project_id, path));
+      } catch (err) {
+        console.warn("failed to initialize side chat actions", {
+          project_id,
+          path,
+          err,
+        });
+        setChatActions(undefined);
+        retryTimer = setTimeout(acquire, 3000);
+      }
+    };
+    acquire();
+    return () => {
+      cancelled = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+      }
+    };
   }, [project_id, path]);
 
   useEffect(() => {
