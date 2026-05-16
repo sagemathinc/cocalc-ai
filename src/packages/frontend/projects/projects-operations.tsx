@@ -348,106 +348,113 @@ export function ProjectsOperations({
     });
   }
 
-  if (selected_project_ids.length > 0) {
-    return (
-      <>
+  return (
+    <>
+      {isFiltered && (
         <Alert
-          type="info"
+          type={visible_projects.length === 0 ? "warning" : "info"}
           showIcon
-          message={`${selected_project_ids.length} selected ${projectsLabelLower}`}
-          description={
-            <Space wrap style={{ marginTop: 8 }}>
-              <Button size="small" onClick={() => onSelectionChange([])}>
-                Clear Selection
-              </Button>
+          message={
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "16px",
+              }}
+            >
+              <div>
+                <FormattedMessage
+                  id="projects.operations.status"
+                  defaultMessage={`Showing {count, plural, one {# {projectLabel}} other {# {projectsLabel}}}{filterText, select, empty {} other { ({filterText})}}{searchHashtagText, select, empty {} other { matching {searchHashtagText}}}`}
+                  values={{
+                    count: visible_projects.length,
+                    filterText: filterText || "empty",
+                    searchHashtagText: searchHashtagText || "empty",
+                    projectLabel: projectLabelLower,
+                    projectsLabel: projectsLabelLower,
+                  }}
+                />
+              </div>
               <Button
                 size="small"
-                icon={<Icon name="stop" />}
-                onClick={confirmSelectedStop}
-              >
-                Stop
-              </Button>
-              <Button
-                size="small"
-                icon={<Icon name="eye-slash" />}
-                onClick={() => confirmSelectedHide(true)}
-              >
-                Hide
-              </Button>
-              <Button
-                size="small"
-                icon={<Icon name="eye" />}
-                onClick={() => confirmSelectedHide(false)}
-              >
-                Unhide
-              </Button>
-              <Button
-                size="small"
+                type={visible_projects.length === 0 ? "primary" : undefined}
                 icon={<Icon name="user-times" />}
-                disabled={selectedPlan.leaveIds.length === 0}
-                onClick={confirmSelectedRemoveMyself}
+                onClick={handleClearFilters}
               >
-                Remove Myself
+                <FormattedMessage
+                  id="projects.operations.clear-filter"
+                  defaultMessage="Clear Filter"
+                />
               </Button>
-              <Button
-                size="small"
-                danger
-                icon={<Icon name="trash" />}
-                onClick={confirmLeaveOrDeleteSelected}
-              >
-                Leave or Delete...
-              </Button>
-            </Space>
+            </div>
           }
         />
-        <FreshAuthModal {...freshAuthModalProps} />
-      </>
-    );
-  }
-
-  if (!isFiltered) {
-    return null;
-  }
-
-  return (
-    <Alert
-      type={visible_projects.length === 0 ? "warning" : "info"}
-      showIcon
-      message={
+      )}
+      {selected_project_ids.length > 0 && (
         <div
           style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "16px",
+            position: "fixed",
+            left: "50%",
+            bottom: 24,
+            transform: "translateX(-50%)",
+            zIndex: 1000,
+            maxWidth: "calc(100vw - 32px)",
+            background: "white",
+            border: `1px solid ${COLORS.GRAY_LL}`,
+            borderRadius: 999,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
+            padding: "8px 10px",
           }}
         >
-          <div>
-            <FormattedMessage
-              id="projects.operations.status"
-              defaultMessage={`Showing {count, plural, one {# {projectLabel}} other {# {projectsLabel}}}{filterText, select, empty {} other { ({filterText})}}{searchHashtagText, select, empty {} other { matching {searchHashtagText}}}`}
-              values={{
-                count: visible_projects.length,
-                filterText: filterText || "empty",
-                searchHashtagText: searchHashtagText || "empty",
-                projectLabel: projectLabelLower,
-                projectsLabel: projectsLabelLower,
-              }}
-            />
-          </div>
-          <Button
-            size="small"
-            type={visible_projects.length === 0 ? "primary" : undefined}
-            icon={<Icon name="user-times" />}
-            onClick={handleClearFilters}
-          >
-            <FormattedMessage
-              id="projects.operations.clear-filter"
-              defaultMessage="Clear Filter"
-            />
-          </Button>
+          <Space wrap size="small">
+            <Text strong style={{ padding: "0 8px", whiteSpace: "nowrap" }}>
+              {selected_project_ids.length} selected
+            </Text>
+            <Button size="small" onClick={() => onSelectionChange([])}>
+              Clear
+            </Button>
+            <Button
+              size="small"
+              icon={<Icon name="stop" />}
+              onClick={confirmSelectedStop}
+            >
+              Stop
+            </Button>
+            <Button
+              size="small"
+              icon={<Icon name="eye-slash" />}
+              onClick={() => confirmSelectedHide(true)}
+            >
+              Hide
+            </Button>
+            <Button
+              size="small"
+              icon={<Icon name="eye" />}
+              onClick={() => confirmSelectedHide(false)}
+            >
+              Unhide
+            </Button>
+            <Button
+              size="small"
+              icon={<Icon name="user-times" />}
+              disabled={selectedPlan.leaveIds.length === 0}
+              onClick={confirmSelectedRemoveMyself}
+            >
+              Remove Myself
+            </Button>
+            <Button
+              size="small"
+              danger
+              icon={<Icon name="trash" />}
+              onClick={confirmLeaveOrDeleteSelected}
+            >
+              Leave or Delete...
+            </Button>
+          </Space>
         </div>
-      }
-    />
+      )}
+      <FreshAuthModal {...freshAuthModalProps} />
+    </>
   );
 }
