@@ -41,6 +41,8 @@ interface Props {
   narrow: boolean; // if narrow, then remove columns like "Collaborators" to safe space
   filteredCollaborators: string[] | null;
   onFilteredCollaboratorsChange: (collaborators: string[] | null) => void;
+  selectedProjectIds: string[];
+  onSelectedProjectIdsChange: (project_ids: string[]) => void;
 }
 
 const PROJECTS_TABLE_SORT_KEY = "projects-table-sort";
@@ -51,6 +53,8 @@ export function ProjectsTable({
   narrow = false,
   filteredCollaborators,
   onFilteredCollaboratorsChange,
+  selectedProjectIds,
+  onSelectedProjectIdsChange,
 }: Props) {
   const intl = useIntl();
   const actions = useActions("projects");
@@ -262,6 +266,15 @@ export function ProjectsTable({
       columns={columns}
       dataSource={tableData}
       rowKey="project_id"
+      rowSelection={{
+        selectedRowKeys: selectedProjectIds,
+        preserveSelectedRowKeys: false,
+        onChange: (keys) =>
+          onSelectedProjectIdsChange(keys.map((key) => `${key}`)),
+        getCheckboxProps: (record) => ({
+          disabled: record.deleting,
+        }),
+      }}
       pagination={false}
       scroll={{ y: height }}
       onChange={handleTableChange}

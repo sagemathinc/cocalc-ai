@@ -150,6 +150,7 @@ export const ProjectsPage: React.FC = () => {
   const [createPanelOpen, setCreatePanelOpen] = useState(readCreatePanelOpen);
 
   const [tableHeight, setTableHeight] = useState<number>(400);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
 
   // Track filtered collaborators from table
   const [filteredCollaborators, setFilteredCollaborators] = useState<
@@ -204,6 +205,11 @@ export const ProjectsPage: React.FC = () => {
     selected_hashtags,
     search,
   ]);
+
+  useEffect(() => {
+    const visible = new Set(visible_projects);
+    setSelectedProjectIds((ids) => ids.filter((id) => visible.has(id)));
+  }, [visible_projects]);
 
   useEffect(() => {
     if (!project_map) return;
@@ -500,6 +506,8 @@ export const ProjectsPage: React.FC = () => {
                   <div ref={operationsRef}>
                     <ProjectsOperations
                       visible_projects={visible_projects}
+                      selected_project_ids={selectedProjectIds}
+                      onSelectionChange={setSelectedProjectIds}
                       filteredCollaborators={filteredCollaborators}
                       onClearCollaboratorFilter={handleClearCollaboratorFilter}
                     />
@@ -512,6 +520,8 @@ export const ProjectsPage: React.FC = () => {
                       narrow={narrow}
                       filteredCollaborators={filteredCollaborators}
                       onFilteredCollaboratorsChange={setFilteredCollaborators}
+                      selectedProjectIds={selectedProjectIds}
+                      onSelectedProjectIdsChange={setSelectedProjectIds}
                     />
                   </div>
 

@@ -10,26 +10,44 @@
 
 // cSpell:ignore undoable
 
-import { Alert, Button, Modal, Space } from "antd";
+import { Alert, Button, Modal, Space, Typography } from "antd";
 import { Map, Set } from "immutable";
 import { useMemo } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
+import { alert_message } from "@cocalc/frontend/alerts";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { useActions, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
-
-import RemoveMyself from "./remove-myself";
 
 interface Props {
   visible_projects: string[];
+  selected_project_ids: string[];
+  onSelectionChange: (project_ids: string[]) => void;
   filteredCollaborators?: string[] | null;
   onClearCollaboratorFilter?: () => void;
 }
 
+type BulkPlan = {
+  deleteIds: string[];
+  transferIds: string[];
+  leaveIds: string[];
+  skippedIds: string[];
+  actionableIds: string[];
+};
+
+const { Text } = Typography;
+
 export function ProjectsOperations({
   visible_projects,
+  selected_project_ids,
+  onSelectionChange,
   filteredCollaborators,
   onClearCollaboratorFilter,
 }: Props) {
@@ -39,6 +57,15 @@ export function ProjectsOperations({
   const projectLabelLower = projectLabel.toLowerCase();
   const projectsLabelLower = projectsLabel.toLowerCase();
   const actions = useActions("projects");
+  const project_map = useTypedRedux("projects", "project_map");
+  const account_id = useTypedRedux("account", "account_id");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) =>
+      Modal.error({
+        title: "Unable to leave or delete projects",
+        content: `${err}`,
+      }),
+  });
 
   const hidden = useTypedRedux("projects", "hidden");
   const search: string = useTypedRedux("projects", "search");
@@ -63,10 +90,6 @@ export function ProjectsOperations({
       (filteredCollaborators && filteredCollaborators.length > 0)
     );
   }, [hidden, search, selected_hashtags_for_filter, filteredCollaborators]);
-
-  if (!isFiltered) {
-    return null;
-  }
 
   // Build status message parts
   const filterParts: string[] = [];
@@ -104,230 +127,327 @@ export function ProjectsOperations({
     onClearCollaboratorFilter?.();
   }
 
-  // Handle Hide/Unhide All
-  function handleToggleHide() {
-    const description = intl.formatMessage(
-      {
-        id: "projects.operations.hide.description",
-        defaultMessage:
-          "Are you sure you want to {hidden, select, true {unhide} other {hide}} {count, plural, one {# {projectLabel}} other {# {projectsLabel}}}?",
-      },
-      {
-        hidden: !!hidden,
-        count: visible_projects.length,
-        projectLabel: projectLabelLower,
-        projectsLabel: projectsLabelLower,
-      },
-    );
+  const selectedPlan: BulkPlan = useMemo(() => {
+    const plan: BulkPlan = {
+      deleteIds: [],
+      transferIds: [],
+      leaveIds: [],
+      skippedIds: [],
+      actionableIds: [],
+    };
+    for (const project_id of selected_project_ids) {
+      const project = project_map?.get(project_id);
+      if (!project || project.getIn(["state", "state"]) === "deleting") {
+        plan.skippedIds.push(project_id);
+        continue;
+      }
+      const group = project.getIn(["users", account_id, "group"]);
+      if (group === "owner") {
+        let collaboratorCount = 0;
+        project.get("users")?.forEach((info) => {
+          if (info?.get?.("group") === "collaborator") {
+            collaboratorCount += 1;
+          }
+        });
+        if (collaboratorCount > 0) {
+          plan.transferIds.push(project_id);
+        } else {
+          plan.deleteIds.push(project_id);
+        }
+        plan.actionableIds.push(project_id);
+      } else if (group === "collaborator") {
+        plan.leaveIds.push(project_id);
+        plan.actionableIds.push(project_id);
+      } else {
+        plan.skippedIds.push(project_id);
+      }
+    }
+    return plan;
+  }, [selected_project_ids, project_map, account_id]);
 
-    const warning = intl.formatMessage(
-      {
-        id: "projects.operations.hide.warning",
-        defaultMessage:
-          "This {hidden, select, true {shows} other {hides}} the {count, plural, one {{projectLabel}} other {{projectsLabel}}} from you, not your collaborators.",
-      },
-      {
-        hidden: !!hidden,
-        count: visible_projects.length,
-        projectLabel: projectLabelLower,
-        projectsLabel: projectsLabelLower,
-      },
-    );
+  function selectedTitle(project_id: string): string {
+    return project_map?.get(project_id)?.get("title") ?? project_id;
+  }
 
-    const undoableText = intl.formatMessage(
-      {
-        id: "projects.operations.undoable",
-        defaultMessage: "This can be undone in {projectLabel} settings.",
-      },
-      { projectLabel: projectLabelLower },
-    );
+  function confirmSelectedHide(hide: boolean) {
+    if (!account_id) return;
 
     Modal.confirm({
-      title: intl.formatMessage(
-        {
-          id: "projects.operations.hide.title",
-          defaultMessage:
-            "{hidden, select, true {Unhide} other {Hide}} {projectsLabel}",
-        },
-        { hidden: !!hidden, projectsLabel },
-      ),
+      title: `${hide ? "Hide" : "Unhide"} selected ${projectsLabelLower}`,
       content: (
         <div>
-          <p>{description}</p>
-          <p>{warning}</p>
+          <p>
+            {hide ? "Hide" : "Unhide"} {selected_project_ids.length} selected{" "}
+            {projectsLabelLower}?
+          </p>
           <p style={{ fontSize: "0.9em", color: COLORS.GRAY_M }}>
-            {undoableText}
+            This only changes your own project list, not collaborator access.
           </p>
         </div>
       ),
-      okText: intl.formatMessage(
-        {
-          id: "projects.operations.hide.confirm",
-          defaultMessage: "Yes, {hidden, select, true {unhide} other {hide}}",
-        },
-        { hidden: !!hidden },
-      ),
-      okButtonProps: { danger: true },
-      onOk: () => {
-        for (const project_id of visible_projects) {
-          actions.toggle_hide_project(project_id);
+      okText: hide ? "Hide" : "Unhide",
+      onOk: async () => {
+        for (const project_id of selected_project_ids) {
+          await actions.set_project_hide(account_id, project_id, hide);
         }
       },
     });
   }
 
-  // Handle Stop All
-  function handleStopAll() {
+  function confirmSelectedStop() {
     Modal.confirm({
-      title: intl.formatMessage(
-        {
-          id: "projects.operations.stop.title",
-          defaultMessage: "Stop {projectsLabel}",
-        },
-        { projectsLabel },
-      ),
-      content: intl.formatMessage(
-        {
-          id: "projects.operations.stop.description",
-          defaultMessage:
-            "Stop {count, plural, one {this {projectLabel}} other {these # {projectsLabel}}}?",
-        },
-        {
-          count: visible_projects.length,
-          projectLabel: projectLabelLower,
-          projectsLabel: projectsLabelLower,
-        },
-      ),
-      okText: intl.formatMessage({
-        id: "projects.operations.stop.confirm",
-        defaultMessage: "Stop",
-      }),
+      title: `Stop selected ${projectsLabelLower}`,
+      content: `Stop ${selected_project_ids.length} selected ${projectsLabelLower}?`,
+      okText: "Stop",
       okButtonProps: { danger: true },
-      onOk: () => {
-        for (const project_id of visible_projects) {
-          actions.stop_project(project_id);
+      onOk: async () => {
+        for (const project_id of selected_project_ids) {
+          await actions.stop_project(project_id);
         }
       },
     });
   }
 
-  // Handle Restart All
-  function handleRestartAll() {
+  function confirmSelectedRemoveMyself() {
+    if (!account_id) return;
+    const projectIds = selectedPlan.leaveIds;
+    if (projectIds.length === 0) return;
     Modal.confirm({
-      title: intl.formatMessage(
-        {
-          id: "projects.operations.restart.title",
-          defaultMessage: "Restart {projectsLabel}",
-        },
-        { projectsLabel },
+      title: `Remove myself from selected ${projectsLabelLower}`,
+      content: (
+        <div>
+          <p>
+            Remove yourself from {projectIds.length} selected{" "}
+            {projectsLabelLower}?
+          </p>
+          <p>
+            <strong>You will no longer have access.</strong>
+          </p>
+          {selectedPlan.deleteIds.length + selectedPlan.transferIds.length >
+            0 && (
+            <p style={{ color: COLORS.GRAY_M }}>
+              {selectedPlan.deleteIds.length + selectedPlan.transferIds.length}{" "}
+              selected {projectsLabelLower} are owned by you and will be skipped
+              by this safe action.
+            </p>
+          )}
+        </div>
       ),
-      content: intl.formatMessage(
-        {
-          id: "projects.operations.restart.description",
-          defaultMessage:
-            "Restart {count, plural, one {this {projectLabel}} other {these # {projectsLabel}}}?",
-        },
-        {
-          count: visible_projects.length,
-          projectLabel: projectLabelLower,
-          projectsLabel: projectsLabelLower,
-        },
-      ),
-      okText: intl.formatMessage({
-        id: "projects.operations.restart.confirm",
-        defaultMessage: "Restart",
-      }),
+      okText: "Remove Myself",
       okButtonProps: { danger: true },
-      onOk: () => {
-        for (const project_id of visible_projects) {
-          actions.restart_project(project_id);
+      onOk: async () => {
+        for (const project_id of projectIds) {
+          await actions.remove_collaborator(project_id, account_id);
+          actions.redux.getActions("page").close_project_tab(project_id);
         }
+        onSelectionChange(
+          selected_project_ids.filter((id) => !projectIds.includes(id)),
+        );
       },
     });
   }
 
-  return (
-    <>
-      <Alert
-        type={visible_projects.length === 0 ? "warning" : "info"}
-        showIcon
-        title={
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: "16px",
-            }}
-          >
-            <div>
-              <FormattedMessage
-                id="projects.operations.status"
-                defaultMessage={`Showing {count, plural, one {# {projectLabel}} other {# {projectsLabel}}}{filterText, select, empty {} other { ({filterText})}}{searchHashtagText, select, empty {} other { matching {searchHashtagText}}}`}
-                values={{
-                  count: visible_projects.length,
-                  filterText: filterText || "empty",
-                  searchHashtagText: searchHashtagText || "empty",
-                  projectLabel: projectLabelLower,
-                  projectsLabel: projectsLabelLower,
-                }}
-              />
-            </div>
-            <Button
-              size="small"
-              type={visible_projects.length === 0 ? "primary" : undefined}
-              icon={<Icon name="user-times" />}
-              onClick={handleClearFilters}
-            >
-              <FormattedMessage
-                id="projects.operations.clear-filter"
-                defaultMessage="Clear Filter"
-              />
-            </Button>
+  function confirmLeaveOrDeleteSelected() {
+    const plan = selectedPlan;
+    if (plan.actionableIds.length === 0) {
+      Modal.warning({
+        title: "No selected projects can be changed",
+        content: "Select projects where you are an owner or collaborator.",
+      });
+      return;
+    }
+    Modal.confirm({
+      title: "Leave or delete selected projects",
+      width: 620,
+      icon: <Icon name="warning" style={{ color: COLORS.ANTD_RED }} />,
+      content: (
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <div>
+            This applies the same cleanup policy as account deletion, but keeps
+            your account.
           </div>
+          <ul style={{ marginBottom: 0 }}>
+            <li>
+              <strong>{plan.deleteIds.length}</strong> owned{" "}
+              {projectsLabelLower} with no collaborators will be permanently
+              deleted.
+            </li>
+            <li>
+              <strong>{plan.transferIds.length}</strong> owned{" "}
+              {projectsLabelLower} with collaborators will be transferred to the
+              most recently active collaborator, and you will be removed.
+            </li>
+            <li>
+              <strong>{plan.leaveIds.length}</strong> {projectsLabelLower} you
+              do not own will remove you as a collaborator.
+            </li>
+            <li>
+              <strong>{plan.skippedIds.length}</strong> selected{" "}
+              {projectsLabelLower} will be skipped.
+            </li>
+          </ul>
+          {plan.transferIds.length > 0 && (
+            <div>
+              <Text strong>Ownership will transfer for:</Text>
+              <ul style={{ maxHeight: 120, overflow: "auto", marginBottom: 0 }}>
+                {plan.transferIds.map((project_id) => (
+                  <li key={project_id}>{selectedTitle(project_id)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </Space>
+      ),
+      okText: "Leave or Delete",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        const accepted = await runFreshAuthAction(async () => {
+          const results =
+            await webapp_client.conat_client.hub.projects.leaveOrDeleteProjects(
+              {
+                project_ids: plan.actionableIds,
+                browser_id: webapp_client.browser_id,
+              },
+            );
+          const errors = results.filter((result) => result.action === "error");
+          const succeeded = results
+            .filter((result) => result.action !== "error")
+            .map((result) => result.project_id);
+          for (const project_id of succeeded) {
+            actions.redux.getActions("page").close_project_tab(project_id);
+          }
+          onSelectionChange(
+            selected_project_ids.filter((id) => !succeeded.includes(id)),
+          );
+          alert_message({
+            type: errors.length > 0 ? "warning" : "success",
+            message:
+              errors.length > 0
+                ? `Processed ${succeeded.length} project(s); ${errors.length} failed.`
+                : `Processed ${succeeded.length} selected project(s).`,
+          });
+          if (errors.length > 0) {
+            Modal.error({
+              title: "Some projects could not be processed",
+              content: (
+                <ul>
+                  {errors.map((result) => (
+                    <li key={result.project_id}>
+                      {selectedTitle(result.project_id)}: {result.error}
+                    </li>
+                  ))}
+                </ul>
+              ),
+            });
+          }
+        });
+        if (!accepted) {
+          return;
         }
-        description={
-          visible_projects.length > 0 ? (
-            <Space wrap style={{ marginTop: "8px" }}>
-              <Button
-                size="small"
-                icon={<Icon name={hidden ? "eye" : "eye-slash"} />}
-                onClick={handleToggleHide}
-              >
-                <FormattedMessage
-                  id="projects.operations.hide.button"
-                  defaultMessage="{hidden, select, true {Unhide All} other {Hide All}}"
-                  values={{ hidden: !!hidden }}
-                />
-              </Button>
+      },
+    });
+  }
 
+  if (selected_project_ids.length > 0) {
+    return (
+      <>
+        <Alert
+          type="info"
+          showIcon
+          message={`${selected_project_ids.length} selected ${projectsLabelLower}`}
+          description={
+            <Space wrap style={{ marginTop: 8 }}>
+              <Button size="small" onClick={() => onSelectionChange([])}>
+                Clear Selection
+              </Button>
               <Button
                 size="small"
                 icon={<Icon name="stop" />}
-                onClick={handleStopAll}
+                onClick={confirmSelectedStop}
               >
-                <FormattedMessage
-                  id="projects.operations.stop.button"
-                  defaultMessage="Stop All"
-                />
+                Stop
               </Button>
-
               <Button
                 size="small"
-                icon={<Icon name="sync-alt" />}
-                onClick={handleRestartAll}
+                icon={<Icon name="eye-slash" />}
+                onClick={() => confirmSelectedHide(true)}
               >
-                <FormattedMessage
-                  id="projects.operations.restart.button"
-                  defaultMessage="Restart All"
-                />
+                Hide
               </Button>
-
-              <RemoveMyself project_ids={visible_projects} size="small" />
+              <Button
+                size="small"
+                icon={<Icon name="eye" />}
+                onClick={() => confirmSelectedHide(false)}
+              >
+                Unhide
+              </Button>
+              <Button
+                size="small"
+                icon={<Icon name="user-times" />}
+                disabled={selectedPlan.leaveIds.length === 0}
+                onClick={confirmSelectedRemoveMyself}
+              >
+                Remove Myself
+              </Button>
+              <Button
+                size="small"
+                danger
+                icon={<Icon name="trash" />}
+                onClick={confirmLeaveOrDeleteSelected}
+              >
+                Leave or Delete...
+              </Button>
             </Space>
-          ) : undefined
-        }
-      />
-    </>
+          }
+        />
+        <FreshAuthModal {...freshAuthModalProps} />
+      </>
+    );
+  }
+
+  if (!isFiltered) {
+    return null;
+  }
+
+  return (
+    <Alert
+      type={visible_projects.length === 0 ? "warning" : "info"}
+      showIcon
+      message={
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "16px",
+          }}
+        >
+          <div>
+            <FormattedMessage
+              id="projects.operations.status"
+              defaultMessage={`Showing {count, plural, one {# {projectLabel}} other {# {projectsLabel}}}{filterText, select, empty {} other { ({filterText})}}{searchHashtagText, select, empty {} other { matching {searchHashtagText}}}`}
+              values={{
+                count: visible_projects.length,
+                filterText: filterText || "empty",
+                searchHashtagText: searchHashtagText || "empty",
+                projectLabel: projectLabelLower,
+                projectsLabel: projectsLabelLower,
+              }}
+            />
+          </div>
+          <Button
+            size="small"
+            type={visible_projects.length === 0 ? "primary" : undefined}
+            icon={<Icon name="user-times" />}
+            onClick={handleClearFilters}
+          >
+            <FormattedMessage
+              id="projects.operations.clear-filter"
+              defaultMessage="Clear Filter"
+            />
+          </Button>
+        </div>
+      }
+    />
   );
 }

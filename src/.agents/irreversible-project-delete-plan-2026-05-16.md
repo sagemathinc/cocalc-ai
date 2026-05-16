@@ -94,10 +94,10 @@ Policy:
   the project as part of account deletion.
 - If the deleting account owns a project with one or more remaining
   collaborators, automatically transfer ownership to a remaining collaborator.
-- Choose the new owner as the remaining collaborator with the most unused global
-  storage quota.
-- If storage/quota data cannot be computed, fall back to a deterministic order:
-  oldest collaborator first, then account id.
+- Choose the new owner as the remaining collaborator who most recently used the
+  project, using `projects.last_active`.
+- If project activity data is unavailable, fall back to deterministic account-id
+  ordering.
 - If the project exceeds the new owner's quota, still transfer it. The new owner
   is then over quota and can resolve that by deleting the project, upgrading, or
   reducing storage.
@@ -462,7 +462,7 @@ should be admin/debug-only and clearly named `project soft-delete`.
 - Define account-deletion ownership transfer:
   - hard-delete owned projects with no other collaborators;
   - transfer owned projects with remaining collaborators to the collaborator
-    with the most unused global storage quota;
+    who most recently used the project;
   - notify the new owner;
   - do not block transfer if the project puts the new owner over quota.
 - Add backend-only `transferProjectOwnership` with multibay-safe routing and
@@ -472,9 +472,9 @@ should be admin/debug-only and clearly named `project soft-delete`.
   - collaborator cannot;
   - admin cannot use normal user path unless using explicit admin path;
   - account deletion hard-deletes owner-only projects;
-  - account deletion transfers shared projects to the collaborator with the most
-    unused storage quota;
-  - transfer falls back deterministically when quota data is unavailable;
+  - account deletion transfers shared projects to the collaborator who most
+    recently used the project;
+  - transfer falls back deterministically when activity data is unavailable;
   - transfer updates storage and runtime sponsorship attribution from the deleted
     account to the new owner;
   - deleted/missing project returns stable errors.
@@ -602,7 +602,7 @@ runtime-slot tables.
 
 ### Phase 8: Remove or Quarantine Soft Delete
 
-USER:  just remove it completely and all code, database fields, etc., cocalc-ai is NOT RELEASED YET, so it's fine to do this.
+USER: just remove it completely and all code, database fields, etc., cocalc-ai is NOT RELEASED YET, so it's fine to do this.
 
 Options:
 
@@ -641,16 +641,16 @@ Add operator CLI/report:
 
 - Should normal hard delete type-confirm by project title, project id, or both?
   Recommendation: accept either exact project id or exact current title, but
-  prefer project id in CLI.   User: agreed.
+  prefer project id in CLI. User: agreed.
 - Should admins be allowed to delete via the normal UI? Recommendation: no;
-  expose explicit admin/support tooling to make this auditable.   User: I can't think of any reason admin delete would be needed, so we can defer this until later.
+  expose explicit admin/support tooling to make this auditable. User: I can't think of any reason admin delete would be needed, so we can defer this until later.
 - What should the default backup snapshot retention be? Recommendation:
   schedule snapshot deletion with a short backend-controlled delay; do not
-  expose a normal-user retention choice.  User: do you mean rustic?  If so -- as short as will work.
+  expose a normal-user retention choice. User: do you mean rustic? If so -- as short as will work.
 - Should deleted-but-not-yet-cleaned projects count toward project limits?
   Recommendation: once the project row is removed and hard-delete LRO is
   accepted, it does not count, but admission rate limits prevent churn abuse.
-  If cleanup fails before removing the row, it should continue to count.  User: agreed; it no longer counts.
+  If cleanup fails before removing the row, it should continue to count. User: agreed; it no longer counts.
 
 ## Acceptance Criteria
 

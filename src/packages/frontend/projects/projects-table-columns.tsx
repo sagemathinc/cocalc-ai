@@ -15,7 +15,7 @@ import type { SortOrder } from "antd/es/table/interface";
 
 import type { IntlShape } from "react-intl";
 
-import { Avatar, Tag, Typography } from "antd";
+import { Avatar, Button, Tag, Typography } from "antd";
 
 import { Icon, IconName, TimeAgo } from "@cocalc/frontend/components";
 import { TimeElapsed } from "@cocalc/frontend/components/time-elapsed";
@@ -118,7 +118,7 @@ export function getProjectTableColumns(
       ? [
           {
             key: "expand",
-            width: 48,
+            width: 90,
             align: "center" as const,
             onCell: (record: ProjectTableRecord) => ({
               onClick: (e: React.MouseEvent) => {
@@ -136,15 +136,15 @@ export function getProjectTableColumns(
               // Render the expand icon based on whether this row is expanded
               const isExpanded = expandedRowKeys.includes(project_id);
               return (
-                <span
-                  style={{
-                    cursor: "pointer",
-                    fontSize: "18px",
-                    color: COLORS.GRAY_M,
-                  }}
+                <Button
+                  size="small"
+                  type={isExpanded ? "primary" : "default"}
+                  icon={
+                    <Icon name={isExpanded ? "minus-square" : "info-circle"} />
+                  }
                 >
-                  <Icon name={isExpanded ? "minus-square" : "plus-square"} />
-                </span>
+                  Details
+                </Button>
               );
             },
           },
@@ -196,7 +196,7 @@ export function getProjectTableColumns(
     },
     {
       title: (
-        <span style={{ paddingLeft: "48px" }}>
+        <span style={{ paddingLeft: IS_MOBILE ? undefined : "12px" }}>
           {intl.formatMessage(labels.project)}
         </span>
       ),
