@@ -26,6 +26,7 @@ import { BACKUPS } from "@cocalc/util/consts/backups";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { Project } from "./types";
 import { human_readable_size } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import MoveProject from "./move-project";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { StartButton } from "@cocalc/frontend/project/start-button";
@@ -50,11 +51,13 @@ function RailRow({
   label,
   children,
   action,
+  iconColor = COLORS.GRAY,
 }: {
   icon: IconName;
   label: string;
   children: ReactNode;
   action?: ReactNode;
+  iconColor?: string;
 }) {
   return (
     <div
@@ -69,7 +72,7 @@ function RailRow({
         paddingTop: 6,
       }}
     >
-      <Icon name={icon} style={{ color: "#6b7280" }} />
+      <Icon name={icon} style={{ color: iconColor }} />
       <div style={{ minWidth: 0 }}>
         <div>
           <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>
@@ -137,9 +140,6 @@ export function ProjectSettingsHealthRail({
         <Text strong>
           <Icon name="dashboard" /> Health
         </Text>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {rawProjectState || "unknown"}
-        </Text>
       </div>
       <Space direction="vertical" style={{ width: "100%" }} size={6}>
         <RuntimeHealthBlock
@@ -158,9 +158,14 @@ export function ProjectSettingsHealthRail({
             {shortProjectId(project_id)}
           </Text>
         </RailRow>
+        <RecoveryHealthRow project_id={project_id} lastBackup={lastBackup} />
+        <StorageHealthRow project_id={project_id} />
+        <ProcessHealthRow project_id={project_id} />
+        <NetworkHealthRow project_id={project_id} />
         {typeof userCount === "number" && (
           <RailRow
             icon="users"
+            iconColor={COLORS.GRAY}
             label="People"
             action={
               <Button size="small" href="#people" style={SMALL_ACTION_STYLE}>
@@ -173,10 +178,6 @@ export function ProjectSettingsHealthRail({
             </Text>
           </RailRow>
         )}
-        <RecoveryHealthRow project_id={project_id} lastBackup={lastBackup} />
-        <StorageHealthRow project_id={project_id} />
-        <ProcessHealthRow project_id={project_id} />
-        <NetworkHealthRow project_id={project_id} />
         {showNoInternetWarning && (
           <Alert
             type="warning"
@@ -218,7 +219,7 @@ function RuntimeHealthBlock({
         padding: "8px 8px 7px",
       }}
     >
-      <Icon name="server" style={{ color: "#16a34a" }} />
+      <Icon name="server" style={{ color: COLORS.BS_GREEN_D }} />
       <div style={{ minWidth: 0 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {displayProjectState ? (
@@ -270,45 +271,60 @@ function RecoveryHealthRow({
 }) {
   const { loading, snapshot } = useLatestSnapshot(project_id);
   return (
-    <RailRow
-      icon="life-ring"
-      label="Recovery"
-      action={
-        <Space size={4}>
-          <Button
-            size="small"
-            onClick={() => openDirectory(project_id, BACKUPS)}
-            style={SMALL_ACTION_STYLE}
-          >
-            Backup
-          </Button>
-          <Button
-            size="small"
-            onClick={() => openDirectory(project_id, SNAPSHOTS)}
-            style={SMALL_ACTION_STYLE}
-          >
-            Snap
-          </Button>
-        </Space>
-      }
-    >
-      <Text>
-        B:{" "}
-        {lastBackup ? (
-          <TimeAgo date={lastBackup as any} />
-        ) : (
-          <Text type="secondary">none</Text>
-        )}
-        {" · "}S:{" "}
-        {snapshot ? (
-          <TimeAgo date={snapshot.name as any} />
-        ) : loading ? (
-          <Text type="secondary">...</Text>
-        ) : (
-          <Text type="secondary">none</Text>
-        )}
-      </Text>
+    <RailRow icon="life-ring" iconColor={COLORS.COCALC_ORANGE} label="Recovery">
+      <Space direction="vertical" size={2} style={{ width: "100%" }}>
+        <RecoveryLine
+          action="Backup"
+          onOpen={() => openDirectory(project_id, BACKUPS)}
+          value={
+            lastBackup ? (
+              <TimeAgo date={lastBackup as any} />
+            ) : (
+              <Text type="secondary">none</Text>
+            )
+          }
+        />
+        <RecoveryLine
+          action="Snap"
+          onOpen={() => openDirectory(project_id, SNAPSHOTS)}
+          value={
+            snapshot ? (
+              <TimeAgo date={snapshot.name as any} />
+            ) : loading ? (
+              <Text type="secondary">...</Text>
+            ) : (
+              <Text type="secondary">none</Text>
+            )
+          }
+        />
+      </Space>
     </RailRow>
+  );
+}
+
+function RecoveryLine({
+  action,
+  onOpen,
+  value,
+}: {
+  action: string;
+  onOpen: () => void;
+  value: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        alignItems: "center",
+        display: "flex",
+        gap: 6,
+        justifyContent: "space-between",
+      }}
+    >
+      <Text>{value}</Text>
+      <Button size="small" onClick={onOpen} style={SMALL_ACTION_STYLE}>
+        {action}
+      </Button>
+    </div>
   );
 }
 
@@ -372,6 +388,7 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
     return (
       <RailRow
         icon="info-circle"
+        iconColor={COLORS.BLUE_DD}
         label="Processes"
         action={
           <Button
@@ -400,6 +417,7 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
   return (
     <RailRow
       icon="info-circle"
+      iconColor={COLORS.BLUE_DD}
       label="Processes"
       action={
         <Button
@@ -413,8 +431,9 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
     >
       <Space direction="vertical" size={0}>
         {cpuPct != null && memoryBytes != null && (
-          <Text>
-            CPU {cpuPct.toFixed(1)}% · Memory {human_readable_size(memoryBytes)}
+          <Text style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+            CPU {cpuPct.toFixed(1)}% · RAM{" "}
+            {human_readable_size(memoryBytes).replace(" ", "")}
           </Text>
         )}
       </Space>
@@ -437,6 +456,7 @@ function StorageHealthRow({ project_id }: { project_id: string }) {
   return (
     <RailRow
       icon="disk-round"
+      iconColor={COLORS.BLUE_D}
       label="Storage"
       action={
         <DiskUsage
@@ -477,6 +497,7 @@ function NetworkHealthRow({ project_id }: { project_id: string }) {
   return (
     <RailRow
       icon="network"
+      iconColor={COLORS.ANTD_LINK_BLUE}
       label="Network"
       action={
         <ManagedEgressHistoryButton
