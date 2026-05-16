@@ -265,7 +265,7 @@ describe("connected terminal resizing", () => {
       expect.any(Function),
     );
     expect(terminal["terminal"].write).toHaveBeenCalledWith(
-      expect.stringContaining("Preparing project session..."),
+      expect.stringContaining("Preparing your terminal session..."),
       expect.any(Function),
     );
 

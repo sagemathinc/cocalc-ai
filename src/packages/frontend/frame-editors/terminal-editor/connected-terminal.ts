@@ -147,7 +147,7 @@ function stoppedProjectTerminalMessage(cols: number | undefined): string {
 function connectingTerminalMessage(cols: number | undefined): string {
   return terminalStatusBox(cols, {
     title: "Connecting terminal",
-    primary: "Preparing project session...",
+    primary: "Preparing your terminal session...",
     secondary: ["This usually takes a few seconds."],
   });
 }
