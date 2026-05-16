@@ -129,7 +129,7 @@ function boxLine(content: string, width: number): string {
 
 function dividerLine(width: number): string {
   return boxLine(
-    `${ANSI_DIM_CYAN}${"─".repeat(width - 8)}${ANSI_RESET}`,
+    `${ANSI_DIM_CYAN}${"─".repeat(Math.max(18, Math.min(28, width - 20)))}${ANSI_RESET}`,
     width,
   );
 }
@@ -143,8 +143,7 @@ function stoppedProjectTerminalMessage(cols: number | undefined): string {
   const lines = [
     borderLine({ left: "╭", fill: "─", right: "╮", width }),
     boxLine("", width),
-    boxLine(`${ANSI_BOLD_CYAN}▶${ANSI_RESET}`, width),
-    boxLine(`${ANSI_BOLD_CYAN}Project stopped${ANSI_RESET}`, width),
+    boxLine(`${ANSI_BOLD_CYAN}>_  Project is stopped${ANSI_RESET}`, width),
     dividerLine(width),
     boxLine("", width),
     boxLine(
@@ -160,7 +159,7 @@ function stoppedProjectTerminalMessage(cols: number | undefined): string {
     boxLine("", width),
     borderLine({ left: "╰", fill: "─", right: "╯", width }),
   ];
-  return `\r\n\r\n${lines.map((line) => `${indent}${line}`).join("\r\n")}\r\n`;
+  return `\r\n${lines.map((line) => `${indent}${line}`).join("\r\n")}\r\n`;
 }
 
 export class Terminal<T extends CodeEditorState = CodeEditorState> {

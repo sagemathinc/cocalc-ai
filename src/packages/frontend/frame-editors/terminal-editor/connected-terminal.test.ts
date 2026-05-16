@@ -355,7 +355,7 @@ describe("connected terminal resizing", () => {
     );
     expect(terminal["terminal"].write).toHaveBeenCalledTimes(1);
     expect(terminal["terminal"].write).toHaveBeenCalledWith(
-      expect.stringContaining("Project stopped"),
+      expect.stringContaining("Project is stopped"),
       expect.any(Function),
     );
     expect(terminal["terminal"].write).toHaveBeenCalledWith(
@@ -403,7 +403,7 @@ describe("connected terminal resizing", () => {
     expect(terminalClient).not.toHaveBeenCalled();
     expect(showProjectStartRequiredModal).not.toHaveBeenCalled();
     expect(terminal["terminal"].write).toHaveBeenCalledWith(
-      expect.stringContaining("Project stopped"),
+      expect.stringContaining("Project is stopped"),
       expect.any(Function),
     );
     expect(terminal["terminal"].write).toHaveBeenCalledWith(
