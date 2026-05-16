@@ -31,7 +31,7 @@ import {
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
-import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
+import { MembershipStatusPanel } from "@cocalc/frontend/account/membership-status";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -179,8 +179,10 @@ export function StartButton({
       return;
     }
     minimalStartAttemptOpIdsRef.current.delete(startLroSummary.op_id);
-    Modal.error({
-      title: "Project start failed",
+    Modal.info({
+      title: runtimeSponsorDenial
+        ? "Select how to start project"
+        : "Project start failed",
       content: renderStartFailureDescription(),
       okText: "Close",
       width: 720,
@@ -236,10 +238,18 @@ export function StartButton({
   }
 
   function showStartError(err: unknown) {
+    const denial = extractRuntimeSponsorDenial(err);
+    if (denial) {
+      Modal.info({
+        title: "Select how to start project",
+        content: renderStartErrorDescription(err),
+        width: 720,
+      });
+      return;
+    }
     Modal.error({
       title: "Unable to start project",
       content: renderStartErrorDescription(err),
-      width: extractRuntimeSponsorDenial(err) ? 720 : undefined,
     });
   }
 
@@ -638,6 +648,7 @@ function RuntimeSponsorDenialDescription({
     try {
       await redux.getActions("projects").stop_project(projectToStopId);
       await redux.getActions("projects").start_project(project_id);
+      Modal.destroyAll();
     } catch (err) {
       setStopError(`${err}`);
     } finally {
@@ -657,6 +668,7 @@ function RuntimeSponsorDenialDescription({
         .getActions("projects")
         .set_project_runtime_sponsor_to_me(project_id);
       await redux.getActions("projects").start_project(project_id);
+      Modal.destroyAll();
     } catch (err) {
       setStopError(`${err}`);
     } finally {
@@ -728,10 +740,15 @@ function RuntimeSponsorDenialDescription({
           here because your account is not a collaborator.
         </div>
       )}
-      <MembershipPurchaseModal
+      <Modal
+        width={800}
         open={membershipOpen}
-        onClose={() => setMembershipOpen(false)}
-      />
+        title="Membership"
+        onCancel={() => setMembershipOpen(false)}
+        onOk={() => setMembershipOpen(false)}
+      >
+        <MembershipStatusPanel showHeader={false} />
+      </Modal>
     </div>
   );
 }

@@ -39,6 +39,13 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
+  const Modal = ({ children, open }: any) =>
+    open ? <div>{children}</div> : null;
+  Modal.confirm = jest.fn();
+  Modal.error = jest.fn();
+  Modal.info = jest.fn();
+  Modal.destroyAll = jest.fn();
+  Modal.useModal = jest.fn(() => [jest.fn(), null]);
   return {
     Alert: ({ title, description, children }: any) => (
       <div>
@@ -48,11 +55,7 @@ jest.mock("antd", () => {
       </div>
     ),
     Button,
-    Modal: {
-      confirm: jest.fn(),
-      error: jest.fn(),
-      destroyAll: jest.fn(),
-    },
+    Modal,
     Progress: Div,
     Space: Div,
     Spin: Div,
@@ -125,10 +128,9 @@ jest.mock("@cocalc/frontend/projects/host-operational", () => ({
 
 jest.mock("@cocalc/frontend/project/settings/move-project", () => () => null);
 
-jest.mock(
-  "@cocalc/frontend/account/membership-purchase-modal",
-  () => () => null,
-);
+jest.mock("@cocalc/frontend/account/membership-status", () => ({
+  MembershipStatusPanel: () => null,
+}));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -154,6 +156,7 @@ describe("StartButton", () => {
     mockStopProject.mockReset();
     mockSetProjectRuntimeSponsorToMe.mockReset();
     (Modal.confirm as jest.Mock).mockReset();
+    (Modal.info as jest.Mock).mockReset();
     mockAccountId = undefined;
     mockIsAdmin = false;
     startLroRecord = {
@@ -364,10 +367,9 @@ describe("StartButton", () => {
     );
 
     await waitFor(() => {
-      expect(Modal.error).toHaveBeenCalledWith(
+      expect(Modal.info).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: "Project start failed",
-          okText: "Close",
+          title: "Select how to start project",
         }),
       );
     });
