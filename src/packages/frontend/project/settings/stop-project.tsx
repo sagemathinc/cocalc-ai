@@ -7,6 +7,7 @@
 
 import { StopOutlined } from "@ant-design/icons";
 import { Button, Popconfirm } from "antd";
+import type { CSSProperties } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { useActions } from "@cocalc/frontend/app-framework";
 import { labels } from "@cocalc/frontend/i18n";
@@ -18,6 +19,7 @@ interface Props {
   size?;
   force?: boolean;
   compact?: boolean;
+  style?: CSSProperties;
 }
 
 export function StopProject({
@@ -26,6 +28,7 @@ export function StopProject({
   size,
   force,
   compact,
+  style,
 }: Props) {
   const actions = useActions("projects");
   const intl = useIntl();
@@ -61,7 +64,12 @@ export function StopProject({
       okText={<FormattedMessage {...labels.project_settings_stop_project_ok} />}
       cancelText={<CancelText />}
     >
-      <Button disabled={disabled || actions == null} size={size} danger={force}>
+      <Button
+        disabled={disabled || actions == null}
+        size={size}
+        danger={force}
+        style={style}
+      >
         <StopOutlined /> {force && "Force "}
         {compact ? (
           "Stop"

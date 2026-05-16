@@ -7,14 +7,10 @@ import { Alert, Button, Card, Progress, Space, Typography } from "antd";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
-import {
-  CopyToClipBoard,
-  Icon,
-  ProjectState,
-  TimeAgo,
-} from "@cocalc/frontend/components";
+import { Icon, ProjectState, TimeAgo } from "@cocalc/frontend/components";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
+import CopyButton from "@cocalc/frontend/components/copy-button";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { linearList } from "@cocalc/frontend/project/info/utils";
 import useDiskUsage from "@cocalc/frontend/project/disk-usage/use-disk-usage";
@@ -36,6 +32,7 @@ import { StartButton } from "@cocalc/frontend/project/start-button";
 import { StopProject } from "./stop-project";
 
 const { Text } = Typography;
+const SMALL_ACTION_STYLE = { minWidth: 64 } as const;
 
 function shortProjectId(project_id: string): string {
   return `${project_id.slice(0, 8)}...${project_id.slice(-4)}`;
@@ -69,7 +66,7 @@ function RailRow({
         alignItems: "center",
         lineHeight: 1.35,
         minWidth: 0,
-        paddingTop: 8,
+        paddingTop: 6,
       }}
     >
       <Icon name={icon} style={{ color: "#6b7280" }} />
@@ -122,7 +119,7 @@ export function ProjectSettingsHealthRail({
         border: "1px solid #d9e2ec",
         boxShadow: "0 8px 28px rgba(15, 23, 42, 0.05)",
       }}
-      styles={{ body: { padding: 16 } }}
+      styles={{ body: { padding: 12 } }}
     >
       <div
         style={{
@@ -144,7 +141,7 @@ export function ProjectSettingsHealthRail({
           {rawProjectState || "unknown"}
         </Text>
       </div>
-      <Space direction="vertical" style={{ width: "100%" }} size={8}>
+      <Space direction="vertical" style={{ width: "100%" }} size={6}>
         <RuntimeHealthBlock
           displayProjectState={displayProjectState}
           displayStateValue={displayStateValue}
@@ -152,21 +149,21 @@ export function ProjectSettingsHealthRail({
           rawProjectState={rawProjectState}
           startTs={startTs}
         />
-        <RailRow icon="copy" label="Project ID">
-          <CopyToClipBoard
-            value={project_id}
-            display={shortProjectId(project_id)}
-            size="small"
-            inputWidth="100%"
-            style={{ display: "block", width: "100%" }}
-          />
+        <RailRow
+          icon="copy"
+          label="Project ID"
+          action={<CopyButton value={project_id} size="small" noText />}
+        >
+          <Text code style={{ fontSize: 12 }}>
+            {shortProjectId(project_id)}
+          </Text>
         </RailRow>
         {typeof userCount === "number" && (
           <RailRow
             icon="users"
             label="People"
             action={
-              <Button size="small" href="#people">
+              <Button size="small" href="#people" style={SMALL_ACTION_STYLE}>
                 Open
               </Button>
             }
@@ -210,13 +207,15 @@ function RuntimeHealthBlock({
     <div
       style={{
         borderTop: "1px solid #edf2f7",
+        background: "linear-gradient(135deg, #f8fcf9, #ffffff)",
+        borderRadius: 10,
         display: "grid",
         gap: 8,
         gridTemplateColumns: "22px minmax(0, 1fr) auto",
         alignItems: "center",
         lineHeight: 1.35,
         minWidth: 0,
-        paddingTop: 8,
+        padding: "8px 8px 7px",
       }}
     >
       <Icon name="server" style={{ color: "#16a34a" }} />
@@ -233,13 +232,25 @@ function RuntimeHealthBlock({
             </Text>
           )}
         </div>
-        <MoveProject project_id={project_id} size="small" />
+        <div style={{ marginTop: 4 }}>
+          <MoveProject project_id={project_id} size="small" />
+        </div>
       </div>
       <div style={{ justifySelf: "end" }}>
         {rawProjectState === "running" ? (
-          <StopProject project_id={project_id} size="small" compact />
+          <StopProject
+            project_id={project_id}
+            size="small"
+            compact
+            style={SMALL_ACTION_STYLE}
+          />
         ) : (
-          <StartButton project_id={project_id} size="small" minimal />
+          <StartButton
+            project_id={project_id}
+            size="small"
+            minimal
+            style={SMALL_ACTION_STYLE}
+          />
         )}
       </div>
     </div>
@@ -267,12 +278,14 @@ function RecoveryHealthRow({
           <Button
             size="small"
             onClick={() => openDirectory(project_id, BACKUPS)}
+            style={SMALL_ACTION_STYLE}
           >
             Backup
           </Button>
           <Button
             size="small"
             onClick={() => openDirectory(project_id, SNAPSHOTS)}
+            style={SMALL_ACTION_STYLE}
           >
             Snap
           </Button>
@@ -361,7 +374,11 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
         icon="info-circle"
         label="Processes"
         action={
-          <Button size="small" onClick={() => openInfoPage(project_id)}>
+          <Button
+            size="small"
+            onClick={() => openInfoPage(project_id)}
+            style={SMALL_ACTION_STYLE}
+          >
             Monitor
           </Button>
         }
@@ -385,7 +402,11 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
       icon="info-circle"
       label="Processes"
       action={
-        <Button size="small" onClick={() => openInfoPage(project_id)}>
+        <Button
+          size="small"
+          onClick={() => openInfoPage(project_id)}
+          style={SMALL_ACTION_STYLE}
+        >
           Monitor
         </Button>
       }
@@ -423,6 +444,7 @@ function StorageHealthRow({ project_id }: { project_id: string }) {
           compact
           buttonText="Details"
           buttonSize="small"
+          style={SMALL_ACTION_STYLE}
         />
       }
     >
@@ -461,10 +483,11 @@ function NetworkHealthRow({ project_id }: { project_id: string }) {
           project_id={project_id}
           buttonText="Egress"
           size="small"
+          style={SMALL_ACTION_STYLE}
         />
       }
     >
-      <ManagedEgressSparkline project_id={project_id} />
+      <ManagedEgressSparkline project_id={project_id} height={20} />
     </RailRow>
   );
 }

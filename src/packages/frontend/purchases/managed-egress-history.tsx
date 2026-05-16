@@ -15,6 +15,7 @@ import {
   Typography,
 } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import type {
   ManagedEgressAccountSummary,
   ManagedEgressAdminHistory,
@@ -402,17 +403,24 @@ export function ManagedEgressHistoryButton({
   buttonText = "View egress history",
   size,
   type,
+  style,
 }: {
   project_id?: string;
   user_account_id?: string;
   buttonText?: string;
   size?: "small" | "middle" | "large";
   type?: "default" | "primary" | "dashed" | "link" | "text";
+  style?: CSSProperties;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button size={size} type={type} onClick={() => setOpen(true)}>
+      <Button
+        size={size}
+        type={type}
+        style={style}
+        onClick={() => setOpen(true)}
+      >
         {buttonText}
       </Button>
       {open ? (
