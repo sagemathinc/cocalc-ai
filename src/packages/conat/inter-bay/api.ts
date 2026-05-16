@@ -751,6 +751,11 @@ export interface AccountLocalVerifySignInPasswordResult {
   home_bay_id: string;
 }
 
+export interface AccountLocalRedeemVerifyEmailRequest {
+  email_address: string;
+  token: string;
+}
+
 export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
 }
@@ -1103,6 +1108,7 @@ export type AccountLocalMethod =
   | "create-impersonation-grant"
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
+  | "redeem-verify-email"
   | "reconcile-dedicated-host-purchase-session"
   | "close-dedicated-host-purchase-session"
   | "reserve-project-runtime-slot"
@@ -1826,6 +1832,9 @@ export interface InterBayAccountLocalApi {
   verifySignInPassword: (
     opts: AccountLocalVerifySignInPasswordRequest,
   ) => Promise<AccountLocalVerifySignInPasswordResult>;
+  redeemVerifyEmail: (
+    opts: AccountLocalRedeemVerifyEmailRequest,
+  ) => Promise<void>;
   reconcileDedicatedHostPurchaseSession: (
     opts: AccountLocalReconcileDedicatedHostPurchaseSessionRequest,
   ) => Promise<void>;
@@ -3188,6 +3197,15 @@ export function createInterBayAccountLocalClient({
       method: "verify-sign-in-password",
     }),
   });
+  const redeemVerifyEmailClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "redeemVerifyEmail">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "redeem-verify-email",
+    }),
+  });
   const reconcileDedicatedHostPurchaseSessionClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "reconcileDedicatedHostPurchaseSession">
   >({
@@ -3403,6 +3421,8 @@ export function createInterBayAccountLocalClient({
       await verifyFreshAuthCredentialsClient.verifyFreshAuthCredentials(opts),
     verifySignInPassword: async (opts) =>
       await verifySignInPasswordClient.verifySignInPassword(opts),
+    redeemVerifyEmail: async (opts) =>
+      await redeemVerifyEmailClient.redeemVerifyEmail(opts),
     reconcileDedicatedHostPurchaseSession: async (opts) =>
       await reconcileDedicatedHostPurchaseSessionClient.reconcileDedicatedHostPurchaseSession(
         opts,
@@ -3589,6 +3609,17 @@ export function createInterBayAccountLocalHandler({
         },
       },
     ),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "redeemVerifyEmail">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "redeem-verify-email",
+      }),
+      impl: {
+        redeemVerifyEmail: async (opts) => await impl.redeemVerifyEmail(opts),
+      },
+    }),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "reconcileDedicatedHostPurchaseSession">
     >({

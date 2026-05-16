@@ -61,6 +61,7 @@ import {
   validateRegistrationTokenDirect,
 } from "@cocalc/server/auth/tokens/redeem";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
+import { redeemVerifyEmailLocal } from "@cocalc/server/auth/redeem-verify-email";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import {
@@ -526,6 +527,9 @@ async function startAccountLocalService(): Promise<void> {
     }),
     verifySignInPassword: async ({ email_address, password }) =>
       await verifyLocalSignInPassword({ email_address, password }),
+    redeemVerifyEmail: async ({ email_address, token }) => {
+      await redeemVerifyEmailLocal(email_address, token);
+    },
     reconcileDedicatedHostPurchaseSession: async (opts) => {
       await reconcileDedicatedHostPurchaseSessionLocal(opts);
     },
