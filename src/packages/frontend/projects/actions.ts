@@ -183,6 +183,14 @@ function isFreshAuthRequiredError(err: unknown): boolean {
   return code === "fresh_auth_required" || message.includes("fresh auth");
 }
 
+function isProjectHardDeleting(project: any): boolean {
+  return project?.getIn?.(["state", "state"]) === "deleting";
+}
+
+function projectHardDeletingMessage(): string {
+  return "This project is being permanently deleted. It cannot be opened or started.";
+}
+
 type DirectProjectBootstrapRow = {
   project_id: string;
   title?: string | null;
@@ -1991,6 +1999,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
         await switch_to_project(opts.project_id);
       }
     }
+    if (isProjectHardDeleting(store.getIn(["project_map", opts.project_id]))) {
+      alert_message({
+        type: "warning",
+        message: projectHardDeletingMessage(),
+        timeout: 12,
+      });
+      return;
+    }
     const host_id = store.getIn(["project_map", opts.project_id, "host_id"]);
     if (typeof host_id === "string") {
       // Ensure host routing info is ready before any conat project API calls.
@@ -2273,6 +2289,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
       } = {},
     ): Promise<boolean> => {
       if (!store.getIn(["project_map", project_id])) {
+        return false;
+      }
+      if (isProjectHardDeleting(store.getIn(["project_map", project_id]))) {
+        const message = projectHardDeletingMessage();
+        redux.getProjectActions(project_id)?.setState({
+          control_error: message,
+        });
+        alert_message({ type: "warning", message, timeout: 12 });
         return false;
       }
       const lifecycleState = store.getIn([
@@ -2955,6 +2979,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
   restart_project = reuseInFlight(
     async (project_id: string, _options?): Promise<void> => {
+      if (isProjectHardDeleting(store.getIn(["project_map", project_id]))) {
+        const message = projectHardDeletingMessage();
+        redux.getProjectActions(project_id)?.setState({
+          control_error: message,
+        });
+        alert_message({ type: "warning", message, timeout: 12 });
+        return;
+      }
       this.project_log(project_id, {
         event: "project_restart_requested",
       });

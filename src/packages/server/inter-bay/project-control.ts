@@ -66,6 +66,7 @@ import {
   acceptProjectRehome,
   rehomeProjectOnOwningBay,
 } from "@cocalc/server/projects/rehome";
+import { assertProjectNotHardDeleting } from "@cocalc/server/projects/hard-delete-state";
 
 const LRO_TERMINAL_STATUSES = new Set<LroStatus>([
   "succeeded",
@@ -128,6 +129,7 @@ export async function handleProjectControlStart(
     project_id: req.project_id,
     epoch: req.epoch,
   });
+  await assertProjectNotHardDeleting({ project_id: req.project_id });
   const project = await getProject(req.project_id);
   const sponsor = await loadProjectRuntimeSponsor(req.project_id);
   await upsertProjectActiveOperation({
@@ -216,6 +218,7 @@ export async function handleProjectControlCheckStartAdmission(
     project_id: req.project_id,
     epoch: req.epoch,
   });
+  await assertProjectNotHardDeleting({ project_id: req.project_id });
   const sponsor = await loadProjectRuntimeSponsor(req.project_id);
   const bypassRuntimeSlotAdmission =
     req.managed_egress_override === "admin-host-drain";
@@ -245,6 +248,7 @@ export async function handleProjectControlStop(
     project_id: req.project_id,
     epoch: req.epoch,
   });
+  await assertProjectNotHardDeleting({ project_id: req.project_id });
   const project = await getProject(req.project_id);
   const sponsor = await loadProjectRuntimeSponsor(req.project_id);
   await upsertProjectActiveOperation({

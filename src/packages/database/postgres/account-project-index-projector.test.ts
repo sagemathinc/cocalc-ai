@@ -402,6 +402,58 @@ describe("account_project_index projector", () => {
     expect(remainingRows.rows).toHaveLength(0);
   });
 
+  it("does not resurrect account_project_index rows from stale hard-deleted project events", async () => {
+    await seedBaseRows();
+    await appendProjectOutboxEventForProject({
+      event_type: "project.created",
+      project_id: PROJECT_ID,
+      default_bay_id: LOCAL_BAY_ID,
+    });
+    await drainAccountProjectIndexProjection({
+      bay_id: LOCAL_BAY_ID,
+      limit: 10,
+      dry_run: false,
+    });
+
+    await appendProjectOutboxEventForProject({
+      event_type: "project.state_changed",
+      project_id: PROJECT_ID,
+      default_bay_id: LOCAL_BAY_ID,
+    });
+    await getPool().query("DELETE FROM projects WHERE project_id = $1", [
+      PROJECT_ID,
+    ]);
+
+    await expect(
+      drainAccountProjectIndexProjection({
+        bay_id: LOCAL_BAY_ID,
+        limit: 10,
+        dry_run: false,
+      }),
+    ).resolves.toMatchObject({
+      applied_events: 1,
+      inserted_rows: 0,
+      deleted_rows: 1,
+      feed_events: [
+        {
+          type: "project.remove",
+          account_id: ACCOUNT_LOCAL,
+          project_id: PROJECT_ID,
+          reason: "membership_removed",
+        },
+      ],
+      event_types: {
+        "project.state_changed": 1,
+      },
+    });
+
+    const remainingRows = await getPool().query(
+      "SELECT * FROM account_project_index WHERE project_id = $1",
+      [PROJECT_ID],
+    );
+    expect(remainingRows.rows).toHaveLength(0);
+  });
+
   it("uses the outbox event time for projected feed events during delayed drains", async () => {
     await seedBaseRows();
     await appendProjectOutboxEventForProject({

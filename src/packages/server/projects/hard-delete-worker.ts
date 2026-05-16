@@ -5,11 +5,15 @@ import type { LroSummary } from "@cocalc/conat/hub/api/lro";
 import { publishLroEvent, publishLroSummary } from "@cocalc/server/lro/stream";
 import { getEffectiveParallelOpsLimit } from "@cocalc/server/lro/worker-config";
 import { claimLroOps, touchLro, updateLro } from "@cocalc/server/lro/lro-db";
+import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
+import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   hardDeleteProject,
   processDueDeletedProjectBackupPurges,
   type HardDeleteProjectProgressUpdate,
 } from "@cocalc/server/projects/hard-delete";
+import { markProjectHardDeleteFailed } from "@cocalc/server/projects/hard-delete-state";
 
 const logger = getLogger("server:projects:hard-delete-worker");
 
@@ -196,6 +200,30 @@ async function handleHardDeleteOp(op: LroSummary): Promise<void> {
     });
     if (updated) {
       await publishSummarySafe(updated, "set-failed");
+    }
+    try {
+      const marked = await markProjectHardDeleteFailed({
+        project_id,
+        op_id: op.op_id,
+        error: `${err}`,
+      });
+      if (marked) {
+        await appendProjectOutboxEventForProject({
+          event_type: "project.state_changed",
+          project_id,
+          default_bay_id: getConfiguredBayId(),
+        });
+        await publishProjectAccountFeedEventsBestEffort({
+          project_id,
+          default_bay_id: getConfiguredBayId(),
+        });
+      }
+    } catch (stateErr) {
+      logger.warn("failed to mark project hard-delete failure", {
+        op_id: op.op_id,
+        project_id,
+        err: `${stateErr}`,
+      });
     }
     await progress({
       step: "done",

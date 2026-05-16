@@ -6,6 +6,10 @@ import deleteProjectControl from "@cocalc/server/projects/delete";
 import { setProjectDeleted as setProjectDeletedControl } from "@cocalc/server/projects/delete";
 import { assertHardDeleteProjectPermission } from "@cocalc/server/projects/hard-delete";
 import { assertProjectHardDeleteAdmission } from "@cocalc/server/projects/hard-delete-admission";
+import {
+  assertProjectNotHardDeleting,
+  markProjectHardDeleteAccepted,
+} from "@cocalc/server/projects/hard-delete-state";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 export * from "@cocalc/server/projects/collaborators";
@@ -1893,6 +1897,7 @@ async function runProjectStartLikeAction({
   stream_name: string;
 }> {
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  await assertProjectNotHardDeleting({ project_id });
   try {
     const ownership = await resolveProjectBay(project_id);
     if (ownership == null) {
@@ -2405,6 +2410,45 @@ export async function hardDeleteProject({
     },
     status: "queued",
     dedupe_key: `project-hard-delete:${project_id}`,
+  });
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const marked = await markProjectHardDeleteAccepted({
+      db: client,
+      project_id,
+      op_id: op.op_id,
+    });
+    if (!marked) {
+      throw new Error("project not found");
+    }
+    await appendProjectOutboxEventForProject({
+      db: client,
+      event_type: "project.state_changed",
+      project_id,
+      default_bay_id: getConfiguredBayId(),
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    await updateLro({
+      op_id: op.op_id,
+      status: "failed",
+      error: `${err}`,
+    });
+    throw err;
+  } finally {
+    client.release();
+  }
+  await publishProjectAccountFeedEventsBestEffort({
+    project_id,
+    default_bay_id: getConfiguredBayId(),
+  }).catch((err) => {
+    log.warn("hardDeleteProject: failed to publish deleting project feed", {
+      project_id,
+      op_id: op.op_id,
+      err: `${err}`,
+    });
   });
   await publishLroSummary({
     scope_type: op.scope_type,

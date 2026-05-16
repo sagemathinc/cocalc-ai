@@ -7,6 +7,7 @@ import { Alert, Button, Space, Switch } from "antd";
 import { useState, type ReactNode } from "react";
 import { defineMessage, FormattedMessage, useIntl } from "react-intl";
 
+import { redux } from "@cocalc/frontend/app-framework";
 import { Icon, SettingBox, type IconName } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { ProjectsActions } from "@cocalc/frontend/todo-types";
@@ -162,6 +163,9 @@ export function HideDeleteBox(props: Readonly<Props>) {
           title={projectTitle}
           name={projectName}
           onCancel={() => setDeleteModalOpen(false)}
+          onDeleted={() => {
+            redux.getActions("page").close_project_tab(project_id);
+          }}
         />
       </Space>
     );
