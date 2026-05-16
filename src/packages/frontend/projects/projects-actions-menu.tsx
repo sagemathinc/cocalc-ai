@@ -41,6 +41,10 @@ import {
   mapCloudRegionToR2Region,
 } from "@cocalc/util/consts";
 import { useProjectRegion } from "@cocalc/frontend/project/use-project-region";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 
 const FILES_SUBMENU_LIST_STYLE: CSS = {
   maxWidth: "80vw",
@@ -58,6 +62,14 @@ interface Props {
 export function ProjectActionsMenu({ record }: Props) {
   const [open, setOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => {
+      Modal.error({
+        title: "Unable to change project deletion state",
+        content: `${err}`,
+      });
+    },
+  });
   const intl = useIntl();
   const actions = useActions("projects");
   const account_id = useTypedRedux("account", "account_id");
@@ -179,12 +191,16 @@ export function ProjectActionsMenu({ record }: Props) {
             okText: "Delete",
             okButtonProps: { danger: true },
             onOk: async () => {
-              await actions.toggle_delete_project(record.project_id);
+              await runFreshAuthAction(async () => {
+                await actions.toggle_delete_project(record.project_id);
+              });
             },
           });
           return;
         }
-        await actions.toggle_delete_project(record.project_id);
+        await runFreshAuthAction(async () => {
+          await actions.toggle_delete_project(record.project_id);
+        });
         break;
       case "remove-self":
         Modal.confirm({
@@ -373,6 +389,7 @@ export function ProjectActionsMenu({ record }: Props) {
           <Icon name="ellipsis" rotate="90" />
         </span>
       </Dropdown>
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }

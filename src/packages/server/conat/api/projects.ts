@@ -164,6 +164,7 @@ import {
   reserveProjectRuntimeSlot,
 } from "@cocalc/server/projects/runtime-slots";
 import {
+  encodeRuntimeSponsorDenial,
   extractRuntimeSponsorDenial,
   formatRuntimeSponsorDenial,
   type RuntimeSponsorDenial,
@@ -527,6 +528,33 @@ function normalizeImportTargetPath(path?: string): string {
 
 async function getProjectHostId(project_id: string): Promise<string> {
   return (await getAssignedProjectHostInfo(project_id)).host_id;
+}
+
+const PROJECT_RUNTIME_LOG_STATES = new Set([
+  "running",
+  "starting",
+  "restarting",
+]);
+
+async function getProjectRuntimeLogInfo(project_id: string): Promise<{
+  host_id: string | null;
+  state: string;
+} | null> {
+  const { rows } = await getPool().query<{
+    host_id: string | null;
+    state: string | null;
+  }>(
+    "SELECT host_id, COALESCE(state->>'state', '') AS state FROM projects WHERE project_id=$1 LIMIT 1",
+    [project_id],
+  );
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    host_id: row.host_id ?? null,
+    state: row.state ?? "",
+  };
 }
 
 async function syncProjectSecretsCacheOnAssignedHost({
@@ -1601,6 +1629,20 @@ export async function getRuntimeLog({
 }): Promise<ProjectRuntimeLog> {
   await assertCollab({ account_id, project_id });
   const tail = normalizeLogTail(lines);
+  const info = await getProjectRuntimeLogInfo(project_id);
+  if (info != null && !PROJECT_RUNTIME_LOG_STATES.has(info.state)) {
+    return {
+      project_id,
+      host_id: info.host_id,
+      container: `project-${project_id}`,
+      lines: tail,
+      text: "",
+      found: false,
+      running: false,
+      available: false,
+      reason: "workspace is not running",
+    };
+  }
   let host_id: string;
   try {
     host_id = (await getAssignedProjectHostInfo(project_id)).host_id;
@@ -1814,6 +1856,35 @@ async function runProjectStartLikeAction({
   stream_name: string;
 }> {
   await assertCollabAllowRemoteProjectAccess({ account_id, project_id });
+  try {
+    const ownership = await resolveProjectBay(project_id);
+    if (ownership == null) {
+      throw new Error(`project ${project_id} not found`);
+    }
+    await getInterBayBridge()
+      .projectControl(ownership.bay_id, {
+        timeout_ms: PROJECT_START_CONTROL_TIMEOUT_MS,
+      })
+      .checkStartAdmission({
+        project_id,
+        account_id,
+        ...(restore_backup_id ? { restore_backup_id } : {}),
+        ...(autostart ? { autostart } : {}),
+        source_bay_id: getConfiguredBayId(),
+        ...(managed_egress_override ? { managed_egress_override } : {}),
+        epoch: ownership.epoch,
+      });
+  } catch (err) {
+    const runtimeSponsorDenial = extractRuntimeSponsorDenial(err);
+    if (runtimeSponsorDenial) {
+      const enrichedRuntimeSponsorDenial = await enrichRuntimeSponsorDenial({
+        denial: runtimeSponsorDenial,
+        account_id,
+      });
+      throw new Error(encodeRuntimeSponsorDenial(enrichedRuntimeSponsorDenial));
+    }
+    throw err;
+  }
   const op = await createLro({
     kind: "project-start",
     scope_type: "project",
@@ -2196,10 +2267,12 @@ export async function getProjectActiveOperation({
 
 export async function deleteProject({
   account_id,
+  browser_id,
   session_hash,
   project_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   project_id: string;
 }): Promise<void> {
@@ -2208,6 +2281,7 @@ export async function deleteProject({
   }
   await requireDangerousProjectMutationAuth({
     account_id,
+    browser_id,
     session_hash,
   });
   await deleteProjectControl({
@@ -2218,11 +2292,13 @@ export async function deleteProject({
 
 export async function setProjectDeleted({
   account_id,
+  browser_id,
   session_hash,
   project_id,
   deleted,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   project_id: string;
   deleted: boolean;
@@ -2232,6 +2308,7 @@ export async function setProjectDeleted({
   }
   await requireDangerousProjectMutationAuth({
     account_id,
+    browser_id,
     session_hash,
   });
   await setProjectDeletedControl({

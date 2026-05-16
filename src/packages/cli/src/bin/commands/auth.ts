@@ -22,6 +22,7 @@ export type AuthCommandDeps = {
   sanitizeProfileName: any;
   profileFromGlobals: any;
   saveAuthConfig: any;
+  maybeCreateLocalDevRememberMeCookie: any;
 };
 
 export function registerAuthCommand(
@@ -48,6 +49,7 @@ export function registerAuthCommand(
     sanitizeProfileName,
     profileFromGlobals,
     saveAuthConfig,
+    maybeCreateLocalDevRememberMeCookie,
   } = deps;
 
   const auth = program.command("auth").description("auth profile management");
@@ -163,6 +165,14 @@ export function registerAuthCommand(
       new Set([cookieNameFor(apiBaseUrl, "remember_me"), "remember_me"]),
     ).filter(Boolean);
     return names.map((name) => `${name}=${value}`).join("; ");
+  }
+
+  function cookieHeaderHasRememberMe(
+    cookieHeader: string | undefined,
+  ): boolean {
+    return `${cookieHeader ?? ""}`
+      .split(";")
+      .some((part) => part.trim().startsWith("remember_me="));
   }
 
   async function resolveBrowserLoginEmail(
@@ -665,10 +675,14 @@ Examples:
     .command("elevate")
     .description("elevate the current CLI session via browser approval")
     .option("--extended", "keep this elevation active for 8 hours")
+    .option(
+      "--dev",
+      "dev-only: elevate using the hub password instead of browser approval",
+    )
     .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
     .action(
       async (
-        opts: { extended?: boolean; pollMs?: string },
+        opts: { extended?: boolean; dev?: boolean; pollMs?: string },
         command: Command,
       ) => {
         await runLocalCommand(command, "auth elevate", async (globals: any) => {
@@ -676,11 +690,114 @@ Examples:
           const apiBaseUrl = effective.api
             ? normalizeUrl(effective.api)
             : defaultApiBaseUrl();
-          const cookieHeader = buildCookieHeader(apiBaseUrl, effective);
+          const hubPassword =
+            effective.hubPassword ??
+            globals.hubPassword ??
+            env.COCALC_HUB_PASSWORD;
+          let cookieHeader = buildCookieHeader(
+            apiBaseUrl,
+            opts.dev
+              ? {
+                  ...effective,
+                  hubPassword,
+                  disableEnvAuthDefaults: false,
+                }
+              : effective,
+          );
+          let bootstrappedDevSession:
+            | {
+                value: string;
+                account_id?: string | null;
+                fresh_auth_until?: string | Date | null;
+                factor_level?: string | null;
+              }
+            | undefined;
+          if (opts.dev && !cookieHeaderHasRememberMe(cookieHeader)) {
+            const requestedAccountId =
+              getExplicitAccountId(effective) ??
+              (!effective.disableEnvAuthDefaults
+                ? env.COCALC_ACCOUNT_ID
+                : undefined);
+            if (!requestedAccountId) {
+              throw new Error(
+                "dev CLI elevation without an existing cookie requires --account-id or COCALC_ACCOUNT_ID",
+              );
+            }
+            bootstrappedDevSession = await maybeCreateLocalDevRememberMeCookie({
+              globals: {
+                ...effective,
+                hubPassword,
+                disableEnvAuthDefaults: false,
+              },
+              apiBaseUrl,
+              requestedAccountId,
+              freshAuthDuration: opts.extended ? "extended" : "default",
+            });
+            if (!bootstrappedDevSession?.value) {
+              throw new Error(
+                "dev CLI elevation without an existing cookie requires local dev hub-password access",
+              );
+            }
+            bootstrappedDevSession = {
+              ...bootstrappedDevSession,
+              account_id: requestedAccountId,
+            };
+            cookieHeader = buildCookieHeader(apiBaseUrl, {
+              ...effective,
+              cookie: buildRememberMeCookieHeader(
+                apiBaseUrl,
+                bootstrappedDevSession.value,
+              ),
+              hubPassword,
+              disableEnvAuthDefaults: false,
+            });
+          }
           if (!cookieHeader) {
             throw new Error(
               "interactive CLI sign-in is required before elevation",
             );
+          }
+          if (opts.dev) {
+            if (bootstrappedDevSession) {
+              return {
+                account_id:
+                  (`${bootstrappedDevSession.account_id ?? ""}`.trim() ||
+                    getExplicitAccountId(effective)) ??
+                  null,
+                factor_level:
+                  `${bootstrappedDevSession.factor_level ?? "totp"}`.trim() ||
+                  null,
+                fresh_auth_until: bootstrappedDevSession.fresh_auth_until
+                  ? new Date(
+                      bootstrappedDevSession.fresh_auth_until,
+                    ).toISOString()
+                  : null,
+                interactive_session: true,
+                bootstrapped_session: true,
+                dev: true,
+              };
+            }
+            const status = await postCliAuthApi<{
+              dev?: boolean;
+              factor_level?: string;
+              fresh_auth_until?: string | Date | null;
+            }>({
+              apiBaseUrl,
+              endpoint: "auth/cli/elevate/dev",
+              body: {
+                duration: opts.extended ? "extended" : "default",
+              },
+              cookieHeader,
+            });
+            return {
+              account_id: getExplicitAccountId(effective) ?? null,
+              factor_level: `${status.factor_level ?? ""}`.trim() || null,
+              fresh_auth_until: status.fresh_auth_until
+                ? new Date(status.fresh_auth_until).toISOString()
+                : null,
+              interactive_session: true,
+              dev: status.dev === true,
+            };
           }
           const start = await postCliAuthApi<CliChallengeStart>({
             apiBaseUrl,

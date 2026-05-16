@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertProjectLogRuntimeAvailable,
   assertProjectRehomeConfirmed,
   getMovePlacementFallbackTimeoutMs,
   readProjectLogPage,
@@ -52,6 +53,24 @@ test("assertProjectRehomeConfirmed refuses rehome without --yes", () => {
       dest_bay_id: "bay-2",
       yes: true,
     }),
+  );
+});
+
+test("assertProjectLogRuntimeAvailable rejects known non-runtime states", () => {
+  assert.doesNotThrow(() =>
+    assertProjectLogRuntimeAvailable({ project: { state: null } }),
+  );
+  assert.doesNotThrow(() =>
+    assertProjectLogRuntimeAvailable({
+      project: { state: { state: "running" } },
+    }),
+  );
+  assert.throws(
+    () =>
+      assertProjectLogRuntimeAvailable({
+        project: { state: { state: "opened" } },
+      }),
+    /project activity log is unavailable because the project is opened/,
   );
 });
 

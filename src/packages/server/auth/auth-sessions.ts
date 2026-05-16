@@ -357,11 +357,13 @@ export async function setSessionFreshAuth({
   session_hash,
   factor_level,
   fresh_auth_until,
+  metadata_patch,
 }: {
   account_id: string;
   session_hash: string;
   factor_level: AuthSessionFactorLevel;
   fresh_auth_until: Date;
+  metadata_patch?: Record<string, unknown>;
 }): Promise<void> {
   const cleanedSessionHash = `${session_hash ?? ""}`.trim();
   if (!cleanedSessionHash) {
@@ -392,10 +394,16 @@ export async function setSessionFreshAuth({
                      WHEN $3::VARCHAR(32) = 'none' THEN factor_level
                      ELSE $3::VARCHAR(32)
                    END,
+                 metadata = COALESCE(metadata, '{}'::JSONB) || $4::JSONB,
                  revoked_at = NULL
            WHERE session_hash = $1::CHAR(127)
         `,
-        [cleanedSessionHash, fresh_auth_until, factor_level],
+        [
+          cleanedSessionHash,
+          fresh_auth_until,
+          factor_level,
+          JSON.stringify(metadata_patch ?? {}),
+        ],
       );
     },
   });

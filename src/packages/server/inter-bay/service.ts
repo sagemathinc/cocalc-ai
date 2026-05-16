@@ -19,6 +19,7 @@ import {
   createInterBayProjectControlAddressHandler,
   createInterBayProjectControlActiveOpHandler,
   createInterBayProjectControlBackupHandler,
+  createInterBayProjectControlCheckStartAdmissionHandler,
   createInterBayBayDirectoryHandlers,
   createInterBayDirectoryHandlers,
   createInterBayProjectControlHandler,
@@ -149,6 +150,7 @@ import {
   handleProjectControlAddress,
   handleProjectControlActiveOperation,
   handleProjectControlBackup,
+  handleProjectControlCheckStartAdmission,
   handleProjectControlAcceptRehome,
   handleProjectControlSetUsageAccount,
   handleProjectControlMove,
@@ -698,6 +700,9 @@ async function startAccountProjectFeedService(): Promise<void> {
 async function startProjectControlStartService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayProjectControlApi = {
+    checkStartAdmission: async (opts) => {
+      await handleProjectControlCheckStartAdmission(opts);
+    },
     start: async (opts) => {
       await handleProjectControlStart(opts);
     },
@@ -724,6 +729,12 @@ async function startProjectControlStartService(): Promise<void> {
   });
   services.push(
     createInterBayProjectControlHandler({
+      client,
+      bay_id,
+      parallel: true,
+      impl,
+    }),
+    createInterBayProjectControlCheckStartAdmissionHandler({
       client,
       bay_id,
       parallel: true,

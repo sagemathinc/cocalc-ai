@@ -27,6 +27,7 @@ jest.mock("@cocalc/server/auth/two-factor", () => ({
 }));
 
 describe("requireDangerousSessionAuth", () => {
+  const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const ACTOR_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
   const SESSION_HASH = "session-hash";
@@ -34,6 +35,7 @@ describe("requireDangerousSessionAuth", () => {
   const FACTOR_VERIFIED_AT = new Date("2026-05-14T12:00:01.000Z");
 
   beforeEach(() => {
+    process.env.NODE_ENV = ORIGINAL_NODE_ENV;
     jest.resetModules();
     requireFreshAuthForSessionHashMock = jest.fn(async () => ({
       account_id: ACCOUNT_ID,
@@ -43,6 +45,10 @@ describe("requireDangerousSessionAuth", () => {
     }));
     getImpersonationSessionBySessionHashMock = jest.fn(async () => undefined);
     hasActiveSecondFactorMock = jest.fn(async () => true);
+  });
+
+  afterEach(() => {
+    process.env.NODE_ENV = ORIGINAL_NODE_ENV;
   });
 
   it("requires a signed-in account", async () => {
@@ -121,6 +127,55 @@ describe("requireDangerousSessionAuth", () => {
     ).rejects.toMatchObject({
       code: "two_factor_required",
       message: "two-factor authentication is required for this operation",
+    });
+  });
+
+  it("accepts dev CLI fresh auth as a local non-production second factor", async () => {
+    process.env.NODE_ENV = "development";
+    hasActiveSecondFactorMock = jest.fn(async () => false);
+    requireFreshAuthForSessionHashMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      session_hash: SESSION_HASH,
+      fresh_auth_until: new Date(Date.now() + 60_000),
+      factor_level: "totp",
+      metadata: { dev_cli_fresh_auth: true },
+    }));
+    const { requireDangerousSessionAuth } =
+      await import("./dangerous-session-auth");
+
+    await expect(
+      requireDangerousSessionAuth({
+        account_id: ACCOUNT_ID,
+        session_hash: SESSION_HASH,
+        require_second_factor: true,
+      }),
+    ).resolves.toMatchObject({
+      account_id: ACCOUNT_ID,
+      session_hash: SESSION_HASH,
+    });
+  });
+
+  it("does not accept dev CLI fresh auth in production", async () => {
+    process.env.NODE_ENV = "production";
+    hasActiveSecondFactorMock = jest.fn(async () => false);
+    requireFreshAuthForSessionHashMock = jest.fn(async () => ({
+      account_id: ACCOUNT_ID,
+      session_hash: SESSION_HASH,
+      fresh_auth_until: new Date(Date.now() + 60_000),
+      factor_level: "totp",
+      metadata: { dev_cli_fresh_auth: true },
+    }));
+    const { requireDangerousSessionAuth } =
+      await import("./dangerous-session-auth");
+
+    await expect(
+      requireDangerousSessionAuth({
+        account_id: ACCOUNT_ID,
+        session_hash: SESSION_HASH,
+        require_second_factor: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "two_factor_required",
     });
   });
 

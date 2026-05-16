@@ -31,6 +31,15 @@ const DEFAULT_HISTORY_POINTS = 96;
 type StorageBucketKey = "home" | "environment";
 type StorageMetricKey = "quota" | "live" | "retained" | "home" | "environment";
 type StorageFindingSeverity = "info" | "warning" | "error";
+type ProjectRuntimeStateLike = {
+  state?: { state?: string } | null;
+};
+
+const PROJECT_STORAGE_RUNTIME_STATES = new Set([
+  "running",
+  "starting",
+  "restarting",
+]);
 
 interface StorageBucketBreakdownResult {
   key: StorageBucketKey;
@@ -66,6 +75,20 @@ interface StorageRecommendation {
   priority: number;
   message: string;
   actions: StorageRecommendationAction[];
+}
+
+function assertProjectStorageRuntimeAvailable({
+  project,
+}: {
+  project: ProjectRuntimeStateLike;
+}): void {
+  const state = `${project.state?.state ?? ""}`.trim();
+  if (!state || PROJECT_STORAGE_RUNTIME_STATES.has(state)) {
+    return;
+  }
+  throw new Error(
+    `project storage information is unavailable because the project is ${state}; start the project and try again`,
+  );
 }
 
 export interface StorageAnalysisResult {
@@ -695,6 +718,7 @@ export function registerProjectStorageCommands(
   const {
     withContext,
     resolveProjectConatClient,
+    resolveProjectFromArgOrContext,
     durationToMs,
     parsePositiveInteger,
   } = deps;
@@ -722,9 +746,14 @@ export function registerProjectStorageCommands(
         command: Command,
       ) => {
         await withContext(command, "project storage show", async (ctx) => {
-          const { project: ws, client } = await resolveProjectConatClient(
+          const project = await resolveProjectFromArgOrContext(
             ctx,
             opts.project,
+          );
+          assertProjectStorageRuntimeAvailable({ project });
+          const { project: ws, client } = await resolveProjectConatClient(
+            ctx,
+            project.project_id,
           );
           const overview = await getStorageOverview({
             client,
@@ -770,9 +799,14 @@ export function registerProjectStorageCommands(
         command: Command,
       ) => {
         await withContext(command, "project storage history", async (ctx) => {
-          const { project: ws, client } = await resolveProjectConatClient(
+          const project = await resolveProjectFromArgOrContext(
             ctx,
             opts.project,
+          );
+          assertProjectStorageRuntimeAvailable({ project });
+          const { project: ws, client } = await resolveProjectConatClient(
+            ctx,
+            project.project_id,
           );
           const window_minutes = parseHistoryWindowMinutes(
             durationToMs,
@@ -815,9 +849,14 @@ export function registerProjectStorageCommands(
         command: Command,
       ) => {
         await withContext(command, "project storage breakdown", async (ctx) => {
-          const { project: ws, client } = await resolveProjectConatClient(
+          const project = await resolveProjectFromArgOrContext(
             ctx,
             opts.project,
+          );
+          assertProjectStorageRuntimeAvailable({ project });
+          const { project: ws, client } = await resolveProjectConatClient(
+            ctx,
+            project.project_id,
           );
           let targetPath = path;
           if (!targetPath) {
@@ -871,9 +910,14 @@ export function registerProjectStorageCommands(
         command: Command,
       ) => {
         await withContext(command, "project storage analyze", async (ctx) => {
-          const { project: ws, client } = await resolveProjectConatClient(
+          const project = await resolveProjectFromArgOrContext(
             ctx,
             opts.project,
+          );
+          assertProjectStorageRuntimeAvailable({ project });
+          const { project: ws, client } = await resolveProjectConatClient(
+            ctx,
+            project.project_id,
           );
           const window_minutes = parseHistoryWindowMinutes(
             durationToMs,
@@ -927,6 +971,7 @@ export function registerProjectStorageCommands(
 }
 
 export const testOnly = {
+  assertProjectStorageRuntimeAvailable,
   buildStorageAnalysis,
   flattenStorageHistory,
   flattenBreakdownRows,

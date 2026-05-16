@@ -1117,11 +1117,13 @@ export interface Projects {
   }) => Promise<ProjectActiveOperationSummary | null>;
   deleteProject: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     project_id: string;
   }) => Promise<void>;
   setProjectDeleted: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     project_id: string;
     deleted: boolean;

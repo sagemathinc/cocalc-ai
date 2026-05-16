@@ -75,6 +75,13 @@ const GET_ALL_RETRY_DECAY = 1.5;
 const log = (..._args) => {};
 //const log = console.log;
 
+function isClosedPersistError(err: unknown): boolean {
+  if (err instanceof Error) {
+    return err.message.toLowerCase() === "closed";
+  }
+  return `${err ?? ""}`.toLowerCase() === "closed";
+}
+
 // when this many bytes of key:value have been changed (so need to be freed),
 // we do a garbage collection pass.
 export const KEY_GC_THRESH = 10 * 1e6;
@@ -726,6 +733,10 @@ export class CoreStream<T = any> extends EventEmitter {
           return true;
         } catch (err) {
           if (this.isClosed()) {
+            return true;
+          }
+          if (isClosedPersistError(err)) {
+            this.close();
             return true;
           }
           if (!process.env.COCALC_TEST_MODE) {

@@ -40,6 +40,17 @@ function currentCollaboratorSponsor(
   return group === "owner" || group === "collaborator" ? account_id : undefined;
 }
 
+function projectOwnerAccountId(
+  users: Record<string, { group?: string }> | undefined,
+): string | undefined {
+  if (users == null) return;
+  return (
+    Object.keys(users).find(
+      (account_id) => users[account_id]?.group === "owner",
+    ) ?? Object.keys(users)[0]
+  );
+}
+
 Table({
   name: "projects",
   rules: {
@@ -182,6 +193,7 @@ Table({
               const group = users?.[account_id]?.group;
               const owner =
                 isUserGroup(group) && group === "owner" ? account_id : null;
+              const ownerAccountId = projectOwnerAccountId(users);
               const sponsor =
                 currentCollaboratorSponsor(
                   row.runtime_sponsor_account_id,
@@ -222,9 +234,13 @@ Table({
                     "The runtime sponsor must be a current project collaborator",
                   );
                 }
-                if (!admin && nextSponsor !== account_id) {
+                if (
+                  !admin &&
+                  nextSponsor !== account_id &&
+                  !(sponsor === account_id && nextSponsor === ownerAccountId)
+                ) {
                   throw Error(
-                    "You can only change this project to use your own membership as runtime sponsor",
+                    "You can only change this project to use your own membership as runtime sponsor, or stop sponsoring it by reverting to the project owner",
                   );
                 }
               }

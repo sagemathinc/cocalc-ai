@@ -662,11 +662,24 @@ async function maybeCreateLocalDevRememberMeCookie({
   globals,
   apiBaseUrl,
   requestedAccountId,
+  freshAuthDuration,
 }: {
   globals: GlobalOptions;
   apiBaseUrl: string;
   requestedAccountId: string;
-}): Promise<string | undefined> {
+  freshAuthDuration?: "default" | "extended";
+}): Promise<
+  | {
+      value: string;
+      session_hash: string;
+      fresh_auth_until?: Date | null;
+      factor_level?: "totp" | null;
+    }
+  | undefined
+> {
+  if (process.env.NODE_ENV === "production") {
+    return;
+  }
   if (!isLoopbackApiBaseUrl(apiBaseUrl)) {
     return;
   }
@@ -687,6 +700,14 @@ async function maybeCreateLocalDevRememberMeCookie({
     "dist",
     "auth",
     "remember-me.js",
+  );
+  const authSessionsModule = join(
+    repoRoot,
+    "packages",
+    "server",
+    "dist",
+    "auth",
+    "auth-sessions.js",
   );
   if (!existsSync(localPostgresEnv) || !existsSync(rememberMeModule)) {
     return;
@@ -713,14 +734,75 @@ async function maybeCreateLocalDevRememberMeCookie({
       createRememberMeCookie?: (
         account_id: string,
         ttl_s?: number,
-      ) => Promise<{ value?: string }>;
+      ) => Promise<{ value?: string; hash?: string }>;
     };
-    const { value } =
+    const { value, hash } =
       (await mod.createRememberMeCookie?.(
         requestedAccountId,
         Math.floor(LOCAL_DEV_SIGN_IN_COOKIE_MAX_AGE_MS / 1000),
       )) ?? {};
-    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+    if (typeof value !== "string" || !value.trim()) {
+      return;
+    }
+    const session_hash = `${hash ?? ""}`.trim();
+    if (!session_hash) {
+      if (freshAuthDuration) {
+        return;
+      }
+      return { value: value.trim(), session_hash };
+    }
+    if (!freshAuthDuration) {
+      return { value: value.trim(), session_hash };
+    }
+    if (!existsSync(authSessionsModule)) {
+      return;
+    }
+    const authSessions = requireCjs(authSessionsModule) as {
+      ensureAuthSessionForRememberMeHash?: (opts: {
+        session_hash: string;
+      }) => Promise<unknown>;
+      resolveFreshAuthDurationMs?: (opts: {
+        duration: "default" | "extended";
+        factor_level: "totp";
+      }) => number;
+      setSessionFreshAuth?: (opts: {
+        account_id: string;
+        session_hash: string;
+        factor_level: "totp";
+        fresh_auth_until: Date;
+        metadata_patch?: Record<string, unknown>;
+      }) => Promise<void>;
+    };
+    if (
+      !authSessions.ensureAuthSessionForRememberMeHash ||
+      !authSessions.setSessionFreshAuth
+    ) {
+      return;
+    }
+    await authSessions.ensureAuthSessionForRememberMeHash({ session_hash });
+    const fresh_auth_until = new Date(
+      Date.now() +
+        (authSessions.resolveFreshAuthDurationMs?.({
+          duration: freshAuthDuration,
+          factor_level: "totp",
+        }) ?? 15 * 60_000),
+    );
+    await authSessions.setSessionFreshAuth({
+      account_id: requestedAccountId,
+      session_hash,
+      factor_level: "totp",
+      fresh_auth_until,
+      metadata_patch: {
+        dev_cli_fresh_auth: true,
+        dev_cli_fresh_auth_at: new Date().toISOString(),
+      },
+    });
+    return {
+      value: value.trim(),
+      session_hash,
+      fresh_auth_until,
+      factor_level: "totp",
+    };
   } finally {
     if (prev.PGHOST === undefined) delete process.env.PGHOST;
     else process.env.PGHOST = prev.PGHOST;
@@ -1170,8 +1252,9 @@ async function maybeReconnectAsRequestedAccount({
     globals,
     apiBaseUrl,
     requestedAccountId: cleanRequestedAccountId,
+    freshAuthDuration: "extended",
   });
-  if (!rememberMeCookie) {
+  if (!rememberMeCookie?.value) {
     throw new Error(
       "requested-account bootstrap requires local dev hub-password access",
     );
@@ -1185,7 +1268,7 @@ async function maybeReconnectAsRequestedAccount({
 
   const nextGlobals: GlobalOptions = {
     ...globals,
-    cookie: buildRememberMeCookieHeader(apiBaseUrl, rememberMeCookie),
+    cookie: buildRememberMeCookieHeader(apiBaseUrl, rememberMeCookie.value),
     hubPassword: "",
   };
   const nextRemote = await connectRemote({
@@ -2337,6 +2420,7 @@ const authCommandDeps = {
   sanitizeProfileName,
   profileFromGlobals,
   saveAuthConfig,
+  maybeCreateLocalDevRememberMeCookie,
 } satisfies AuthCommandDeps;
 
 registerAuthCommand(program, authCommandDeps);

@@ -15,6 +15,26 @@ type OutputGlobals = {
   account_id?: string;
 };
 
+function errorCode(error: unknown, message: string): string {
+  const direct =
+    error && typeof error === "object" ? `${(error as any).code ?? ""}` : "";
+  if (direct) {
+    return direct;
+  }
+  const match = message.match(/\bcode='([^']+)'/);
+  return match?.[1] ?? "command_failed";
+}
+
+function freshAuthHint(code: string, message: string): string | undefined {
+  if (
+    code !== "fresh_auth_required" &&
+    !message.toLowerCase().includes("fresh auth")
+  ) {
+    return undefined;
+  }
+  return "Run `cocalc auth elevate` and complete the browser passkey/TOTP challenge, then retry the command. Fresh-auth CLI actions require a browser-approved cookie profile; API keys, bearer tokens, and hub-password automation cannot provide human 2FA.";
+}
+
 export function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { value };
@@ -227,6 +247,8 @@ export function emitError(
   normalizeUrl: (url: string) => string,
 ): void {
   const message = error instanceof Error ? error.message : `${error}`;
+  const code = errorCode(error, message);
+  const hint = freshAuthHint(code, message);
   let api = ctx.apiBaseUrl;
   if (!api && ctx.globals?.api) {
     try {
@@ -243,8 +265,9 @@ export function emitError(
       ok: false,
       command: commandName,
       error: {
-        code: "command_failed",
+        code,
         message,
+        ...(hint ? { hint } : undefined),
       },
       meta: {
         api,
@@ -254,5 +277,5 @@ export function emitError(
     console.error(JSON.stringify(payload, null, 2));
     return;
   }
-  console.error(`ERROR: ${message}`);
+  console.error(`ERROR: ${message}${hint ? `\n\n${hint}` : ""}`);
 }

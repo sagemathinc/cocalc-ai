@@ -17,10 +17,20 @@ function makeProgram({
   openFiles,
   listBrowserSessions,
   getWorkspaceSelection,
+  getAutomationPolicyInfo,
+  getExecApiDeclaration,
+  listRuntimeEvents,
+  listNetworkTrace,
+  globals,
 }: {
   openFiles: { project_id: string; title?: string; path: string }[];
   listBrowserSessions?: () => Promise<any[]>;
   getWorkspaceSelection?: (opts: { project_id: string }) => Promise<any>;
+  getAutomationPolicyInfo?: () => Promise<any>;
+  getExecApiDeclaration?: () => Promise<string>;
+  listRuntimeEvents?: (opts?: any) => Promise<any>;
+  listNetworkTrace?: (opts?: any) => Promise<any>;
+  globals?: Record<string, unknown>;
 }): { program: Command; results: unknown[] } {
   const results: unknown[] = [];
   const program = new Command();
@@ -32,9 +42,9 @@ function makeProgram({
   registerBrowserCommand(program, {
     withContext: async (_command, _label, fn) => {
       const result = await fn({
-        globals: {},
+        globals: globals ?? {},
         accountId: "00000000-1000-4000-8000-000000000001",
-        timeoutMs: 30_000,
+        timeoutMs: globals?.timeout === "1s" ? 1_000 : 30_000,
         apiBaseUrl: "http://localhost:7003",
         remote: { client: {} },
         hub: {
@@ -76,6 +86,50 @@ function makeProgram({
           (async () => {
             throw new Error("getWorkspaceSelection should not be called");
           }),
+        getAutomationPolicyInfo:
+          getAutomationPolicyInfo ??
+          (async () => ({
+            raw_exec_policy: "enabled",
+            raw_exec_admin: false,
+            max_active_exec_ops: 2,
+            max_active_actions: 8,
+            max_async_exec_ops: 256,
+            max_exec_code_length: 100000,
+            max_sandbox_actions: 512,
+          })),
+        getExecApiDeclaration:
+          getExecApiDeclaration ??
+          (async () =>
+            "export type BrowserExecApi = { listOpenFiles: () => unknown[]; };"),
+        listRuntimeEvents:
+          listRuntimeEvents ??
+          (async () => ({
+            events: [],
+            next_seq: 0,
+            dropped: 0,
+            total_buffered: 0,
+          })),
+        configureNetworkTrace: async () => ({
+          enabled: true,
+          include_decoded: false,
+          include_internal: false,
+          protocols: ["conat", "http", "ws"],
+          max_events: 1000,
+          max_preview_chars: 500,
+          subject_prefixes: [],
+          addresses: [],
+          buffered: 0,
+          dropped: 0,
+          next_seq: 0,
+        }),
+        listNetworkTrace:
+          listNetworkTrace ??
+          (async () => ({
+            events: [],
+            next_seq: 0,
+            dropped: 0,
+            total_buffered: 0,
+          })),
       }) as any,
   } as any);
   return { program, results };
@@ -301,6 +355,236 @@ test("browser tabs is an alias for browser files", async () => {
   assert.equal((results[0] as unknown[]).length, 1);
   assert.equal((results[0] as { path: string }[])[0]?.path, "/home/user/a.md");
   assert.equal((results[0] as { kind: string }[])[0]?.kind, "file");
+});
+
+test("browser exec-api reports the QuickJS sandbox API when raw exec is disabled", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const { program, results } = makeProgram({
+    openFiles: [],
+    getAutomationPolicyInfo: async () => ({
+      raw_exec_policy: "disabled",
+      raw_exec_admin: true,
+      max_active_exec_ops: 2,
+      max_active_actions: 8,
+      max_async_exec_ops: 256,
+      max_exec_code_length: 100000,
+      max_sandbox_actions: 512,
+    }),
+    getExecApiDeclaration: async () =>
+      "export type BrowserExecApi = { listOpenFiles: () => unknown[]; };",
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "exec-api",
+    "--browser",
+    "browser-1",
+  ]);
+
+  const output = results[0] as string;
+  assert.match(output, /raw_exec_policy=disabled/);
+  assert.match(output, /QuickJS sandbox mode/);
+  assert.match(output, /waitForSelector/);
+  assert.match(output, /BrowserExecActionResult;/);
+  assert.doesNotMatch(output, /listOpenFiles/);
+  assert.doesNotMatch(output, /Promise<BrowserExecActionResult>/);
+});
+
+test("browser exec-api reports the raw API when raw exec is allowed", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const { program, results } = makeProgram({
+    openFiles: [],
+    getAutomationPolicyInfo: async () => ({
+      raw_exec_policy: "enabled",
+      raw_exec_admin: false,
+      max_active_exec_ops: 2,
+      max_active_actions: 8,
+      max_async_exec_ops: 256,
+      max_exec_code_length: 100000,
+      max_sandbox_actions: 512,
+    }),
+    getExecApiDeclaration: async () =>
+      "export type BrowserExecApi = { listOpenFiles: () => unknown[]; };",
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "exec-api",
+    "--browser",
+    "browser-1",
+  ]);
+
+  const output = results[0] as string;
+  assert.match(output, /raw_exec_policy=enabled/);
+  assert.match(output, /listOpenFiles/);
+  assert.doesNotMatch(output, /QuickJS sandbox mode/);
+});
+
+test("browser logs tail --follow respects timeout while waiting for events", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const started = Date.now();
+  const { program, results } = makeProgram({
+    openFiles: [],
+    listRuntimeEvents: async () =>
+      new Promise(() => {
+        // Simulate a browser-session RPC that is waiting for new log events.
+      }),
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "logs",
+    "tail",
+    "--browser",
+    "browser-1",
+    "--follow",
+    "--timeout",
+    "1s",
+    "--poll-ms",
+    "100ms",
+  ]);
+
+  assert.ok(Date.now() - started < 2_500);
+  assert.deepEqual(results[0], {
+    browser_id: "browser-1",
+    printed: 0,
+    next_seq: 0,
+    dropped: 0,
+    total_buffered: 0,
+    target_api_url: "http://localhost:7003",
+    target_browser_id: "browser-1",
+    target_session_url: "",
+  });
+});
+
+test("browser logs tail --follow inherits explicit root timeout", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const started = Date.now();
+  const { program, results } = makeProgram({
+    openFiles: [],
+    globals: { timeout: "1s" },
+    listRuntimeEvents: async () =>
+      new Promise(() => {
+        // Simulate a browser-session RPC that is waiting for new log events.
+      }),
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "logs",
+    "tail",
+    "--browser",
+    "browser-1",
+    "--follow",
+    "--poll-ms",
+    "100ms",
+  ]);
+
+  assert.ok(Date.now() - started < 2_500);
+  assert.equal((results[0] as any).printed, 0);
+});
+
+test("browser logs uncaught --follow inherits explicit root timeout", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const started = Date.now();
+  const { program, results } = makeProgram({
+    openFiles: [],
+    globals: { timeout: "1s" },
+    listRuntimeEvents: async () =>
+      new Promise(() => {
+        // Simulate a browser-session RPC that is waiting for new log events.
+      }),
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "logs",
+    "uncaught",
+    "--browser",
+    "browser-1",
+    "--follow",
+    "--poll-ms",
+    "100ms",
+  ]);
+
+  assert.ok(Date.now() - started < 2_500);
+  assert.equal((results[0] as any).printed, 0);
+});
+
+test("browser network trace --follow inherits explicit root timeout", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const started = Date.now();
+  const { program, results } = makeProgram({
+    openFiles: [],
+    globals: { timeout: "1s" },
+    listNetworkTrace: async () =>
+      new Promise(() => {
+        // Simulate a browser-session RPC that is waiting for new trace events.
+      }),
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "network",
+    "trace",
+    "--browser",
+    "browser-1",
+    "--follow",
+    "--poll-ms",
+    "100ms",
+  ]);
+
+  assert.ok(Date.now() - started < 2_500);
+  assert.equal((results[0] as any).printed, 0);
+});
+
+test("browser network summary respects duration while waiting for trace events", async () => {
+  delete process.env.COCALC_CLI_AGENT_MODE;
+  delete process.env.COCALC_AGENT_MODE;
+  const started = Date.now();
+  const { program, results } = makeProgram({
+    openFiles: [],
+    listNetworkTrace: async () =>
+      new Promise(() => {
+        // Simulate a browser-session RPC that is waiting for trace events.
+      }),
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "browser",
+    "network",
+    "summary",
+    "--browser",
+    "browser-1",
+    "--duration",
+    "1s",
+    "--poll-ms",
+    "100ms",
+  ]);
+
+  assert.ok(Date.now() - started < 2_500);
+  assert.equal((results[0] as any).mode, "recorded-window");
+  assert.equal((results[0] as any).totals.messages, 0);
 });
 
 test("browser workspace-state falls back to a partial summary on transient browser auth failures", async () => {

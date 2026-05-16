@@ -130,6 +130,24 @@ test("parseHistoryWindowMinutes converts duration strings into bounded minutes",
   );
 });
 
+test("assertProjectStorageRuntimeAvailable rejects known non-runtime states", () => {
+  assert.doesNotThrow(() =>
+    testOnly.assertProjectStorageRuntimeAvailable({ project: { state: null } }),
+  );
+  assert.doesNotThrow(() =>
+    testOnly.assertProjectStorageRuntimeAvailable({
+      project: { state: { state: "running" } },
+    }),
+  );
+  assert.throws(
+    () =>
+      testOnly.assertProjectStorageRuntimeAvailable({
+        project: { state: { state: "opened" } },
+      }),
+    /project storage information is unavailable because the project is opened/,
+  );
+});
+
 test("flattenBreakdownRows sorts children and computes percentages", () => {
   const rows = testOnly.flattenBreakdownRows({
     path: "/root",
