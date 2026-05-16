@@ -15,6 +15,7 @@ import { Project } from "@cocalc/frontend/project/settings/types";
 import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../project/page/common";
 import { User } from "../users";
+import { Avatar } from "../account/avatar/avatar";
 
 interface Props {
   project: Project;
@@ -84,6 +85,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
       >
         <Button
           disabled={isOwner}
+          size="small"
           type="text"
           danger
           style={{
@@ -91,7 +93,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
             paddingInline: isFlyout ? 0 : 8,
           }}
         >
-          <Icon name="user-times" /> {intl.formatMessage(labels.remove)} ...
+          <Icon name="user-times" /> {intl.formatMessage(labels.remove)}
         </Button>
       </Popconfirm>
     );
@@ -108,42 +110,55 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
           borderRadius: 10,
           boxShadow: isFlyout ? undefined : "0 1px 2px rgba(14, 43, 89, 0.04)",
           display: "grid",
-          gap: isFlyout ? 10 : 16,
-          gridTemplateColumns: `minmax(0, 1fr) ${isFlyout ? "146px" : "190px"}`,
+          gap: isFlyout ? 10 : 14,
+          gridTemplateColumns: "minmax(0, 1fr) auto",
           marginBottom: is_last ? 0 : 8,
           padding: isFlyout ? "8px 10px" : "11px 12px",
         }}
       >
-        <div style={{ minWidth: 0 }}>
-          <User
+        <div
+          style={{
+            alignItems: "center",
+            display: "flex",
+            minWidth: 0,
+          }}
+        >
+          <Avatar
             account_id={user.account_id}
-            user_map={user_map}
-            show_avatar={true}
+            no_tooltip={true}
+            no_loading
+            size={isFlyout ? 30 : 34}
+            style={{ flex: "0 0 auto" }}
           />
-          <div
-            style={{
-              color: COLORS.GRAY_M,
-              fontSize: "12px",
-              marginLeft: isFlyout ? 38 : 42,
-              marginTop: 2,
-            }}
-          >
-            {render_last_active(user.account_id, user.last_active)}
+          <div style={{ marginLeft: 10, minWidth: 0 }}>
+            <User
+              account_id={user.account_id}
+              user_map={user_map}
+              show_avatar={false}
+            />
+            <div
+              style={{
+                color: COLORS.GRAY_M,
+                fontSize: "12px",
+                marginTop: 2,
+              }}
+            >
+              {render_last_active(user.account_id, user.last_active)}
+            </div>
           </div>
         </div>
         <div
           style={{
             alignItems: "center",
-            display: "grid",
-            gap: 8,
-            gridTemplateColumns: `${isFlyout ? "82px" : "102px"} ${isFlyout ? "54px" : "80px"}`,
-            justifyContent: "end",
+            display: "flex",
+            gap: 10,
+            justifyContent: "flex-end",
+            minWidth: isFlyout ? 138 : 178,
+            whiteSpace: "nowrap",
           }}
         >
-          <div style={{ textAlign: "right" }}>{render_role(user.group)}</div>
-          <div style={{ textAlign: "right" }}>
-            {user_remove_button(user.account_id, user.group)}
-          </div>
+          {render_role(user.group)}
+          {user_remove_button(user.account_id, user.group)}
         </div>
       </div>
     );

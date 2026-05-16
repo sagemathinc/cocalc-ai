@@ -659,7 +659,11 @@ export const AddCollaborators: React.FC<Props> = ({
               "matching user",
             )}.`}
             onChange={(value) => {
-              set_selected_entries(value as string[]);
+              const selected = value as string[];
+              set_selected_entries(selected);
+              if (selected.length > 0) {
+                set_select_open(false);
+              }
             }}
             value={selected_entries}
             optionLabelProp="tag"
