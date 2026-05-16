@@ -16,7 +16,12 @@ import {
 import { ProjectSettingsHealthRail } from "./health-rail";
 
 const { Paragraph, Text, Title } = Typography;
-const HEADER_LINK_IDS = ["resources", "people", "recovery", "danger"] as const;
+const HEADER_LINK_IDS = [
+  "resources",
+  "location",
+  "people",
+  "recovery",
+] as const;
 
 interface Props {
   project_id: string;

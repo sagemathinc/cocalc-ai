@@ -18,6 +18,8 @@ import { ProjectsActions } from "@cocalc/frontend/todo-types";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 import { DeletedProjectWarning } from "../warnings/deleted";
+import { ArchiveProject } from "./archive-project";
+import MoveProject from "./move-project";
 import { Project } from "./types";
 
 interface Props {
@@ -25,10 +27,21 @@ interface Props {
   actions: ProjectsActions;
   mode?: "project" | "flyout";
   embedded?: boolean;
+  extraRows?: ReactNode;
+  introMessage?: ReactNode;
+  introDescription?: ReactNode;
 }
 
 export function HideDeleteBox(props: Readonly<Props>) {
-  const { project, actions, mode = "project", embedded = false } = props;
+  const {
+    project,
+    actions,
+    mode = "project",
+    embedded = false,
+    extraRows,
+    introMessage = "Danger Zone",
+    introDescription = `These actions change project visibility or lifecycle state. They are separated from normal settings so they are harder to trigger accidentally.`,
+  } = props;
   const isFlyout = mode === "flyout";
   const isEmbedded = embedded || isFlyout;
   const intl = useIntl();
@@ -192,8 +205,8 @@ export function HideDeleteBox(props: Readonly<Props>) {
         <Alert
           type="warning"
           showIcon
-          message="Danger Zone"
-          description={`These actions change project visibility or lifecycle state. They are separated from normal settings so they are harder to trigger accidentally.`}
+          message={introMessage}
+          description={introDescription}
         />
         <DangerActionRow
           icon={hidden ? "eye-slash" : "eye"}
@@ -212,6 +225,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
             />
           }
         />
+        {extraRows}
         <DangerActionRow
           icon="trash"
           title={deleteUndeleteMsg}
@@ -250,6 +264,77 @@ export function HideDeleteBox(props: Readonly<Props>) {
       </SettingBox>
     );
   }
+}
+
+export function ProjectLocationBox(props: Readonly<Props>) {
+  const { project, actions, mode = "project", embedded = false } = props;
+  const isFlyout = mode === "flyout";
+  const isEmbedded = embedded || isFlyout;
+  const project_id = project.get("project_id");
+  const state = project.getIn(["state", "state"]);
+  const is_deleted = project.get("deleted");
+  const lifecycleBusy =
+    state == null ||
+    ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
+      state,
+    );
+  const movingDisabled =
+    is_deleted ||
+    (state != null &&
+      ["starting", "stopping", "archiving", "unarchiving"].includes(state));
+
+  function renderBody() {
+    const locationRows = (
+      <>
+        <DangerActionRow
+          icon="servers"
+          title="Move Project"
+          description="Move this project to another host. The project is unavailable during the move and snapshots are removed."
+          action={
+            <MoveProject
+              project_id={project_id}
+              disabled={movingDisabled}
+              label="Move Project"
+              showHostName={false}
+              size={isFlyout ? "small" : undefined}
+            />
+          }
+        />
+        <DangerActionRow
+          icon="file-archive"
+          title="Archive Project"
+          description="Remove the active copy from its host. Starting later restores from backup, which is slower, and snapshots are removed."
+          action={
+            <ArchiveProject
+              project_id={project_id}
+              disabled={is_deleted || lifecycleBusy}
+              size={isFlyout ? "small" : undefined}
+            />
+          }
+        />
+      </>
+    );
+    return (
+      <HideDeleteBox
+        project={project}
+        actions={actions}
+        mode={mode}
+        embedded
+        extraRows={locationRows}
+        introMessage="Location changes can interrupt access"
+        introDescription="These controls change where the project is listed, hosted, archived, or deleted. Moving and archiving can make the project unavailable for a while and remove snapshots."
+      />
+    );
+  }
+
+  if (isEmbedded) {
+    return renderBody();
+  }
+  return (
+    <SettingBox title="Location" icon="servers">
+      {renderBody()}
+    </SettingBox>
+  );
 }
 
 function DangerActionRow({

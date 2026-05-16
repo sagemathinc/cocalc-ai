@@ -22,8 +22,6 @@ import { COLORS } from "@cocalc/util/theme";
 import { useProjectContext } from "../context";
 import { RestartProject } from "./restart-project";
 import { StopProject } from "./stop-project";
-import { ArchiveProject } from "./archive-project";
-import MoveProject from "./move-project";
 import { Project } from "./types";
 import RootFilesystemImage from "./root-filesystem-image";
 import ProjectControlError from "./project-control-error";
@@ -136,17 +134,11 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     const commands = (state &&
       COMPUTE_STATES[state] &&
       COMPUTE_STATES[state].commands) || ["save", "stop", "start"];
-    const archiveDisabled =
-      state == null ||
-      ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
-        state,
-      );
-    const archived = lifecycle.isRawArchived;
     return (
       <section>
         <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "8px" }}>
-          Use these controls when the project is stuck, needs to move hosts, or
-          should be archived.
+          Use these controls when the active runtime is stuck or needs to be
+          restarted.
         </Paragraph>
         <Space.Compact
           style={{ marginTop: "4px", marginBottom: "10px" }}
@@ -154,22 +146,6 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
         >
           {render_restart_button(commands)}
           {render_stop_button(commands)}
-          <ArchiveProject
-            project_id={project_id}
-            size={isFlyout ? "small" : "large"}
-            disabled={archiveDisabled}
-          />
-          {!archived && (
-            <MoveProject
-              project_id={project_id}
-              disabled={
-                state == "starting" ||
-                state == "stopping" ||
-                state == "archiving" ||
-                state == "unarchiving"
-              }
-            />
-          )}
         </Space.Compact>
       </section>
     );
