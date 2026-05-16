@@ -51,6 +51,8 @@ import {
 } from "@cocalc/conat/inter-bay/api";
 import type { ConatService } from "@cocalc/conat/service/typed";
 import getLogger from "@cocalc/backend/logger";
+import { db } from "@cocalc/database";
+import { callback2 } from "@cocalc/util/async-utils";
 import { getRequiresTokensDirect } from "@cocalc/server/auth/tokens/get-requires-token";
 import {
   deleteRegistrationTokenDirect,
@@ -333,6 +335,9 @@ async function startBayOpsService(): Promise<void> {
         bay_id,
         internalAuth: BAY_OPS_INTERNAL_AUTH,
       }),
+    setServerSetting: async (opts) => {
+      await callback2(db().set_server_setting, opts);
+    },
   };
   services.push(
     ...createInterBayBayOpsHandlers({
