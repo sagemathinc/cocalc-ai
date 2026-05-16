@@ -132,6 +132,7 @@ export function ProjectsTable({
         last_edited: project.get("last_edited"),
         color: projectThemeColor(project),
         state,
+        deleting: state?.get?.("state") === "deleting",
         deleted: !!project.get("deleted"),
         hidden: !!project.getIn(["users", current_account_id, "hide"]),
         collaborators,
@@ -223,6 +224,9 @@ export function ProjectsTable({
   );
 
   function handleRowClick(record: ProjectTableRecord, e?: React.MouseEvent) {
+    if (record.deleting) {
+      return;
+    }
     actions.open_project({
       project_id: record.project_id,
       target: "project-home",
@@ -267,12 +271,13 @@ export function ProjectsTable({
         onClick: (e) => handleRowClick(record, e),
         onMouseDown: (e) => {
           // Support middle-click to open in background
-          if (e.button === 1) {
+          if (e.button === 1 && !record.deleting) {
             handleRowClick(record, e);
           }
         },
         style: {
-          cursor: "pointer",
+          cursor: record.deleting ? "not-allowed" : "pointer",
+          opacity: record.deleting ? 0.72 : undefined,
           outlineLeft: `4px solid ${record.color ?? "transparent"}`,
         },
       })}

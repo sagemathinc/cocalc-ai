@@ -81,6 +81,7 @@ export interface ProjectTableRecord {
   last_edited?: Date;
   color?: string;
   state?: any; // immutable Map
+  deleting?: boolean;
   deleted: boolean;
   hidden: boolean;
   collaborators: string[]; // Array of collaborator account_ids (excluding current user)
@@ -212,6 +213,7 @@ export function getProjectTableColumns(
         const stateIcon = getStateIcon(record.state);
         const strong = record.state?.get("state") === "running";
         const archived = record.state?.get("state") === "archived";
+        const deleting = record.deleting === true;
         return (
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             {/* Avatar or placeholder */}
@@ -238,10 +240,17 @@ export function getProjectTableColumns(
                     }}
                   />
                 )}
-                <Text strong={strong}>{record.title || "Untitled"}</Text>
+                <Text strong={strong} disabled={deleting}>
+                  {record.title || "Untitled"}
+                </Text>
                 {archived && (
                   <Tag color="purple" style={{ marginLeft: "8px" }}>
                     Archived
+                  </Tag>
+                )}
+                {deleting && (
+                  <Tag color="orange" style={{ marginLeft: "8px" }}>
+                    Deleting...
                   </Tag>
                 )}
               </div>

@@ -66,6 +66,7 @@ export function ProjectActionsMenu({ record }: Props) {
   const account_id = useTypedRedux("account", "account_id");
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
+  const isDeleting = record.deleting === true;
   const project_map = useTypedRedux("projects", "project_map");
   const currentHostId = project_map?.getIn([record.project_id, "host_id"]) as
     | string
@@ -118,6 +119,9 @@ export function ProjectActionsMenu({ record }: Props) {
   );
 
   function openProjectTab(tab: string) {
+    if (isDeleting) {
+      return;
+    }
     actions.open_project({
       project_id: record.project_id,
       switch_to: true,
@@ -137,25 +141,31 @@ export function ProjectActionsMenu({ record }: Props) {
 
     switch (key) {
       case "open":
+        if (isDeleting) break;
         actions.open_project({
           project_id: record.project_id,
           switch_to: true,
         });
         break;
       case "explorer":
+        if (isDeleting) break;
         openProjectTab("files");
         break;
       case "new":
+        if (isDeleting) break;
         openProjectTab("new");
         break;
       case "log":
+        if (isDeleting) break;
         openProjectTab("log");
         break;
       case "move":
+        if (isDeleting) break;
         await refreshProjectRegion();
         setMoveOpen(true);
         break;
       case "settings":
+        if (isDeleting) break;
         actions.open_project({
           project_id: record.project_id,
           switch_to: true,
@@ -166,6 +176,7 @@ export function ProjectActionsMenu({ record }: Props) {
         await actions.toggle_hide_project(record.project_id);
         break;
       case "delete":
+        if (isDeleting) break;
         setDeleteOpen(true);
         break;
       case "remove-self":
@@ -177,6 +188,9 @@ export function ProjectActionsMenu({ record }: Props) {
         });
         break;
       default:
+        if (isDeleting) {
+          break;
+        }
         // Handle starred files - check if key starts with "starred-file:"
         if (key.startsWith("starred-file:")) {
           const filename = key.substring("starred-file:".length);
@@ -193,10 +207,24 @@ export function ProjectActionsMenu({ record }: Props) {
   };
 
   const menuItems: MenuProps["items"] = [
+    ...(isDeleting
+      ? [
+          {
+            key: "deleting",
+            label: "Permanent deletion in progress",
+            icon: <Icon name="spinner" spin />,
+            disabled: true,
+          },
+          {
+            type: "divider" as const,
+          },
+        ]
+      : []),
     {
       key: "explorer",
       label: intl.formatMessage(labels.explorer),
       icon: <Icon name={FIXED_PROJECT_TABS.files.icon} />,
+      disabled: isDeleting,
     },
     {
       type: "divider",
@@ -207,6 +235,7 @@ export function ProjectActionsMenu({ record }: Props) {
       icon: <Icon name="star-filled" />,
       children: starredFilesSubmenu,
       popupClassName: "cc-starred-files-submenu",
+      disabled: isDeleting,
     },
     {
       key: "recent-files",
@@ -214,6 +243,7 @@ export function ProjectActionsMenu({ record }: Props) {
       icon: <Icon name="history" />,
       children: recentFilesSubmenu,
       popupClassName: "cc-recent-files-submenu",
+      disabled: isDeleting,
     },
     {
       key: "apps",
@@ -221,6 +251,7 @@ export function ProjectActionsMenu({ record }: Props) {
       icon: <Icon name="server" />,
       children: serversSubmenu,
       popupClassName: "cc-apps-submenu",
+      disabled: isDeleting,
     },
     {
       type: "divider",
@@ -229,21 +260,25 @@ export function ProjectActionsMenu({ record }: Props) {
       key: "new",
       label: intl.formatMessage(labels.new),
       icon: <Icon name={FIXED_PROJECT_TABS.new.icon} />,
+      disabled: isDeleting,
     },
     {
       key: "log",
       label: "Log",
       icon: <Icon name={FIXED_PROJECT_TABS.log.icon} />,
+      disabled: isDeleting,
     },
     {
       key: "settings",
       label: "Settings",
       icon: <Icon name={FIXED_PROJECT_TABS.settings.icon} />,
+      disabled: isDeleting,
     },
     {
       key: "move",
       label: "Move to host…",
       icon: <Icon name="server" />,
+      disabled: isDeleting,
     },
     {
       type: "divider",
@@ -273,6 +308,7 @@ export function ProjectActionsMenu({ record }: Props) {
             label: `Delete ${projectLabel}`,
             icon: <Icon name="trash" />,
             danger: true,
+            disabled: isDeleting,
           },
         ]
       : []),

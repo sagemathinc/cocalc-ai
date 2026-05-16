@@ -6,6 +6,7 @@ import getLogger from "@cocalc/backend/logger";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
 import getPool from "@cocalc/database/pool";
+import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
 import {
   deleteProjectDataOnHost,
   stopProjectOnHost,
@@ -117,6 +118,17 @@ function isOwner(usersRaw: any, account_id: string): boolean {
   const users = normalizeUsers(usersRaw);
   const group = users?.[account_id]?.group;
   return group === "owner";
+}
+
+function visibleAccountIdsFromUsers(usersRaw: any): string[] {
+  const users = normalizeUsers(usersRaw);
+  return Object.entries(users)
+    .filter(
+      ([account_id, info]) =>
+        isValidUUID(account_id) &&
+        ["owner", "collaborator"].includes(`${info?.group ?? ""}`),
+    )
+    .map(([account_id]) => account_id);
 }
 
 async function ensureDeletedProjectsSchema(): Promise<void> {
@@ -556,6 +568,13 @@ async function purgeProjectRows({
       params: [project.project_id],
       purged,
     });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "account_project_index",
+      query: "DELETE FROM account_project_index WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
 
     const deleted = await client.query(
       "DELETE FROM projects WHERE project_id=$1",
@@ -577,6 +596,26 @@ async function purgeProjectRows({
   } finally {
     client.release();
   }
+}
+
+async function publishProjectHardDeleteRemoveEvents(
+  project: ProjectRow,
+): Promise<void> {
+  const ts = Date.now();
+  await Promise.all(
+    visibleAccountIdsFromUsers(project.users).map((account_id) =>
+      publishAccountFeedEventBestEffort({
+        account_id,
+        event: {
+          type: "project.remove",
+          ts,
+          account_id,
+          project_id: project.project_id,
+          reason: "membership_removed",
+        },
+      }),
+    ),
+  );
 }
 
 function clampBackupRetentionDays(days: number | undefined): number {
@@ -901,6 +940,12 @@ export async function hardDeleteProject({
       backup_purge_due_at: backupPurgeDueAt,
       backup_purge_status: backupPurgeStatus,
       backups_purged_at: backupsPurgedAt,
+    });
+    await publishProjectHardDeleteRemoveEvents(project).catch((err) => {
+      log.warn("failed to publish hard-delete project removal events", {
+        project_id,
+        err: `${err}`,
+      });
     });
 
     await progress({

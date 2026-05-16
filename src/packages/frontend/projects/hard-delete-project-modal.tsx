@@ -3,10 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Input, Modal, Progress, Space } from "antd";
+import { Alert, Button, Input, Modal, Space } from "antd";
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { useIntl } from "react-intl";
 
+import { alert_message } from "@cocalc/frontend/alerts";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -14,7 +15,6 @@ import {
 import { Icon, type IconName } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import type { LroEvent } from "@cocalc/conat/hub/api/lro";
 import { COLORS } from "@cocalc/util/theme";
 
 interface Props {
@@ -43,9 +43,6 @@ export function HardDeleteProjectModal({
   const [confirmation, setConfirmation] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
-  const [progress, setProgress] = useState<
-    Extract<LroEvent, { type: "progress" }> | undefined
-  >();
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => setError(`${err}`),
   });
@@ -53,7 +50,6 @@ export function HardDeleteProjectModal({
   function close() {
     if (deleting) return;
     setConfirmation("");
-    setProgress(undefined);
     setError("");
     onCancel();
   }
@@ -62,25 +58,17 @@ export function HardDeleteProjectModal({
     setError("");
     const action = async () => {
       setDeleting(true);
-      setProgress(undefined);
       try {
-        const op =
-          await webapp_client.conat_client.hub.projects.hardDeleteProject({
-            project_id,
-            browser_id: webapp_client.browser_id,
-          });
-        const summary = await webapp_client.conat_client.lroWait({
-          op_id: op.op_id,
-          stream_name: op.stream_name,
-          scope_type: op.scope_type,
-          scope_id: op.scope_id,
-          onProgress: setProgress,
+        await webapp_client.conat_client.hub.projects.hardDeleteProject({
+          project_id,
+          browser_id: webapp_client.browser_id,
         });
-        if (summary.status !== "succeeded") {
-          throw new Error(summary.error ?? `project delete ${summary.status}`);
-        }
         setConfirmation("");
-        setProgress(undefined);
+        alert_message({
+          type: "success",
+          message: `Permanent deletion started for ${confirmationTarget}.`,
+          timeout: 8,
+        });
         onDeleted?.();
         onCancel();
       } finally {
@@ -96,11 +84,6 @@ export function HardDeleteProjectModal({
   const confirmationMatches =
     confirmation.trim() === confirmationTarget ||
     confirmation.trim() === project_id;
-  const progressPhase = progress?.phase ?? progress?.message;
-  const progressPercent =
-    progress?.progress == null
-      ? undefined
-      : Math.max(0, Math.min(100, Math.round(progress.progress)));
 
   return (
     <>
@@ -221,14 +204,6 @@ export function HardDeleteProjectModal({
               }}
             />
           </div>
-          {deleting ? (
-            <div>
-              <div style={{ marginBottom: 8 }}>
-                {progressPhase ? `${progressPhase}` : "Deleting project..."}
-              </div>
-              <Progress percent={progressPercent ?? 0} status="active" />
-            </div>
-          ) : undefined}
         </Space>
       </Modal>
       <FreshAuthModal {...freshAuthModalProps} />
