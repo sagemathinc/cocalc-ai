@@ -7,6 +7,7 @@ let queryMock: jest.Mock;
 let getServerSettingsMock: jest.Mock;
 let getVerifyEmailMock: jest.Mock;
 let sendEmailMock: jest.Mock;
+let sendViaSMTPMock: jest.Mock;
 let sendWelcomeEmailMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -25,6 +26,11 @@ jest.mock("@cocalc/server/email/verify", () => ({
 jest.mock("@cocalc/server/email/send-email", () => ({
   __esModule: true,
   default: (...args: any[]) => sendEmailMock(...args),
+}));
+
+jest.mock("@cocalc/server/email/smtp", () => ({
+  __esModule: true,
+  default: (...args: any[]) => sendViaSMTPMock(...args),
 }));
 
 jest.mock("@cocalc/server/email/welcome-email", () => ({
@@ -46,6 +52,7 @@ describe("sendEmailVerification", () => {
       text: "verify",
     }));
     sendEmailMock = jest.fn(async () => undefined);
+    sendViaSMTPMock = jest.fn(async () => undefined);
     sendWelcomeEmailMock = jest.fn(async () => undefined);
   });
 
@@ -73,6 +80,31 @@ describe("sendEmailVerification", () => {
       "critical",
     );
     expect(sendWelcomeEmailMock).not.toHaveBeenCalled();
+    expect(sendViaSMTPMock).not.toHaveBeenCalled();
+  });
+
+  it("honors the secondary SMTP override used for password reset and verification mail", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      site_name: "Alpha",
+      password_reset_override: "smtp",
+    });
+    const { default: sendEmailVerification } =
+      await import("./send-email-verification");
+
+    await expect(sendEmailVerification(account_id)).resolves.toBe("");
+
+    expect(sendViaSMTPMock).toHaveBeenCalledWith(
+      {
+        to: "user@example.com",
+        subject: "Verify your email address on Alpha",
+        text: "verify",
+        html: "<p>verify</p>",
+        categories: ["verify"],
+        asm_group: 147985,
+      },
+      "password_reset",
+    );
+    expect(sendEmailMock).not.toHaveBeenCalled();
   });
 
   it("returns the send error instead of reporting success", async () => {

@@ -6,8 +6,10 @@
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import sendEmail from "@cocalc/server/email/send-email";
+import sendViaSMTP from "@cocalc/server/email/smtp";
 import { getVerifyEmail } from "@cocalc/server/email/verify";
 import sendWelcomeEmail from "@cocalc/server/email/welcome-email";
+import type { Message } from "@cocalc/server/email/message";
 import { isValidUUID } from "@cocalc/util/misc";
 import { SITE_NAME } from "@cocalc/util/theme";
 import getLogger from "@cocalc/backend/logger";
@@ -38,23 +40,24 @@ export default async function sendEmailVerification(
     if (!only_verify) {
       await sendWelcomeEmail(email_address, account_id);
     } else {
-      const [{ html, text }, { site_name }] = await Promise.all([
+      const [{ html, text }, settings] = await Promise.all([
         getVerifyEmail(email_address),
         getServerSettings(),
       ]);
-      const siteName = `${site_name ?? ""}`.trim() || SITE_NAME;
-      await sendEmail(
-        {
-          to: email_address,
-          subject: `Verify your email address on ${siteName}`,
-          text,
-          html,
-          categories: ["verify"],
-          asm_group: 147985,
-        },
-        account_id,
-        "critical",
-      );
+      const siteName = `${settings.site_name ?? ""}`.trim() || SITE_NAME;
+      const message: Message = {
+        to: email_address,
+        subject: `Verify your email address on ${siteName}`,
+        text,
+        html,
+        categories: ["verify"],
+        asm_group: 147985,
+      };
+      if (settings.password_reset_override === "smtp") {
+        await sendViaSMTP(message, "password_reset");
+      } else {
+        await sendEmail(message, account_id, "critical");
+      }
     }
     logger.debug(
       `successfully sent verification email for account_id=${account_id}`,

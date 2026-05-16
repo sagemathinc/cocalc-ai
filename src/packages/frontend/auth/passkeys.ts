@@ -46,8 +46,10 @@ export function webAuthnUnavailableMessage(): string | null {
 
 export async function registerPasskey({
   label,
+  origin,
 }: {
   label?: string;
+  origin?: string;
 } = {}): Promise<{ passkey: unknown; recovery_codes?: string[] }> {
   const unavailable = webAuthnUnavailableMessage();
   if (unavailable) {
@@ -55,6 +57,7 @@ export async function registerPasskey({
   }
   const setup = await postAuthApi<PasskeySetupStart>({
     endpoint: "auth/2fa/passkeys/setup/start",
+    origin,
     body: { label },
   });
   const response: RegistrationResponseJSON = await startRegistration({
@@ -62,6 +65,7 @@ export async function registerPasskey({
   });
   return await postAuthApi({
     endpoint: "auth/2fa/passkeys/setup/finish",
+    origin,
     body: {
       challenge_id: setup.challenge_id,
       label,
@@ -102,9 +106,11 @@ export async function signInWithPasskey({
 export async function freshAuthWithPasskey({
   current_password,
   duration,
+  origin,
 }: {
   current_password: string;
   duration?: "default" | "extended";
+  origin?: string;
 }): Promise<PasskeyFreshAuthResult> {
   const unavailable = webAuthnUnavailableMessage();
   if (unavailable) {
@@ -112,6 +118,7 @@ export async function freshAuthWithPasskey({
   }
   const authentication = await postAuthApi<PasskeyAuthenticationStart>({
     endpoint: "auth/2fa/passkeys/fresh-auth/start",
+    origin,
     body: {
       current_password,
       duration,
@@ -122,6 +129,7 @@ export async function freshAuthWithPasskey({
   });
   return await postAuthApi<PasskeyFreshAuthResult>({
     endpoint: "auth/2fa/passkeys/fresh-auth/finish",
+    origin,
     body: {
       challenge_id: authentication.challenge_id,
       response,
