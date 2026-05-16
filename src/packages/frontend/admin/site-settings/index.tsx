@@ -9,7 +9,6 @@ import {
   Button,
   Col,
   Input,
-  InputRef,
   Modal,
   Row,
   Switch,
@@ -21,9 +20,11 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import useCounter from "@cocalc/frontend/app-framework/counter-hook";
 import { Gap, Icon, Loading, Paragraph } from "@cocalc/frontend/components";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { TAGS, Tag, to_bool } from "@cocalc/util/db-schema/site-defaults";
 import { EXTRAS } from "@cocalc/util/db-schema/site-settings-extras";
 import { deep_copy, keys } from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
 import { site_settings_conf } from "@cocalc/util/schema";
 import { RenderRow } from "./render-row";
 import { Data, IsClearing, IsReadonly, IsSet, State } from "./types";
@@ -58,10 +59,11 @@ export default function SiteSettings({ close }) {
     "customize",
     "launchpad_cloudflare_tunnel_status",
   );
-  const testEmailRef = useRef<InputRef>(null);
-  const [_, setDisableTests] = useState<boolean>(false);
   const [state, setState] = useState<State>("load");
   const [error, setError] = useState<string>("");
+  const [emailTestLoading, setEmailTestLoading] = useState<boolean>(false);
+  const [emailTestResult, setEmailTestResult] = useState<any>(null);
+  const [emailTestError, setEmailTestError] = useState<string>("");
   const [data, setData] = useState<Data | null>(null);
   const [isSet, setIsSet] = useState<IsSet | null>(null);
   const [filterStr, setFilterStr] = useState<string>("");
@@ -138,7 +140,6 @@ export default function SiteSettings({ close }) {
     clearSecretsRef.current = {};
     editedRef.current = deep_copy(data);
     savedRef.current = deep_copy(data);
-    setDisableTests(false);
   }
 
   // returns true if the given settings key is a header
@@ -459,18 +460,89 @@ export default function SiteSettings({ close }) {
     }
   }
 
-  function Tests() {
+  async function sendTestEmail(): Promise<void> {
+    setEmailTestLoading(true);
+    setEmailTestError("");
+    setEmailTestResult(null);
+    try {
+      const result = await webapp_client.conat_client.hub.system.sendTestEmail({
+        lane: "critical",
+      });
+      setEmailTestResult(result);
+    } catch (err) {
+      setEmailTestError(err instanceof Error ? err.message : `${err}`);
+    } finally {
+      setEmailTestLoading(false);
+    }
+  }
+
+  function formatEmailTestRoute(result: any): string {
+    const route = result?.route ?? [];
+    if (!route.length) {
+      return `${result?.lane ?? "critical"} -> no backend configured`;
+    }
+    return [
+      result.lane,
+      ...route.map((step) =>
+        step.status === "accepted"
+          ? `${step.backend} accepted`
+          : `${step.backend} failed`,
+      ),
+    ].join(" -> ");
+  }
+
+  function EmailTest() {
+    const email = redux.getStore("account").get("email_address");
     return (
-      <div style={{ marginBottom: "1rem" }}>
-        <strong>Tests:</strong>
-        <Gap />
-        Email:
-        <Gap />
-        <Input
-          style={{ width: "auto" }}
-          defaultValue={redux.getStore("account").get("email_address")}
-          ref={testEmailRef}
-        />
+      <div style={{ margin: "4px 0 12px 0", maxWidth: "900px" }}>
+        <Button
+          size="small"
+          icon={<Icon name="mail" />}
+          loading={emailTestLoading}
+          onClick={sendTestEmail}
+        >
+          Send Test Email
+        </Button>
+        <span style={{ marginLeft: "8px", color: COLORS.GRAY_M }}>
+          Sends a critical-lane test to <code>{email || "your account"}</code>.
+        </span>
+        {emailTestResult != null && (
+          <Alert
+            showIcon
+            style={{ marginTop: "8px" }}
+            type={emailTestResult.success ? "success" : "error"}
+            message={formatEmailTestRoute(emailTestResult)}
+            description={
+              <div>
+                <div>
+                  Recipient: <code>{emailTestResult.to}</code>
+                </div>
+                <div>
+                  Settings: default{" "}
+                  <code>{emailTestResult.default_backend}</code>, critical{" "}
+                  <code>{emailTestResult.lane_backend}</code>, resolved{" "}
+                  <code>{emailTestResult.resolved_backend || "none"}</code>
+                </div>
+                {emailTestResult.route?.map((step, i) =>
+                  step.error ? (
+                    <div key={i}>
+                      <code>{step.backend}</code>: {step.error}
+                    </div>
+                  ) : null,
+                )}
+              </div>
+            }
+          />
+        )}
+        {emailTestError && (
+          <Alert
+            showIcon
+            style={{ marginTop: "8px" }}
+            type="error"
+            message="Test email failed"
+            description={emailTestError}
+          />
+        )}
       </div>
     );
   }
@@ -713,6 +785,7 @@ export default function SiteSettings({ close }) {
                 </span>
               )}
             </div>
+            {groupName === "Messaging & Email" && <EmailTest />}
             {[...subgroups.entries()]
               .sort((a, b) => a[0].localeCompare(b[0]))
               .map(([subgroupName, items]) => (
@@ -952,7 +1025,6 @@ export default function SiteSettings({ close }) {
         </Row>
         {editRows}
         <Gap />
-        {!activeFilter && <Tests />}
         {!activeFilter && <Buttons />}
         {activeFilter ? (
           <Alert
