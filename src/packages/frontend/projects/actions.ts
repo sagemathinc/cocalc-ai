@@ -48,6 +48,7 @@ import {
 } from "./offline-move-confirmation";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { isTerminal } from "@cocalc/frontend/lro/utils";
+import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
 
 import type {
   CourseInfo,
@@ -2294,7 +2295,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
           void this.ensure_host_info(host_id, true);
         }
       } catch (err) {
-        actions.setState({ control_error: `Error starting project -- ${err}` });
+        if (extractRuntimeSponsorDenial(err)) {
+          actions.setState({ control_error: "" });
+        } else {
+          actions.setState({
+            control_error: `Error starting project -- ${err}`,
+          });
+        }
         throw err;
       }
       actions.setState({ control_error: "" });

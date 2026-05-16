@@ -125,6 +125,11 @@ jest.mock("@cocalc/frontend/projects/host-operational", () => ({
 
 jest.mock("@cocalc/frontend/project/settings/move-project", () => () => null);
 
+jest.mock(
+  "@cocalc/frontend/account/membership-purchase-modal",
+  () => () => null,
+);
+
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
@@ -253,9 +258,7 @@ describe("StartButton", () => {
       </IntlProvider>,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /stop and start this project/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /^stop$/i }));
 
     await waitFor(() => {
       expect(mockStopProject).toHaveBeenCalledWith("running-project");

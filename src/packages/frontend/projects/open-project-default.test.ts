@@ -55,6 +55,15 @@ describe("defaultOpenProjectTarget", () => {
     ).toBeUndefined();
   });
 
+  it("does not restore settings for an explicit project root URL", () => {
+    expect(
+      defaultOpenProjectTarget({
+        target: "",
+        activeProjectTab: "settings",
+      }),
+    ).toBe("project-home");
+  });
+
   it("defaults to files/ when active tab is unset", () => {
     expect(
       defaultOpenProjectTarget({

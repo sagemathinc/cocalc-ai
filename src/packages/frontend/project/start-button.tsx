@@ -31,6 +31,7 @@ import {
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
+import MembershipPurchaseModal from "@cocalc/frontend/account/membership-purchase-modal";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -620,6 +621,7 @@ function RuntimeSponsorDenialDescription({
     Record<string, true>
   >({});
   const [changingSponsor, setChangingSponsor] = useState(false);
+  const [membershipOpen, setMembershipOpen] = useState(false);
   const [stopError, setStopError] = useState<string>("");
   const visibleProjects = denial.active_projects.filter(
     (project) => project.visible !== false,
@@ -629,22 +631,6 @@ function RuntimeSponsorDenialDescription({
   const canStopAnyVisibleProject = visibleProjects.some(
     (project) => project.can_stop !== false,
   );
-
-  async function stopProject(project_id: string) {
-    setStopError("");
-    setStoppingProjectIds((ids) => ({ ...ids, [project_id]: true }));
-    try {
-      await redux.getActions("projects").stop_project(project_id);
-    } catch (err) {
-      setStopError(`${err}`);
-    } finally {
-      setStoppingProjectIds((ids) => {
-        const next = { ...ids };
-        delete next[project_id];
-        return next;
-      });
-    }
-  }
 
   async function stopProjectAndRetry(projectToStopId: string) {
     setStopError("");
@@ -679,8 +665,7 @@ function RuntimeSponsorDenialDescription({
   }
 
   function openMembershipDetails() {
-    Modal.destroyAll();
-    redux.getActions("page").set_active_tab("account");
+    setMembershipOpen(true);
   }
 
   return (
@@ -691,29 +676,17 @@ function RuntimeSponsorDenialDescription({
           {visibleProjects.map((project) => (
             <li key={project.project_id}>
               <Space size="small" align="center" wrap>
+                {project.can_stop !== false && (
+                  <Button
+                    size="small"
+                    loading={!!stoppingProjectIds[project.project_id]}
+                    onClick={() => stopProjectAndRetry(project.project_id)}
+                  >
+                    Stop
+                  </Button>
+                )}
                 <ProjectTitle project_id={project.project_id} trunc={60} />
                 {project.state && <span>({project.state})</span>}
-                {project.can_stop !== false && (
-                  <>
-                    <Button
-                      size="small"
-                      loading={!!stoppingProjectIds[project.project_id]}
-                      onClick={() => stopProject(project.project_id)}
-                    >
-                      Stop
-                    </Button>
-                    {denial.can_change_sponsor !== true && (
-                      <Button
-                        size="small"
-                        type="primary"
-                        loading={!!stoppingProjectIds[project.project_id]}
-                        onClick={() => stopProjectAndRetry(project.project_id)}
-                      >
-                        Stop and start this project
-                      </Button>
-                    )}
-                  </>
-                )}
               </Space>
             </li>
           ))}
@@ -721,9 +694,8 @@ function RuntimeSponsorDenialDescription({
       )}
       {canStopAnyVisibleProject && (
         <div style={{ marginTop: "8px" }}>
-          Stop one of these projects, then try starting this project again.
-          {denial.can_change_sponsor !== true &&
-            " Or use one of the buttons above to do both in one step."}
+          Stop one of these projects to free a running-project slot and start
+          the project you were trying to start.
         </div>
       )}
       {denial.can_upgrade && (
@@ -756,6 +728,10 @@ function RuntimeSponsorDenialDescription({
           here because your account is not a collaborator.
         </div>
       )}
+      <MembershipPurchaseModal
+        open={membershipOpen}
+        onClose={() => setMembershipOpen(false)}
+      />
     </div>
   );
 }
