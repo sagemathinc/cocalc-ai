@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Card, Modal, Space, Tag, Typography } from "antd";
+import { Alert, Button, Card, Progress, Space, Typography } from "antd";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
@@ -19,20 +19,18 @@ import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { linearList } from "@cocalc/frontend/project/info/utils";
 import useDiskUsage from "@cocalc/frontend/project/disk-usage/use-disk-usage";
 import useProjectInfo from "@cocalc/frontend/project/info/use-project-info";
-import { ManagedEgressRateSummary } from "@cocalc/frontend/purchases/managed-egress-history";
+import { ManagedEgressCompactButton } from "@cocalc/frontend/purchases/managed-egress-history";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
-import {
-  hostLabel,
-  normalizeProjectStateForDisplay,
-} from "@cocalc/frontend/projects/host-operational";
+import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { BACKUPS } from "@cocalc/util/consts/backups";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { Project } from "./types";
 import { human_readable_size } from "@cocalc/util/misc";
 import { useRunQuota } from "./run-quota/hooks";
+import MoveProject from "./move-project";
 
-const { Text, Title } = Typography;
+const { Text } = Typography;
 
 interface Props {
   project_id: string;
@@ -41,23 +39,37 @@ interface Props {
   showNonMemberWarning?: boolean;
 }
 
-function HealthRow({
+function RailRow({
   label,
   children,
+  action,
 }: {
   label: string;
   children: ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <div
       style={{
-        display: "grid",
-        gap: 4,
-        gridTemplateColumns: "96px minmax(0, 1fr)",
+        borderTop: "1px solid #edf2f7",
+        paddingTop: 10,
         lineHeight: 1.35,
       }}
     >
-      <Text type="secondary">{label}</Text>
+      <div
+        style={{
+          alignItems: "center",
+          display: "flex",
+          gap: 8,
+          justifyContent: "space-between",
+          marginBottom: 4,
+        }}
+      >
+        <Text type="secondary" style={{ fontSize: 12, fontWeight: 600 }}>
+          {label}
+        </Text>
+        {action}
+      </div>
       <div style={{ minWidth: 0 }}>{children}</div>
     </div>
   );
@@ -67,7 +79,6 @@ export function ProjectSettingsHealthRail({
   project_id,
   project,
   showNoInternetWarning,
-  showNonMemberWarning,
 }: Props) {
   const projectStatus = useTypedRedux({ project_id }, "status");
   const projectMap = useTypedRedux("projects", "project_map");
@@ -102,78 +113,67 @@ export function ProjectSettingsHealthRail({
       }}
       styles={{ body: { padding: 16 } }}
     >
-      <Title
-        level={4}
-        style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 0 }}
+      <div
+        style={{
+          alignItems: "center",
+          display: "flex",
+          gap: 8,
+          marginBottom: 12,
+        }}
       >
-        <Icon name="dashboard" /> Project Health
-      </Title>
-      <Space direction="vertical" style={{ width: "100%" }} size={12}>
-        <HealthRow label="State">
+        <Icon name="dashboard" />
+        <Text strong style={{ fontSize: 16 }}>
+          Project Health
+        </Text>
+      </div>
+      <Space direction="vertical" style={{ width: "100%" }} size={10}>
+        <RailRow label="State">
           {displayProjectState ? (
             <ProjectState show_desc={false} state={displayProjectState} />
           ) : (
             <Text type="secondary">Unknown</Text>
           )}
-        </HealthRow>
-        <HealthRow label="Host">
-          <Text>{hostLabel(hostInfo, hostId) ?? "Unassigned"}</Text>
-        </HealthRow>
+        </RailRow>
+        <RailRow label="Host">
+          <MoveProject project_id={project_id} size="small" />
+        </RailRow>
         {typeof startTs === "number" && displayStateValue === "running" && (
-          <HealthRow label="Uptime">
+          <RailRow label="Uptime">
             <TimeAgo date={new Date(startTs)} />
-          </HealthRow>
+          </RailRow>
         )}
-        <HealthRow label="Project ID">
+        <RailRow label="Project ID">
           <CopyToClipBoard
             value={project_id}
-            display={`${project_id.slice(0, 8)}...`}
+            display={project_id}
             size="small"
-            inputWidth="90px"
-            style={{ display: "inline-block" }}
+            inputWidth="100%"
+            style={{ display: "block", width: "100%" }}
           />
-        </HealthRow>
+        </RailRow>
         {typeof userCount === "number" && (
-          <HealthRow label="People">
-            <Tag>
+          <RailRow label="People">
+            <Button type="link" href="#people" style={{ padding: 0 }}>
               {userCount} collaborator{userCount === 1 ? "" : "s"}
-            </Tag>
-          </HealthRow>
+            </Button>
+          </RailRow>
         )}
         <BackupHealthRow project_id={project_id} lastBackup={lastBackup} />
         <SnapshotHealthRow project_id={project_id} />
         <StorageHealthRow project_id={project_id} />
         <ProcessHealthRow project_id={project_id} />
-        <HealthRow label="Network">
-          <Space direction="vertical" size={2}>
-            <ManagedEgressRateSummary project_id={project_id} />
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              Internet:{" "}
-              {runQuota.network == null
-                ? "Unknown"
-                : runQuota.network
-                  ? "Enabled"
-                  : "Disabled"}
-            </Text>
-          </Space>
-        </HealthRow>
-        {runQuota.member_host != null && (
-          <HealthRow label="Member host">
-            <Tag color={runQuota.member_host ? "green" : "warning"}>
-              {runQuota.member_host ? "Yes" : "No"}
-            </Tag>
-          </HealthRow>
-        )}
-        {(showNoInternetWarning || showNonMemberWarning) && (
+        <NetworkHealthRow
+          project_id={project_id}
+          networkEnabled={
+            runQuota.network == null ? undefined : !!runQuota.network
+          }
+        />
+        {showNoInternetWarning && (
           <Alert
             type="warning"
             showIcon
-            message="Attention needed"
-            description={
-              showNoInternetWarning
-                ? "This project currently has no internet access."
-                : "This project is not running on a member host."
-            }
+            message="No internet access"
+            description="This project currently has no internet access."
           />
         )}
       </Space>
@@ -193,7 +193,7 @@ function BackupHealthRow({
   lastBackup: unknown;
 }) {
   return (
-    <HealthRow label="Backups">
+    <RailRow label="Backups">
       <Space direction="vertical" size={2}>
         {lastBackup ? (
           <Text>
@@ -206,7 +206,7 @@ function BackupHealthRow({
           Open backups
         </Button>
       </Space>
-    </HealthRow>
+    </RailRow>
   );
 }
 
@@ -253,7 +253,7 @@ function SnapshotHealthRow({ project_id }: { project_id: string }) {
   }, [project_id]);
 
   return (
-    <HealthRow label="Snapshots">
+    <RailRow label="Snapshots">
       <Space direction="vertical" size={2}>
         {snapshot ? (
           <Text>
@@ -271,7 +271,7 @@ function SnapshotHealthRow({ project_id }: { project_id: string }) {
           Open snapshots
         </Button>
       </Space>
-    </HealthRow>
+    </RailRow>
   );
 }
 
@@ -285,14 +285,14 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
 
   if (disconnected && rows == null) {
     return (
-      <HealthRow label="Processes">
+      <RailRow label="Processes">
         <Space direction="vertical" size={2}>
           <Text type="secondary">Unavailable</Text>
-          <Button size="small" href="#runtime">
-            Open runtime
+          <Button size="small" onClick={() => openInfoPage(project_id)}>
+            Process monitor
           </Button>
         </Space>
-      </HealthRow>
+      </RailRow>
     );
   }
 
@@ -307,7 +307,7 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
       : rows.reduce((total, process) => total + process.mem, 0);
 
   return (
-    <HealthRow label="Processes">
+    <RailRow label="Processes">
       <Space direction="vertical" size={2}>
         <Text>
           {processCount} process{processCount === 1 ? "" : "es"}
@@ -317,18 +317,21 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
             CPU {cpuPct.toFixed(1)}% · Memory {human_readable_size(memoryBytes)}
           </Text>
         )}
-        <Button size="small" href="#runtime">
-          Open runtime
+        <Button size="small" onClick={() => openInfoPage(project_id)}>
+          Process monitor
         </Button>
       </Space>
-    </HealthRow>
+    </RailRow>
   );
 }
 
 function StorageHealthRow({ project_id }: { project_id: string }) {
-  const [open, setOpen] = useState<boolean>(false);
   const { quotas, live, retained, loading } = useDiskUsage({ project_id });
   const quota = quotas[0];
+  const percent =
+    quota == null || quota.size <= 0
+      ? undefined
+      : Math.min(100, Math.round((100 * quota.used) / quota.size));
   const quotaLabel =
     quota == null || quota.size <= 0
       ? undefined
@@ -339,38 +342,75 @@ function StorageHealthRow({ project_id }: { project_id: string }) {
     : undefined;
 
   return (
-    <>
-      <HealthRow label="Storage">
-        <Space direction="vertical" size={2} style={{ width: "100%" }}>
-          {quotaLabel ? (
+    <RailRow label="Storage">
+      <Space direction="vertical" size={5} style={{ width: "100%" }}>
+        {quotaLabel ? (
+          <>
             <Text>{quotaLabel}</Text>
-          ) : loading ? (
-            <Text type="secondary">Loading...</Text>
-          ) : (
-            <Text type="secondary">Unknown</Text>
-          )}
-          {(liveLabel || retainedLabel) && (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {liveLabel ? `Live ${liveLabel}` : ""}
-              {liveLabel && retainedLabel ? " · " : ""}
-              {retainedLabel ? `Retained ${retainedLabel}` : ""}
-            </Text>
-          )}
-          <Button size="small" onClick={() => setOpen(true)}>
-            Disk usage
-          </Button>
-        </Space>
-      </HealthRow>
-      <Modal
-        open={open}
-        title="Disk Usage"
-        width={760}
-        footer={null}
-        onCancel={() => setOpen(false)}
-        destroyOnHidden
-      >
-        <DiskUsage project_id={project_id} compact />
-      </Modal>
-    </>
+            <Progress
+              percent={percent}
+              showInfo={false}
+              size="small"
+              status={percent != null && percent > 90 ? "exception" : "normal"}
+            />
+          </>
+        ) : loading ? (
+          <Text type="secondary">Loading...</Text>
+        ) : (
+          <Text type="secondary">Unknown</Text>
+        )}
+        {(liveLabel || retainedLabel) && (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {liveLabel ? `Live ${liveLabel}` : ""}
+            {liveLabel && retainedLabel ? " · " : ""}
+            {retainedLabel ? `Retained ${retainedLabel}` : ""}
+          </Text>
+        )}
+        <DiskUsage project_id={project_id} compact style={{ width: "100%" }} />
+      </Space>
+    </RailRow>
+  );
+}
+
+function openInfoPage(project_id: string) {
+  redux.getProjectActions(project_id).set_active_tab("info");
+}
+
+function NetworkHealthRow({
+  project_id,
+  networkEnabled,
+}: {
+  project_id: string;
+  networkEnabled: boolean | null | undefined;
+}) {
+  const activityBars = [30, 58, 38, 72, 46, 88, 54];
+  return (
+    <RailRow label="Network">
+      <Space direction="vertical" size={6} style={{ width: "100%" }}>
+        <div style={{ display: "flex", alignItems: "end", gap: 3, height: 22 }}>
+          {activityBars.map((height, i) => (
+            <div
+              key={i}
+              style={{
+                background: networkEnabled === false ? "#d9d9d9" : "#1677ff",
+                borderRadius: 2,
+                height: `${height}%`,
+                opacity: 0.35 + i * 0.07,
+                width: 8,
+              }}
+            />
+          ))}
+        </div>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          Internet{" "}
+          {networkEnabled == null
+            ? "unknown"
+            : networkEnabled
+              ? "enabled"
+              : "disabled"}
+        </Text>
+        <ManagedEgressCompactButton project_id={project_id} label="Egress" />
+      </Space>
+    </RailRow>
   );
 }
