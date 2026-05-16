@@ -6,7 +6,6 @@
 import getPool from "@cocalc/database/pool";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import sendEmail from "@cocalc/server/email/send-email";
-import sendViaSMTP from "@cocalc/server/email/smtp";
 import { getVerifyEmail } from "@cocalc/server/email/verify";
 import sendWelcomeEmail from "@cocalc/server/email/welcome-email";
 import type { Message } from "@cocalc/server/email/message";
@@ -53,18 +52,7 @@ export default async function sendEmailVerification(
         categories: ["verify"],
         asm_group: 147985,
       };
-      if (settings.password_reset_override === "smtp") {
-        try {
-          await sendViaSMTP(message, "password_reset");
-        } catch (err) {
-          logger.debug(
-            `verification email via secondary smtp failed for account_id=${account_id}; falling back to critical lane -- ${err}`,
-          );
-          await sendEmail(message, account_id, "critical");
-        }
-      } else {
-        await sendEmail(message, account_id, "critical");
-      }
+      await sendEmail(message, account_id, "critical");
     }
     logger.debug(
       `successfully sent verification email for account_id=${account_id}`,

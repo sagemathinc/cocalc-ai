@@ -1687,17 +1687,10 @@ export interface System {
         login: boolean;
         password: boolean;
       };
-      secondary_smtp: {
-        enabled: boolean;
-        server: boolean;
-        from: boolean;
-        login: boolean;
-        password: boolean;
-      };
     };
     route: {
       backend: "sendgrid" | "smtp";
-      source: "lane" | "primary-smtp" | "secondary-smtp" | "default-fallback";
+      source: "lane" | "primary-smtp" | "default-fallback";
       status: "accepted" | "failed" | "skipped";
       error?: string;
     }[];

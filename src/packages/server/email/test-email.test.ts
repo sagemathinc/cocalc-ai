@@ -62,7 +62,6 @@ describe("sendTestEmail", () => {
         to: "admin@example.com",
         subject: "CoCalc test email from Alpha",
       }),
-      "email",
     );
     expect(sendViaSendgridMock).not.toHaveBeenCalled();
   });
@@ -126,17 +125,7 @@ describe("sendTestEmail", () => {
     expect(sendViaSendgridMock).not.toHaveBeenCalled();
   });
 
-  it("tests the verification route using secondary smtp before critical fallback", async () => {
-    getServerSettingsMock.mockResolvedValueOnce({
-      site_name: "Alpha",
-      email_backend: "sendgrid",
-      notification_email_critical_backend: "smtp",
-      password_reset_override: "smtp",
-      password_reset_smtp_server: "smtp.example.com",
-      password_reset_smtp_from: "noreply@example.com",
-      password_reset_smtp_login: "user",
-      password_reset_smtp_password: "password",
-    });
+  it("tests the verification route through the critical lane", async () => {
     const { sendTestEmail } = await import("./test-email");
 
     await expect(
@@ -144,59 +133,14 @@ describe("sendTestEmail", () => {
     ).resolves.toMatchObject({
       mode: "verification",
       success: true,
-      route: [
-        { backend: "smtp", source: "secondary-smtp", status: "accepted" },
-      ],
+      route: [{ backend: "smtp", source: "primary-smtp", status: "accepted" }],
     });
     expect(sendViaSMTPMock).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "admin@example.com",
         subject: "CoCalc verification test email from Alpha",
       }),
-      "password_reset",
     );
     expect(sendViaSendgridMock).not.toHaveBeenCalled();
-  });
-
-  it("falls back from secondary smtp to the critical route for verification tests", async () => {
-    getServerSettingsMock.mockResolvedValueOnce({
-      site_name: "Alpha",
-      email_backend: "sendgrid",
-      notification_email_critical_backend: "smtp",
-      password_reset_override: "smtp",
-      password_reset_smtp_server: "smtp.example.com",
-      password_reset_smtp_from: "noreply@example.com",
-      password_reset_smtp_login: "user",
-      password_reset_smtp_password: "password",
-    });
-    sendViaSMTPMock
-      .mockRejectedValueOnce(Error("secondary down"))
-      .mockRejectedValueOnce(Error("primary down"));
-    const { sendTestEmail } = await import("./test-email");
-
-    await expect(
-      sendTestEmail({ account_id, mode: "verification" }),
-    ).resolves.toMatchObject({
-      mode: "verification",
-      success: true,
-      route: [
-        {
-          backend: "smtp",
-          source: "secondary-smtp",
-          status: "failed",
-          error: "secondary down",
-        },
-        {
-          backend: "smtp",
-          source: "primary-smtp",
-          status: "failed",
-          error: "primary down",
-        },
-        { backend: "sendgrid", source: "default-fallback", status: "accepted" },
-      ],
-    });
-    expect(sendViaSendgridMock).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "admin@example.com" }),
-    );
   });
 });

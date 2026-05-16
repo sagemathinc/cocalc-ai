@@ -96,7 +96,6 @@ let sendgrid_server_disabled = false;
 let smtp_server: any | undefined = undefined;
 let smtp_server_created: number | undefined = undefined; // timestamp
 let smtp_server_conf: any | undefined = undefined;
-let smtp_pw_reset_server: any | undefined = undefined;
 
 async function init_sendgrid(opts: Opts, dbg): Promise<void> {
   if (sendgrid_server != null) {
@@ -398,43 +397,11 @@ function make_dbg(opts) {
   }
 }
 
-async function init_pw_reset_smtp_server(opts): Promise<void> {
-  const s = opts.settings;
-  if (smtp_pw_reset_server != null) {
-    return;
-  }
-
-  // s.password_reset_smtp_from;
-  smtp_pw_reset_server = await createTransport({
-    host: s.password_reset_smtp_server,
-    port: s.password_reset_smtp_port,
-    secure: s.password_reset_smtp_secure, // true for 465, false for other ports
-    auth: {
-      user: s.password_reset_smtp_login,
-      pass: s.password_reset_smtp_password,
-    },
-  });
-}
-
 const smtp_footer = `
 <p style="margin-top:150px; border-top: 1px solid gray; color: gray; font-size:85%; text-align:center">
 This email was sent by <a href="<%= url %>"><%= settings.site_name %></a> by <%= company_name %>.
 Contact <a href="mailto:<%= settings.help_email %>"><%= settings.help_email %></a> if you have any questions.
 </p>`;
-
-// construct the actual HTML body of a password reset email sent via SMTP
-// in particular, all emails must have a body explaining who sent it!
-const pw_reset_body_tmpl = template(`
-<h2><%= subject %></h2>
-
-<%= body %>
-
-${smtp_footer}
-`);
-
-function password_reset_body(opts: Opts): string {
-  return pw_reset_body_tmpl(opts);
-}
 
 const smtp_email_body_tmpl = template(`
 <%= body %>
@@ -511,8 +478,6 @@ export async function send_email(opts: Opts): Promise<void> {
   // 0. email_enabled == false, don't send any emails, period.
   // 1. email_backend == none, can't send usual emails
   //                  == sendgrid | smtp → send using one of these
-  // 2. password_reset_override == 'default', do what (1.) is set to
-  //                            == 'smtp', override (1.), including "none"
 
   // an optional message to log and report back
   let message: string | undefined = undefined;
@@ -523,62 +488,32 @@ export async function send_email(opts: Opts): Promise<void> {
     dbg(message);
   }
 
-  const pw_reset_smtp =
-    opts.category == "password_reset" &&
-    opts.settings.password_reset_override == "smtp";
-
-  const email_verify_smtp =
-    opts.category == "verify" &&
-    opts.settings.password_reset_override == "smtp";
-
   const email_backend = opts.settings.email_backend ?? "sendgrid";
 
   try {
-    // this is a password reset or email verification token email
-    // and we send it via smtp because the override is enabled
-    if (pw_reset_smtp || email_verify_smtp) {
-      dbg("initializing PW SMTP server...");
-      await init_pw_reset_smtp_server(opts);
+    // INIT phase
+    await init_sendgrid(opts, dbg);
+    await init_smtp_server(opts, dbg);
 
-      const html =
-        opts.category == "verify" ? opts.body : password_reset_body(opts);
-
-      dbg(`sending email category=${opts.category} via SMTP server ...`);
-      const info = await smtp_pw_reset_server.sendMail({
-        from: opts.settings.password_reset_smtp_from,
-        replyTo: opts.settings.password_reset_smtp_from,
-        to: opts.to,
-        subject: opts.subject,
-        html,
-      });
-
-      message = `password reset email sent via SMTP: ${info.messageId}`;
-      dbg(message);
-    } else {
-      // INIT phase
-      await init_sendgrid(opts, dbg);
-      await init_smtp_server(opts, dbg);
-
-      // SEND phase
-      switch (email_backend) {
-        case "sendgrid":
-          // if not available for any reason …
-          if (sendgrid_server == null || sendgrid_server_disabled) {
-            message = "sendgrid email is disabled -- no actual message sent";
-            dbg(message);
-          } else {
-            await send_via_sendgrid(opts, dbg);
-          }
-          break;
-        case "smtp":
-          await send_via_smtp(opts, dbg);
-          break;
-        case "none":
-          message =
-            "no email sent, because email_backend is 'none' -- configure it in 'Admin/Site Settings'";
+    // SEND phase
+    switch (email_backend) {
+      case "sendgrid":
+        // if not available for any reason …
+        if (sendgrid_server == null || sendgrid_server_disabled) {
+          message = "sendgrid email is disabled -- no actual message sent";
           dbg(message);
-          break;
-      }
+        } else {
+          await send_via_sendgrid(opts, dbg);
+        }
+        break;
+      case "smtp":
+        await send_via_smtp(opts, dbg);
+        break;
+      case "none":
+        message =
+          "no email sent, because email_backend is 'none' -- configure it in 'Admin/Site Settings'";
+        dbg(message);
+        break;
     }
 
     // all fine, no errors

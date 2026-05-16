@@ -20,7 +20,7 @@ import sendViaSendgrid from "./sendgrid";
 
 export interface TestEmailRouteStep {
   backend: Exclude<EmailBackend, "" | "none">;
-  source: "lane" | "primary-smtp" | "secondary-smtp" | "default-fallback";
+  source: "lane" | "primary-smtp" | "default-fallback";
   status: "accepted" | "failed" | "skipped";
   error?: string;
 }
@@ -43,13 +43,6 @@ export interface TestEmailResult {
       login: boolean;
       password: boolean;
     };
-    secondary_smtp: {
-      enabled: boolean;
-      server: boolean;
-      from: boolean;
-      login: boolean;
-      password: boolean;
-    };
   };
   route: TestEmailRouteStep[];
 }
@@ -64,13 +57,6 @@ function getConfigured(
       from: !!settings.email_smtp_from,
       login: !!settings.email_smtp_login,
       password: !!settings.email_smtp_password,
-    },
-    secondary_smtp: {
-      enabled: settings.password_reset_override === "smtp",
-      server: !!settings.password_reset_smtp_server,
-      from: !!settings.password_reset_smtp_from,
-      login: !!settings.password_reset_smtp_login,
-      password: !!settings.password_reset_smtp_password,
     },
   };
 }
@@ -117,7 +103,7 @@ async function sendViaBackend(
 ): Promise<void> {
   switch (backend) {
     case "smtp":
-      await sendViaSMTP(message, "email");
+      await sendViaSMTP(message);
       return;
     case "sendgrid":
       await sendViaSendgrid(message);
@@ -212,36 +198,12 @@ export async function sendTestEmail({
   };
 
   let success = false;
-  if (
-    normalizedMode === "verification" &&
-    settings.password_reset_override === "smtp"
-  ) {
-    try {
-      await sendViaSMTP({ ...message }, "password_reset");
-      route.push({
-        backend: "smtp",
-        source: "secondary-smtp",
-        status: "accepted",
-      });
-      success = true;
-    } catch (err) {
-      route.push({
-        backend: "smtp",
-        source: "secondary-smtp",
-        status: "failed",
-        error: sanitizeError(err),
-      });
-    }
-  }
-
-  if (!success) {
-    success = await sendViaCriticalRoute({
-      message,
-      route,
-      resolved_backend,
-      default_backend,
-    });
-  }
+  success = await sendViaCriticalRoute({
+    message,
+    route,
+    resolved_backend,
+    default_backend,
+  });
 
   return {
     mode: normalizedMode,

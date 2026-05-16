@@ -498,8 +498,6 @@ export default function SiteSettings({ close }) {
     switch (step?.source) {
       case "primary-smtp":
         return "primary smtp";
-      case "secondary-smtp":
-        return "secondary smtp";
       case "default-fallback":
         return `fallback ${step.backend}`;
       default:
@@ -510,7 +508,6 @@ export default function SiteSettings({ close }) {
   function EmailTest() {
     const email = redux.getStore("account").get("email_address");
     const primarySmtp = emailTestResult?.configured?.primary_smtp;
-    const secondarySmtp = emailTestResult?.configured?.secondary_smtp;
     return (
       <div style={{ margin: "4px 0 12px 0", maxWidth: "900px" }}>
         <Button
@@ -531,8 +528,8 @@ export default function SiteSettings({ close }) {
           Send Verification Test
         </Button>
         <span style={{ marginLeft: "8px", color: COLORS.GRAY_M }}>
-          Sends to <code>{email || "your account"}</code>. Verification uses
-          Secondary SMTP first when that override is enabled.
+          Sends to <code>{email || "your account"}</code>. Verification uses the
+          critical email route.
         </span>
         {emailTestResult != null && (
           <Alert
@@ -552,9 +549,8 @@ export default function SiteSettings({ close }) {
                   <code>{emailTestResult.resolved_backend || "none"}</code>
                 </div>
                 <div>
-                  Primary SMTP is used when a lane resolves to <code>smtp</code>
-                  . Secondary SMTP is only used by password reset/email
-                  verification when its override is <code>smtp</code>.
+                  Primary SMTP is used when a lane resolves to{" "}
+                  <code>smtp</code>.
                 </div>
                 {primarySmtp != null && (
                   <div>
@@ -565,17 +561,6 @@ export default function SiteSettings({ close }) {
                     <code>{primarySmtp.login ? "set" : "missing"}</code>,
                     password{" "}
                     <code>{primarySmtp.password ? "set" : "missing"}</code>
-                  </div>
-                )}
-                {secondarySmtp?.enabled && (
-                  <div>
-                    Secondary SMTP: server{" "}
-                    <code>{secondarySmtp.server ? "set" : "missing"}</code>,
-                    from <code>{secondarySmtp.from ? "set" : "missing"}</code>,
-                    username{" "}
-                    <code>{secondarySmtp.login ? "set" : "missing"}</code>,
-                    password{" "}
-                    <code>{secondarySmtp.password ? "set" : "missing"}</code>
                   </div>
                 )}
                 {emailTestResult.route?.map((step, i) =>
