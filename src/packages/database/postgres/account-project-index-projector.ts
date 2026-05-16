@@ -132,6 +132,35 @@ async function existingLastOpenedAt(
   );
 }
 
+async function projectExists(
+  db: PoolClient,
+  project_id: string,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    `SELECT 1
+       FROM projects
+      WHERE project_id = $1
+      LIMIT 1`,
+    [project_id],
+  );
+  return rows.length > 0;
+}
+
+function projectRemoveEvents(opts: {
+  account_ids: string[];
+  project_id: string;
+  event_ts?: string | Date | number | null;
+}): AccountFeedEvent[] {
+  const ts = eventTimestampMs(opts.event_ts);
+  return opts.account_ids.map((account_id) => ({
+    type: "project.remove",
+    ts,
+    account_id,
+    project_id: opts.project_id,
+    reason: "membership_removed",
+  }));
+}
+
 export async function computeAccountProjectFeedEvents(opts: {
   db: PoolClient;
   bay_id: string;
@@ -209,20 +238,30 @@ async function applyProjectEventToAccountProjectIndex(opts: {
 }> {
   const { db, bay_id, event } = opts;
   const payload = event.payload_json;
-  const lastOpenedByAccount = await existingLastOpenedAt(
-    db,
-    payload.project_id,
-  );
+  const project_id = event.project_id;
+  const lastOpenedByAccount = await existingLastOpenedAt(db, project_id);
   const deleted = await db.query(
     `DELETE FROM account_project_index
       WHERE project_id = $1`,
-    [payload.project_id],
+    [project_id],
   );
+  const previousLocalAccountIds = Array.from(lastOpenedByAccount.keys());
+  if (!(await projectExists(db, project_id))) {
+    return {
+      inserted_rows: 0,
+      deleted_rows: deleted.rowCount ?? 0,
+      feed_events: projectRemoveEvents({
+        account_ids: previousLocalAccountIds,
+        project_id,
+        event_ts: event.created_at,
+      }),
+    };
+  }
   const feed_events = await computeAccountProjectFeedEvents({
     db,
     bay_id,
     payload,
-    previous_local_account_ids: Array.from(lastOpenedByAccount.keys()),
+    previous_local_account_ids: previousLocalAccountIds,
     event_ts: event.created_at,
   });
   const currentLocalAccountIds = feed_events

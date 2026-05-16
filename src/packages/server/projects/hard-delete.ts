@@ -570,6 +570,13 @@ async function purgeProjectRows({
     });
     await runDeleteMaybeMissingTable({
       client,
+      table: "project_events_outbox",
+      query: "DELETE FROM project_events_outbox WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
       table: "account_project_index",
       query: "DELETE FROM account_project_index WHERE project_id=$1",
       params: [project.project_id],
