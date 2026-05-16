@@ -60,7 +60,6 @@ export interface ProjectsState {
   open_projects: List<string>; // the opened projects in *tab* order
 
   search: string;
-  deleted: boolean;
   hidden: boolean;
   selected_hashtags: Map<string, Set<string>>;
 
@@ -406,16 +405,15 @@ export class ProjectsStore extends Store<ProjectsState> {
   }
 
   // Returns true if the project should be visible with the specified filters selected
-  private project_is_in_filter(
-    project_id: string,
-    hidden: boolean,
-    deleted: boolean,
-  ): boolean {
+  private project_is_in_filter(project_id: string, hidden: boolean): boolean {
     const account_id = webapp_client.account_id;
-    const project = this.getIn(["project_map", "project", project_id]);
+    const project = this.getIn(["project_map", project_id]);
+    if (project == null) {
+      return false;
+    }
     return (
-      !!project.get("deleted") == deleted &&
-      !!project.getIn("users", account_id, "hide") == hidden
+      !project.get("deleted") &&
+      !!project.getIn(["users", account_id, "hide"]) == hidden
     );
   }
 
@@ -424,25 +422,7 @@ export class ProjectsStore extends Store<ProjectsState> {
     const project_map = this.get("project_map");
     if (project_map == null) return false;
     for (const [project_id] of project_map) {
-      if (
-        this.project_is_in_filter(project_id, true, false) ||
-        this.project_is_in_filter(project_id, true, true)
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Returns true if this project has any deleted files
-  public has_deleted_projects(): boolean {
-    const project_map = this.get("project_map");
-    if (project_map == null) return false;
-    for (const [project_id] of project_map) {
-      if (
-        this.project_is_in_filter(project_id, false, true) ||
-        this.project_is_in_filter(project_id, true, true)
-      ) {
+      if (this.project_is_in_filter(project_id, true)) {
         return true;
       }
     }
@@ -578,7 +558,6 @@ const init_store = {
   open_projects: List<string>(), // ordered list of open projects
 
   search: "",
-  deleted: false,
   hidden: false,
   selected_hashtags: Map<string, Set<string>>(),
 

@@ -2,8 +2,6 @@ import createProject from "@cocalc/server/projects/create";
 export { createProject };
 import execProject from "@cocalc/server/projects/exec";
 import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/control";
-import deleteProjectControl from "@cocalc/server/projects/delete";
-import { setProjectDeleted as setProjectDeletedControl } from "@cocalc/server/projects/delete";
 import { assertHardDeleteProjectPermission } from "@cocalc/server/projects/hard-delete";
 import { assertProjectHardDeleteAdmission } from "@cocalc/server/projects/hard-delete-admission";
 import {
@@ -2304,59 +2302,6 @@ export async function getProjectActiveOperation({
   return await getInterBayBridge().projectControl(ownership.bay_id).activeOp({
     project_id,
     epoch: ownership.epoch,
-  });
-}
-
-export async function deleteProject({
-  account_id,
-  browser_id,
-  session_hash,
-  project_id,
-}: {
-  account_id?: string;
-  browser_id?: string | null;
-  session_hash?: string | null;
-  project_id: string;
-}): Promise<void> {
-  if (!account_id) {
-    throw new Error("must be signed in");
-  }
-  await requireDangerousProjectMutationAuth({
-    account_id,
-    browser_id,
-    session_hash,
-  });
-  await deleteProjectControl({
-    project_id,
-    account_id,
-  });
-}
-
-export async function setProjectDeleted({
-  account_id,
-  browser_id,
-  session_hash,
-  project_id,
-  deleted,
-}: {
-  account_id?: string;
-  browser_id?: string | null;
-  session_hash?: string | null;
-  project_id: string;
-  deleted: boolean;
-}): Promise<void> {
-  if (!account_id) {
-    throw new Error("must be signed in");
-  }
-  await requireDangerousProjectMutationAuth({
-    account_id,
-    browser_id,
-    session_hash,
-  });
-  await setProjectDeletedControl({
-    project_id,
-    account_id,
-    deleted: !!deleted,
   });
 }
 

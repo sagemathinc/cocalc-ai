@@ -940,8 +940,6 @@ export const LogEntry: React.FC<Props> = React.memo(
           return render_x11(event);
         case "delete_project":
           return <span>deleted the {projectLabelLower}</span>;
-        case "undelete_project":
-          return <span>undeleted the {projectLabelLower}</span>;
         case "hide_project":
           return <span>hid the {projectLabelLower} from themself</span>;
         case "unhide_project":

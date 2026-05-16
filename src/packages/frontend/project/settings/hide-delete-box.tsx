@@ -44,7 +44,6 @@ export function HideDeleteBox(props: Readonly<Props>) {
   const intl = useIntl();
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
-  const is_deleted = project.get("deleted");
   const project_id = project.get("project_id");
   const projectTitle = `${project.get("title") ?? ""}`.trim();
   const projectName = `${project.get("name") ?? ""}`.trim();
@@ -125,11 +124,7 @@ export function HideDeleteBox(props: Readonly<Props>) {
           <DangerActionRow
             icon="trash"
             title={`Delete ${projectLabel}`}
-            description={
-              is_deleted
-                ? `This ${projectLabelLower} is already marked deleted. Permanent delete will remove the workspace record and data.`
-                : `Permanently delete this ${projectLabelLower} for everyone. This requires fresh authentication and cannot be undone.`
-            }
+            description={`Permanently delete this ${projectLabelLower} for everyone. This requires fresh authentication and cannot be undone.`}
             action={
               <Button
                 danger
@@ -204,16 +199,14 @@ export function ProjectLocationBox(props: Readonly<Props>) {
   const isEmbedded = embedded || isFlyout;
   const project_id = project.get("project_id");
   const state = project.getIn(["state", "state"]);
-  const is_deleted = project.get("deleted");
   const lifecycleBusy =
     state == null ||
     ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
       state,
     );
   const movingDisabled =
-    is_deleted ||
-    (state != null &&
-      ["starting", "stopping", "archiving", "unarchiving"].includes(state));
+    state != null &&
+    ["starting", "stopping", "archiving", "unarchiving"].includes(state);
 
   function renderBody() {
     const locationRows = (
@@ -239,7 +232,7 @@ export function ProjectLocationBox(props: Readonly<Props>) {
           action={
             <ArchiveProject
               project_id={project_id}
-              disabled={is_deleted || lifecycleBusy}
+              disabled={lifecycleBusy}
               size={isFlyout ? "small" : undefined}
             />
           }

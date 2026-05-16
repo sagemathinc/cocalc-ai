@@ -33,7 +33,6 @@ import {
 } from "../context";
 import FileActionModal from "../file-action-modal";
 import { ProjectWarningBanner } from "../project-banner";
-import { DeletedProjectWarning } from "../warnings/deleted";
 import { DiskSpaceWarning } from "../warnings/disk-space";
 import { OOMWarning } from "../warnings/oom";
 import { RamWarning } from "../warnings/ram";
@@ -101,12 +100,6 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   const { collapsed: hideActionButtons } = useActivityBarPreferences();
   const flyout = useTypedRedux({ project_id }, "flyout");
   const actions = useActions({ project_id });
-  const is_deleted = useRedux([
-    "projects",
-    "project_map",
-    project_id,
-    "deleted",
-  ]);
   const project = useRedux(["projects", "project_map", project_id]);
   const project_color = projectThemeColor(project);
   const projectCtx = useProjectContextProvider({
@@ -719,7 +712,6 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
         <ProjectWarningBanner />
         {renderHostUnavailableBanner()}
         {renderTopRow()}
-        {is_deleted && <DeletedProjectWarning />}
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           {!workspaceBlocked && renderActivityBarButtons()}
           {!workspaceBlocked && renderFlyout()}
