@@ -56,7 +56,6 @@ const MAX_HISTORY_LENGTH = 100 * SCROLLBACK;
 const SPAWN_TIMEOUT = 5000;
 
 const EXIT_MESSAGE = "\r\n[Process completed - press any key]\r\n";
-const CONNECTING_MESSAGE = `\r\n\x1b[1;37m[\x1b[0m\x1b[36m CONNECTING{TARGET}... \x1b[0m\x1b[1;37m]\x1b[0m\r\n\r\n`;
 const ANSI_RESET = "\x1b[0m";
 const ANSI_DIM_CYAN = "\x1b[2;36m";
 const ANSI_BOLD_CYAN = "\x1b[1;36m";
@@ -135,6 +134,36 @@ function dividerLine(width: number): string {
 }
 
 function stoppedProjectTerminalMessage(cols: number | undefined): string {
+  return terminalStatusBox(cols, {
+    title: "Project is stopped",
+    primary: "Start the project to use this terminal.",
+    secondary: [
+      "This terminal will connect automatically",
+      "after the project starts.",
+    ],
+  });
+}
+
+function connectingTerminalMessage(cols: number | undefined): string {
+  return terminalStatusBox(cols, {
+    title: "Connecting terminal",
+    primary: "Preparing project session...",
+    secondary: ["This usually takes a few seconds."],
+  });
+}
+
+function terminalStatusBox(
+  cols: number | undefined,
+  {
+    title,
+    primary,
+    secondary,
+  }: {
+    title: string;
+    primary: string;
+    secondary: string[];
+  },
+): string {
   const terminalWidth = Math.max(40, Math.min(88, cols ?? 80));
   const width = Math.max(40, Math.min(62, terminalWidth - 6));
   const indent = " ".repeat(
@@ -143,19 +172,14 @@ function stoppedProjectTerminalMessage(cols: number | undefined): string {
   const lines = [
     borderLine({ left: "╭", fill: "─", right: "╮", width }),
     boxLine("", width),
-    boxLine(`${ANSI_BOLD_CYAN}>_  Project is stopped${ANSI_RESET}`, width),
+    boxLine(`${ANSI_BOLD_CYAN}>_  ${title}${ANSI_RESET}`, width),
     dividerLine(width),
     boxLine("", width),
-    boxLine(
-      `${ANSI_BOLD_WHITE}Start the project to use this terminal.${ANSI_RESET}`,
-      width,
-    ),
+    boxLine(`${ANSI_BOLD_WHITE}${primary}${ANSI_RESET}`, width),
     boxLine("", width),
-    boxLine(
-      `${ANSI_DIM}This terminal will connect automatically${ANSI_RESET}`,
-      width,
+    ...secondary.map((line) =>
+      boxLine(`${ANSI_DIM}${line}${ANSI_RESET}`, width),
     ),
-    boxLine(`${ANSI_DIM}after the project starts.${ANSI_RESET}`, width),
     boxLine("", width),
     borderLine({ left: "╰", fill: "─", right: "╯", width }),
   ];
@@ -638,7 +662,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
 
       this.terminal.reset();
       await this.handleDataFromProject(
-        CONNECTING_MESSAGE.replace("{TARGET}", ""),
+        connectingTerminalMessage(this.terminal.cols),
       );
 
       const pty = webapp_client.conat_client.terminalClient({

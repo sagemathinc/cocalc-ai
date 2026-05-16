@@ -260,6 +260,14 @@ describe("connected terminal resizing", () => {
         project_id: "project-1",
       }),
     );
+    expect(terminal["terminal"].write).toHaveBeenCalledWith(
+      expect.stringContaining("Connecting terminal"),
+      expect.any(Function),
+    );
+    expect(terminal["terminal"].write).toHaveBeenCalledWith(
+      expect.stringContaining("Preparing project session..."),
+      expect.any(Function),
+    );
 
     const disconnectedHandler = ptys
       .flatMap((pty) =>
