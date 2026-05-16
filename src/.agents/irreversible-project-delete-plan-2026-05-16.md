@@ -246,7 +246,7 @@ Delete flow:
 2. Fresh auth is required.
 3. Modal clearly states:
    - deletion is permanent and cannot be undone;
-   - files, collaborators, invites, shares, project-scoped secrets/API keys, and
+   - files, collaborators, invites, shares, project-scoped secrets/SSH keys, and
      project metadata will be removed;
    - backup cleanup is asynchronous;
    - the project cannot be opened or started after deletion begins.
@@ -254,9 +254,92 @@ Delete flow:
 5. User confirms.
 6. Frontend calls `hardDeleteProject` with backup purge scheduled according to
    backend policy.
-7. UI shows LRO progress.
-8. On queued/running success, remove/close the project tab and return to the
-   projects list.
+7. While admission/fresh-auth/rate-limit checks are still happening, keep the
+   modal open with the confirm button disabled and a short "Starting deletion"
+   spinner.
+8. If admission fails, show the structured error in the modal.
+9. As soon as the backend accepts the delete and returns a hard-delete LRO, close
+   the modal immediately. Do not keep a blocking modal open while the LRO runs.
+10. Close the current project tab or navigate back to the projects list, and show
+    a non-modal notification that permanent deletion has started.
+
+### Deletion-In-Progress UX
+
+Hard delete is allowed to take an unbounded amount of wall-clock time because it
+may stop a project, clean host state, delete database rows, and schedule backup
+cleanup. The UI must therefore treat "delete accepted" as the user-visible point
+of no return and must not block the user on the cleanup LRO.
+
+State model:
+
+- `admitting`: the user clicked confirm, but the backend has not accepted the
+  delete yet. The modal stays open, disables actions, and can still show
+  admission/fresh-auth/rate-limit errors.
+- `deleting`: the backend accepted the delete and returned a hard-delete LRO.
+  The project is no longer openable or startable, but cleanup may still be
+  running.
+- `deleted`: cleanup reached the point where the project row/projection is gone.
+  The project disappears from normal project lists.
+- `delete_failed`: cleanup failed after admission. The project should not
+  silently become normal again; show a clear failed-deletion state with the LRO
+  id and retry/support details.
+
+Required frontend behavior once the delete is accepted:
+
+- Close the hard-delete modal immediately after receiving the LRO id.
+- Show a dismissible notification such as "Permanent deletion started for
+  <project title>." Include a link to the non-modal activity/LRO detail when
+  available.
+- Remove or close the active project tab. If there is no safe close target,
+  navigate to the projects list.
+- In the projects list, keep the row visible only while projections still know
+  about it, with a "Deleting..." badge and disabled normal actions.
+- Hide or disable open, start, restart, move, archive, settings mutation, and
+  delete actions for a project in `deleting` state.
+- Allow only non-mutating affordances such as viewing deletion progress or
+  copying the project id.
+- When the final projection says the project is gone, remove it from the list
+  and prune any selected checkbox state.
+
+Required behavior for other browser tabs and stale links:
+
+- Opening a project that is in `deleting` state must show an explicit
+  full-page/project-shell message, not silently close.
+- Message: "This project is being permanently deleted. It cannot be opened or
+  started."
+- Actions: "Back to projects" and, when available, "View deletion progress".
+- Already-open file/editor/terminal/Jupyter tabs for the project should be
+  replaced by the same deletion-in-progress message or closed with an explicit
+  notification. They must not sit in a broken loading/connecting state.
+- Deep links to files inside the project should route to the same
+  deletion-in-progress screen while the LRO is running, and to a stable
+  "Project deleted" / not-found screen after final deletion.
+
+Required backend/projection behavior:
+
+- Hard-delete admission must durably mark the project as pending irreversible
+  deletion, or publish an equivalent account/project projection before the LRO
+  starts doing slow cleanup.
+- That pending-delete state must be visible to all relevant browser sessions,
+  not just the tab that initiated deletion.
+- Start/open/project-host routing must reject pending-delete projects with a
+  structured code such as `project_delete_in_progress`, not generic routing or
+  missing-volume errors.
+- The project-list projection must invalidate promptly when delete is accepted
+  and again when cleanup completes.
+- If cleanup fails after the project row is removed but backup purge remains
+  pending, the user-facing project can still be gone; surface the remaining
+  cleanup failure through operator/admin observability instead of resurrecting
+  the project.
+
+Error behavior after the modal has closed:
+
+- If the LRO later fails before the project row is removed, show a non-modal
+  account/project-list notification and mark the row as "Deletion failed".
+- The failed state should include the LRO id, a concise error, and a retry
+  action when retry is safe.
+- Do not silently reopen the project or restore normal project actions after a
+  failed cleanup unless the backend explicitly marks the project as safe to use.
 
 ### Project List Delete
 
@@ -574,6 +657,12 @@ Add operator CLI/report:
 - A collaborator cannot delete a project they do not own.
 - A project owner can irreversibly delete a project after fresh auth and typed
   confirmation.
+- The delete confirmation modal only blocks until admission succeeds or fails;
+  it closes immediately after the hard-delete LRO is accepted.
+- Accepted hard deletes are tracked through non-modal notifications,
+  project-list row state, and LRO/activity details.
+- Opening or viewing a project while deletion is in progress shows an explicit
+  deletion-in-progress message instead of silently closing or hanging.
 - Deleting an account hard-deletes owner-only projects.
 - Deleting an account transfers projects with remaining collaborators to a new
   owner/storage-responsible collaborator.
