@@ -19,7 +19,10 @@ import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
 import { linearList } from "@cocalc/frontend/project/info/utils";
 import useDiskUsage from "@cocalc/frontend/project/disk-usage/use-disk-usage";
 import useProjectInfo from "@cocalc/frontend/project/info/use-project-info";
-import { ManagedEgressHistoryButton } from "@cocalc/frontend/purchases/managed-egress-history";
+import {
+  ManagedEgressHistoryButton,
+  ManagedEgressSparkline,
+} from "@cocalc/frontend/purchases/managed-egress-history";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import { normalizeProjectStateForDisplay } from "@cocalc/frontend/projects/host-operational";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -27,13 +30,16 @@ import { BACKUPS } from "@cocalc/util/consts/backups";
 import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { Project } from "./types";
 import { human_readable_size } from "@cocalc/util/misc";
-import { useRunQuota } from "./run-quota/hooks";
 import MoveProject from "./move-project";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { StartButton } from "@cocalc/frontend/project/start-button";
 import { StopProject } from "./stop-project";
 
 const { Text } = Typography;
+
+function shortProjectId(project_id: string): string {
+  return `${project_id.slice(0, 8)}...${project_id.slice(-4)}`;
+}
 
 interface Props {
   project_id: string;
@@ -102,7 +108,6 @@ export function ProjectSettingsHealthRail({
     return rawState.set("state", "opened");
   })();
   const rawProjectState = `${(project as any).getIn(["state", "state"]) ?? ""}`;
-  const runQuota = useRunQuota(project_id, null);
   const lastBackup =
     projectMap?.getIn([project_id, "last_backup"]) ??
     (project as any).get("last_backup");
@@ -122,58 +127,35 @@ export function ProjectSettingsHealthRail({
       <div
         style={{
           alignItems: "center",
+          background: "linear-gradient(135deg, #f6fbff, #ffffff)",
+          border: "1px solid #e6f0fb",
+          borderRadius: 10,
           display: "flex",
           gap: 8,
-          marginBottom: 12,
+          justifyContent: "space-between",
+          marginBottom: 10,
+          padding: "8px 10px",
         }}
       >
-        <Icon name="dashboard" />
-        <Text strong style={{ fontSize: 16 }}>
-          Project Health
+        <Text strong>
+          <Icon name="dashboard" /> Health
+        </Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {rawProjectState || "unknown"}
         </Text>
       </div>
-      <Space direction="vertical" style={{ width: "100%" }} size={10}>
-        <RailRow
-          icon="heart"
-          label="State"
-          action={
-            rawProjectState === "running" ? (
-              <StopProject project_id={project_id} size="small" compact />
-            ) : (
-              <StartButton project_id={project_id} size="small" minimal />
-            )
-          }
-        >
-          {displayProjectState ? (
-            <>
-              <ProjectState show_desc={false} state={displayProjectState} />
-              {typeof startTs === "number" &&
-                displayStateValue === "running" && (
-                  <Text
-                    type="secondary"
-                    style={{ fontSize: 12, marginLeft: 8 }}
-                  >
-                    <TimeAgo date={new Date(startTs)} />
-                  </Text>
-                )}
-            </>
-          ) : (
-            <Text type="secondary">Unknown</Text>
-          )}
-        </RailRow>
-        <RailRow
-          icon="server"
-          label="Host"
-          action={<MoveProject project_id={project_id} size="small" />}
-        >
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            Details and move
-          </Text>
-        </RailRow>
+      <Space direction="vertical" style={{ width: "100%" }} size={8}>
+        <RuntimeHealthBlock
+          displayProjectState={displayProjectState}
+          displayStateValue={displayStateValue}
+          project_id={project_id}
+          rawProjectState={rawProjectState}
+          startTs={startTs}
+        />
         <RailRow icon="copy" label="Project ID">
           <CopyToClipBoard
             value={project_id}
-            display={project_id}
+            display={shortProjectId(project_id)}
             size="small"
             inputWidth="100%"
             style={{ display: "block", width: "100%" }}
@@ -194,16 +176,10 @@ export function ProjectSettingsHealthRail({
             </Text>
           </RailRow>
         )}
-        <BackupHealthRow project_id={project_id} lastBackup={lastBackup} />
-        <SnapshotHealthRow project_id={project_id} />
+        <RecoveryHealthRow project_id={project_id} lastBackup={lastBackup} />
         <StorageHealthRow project_id={project_id} />
         <ProcessHealthRow project_id={project_id} />
-        <NetworkHealthRow
-          project_id={project_id}
-          networkEnabled={
-            runQuota.network == null ? undefined : !!runQuota.network
-          }
-        />
+        <NetworkHealthRow project_id={project_id} />
         {showNoInternetWarning && (
           <Alert
             type="warning"
@@ -217,32 +193,108 @@ export function ProjectSettingsHealthRail({
   );
 }
 
+function RuntimeHealthBlock({
+  displayProjectState,
+  displayStateValue,
+  project_id,
+  rawProjectState,
+  startTs,
+}: {
+  displayProjectState: any;
+  displayStateValue?: string;
+  project_id: string;
+  rawProjectState: string;
+  startTs?: number;
+}) {
+  return (
+    <div
+      style={{
+        borderTop: "1px solid #edf2f7",
+        display: "grid",
+        gap: 8,
+        gridTemplateColumns: "22px minmax(0, 1fr) auto",
+        alignItems: "center",
+        lineHeight: 1.35,
+        minWidth: 0,
+        paddingTop: 8,
+      }}
+    >
+      <Icon name="server" style={{ color: "#16a34a" }} />
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {displayProjectState ? (
+            <ProjectState show_desc={false} state={displayProjectState} />
+          ) : (
+            <Text type="secondary">Unknown</Text>
+          )}
+          {typeof startTs === "number" && displayStateValue === "running" && (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              <TimeAgo date={new Date(startTs)} />
+            </Text>
+          )}
+        </div>
+        <MoveProject project_id={project_id} size="small" />
+      </div>
+      <div style={{ justifySelf: "end" }}>
+        {rawProjectState === "running" ? (
+          <StopProject project_id={project_id} size="small" compact />
+        ) : (
+          <StartButton project_id={project_id} size="small" minimal />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function openDirectory(project_id: string, path: string) {
   void redux.getProjectActions(project_id).open_directory(path, true, true);
 }
 
-function BackupHealthRow({
+function RecoveryHealthRow({
   project_id,
   lastBackup,
 }: {
   project_id: string;
   lastBackup: unknown;
 }) {
+  const { loading, snapshot } = useLatestSnapshot(project_id);
   return (
     <RailRow
-      icon="cloud-upload"
-      label="Backup"
+      icon="life-ring"
+      label="Recovery"
       action={
-        <Button size="small" onClick={() => openDirectory(project_id, BACKUPS)}>
-          Open
-        </Button>
+        <Space size={4}>
+          <Button
+            size="small"
+            onClick={() => openDirectory(project_id, BACKUPS)}
+          >
+            Backup
+          </Button>
+          <Button
+            size="small"
+            onClick={() => openDirectory(project_id, SNAPSHOTS)}
+          >
+            Snap
+          </Button>
+        </Space>
       }
     >
-      {lastBackup ? (
-        <TimeAgo date={lastBackup as any} />
-      ) : (
-        <Text type="secondary">None recorded</Text>
-      )}
+      <Text>
+        B:{" "}
+        {lastBackup ? (
+          <TimeAgo date={lastBackup as any} />
+        ) : (
+          <Text type="secondary">none</Text>
+        )}
+        {" · "}S:{" "}
+        {snapshot ? (
+          <TimeAgo date={snapshot.name as any} />
+        ) : loading ? (
+          <Text type="secondary">...</Text>
+        ) : (
+          <Text type="secondary">none</Text>
+        )}
+      </Text>
     </RailRow>
   );
 }
@@ -257,7 +309,10 @@ function newestSnapshot(snapshots: SnapshotUsage[]): SnapshotUsage | undefined {
   }, undefined);
 }
 
-function SnapshotHealthRow({ project_id }: { project_id: string }) {
+function useLatestSnapshot(project_id: string): {
+  loading: boolean;
+  snapshot: SnapshotUsage | undefined;
+} {
   const [loading, setLoading] = useState<boolean>(true);
   const [snapshot, setSnapshot] = useState<SnapshotUsage | undefined>();
 
@@ -289,28 +344,7 @@ function SnapshotHealthRow({ project_id }: { project_id: string }) {
     };
   }, [project_id]);
 
-  return (
-    <RailRow
-      icon="disk-snapshot"
-      label="Snapshot"
-      action={
-        <Button
-          size="small"
-          onClick={() => openDirectory(project_id, SNAPSHOTS)}
-        >
-          Open
-        </Button>
-      }
-    >
-      {snapshot ? (
-        <TimeAgo date={snapshot.name as any} />
-      ) : loading ? (
-        <Text type="secondary">Loading...</Text>
-      ) : (
-        <Text type="secondary">None found</Text>
-      )}
-    </RailRow>
-  );
+  return { loading, snapshot };
 }
 
 function ProcessHealthRow({ project_id }: { project_id: string }) {
@@ -377,7 +411,7 @@ function StorageHealthRow({ project_id }: { project_id: string }) {
   const quotaLabel =
     quota == null || quota.size <= 0
       ? undefined
-      : `${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`;
+      : `${percent}% used · ${human_readable_size(quota.used)} / ${human_readable_size(quota.size)}`;
 
   return (
     <RailRow
@@ -417,14 +451,7 @@ function openInfoPage(project_id: string) {
   redux.getProjectActions(project_id).set_active_tab("info");
 }
 
-function NetworkHealthRow({
-  project_id,
-  networkEnabled,
-}: {
-  project_id: string;
-  networkEnabled: boolean | null | undefined;
-}) {
-  const activityBars = [30, 58, 38, 72, 46, 88, 54];
+function NetworkHealthRow({ project_id }: { project_id: string }) {
   return (
     <RailRow
       icon="network"
@@ -437,20 +464,7 @@ function NetworkHealthRow({
         />
       }
     >
-      <div style={{ display: "flex", alignItems: "end", gap: 3, height: 22 }}>
-        {activityBars.map((height, i) => (
-          <div
-            key={i}
-            style={{
-              background: networkEnabled === false ? "#d9d9d9" : "#1677ff",
-              borderRadius: 2,
-              height: `${height}%`,
-              opacity: 0.35 + i * 0.07,
-              width: 8,
-            }}
-          />
-        ))}
-      </div>
+      <ManagedEgressSparkline project_id={project_id} />
     </RailRow>
   );
 }

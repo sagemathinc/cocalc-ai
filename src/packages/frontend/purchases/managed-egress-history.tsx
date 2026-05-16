@@ -657,6 +657,69 @@ export function ManagedEgressRateSummary({
   );
 }
 
+export function ManagedEgressSparkline({
+  project_id,
+  user_account_id,
+  height = 28,
+}: {
+  project_id?: string;
+  user_account_id?: string;
+  height?: number;
+}) {
+  const { error, history, loading } = useManagedEgressHistorySnapshot({
+    project_id,
+    user_account_id,
+    durationMs: RECENT_SUMMARY_WINDOW_MS,
+    bucket: "5m",
+    recentEventLimit: 1,
+    topProjectLimit: 1,
+    refreshMs: RECENT_SUMMARY_REFRESH_MS,
+  });
+
+  if (loading && history == null) {
+    return <Text type="secondary">Loading...</Text>;
+  }
+  if (error && history == null) {
+    return <Text type="secondary">Unavailable</Text>;
+  }
+  if (history == null || history.points.length === 0) {
+    return <Text type="secondary">No recent egress</Text>;
+  }
+
+  const width = 120;
+  const values = history.points.map((point) => Math.max(0, point.bytes ?? 0));
+  const xs = xCoordinates(values, width);
+  const ys = yCoordinates(values, height);
+  const polyline = xs
+    .map((x, i) => `${x.toFixed(2)},${ys[i].toFixed(2)}`)
+    .join(" ");
+  const recent = summarizeManagedEgressRecentUsage(history);
+
+  return (
+    <Space direction="vertical" size={2} style={{ width: "100%" }}>
+      <svg
+        aria-label="Recent managed egress"
+        height={height}
+        preserveAspectRatio="none"
+        style={{ display: "block", width: "100%" }}
+        viewBox={`0 0 ${width} ${height}`}
+      >
+        <polyline
+          fill="none"
+          points={polyline}
+          stroke={COLORS.BLUE_D}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="2.5"
+        />
+      </svg>
+      <Text type="secondary" style={{ fontSize: 12 }}>
+        {humanSize(recent.lastHourBytes)} last hour
+      </Text>
+    </Space>
+  );
+}
+
 export function ManagedEgressTopProjectsSummary({
   user_account_id,
   limit = 5,
