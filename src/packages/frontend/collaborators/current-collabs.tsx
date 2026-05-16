@@ -7,7 +7,7 @@ import { Button, Card, Popconfirm, Tag } from "antd";
 import React from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { CSS, redux, useRedux } from "@cocalc/frontend/app-framework";
-import { Gap, Icon, SettingBox } from "@cocalc/frontend/components";
+import { Icon, SettingBox, TimeAgo } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
@@ -89,7 +89,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
             marginBottom: "0",
             ...(isFlyout
               ? { color: COLORS.ANTD_RED_WARN, paddingInline: 0 }
-              : { float: "right" }),
+              : {}),
           }}
         >
           <Icon name="user-times" /> {intl.formatMessage(labels.remove)} ...
@@ -99,27 +99,51 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
   }
 
   function render_user(user: any, is_last?: boolean) {
-    if (isFlyout) {
-      return render_flyout_user(user, is_last);
-    }
-    const style = {
-      width: "100%",
-      flex: "1 1 auto",
-      ...(!is_last ? { marginBottom: "20px" } : {}),
-    };
     return (
-      <div key={user.account_id} style={style}>
-        <User
-          account_id={user.account_id}
-          user_map={user_map}
-          last_active={user.last_active}
-          show_avatar={true}
-        />
-        <span>
-          <Gap />({user.group})
-        </span>
-        {user_remove_button(user.account_id, user.group)}
+      <div
+        key={user.account_id}
+        style={{
+          alignItems: "center",
+          borderBottom: is_last ? undefined : `1px solid ${COLORS.GRAY_LL}`,
+          display: "grid",
+          gap: isFlyout ? 10 : 14,
+          gridTemplateColumns: "minmax(0, 1fr) auto auto",
+          padding: isFlyout ? "8px 0" : "10px 0",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <User
+            account_id={user.account_id}
+            user_map={user_map}
+            show_avatar={true}
+          />
+          <div
+            style={{
+              color: COLORS.GRAY_M,
+              fontSize: "12px",
+              marginLeft: isFlyout ? 38 : 42,
+              marginTop: 2,
+            }}
+          >
+            {render_last_active(user.last_active)}
+          </div>
+        </div>
+        {render_role(user.group)}
+        <div style={{ minWidth: isFlyout ? 66 : 90, textAlign: "right" }}>
+          {user_remove_button(user.account_id, user.group)}
+        </div>
       </div>
+    );
+  }
+
+  function render_last_active(last_active?: Date | number) {
+    if (!last_active) {
+      return "No recent project activity";
+    }
+    return (
+      <>
+        Last active <TimeAgo date={last_active} />
+      </>
     );
   }
 
@@ -132,35 +156,6 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
       >
         {isOwner && <Icon name="lock" />} {group ?? "collaborator"}
       </Tag>
-    );
-  }
-
-  function render_flyout_user(user: any, is_last?: boolean) {
-    return (
-      <div
-        key={user.account_id}
-        style={{
-          alignItems: "center",
-          borderBottom: is_last ? undefined : `1px solid ${COLORS.GRAY_LL}`,
-          display: "grid",
-          gap: 10,
-          gridTemplateColumns: "minmax(0, 1fr) auto auto",
-          padding: "8px 0",
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <User
-            account_id={user.account_id}
-            user_map={user_map}
-            last_active={user.last_active}
-            show_avatar={true}
-          />
-        </div>
-        {render_role(user.group)}
-        <div style={{ minWidth: 66, textAlign: "right" }}>
-          {user_remove_button(user.account_id, user.group)}
-        </div>
-      </div>
     );
   }
 
@@ -197,7 +192,10 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
       );
     } else {
       return (
-        <Card style={{ ...style, backgroundColor: COLORS.GRAY_LLL }}>
+        <Card
+          style={{ ...style, backgroundColor: "white" }}
+          styles={{ body: { padding: "4px 14px" } }}
+        >
           {render_users(users)}
         </Card>
       );
@@ -207,18 +205,32 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
   const introText = intl.formatMessage({
     id: "collaborators.current-collabs.intro",
     defaultMessage:
-      "Everybody listed below can collaboratively work with you on any Jupyter Notebook, Linux Terminal or file in this project, and add or remove other collaborators.",
+      "Collaborators can edit files, run code, manage this project, and invite others.",
   });
 
   switch (mode) {
-    case "project":
+    case "project": {
+      const users = get_users();
       return (
         <SettingBox title="Current Collaborators" icon="user">
-          {introText}
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+            }}
+          >
+            <span>{introText}</span>
+            <Tag style={{ marginInlineEnd: 0 }}>
+              {users.length} {users.length === 1 ? "person" : "people"}
+            </Tag>
+          </div>
           <hr />
-          {render_collaborators_list()}
+          {render_collaborators_list(users)}
         </SettingBox>
       );
+    }
     case "flyout": {
       const users = get_users();
       return (

@@ -85,6 +85,11 @@ export function ProjectCollaboratorsContent({
       </Space>
     ) : (
       <div>
+        <CurrentCollaboratorsPanel
+          key="current-collabs"
+          project={project}
+          user_map={user_map}
+        />
         <SettingBox title="Invite Collaborators" icon="UserAddOutlined">
           {inviteControls}
         </SettingBox>
@@ -92,11 +97,6 @@ export function ProjectCollaboratorsContent({
           project_id={project.get("project_id")}
           mode="project"
           showWhenEmpty={false}
-        />
-        <CurrentCollaboratorsPanel
-          key="current-collabs"
-          project={project}
-          user_map={user_map}
         />
       </div>
     );
