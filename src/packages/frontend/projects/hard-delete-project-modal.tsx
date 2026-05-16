@@ -139,7 +139,22 @@ export function HardDeleteProjectModal({
             showIcon
             type="error"
             message="This cannot be undone"
-            description={`Deleting this ${projectLabelLower} permanently removes its files, collaborators, invitations, shares, project secrets, SSH keys, and metadata. Backups are cleaned up asynchronously and this ${projectLabelLower} cannot be opened or started after deletion begins.`}
+            description={
+              <Space direction="vertical" size={8}>
+                <div>
+                  Deleting this {projectLabelLower} permanently removes its
+                  files, collaborators, invitations, shares, project secrets,
+                  SSH keys, metadata, and all TimeTravel edit history for every
+                  document in the {projectLabelLower}. This {projectLabelLower}{" "}
+                  cannot be opened or started after deletion begins.
+                </div>
+                <div>
+                  It also immediately frees one of your project slots, frees the
+                  storage used by this {projectLabelLower} as cleanup runs, and
+                  deletes all backups soon to reduce retained private data.
+                </div>
+              </Space>
+            }
           />
           <div>
             Type <code style={{ userSelect: "all" }}>{confirmationTarget}</code>{" "}
