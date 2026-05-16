@@ -43,7 +43,11 @@ export const DEFAULT_PROJECT_HARD_DELETE_ADMISSION_LIMITS: ProjectHardDeleteAdmi
   };
 
 function envInteger(name: string, fallback: number): number {
-  const value = Number(process.env[name] ?? "");
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") {
+    return fallback;
+  }
+  const value = Number(raw);
   if (!Number.isFinite(value)) {
     return fallback;
   }

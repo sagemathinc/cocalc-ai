@@ -60,6 +60,23 @@ describe("hard-delete admission", () => {
     queryMock.mockReset();
     ensureLroSchemaMock.mockReset();
     ensureLroSchemaMock.mockResolvedValue(undefined);
+    delete process.env.COCALC_PROJECT_HARD_DELETE_ACCOUNT_INFLIGHT_LIMIT;
+    delete process.env.COCALC_PROJECT_HARD_DELETE_ACCOUNT_RECENT_LIMIT;
+    delete process.env.COCALC_PROJECT_HARD_DELETE_ACCOUNT_RECENT_WINDOW_SECONDS;
+    delete process.env.COCALC_PROJECT_HARD_DELETE_GLOBAL_INFLIGHT_LIMIT;
+  });
+
+  it("uses defaults when hard-delete limit env vars are unset or blank", async () => {
+    process.env.COCALC_PROJECT_HARD_DELETE_ACCOUNT_INFLIGHT_LIMIT = "";
+
+    const { getProjectHardDeleteAdmissionLimits } =
+      await import("./hard-delete-admission");
+    expect(getProjectHardDeleteAdmissionLimits()).toMatchObject({
+      account_inflight: 2,
+      account_recent: 10,
+      account_recent_window_seconds: 60 * 60,
+      global_inflight: 100,
+    });
   });
 
   it("allows a delete below admission limits", async () => {
