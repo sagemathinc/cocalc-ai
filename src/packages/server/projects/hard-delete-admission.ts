@@ -7,6 +7,10 @@ import { ConatError } from "@cocalc/conat/core/client";
 import getPool from "@cocalc/database/pool";
 import { ensureLroSchema } from "@cocalc/server/lro/lro-db";
 
+const ACTIVE_STATUSES = ["queued", "running"] as const;
+const TERMINAL_STATUSES = ["succeeded", "failed", "canceled", "expired"];
+const DEFAULT_RUNNING_LEASE_MS = 120_000;
+
 export type ProjectHardDeleteAdmissionLimitCode =
   | "project_delete_rate_limited_account_inflight"
   | "project_delete_rate_limited_account_recent"
@@ -93,17 +97,37 @@ export async function getProjectHardDeleteAdmissionCounts({
       SELECT
         COUNT(*) FILTER (
           WHERE created_by=$1
+            AND expires_at > now()
             AND status = ANY($3::text[])
+            AND (
+              status='queued'
+              OR (
+                status='running'
+                AND heartbeat_at IS NOT NULL
+                AND heartbeat_at >= now() - ($6::text || ' milliseconds')::interval
+              )
+            )
         )::int AS account_inflight,
         COUNT(*) FILTER (
           WHERE created_by=$1
             AND created_at >= now() - ($2::int * interval '1 second')
+            AND status <> 'expired'
         )::int AS account_recent,
         COUNT(*) FILTER (
-          WHERE status = ANY($3::text[])
+          WHERE expires_at > now()
+            AND status = ANY($3::text[])
+            AND (
+              status='queued'
+              OR (
+                status='running'
+                AND heartbeat_at IS NOT NULL
+                AND heartbeat_at >= now() - ($6::text || ' milliseconds')::interval
+              )
+            )
         )::int AS global_inflight,
         COUNT(*) FILTER (
           WHERE dedupe_key=$4
+            AND expires_at > now()
             AND status <> ALL($5::text[])
         )::int AS same_project_active
       FROM long_running_operations
@@ -112,9 +136,10 @@ export async function getProjectHardDeleteAdmissionCounts({
     [
       account_id,
       recent_window_seconds,
-      ["queued", "running"],
+      ACTIVE_STATUSES,
       `project-hard-delete:${project_id}`,
-      ["succeeded", "failed", "canceled", "expired"],
+      TERMINAL_STATUSES,
+      DEFAULT_RUNNING_LEASE_MS,
     ],
   );
   const row = rows[0] ?? {};

@@ -75,6 +75,24 @@ describe("hard-delete admission", () => {
     expect(ensureLroSchemaMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not count expired or stale-running LROs as active inflight work", async () => {
+    queryMock.mockResolvedValueOnce(counts());
+
+    const { getProjectHardDeleteAdmissionCounts } =
+      await import("./hard-delete-admission");
+    await getProjectHardDeleteAdmissionCounts({
+      account_id: ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      recent_window_seconds: 60 * 60,
+    });
+
+    const [sql, params] = queryMock.mock.calls[0];
+    expect(`${sql}`).toContain("expires_at > now()");
+    expect(`${sql}`).toContain("heartbeat_at IS NOT NULL");
+    expect(`${sql}`).toContain("heartbeat_at >=");
+    expect(params).toContain(120_000);
+  });
+
   it("allows repeated admission for an already-active delete on the same project", async () => {
     queryMock.mockResolvedValueOnce(
       counts({
