@@ -42,6 +42,7 @@ import {
 } from "@cocalc/util/consts";
 import { useProjectRegion } from "@cocalc/frontend/project/use-project-region";
 import { HardDeleteProjectModal } from "./hard-delete-project-modal";
+import { confirmRemoveMyselfFromProject } from "./remove-myself";
 
 const FILES_SUBMENU_LIST_STYLE: CSS = {
   maxWidth: "80vw",
@@ -168,31 +169,11 @@ export function ProjectActionsMenu({ record }: Props) {
         setDeleteOpen(true);
         break;
       case "remove-self":
-        Modal.confirm({
-          title: `Remove Myself from ${projectLabel}`,
-          content: (
-            <div>
-              <p>
-                Are you sure you want to remove yourself from this{" "}
-                {projectLabelLower}?
-              </p>
-              <p>
-                <strong>
-                  You will no longer have access and cannot add yourself back.
-                </strong>
-              </p>
-            </div>
-          ),
-          okText: "Yes, Remove Me",
-          okButtonProps: { danger: true },
-          onOk: async () => {
-            try {
-              await actions.remove_collaborator(record.project_id, account_id);
-              redux.getActions("page").close_project_tab(record.project_id);
-            } catch (error) {
-              console.error("Failed to remove collaborator:", error);
-            }
-          },
+        confirmRemoveMyselfFromProject({
+          project_id: record.project_id,
+          account_id,
+          projectLabel,
+          projectLabelLower,
         });
         break;
       default:
