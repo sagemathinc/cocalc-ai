@@ -60,7 +60,7 @@ const CONNECTING_MESSAGE = `\r\n\x1b[1;37m[\x1b[0m\x1b[36m CONNECTING{TARGET}...
 const ANSI_RESET = "\x1b[0m";
 const ANSI_DIM_CYAN = "\x1b[2;36m";
 const ANSI_BOLD_CYAN = "\x1b[1;36m";
-const ANSI_WHITE = "\x1b[37m";
+const ANSI_BOLD_WHITE = "\x1b[1;37m";
 const ANSI_DIM = "\x1b[2m";
 
 const ENABLE_WEBGL = false;
@@ -127,6 +127,13 @@ function boxLine(content: string, width: number): string {
   return `${ANSI_DIM_CYAN}│${ANSI_RESET}${" ".repeat(left)}${content}${" ".repeat(right)}${ANSI_DIM_CYAN}│${ANSI_RESET}`;
 }
 
+function dividerLine(width: number): string {
+  return boxLine(
+    `${ANSI_DIM_CYAN}${"─".repeat(width - 8)}${ANSI_RESET}`,
+    width,
+  );
+}
+
 function stoppedProjectTerminalMessage(cols: number | undefined): string {
   const terminalWidth = Math.max(40, Math.min(88, cols ?? 80));
   const width = Math.max(40, Math.min(62, terminalWidth - 6));
@@ -136,12 +143,15 @@ function stoppedProjectTerminalMessage(cols: number | undefined): string {
   const lines = [
     borderLine({ left: "╭", fill: "─", right: "╮", width }),
     boxLine("", width),
-    boxLine(`${ANSI_BOLD_CYAN}▷  Project stopped${ANSI_RESET}`, width),
+    boxLine(`${ANSI_BOLD_CYAN}▶${ANSI_RESET}`, width),
+    boxLine(`${ANSI_BOLD_CYAN}Project stopped${ANSI_RESET}`, width),
+    dividerLine(width),
     boxLine("", width),
     boxLine(
-      `${ANSI_WHITE}Start the project to use this terminal.${ANSI_RESET}`,
+      `${ANSI_BOLD_WHITE}Start the project to use this terminal.${ANSI_RESET}`,
       width,
     ),
+    boxLine("", width),
     boxLine(
       `${ANSI_DIM}This terminal will connect automatically${ANSI_RESET}`,
       width,
