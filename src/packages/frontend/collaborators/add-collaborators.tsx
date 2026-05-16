@@ -21,7 +21,7 @@ import {
   useState,
 } from "../app-framework";
 import { Well } from "../antd-bootstrap";
-import { A, Icon, Loading, ErrorDisplay, Gap } from "../components";
+import { Icon, Loading, ErrorDisplay, Gap } from "../components";
 import { webapp_client } from "../webapp-client";
 import { SITE_NAME } from "@cocalc/util/theme";
 import {
@@ -212,6 +212,7 @@ export const AddCollaborators: React.FC<Props> = ({
     }
     set_num_matching_already(num_already_matching);
     write_email_invite();
+    set_selected_entries([]);
     // sort search_results with collaborators first by last_active,
     // then non-collabs by last_active.
     search_results.sort((x, y) => {
@@ -508,14 +509,9 @@ export const AddCollaborators: React.FC<Props> = ({
           render_select_list_button()
         ) : (
           <>
-            Who would you like to collaborate with?{" "}
-            <b>
-              NOTE: If you are teaching,{" "}
-              <A href="https://doc.cocalc.com/teaching-create-course.html#add-students-to-the-course">
-                add your students to your course
-              </A>
-              , NOT HERE.
-            </b>
+            Collaborators can view, edit, run code, manage files, and add or
+            remove other collaborators in this project. For teaching, add
+            students through the course.
           </>
         )}
       </div>
@@ -534,6 +530,7 @@ export const AddCollaborators: React.FC<Props> = ({
         users.push(r);
       }
     }
+    const showSelector = state === ("searched" as State) && users.length > 0;
 
     function render_search_help(): React.JSX.Element | undefined {
       if (focused && results.length === 0) {
@@ -566,54 +563,46 @@ export const AddCollaborators: React.FC<Props> = ({
             Search
           </Button>
         </div>
-        <Select
-          ref={select_ref}
-          mode="multiple"
-          allowClear
-          open={select_open}
-          showSearch={false}
-          filterOption={(s, opt) => {
-            if (s.indexOf(",") != -1) return true;
-            return search_match(
-              (opt as any).label,
-              search_split(s.toLowerCase()),
-            );
-          }}
-          style={{ width: "100%", marginBottom: "10px" }}
-          placeholder={
-            results.length > 0 && search.trim() ? (
-              `Select user from ${results.length} ${plural(
-                results.length,
-                "user",
-              )} matching '${search}'.`
-            ) : (
-              <span>
-                <Icon name="search" /> Name or email address...
-              </span>
-            )
-          }
-          onChange={(value) => {
-            set_selected_entries(value as string[]);
-          }}
-          value={selected_entries}
-          optionLabelProp="tag"
-          notFoundContent={null}
-          onFocus={() => {
-            set_focused(true);
-            if (state === ("searched" as State)) {
+        {showSelector && (
+          <Select
+            ref={select_ref}
+            mode="multiple"
+            allowClear
+            open={select_open}
+            showSearch={false}
+            filterOption={(s, opt) => {
+              if (s.indexOf(",") != -1) return true;
+              return search_match(
+                (opt as any).label,
+                search_split(s.toLowerCase()),
+              );
+            }}
+            style={{ width: "100%", marginBottom: "10px" }}
+            placeholder={`Select from ${users.length} ${plural(
+              users.length,
+              "matching user",
+            )}.`}
+            onChange={(value) => {
+              set_selected_entries(value as string[]);
+            }}
+            value={selected_entries}
+            optionLabelProp="tag"
+            notFoundContent={null}
+            onFocus={() => {
+              set_focused(true);
               set_select_open(true);
-            }
-          }}
-          onBlur={() => {
-            set_focused(false);
-            set_select_open(false);
-          }}
-          onDropdownVisibleChange={(open) => {
-            set_select_open(open);
-          }}
-        >
-          {render_options(users)}
-        </Select>
+            }}
+            onBlur={() => {
+              set_focused(false);
+              set_select_open(false);
+            }}
+            onDropdownVisibleChange={(open) => {
+              set_select_open(open);
+            }}
+          >
+            {render_options(users)}
+          </Select>
+        )}
         {render_search_help()}
         {selected_entries.length > 0 && (
           <div

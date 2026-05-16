@@ -988,11 +988,13 @@ export async function respondCollabInviteCanonical({
   invite_id,
   action,
   includeEmail,
+  trustedProductAccessChecked,
 }: {
   account_id: string;
   invite_id: string;
   action: ProjectCollabInviteAction;
   includeEmail: boolean;
+  trustedProductAccessChecked?: boolean;
 }): Promise<ProjectCollabInviteRow> {
   const normalizedAction = normalizeInviteAction(action);
   const pool = getPool();
@@ -1033,10 +1035,12 @@ export async function respondCollabInviteCanonical({
 
   let nextStatus: ProjectCollabInviteStatus = "declined";
   if (normalizedAction === "accept") {
-    await assertAccountTrustedForProductAccess(
-      account_id,
-      "accept collaboration invites",
-    );
+    if (!trustedProductAccessChecked) {
+      await assertAccountTrustedForProductAccess(
+        account_id,
+        "accept collaboration invites",
+      );
+    }
     const { rows: collabRows } = await pool.query<{ already: boolean }>(
       `SELECT EXISTS(
          SELECT 1

@@ -27,14 +27,9 @@ import {
   only_booleans,
   only_cocalc_com,
   only_commercial,
-  only_for_password_reset_smtp,
-  only_for_sendgrid,
-  only_for_smtp,
-  only_nonneg_int,
   parsableJson,
   toFloat,
   to_bool,
-  to_int,
   to_trimmed_str,
 } from "./site-defaults";
 
@@ -78,6 +73,26 @@ const custom_openai_enabled = (conf: SiteSettings) =>
 
 const cloudflare_mode = (conf: SiteSettings): string =>
   `${conf.cloudflare_mode ?? "none"}`.trim().toLowerCase();
+
+function emailBackendSelected(
+  conf: Record<string, any>,
+  backend: string,
+): boolean {
+  if (!is_email_enabled(conf)) return false;
+  return (
+    conf.email_backend === backend ||
+    conf.notification_email_critical_backend === backend ||
+    conf.notification_email_transactional_backend === backend ||
+    conf.notification_email_notification_backend === backend ||
+    conf.notification_email_marketing_backend === backend
+  );
+}
+
+const only_for_email_smtp = (conf: Record<string, any>): boolean =>
+  emailBackendSelected(conf, "smtp");
+
+const only_for_email_sendgrid = (conf: Record<string, any>): boolean =>
+  emailBackendSelected(conf, "sendgrid");
 const cloudflare_self_mode = (conf: SiteSettings): boolean =>
   cloudflare_mode(conf) === "self";
 
@@ -221,8 +236,6 @@ export type SiteSettingsExtrasKeys =
   | "email_smtp_from"
   | "email_smtp_login"
   | "email_smtp_password"
-  | "email_smtp_port"
-  | "email_smtp_secure"
   | "openai_section"
   | "openai_api_key"
   | "google_vertexai_key"
@@ -232,13 +245,6 @@ export type SiteSettingsExtrasKeys =
   | "anthropic_api_key"
   | "salesloft_section"
   | "salesloft_api_key"
-  | "password_reset_override"
-  | "password_reset_smtp_server"
-  | "password_reset_smtp_from"
-  | "password_reset_smtp_login"
-  | "password_reset_smtp_password"
-  | "password_reset_smtp_port"
-  | "password_reset_smtp_secure"
   | "google_sso_heading"
   | "google_sso_enabled"
   | "google_sso_client_id"
@@ -830,154 +836,53 @@ export const EXTRAS: SettingsExtras = {
     desc: "You need a Sendgrid account and then enter a valid API key here",
     password: true,
     default: "",
-    show: only_for_sendgrid,
+    show: only_for_email_sendgrid,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "SendGrid",
     required_when: [{ key: "email_backend", equals: "sendgrid" }],
   },
   email_smtp_server: {
-    name: "SMTP server (for email)",
-    desc: "the hostname to talk to",
+    name: "SMTP server",
+    desc: "Hostname for the SMTP backend.",
     default: "",
-    show: only_for_smtp,
+    show: only_for_email_smtp,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "SMTP",
     required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_from: {
-    name: "SMTP server FROM (for email)",
-    desc: "the FROM and REPLYTO email address",
+    name: "SMTP FROM",
+    desc: "FROM and REPLYTO email address for the SMTP backend.",
     default: "",
     valid: is_valid_email_address,
-    show: only_for_smtp,
+    show: only_for_email_smtp,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "SMTP",
     required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_login: {
-    name: "SMTP username (for email)",
-    desc: "the username, for PLAIN login",
+    name: "SMTP username",
+    desc: "Username for PLAIN SMTP auth.",
     default: "",
-    show: only_for_smtp,
+    show: only_for_email_smtp,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "SMTP",
     required_when: [{ key: "email_backend", equals: "smtp" }],
   },
   email_smtp_password: {
-    name: "SMTP password (for email)",
-    desc: "the password, for PLAIN login",
+    name: "SMTP password",
+    desc: "Password for PLAIN SMTP auth.",
     default: "",
-    show: only_for_smtp,
+    show: only_for_email_smtp,
     password: true,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "SMTP",
     required_when: [{ key: "email_backend", equals: "smtp" }],
-  },
-  email_smtp_port: {
-    name: "SMTP port (for email)",
-    desc: "Usually: For secure==true use port 465, otherwise port 587 or 25",
-    default: "465",
-    to_val: to_int,
-    valid: only_nonneg_int,
-    show: only_for_smtp,
-    tags: ["Email"],
-    group: "Messaging & Email",
-    subgroup: "SMTP",
-    required_when: [{ key: "email_backend", equals: "smtp" }],
-  },
-  email_smtp_secure: {
-    name: "SMTP secure (for email)",
-    desc: "Usually 'true'",
-    default: "true",
-    valid: only_booleans,
-    to_val: to_bool,
-    show: only_for_smtp,
-    tags: ["Email"],
-    group: "Messaging & Email",
-    subgroup: "SMTP",
-    required_when: [{ key: "email_backend", equals: "smtp" }],
-  },
-  // bad name, historic baggage, used in packages/hub/email.ts
-  password_reset_override: {
-    name: "Override email backend",
-    desc: "For 'smtp', password reset and email verification emails are sent via the 'Secondary SMTP' configuration",
-    default: "default",
-    valid: ["default", "smtp"],
-    show: is_email_enabled,
-    tags: ["Email"],
-    group: "Messaging & Email",
-    subgroup: "Secondary SMTP",
-  },
-  password_reset_smtp_server: {
-    name: "Secondary SMTP server (for email)",
-    desc: "hostname sending password reset emails",
-    default: "",
-    show: only_for_password_reset_smtp,
-    tags: ["Email"],
-    group: "Messaging & Email",
-    subgroup: "Secondary SMTP",
-    required_when: [{ key: "password_reset_override", equals: "smtp" }],
-  },
-  password_reset_smtp_from: {
-    name: "Secondary SMTP FROM (for email)",
-    desc: "This sets the FROM and REPLYTO email address",
-    default: "",
-    valid: is_valid_email_address,
-    show: only_for_password_reset_smtp,
-    tags: ["Email"],
-    group: "Messaging & Email",
-    subgroup: "Secondary SMTP",
-    required_when: [{ key: "password_reset_override", equals: "smtp" }],
-  },
-  password_reset_smtp_login: {
-    name: "Secondary SMTP username (for email)",
-    desc: "username, PLAIN auth",
-    default: "",
-    show: only_for_password_reset_smtp,
-    tags: ["Email"],
-    group: "Messaging & Email",
-    subgroup: "Secondary SMTP",
-    required_when: [{ key: "password_reset_override", equals: "smtp" }],
-  },
-  password_reset_smtp_password: {
-    name: "Secondary SMTP password (for email)",
-    desc: "password, PLAIN auth",
-    default: "",
-    show: only_for_password_reset_smtp,
-    password: true,
-    tags: ["Email"],
-    group: "Messaging & Email",
-    subgroup: "Secondary SMTP",
-    required_when: [{ key: "password_reset_override", equals: "smtp" }],
-  },
-  password_reset_smtp_port: {
-    name: "Secondary SMTP port (for email)",
-    desc: "Usually: For secure==true use port 465, otherwise port 587 or 25",
-    default: "465",
-    to_val: to_int,
-    valid: only_nonneg_int,
-    show: only_for_password_reset_smtp,
-    tags: ["Email"],
-    group: "Messaging & Email",
-    subgroup: "Secondary SMTP",
-    required_when: [{ key: "password_reset_override", equals: "smtp" }],
-  },
-  password_reset_smtp_secure: {
-    name: "Secondary SMTP secure (for email)",
-    desc: "Usually 'true'",
-    default: "true",
-    valid: only_booleans,
-    to_val: to_bool,
-    show: only_for_password_reset_smtp,
-    tags: ["Email"],
-    group: "Messaging & Email",
-    subgroup: "Secondary SMTP",
-    required_when: [{ key: "password_reset_override", equals: "smtp" }],
   },
   prometheus_metrics: {
     name: "Prometheus Metrics",

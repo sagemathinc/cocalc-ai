@@ -47,10 +47,12 @@ jest.mock("antd", () => {
   Modal.destroyAll = jest.fn();
   Modal.useModal = jest.fn(() => [jest.fn(), null]);
   return {
-    Alert: ({ title, description, children }: any) => (
+    Alert: ({ title, message, description, action, children }: any) => (
       <div>
         {title}
+        {message}
         {description}
+        {action}
         {children}
       </div>
     ),
@@ -80,6 +82,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
     if (key === "account_id") return mockAccountId;
     if (key === "is_admin") return mockIsAdmin;
     if (key === "start_lro") return startLroRecord;
+    if (key === "email_address") return "user@example.com";
     return undefined;
   },
 }));
@@ -134,6 +137,9 @@ jest.mock("@cocalc/frontend/account/membership-status", () => ({
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
+    account_client: {
+      send_verification_email: jest.fn(),
+    },
     conat_client: {
       hub: {
         lro: {
@@ -402,6 +408,33 @@ describe("StartButton", () => {
       screen.getByText(/could not finish preparing the project software/i),
     ).toBeTruthy();
     expect(screen.getByText("Technical details")).toBeTruthy();
+  });
+
+  it("explains project start blocks caused by unverified email", async () => {
+    startLroRecord = {
+      toJS: () => ({
+        summary: {
+          status: "failed",
+          op_id: "op-1",
+          scope_type: "project",
+          scope_id: "project-1",
+          error: "Verify your email address before you start a project.",
+        },
+      }),
+    };
+
+    render(
+      <IntlProvider locale="en">
+        <StartButton />
+      </IntlProvider>,
+    );
+
+    expect(screen.getByText("Email verification required")).toBeTruthy();
+    expect(screen.getByText(/blocks project runtimes/i)).toBeTruthy();
+    expect(screen.getByText("user@example.com")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /send verification email/i }),
+    ).toBeTruthy();
   });
 
   it("opens membership details from sponsor recovery inside the normal React tree", async () => {

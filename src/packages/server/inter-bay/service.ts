@@ -51,6 +51,8 @@ import {
 } from "@cocalc/conat/inter-bay/api";
 import type { ConatService } from "@cocalc/conat/service/typed";
 import getLogger from "@cocalc/backend/logger";
+import { db } from "@cocalc/database";
+import { callback2 } from "@cocalc/util/async-utils";
 import { getRequiresTokensDirect } from "@cocalc/server/auth/tokens/get-requires-token";
 import {
   deleteRegistrationTokenDirect,
@@ -59,6 +61,7 @@ import {
   validateRegistrationTokenDirect,
 } from "@cocalc/server/auth/tokens/redeem";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
+import { redeemVerifyEmailLocal } from "@cocalc/server/auth/redeem-verify-email";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import {
@@ -334,6 +337,9 @@ async function startBayOpsService(): Promise<void> {
         bay_id,
         internalAuth: BAY_OPS_INTERNAL_AUTH,
       }),
+    setServerSetting: async (opts) => {
+      await callback2(db().set_server_setting, opts);
+    },
   };
   services.push(
     ...createInterBayBayOpsHandlers({
@@ -522,6 +528,9 @@ async function startAccountLocalService(): Promise<void> {
     }),
     verifySignInPassword: async ({ email_address, password }) =>
       await verifyLocalSignInPassword({ email_address, password }),
+    redeemVerifyEmail: async ({ email_address, token }) => {
+      await redeemVerifyEmailLocal(email_address, token);
+    },
     reconcileDedicatedHostPurchaseSession: async (opts) => {
       await reconcileDedicatedHostPurchaseSessionLocal(opts);
     },
@@ -902,13 +911,20 @@ async function startProjectCollabInviteService(): Promise<void> {
         account_id,
         project_ids,
       }),
-    respond: async ({ account_id, invite_id, action, include_email }) =>
+    respond: async ({
+      account_id,
+      invite_id,
+      action,
+      include_email,
+      trusted_product_access_checked,
+    }) =>
       collabInviteToWire(
         await respondCollabInviteCanonical({
           account_id,
           invite_id,
           action,
           includeEmail: !!include_email,
+          trustedProductAccessChecked: !!trusted_product_access_checked,
         }),
       ),
   };

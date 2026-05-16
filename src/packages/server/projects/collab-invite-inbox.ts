@@ -301,6 +301,7 @@ export async function respondProjectedInboundCollabInvite({
     account_id,
     action,
     include_email: includeEmail,
+    trusted_product_access_checked: action === "accept",
   });
   await deleteProjectedCollabInviteDirect(invite_id);
   return fromWire(result);

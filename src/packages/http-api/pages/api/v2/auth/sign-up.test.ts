@@ -17,6 +17,7 @@ const mockDeleteRegistrationToken = jest.fn();
 const mockGetRequiresRegistrationToken = jest.fn();
 const mockCreateClusterAccount = jest.fn();
 const mockSignUserIn = jest.fn();
+const mockSendEmailVerification = jest.fn();
 const mockRecordSignUpTokenFail = jest.fn();
 const mockSignUpTokenCheck = jest.fn();
 const mockGetEnabledSsoDomainPolicyForEmail = jest.fn();
@@ -93,9 +94,9 @@ jest.mock("@cocalc/server/bay-public-origin", () => ({
     .mockResolvedValue("https://bay-0.example.test"),
 }));
 
-jest.mock("@cocalc/server/email/welcome-email", () => ({
+jest.mock("@cocalc/server/accounts/send-email-verification", () => ({
   __esModule: true,
-  default: jest.fn(),
+  default: (...args) => mockSendEmailVerification(...args),
 }));
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -119,6 +120,7 @@ describe("/api/v2/auth/sign-up", () => {
     mockRedeemRegistrationToken.mockReset().mockResolvedValue(undefined);
     mockCreateClusterAccount.mockReset();
     mockSignUserIn.mockReset();
+    mockSendEmailVerification.mockReset().mockResolvedValue("");
     mockRecordSignUpTokenFail.mockReset();
     mockSignUpTokenCheck.mockReset().mockReturnValue(undefined);
     mockGetEnabledSsoDomainPolicyForEmail
@@ -453,6 +455,78 @@ describe("/api/v2/auth/sign-up", () => {
       req,
       res,
       "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    );
+  });
+
+  it("sends only a verification email for public password signup", async () => {
+    mockGetRequiresRegistrationToken.mockResolvedValue(false);
+    mockCreateClusterAccount.mockResolvedValue({
+      account_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      home_bay_id: "bay-0",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(mockCreateClusterAccount).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trusted_product_access: false,
+        trusted_product_access_reason: undefined,
+      }),
+    );
+    expect(mockSendEmailVerification).toHaveBeenCalledWith(
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      true,
+    );
+    expect(mockSignUserIn).toHaveBeenCalledWith(
+      req,
+      res,
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    );
+  });
+
+  it("sends the welcome email path for registration-token signup", async () => {
+    mockRedeemRegistrationToken.mockResolvedValue({});
+    mockCreateClusterAccount.mockResolvedValue({
+      account_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      home_bay_id: "bay-0",
+    });
+    const { req, res } = createMocks({
+      method: "POST",
+      url: "/api/v2/auth/sign-up",
+      body: {
+        terms: true,
+        email: "new@example.com",
+        password: "correct horse battery staple 12345!",
+        firstName: "New",
+        lastName: "User",
+        registrationToken: "valid-token",
+      },
+    });
+
+    const { signUp } = await import("./sign-up");
+    await signUp(req, res);
+
+    expect(mockCreateClusterAccount).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trusted_product_access: true,
+        trusted_product_access_reason: "registration_token",
+      }),
+    );
+    expect(mockSendEmailVerification).toHaveBeenCalledWith(
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      false,
     );
   });
 });

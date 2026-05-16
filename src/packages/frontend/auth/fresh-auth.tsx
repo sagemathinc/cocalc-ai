@@ -34,10 +34,12 @@ export function FreshAuthModal({
   open,
   onCancel,
   onSuccess,
+  origin,
 }: {
   open: boolean;
   onCancel: () => void;
   onSuccess: () => Promise<void>;
+  origin?: string;
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [code, setCode] = useState("");
@@ -61,6 +63,7 @@ export function FreshAuthModal({
       try {
         const next = await postAuthApi<FreshAuthStatus>({
           endpoint: "auth/fresh-auth-status",
+          origin,
           body: {},
         });
         if (!cancelled) {
@@ -80,7 +83,7 @@ export function FreshAuthModal({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, origin]);
 
   useEffect(() => {
     if (factorEnabled !== true || (!usePasskey && inferredMethod !== "totp")) {
@@ -97,10 +100,12 @@ export function FreshAuthModal({
         await freshAuthWithPasskey({
           current_password: currentPassword,
           duration: extended ? "extended" : "default",
+          origin,
         });
       } else {
         await postAuthApi({
           endpoint: "auth/fresh-auth",
+          origin,
           body: {
             current_password: currentPassword,
             ...(requireSecondFactor

@@ -6,6 +6,11 @@ has been verified.
 import getPool from "@cocalc/database/pool";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { publishAccountRowFeedEventsBestEffort } from "@cocalc/server/account/account-row-feed";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { isMultiBayCluster } from "@cocalc/server/cluster-config";
+import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 
 function normalizeEmailAddress(email_address: string): string {
@@ -18,6 +23,32 @@ function normalizeEmailAddress(email_address: string): string {
 }
 
 export default async function redeemVerifyEmail(
+  email_address: string,
+  token: string,
+): Promise<void> {
+  email_address = normalizeEmailAddress(email_address);
+  if (!isValidEmailAddress(email_address)) {
+    throw Error("email_address is not valid");
+  }
+  if (isMultiBayCluster()) {
+    const account = await getClusterAccountByEmail(email_address);
+    const home_bay_id = `${account?.home_bay_id ?? ""}`.trim();
+    if (!home_bay_id) {
+      throw Error(`no account with email address ${email_address}`);
+    }
+    if (home_bay_id !== getConfiguredBayId()) {
+      await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: home_bay_id,
+        timeout: 15_000,
+      }).redeemVerifyEmail({ email_address, token });
+      return;
+    }
+  }
+  await redeemVerifyEmailLocal(email_address, token);
+}
+
+export async function redeemVerifyEmailLocal(
   email_address: string,
   token: string,
 ): Promise<void> {

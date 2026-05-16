@@ -50,7 +50,7 @@ import redeemRegistrationToken, {
   validateRegistrationToken,
 } from "@cocalc/server/auth/tokens/redeem";
 import getRequiresRegistrationToken from "@cocalc/server/auth/tokens/get-requires-token";
-import sendWelcomeEmail from "@cocalc/server/email/welcome-email";
+import sendEmailVerification from "@cocalc/server/accounts/send-email-verification";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
@@ -372,13 +372,12 @@ export async function signUp(req, res) {
     }
 
     if (email) {
-      try {
-        await sendWelcomeEmail(email, account_id);
-      } catch (err) {
-        // Expected to fail, e.g., when sendgrid or smtp not configured yet.
-        logger.debug("welcome email skipped (no email backend configured)", {
+      const onlyVerify = !requiresRegistrationToken;
+      const emailError = await sendEmailVerification(account_id, onlyVerify);
+      if (emailError) {
+        logger.debug("signup email skipped (no email backend configured)", {
           email,
-          err,
+          err: emailError,
         });
       }
     }

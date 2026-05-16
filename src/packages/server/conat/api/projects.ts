@@ -1644,6 +1644,7 @@ export async function respondCollabInvite({
         invite_id,
         action,
         include_email,
+        trusted_product_access_checked: action === "accept",
       });
     return collabInviteFromWire(result);
   }
