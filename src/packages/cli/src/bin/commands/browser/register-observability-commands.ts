@@ -214,6 +214,59 @@ function addNetworkSummaryEvent(
   bumpNetworkTrafficCounter(rows[key], event);
 }
 
+const fetchWithDeadline = async <T>({
+  fetch,
+  deadlineAt,
+  sleep,
+  onDeadline,
+}: {
+  fetch: () => Promise<T>;
+  deadlineAt?: number;
+  sleep: (ms: number) => Promise<void>;
+  onDeadline?: () => void;
+}): Promise<T | undefined> => {
+  if (deadlineAt == null) {
+    return await fetch();
+  }
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0) {
+    onDeadline?.();
+    return undefined;
+  }
+  const timeoutSentinel = { timeout: true };
+  const result: T | typeof timeoutSentinel = await Promise.race([
+    fetch(),
+    sleep(remainingMs).then(() => timeoutSentinel),
+  ]);
+  if (result === timeoutSentinel) {
+    onDeadline?.();
+    return undefined;
+  }
+  return result as T;
+};
+
+function resolveFollowTimeoutMs({
+  optionTimeout,
+  globalTimeout,
+  contextTimeoutMs,
+  durationToMs,
+}: {
+  optionTimeout?: string;
+  globalTimeout?: string;
+  contextTimeoutMs: number;
+  durationToMs: (value: string | undefined, fallbackMs: number) => number;
+}): number | undefined {
+  const explicitTimeout = `${optionTimeout ?? ""}`.trim();
+  const inheritedTimeout = `${globalTimeout ?? ""}`.trim();
+  if (explicitTimeout) {
+    return Math.max(1_000, durationToMs(explicitTimeout, contextTimeoutMs));
+  }
+  if (inheritedTimeout && inheritedTimeout !== "600s") {
+    return Math.max(1_000, contextTimeoutMs);
+  }
+  return undefined;
+}
+
 function finalizeNetworkTrafficRows(
   rows: Record<string, NetworkTrafficCounter>,
   durationSec: number,
@@ -396,16 +449,28 @@ export function registerBrowserObservabilityCommands({
           }
           const follow = !!opts.follow;
           const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
-          const timeoutMs = `${opts.timeout ?? ""}`.trim()
-            ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
-            : undefined;
+          const timeoutMs = resolveFollowTimeoutMs({
+            optionTimeout: opts.timeout,
+            globalTimeout: ctx.globals?.timeout,
+            contextTimeoutMs: ctx.timeoutMs,
+            durationToMs,
+          });
           const startedAt = Date.now();
+          const deadlineAt =
+            follow && timeoutMs != null ? startedAt + timeoutMs : undefined;
           const browserClient = deps.createBrowserSessionClient({
             account_id: ctx.accountId,
             browser_id: sessionInfo.browser_id,
             client: ctx.remote.client,
             timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
           });
+          const closeRemoteClient = () => {
+            try {
+              (ctx.remote.client as any)?.close?.();
+            } catch {
+              // best effort: closing the client aborts an in-flight long poll
+            }
+          };
           let printed = 0;
           let latestDropped = 0;
           let latestBuffered = 0;
@@ -425,12 +490,21 @@ export function registerBrowserObservabilityCommands({
             }
           };
           for (;;) {
-            const result = await browserClient.listRuntimeEvents({
-              ...(afterSeq != null ? { after_seq: afterSeq } : {}),
-              limit: Math.min(5_000, Math.max(1, Math.floor(lines))),
-              kinds: ["console"],
-              ...(levelFilter ? { levels: levelFilter } : {}),
+            const result = await fetchWithDeadline({
+              deadlineAt,
+              sleep,
+              onDeadline: closeRemoteClient,
+              fetch: () =>
+                browserClient.listRuntimeEvents({
+                  ...(afterSeq != null ? { after_seq: afterSeq } : {}),
+                  limit: Math.min(5_000, Math.max(1, Math.floor(lines))),
+                  kinds: ["console"],
+                  ...(levelFilter ? { levels: levelFilter } : {}),
+                }),
             });
+            if (result == null) {
+              break;
+            }
             const events = Array.isArray(result?.events) ? result.events : [];
             latestDropped = Number(result?.dropped ?? latestDropped);
             latestBuffered = Number(result?.total_buffered ?? latestBuffered);
@@ -444,7 +518,12 @@ export function registerBrowserObservabilityCommands({
             if (timeoutMs != null && Date.now() - startedAt >= timeoutMs) {
               break;
             }
-            await sleep(pollMs);
+            const remainingMs =
+              deadlineAt == null ? pollMs : deadlineAt - Date.now();
+            if (remainingMs <= 0) {
+              break;
+            }
+            await sleep(Math.min(pollMs, remainingMs));
           }
           const base = {
             browser_id: sessionInfo.browser_id,
@@ -531,16 +610,28 @@ export function registerBrowserObservabilityCommands({
             }
             const follow = opts.follow !== false;
             const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
-            const timeoutMs = `${opts.timeout ?? ""}`.trim()
-              ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
-              : undefined;
             const startedAt = Date.now();
+            const timeoutMs = resolveFollowTimeoutMs({
+              optionTimeout: opts.timeout,
+              globalTimeout: ctx.globals?.timeout,
+              contextTimeoutMs: ctx.timeoutMs,
+              durationToMs,
+            });
+            const deadlineAt =
+              follow && timeoutMs != null ? startedAt + timeoutMs : undefined;
             const browserClient = deps.createBrowserSessionClient({
               account_id: ctx.accountId,
               browser_id: sessionInfo.browser_id,
               client: ctx.remote.client,
               timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
             });
+            const closeRemoteClient = () => {
+              try {
+                (ctx.remote.client as any)?.close?.();
+              } catch {
+                // best effort: closing the client aborts an in-flight long poll
+              }
+            };
             let printed = 0;
             let latestDropped = 0;
             let latestBuffered = 0;
@@ -560,12 +651,21 @@ export function registerBrowserObservabilityCommands({
               }
             };
             for (;;) {
-              const result = await browserClient.listRuntimeEvents({
-                ...(afterSeq != null ? { after_seq: afterSeq } : {}),
-                limit: Math.min(5_000, Math.max(1, Math.floor(lines))),
-                kinds: ["uncaught_error", "unhandled_rejection"],
-                levels: ["error"],
+              const result = await fetchWithDeadline({
+                deadlineAt,
+                sleep,
+                onDeadline: closeRemoteClient,
+                fetch: () =>
+                  browserClient.listRuntimeEvents({
+                    ...(afterSeq != null ? { after_seq: afterSeq } : {}),
+                    limit: Math.min(5_000, Math.max(1, Math.floor(lines))),
+                    kinds: ["uncaught_error", "unhandled_rejection"],
+                    levels: ["error"],
+                  }),
               });
+              if (result == null) {
+                break;
+              }
               const events = Array.isArray(result?.events) ? result.events : [];
               latestDropped = Number(result?.dropped ?? latestDropped);
               latestBuffered = Number(result?.total_buffered ?? latestBuffered);
@@ -579,7 +679,12 @@ export function registerBrowserObservabilityCommands({
               if (timeoutMs != null && Date.now() - startedAt >= timeoutMs) {
                 break;
               }
-              await sleep(pollMs);
+              const remainingMs =
+                deadlineAt == null ? pollMs : deadlineAt - Date.now();
+              if (remainingMs <= 0) {
+                break;
+              }
+              await sleep(Math.min(pollMs, remainingMs));
             }
             const base = {
               browser_id: sessionInfo.browser_id,
@@ -861,10 +966,15 @@ export function registerBrowserObservabilityCommands({
             }
             const follow = !!opts.follow;
             const pollMs = Math.max(100, durationToMs(opts.pollMs, 1_000));
-            const timeoutMs = `${opts.timeout ?? ""}`.trim()
-              ? Math.max(1_000, durationToMs(opts.timeout, ctx.timeoutMs))
-              : undefined;
             const startedAt = Date.now();
+            const timeoutMs = resolveFollowTimeoutMs({
+              optionTimeout: opts.timeout,
+              globalTimeout: ctx.globals?.timeout,
+              contextTimeoutMs: ctx.timeoutMs,
+              durationToMs,
+            });
+            const deadlineAt =
+              follow && timeoutMs != null ? startedAt + timeoutMs : undefined;
             const protocols = parseNetworkProtocols(opts.protocol);
             const direction = parseNetworkDirection(opts.direction);
             const phases = parseNetworkPhases(opts.phase);
@@ -881,6 +991,13 @@ export function registerBrowserObservabilityCommands({
               client: ctx.remote.client,
               timeout: Math.max(1_000, timeoutMs ?? ctx.timeoutMs),
             });
+            const closeRemoteClient = () => {
+              try {
+                (ctx.remote.client as any)?.close?.();
+              } catch {
+                // best effort: closing the client aborts an in-flight long poll
+              }
+            };
             if (opts.clear) {
               await browserClient.clearNetworkTrace();
             }
@@ -921,16 +1038,25 @@ export function registerBrowserObservabilityCommands({
               }
             };
             for (;;) {
-              const result = await browserClient.listNetworkTrace({
-                ...(afterSeq != null ? { after_seq: afterSeq } : {}),
-                limit: Math.min(50_000, Math.max(1, Math.floor(lines))),
-                ...(protocols ? { protocols } : {}),
-                ...(direction ? { direction } : {}),
-                ...(phases ? { phases } : {}),
-                ...(subjectPrefix ? { subject_prefix: subjectPrefix } : {}),
-                ...(addressFilter ? { address: addressFilter } : {}),
-                include_decoded: !!opts.decoded,
+              const result = await fetchWithDeadline({
+                deadlineAt,
+                sleep,
+                onDeadline: closeRemoteClient,
+                fetch: () =>
+                  browserClient.listNetworkTrace({
+                    ...(afterSeq != null ? { after_seq: afterSeq } : {}),
+                    limit: Math.min(50_000, Math.max(1, Math.floor(lines))),
+                    ...(protocols ? { protocols } : {}),
+                    ...(direction ? { direction } : {}),
+                    ...(phases ? { phases } : {}),
+                    ...(subjectPrefix ? { subject_prefix: subjectPrefix } : {}),
+                    ...(addressFilter ? { address: addressFilter } : {}),
+                    include_decoded: !!opts.decoded,
+                  }),
               });
+              if (result == null) {
+                break;
+              }
               const events = Array.isArray(result?.events) ? result.events : [];
               latestDropped = Number(result?.dropped ?? latestDropped);
               latestBuffered = Number(result?.total_buffered ?? latestBuffered);
@@ -944,7 +1070,12 @@ export function registerBrowserObservabilityCommands({
               if (timeoutMs != null && Date.now() - startedAt >= timeoutMs) {
                 break;
               }
-              await sleep(pollMs);
+              const remainingMs =
+                deadlineAt == null ? pollMs : deadlineAt - Date.now();
+              if (remainingMs <= 0) {
+                break;
+              }
+              await sleep(Math.min(pollMs, remainingMs));
             }
             const base = {
               browser_id: sessionInfo.browser_id,
@@ -1072,6 +1203,16 @@ export function registerBrowserObservabilityCommands({
             const events: BrowserNetworkTraceEvent[] = [];
             const startedAt = new Date();
             const startedMs = Date.now();
+            const deadlineAt = opts.existing
+              ? undefined
+              : startedMs + durationMs;
+            const closeRemoteClient = () => {
+              try {
+                (ctx.remote.client as any)?.close?.();
+              } catch {
+                // best effort: closing the client aborts an in-flight long poll
+              }
+            };
 
             if (opts.clear) {
               await browserClient.clearNetworkTrace();
@@ -1093,12 +1234,21 @@ export function registerBrowserObservabilityCommands({
             }
 
             for (;;) {
-              const result = await browserClient.listNetworkTrace({
-                ...(afterSeq != null ? { after_seq: afterSeq } : {}),
-                limit: maxEvents,
-                ...(protocols ? { protocols } : {}),
-                include_decoded: false,
+              const result = await fetchWithDeadline({
+                deadlineAt,
+                sleep,
+                onDeadline: closeRemoteClient,
+                fetch: () =>
+                  browserClient.listNetworkTrace({
+                    ...(afterSeq != null ? { after_seq: afterSeq } : {}),
+                    limit: maxEvents,
+                    ...(protocols ? { protocols } : {}),
+                    include_decoded: false,
+                  }),
               });
+              if (result == null) {
+                break;
+              }
               const batch = Array.isArray(result?.events) ? result.events : [];
               events.push(...batch);
               if (events.length > maxEvents) {
@@ -1110,9 +1260,12 @@ export function registerBrowserObservabilityCommands({
               if (opts.existing || Date.now() - startedMs >= durationMs) {
                 break;
               }
-              await sleep(
-                Math.min(pollMs, durationMs - (Date.now() - startedMs)),
-              );
+              const remainingMs =
+                deadlineAt == null ? pollMs : deadlineAt - Date.now();
+              if (remainingMs <= 0) {
+                break;
+              }
+              await sleep(Math.min(pollMs, remainingMs));
             }
 
             const finishedAt = new Date();

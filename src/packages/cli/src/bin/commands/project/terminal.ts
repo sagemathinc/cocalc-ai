@@ -9,18 +9,49 @@ import type { ProjectCommandDeps } from "../project";
 
 type CommandContext = any;
 
+type ProjectRuntimeStateLike = {
+  state?: { state?: string } | null;
+};
+
+const PROJECT_TERMINAL_RUNTIME_STATES = new Set([
+  "running",
+  "starting",
+  "restarting",
+]);
+
+export function assertProjectTerminalRuntimeAvailable({
+  project,
+}: {
+  project: ProjectRuntimeStateLike;
+}): void {
+  const state = `${project.state?.state ?? ""}`.trim();
+  if (!state || PROJECT_TERMINAL_RUNTIME_STATES.has(state)) {
+    return;
+  }
+  throw new Error(
+    `project terminal operations are unavailable because the project is ${state}; start the project and try again`,
+  );
+}
+
 async function withTerminalClient({
   ctx,
   projectIdentifier,
+  resolveProjectFromArgOrContext,
   resolveProjectConatClient,
 }: {
   ctx: CommandContext;
   projectIdentifier?: string;
+  resolveProjectFromArgOrContext: ProjectCommandDeps["resolveProjectFromArgOrContext"];
   resolveProjectConatClient: ProjectCommandDeps["resolveProjectConatClient"];
 }) {
-  const { project, client } = await resolveProjectConatClient(
+  const resolvedProject = await resolveProjectFromArgOrContext(
     ctx,
     projectIdentifier,
+  );
+  assertProjectTerminalRuntimeAvailable({ project: resolvedProject });
+  const { project, client } = await resolveProjectConatClient(
+    ctx,
+    resolvedProject.project_id,
   );
   const terminal = terminalClient({
     project_id: project.project_id,
@@ -60,7 +91,12 @@ export function registerProjectTerminalCommands(
   project: Command,
   deps: ProjectCommandDeps,
 ): void {
-  const { withContext, resolveProjectConatClient, readAllStdin } = deps;
+  const {
+    withContext,
+    resolveProjectFromArgOrContext,
+    resolveProjectConatClient,
+    readAllStdin,
+  } = deps;
 
   const terminal = project
     .command("terminal")
@@ -94,6 +130,7 @@ export function registerProjectTerminalCommands(
           const { project, terminal } = await withTerminalClient({
             ctx,
             projectIdentifier: opts.project,
+            resolveProjectFromArgOrContext,
             resolveProjectConatClient,
           });
           try {
@@ -140,6 +177,7 @@ export function registerProjectTerminalCommands(
         const { terminal } = await withTerminalClient({
           ctx,
           projectIdentifier: opts.project,
+          resolveProjectFromArgOrContext,
           resolveProjectConatClient,
         });
         try {
@@ -165,6 +203,7 @@ export function registerProjectTerminalCommands(
           const { terminal } = await withTerminalClient({
             ctx,
             projectIdentifier: opts.project,
+            resolveProjectFromArgOrContext,
             resolveProjectConatClient,
           });
           try {
@@ -190,6 +229,7 @@ export function registerProjectTerminalCommands(
           const { terminal } = await withTerminalClient({
             ctx,
             projectIdentifier: opts.project,
+            resolveProjectFromArgOrContext,
             resolveProjectConatClient,
           });
           try {
@@ -211,6 +251,7 @@ export function registerProjectTerminalCommands(
           const { terminal } = await withTerminalClient({
             ctx,
             projectIdentifier: opts.project,
+            resolveProjectFromArgOrContext,
             resolveProjectConatClient,
           });
           try {
@@ -251,6 +292,7 @@ export function registerProjectTerminalCommands(
           const { terminal } = await withTerminalClient({
             ctx,
             projectIdentifier: opts.project,
+            resolveProjectFromArgOrContext,
             resolveProjectConatClient,
           });
           try {

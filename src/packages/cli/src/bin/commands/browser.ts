@@ -106,6 +106,67 @@ import type {
 } from "./browser/types";
 export type { BrowserCommandDeps } from "./browser/types";
 
+const QUICKJS_BROWSER_EXEC_API_DECLARATION = `/**
+ * Browser exec API available in QuickJS sandbox mode.
+ *
+ * Raw browser JavaScript is not available for this selected browser session, so
+ * globals such as window and document are intentionally undefined. Scripts run
+ * inside a QuickJS sandbox and can only use this constrained action API.
+ *
+ * Note: top-level await is not supported in this sandbox wrapper. Action calls
+ * are synchronous from the script's point of view and return their result
+ * directly.
+ *
+ * Examples:
+ *   return api.pageUrl;
+ *   const found = api.waitForSelector("body");
+ *   return found.ok ? api.click("button") : found;
+ */
+export type BrowserExecActionResult = {
+  ok?: boolean;
+  [key: string]: unknown;
+};
+
+export type BrowserExecApi = {
+  projectId: string;
+  pageUrl: string;
+  origin: string;
+  action: (name: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  navigate: (url: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  click: (selector: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  clickAt: (x: number, y: number, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  drag: (opts: Record<string, unknown>) => BrowserExecActionResult;
+  type: (text: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  press: (key: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  reload: (opts?: Record<string, unknown>) => BrowserExecActionResult;
+  scrollBy: (dy: number, dx?: number, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  scrollTo: (opts?: Record<string, unknown>) => BrowserExecActionResult;
+  waitForSelector: (selector: string, opts?: Record<string, unknown>) => BrowserExecActionResult;
+  waitForUrl: (opts?: Record<string, unknown>) => BrowserExecActionResult;
+};`;
+
+function rawBrowserExecAllowed(policyInfo: {
+  raw_exec_policy?: string;
+  raw_exec_admin?: boolean;
+}): boolean {
+  return (
+    policyInfo.raw_exec_policy === "enabled" ||
+    (policyInfo.raw_exec_policy === "admin_only" && !!policyInfo.raw_exec_admin)
+  );
+}
+
+function browserExecApiDeclarationForPolicy({
+  policyInfo,
+  declaration,
+}: {
+  policyInfo?: { raw_exec_policy?: string; raw_exec_admin?: boolean };
+  declaration: string;
+}): string {
+  if (!policyInfo) return declaration;
+  if (rawBrowserExecAllowed(policyInfo)) return declaration;
+  return QUICKJS_BROWSER_EXEC_API_DECLARATION;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -440,7 +501,11 @@ export function registerBrowserCommand(
             browserClient.getAutomationPolicyInfo().catch(() => undefined),
             browserClient.getExecApiDeclaration(),
           ]);
-          if (!policyInfo) return declaration;
+          const effectiveDeclaration = browserExecApiDeclarationForPolicy({
+            policyInfo,
+            declaration,
+          });
+          if (!policyInfo) return effectiveDeclaration;
           return `/* Effective browser automation policy for this session:
  * raw_exec_policy=${policyInfo.raw_exec_policy}
  * raw_exec_admin=${policyInfo.raw_exec_admin}
@@ -451,7 +516,7 @@ export function registerBrowserCommand(
  * max_sandbox_actions=${policyInfo.max_sandbox_actions}
  */
 
-${declaration}`;
+${effectiveDeclaration}`;
         });
       },
     );

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Modal } from "antd";
 import { Map as ImmutableMap } from "immutable";
 import * as React from "react";
@@ -6,6 +6,7 @@ import { IntlProvider } from "react-intl";
 import { StartButton } from "./start-button";
 
 const mockStartProject = jest.fn();
+const mockStopProject = jest.fn();
 const mockSetProjectRuntimeSponsorToMe = jest.fn();
 let mockAccountId: string | undefined;
 let mockIsAdmin = false;
@@ -33,7 +34,7 @@ jest.mock("antd", () => {
   const Div = ({ children, size, align, wrap, ...props }: any) => (
     <div {...props}>{children}</div>
   );
-  const Button = ({ children, danger, size, ...props }: any) => (
+  const Button = ({ children, danger, size, loading, ...props }: any) => (
     <button type="button" {...props}>
       {children}
     </button>
@@ -50,6 +51,7 @@ jest.mock("antd", () => {
     Modal: {
       confirm: jest.fn(),
       error: jest.fn(),
+      destroyAll: jest.fn(),
     },
     Progress: Div,
     Space: Div,
@@ -61,6 +63,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: {
     getActions: () => ({
       start_project: mockStartProject,
+      stop_project: mockStopProject,
       set_project_runtime_sponsor_to_me: mockSetProjectRuntimeSponsorToMe,
     }),
     getStore: () =>
@@ -143,6 +146,7 @@ jest.mock("./use-project-active-op", () => ({
 describe("StartButton", () => {
   beforeEach(() => {
     mockStartProject.mockReset();
+    mockStopProject.mockReset();
     mockSetProjectRuntimeSponsorToMe.mockReset();
     (Modal.confirm as jest.Mock).mockReset();
     mockAccountId = undefined;
@@ -211,5 +215,158 @@ describe("StartButton", () => {
       }),
     );
     expect(mockStartProject).not.toHaveBeenCalled();
+  });
+
+  it("lets a full sponsor stop another sponsored project and retry in one click", async () => {
+    startLroRecord = {
+      toJS: () => ({
+        summary: {
+          status: "failed",
+          op_id: "op-1",
+          scope_type: "project",
+          scope_id: "project-1",
+          error: "runtime sponsor slots exhausted",
+          result: {
+            runtime_sponsor_denial: {
+              code: "runtime_sponsor_slots_exhausted",
+              sponsor_account_id: "user-1",
+              limit: 1,
+              current: 1,
+              active_projects: [
+                {
+                  project_id: "running-project",
+                  state: "running",
+                  visible: true,
+                  can_stop: true,
+                },
+              ],
+              can_change_sponsor: false,
+            },
+          },
+        },
+      }),
+    };
+
+    render(
+      <IntlProvider locale="en">
+        <StartButton />
+      </IntlProvider>,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /stop and start this project/i }),
+    );
+
+    await waitFor(() => {
+      expect(mockStopProject).toHaveBeenCalledWith("running-project");
+      expect(mockStartProject).toHaveBeenCalledWith("project-1");
+    });
+  });
+
+  it("ignores old async start failures for compact start buttons", async () => {
+    startLroRecord = {
+      toJS: () => ({
+        summary: {
+          status: "failed",
+          op_id: "op-old",
+          scope_type: "project",
+          scope_id: "project-1",
+          error: "runtime sponsor slots exhausted",
+          result: {
+            runtime_sponsor_denial: {
+              code: "runtime_sponsor_slots_exhausted",
+              sponsor_account_id: "user-1",
+              limit: 1,
+              current: 1,
+              active_projects: [
+                {
+                  project_id: "running-project",
+                  state: "running",
+                  visible: true,
+                  can_stop: true,
+                },
+              ],
+              can_change_sponsor: false,
+            },
+          },
+        },
+      }),
+    };
+
+    render(
+      <IntlProvider locale="en">
+        <StartButton minimal />
+      </IntlProvider>,
+    );
+
+    expect(Modal.error).not.toHaveBeenCalled();
+  });
+
+  it("surfaces current async start failures for compact start buttons", async () => {
+    startLroRecord = undefined;
+    mockStartProject.mockImplementation(async (_projectId, opts) => {
+      opts?.onStartOp?.({ op_id: "op-compact" });
+      return true;
+    });
+
+    const view = render(
+      <IntlProvider locale="en">
+        <StartButton minimal />
+      </IntlProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /start/i }));
+
+    await waitFor(() => {
+      expect(mockStartProject).toHaveBeenCalledWith(
+        "project-1",
+        expect.objectContaining({
+          onStartOp: expect.any(Function),
+        }),
+      );
+    });
+
+    startLroRecord = {
+      toJS: () => ({
+        summary: {
+          status: "failed",
+          op_id: "op-compact",
+          scope_type: "project",
+          scope_id: "project-1",
+          error: "runtime sponsor slots exhausted",
+          result: {
+            runtime_sponsor_denial: {
+              code: "runtime_sponsor_slots_exhausted",
+              sponsor_account_id: "user-1",
+              limit: 1,
+              current: 1,
+              active_projects: [
+                {
+                  project_id: "running-project",
+                  state: "running",
+                  visible: true,
+                  can_stop: true,
+                },
+              ],
+              can_change_sponsor: false,
+            },
+          },
+        },
+      }),
+    };
+    view.rerender(
+      <IntlProvider locale="en">
+        <StartButton minimal />
+      </IntlProvider>,
+    );
+
+    await waitFor(() => {
+      expect(Modal.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Project start failed",
+          okText: "Close",
+        }),
+      );
+    });
   });
 });

@@ -14,7 +14,7 @@ happens, and also when the system is heavily loaded.
 
 import { Alert, Button, Modal, Progress, Space, Spin } from "antd";
 import type { ButtonProps } from "antd";
-import { CSSProperties, useRef, useState } from "react";
+import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, ProjectState, Tooltip } from "@cocalc/frontend/components";
@@ -40,6 +40,7 @@ import {
 import { progressBarStatus } from "@cocalc/frontend/lro/utils";
 import { useProjectActiveOperation } from "./use-project-active-op";
 import {
+  extractRuntimeSponsorDenial,
   formatRuntimeSponsorDenial,
   type RuntimeSponsorDenial,
 } from "@cocalc/util/runtime-sponsor-denial";
@@ -128,6 +129,7 @@ export function StartButton({
   const runtimeSponsorDenial = startLroSummary?.result
     ?.runtime_sponsor_denial as RuntimeSponsorDenial | undefined;
   const startFailed = startLroSummary?.status === "failed" && !!startLroError;
+  const minimalStartAttemptOpIdsRef = useRef<Set<string>>(new Set());
   const moveActive =
     moveLro != null &&
     (!moveLro.summary ||
@@ -170,6 +172,27 @@ export function StartButton({
     return startLroActive || activeOpStartLike;
   }, [activeOpStartLike, lifecycleState, startLroActive]);
 
+  useEffect(() => {
+    if (!minimal || !startFailed || !startLroSummary || !project_id) return;
+    if (!minimalStartAttemptOpIdsRef.current.has(startLroSummary.op_id)) {
+      return;
+    }
+    minimalStartAttemptOpIdsRef.current.delete(startLroSummary.op_id);
+    Modal.error({
+      title: "Project start failed",
+      content: renderStartFailureDescription(),
+      okText: "Close",
+      width: 720,
+    });
+  }, [
+    minimal,
+    project_id,
+    runtimeSponsorDenial,
+    startFailed,
+    startLroError,
+    startLroSummary,
+  ]);
+
   if (!project_id) {
     return null;
   }
@@ -182,6 +205,51 @@ export function StartButton({
 
   if (minimal && hostUnavailable) {
     return null;
+  }
+
+  function renderStartFailureDescription() {
+    return runtimeSponsorDenial ? (
+      <RuntimeSponsorDenialDescription
+        denial={runtimeSponsorDenial}
+        project_id={resolvedProjectId}
+      />
+    ) : (
+      startLroError
+    );
+  }
+
+  function renderStartErrorDescription(err: unknown) {
+    const denial = extractRuntimeSponsorDenial(err);
+    return denial ? (
+      <RuntimeSponsorDenialDescription
+        denial={denial}
+        project_id={resolvedProjectId}
+      />
+    ) : err instanceof Error ? (
+      err.message
+    ) : startPolicyBlock ? (
+      formatProjectStartPolicyBlock(startPolicyBlock)
+    ) : (
+      `${err}`
+    );
+  }
+
+  function showStartError(err: unknown) {
+    Modal.error({
+      title: "Unable to start project",
+      content: renderStartErrorDescription(err),
+      width: extractRuntimeSponsorDenial(err) ? 720 : undefined,
+    });
+  }
+
+  async function requestProjectStart() {
+    await redux.getActions("projects").start_project(project_id, {
+      onStartOp: (op) => {
+        if (minimal && op.op_id) {
+          minimalStartAttemptOpIdsRef.current.add(op.op_id);
+        }
+      },
+    });
   }
 
   function render_start_project_button() {
@@ -228,29 +296,18 @@ export function StartButton({
               await redux
                 .getActions("projects")
                 .set_project_runtime_sponsor_to_me(project_id);
-              await redux.getActions("projects").start_project(project_id);
+              await requestProjectStart();
             } catch (err) {
-              Modal.error({
-                title: "Unable to start project",
-                content: `${err}`,
-              });
+              showStartError(err);
             }
           },
         });
         return;
       }
       try {
-        await redux.getActions("projects").start_project(project_id);
+        await requestProjectStart();
       } catch (err) {
-        Modal.error({
-          title: "Unable to start project",
-          content:
-            err instanceof Error
-              ? err.message
-              : startPolicyBlock
-                ? formatProjectStartPolicyBlock(startPolicyBlock)
-                : `${err}`,
-        });
+        showStartError(err);
       }
     };
 
@@ -325,16 +382,7 @@ export function StartButton({
             type="error"
             showIcon
             title="Project start failed"
-            description={
-              runtimeSponsorDenial ? (
-                <RuntimeSponsorDenialDescription
-                  denial={runtimeSponsorDenial}
-                  project_id={resolvedProjectId}
-                />
-              ) : (
-                startLroError
-              )
-            }
+            description={renderStartFailureDescription()}
             action={
               <Button
                 size="small"
@@ -598,6 +646,23 @@ function RuntimeSponsorDenialDescription({
     }
   }
 
+  async function stopProjectAndRetry(projectToStopId: string) {
+    setStopError("");
+    setStoppingProjectIds((ids) => ({ ...ids, [projectToStopId]: true }));
+    try {
+      await redux.getActions("projects").stop_project(projectToStopId);
+      await redux.getActions("projects").start_project(project_id);
+    } catch (err) {
+      setStopError(`${err}`);
+    } finally {
+      setStoppingProjectIds((ids) => {
+        const next = { ...ids };
+        delete next[projectToStopId];
+        return next;
+      });
+    }
+  }
+
   async function useMyMembershipAndRetry() {
     setStopError("");
     setChangingSponsor(true);
@@ -613,6 +678,11 @@ function RuntimeSponsorDenialDescription({
     }
   }
 
+  function openMembershipDetails() {
+    Modal.destroyAll();
+    redux.getActions("page").set_active_tab("account");
+  }
+
   return (
     <div>
       <div>{formatRuntimeSponsorDenial(denial)}</div>
@@ -624,13 +694,25 @@ function RuntimeSponsorDenialDescription({
                 <ProjectTitle project_id={project.project_id} trunc={60} />
                 {project.state && <span>({project.state})</span>}
                 {project.can_stop !== false && (
-                  <Button
-                    size="small"
-                    loading={!!stoppingProjectIds[project.project_id]}
-                    onClick={() => stopProject(project.project_id)}
-                  >
-                    Stop
-                  </Button>
+                  <>
+                    <Button
+                      size="small"
+                      loading={!!stoppingProjectIds[project.project_id]}
+                      onClick={() => stopProject(project.project_id)}
+                    >
+                      Stop
+                    </Button>
+                    {denial.can_change_sponsor !== true && (
+                      <Button
+                        size="small"
+                        type="primary"
+                        loading={!!stoppingProjectIds[project.project_id]}
+                        onClick={() => stopProjectAndRetry(project.project_id)}
+                      >
+                        Stop and start this project
+                      </Button>
+                    )}
+                  </>
                 )}
               </Space>
             </li>
@@ -640,14 +722,13 @@ function RuntimeSponsorDenialDescription({
       {canStopAnyVisibleProject && (
         <div style={{ marginTop: "8px" }}>
           Stop one of these projects, then try starting this project again.
+          {denial.can_change_sponsor !== true &&
+            " Or use one of the buttons above to do both in one step."}
         </div>
       )}
       {denial.can_upgrade && (
         <div style={{ marginTop: "8px" }}>
-          <Button
-            size="small"
-            onClick={() => redux.getActions("page").set_active_tab("account")}
-          >
+          <Button size="small" onClick={openMembershipDetails}>
             Open membership details
           </Button>
         </div>
@@ -665,7 +746,7 @@ function RuntimeSponsorDenialDescription({
       )}
       {stopError && (
         <div style={{ marginTop: "8px", color: COLORS.ANTD_RED_WARN }}>
-          Failed to stop project: {stopError}
+          Runtime sponsor action failed: {stopError}
         </div>
       )}
       {nonCollaboratorCount > 0 && (

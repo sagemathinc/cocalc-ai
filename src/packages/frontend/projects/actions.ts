@@ -1617,6 +1617,29 @@ export class ProjectsActions extends Actions<ProjectsState> {
     });
   };
 
+  set_project_runtime_sponsor_to_owner = async (
+    project_id: string,
+    owner_account_id: string,
+  ): Promise<void> => {
+    if (!(await this.have_project(project_id))) {
+      console.warn(
+        `Can't set runtime sponsor -- you are not a collaborator on project '${project_id}'.`,
+      );
+      return;
+    }
+    if (!is_valid_uuid_string(owner_account_id)) {
+      throw Error("Project owner account id is not available.");
+    }
+    await this.projects_table_set({
+      project_id,
+      runtime_sponsor_account_id: owner_account_id,
+    });
+    publishProjectDetailInvalidation({
+      project_id,
+      fields: ["runtime_sponsor_account_id"],
+    });
+  };
+
   set_project_autostart_enabled = async (
     project_id: string,
     autostart_enabled: boolean,
@@ -2205,7 +2228,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
   start_project = reuseInFlight(
     async (
       project_id: string,
-      opts: { autostart?: boolean } = {},
+      opts: {
+        autostart?: boolean;
+        onStartOp?: (op: { op_id?: string }) => void;
+      } = {},
     ): Promise<boolean> => {
       if (!store.getIn(["project_map", project_id])) {
         return false;
@@ -2260,6 +2286,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           wait: false,
         });
         actions.trackStartOp(resp);
+        opts.onStartOp?.(resp);
         const host_id = store.getIn(["project_map", project_id, "host_id"]) as
           | string
           | undefined;

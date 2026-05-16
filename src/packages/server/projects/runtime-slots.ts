@@ -77,6 +77,12 @@ export interface ReserveProjectRuntimeSlotResult {
   slot: ProjectRuntimeSlot;
 }
 
+export interface CheckProjectRuntimeSlotOptions {
+  sponsor_account_id: string;
+  project_id: string;
+  client?: PoolClient;
+}
+
 export interface ProjectRuntimeSlotHeartbeatInput {
   sponsor_account_id: string;
   project_id: string;
@@ -136,6 +142,57 @@ async function loadActiveSlotsForSponsor(
   return rows;
 }
 
+function runtimeSponsorSlotDenialFromActiveSlots({
+  sponsor_account_id,
+  project_id,
+  activeSlots,
+  limit,
+}: {
+  sponsor_account_id: string;
+  project_id: string;
+  activeSlots: ProjectRuntimeSlot[];
+  limit?: number;
+}): RuntimeSponsorSlotDenial | undefined {
+  if (limit == null) return undefined;
+  if (activeSlots.some((slot) => slot.project_id === project_id)) {
+    return undefined;
+  }
+  if (activeSlots.length < limit) return undefined;
+  return {
+    code: "runtime_sponsor_slots_exhausted",
+    sponsor_account_id,
+    limit,
+    current: activeSlots.length,
+    active_projects: activeSlots.map((slot) => ({
+      project_id: slot.project_id,
+      state: slot.state === "starting" ? "starting" : "running",
+    })),
+  };
+}
+
+export async function getProjectRuntimeSlotDenialLocal({
+  sponsor_account_id,
+  project_id,
+  client,
+}: CheckProjectRuntimeSlotOptions): Promise<
+  RuntimeSponsorSlotDenial | undefined
+> {
+  const pool = client ?? getPool();
+  await expireStaleRuntimeSlots(pool);
+  const activeSlots = await loadActiveSlotsForSponsor(pool, sponsor_account_id);
+  const membership = await resolveMembershipForAccount(sponsor_account_id);
+  const limit = normalizePositiveInteger(
+    getEffectiveMembershipUsageLimits(membership)
+      .max_sponsored_running_projects,
+  );
+  return runtimeSponsorSlotDenialFromActiveSlots({
+    sponsor_account_id,
+    project_id,
+    activeSlots,
+    limit,
+  });
+}
+
 async function reserveProjectRuntimeSlotInTransaction(
   client: PoolClient,
   opts: ReserveProjectRuntimeSlotOptions,
@@ -156,16 +213,15 @@ async function reserveProjectRuntimeSlotInTransaction(
   );
 
   if (!existingSlot && limit != null && activeSlots.length >= limit) {
-    throw new RuntimeSponsorSlotsExhaustedError({
-      code: "runtime_sponsor_slots_exhausted",
+    const denial = runtimeSponsorSlotDenialFromActiveSlots({
       sponsor_account_id: opts.sponsor_account_id,
+      project_id: opts.project_id,
+      activeSlots,
       limit,
-      current: activeSlots.length,
-      active_projects: activeSlots.map((slot) => ({
-        project_id: slot.project_id,
-        state: slot.state === "starting" ? "starting" : "running",
-      })),
     });
+    if (denial) {
+      throw new RuntimeSponsorSlotsExhaustedError(denial);
+    }
   }
 
   const { rows } = await client.query<ProjectRuntimeSlot>(
@@ -433,6 +489,38 @@ export async function reserveProjectRuntimeSlot(
     return await reserveProjectRuntimeSlotLocal(opts);
   }
   return await accountLocalClient(homeBay).reserveProjectRuntimeSlot(opts);
+}
+
+export async function getProjectRuntimeSlotDenial({
+  sponsor_account_id,
+  project_id,
+  client,
+}: CheckProjectRuntimeSlotOptions): Promise<
+  RuntimeSponsorSlotDenial | undefined
+> {
+  const homeBay = await runtimeSponsorHomeBay(sponsor_account_id);
+  if (homeBay === getConfiguredBayId()) {
+    return await getProjectRuntimeSlotDenialLocal({
+      sponsor_account_id,
+      project_id,
+      client,
+    });
+  }
+  const remote = accountLocalClient(homeBay);
+  const [activeSlots, membership] = await Promise.all([
+    remote.listProjectRuntimeSlots({ sponsor_account_id }),
+    remote.getMembership({ account_id: sponsor_account_id }),
+  ]);
+  const limit = normalizePositiveInteger(
+    getEffectiveMembershipUsageLimits(membership)
+      .max_sponsored_running_projects,
+  );
+  return runtimeSponsorSlotDenialFromActiveSlots({
+    sponsor_account_id,
+    project_id,
+    activeSlots,
+    limit,
+  });
 }
 
 export async function heartbeatProjectRuntimeSlot(

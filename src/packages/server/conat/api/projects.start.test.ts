@@ -12,6 +12,7 @@ let supersedeOlderProjectStartLrosMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let resolveProjectOwningBayMock: jest.Mock;
 let interBayStartMock: jest.Mock;
+let interBayCheckStartAdmissionMock: jest.Mock;
 let projectControlBridgeMock: jest.Mock;
 let getNameMock: jest.Mock;
 
@@ -101,6 +102,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
 }));
 
 projectControlBridgeMock = jest.fn(() => ({
+  checkStartAdmission: (...args: any[]) =>
+    interBayCheckStartAdmissionMock(...args),
   start: (...args: any[]) => interBayStartMock(...args),
 }));
 
@@ -186,8 +189,11 @@ describe("projects.start", () => {
       source: "project-row",
     }));
     getNameMock = jest.fn(async () => "Runtime Sponsor");
+    interBayCheckStartAdmissionMock = jest.fn(async () => undefined);
     interBayStartMock = jest.fn(async () => undefined);
     projectControlBridgeMock = jest.fn(() => ({
+      checkStartAdmission: (...args: any[]) =>
+        interBayCheckStartAdmissionMock(...args),
       start: (...args: any[]) => interBayStartMock(...args),
     }));
     getProjectMock = jest.fn(async () => ({
@@ -216,6 +222,12 @@ describe("projects.start", () => {
       project_id: "proj-1",
       account_id: "acct-1",
       lro_op_id: "op-1",
+      source_bay_id: "bay-0",
+      epoch: 0,
+    });
+    expect(interBayCheckStartAdmissionMock).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      account_id: "acct-1",
       source_bay_id: "bay-0",
       epoch: 0,
     });
@@ -274,6 +286,55 @@ describe("projects.start", () => {
           title: "Visible Project",
           visible: true,
           can_stop: true,
+        },
+      ],
+    });
+  });
+
+  it("rejects obvious runtime sponsor slot exhaustion before creating a start lro", async () => {
+    const { encodeRuntimeSponsorDenial, extractRuntimeSponsorDenial } =
+      await import("@cocalc/util/runtime-sponsor-denial");
+    interBayCheckStartAdmissionMock = jest.fn(async () => {
+      throw new Error(
+        encodeRuntimeSponsorDenial({
+          code: "runtime_sponsor_slots_exhausted",
+          sponsor_account_id: "11111111-1111-4111-8111-111111111111",
+          limit: 1,
+          current: 1,
+          active_projects: [
+            {
+              project_id: "22222222-2222-4222-8222-222222222222",
+              state: "running",
+            },
+          ],
+        }),
+      );
+    });
+    const { start } = await import("./projects");
+
+    await expect(
+      start({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        wait: false,
+      }),
+    ).rejects.toThrow("COCALC_RUNTIME_SPONSOR_DENIAL");
+
+    expect(createLroMock).not.toHaveBeenCalled();
+    expect(interBayStartMock).not.toHaveBeenCalled();
+    const err = await start({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      wait: false,
+    }).catch((err) => err);
+    expect(extractRuntimeSponsorDenial(err)).toMatchObject({
+      sponsor_display_name: "Runtime Sponsor",
+      can_change_sponsor: true,
+      active_projects: [
+        {
+          project_id: "22222222-2222-4222-8222-222222222222",
+          title: "Visible Project",
+          visible: true,
         },
       ],
     });

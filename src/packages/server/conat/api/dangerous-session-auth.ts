@@ -43,7 +43,17 @@ function isAtLeastAsRecent({
   );
 }
 
+function isDevCliFreshAuth(session: AccountAuthSessionRow): boolean {
+  return (
+    process.env.NODE_ENV !== "production" &&
+    session.metadata?.dev_cli_fresh_auth === true
+  );
+}
+
 function hasRecentSecondFactor(session: AccountAuthSessionRow): boolean {
+  if (isDevCliFreshAuth(session)) {
+    return true;
+  }
   return (
     (session.factor_level ?? "none") !== "none" &&
     isAtLeastAsRecent({
@@ -119,9 +129,11 @@ export async function requireDangerousSessionAuth({
   }
 
   if (!(await hasActiveSecondFactor(accountId))) {
-    throw twoFactorRequired(
-      "two-factor authentication is required for this operation",
-    );
+    if (!isDevCliFreshAuth(session)) {
+      throw twoFactorRequired(
+        "two-factor authentication is required for this operation",
+      );
+    }
   }
   if (!hasRecentSecondFactor(session)) {
     throw freshAuthRequired("recent two-factor verification is required");
