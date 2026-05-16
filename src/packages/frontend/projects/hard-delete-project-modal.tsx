@@ -139,7 +139,7 @@ export function HardDeleteProjectModal({
             showIcon
             type="error"
             message="This cannot be undone"
-            description={`Deleting this ${projectLabelLower} permanently removes its files, collaborators, invitations, shares, project secrets, API keys, and metadata. Backups are cleaned up asynchronously and this ${projectLabelLower} cannot be opened or started after deletion begins.`}
+            description={`Deleting this ${projectLabelLower} permanently removes its files, collaborators, invitations, shares, project secrets, SSH keys, and metadata. Backups are cleaned up asynchronously and this ${projectLabelLower} cannot be opened or started after deletion begins.`}
           />
           <div>
             Type <code style={{ userSelect: "all" }}>{confirmationTarget}</code>{" "}
