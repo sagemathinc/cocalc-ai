@@ -40,6 +40,7 @@ import {
   DEFAULT_R2_REGION,
   mapCloudRegionToR2Region,
 } from "@cocalc/util/consts";
+import { COLORS } from "@cocalc/util/theme";
 import { useProjectRegion } from "@cocalc/frontend/project/use-project-region";
 import { HardDeleteProjectModal } from "./hard-delete-project-modal";
 import { confirmRemoveMyselfFromProject } from "./remove-myself";
@@ -64,6 +65,7 @@ export function ProjectActionsMenu({ record }: Props) {
   const intl = useIntl();
   const actions = useActions("projects");
   const account_id = useTypedRedux("account", "account_id");
+  const isAdmin = !!useTypedRedux("account", "is_admin");
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const isDeleting = record.deleting === true;
@@ -91,6 +93,19 @@ export function ProjectActionsMenu({ record }: Props) {
   const isOwner =
     project_map?.getIn([record.project_id, "users", account_id, "group"]) ===
     "owner";
+  const canArchive =
+    isAdmin ||
+    isOwner ||
+    project_map?.getIn([
+      record.project_id,
+      "allow_collaborator_destructive_storage_actions",
+    ]) === true;
+  const archiveDisabled =
+    isDeleting ||
+    ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
+      `${record.state?.get?.("state") ?? ""}`,
+    ) ||
+    !canArchive;
 
   // Get recent files - only when menu is open
   const recentFiles: OpenedFile[] = useRecentFiles(project_log, open ? 100 : 0);
@@ -163,6 +178,39 @@ export function ProjectActionsMenu({ record }: Props) {
         if (isDeleting) break;
         await refreshProjectRegion();
         setMoveOpen(true);
+        break;
+      case "archive":
+        if (archiveDisabled) break;
+        Modal.confirm({
+          title: `Archive ${projectLabelLower}`,
+          icon: <Icon name="file-archive" style={{ color: COLORS.BRWN }} />,
+          width: 520,
+          content: (
+            <div>
+              <p>
+                Archiving removes the active copy from the project host. CoCalc
+                will stop the {projectLabelLower} if needed, create a final
+                backup when needed, then archive it.
+              </p>
+              <p style={{ color: COLORS.GRAY_M }}>
+                Starting it later restores it from backup, which is slower, but
+                archived {projectLabelLower}s do not count toward active storage
+                usage.
+              </p>
+            </div>
+          ),
+          okText: "Archive",
+          onOk: async () => {
+            try {
+              await actions.archive_project(record.project_id);
+            } catch (err) {
+              Modal.error({
+                title: "Archive failed",
+                content: `${err}`,
+              });
+            }
+          },
+        });
         break;
       case "settings":
         if (isDeleting) break;
@@ -279,6 +327,12 @@ export function ProjectActionsMenu({ record }: Props) {
       label: "Move to host…",
       icon: <Icon name="server" />,
       disabled: isDeleting,
+    },
+    {
+      key: "archive",
+      label: "Archive…",
+      icon: <Icon name="file-archive" />,
+      disabled: archiveDisabled,
     },
     {
       type: "divider",

@@ -190,6 +190,74 @@ describe("ProjectsActions realtime feed", () => {
     expect(projectMap.getIn(["project-1", "last_edited"])).toBeInstanceOf(Date);
   });
 
+  it("replaces project users from realtime upserts instead of preserving removed members", async () => {
+    projectMap = ImmutableMap<string, any>([
+      [
+        "project-1",
+        ImmutableMap({
+          project_id: "project-1",
+          title: "Realtime Project",
+          users: ImmutableMap({
+            "acct-old-owner": ImmutableMap({ group: "owner" }),
+            "acct-new-owner": ImmutableMap({ group: "collaborator" }),
+          }),
+          state: ImmutableMap({ state: "running" }),
+        }),
+      ],
+    ]);
+    const redux = {
+      getStore: jest.fn((name: string) => {
+        if (name === "account") {
+          return ImmutableMap({ account_id: "acct-new-owner" });
+        }
+        return ImmutableMap();
+      }),
+      _set_state: jest.fn((state) => {
+        projectMap = state.projects.project_map;
+      }),
+      removeActions: jest.fn(),
+      getTable: jest.fn(),
+      getProjectActions: jest.fn(() => ({
+        save_all_files: jest.fn(),
+      })),
+    } as any;
+    const actions = new ProjectsActions("projects", redux);
+
+    actions._init();
+    await flush();
+
+    const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+    feed.emit("change", {
+      type: "project.upsert",
+      ts: Date.now(),
+      account_id: "acct-new-owner",
+      project: {
+        project_id: "project-1",
+        title: "Realtime Project",
+        description: "from feed",
+        name: "realtime-project",
+        theme: null,
+        host_id: null,
+        owning_bay_id: "bay-0",
+        users: {
+          "acct-new-owner": { group: "owner" },
+        },
+        state: { state: "running" },
+        last_active: { "acct-new-owner": "2026-04-05T03:00:00.000Z" },
+        last_edited: "2026-04-05T03:00:00.000Z",
+        deleted: false,
+      },
+    });
+    await flush();
+
+    expect(
+      projectMap.getIn(["project-1", "users", "acct-new-owner", "group"]),
+    ).toBe("owner");
+    expect(projectMap.getIn(["project-1", "users", "acct-old-owner"])).toBe(
+      undefined,
+    );
+  });
+
   it("batches multiple project upserts into one state update", async () => {
     const redux = {
       getStore: jest.fn((name: string) => {

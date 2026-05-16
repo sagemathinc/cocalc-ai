@@ -801,6 +801,19 @@ export class ProjectsActions extends Actions<ProjectsState> {
     return nextProject.set("users", mergedUsers);
   }
 
+  private mergeProjectFeedRow(
+    currentProject: Map<string, any>,
+    row: AccountFeedProjectRow,
+  ): Map<string, any> {
+    const incomingProject = buildProjectRecordFromFeedRow(row);
+    // Realtime feed rows contain the authoritative membership map.  Do not
+    // deep-merge users, since removed collaborators/previous owners must
+    // disappear immediately without requiring a browser refresh.
+    return currentProject
+      .mergeDeep(incomingProject)
+      .set("users", incomingProject.get("users"));
+  }
+
   private queueProjectFeedUpsert(
     row: AccountFeedProjectRow,
     updated_at?: number,
@@ -909,9 +922,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           : undefined;
       const currentProject =
         project_map.get(row.project_id) ?? Map<string, any>();
-      let nextProject = currentProject.mergeDeep(
-        buildProjectRecordFromFeedRow(row),
-      );
+      let nextProject = this.mergeProjectFeedRow(currentProject, row);
       if (
         typeof source_host_id === "string" &&
         source_host_id &&
@@ -993,9 +1004,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private upsertProjectMapFromRow(row: AccountFeedProjectRow): void {
     const currentProject =
       store.get("project_map")?.get(row.project_id) ?? Map<string, any>();
-    let nextProject = currentProject.mergeDeep(
-      buildProjectRecordFromFeedRow(row),
-    );
+    let nextProject = this.mergeProjectFeedRow(currentProject, row);
     if (
       this.shouldPreserveNewerLocalState({
         currentProject,

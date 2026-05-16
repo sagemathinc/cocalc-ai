@@ -57,6 +57,7 @@ export function ProjectsOperations({
   const [leaveDeleteModalOpen, setLeaveDeleteModalOpen] = useState(false);
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
+  const isAdmin = !!useTypedRedux("account", "is_admin");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) =>
       Modal.error({
@@ -163,6 +164,18 @@ export function ProjectsOperations({
     return plan;
   }, [selected_project_ids, project_map, account_id]);
 
+  const selectedArchiveIds: string[] = useMemo(() => {
+    const archiveIds: string[] = [];
+    for (const project_id of selected_project_ids) {
+      const project = project_map?.get(project_id);
+      if (!project || !canArchiveProject(project, account_id, isAdmin)) {
+        continue;
+      }
+      archiveIds.push(project_id);
+    }
+    return archiveIds;
+  }, [selected_project_ids, project_map, account_id, isAdmin]);
+
   function selectedTitle(project_id: string): string {
     return project_map?.get(project_id)?.get("title") ?? project_id;
   }
@@ -201,6 +214,81 @@ export function ProjectsOperations({
       onOk: async () => {
         for (const project_id of selected_project_ids) {
           await actions.stop_project(project_id);
+        }
+      },
+    });
+  }
+
+  function confirmSelectedArchive() {
+    const projectIds = selectedArchiveIds;
+    const skipped = selected_project_ids.length - projectIds.length;
+    if (projectIds.length === 0) {
+      Modal.warning({
+        title: `No selected ${projectsLabelLower} can be archived`,
+        content:
+          "Select projects where you can archive recovery data and that are not already archived or busy.",
+      });
+      return;
+    }
+    Modal.confirm({
+      title: `Archive selected ${projectsLabelLower}`,
+      icon: <Icon name="file-archive" style={{ color: COLORS.BRWN }} />,
+      width: 560,
+      content: (
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <div>
+            Archive {projectIds.length} selected {projectsLabelLower}? CoCalc
+            will stop each project if needed, create a final backup when needed,
+            then remove the active copy from its host.
+          </div>
+          <div style={{ color: COLORS.GRAY_M }}>
+            Archived {projectsLabelLower} restore from backup when started
+            later. They do not count toward active storage usage while archived.
+          </div>
+          {skipped > 0 ? (
+            <div style={{ color: COLORS.GRAY_M }}>
+              {skipped} selected {projectsLabelLower} will be skipped because
+              they are already archived, busy, or you do not have permission to
+              archive them.
+            </div>
+          ) : undefined}
+        </Space>
+      ),
+      okText: "Archive",
+      onOk: async () => {
+        const succeeded: string[] = [];
+        const errors: Array<{ project_id: string; error: string }> = [];
+        for (const project_id of projectIds) {
+          try {
+            await actions.archive_project(project_id);
+            succeeded.push(project_id);
+          } catch (err) {
+            errors.push({ project_id, error: `${err}` });
+          }
+        }
+        onSelectionChange(
+          selected_project_ids.filter((id) => !succeeded.includes(id)),
+        );
+        alert_message({
+          type: errors.length > 0 ? "warning" : "success",
+          message:
+            errors.length > 0
+              ? `Archived ${succeeded.length} project(s); ${errors.length} failed.`
+              : `Archived ${succeeded.length} selected project(s).`,
+        });
+        if (errors.length > 0) {
+          Modal.error({
+            title: "Some projects could not be archived",
+            content: (
+              <ul>
+                {errors.map((result) => (
+                  <li key={result.project_id}>
+                    {selectedTitle(result.project_id)}: {result.error}
+                  </li>
+                ))}
+              </ul>
+            ),
+          });
         }
       },
     });
@@ -375,6 +463,14 @@ export function ProjectsOperations({
             </Button>
             <Button
               size="small"
+              icon={<Icon name="file-archive" />}
+              disabled={selectedArchiveIds.length === 0}
+              onClick={confirmSelectedArchive}
+            >
+              Archive...
+            </Button>
+            <Button
+              size="small"
               icon={<Icon name="eye-slash" />}
               onClick={() => confirmSelectedHide(true)}
             >
@@ -416,5 +512,36 @@ export function ProjectsOperations({
       />
       <FreshAuthModal {...freshAuthModalProps} />
     </>
+  );
+}
+
+function canArchiveProject(
+  project: any,
+  account_id: string | undefined,
+  isAdmin: boolean,
+): boolean {
+  const state = `${project.getIn?.(["state", "state"]) ?? ""}`;
+  if (
+    !state ||
+    [
+      "starting",
+      "stopping",
+      "archiving",
+      "unarchiving",
+      "archived",
+      "deleting",
+    ].includes(state)
+  ) {
+    return false;
+  }
+  if (isAdmin) {
+    return true;
+  }
+  const group = account_id
+    ? `${project.getIn?.(["users", account_id, "group"]) ?? ""}`
+    : "";
+  return (
+    group === "owner" ||
+    project.get?.("allow_collaborator_destructive_storage_actions") === true
   );
 }
