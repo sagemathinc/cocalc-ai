@@ -5,7 +5,7 @@
 
 import { Alert, Button, Card, Modal, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   CopyToClipBoard,
@@ -13,15 +13,21 @@ import {
   ProjectState,
   TimeAgo,
 } from "@cocalc/frontend/components";
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import type { SnapshotUsage } from "@cocalc/conat/files/file-server";
 import DiskUsage from "@cocalc/frontend/project/disk-usage/disk-usage";
+import { linearList } from "@cocalc/frontend/project/info/utils";
 import useDiskUsage from "@cocalc/frontend/project/disk-usage/use-disk-usage";
+import useProjectInfo from "@cocalc/frontend/project/info/use-project-info";
 import { ManagedEgressRateSummary } from "@cocalc/frontend/purchases/managed-egress-history";
 import { useHostInfo } from "@cocalc/frontend/projects/host-info";
 import {
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { BACKUPS } from "@cocalc/util/consts/backups";
+import { SNAPSHOTS } from "@cocalc/util/consts/snapshots";
 import { Project } from "./types";
 import { human_readable_size } from "@cocalc/util/misc";
 import { useRunQuota } from "./run-quota/hooks";
@@ -134,12 +140,10 @@ export function ProjectSettingsHealthRail({
             </Tag>
           </HealthRow>
         )}
-        {lastBackup && (
-          <HealthRow label="Last backup">
-            <TimeAgo date={lastBackup as any} />
-          </HealthRow>
-        )}
+        <BackupHealthRow project_id={project_id} lastBackup={lastBackup} />
+        <SnapshotHealthRow project_id={project_id} />
         <StorageHealthRow project_id={project_id} />
+        <ProcessHealthRow project_id={project_id} />
         <HealthRow label="Network">
           <Space direction="vertical" size={2}>
             <ManagedEgressRateSummary project_id={project_id} />
@@ -174,6 +178,150 @@ export function ProjectSettingsHealthRail({
         )}
       </Space>
     </Card>
+  );
+}
+
+function openDirectory(project_id: string, path: string) {
+  void redux.getProjectActions(project_id).open_directory(path, true, true);
+}
+
+function BackupHealthRow({
+  project_id,
+  lastBackup,
+}: {
+  project_id: string;
+  lastBackup: unknown;
+}) {
+  return (
+    <HealthRow label="Backups">
+      <Space direction="vertical" size={2}>
+        {lastBackup ? (
+          <Text>
+            Last backup <TimeAgo date={lastBackup as any} />
+          </Text>
+        ) : (
+          <Text type="secondary">No backup recorded</Text>
+        )}
+        <Button size="small" onClick={() => openDirectory(project_id, BACKUPS)}>
+          Open backups
+        </Button>
+      </Space>
+    </HealthRow>
+  );
+}
+
+function newestSnapshot(snapshots: SnapshotUsage[]): SnapshotUsage | undefined {
+  return snapshots.reduce<SnapshotUsage | undefined>((newest, snapshot) => {
+    const snapshotTime = new Date(snapshot.name).getTime();
+    if (!Number.isFinite(snapshotTime)) return newest;
+    if (newest == null) return snapshot;
+    const newestTime = new Date(newest.name).getTime();
+    return snapshotTime > newestTime ? snapshot : newest;
+  }, undefined);
+}
+
+function SnapshotHealthRow({ project_id }: { project_id: string }) {
+  const [loading, setLoading] = useState<boolean>(true);
+  const [snapshot, setSnapshot] = useState<SnapshotUsage | undefined>();
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setSnapshot(undefined);
+    (async () => {
+      try {
+        const usage =
+          await webapp_client.conat_client.hub.projects.allSnapshotUsage({
+            project_id,
+          });
+        if (!cancelled) {
+          setSnapshot(newestSnapshot(usage));
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setSnapshot(undefined);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [project_id]);
+
+  return (
+    <HealthRow label="Snapshots">
+      <Space direction="vertical" size={2}>
+        {snapshot ? (
+          <Text>
+            Last snapshot <TimeAgo date={snapshot.name as any} />
+          </Text>
+        ) : loading ? (
+          <Text type="secondary">Loading...</Text>
+        ) : (
+          <Text type="secondary">No snapshots found</Text>
+        )}
+        <Button
+          size="small"
+          onClick={() => openDirectory(project_id, SNAPSHOTS)}
+        >
+          Open snapshots
+        </Button>
+      </Space>
+    </HealthRow>
+  );
+}
+
+function ProcessHealthRow({ project_id }: { project_id: string }) {
+  const { info, disconnected } = useProjectInfo({
+    project_id,
+    intervalVisible: 10000,
+    intervalHidden: 60000,
+  });
+  const rows = info?.processes == null ? undefined : linearList(info.processes);
+
+  if (disconnected && rows == null) {
+    return (
+      <HealthRow label="Processes">
+        <Space direction="vertical" size={2}>
+          <Text type="secondary">Unavailable</Text>
+          <Button size="small" href="#runtime">
+            Open runtime
+          </Button>
+        </Space>
+      </HealthRow>
+    );
+  }
+
+  const processCount = rows?.length ?? 0;
+  const cpuPct =
+    rows == null
+      ? undefined
+      : rows.reduce((total, process) => total + process.cpu_pct, 0);
+  const memoryBytes =
+    rows == null
+      ? undefined
+      : rows.reduce((total, process) => total + process.mem, 0);
+
+  return (
+    <HealthRow label="Processes">
+      <Space direction="vertical" size={2}>
+        <Text>
+          {processCount} process{processCount === 1 ? "" : "es"}
+        </Text>
+        {cpuPct != null && memoryBytes != null && (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            CPU {cpuPct.toFixed(1)}% · Memory {human_readable_size(memoryBytes)}
+          </Text>
+        )}
+        <Button size="small" href="#runtime">
+          Open runtime
+        </Button>
+      </Space>
+    </HealthRow>
   );
 }
 
