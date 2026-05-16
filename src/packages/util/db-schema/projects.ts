@@ -156,7 +156,9 @@ Table({
             obj.allow_collaborator_starts_using_sponsor !== undefined ||
             obj.allow_collaborator_destructive_storage_actions !== undefined ||
             obj.runtime_sponsor_account_id !== undefined ||
-            obj.autostart_enabled !== undefined
+            obj.autostart_enabled !== undefined ||
+            obj.snapshots !== undefined ||
+            obj.backups !== undefined
           ) {
             try {
               if (!account_id) {
@@ -179,7 +181,7 @@ Table({
 
               const { rows } = await db.async_query({
                 query:
-                  "SELECT users, runtime_sponsor_account_id, usage_account_id FROM projects WHERE project_id = $1",
+                  "SELECT users, runtime_sponsor_account_id, usage_account_id, allow_collaborator_destructive_storage_actions FROM projects WHERE project_id = $1",
                 params: [obj.project_id],
               });
               const users = rows?.[0]?.users ?? {};
@@ -242,6 +244,16 @@ Table({
               ) {
                 throw Error(
                   "Only project owners and administrators can change destructive storage-history settings",
+                );
+              }
+              if (
+                (obj.snapshots !== undefined || obj.backups !== undefined) &&
+                !admin &&
+                owner !== account_id &&
+                row.allow_collaborator_destructive_storage_actions !== true
+              ) {
+                throw Error(
+                  "Only project owners can change snapshot and backup schedules unless the owner allows collaborators to manage storage history.",
                 );
               }
               if (obj.runtime_sponsor_account_id !== undefined) {

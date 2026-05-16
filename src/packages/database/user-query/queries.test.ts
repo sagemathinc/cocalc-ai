@@ -948,6 +948,96 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
    * ===========================================
    */
   describe("Set Query Methods", () => {
+    describe("projects schedule policy check_hook", () => {
+      const accountId = "collab-account";
+      const ownerId = "owner-account";
+      const projectId = "project-1";
+      const check_hook = SCHEMA.projects.user_query.set.check_hook;
+
+      function configureProjectPolicyRow({
+        group = "collaborator",
+        allow = false,
+      }: {
+        group?: string;
+        allow?: boolean;
+      } = {}) {
+        db.async_query = jest.fn(async () => ({
+          rows: [
+            {
+              users: {
+                [accountId]: { group },
+                [ownerId]: { group: "owner" },
+              },
+              runtime_sponsor_account_id: ownerId,
+              usage_account_id: ownerId,
+              allow_collaborator_destructive_storage_actions: allow,
+            },
+          ],
+        }));
+        db.is_admin = jest.fn((opts) => opts.cb(null, false));
+      }
+
+      test("rejects collaborator snapshot schedule changes by default", (done) => {
+        configureProjectPolicyRow();
+        check_hook(
+          db,
+          { project_id: projectId, snapshots: { daily: 2 } },
+          accountId,
+          undefined,
+          (err) => {
+            expect(err).toContain(
+              "Only project owners can change snapshot and backup schedules",
+            );
+            done();
+          },
+        );
+      });
+
+      test("rejects collaborator backup schedule changes by default", (done) => {
+        configureProjectPolicyRow();
+        check_hook(
+          db,
+          { project_id: projectId, backups: { daily: 2 } },
+          accountId,
+          undefined,
+          (err) => {
+            expect(err).toContain(
+              "Only project owners can change snapshot and backup schedules",
+            );
+            done();
+          },
+        );
+      });
+
+      test("allows collaborator schedule changes when destructive storage actions are enabled", (done) => {
+        configureProjectPolicyRow({ allow: true });
+        check_hook(
+          db,
+          { project_id: projectId, snapshots: { daily: 2 } },
+          accountId,
+          undefined,
+          (err) => {
+            expect(err).toBeFalsy();
+            done();
+          },
+        );
+      });
+
+      test("allows owner schedule changes", (done) => {
+        configureProjectPolicyRow({ group: "owner" });
+        check_hook(
+          db,
+          { project_id: projectId, backups: { daily: 2 } },
+          accountId,
+          undefined,
+          (err) => {
+            expect(err).toBeFalsy();
+            done();
+          },
+        );
+      });
+    });
+
     describe("_parse_set_query_opts", () => {
       const accountId = uuid();
 
