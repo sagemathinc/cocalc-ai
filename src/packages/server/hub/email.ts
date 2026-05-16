@@ -144,8 +144,8 @@ async function init_smtp_server(opts: Opts, dbg): Promise<void> {
 
   const conf = {
     host: s.email_smtp_server,
-    port: s.email_smtp_port,
-    secure: s.email_smtp_secure, // true for 465, false for other ports
+    port: 465,
+    secure: true,
     auth: {
       user: s.email_smtp_login,
       pass: s.email_smtp_password,

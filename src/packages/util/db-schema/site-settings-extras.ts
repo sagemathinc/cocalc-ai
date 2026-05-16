@@ -27,11 +27,9 @@ import {
   only_booleans,
   only_cocalc_com,
   only_commercial,
-  only_nonneg_int,
   parsableJson,
   toFloat,
   to_bool,
-  to_int,
   to_trimmed_str,
 } from "./site-defaults";
 
@@ -238,8 +236,6 @@ export type SiteSettingsExtrasKeys =
   | "email_smtp_from"
   | "email_smtp_login"
   | "email_smtp_password"
-  | "email_smtp_port"
-  | "email_smtp_secure"
   | "openai_section"
   | "openai_api_key"
   | "google_vertexai_key"
@@ -883,30 +879,6 @@ export const EXTRAS: SettingsExtras = {
     default: "",
     show: only_for_email_smtp,
     password: true,
-    tags: ["Email"],
-    group: "Messaging & Email",
-    subgroup: "Primary SMTP",
-    required_when: [{ key: "email_backend", equals: "smtp" }],
-  },
-  email_smtp_port: {
-    name: "Primary SMTP port",
-    desc: "Usually: For secure==true use port 465, otherwise port 587 or 25",
-    default: "465",
-    to_val: to_int,
-    valid: only_nonneg_int,
-    show: only_for_email_smtp,
-    tags: ["Email"],
-    group: "Messaging & Email",
-    subgroup: "Primary SMTP",
-    required_when: [{ key: "email_backend", equals: "smtp" }],
-  },
-  email_smtp_secure: {
-    name: "Primary SMTP secure",
-    desc: "Usually 'true'",
-    default: "true",
-    valid: only_booleans,
-    to_val: to_bool,
-    show: only_for_email_smtp,
     tags: ["Email"],
     group: "Messaging & Email",
     subgroup: "Primary SMTP",

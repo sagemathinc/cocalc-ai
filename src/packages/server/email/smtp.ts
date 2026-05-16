@@ -10,6 +10,8 @@ import getHelpEmail from "./help";
 import appendFooter from "./footer";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 
+const SMTP_PORT = 465;
+
 export default async function sendEmail(message: Message): Promise<void> {
   let settings: SMTPSettings;
   try {
@@ -39,8 +41,8 @@ async function getServer(settings): Promise<Transporter> {
   if (server !== undefined && s == cacheSettings) return server;
   server = await createTransport({
     host: settings.server,
-    port: settings.port,
-    secure: settings.secure,
+    port: SMTP_PORT,
+    secure: true,
     auth: {
       user: settings.login,
       pass: settings.password,
@@ -54,9 +56,7 @@ interface SMTPSettings {
   server: string;
   login: string;
   password: string;
-  secure: boolean;
   from?: string;
-  port?: string;
 }
 
 async function getEmailServerSettings(): Promise<SMTPSettings> {
@@ -65,9 +65,7 @@ async function getEmailServerSettings(): Promise<SMTPSettings> {
     server: settings.email_smtp_server,
     login: settings.email_smtp_login,
     password: settings.email_smtp_password,
-    secure: settings.email_smtp_secure,
     from: settings.email_smtp_from,
-    port: settings.email_smtp_port,
   };
 }
 
