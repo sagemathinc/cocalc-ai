@@ -409,7 +409,7 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
     rows == null
       ? undefined
       : rows.reduce((total, process) => total + process.cpu_pct, 0);
-  const memoryBytes =
+  const memoryMiB =
     rows == null
       ? undefined
       : rows.reduce((total, process) => total + process.mem, 0);
@@ -430,10 +430,9 @@ function ProcessHealthRow({ project_id }: { project_id: string }) {
       }
     >
       <Space direction="vertical" size={0}>
-        {cpuPct != null && memoryBytes != null && (
+        {cpuPct != null && memoryMiB != null && (
           <Text style={{ fontSize: 12, whiteSpace: "nowrap" }}>
-            CPU {cpuPct.toFixed(1)}% · RAM{" "}
-            {human_readable_size(memoryBytes).replace(" ", "")}
+            CPU {cpuPct.toFixed(1)}% · RAM {memoryMiB.toFixed(0)} MiB
           </Text>
         )}
       </Space>
