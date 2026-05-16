@@ -615,6 +615,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
         } else {
           nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
         }
+        this.releaseRoutingIfCurrentAccountRegainedMembership({
+          project_id: row.project_id,
+          currentProject,
+          nextProject,
+        });
         project_map = project_map.set(row.project_id, nextProject);
         changed = true;
       }
@@ -814,6 +819,29 @@ export class ProjectsActions extends Actions<ProjectsState> {
       .set("users", incomingProject.get("users"));
   }
 
+  private releaseRoutingIfCurrentAccountRegainedMembership({
+    project_id,
+    currentProject,
+    nextProject,
+  }: {
+    project_id: string;
+    currentProject: Map<string, any>;
+    nextProject: Map<string, any>;
+  }): void {
+    const account_id = this.getAccountId();
+    if (!account_id) {
+      return;
+    }
+    const currentUsers = currentProject.get("users");
+    if (
+      currentUsers != null &&
+      currentProject.getIn(["users", account_id]) == null &&
+      nextProject.getIn(["users", account_id]) != null
+    ) {
+      webapp_client.conat_client.releaseProjectHostRouting({ project_id });
+    }
+  }
+
   private queueProjectFeedUpsert(
     row: AccountFeedProjectRow,
     updated_at?: number,
@@ -966,6 +994,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
         );
       }
       nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
+      this.releaseRoutingIfCurrentAccountRegainedMembership({
+        project_id: row.project_id,
+        currentProject,
+        nextProject,
+      });
       project_map = project_map.set(row.project_id, nextProject);
       changed = true;
       hostChanges.push({
@@ -1036,6 +1069,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
       );
     }
     nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
+    this.releaseRoutingIfCurrentAccountRegainedMembership({
+      project_id: row.project_id,
+      currentProject,
+      nextProject,
+    });
     const project_map = (store.get("project_map") ?? Map<string, any>()).set(
       row.project_id,
       nextProject,
@@ -1131,6 +1169,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
       nextProject = this.mergeLocalProjectUsers(currentProject, nextProject);
       nextProject = this.mergeNewerLocalLastActive(currentProject, nextProject);
       nextProject = nextProject.delete(PROJECTION_ONLY_FIELD);
+      this.releaseRoutingIfCurrentAccountRegainedMembership({
+        project_id,
+        currentProject,
+        nextProject,
+      });
       project_map = project_map.set(project_id, nextProject);
     }
     this.setState({ project_map } as ProjectsState);

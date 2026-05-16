@@ -332,6 +332,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   private moveOpsManager: MoveOpsManager;
   private collaboratorRealtimeInitialized = false;
   private collaboratorRealtimeDenied = false;
+  private collaboratorRealtimeRetryTimer?: ReturnType<typeof setTimeout>;
+  private collaboratorRealtimeRetryCount = 0;
 
   constructor(name, b) {
     super(name, b);
@@ -481,6 +483,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     if (this.collaboratorRealtimeDenied) {
       return false;
     }
+    return this.localProjectMembershipAllowsRealtime();
+  };
+
+  private localProjectMembershipAllowsRealtime = (): boolean => {
     return canUseCollaboratorProjectRealtime({
       account_id: webapp_client.account_id,
       is_admin: redux.getStore("account")?.get("is_admin") as
@@ -493,6 +499,45 @@ export class ProjectActions extends Actions<ProjectStoreState> {
           }
         | undefined,
     });
+  };
+
+  private closeCollaboratorRealtimeSubscriptions = (): void => {
+    this.projectStatusSub?.close();
+    delete this.projectStatusSub;
+    this.copyOpsManager.close();
+    this.backupOpsManager.close();
+    this.restoreOpsManager.close();
+    this.rootfsPublishOpsManager.close();
+    this.startOpsManager.close();
+    this.moveOpsManager.close();
+  };
+
+  private clearCollaboratorRealtimeRetry = (): void => {
+    if (this.collaboratorRealtimeRetryTimer != null) {
+      clearTimeout(this.collaboratorRealtimeRetryTimer);
+      delete this.collaboratorRealtimeRetryTimer;
+    }
+  };
+
+  private scheduleCollaboratorRealtimeRetry = (): void => {
+    if (this.collaboratorRealtimeRetryTimer != null) {
+      return;
+    }
+    const delayMs = Math.min(
+      1000 * 2 ** Math.min(this.collaboratorRealtimeRetryCount, 5),
+      30_000,
+    );
+    this.collaboratorRealtimeRetryCount += 1;
+    this.collaboratorRealtimeRetryTimer = setTimeout(() => {
+      delete this.collaboratorRealtimeRetryTimer;
+      if (
+        this.state === "closed" ||
+        (!this.isTabOpened() && this.referenceCount <= 0)
+      ) {
+        return;
+      }
+      this.ensureCollaboratorRealtime();
+    }, delayMs);
   };
 
   private ensureCollaboratorRealtime = () => {
@@ -524,19 +569,24 @@ export class ProjectActions extends Actions<ProjectStoreState> {
   };
 
   private handleCollaboratorRealtimeAccessDenied = (): void => {
+    if (this.localProjectMembershipAllowsRealtime()) {
+      // Membership additions can reach the project list before every realtime
+      // auth/routing cache has caught up. Keep the tab open and retry instead
+      // of treating this transient denial as collaborator removal.
+      this.collaboratorRealtimeInitialized = false;
+      this.closeCollaboratorRealtimeSubscriptions();
+      webapp_client.conat_client.releaseProjectHostRouting({
+        project_id: this.project_id,
+      });
+      this.scheduleCollaboratorRealtimeRetry();
+      return;
+    }
     if (this.collaboratorRealtimeDenied) {
       return;
     }
     this.collaboratorRealtimeDenied = true;
     this.collaboratorRealtimeInitialized = false;
-    this.projectStatusSub?.close();
-    delete this.projectStatusSub;
-    this.copyOpsManager.close();
-    this.backupOpsManager.close();
-    this.restoreOpsManager.close();
-    this.rootfsPublishOpsManager.close();
-    this.startOpsManager.close();
-    this.moveOpsManager.close();
+    this.closeCollaboratorRealtimeSubscriptions();
     (redux.getActions("page") as any)?.close_project_tab?.(this.project_id);
   };
 
@@ -546,15 +596,10 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     this.initialized = false;
     this.collaboratorRealtimeInitialized = false;
     this.collaboratorRealtimeDenied = false;
+    this.collaboratorRealtimeRetryCount = 0;
+    this.clearCollaboratorRealtimeRetry();
     redux.removeProjectReferences(this.project_id);
-    this.copyOpsManager.close();
-    this.backupOpsManager.close();
-    this.restoreOpsManager.close();
-    this.rootfsPublishOpsManager.close();
-    this.startOpsManager.close();
-    this.moveOpsManager.close();
-    this.projectStatusSub?.close();
-    delete this.projectStatusSub;
+    this.closeCollaboratorRealtimeSubscriptions();
     void this.releaseProjectLogStream?.({ immediate: true });
     delete this.projectLogStream;
     delete this.releaseProjectLogStream;
@@ -3281,6 +3326,8 @@ export class ProjectActions extends Actions<ProjectStoreState> {
         client,
         project_id: this.project_id,
       });
+      this.collaboratorRealtimeRetryCount = 0;
+      this.clearCollaboratorRealtimeRetry();
     } catch (err) {
       if (isCollaboratorRealtimeAccessError(err)) {
         this.handleCollaboratorRealtimeAccessDenied();
