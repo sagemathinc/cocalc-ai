@@ -262,15 +262,61 @@ Delete flow:
 
 Single-project row delete should use the same hard-delete modal.
 
-Bulk delete should not hard-delete multiple projects in the same old reversible
-bulk flow. Initial implementation should either:
+The old filtered-list bulk delete/undelete flow should not be reused for
+irreversible delete. It is too implicit: users can change filters/searches and
+accidentally act on many projects they did not explicitly select.
 
-- remove bulk project delete, or
-- require an explicit owner-only hard-delete bulk dialog with a count, exact
-  typed confirmation, and rate-limit-aware enqueueing.
+Replace it with explicit checkbox selection in the projects table:
 
-Recommendation for first implementation: remove/disable bulk hard delete until
-single-project delete is polished.
+- Add a checkbox column on the left.
+- Show bulk-action buttons only when at least one project is checked.
+- Replace the current `+` drawer affordance with a `Details` button, since it
+  opens a drawer rather than expanding the row.
+- Selection should be pruned when rows disappear due to filtering or data
+  refresh.
+- Bulk actions must report per-project failures instead of one vague global
+  error.
+
+Initial safe bulk actions:
+
+- Stop selected projects.
+- Hide selected projects.
+- Unhide selected projects.
+- Remove myself from selected projects where the current user is not the owner.
+
+Do not include bulk start or restart initially. They are too entangled with
+runtime sponsor slots, automatic-start policy, LRO admission failures, and mixed
+project states. The useful and predictable bulk cases are stopping resource use
+and cleaning up/hiding projects after being added to many projects.
+
+Bulk destructive cleanup should be exposed as a separate dangerous flow, with a
+label such as "Leave or delete selected projects", not just "Delete".
+
+Bulk cleanup semantics should match account-deletion project cleanup, except the
+account itself remains:
+
+- If the current user owns a selected project with no other collaborators,
+  hard-delete it.
+- If the current user owns a selected project with remaining collaborators,
+  transfer ownership to a remaining collaborator using the same ownership
+  transfer policy as account deletion, then remove the current user from the
+  project.
+- If the current user does not own a selected project, remove the current user
+  as a collaborator.
+- If an individual project cannot be processed, continue with the rest and show
+  a per-project result.
+
+The confirmation modal should preview counts before confirmation:
+
+- projects that will be permanently deleted;
+- projects that will be transferred to another collaborator;
+- projects the user will leave;
+- projects that will be skipped or cannot be changed.
+
+The transfer case is the surprising one, so the modal should list transferred
+projects and explain that storage responsibility moves to another collaborator.
+The flow requires fresh auth and typed confirmation. Hard-delete admission rate
+limits still apply to projects that are actually deleted.
 
 NOTE: I think this is only implemented in courses, where I think this is a button to delete all the student projects, which instructors use to clean up old courses. It's important, since deleting old data is sometimes needed for legal reasons.
 
@@ -473,6 +519,8 @@ runtime-slot tables.
 
 ### Phase 8: Remove or Quarantine Soft Delete
 
+USER:  just remove it completely and all code, database fields, etc., cocalc-ai is NOT RELEASED YET, so it's fine to do this.
+
 Options:
 
 1. Remove normal `setProjectDeleted` access entirely.
@@ -510,16 +558,16 @@ Add operator CLI/report:
 
 - Should normal hard delete type-confirm by project title, project id, or both?
   Recommendation: accept either exact project id or exact current title, but
-  prefer project id in CLI.
+  prefer project id in CLI.   User: agreed.
 - Should admins be allowed to delete via the normal UI? Recommendation: no;
-  expose explicit admin/support tooling to make this auditable.
+  expose explicit admin/support tooling to make this auditable.   User: I can't think of any reason admin delete would be needed, so we can defer this until later.
 - What should the default backup snapshot retention be? Recommendation:
   schedule snapshot deletion with a short backend-controlled delay; do not
-  expose a normal-user retention choice.
+  expose a normal-user retention choice.  User: do you mean rustic?  If so -- as short as will work.
 - Should deleted-but-not-yet-cleaned projects count toward project limits?
   Recommendation: once the project row is removed and hard-delete LRO is
   accepted, it does not count, but admission rate limits prevent churn abuse.
-  If cleanup fails before removing the row, it should continue to count.
+  If cleanup fails before removing the row, it should continue to count.  User: agreed; it no longer counts.
 
 ## Acceptance Criteria
 
@@ -530,6 +578,12 @@ Add operator CLI/report:
 - Deleting an account transfers projects with remaining collaborators to a new
   owner/storage-responsible collaborator.
 - There is no normal user-facing undelete.
+- Project-list bulk actions use explicit checkbox selection, not filtered-list
+  implicit selection.
+- Initial bulk actions include stop, hide, unhide, and remove-myself, but not
+  start or restart.
+- Bulk "leave or delete selected projects" uses the same ownership-transfer and
+  hard-delete semantics as account-deletion project cleanup.
 - The deleted project is immediately not openable/startable.
 - Project limit cannot be bypassed by cycling projects through reversible
   deletion.
