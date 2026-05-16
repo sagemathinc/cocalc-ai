@@ -1,21 +1,15 @@
-/*
- *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
- *  License: MS-RSL – see LICENSE.md for details
- */
+import Footer from "components/landing/footer";
+import Header from "components/landing/header";
+import Head from "components/landing/head";
+import { Layout } from "antd";
+import withCustomize from "lib/with-customize";
+import { Customize } from "lib/customize";
+import A from "components/misc/A";
+import { MAX_WIDTH } from "lib/config";
 
-import {
-  A,
-  Customize,
-  Footer,
-  Head,
-  Header,
-  Layout,
-  MAX_WIDTH,
-} from "./compat";
-
-export default function PrivacyPage() {
+export default function Privacy({ customize }) {
   return (
-    <Customize>
+    <Customize value={customize}>
       <Head title="Privacy Policy" />
       <Layout>
         <Header page="policies" subPage="privacy" />
@@ -34,7 +28,7 @@ export default function PrivacyPage() {
           >
             <div style={{ textAlign: "center", color: "#444" }}>
               <h1 style={{ fontSize: "28pt" }}>CoCalc - Privacy Policy</h1>
-              <h2>Last Updated: October 3, 2025</h2>
+              <h2>Last Updated: May 13, 2026</h2>
             </div>
             <div style={{ fontSize: "12pt" }}>
               <p>
@@ -131,39 +125,26 @@ export default function PrivacyPage() {
                   Collect and How We Use It
                 </h1>
                 <p>
-                  The types of Personal Information we may collect (directly
-                  from you or from Third-Party sources) and our privacy
-                  practices depend on the nature of the relationship you have
-                  with Sagemath and the requirements of applicable law. Some of
-                  the ways that Sagemath may collect Personal Information
-                  include:{" "}
+                  The types of Personal Information we may collect, how we use
+                  it, and the lawful basis for processing depend on the nature
+                  of your relationship with Sagemath and the requirements of
+                  applicable law. We endeavor to collect only Personal
+                  Information that is relevant to providing, securing,
+                  improving, and supporting the Services and to meeting our
+                  legal and business obligations.{" "}
                 </p>{" "}
-                <ul>
-                  {" "}
-                  <li>
-                    {" "}
-                    <p>
-                      {" "}
-                      You may provide Personal Information directly to Sagemath
-                      through interacting with the Services, participating in
-                      surveys, and requesting Services, or information.{" "}
-                    </p>{" "}
-                  </li>{" "}
-                  <li>
-                    {" "}
-                    <p>
-                      {" "}
-                      As you navigate the Services, certain passive information
-                      may also be collected about your visit, including through
-                      cookies and similar technologies as described below.{" "}
-                    </p>{" "}
-                  </li>{" "}
-                </ul>{" "}
                 <p>
                   {" "}
-                  We endeavor to collect only that information which is relevant
-                  for the purposes of Processing. Below are the ways we collect
-                  Personal Information and how we use it.{" "}
+                  Where applicable data protection law requires a lawful basis
+                  for processing Personal Information, Sagemath relies on the
+                  lawful basis appropriate for the particular purpose, including
+                  performance of a contract, legitimate interests, consent,
+                  compliance with legal obligations, and, where applicable,
+                  vital interests or tasks carried out in the public interest.
+                  For example, we may process Personal Information to provide
+                  and secure the Services, process payments, respond to
+                  requests, comply with law, or process optional cookies and
+                  marketing communications where consent is required.{" "}
                 </p>{" "}
                 <div id="types-of-personal-information-we-collect">
                   {" "}
@@ -251,7 +232,12 @@ export default function PrivacyPage() {
                   <p>
                     {" "}
                     We Process Personal Information about Individuals for the
-                    following business purposes:{" "}
+                    following business purposes, relying on the lawful basis
+                    appropriate for each purpose, such as performance of a
+                    contract, legitimate interests in operating, securing,
+                    improving, and supporting the Services, compliance with
+                    legal obligations, or consent where required by applicable
+                    law:{" "}
                   </p>{" "}
                   <p>
                     {" "}
@@ -310,124 +296,93 @@ export default function PrivacyPage() {
                   <p>
                     {" "}
                     <strong>
-                      Marketing Sagemath Products and Services:
+                      Marketing Sagemath Products and Services.
                     </strong>{" "}
+                    We may use Personal Information to tailor content and notify
+                    you about offers, products, and services that may be of
+                    interest to you. We rely on consent where required by
+                    applicable law, or on legitimate interests where permitted
+                    by applicable law. You may contact us at any time to opt out
+                    of the use of your Personal Information for marketing
+                    purposes as set forth below.{" "}
                   </p>{" "}
-                  <ul>
-                    {" "}
-                    <li>To tailor content; </li>{" "}
-                    <li>
-                      To notify you about offers, products, and services that
-                      may be of interest to you;{" "}
-                    </li>{" "}
-                    <li>To provide Services to you; </li>{" "}
-                    <li>
-                      For other purposes disclosed at the time that Individuals
-                      provide Personal Information;{" "}
-                    </li>{" "}
-                    <li>Otherwise with your consent. </li>{" "}
-                  </ul>{" "}
                   <p>
                     {" "}
-                    You may contact us at any time to opt out of the use of your
-                    Personal Information for marketing purposes as set forth
-                    below.{" "}
+                    <strong>Research and Development.</strong> Sagemath may use
+                    Personal Information to create non-identifiable information
+                    that we may use alone or in the aggregate with information
+                    obtained from other sources, in order to help us to
+                    optimally deliver our existing products and Services or
+                    develop new products and Services. We may share anonymous
+                    Individual and aggregate data for research and analysis
+                    purposes.{" "}
                   </p>{" "}
-                  <ul>
+                  <p>
                     {" "}
-                    <li>
-                      {" "}
-                      <p>
-                        {" "}
-                        <strong>Research and Development.</strong> Sagemath may
-                        use Personal Information to create non-identifiable
-                        information that we may use alone or in the aggregate
-                        with information obtained from other sources, in order
-                        to help us to optimally deliver our existing products
-                        and Services or develop new products and Services. We
-                        may share anonymous Individual and aggregate data for
-                        research and analysis purposes.{" "}
-                      </p>{" "}
-                    </li>{" "}
-                    <li>
-                      {" "}
-                      <p>
-                        {" "}
-                        <strong>
-                          Direct Mail, Email and Outbound Telemarketing.
-                        </strong>{" "}
-                        Individuals who provide us with Personal Information, or
-                        whose Personal Information we obtain from Third Parties,
-                        may receive periodic emails, newsletters, mailings, or
-                        phone calls from us with information on Sagemath’s or
-                        our business partners’ products and services or upcoming
-                        special offers/events. We offer the option to decline
-                        these communications at no cost to the Individual by
-                        following the instructions set forth below.{" "}
-                      </p>{" "}
-                    </li>{" "}
-                    <li>
-                      {" "}
-                      <p>
-                        {" "}
-                        <strong>
-                          Anonymous and Aggregated Information Use.
-                        </strong>{" "}
-                        Sagemath may use Personal Information and other
-                        information about you to create anonymized and
-                        aggregated information, such as de-identified
-                        demographic information, de-identified location
-                        information, information about the computer or device
-                        from which you access Sagemath’s Services, or other
-                        analyses we create. Anonymized or aggregated information
-                        is not Personal Information, and Sagemath may use such
-                        information in a number of ways, including research,
-                        internal analysis, analytics, and any other legally
-                        permissible purposes. We may share this information
-                        within Sagemath and with Third Parties for our or their
-                        purposes in an anonymized or aggregated form that is
-                        designed to prevent anyone from identifying you.{" "}
-                      </p>{" "}
-                    </li>{" "}
-                    <li>
-                      {" "}
-                      <p>
-                        {" "}
-                        <strong>Sharing Content.</strong> Sagemath’s Services
-                        may offer various tools and functionalities that allow
-                        you to share content. For example, Sagemath allows you
-                        to provide information about your colleagues, students,
-                        or friends through our course management system and
-                        referral services, such as inviting a collaborator to a
-                        project. Our referral services may allow you to forward
-                        or share certain content with others, such as emails
-                        inviting them to use our Services. Email addresses that
-                        you may provide in such situations will be used to send
-                        the content or link you request, but will not be
-                        collected or otherwise used by Sagemath or any other
-                        Third Parties for any other purpose. The Services also
-                        allow you to share your content with Third Parties such
-                        as GitHub and NPM. Any Personal Information you choose
-                        to share with these Third Parties is not covered by this
-                        Privacy Policy. We encourage you to review the privacy
-                        policy of these Third Parties before submitting your
-                        Personal Information.{" "}
-                      </p>{" "}
-                    </li>{" "}
-                    <li>
-                      {" "}
-                      <p>
-                        {" "}
-                        <strong>Other Uses.</strong> Sagemath may use Personal
-                        Information to pursue our legitimate interests, such as
-                        direct marketing, marketing research, network and
-                        information security, and fraud prevention and any other
-                        purpose disclosed to you at the time you provide
-                        Personal Information or otherwise with your
-                        consent.{" "}
-                      </p>{" "}
-                    </li>{" "}
-                  </ul>{" "}
+                    <strong>
+                      Direct Mail, Email and Outbound Telemarketing.
+                    </strong>{" "}
+                    Individuals who provide us with Personal Information, or
+                    whose Personal Information we obtain from Third Parties, may
+                    receive periodic emails, newsletters, mailings, or phone
+                    calls from us with information on Sagemath’s or our business
+                    partners’ products and services or upcoming special
+                    offers/events. We offer the option to decline these
+                    communications at no cost to the Individual by following the
+                    instructions set forth below.{" "}
+                  </p>{" "}
+                  <p>
+                    {" "}
+                    <strong>
+                      Anonymous and Aggregated Information Use.
+                    </strong>{" "}
+                    Sagemath may use Personal Information and other information
+                    about you to create anonymized and aggregated information,
+                    such as de-identified demographic information, de-identified
+                    location information, information about the computer or
+                    device from which you access Sagemath’s Services, or other
+                    analyses we create. Anonymized or aggregated information is
+                    not treated as Personal Information when it cannot
+                    reasonably be used to identify you, and Sagemath may use
+                    such information in a number of ways, including research,
+                    internal analysis, analytics, and any other legally
+                    permissible purposes. We may share this information within
+                    Sagemath and with Third Parties for our or their purposes in
+                    a form designed to prevent anyone from identifying you.{" "}
+                  </p>{" "}
+                  <p>
+                    {" "}
+                    <strong>Sharing Content.</strong> Sagemath’s Services may
+                    offer various tools and functionalities that allow you to
+                    share content. For example, Sagemath allows you to provide
+                    information about your colleagues, students, or friends
+                    through our course management system and referral services,
+                    such as inviting a collaborator to a project. Our referral
+                    services may allow you to forward or share certain content
+                    with others, such as emails inviting them to use our
+                    Services. Email addresses that you may provide in such
+                    situations will be used to send the content or link you
+                    request, but will not be collected or otherwise used by
+                    Sagemath or any other Third Parties for any other purpose.
+                    The Services also allow you to share your content with Third
+                    Parties such as GitHub and NPM. Any Personal Information you
+                    choose to share with these Third Parties is not covered by
+                    this Privacy Policy. We encourage you to review the privacy
+                    policy of these Third Parties before submitting your
+                    Personal Information.{" "}
+                  </p>{" "}
+                  <p>
+                    {" "}
+                    <strong>Other Uses.</strong> Sagemath may use Personal
+                    Information to pursue our legitimate interests, such as
+                    direct marketing where permitted by applicable law,
+                    marketing research, network and information security, and
+                    fraud prevention, where those interests are not overridden
+                    by your rights and interests. Sagemath may also use Personal
+                    Information for other purposes disclosed to you at the time
+                    you provide Personal Information or otherwise with your
+                    consent.{" "}
+                  </p>{" "}
                 </div>{" "}
                 <div id="cookies-pixel-tagsweb-beacons-analytics-information-and-interest-based-advertising">
                   {" "}
@@ -448,13 +403,105 @@ export default function PrivacyPage() {
                         {" "}
                         <strong>Cookies.</strong> Cookies are small text files
                         placed in visitors’ computer browsers to store their
-                        preferences. We use required cookies to make sure that
-                        the Services work properly, for example for
-                        authentication purposes. You may not opt-out of the use
-                        of these cookies since it would be impossible for us to
-                        provide the service otherwise. We do NOT use cookies for
-                        marketing or advertising purpuses.{" "}
+                        preferences. We use the following required cookies to
+                        make sure that the Services work properly.{" "}
                       </p>{" "}
+                      <table
+                        cellPadding="5px"
+                        style={{ margin: "12px 0", border: "1px solid black" }}
+                      >
+                        <thead>
+                          <tr>
+                            <th align="left"> Cookies </th>
+                            <th align="left"> Purpose </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td> remember_me </td>
+                            <td>
+                              {" "}
+                              Persistent auth token to keep you signed in.{" "}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td> account_id </td>
+                            <td> Stores your account ID for the client UI. </td>
+                          </tr>
+                          <tr>
+                            <td> cocalc_version </td>
+                            <td>
+                              {" "}
+                              Client version for compatibility checks before
+                              project access.{" "}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td> connect.sid </td>
+                            <td>
+                              {" "}
+                              Session cookie used for Passport/SSO login
+                              flows.{" "}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td> get_api_key </td>
+                            <td>
+                              {" "}
+                              Temporary cookie used during SSO API key
+                              requests.{" "}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td> PWRESET </td>
+                            <td> Short-lived password reset token. </td>
+                          </tr>
+                          <tr>
+                            <td> SMCSERVERID3 </td>
+                            <td>
+                              {" "}
+                              Load balancer stickiness cookie set by
+                              HAProxy.{" "}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td> cc_cookie </td>
+                            <td>
+                              {" "}
+                              Stores cookie banner choices, including consent
+                              categories and revision.{" "}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td> cocalc_youtube_consent </td>
+                            <td>
+                              {" "}
+                              Stores whether you allowed embedded YouTube videos
+                              to load.{" "}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      Please note that we do our best to keep this table
+                      updated, but the number and names of cookies may change
+                      from time to time. You may not opt-out of the use of these
+                      cookies since it would be impossible for us to provide the
+                      service otherwise.
+                      <p>
+                        {" "}
+                        With your consent, we may use optional analytics cookies
+                        to understand how the site is used. Examples include
+                        Google Analytics cookies such as <code>_ga</code>,{" "}
+                        <code>_gid</code>, and related <code>_ga*</code>{" "}
+                        cookies, as well as the CoCalc analytics cookie{" "}
+                        <code>CC_ANA</code>.
+                      </p>
+                      <p>
+                        {" "}
+                        If enabled and consented to, first-party usage metrics
+                        may record product interactions in our own systems.
+                        These usage metrics are not managed as browser cookies.
+                      </p>
                     </li>{" "}
                     <li>
                       {" "}
@@ -464,15 +511,12 @@ export default function PrivacyPage() {
                         (also known as a web beacon) is a piece of code embedded
                         on the Services that collects information about users’
                         engagement on that web page. We do not use pixel tags
-                        directly, but some of our service providers, namely
-                        Salesloft and ZenDesk, may use similar technology to let
-                        us know that email messages have been opened, acted on,
-                        or forwarded. You can consult their privacy policies and
-                        other documents following the links on our Third Parties
-                        page at{" "}
-                        <A href="/policies/thirdparties">
-                          https://cocalc.com/policies/thirdparties
-                        </A>{" "}
+                        directly, but some of our service providers, including
+                        HubSpot, Salesloft, and Zendesk, may use similar
+                        technology to let us know that email messages have been
+                        opened, acted on, or forwarded. You can review the
+                        privacy policies of those providers on their respective
+                        websites.
                       </p>{" "}
                     </li>{" "}
                   </ul>{" "}
@@ -520,18 +564,17 @@ export default function PrivacyPage() {
                   <h2>3.5 Third-Party Payment Processing </h2>{" "}
                   <p>
                     {" "}
-                    When you make purchases through the Services, we process
-                    your payments through our Payment Processor, Stripe. The
-                    Payment Processor collects information from and about you
-                    that is necessary to process your payment and to prevent
-                    abuse. This may include your name, email address, billing
-                    address, tax identifies, IP address, and account numbers. We
-                    do not get access to your full account numbers. You can
-                    consult Stripe's privacy policy and other documents
-                    following the links on our Third Parties page at{" "}
-                    <A href="/policies/thirdparties">
-                      https://cocalc.com/policies/thirdparties
-                    </A>{" "}
+                    When you make purchases through the Services, payments are
+                    processed by our payment processor, Stripe. Stripe collects
+                    information from and about you that is necessary to complete
+                    the transaction, comply with legal and tax obligations, and
+                    help prevent fraud and abuse. This may include your name,
+                    email address, billing address, tax identifiers, IP address,
+                    and payment information. We do not receive your full payment
+                    account numbers. We use Stripe for payment processing based
+                    on the need to complete transactions and our legitimate
+                    interests in preventing fraud and abuse. You can review
+                    Stripe&apos;s privacy policy on Stripe&apos;s website.
                   </p>{" "}
                 </div>{" "}
               </div>{" "}
@@ -555,7 +598,10 @@ export default function PrivacyPage() {
                 <p>
                   {" "}
                   We Process Human Resources Data for a variety of business
-                  purposes including:{" "}
+                  purposes, relying on the lawful basis appropriate for each
+                  use, such as performance of an employment or contractor
+                  relationship, legal obligations, legitimate interests, or
+                  consent where required by applicable law:{" "}
                 </p>{" "}
                 <ul>
                   {" "}
@@ -607,9 +653,13 @@ export default function PrivacyPage() {
                   <p>
                     {" "}
                     We may share your information as described in this Privacy
-                    Policy (e.g., with our Third-Party service providers; to
-                    comply with legal obligations; to protect and defend our
-                    rights and property) or with your permission.{" "}
+                    Policy, relying on the lawful basis appropriate for the
+                    disclosure, such as performance of a contract, legitimate
+                    interests, legal obligations, consent where required by
+                    applicable law, or the same lawful basis that supports the
+                    underlying processing. Examples include sharing with our
+                    Third-Party service providers, protecting and defending our
+                    rights and property, or sharing with your permission.{" "}
                   </p>{" "}
                   <ul>
                     {" "}
@@ -723,16 +773,17 @@ export default function PrivacyPage() {
                   </h2>{" "}
                   <p>
                     {" "}
-                    You agree that all information collected via or by Sagemath
-                    may be transferred, processed, and stored in the United
-                    States, in the cloud, on our servers, on the servers of our
-                    affiliates, or the servers of our service providers, in
-                    order to provide the Services.{" "}
+                    Information collected via or by Sagemath may be transferred,
+                    processed, and stored in the United States, in the cloud, on
+                    our servers, on the servers of our affiliates, or on the
+                    servers of our service providers, as necessary to provide
+                    the Services and subject to applicable legal requirements
+                    and transfer safeguards.{" "}
                   </p>{" "}
                   <p>
                     If you use Services that require you to select a geographic
-                    location explicitly, your data will be sent to the chosen
-                    location.
+                    location explicitly, such as compute servers or cloud file
+                    systems, your data will be sent to the chosen location.
                   </p>
                 </div>{" "}
               </div>{" "}
@@ -751,18 +802,14 @@ export default function PrivacyPage() {
                   <p>
                     {" "}
                     You have the right to object to and opt out of certain uses
-                    of your Personal Information. Where you have consented to
-                    Sagemath’s Processing of your Personal Information or
-                    Sensitive Personal Information, you may withdraw that
-                    consent at any time and opt out of further Processing by
-                    contacting{" "}
+                    of your Personal Information. Where we rely on your consent
+                    to process Personal Information, or explicit consent to
+                    process Sensitive Personal Information, you may withdraw
+                    that consent at any time by contacting{" "}
                     <A href="mailto:office@sagemath.com">office@sagemath.com</A>
-                    . Even if you opt out, we may still collect and use
-                    non-Personal Information regarding your activities on our
-                    Services and/or information from the advertisements on
-                    Third-Party websites for non-interest based advertising
-                    purposes, such as to determine the effectiveness of the
-                    advertisements.{" "}
+                    . Withdrawing consent does not affect processing that
+                    occurred before withdrawal or processing that relies on
+                    another lawful basis or applicable legal permission.{" "}
                   </p>{" "}
                 </div>{" "}
                 <div id="email-and-telephone-communications">
@@ -867,9 +914,13 @@ export default function PrivacyPage() {
                   incomplete personal information; (vi) request erasure of
                   personal information held about you by Sagemath, subject to
                   certain exceptions prescribed by law; (vii) object to
-                  processing of your personal information. If you would like to
-                  exercise any of these rights, please contact us as set forth
-                  below.{" "}
+                  processing of your personal information; (viii) where
+                  applicable, exercise rights relating to decisions based solely
+                  on automated processing, including profiling, that produce
+                  legal effects concerning you or similarly significantly affect
+                  you, including requesting human intervention where required by
+                  law. If you would like to exercise any of these rights, please
+                  contact us as set forth below.{" "}
                 </p>{" "}
                 <p>
                   {" "}
@@ -905,31 +956,31 @@ export default function PrivacyPage() {
                 </h1>{" "}
                 <p>
                   {" "}
-                  We take steps to ensure that your information is treated
-                  securely and in accordance with this Privacy Policy. We
-                  encrypt data storage and backups, use firewalls and access
-                  control. You can learn more details about measures taken and
-                  third party audits and certifications on our Trust page at{" "}
+                  We implement appropriate technical and organizational measures
+                  designed to protect Personal Information against unauthorized
+                  access, loss, misuse, alteration, or disclosure. These
+                  measures include encryption for data storage and backups,
+                  firewalls, and access controls. You can learn more about our
+                  security controls, third-party audits, and certifications on
+                  our Trust page at{" "}
                   <A href="/policies/trust">
                     https://cocalc.com/policies/trust
                   </A>{" "}
-                  Unfortunately, the Internet cannot be guaranteed to be 100%
-                  secure, and we cannot ensure or warrant the security of any
-                  information you provide to us. To the fullest extent permitted
-                  by applicable law, we do not accept liability for
-                  unintentional disclosure.{" "}
+                  No method of transmission or storage over the Internet is
+                  completely secure, and we cannot guarantee absolute security.
+                  To the fullest extent permitted by applicable law, we do not
+                  accept liability for unintentional disclosure.{" "}
                 </p>{" "}
                 <p>
                   {" "}
-                  By using the Services or providing Personal Information to us,
-                  you agree that we may communicate with you electronically
-                  regarding security, privacy, and administrative issues
-                  relating to your use of the Services. If we learn of a
-                  personal data breach, in accordance with GDPR we will inform
-                  the Supervisory Authority within 72 hours. If there is a high
-                  risk to your security or if required by the Supervisory
-                  Authority, we will notify you electronically by posting a
-                  notice on the Services or sending an e-mail to you.
+                  We may communicate with you electronically regarding security,
+                  privacy, and administrative issues relating to your use of the
+                  Services. If we learn of a personal data breach, in accordance
+                  with GDPR we will inform the Supervisory Authority within 72
+                  hours. If there is a high risk to your security or if required
+                  by the Supervisory Authority, we will notify you
+                  electronically by posting a notice on the Services or sending
+                  an e-mail to you.
                 </p>{" "}
               </div>{" "}
               <div id="childrens-privacy">
@@ -1052,13 +1103,11 @@ export default function PrivacyPage() {
                   </h2>{" "}
                   <p>
                     {" "}
-                    We may revise this Privacy Policy from time to time in our
-                    sole discretion. If there are any material changes to this
-                    Privacy Policy, we will notify you as required by applicable
-                    law. You understand and agree that you will be deemed to
-                    have accepted the updated Privacy Policy if you continue to
-                    use the Services after the new Privacy Policy takes
-                    effect.{" "}
+                    We may revise this Privacy Policy from time to time. When we
+                    do, we will post the updated Privacy Policy here and update
+                    the “Last Updated” date. If applicable law requires
+                    additional notice or consent for a change, we will provide
+                    it before the change applies.{" "}
                   </p>{" "}
                 </div>{" "}
                 <div id="california-privacy-rights">
@@ -1235,65 +1284,85 @@ export default function PrivacyPage() {
                 >
                   <thead>
                     <tr>
-                      <th align="left">Title</th>
-                      <th>Effective Date</th>
+                      <th align="left"> Title </th> <th> Effective Date </th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td>Sagemath Privacy Policy</td>
-                      <td>2015-05-03</td>
+                      <td> Sagemath Privacy Policy </td>
+                      <td> 2015-05-03 </td>
                     </tr>
                     <tr>
-                      <td>Updated Sagemath Privacy Policy</td>
-                      <td>2018-10-05</td>
+                      <td> Updated Sagemath Privacy Policy </td>
+                      <td> 2018-10-05 </td>
                     </tr>
                     <tr>
-                      <td>Updated Sagemath Privacy Policy</td>
-                      <td>2018-10-29</td>
+                      <td> Updated Sagemath Privacy Policy </td>
+                      <td> 2018-10-29 </td>
                     </tr>
                     <tr>
                       <td>Update: Privacy Shield</td>
-                      <td>2020-02-04</td>
+                      <td> 2020-02-04 </td>
                     </tr>
                     <tr>
                       <td>
                         Update: temporarily remove mention of Privacy Shield
                       </td>
-                      <td>2020-02-06</td>
+                      <td> 2020-02-06 </td>
                     </tr>
                     <tr>
                       <td>Update: restore mention of Privacy Shield</td>
-                      <td>2020-02-20</td>
+                      <td> 2020-02-20 </td>
                     </tr>
                     <tr>
                       <td>Update: revise JAMS link</td>
-                      <td>2022-09-15</td>
+                      <td> 2022-09-15 </td>
                     </tr>
                     <tr>
                       <td>
                         Update: Data Privacy Framework instead of Privacy Shield
                       </td>
-                      <td>2023-08-23</td>
+                      <td> 2023-08-23 </td>
                     </tr>
                     <tr>
                       <td>Update: clarify alignment with GDPR</td>
-                      <td>2025-02-20</td>
+                      <td> 2025-02-20 </td>
                     </tr>
                     <tr>
                       <td>
                         Update: HR data require explicit opt-in for any new use
                       </td>
-                      <td>2025-10-03</td>
+                      <td> 2025-10-03 </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        Update: add the list of used cookies and their purpose
+                      </td>
+                      <td> 2026-01-06 </td>
+                    </tr>
+                    <tr>
+                      <td>Update: simplify vendor references</td>
+                      <td> 2026-04-21 </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        Update: list cookie-consent and YouTube embed
+                        consent cookies
+                      </td>
+                      <td> 2026-05-12 </td>
+                    </tr>
+                    <tr>
+                      <td>Update: clarify lawful bases for processing</td>
+                      <td> 2026-05-13 </td>
                     </tr>
                   </tbody>
                 </table>
                 <p>
                   {" "}
                   A revision control history for this web page can be found at
-                  <A href="https://github.com/sagemathinc/cocalc/commits/master/src/packages/frontend/public/content/legal-pages/privacy.tsx">
+                  <A href="https://github.com/sagemathinc/cocalc/commits/master/src/packages/next/pages/policies/privacy.tsx">
                     {" "}
-                    github.com/sagemathinc/cocalc/commits/master/src/packages/frontend/public/content/legal-pages/privacy.tsx
+                    github.com/sagemathinc/cocalc/commits/master/src/packages/next/pages/policies/privacy.tsx
                   </A>
                   .{" "}
                 </p>{" "}
@@ -1311,4 +1380,8 @@ export default function PrivacyPage() {
       </Layout>
     </Customize>
   );
+}
+
+export async function getServerSideProps(context) {
+  return await withCustomize({ context });
 }

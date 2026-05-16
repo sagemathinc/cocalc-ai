@@ -8,11 +8,9 @@ import type { ComponentType } from "react";
 import { publicPath } from "../routes";
 import AccessibilityPage from "./accessibility";
 import CopyrightPage from "./copyright";
-import EnterpriseTermsPage from "./enterprise-terms";
 import FERPAPage from "./ferpa";
 import PrivacyPage from "./privacy";
 import TermsOfServicePage from "./terms";
-import ThirdPartiesPage from "./thirdparties";
 import TrustPage from "./trust";
 
 export interface BuiltinPolicyEntry {
@@ -26,7 +24,7 @@ export interface BuiltinPolicyEntry {
 export const BUILTIN_POLICIES: readonly BuiltinPolicyEntry[] = [
   {
     component: TermsOfServicePage,
-    description: "The Terms of Service govern use of CoCalc.",
+    description: "The core terms governing use of CoCalc and related services.",
     navLabel: "Terms",
     slug: "terms",
     title: "Terms of Service",
@@ -34,38 +32,31 @@ export const BUILTIN_POLICIES: readonly BuiltinPolicyEntry[] = [
   {
     component: PrivacyPage,
     description:
-      "The Privacy Policy describes how SageMath, Inc. respects the privacy of its users.",
+      "How SageMath, Inc. collects, uses, and protects personal information.",
     navLabel: "Privacy",
     slug: "privacy",
     title: "Privacy Policy",
   },
   {
-    component: ThirdPartiesPage,
+    component: DPAPage,
     description:
-      "Our List of third parties enumerates what is used to provide CoCalc.",
-    navLabel: "Third Parties",
-    slug: "thirdparties",
-    title: "Third Parties",
+      "The terms that apply when SageMath, Inc. processes personal data on a user's behalf.",
+    navLabel: "DPA",
+    slug: "dpa",
+    title: "Data Processing Addendum",
   },
   {
     component: TrustPage,
     description:
-      "The Trust page highlights our compliance with laws and frameworks, such as GDPR and SOC 2. We adhere to rigorous standards to protect your data and maintain transparency and accountability in all our operations.",
+      "Security, GDPR, SOC 2, and external trust resources.",
     navLabel: "Trust",
     slug: "trust",
-    title: "Trust",
-  },
-  {
-    component: EnterpriseTermsPage,
-    description: "Enterprise and institutional agreement overview.",
-    navLabel: "Enterprise",
-    slug: "enterprise-terms",
-    title: "Enterprise Terms",
+    title: "Trust and Compliance",
   },
   {
     component: AccessibilityPage,
     description:
-      "CoCalc's Voluntary Product Accessibility Template (VPAT) describes how we address accessibility issues.",
+      "Accessibility information, including VPAT-related material.",
     navLabel: "Accessibility",
     slug: "accessibility",
     title: "Accessibility Statement",
@@ -73,7 +64,7 @@ export const BUILTIN_POLICIES: readonly BuiltinPolicyEntry[] = [
   {
     component: CopyrightPage,
     description:
-      "The Copyright Policy explains how SageMath, Inc. respects copyright policies, and provides a site that does not infringe on others' copyright.",
+      "How SageMath, Inc. handles copyright complaints and DMCA notices.",
     navLabel: "Copyright",
     slug: "copyright",
     title: "Copyright Policy",
@@ -81,10 +72,10 @@ export const BUILTIN_POLICIES: readonly BuiltinPolicyEntry[] = [
   {
     component: FERPAPage,
     description:
-      "CoCalc's FERPA Compliance statement explains how we address FERPA requirements at US educational instituations.",
+      "How CoCalc addresses FERPA-related questions for educational institutions.",
     navLabel: "FERPA",
     slug: "ferpa",
-    title: "FERPA Compliance Statement",
+    title: "FERPA Statement",
   },
 ] as const;
 

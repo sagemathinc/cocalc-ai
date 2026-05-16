@@ -1,13 +1,14 @@
-/*
- *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
- *  License: MS-RSL – see LICENSE.md for details
- */
+import Footer from "components/landing/footer";
+import Header from "components/landing/header";
+import Head from "components/landing/head";
+import { Layout } from "antd";
+import withCustomize from "lib/with-customize";
+import { Customize } from "lib/customize";
+import { MAX_WIDTH } from "lib/config";
 
-import { Customize, Footer, Head, Header, Layout, MAX_WIDTH } from "./compat";
-
-export default function FERPAPage() {
+export default function FERPA({ customize }) {
   return (
-    <Customize>
+    <Customize value={customize}>
       <Head title="FERPA Policy" />
       <Layout>
         <Header page="policies" subPage="ferpa" />
@@ -62,4 +63,8 @@ export default function FERPAPage() {
       </Layout>
     </Customize>
   );
+}
+
+export async function getServerSideProps(context) {
+  return await withCustomize({ context });
 }

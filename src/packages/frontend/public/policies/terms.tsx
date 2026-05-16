@@ -1,21 +1,20 @@
 /*
- *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  This file is part of CoCalc: Copyright © 2021-2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import {
-  A,
-  Customize,
-  Footer,
-  Head,
-  Header,
-  Layout,
-  MAX_WIDTH,
-} from "./compat";
+import Footer from "components/landing/footer";
+import Header from "components/landing/header";
+import Head from "components/landing/head";
+import { Layout } from "antd";
+import withCustomize from "lib/with-customize";
+import { Customize } from "lib/customize";
+import A from "components/misc/A";
+import { MAX_WIDTH } from "lib/config";
 
-export default function TermsOfServicePage() {
+export default function TermsOfService({ customize }) {
   return (
-    <Customize>
+    <Customize value={customize}>
       <Head title="Terms of Service" />
       <Layout>
         <Header page="policies" subPage="terms" />
@@ -34,7 +33,7 @@ export default function TermsOfServicePage() {
           >
             <div style={{ textAlign: "center", color: "#444" }}>
               <h1 style={{ fontSize: "28pt" }}>CoCalc - Terms of Service</h1>
-              <h2>Last Updated: January 27, 2025</h2>
+              <h2>Last Updated: April 15, 2026</h2>
             </div>
             <div style={{ fontSize: "12pt" }}>
               <p>
@@ -64,7 +63,7 @@ export default function TermsOfServicePage() {
                 <A href="/policies/terms">https://cocalc.com/policies/terms</A>{" "}
                 or through other communications. You can track complete details
                 regarding every change{" "}
-                <A href="https://github.com/sagemathinc/cocalc/tree/master/src/packages/frontend/public/content/legal-pages">
+                <A href="https://github.com/sagemathinc/cocalc/tree/master/src/packages/next/pages/policies">
                   on GitHub
                 </A>
                 . It’s important that you review the Terms whenever we modify
@@ -96,25 +95,24 @@ export default function TermsOfServicePage() {
                 support student privacy requirements.){" "}
               </p>
               <h1>Using the Services</h1>
-              <h2>Workspaces and Files</h2>
+              <h2>Projects and Files</h2>
               <p>
                 The Services offer a web-based environment through which users
                 can use SageMath and other open source math software online in
                 connection with mathematical research and teaching and the
                 performance of computational mathematics. Through their
-                Accounts, users can create multiple workspaces ("
-                <b>Workspace</b>"), each of which acts as a virtual computer
-                with a file system with multiple directories, inside of which a
-                user can create and edit any number of files of any type (such
-                as Latex documents, Jupyter notebooks, and many others) as well
-                as write, compile, and run software code in various programming
-                languages (such files and code collectively, "<b>Files</b>").
-                You’ll be able to share your Files with other users of the
-                Services, as well as enable them to contribute to and build upon
-                them and share them as well. When you create Files, you can, if
-                you choose, specify the terms and conditions that govern other
-                users’ use of your Files (e.g. a specific software or creative
-                commons license) ("
+                Accounts, users can create multiple projects ("<b>Project</b>"),
+                each of which acts as a virtual computer with a file system with
+                multiple directories, inside of which a user can create and edit
+                any number of files of any type (such as Latex documents,
+                Jupyter notebooks, and many others) as well as write, compile,
+                and run software code in various programming languages (such
+                files and code collectively, "<b>Files</b>"). You’ll be able to
+                share your Files with other users of the Services, as well as
+                enable them to contribute to and build upon them and share them
+                as well. When you create Files, you can, if you choose, specify
+                the terms and conditions that govern other users’ use of your
+                Files (e.g. a specific software or creative commons license) ("
                 <b>File License</b>"). Similarly, if you download, access or use
                 another user’s Files through the Services, you agree that you
                 will use such Files strictly in accordance with the File License
@@ -157,7 +155,7 @@ export default function TermsOfServicePage() {
                 view, copy, and publicly display, your Files; and (b)
                 non-Account holder users of the Service a non-exclusive,
                 non-transferable license to view such Files.{" "}
-                <span style={{ textTransform: "uppercase" }}>
+                <span className="uppercase">
                   Once you POST TO THE GENERAL PUBLIC, you can LATER un-POST,
                   but the licenses granted will remain in effect. You cannot
                   revoke this license, so we encourage you to consider carefully
@@ -244,17 +242,17 @@ export default function TermsOfServicePage() {
               </p>
               <h2>CoCalc Credit and Pay-As-You-Go Services</h2>
               <p>
-                Some Services may require you to put CoCalc Credit on your
-                Account before you can access them. CoCalc Credit has no cash
-                value and is given on a non-refundable basis. It may be used,
-                however, towards any of the Pay-As-You-Go services or to
-                purchase licenses and subscriptions. Pay-As-You-Go services may
-                be suspended or terminated immediately, if your CoCalc credit
-                balance becomes negative. The fees for Pay-As-You-Go Services
-                are subject to change without any advance notice at any time by
-                posting the changes to the Site or the Service itself. Typically
-                these changes mirror fee changes by cloud providers that we
-                utilize.
+                Some Services, such as compute servers, may require you to put
+                CoCalc Credit on your Account before you can access them. CoCalc
+                Credit has no cash value and is given on a non-refundable basis.
+                It may be used, however, towards any of the Pay-As-You-Go
+                services or to purchase licenses and subscriptions.
+                Pay-As-You-Go services may be suspended or terminated
+                immediately, if your CoCalc credit balance becomes negative. The
+                fees for Pay-As-You-Go Services are subject to change without
+                any advance notice at any time by posting the changes to the
+                Site or the Service itself. Typically these changes mirror fee
+                changes by cloud providers that we utilize.
               </p>
               <h1>Feedback</h1>
               <p>
@@ -276,7 +274,11 @@ export default function TermsOfServicePage() {
                   https://cocalc.com/policies/privacy
                 </A>
                 ) for information on how we collect, use and disclose
-                information from our users.{" "}
+                information from our users. Where SageMath, Inc. processes
+                personal data on your behalf as a Data Processor, such
+                processing is governed by our Data Processing Addendum (
+                <A href="/policies/dpa">https://cocalc.com/policies/dpa</A>),
+                which is hereby incorporated into these Terms by reference.{" "}
               </p>
               <h1>Content and Content Rights</h1>
               <p>
@@ -503,7 +505,7 @@ export default function TermsOfServicePage() {
                 Governing Law and Jurisdiction; General Terms.{" "}
               </p>
               <h1>Warranty Disclaimers</h1>
-              <p style={{ textTransform: "uppercase" }}>
+              <p className="uppercase">
                 The Services and Content are provided "AS IS," without warranty
                 of any kind. Without limiting the foregoing, WE EXPLICITLY
                 DISCLAIM ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
@@ -522,7 +524,7 @@ export default function TermsOfServicePage() {
                 FREELY ASSUME ALL RISK WHEN USING THE SERVICES AND THE
                 CONTENT.{" "}
               </p>
-              <p style={{ textTransform: "uppercase" }}>
+              <p className="uppercase">
                 THE CONTENT PROVIDED BY ACCOUNT HOLDERS AND THE USE OF CONTENT
                 BY ACCOUNT HOLDERS AND NON-ACCOUNT HOLDER USERS IS ENTIRELY THE
                 RESPONSIBILITY OF THE APPLICABLE ACCOUNT HOLDER OR NON-ACCOUNT
@@ -554,7 +556,7 @@ export default function TermsOfServicePage() {
                 representations or warranties in these Terms).{" "}
               </p>
               <h1>Limitation of Liability</h1>
-              <p style={{ textTransform: "uppercase" }}>
+              <p className="uppercase">
                 NEITHER SMI NOR ANY OTHER PARTY INVOLVED IN CREATING, PRODUCING,
                 OR DELIVERING THE SERVICES OR CONTENT WILL BE LIABLE FOR ANY
                 INCIDENTAL, SPECIAL, EXEMPLARY OR CONSEQUENTIAL DAMAGES,
@@ -574,7 +576,7 @@ export default function TermsOfServicePage() {
                   ABOVE LIMITATION MAY NOT APPLY TO YOU.{" "}
                 </span>
               </p>
-              <p style={{ textTransform: "uppercase" }}>
+              <p className="uppercase">
                 In no event will SMI's total liability arising out of or in
                 connection with THESE TERMS OR FROM THE USE OF OR INABILITY TO
                 USE the ServiceS or content EXCEED THE AMOUNTS YOU HAVE PAID TO
@@ -787,4 +789,8 @@ export default function TermsOfServicePage() {
       </Layout>
     </Customize>
   );
+}
+
+export async function getServerSideProps(context) {
+  return await withCustomize({ context });
 }

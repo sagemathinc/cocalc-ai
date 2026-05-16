@@ -1,23 +1,18 @@
-/*
- *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
- *  License: MS-RSL – see LICENSE.md for details
- */
+import { Layout } from "antd";
 
-import {
-  A,
-  Customize,
-  Footer,
-  Head,
-  Header,
-  Icon,
-  Image,
-  Layout,
-  MAX_WIDTH,
-  POLICIES,
-  Paragraph,
-  Text,
-  Title,
-} from "./compat";
+import { Icon } from "@cocalc/frontend/components/icon";
+import Footer from "components/landing/footer";
+import Head from "components/landing/head";
+import Header from "components/landing/header";
+import Image from "components/landing/image";
+import { POLICIES } from "components/landing/sub-nav";
+import { Paragraph, Text, Title } from "components/misc";
+import A from "components/misc/A";
+import { MAX_WIDTH } from "lib/config";
+import { Customize } from "lib/customize";
+import withCustomize from "lib/with-customize";
+
+import SOC2LOGO from "public/soc2-aicpa-logo.png";
 
 const GDPR_BADGE_HTML = `
 <html>
@@ -47,9 +42,9 @@ const GDPR_BADGE_HTML = `
 </html>
 `;
 
-export default function TrustPage() {
+export default function Trust({ customize }) {
   return (
-    <Customize>
+    <Customize value={customize}>
       <Head title={POLICIES.trust.label} />
       <Layout>
         <Header page="policies" subPage="trust" />
@@ -73,14 +68,14 @@ export default function TrustPage() {
             <Title level={2}>GDPR</Title>
             <Paragraph>
               SageMath, Inc. compliance with{" "}
-              <A href="https://gdpr-info.eu/">GDPR</A> has been verified by our
-              EU and UK representative{" "}
-              <A href="https://gdprlocal.com/">GDPR Local</A>.
+              <A href={"https://gdpr-info.eu/"}>GDPR</A> has been verified by
+              our EU and UK representative{" "}
+              <A hfre={"https://gdprlocal.com/"}>GDPR Local</A>.
             </Paragraph>
             <Paragraph>
               <iframe
-                sandbox="allow-scripts"
                 srcDoc={GDPR_BADGE_HTML}
+                sandbox="allow-scripts"
                 style={{
                   width: "100%",
                   height: "180px",
@@ -113,9 +108,9 @@ export default function TrustPage() {
             </Paragraph>
             <Paragraph>
               <Image
-                alt="SOC 2 Compliance Logo"
-                src="/public/soc2-aicpa-logo.png"
                 style={{ width: "150px", margin: "auto", height: "150px" }}
+                src={SOC2LOGO}
+                alt={"SOC 2 Compliance Logo"}
               />
             </Paragraph>
             <h2>Questions?</h2>
@@ -126,8 +121,12 @@ export default function TrustPage() {
             </Paragraph>
           </div>
           <Footer />
-        </Layout.Content>
+        </Layout.Content>{" "}
       </Layout>
     </Customize>
   );
+}
+
+export async function getServerSideProps(context) {
+  return await withCustomize({ context });
 }
