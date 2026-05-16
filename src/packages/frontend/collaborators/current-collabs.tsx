@@ -71,7 +71,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     if (student.disableCollaborators) return;
     const text = user_remove_confirm_text(account_id);
     const isOwner = group === "owner";
-    if (isOwner && isFlyout) {
+    if (isOwner) {
       return null;
     }
     return (
@@ -84,12 +84,11 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
       >
         <Button
           disabled={isOwner}
-          type={isFlyout ? "link" : "default"}
+          type="text"
+          danger
           style={{
             marginBottom: "0",
-            ...(isFlyout
-              ? { color: COLORS.ANTD_RED_WARN, paddingInline: 0 }
-              : {}),
+            paddingInline: isFlyout ? 0 : 8,
           }}
         >
           <Icon name="user-times" /> {intl.formatMessage(labels.remove)} ...
@@ -104,11 +103,15 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
         key={user.account_id}
         style={{
           alignItems: "center",
-          borderBottom: is_last ? undefined : `1px solid ${COLORS.GRAY_LL}`,
+          background: "white",
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 10,
+          boxShadow: isFlyout ? undefined : "0 1px 2px rgba(14, 43, 89, 0.04)",
           display: "grid",
           gap: isFlyout ? 10 : 14,
           gridTemplateColumns: "minmax(0, 1fr) auto auto",
-          padding: isFlyout ? "8px 0" : "10px 0",
+          marginBottom: is_last ? 0 : 8,
+          padding: isFlyout ? "8px 10px" : "11px 12px",
         }}
       >
         <div style={{ minWidth: 0 }}>
@@ -129,7 +132,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
           </div>
         </div>
         {render_role(user.group)}
-        <div style={{ minWidth: isFlyout ? 66 : 90, textAlign: "right" }}>
+        <div style={{ minWidth: isFlyout ? 54 : 78, textAlign: "right" }}>
           {user_remove_button(user.account_id, user.group)}
         </div>
       </div>
@@ -185,12 +188,13 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
 
   function render_collaborators_list(users = get_users()) {
     const style: CSS = {
-      maxHeight: isFlyout ? "240px" : "20em",
+      maxHeight: isFlyout ? "240px" : "24em",
       overflowY: "auto",
       overflowX: "hidden",
       marginBottom: "0",
       display: "flex",
       flexDirection: "column",
+      paddingRight: 3,
     };
     if (isFlyout) {
       return (
@@ -201,8 +205,12 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     } else {
       return (
         <Card
-          style={{ ...style, backgroundColor: "white" }}
-          styles={{ body: { padding: "4px 14px" } }}
+          style={{
+            ...style,
+            backgroundColor: COLORS.GRAY_LLL,
+            borderColor: COLORS.GRAY_LL,
+          }}
+          styles={{ body: { padding: 10 } }}
         >
           {render_users(users)}
         </Card>
@@ -210,31 +218,46 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     }
   }
 
-  const introText = intl.formatMessage({
-    id: "collaborators.current-collabs.intro",
-    defaultMessage:
-      "Collaborators can edit files, run code, manage this project, and invite others.",
-  });
+  function render_access_summary(users: any[]) {
+    return (
+      <div
+        style={{
+          alignItems: "center",
+          background: COLORS.ANTD_BG_BLUE_L,
+          border: `1px solid ${COLORS.BLUE_LLL}`,
+          borderRadius: 10,
+          display: "flex",
+          gap: 12,
+          justifyContent: "space-between",
+          marginBottom: 12,
+          padding: "10px 12px",
+        }}
+      >
+        <div style={{ alignItems: "center", display: "flex", gap: 10 }}>
+          <Icon
+            name="user"
+            style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 18 }}
+          />
+          <div>
+            <div style={{ fontWeight: 600 }}>Full project access</div>
+            <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+              Edit files, run code, manage settings, and invite people.
+            </div>
+          </div>
+        </div>
+        <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+          {users.length} {users.length === 1 ? "person" : "people"}
+        </Tag>
+      </div>
+    );
+  }
 
   switch (mode) {
     case "project": {
       const users = get_users();
       return (
         <SettingBox title="Current Collaborators" icon="user">
-          <div
-            style={{
-              alignItems: "center",
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 12,
-            }}
-          >
-            <span>{introText}</span>
-            <Tag style={{ marginInlineEnd: 0 }}>
-              {users.length} {users.length === 1 ? "person" : "people"}
-            </Tag>
-          </div>
-          <hr />
+          {render_access_summary(users)}
           {render_collaborators_list(users)}
         </SettingBox>
       );

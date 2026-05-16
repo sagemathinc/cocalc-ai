@@ -23,7 +23,7 @@ import {
 import { Well } from "../antd-bootstrap";
 import { Icon, Loading, ErrorDisplay, Gap } from "../components";
 import { webapp_client } from "../webapp-client";
-import { SITE_NAME } from "@cocalc/util/theme";
+import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import {
   contains_url,
   plural,
@@ -53,6 +53,7 @@ interface RegisteredUser {
   label?: string;
   tag?: string;
   name?: string;
+  extra?: string[];
 }
 
 interface NonregisteredUser {
@@ -67,6 +68,7 @@ interface NonregisteredUser {
   label?: string;
   tag?: string;
   name?: string;
+  extra?: string[];
 }
 
 type User = RegisteredUser | NonregisteredUser;
@@ -248,8 +250,6 @@ export const AddCollaborators: React.FC<Props> = ({
         }
         const tag = trunc_middle(name, 20);
 
-        // Extra display is a bit ugly, but we need to do it for now.  Need to make
-        // react rendered version of this that is much nicer (with pictures!) someday.
         const extra: string[] = [];
         if (r.account_id != null && user_map.get(r.account_id)) {
           extra.push("Collaborator");
@@ -271,24 +271,49 @@ export const AddCollaborators: React.FC<Props> = ({
             }
           }
         }
-        if (extra.length > 0) {
-          name += `  (${extra.join(", ")})`;
-        }
-        r.label = name.toLowerCase();
+        r.label = `${name} ${extra.join(" ")}`.toLowerCase();
         r.tag = tag;
         r.name = name;
+        r.extra = extra;
       }
       const x = r.account_id ?? r.email_address;
       options.push(
         <Select.Option key={x} value={x} label={r.label} tag={r.tag}>
-          <Avatar
-            size={36}
-            no_tooltip={true}
-            account_id={r.account_id}
-            first_name={r.account_id ? r.first_name : "@"}
-            last_name={r.last_name}
-          />{" "}
-          <span title={r.name}>{r.name}</span>
+          <div style={{ alignItems: "center", display: "flex", gap: 10 }}>
+            <Avatar
+              size={36}
+              no_tooltip={true}
+              account_id={r.account_id}
+              first_name={r.account_id ? r.first_name : "@"}
+              last_name={r.last_name}
+            />
+            <div style={{ lineHeight: 1.25, minWidth: 0 }}>
+              <div
+                style={{
+                  fontWeight: 500,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={r.name}
+              >
+                {r.name}
+              </div>
+              {r.extra != null && r.extra.length > 0 && (
+                <div
+                  style={{
+                    color: COLORS.GRAY_M,
+                    fontSize: 12,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {r.extra.join(" · ")}
+                </div>
+              )}
+            </div>
+          </div>
         </Select.Option>,
       );
     }
@@ -528,10 +553,23 @@ export const AddCollaborators: React.FC<Props> = ({
       return;
     }
     return (
-      <div style={{ marginBottom: "15px" }}>
-        Collaborators can view, edit, run code, manage files, and add or remove
-        other collaborators in this project. For teaching, add students through
-        the course.
+      <div
+        style={{
+          alignItems: "flex-start",
+          color: COLORS.GRAY_M,
+          display: "flex",
+          gap: 8,
+          marginBottom: 10,
+        }}
+      >
+        <Icon
+          name="info-circle"
+          style={{ color: COLORS.ANTD_LINK_BLUE, marginTop: 2 }}
+        />
+        <span>
+          Collaborators get full project access. For teaching, add students
+          through the course instead.
+        </span>
       </div>
     );
   }
@@ -557,11 +595,19 @@ export const AddCollaborators: React.FC<Props> = ({
     }
 
     return (
-      <div style={{ marginBottom: "10px" }}>
-        <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
+      <div
+        style={{
+          background: COLORS.GRAY_LLL,
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 10,
+          marginBottom: 10,
+          padding: 12,
+        }}
+      >
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
           <Input
             autoFocus={autoFocus}
-            placeholder="Name or email address..."
+            placeholder="Search by name or email address..."
             value={search}
             onChange={(e) => {
               const value = (e.target as any).value ?? "";
@@ -577,6 +623,7 @@ export const AddCollaborators: React.FC<Props> = ({
           <Button
             onClick={() => void do_search(search_ref.current)}
             disabled={state === ("searching" as State) || !search.trim()}
+            type={search.trim() ? "primary" : "default"}
           >
             Search
           </Button>
@@ -595,7 +642,7 @@ export const AddCollaborators: React.FC<Props> = ({
                 search_split(s.toLowerCase()),
               );
             }}
-            style={{ width: "100%", marginBottom: "10px" }}
+            style={{ width: "100%", marginBottom: 10 }}
             placeholder={`Select from ${users.length} ${plural(
               users.length,
               "matching user",
@@ -657,7 +704,7 @@ export const AddCollaborators: React.FC<Props> = ({
       disabled = true;
     }
     return (
-      <div style={{ display: "flex" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
         <Button onClick={reset}>Cancel</Button>
         <Gap />
         <Button disabled={disabled} onClick={add_selected} type="primary">
