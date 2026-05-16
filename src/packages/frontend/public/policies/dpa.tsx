@@ -3,16 +3,19 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Layout } from "antd";
+import {
+  A,
+  Customize,
+  type CustomizeType,
+  Footer,
+  Head,
+  Header,
+  Layout,
+  MAX_WIDTH,
+  withCustomize,
+} from "./compat";
 
-import { COLORS } from "@cocalc/util/theme";
-import A from "components/misc/A";
-import Footer from "components/landing/footer";
-import Head from "components/landing/head";
-import Header from "components/landing/header";
-import { MAX_WIDTH } from "lib/config";
-import { Customize, type CustomizeType } from "lib/customize";
-import withCustomize from "lib/with-customize";
+const COLORS = { WHITE: "white" } as const;
 
 interface Props {
   customize: CustomizeType;

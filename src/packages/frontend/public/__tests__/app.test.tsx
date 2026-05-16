@@ -384,7 +384,7 @@ describe("PublicApp", () => {
 
     expect(screen.getByText("Terms of Service")).not.toBeNull();
     expect(screen.getByText("Privacy Policy")).not.toBeNull();
-    expect(screen.getByText("Trust")).not.toBeNull();
+    expect(screen.getByText("Trust and Compliance")).not.toBeNull();
     expect(screen.queryByText("Open page")).toBeNull();
     expect(
       screen.getByRole("link", { name: /Terms of Service/i }),
@@ -458,22 +458,24 @@ describe("PublicApp", () => {
     ).toHaveClass("ant-menu-item-selected");
   });
 
-  it("renders the built-in third-party policy page", async () => {
+  it("renders the built-in data processing addendum page", async () => {
     await renderPublicApp(
       <PublicApp
         config={{ policy_pages: "sagemathinc", site_name: "Launchpad" }}
         initialRoute={policiesRoute({
-          policySlug: "thirdparties",
+          policySlug: "dpa",
           view: "policies-detail",
         })}
       />,
     );
 
     expect(
-      await screen.findByText("CoCalc - Third Parties Statements"),
+      await screen.findByText("CoCalc - Data Processing Addendum"),
     ).not.toBeNull();
-    expect(screen.getByText("Cloudflare")).not.toBeNull();
-    expect(screen.getByText("Salesloft")).not.toBeNull();
+    expect(
+      screen.getByText(/The Controller \(User\) provides/i),
+    ).not.toBeNull();
+    expect(screen.getByText("2. Sub-processors")).not.toBeNull();
     const policyPages = screen.getByRole("menu", { name: "Policy pages" });
     expect(
       within(policyPages)
@@ -482,9 +484,8 @@ describe("PublicApp", () => {
     ).toEqual([
       "Terms",
       "Privacy",
-      "Third Parties",
+      "DPA",
       "Trust",
-      "Enterprise",
       "Accessibility",
       "Copyright",
       "FERPA",

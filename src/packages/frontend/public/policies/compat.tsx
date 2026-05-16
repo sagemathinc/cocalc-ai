@@ -48,8 +48,19 @@ export function Footer(_props: Record<string, unknown>) {
   return null;
 }
 
-export function Customize({ children }: { children?: ReactNode }) {
+export function Customize({
+  children,
+}: {
+  children?: ReactNode;
+  value?: CustomizeType;
+}) {
   return <>{children}</>;
+}
+
+export type CustomizeType = Record<string, unknown>;
+
+export async function withCustomize(_props: Record<string, unknown>) {
+  return { props: { customize: {} } };
 }
 
 function LayoutRoot({ children }: { children?: ReactNode }) {

@@ -8,6 +8,7 @@ import type { ComponentType } from "react";
 import { publicPath } from "../routes";
 import AccessibilityPage from "./accessibility";
 import CopyrightPage from "./copyright";
+import DPAPage from "./dpa";
 import FERPAPage from "./ferpa";
 import PrivacyPage from "./privacy";
 import TermsOfServicePage from "./terms";

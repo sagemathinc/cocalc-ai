@@ -1,18 +1,21 @@
-import { Layout } from "antd";
+import {
+  A,
+  Customize,
+  Footer,
+  Head,
+  Header,
+  Icon,
+  Image,
+  Layout,
+  MAX_WIDTH,
+  Paragraph,
+  POLICIES,
+  Text,
+  Title,
+  withCustomize,
+} from "./compat";
 
-import { Icon } from "@cocalc/frontend/components/icon";
-import Footer from "components/landing/footer";
-import Head from "components/landing/head";
-import Header from "components/landing/header";
-import Image from "components/landing/image";
-import { POLICIES } from "components/landing/sub-nav";
-import { Paragraph, Text, Title } from "components/misc";
-import A from "components/misc/A";
-import { MAX_WIDTH } from "lib/config";
-import { Customize } from "lib/customize";
-import withCustomize from "lib/with-customize";
-
-import SOC2LOGO from "public/soc2-aicpa-logo.png";
+const SOC2LOGO = "/public/soc2-aicpa-logo.png";
 
 const GDPR_BADGE_HTML = `
 <html>

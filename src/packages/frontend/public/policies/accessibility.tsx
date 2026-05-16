@@ -1,10 +1,12 @@
-import Footer from "components/landing/footer";
-import Header from "components/landing/header";
-import Head from "components/landing/head";
-import { Layout } from "antd";
-import withCustomize from "lib/with-customize";
-import { Customize } from "lib/customize";
-import { MAX_WIDTH } from "lib/config";
+import {
+  Customize,
+  Footer,
+  Head,
+  Header,
+  Layout,
+  MAX_WIDTH,
+  withCustomize,
+} from "./compat";
 
 export default function AccessibilityPage({ customize }) {
   return (
