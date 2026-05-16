@@ -152,6 +152,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
   private title?: string;
   private projectsStore?;
   private lastProjectState?: string;
+  private projectStartingRetryTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
     actions: Actions<T>,
@@ -423,6 +424,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
     this.reconnectResource?.close();
     this.reconnectResource = undefined;
+    this.clearProjectStartingRetry();
     this.pty?.close();
     this.pty = null;
     this.set_connection_status("disconnected");
@@ -467,11 +469,33 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
     }
 
     if (prevState !== "running" && nextState === "running") {
+      this.clearProjectStartingRetry();
+      void this.connect();
       this.reconnectResource?.requestReconnect({
         reason: "project_became_running",
         resetBackoff: true,
       });
     }
+  };
+
+  private clearProjectStartingRetry = (): void => {
+    if (this.projectStartingRetryTimer != null) {
+      clearTimeout(this.projectStartingRetryTimer);
+      this.projectStartingRetryTimer = undefined;
+    }
+  };
+
+  private scheduleProjectStartingRetry = (): void => {
+    if (this.projectStartingRetryTimer != null) {
+      return;
+    }
+    this.projectStartingRetryTimer = setTimeout(() => {
+      this.projectStartingRetryTimer = undefined;
+      if (!this.isClosed()) {
+        void this.connect();
+      }
+    }, 1000);
+    this.projectStartingRetryTimer.unref?.();
   };
 
   private update_settings = (): void => {
@@ -520,7 +544,7 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         redux.getProjectsStore?.()?.get_state?.(this.project_id) ??
         redux.getStore("projects")?.get_state?.(this.project_id);
       const startPolicyBlock =
-        projectState !== "running" && projectState !== "starting"
+        projectState !== "running"
           ? getAutostartProjectStartPolicyBlock(this.project_id)
           : undefined;
       if (startPolicyBlock) {
@@ -533,6 +557,12 @@ export class Terminal<T extends CodeEditorState = CodeEditorState> {
         }
         return;
       }
+      if (projectState === "starting") {
+        this.set_connection_status("disconnected");
+        this.scheduleProjectStartingRetry();
+        return;
+      }
+      this.clearProjectStartingRetry();
       this.manualStartMessageShown = false;
 
       if (this.pty != null) {
