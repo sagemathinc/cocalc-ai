@@ -5,6 +5,7 @@ import { takeStartProjectPhaseTimings } from "@cocalc/server/project-host/contro
 import deleteProjectControl from "@cocalc/server/projects/delete";
 import { setProjectDeleted as setProjectDeletedControl } from "@cocalc/server/projects/delete";
 import { assertHardDeleteProjectPermission } from "@cocalc/server/projects/hard-delete";
+import { assertProjectHardDeleteAdmission } from "@cocalc/server/projects/hard-delete-admission";
 import getLogger from "@cocalc/backend/logger";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 export * from "@cocalc/server/projects/collaborators";
@@ -2384,6 +2385,10 @@ export async function hardDeleteProject({
     session_hash,
   });
   await assertHardDeleteProjectPermission({
+    project_id,
+    account_id,
+  });
+  await assertProjectHardDeleteAdmission({
     project_id,
     account_id,
   });
