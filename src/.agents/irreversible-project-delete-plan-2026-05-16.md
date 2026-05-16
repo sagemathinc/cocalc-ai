@@ -205,6 +205,29 @@ Add one owner-controlled project setting:
 This should not be split into several granular permissions initially. The common
 trust question is whether collaborators may destroy or invalidate recovery data.
 
+### Manual Snapshots Cannot Crowd Out Rolling Snapshots
+
+Snapshot creation also needs a trust/availability guardrail. Even if a
+collaborator is allowed to create manual named snapshots, they must not be able
+to fill every snapshot slot and thereby prevent automatic rolling recovery
+snapshots from being created.
+
+Policy:
+
+- Let the project snapshot cap be `n`.
+- Reserve `k` slots for automatic rolling snapshots.
+- Allow at most `n-k` manual/user-created/named snapshots.
+- If `n <= k`, manual snapshots are disabled.
+- Automatic rolling snapshots may rotate automatic rolling snapshots, but should
+  not evict manual named snapshots except through explicit admin repair tooling.
+- Manual snapshot creation should fail with a clear structured denial when the
+  manual snapshot cap is reached.
+
+User-facing message:
+
+- "Manual snapshot limit reached. Delete a named snapshot or ask the owner to
+  increase the snapshot limit."
+
 ## Target Behavior
 
 ### Project Settings Delete
@@ -249,6 +272,8 @@ bulk flow. Initial implementation should either:
 Recommendation for first implementation: remove/disable bulk hard delete until
 single-project delete is polished.
 
+NOTE: I think this is only implemented in courses, where I think this is a button to delete all the student projects, which instructors use to clean up old courses. It's important, since deleting old data is sometimes needed for legal reasons.
+
 ### Destructive Storage-History Controls
 
 The project settings UI should expose an owner-only switch near other project
@@ -263,13 +288,23 @@ trust/lifecycle controls:
 
 When the switch is off, collaborator UI should hide or disable:
 
-- snapshot delete buttons;
-- backup delete buttons;
+- file-manager delete actions when the selected item resolves to a snapshot or
+  backup;
 - archive project controls;
 - move project controls.
 
-Backend authorization must still enforce the policy even if the frontend is
-wrong or stale.
+The file manager does not necessarily render separate snapshot/backup delete
+buttons. It uses the normal delete action, detects that the target is a snapshot
+or backup, and routes to a special snapshot/backup delete API. Security must be
+enforced in those special APIs. Frontend checks are only for clearer UX.
+
+If denied, the file manager should show a direct message:
+
+- "Only the project owner can delete snapshots/backups unless the owner enables
+  collaborator storage-history management."
+
+Backend authorization must enforce the policy even if the frontend is wrong or
+stale.
 
 ### CLI Delete
 
@@ -391,13 +426,22 @@ runtime-slot tables.
   - collaborator: allowed only when the project setting is true;
   - non-collaborator: denied.
 - Apply the helper to:
-  - snapshot delete;
-  - backup delete;
+  - snapshot delete APIs;
+  - backup delete APIs;
   - archive project admission;
   - move project admission.
 - Add frontend switch in project settings.
-- Hide or disable protected controls for collaborators when the switch is off.
+- Hide or disable protected controls for collaborators when the switch is off,
+  including file-manager delete attempts that resolve to snapshot/backup API
+  calls.
+- Add manual snapshot reservation:
+  - compute total snapshot cap `n`;
+  - reserve rolling snapshot slots `k`;
+  - enforce manual snapshot count `<= n-k`;
+  - return a structured denial when manual snapshot slots are exhausted.
 - Add tests for each backend enforcement point.
+- Add tests that manual snapshots cannot exhaust slots reserved for automatic
+  rolling snapshots.
 - Add frontend tests for owner/collaborator visibility where practical.
 
 ### Phase 6: Replace Frontend Soft Delete
@@ -494,6 +538,8 @@ Add operator CLI/report:
 - Hard delete works when home bay and owning bay differ.
 - Collaborator snapshot/backup delete, archive, and move are blocked by default
   unless the owner enables the destructive storage-history setting.
+- Manual/named snapshots cannot consume slots reserved for automatic rolling
+  snapshots.
 - Core project-scoped projection/runtime-slot rows are removed.
 - Frontend and CLI show clear structured errors for not-owner, fresh-auth, and
   rate-limit denials.
