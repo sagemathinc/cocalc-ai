@@ -14,7 +14,7 @@ happens, and also when the system is heavily loaded.
 
 import { Alert, Button, Modal, Progress, Space, Spin } from "antd";
 import type { ButtonProps } from "antd";
-import { CSSProperties, useRef, useState } from "react";
+import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
 import { redux, useMemo, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, ProjectState, Tooltip } from "@cocalc/frontend/components";
@@ -128,6 +128,7 @@ export function StartButton({
   const runtimeSponsorDenial = startLroSummary?.result
     ?.runtime_sponsor_denial as RuntimeSponsorDenial | undefined;
   const startFailed = startLroSummary?.status === "failed" && !!startLroError;
+  const lastMinimalStartFailureOpIdRef = useRef<string | undefined>(undefined);
   const moveActive =
     moveLro != null &&
     (!moveLro.summary ||
@@ -170,6 +171,27 @@ export function StartButton({
     return startLroActive || activeOpStartLike;
   }, [activeOpStartLike, lifecycleState, startLroActive]);
 
+  useEffect(() => {
+    if (!minimal || !startFailed || !startLroSummary || !project_id) return;
+    if (lastMinimalStartFailureOpIdRef.current === startLroSummary.op_id) {
+      return;
+    }
+    lastMinimalStartFailureOpIdRef.current = startLroSummary.op_id;
+    Modal.error({
+      title: "Project start failed",
+      content: renderStartFailureDescription(),
+      okText: "Close",
+      width: 720,
+    });
+  }, [
+    minimal,
+    project_id,
+    runtimeSponsorDenial,
+    startFailed,
+    startLroError,
+    startLroSummary,
+  ]);
+
   if (!project_id) {
     return null;
   }
@@ -182,6 +204,17 @@ export function StartButton({
 
   if (minimal && hostUnavailable) {
     return null;
+  }
+
+  function renderStartFailureDescription() {
+    return runtimeSponsorDenial ? (
+      <RuntimeSponsorDenialDescription
+        denial={runtimeSponsorDenial}
+        project_id={resolvedProjectId}
+      />
+    ) : (
+      startLroError
+    );
   }
 
   function render_start_project_button() {
@@ -325,16 +358,7 @@ export function StartButton({
             type="error"
             showIcon
             title="Project start failed"
-            description={
-              runtimeSponsorDenial ? (
-                <RuntimeSponsorDenialDescription
-                  denial={runtimeSponsorDenial}
-                  project_id={resolvedProjectId}
-                />
-              ) : (
-                startLroError
-              )
-            }
+            description={renderStartFailureDescription()}
             action={
               <Button
                 size="small"

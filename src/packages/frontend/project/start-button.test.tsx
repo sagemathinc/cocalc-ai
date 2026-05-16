@@ -261,4 +261,50 @@ describe("StartButton", () => {
       expect(mockStartProject).toHaveBeenCalledWith("project-1");
     });
   });
+
+  it("surfaces async start failures for compact start buttons", async () => {
+    startLroRecord = {
+      toJS: () => ({
+        summary: {
+          status: "failed",
+          op_id: "op-compact",
+          scope_type: "project",
+          scope_id: "project-1",
+          error: "runtime sponsor slots exhausted",
+          result: {
+            runtime_sponsor_denial: {
+              code: "runtime_sponsor_slots_exhausted",
+              sponsor_account_id: "user-1",
+              limit: 1,
+              current: 1,
+              active_projects: [
+                {
+                  project_id: "running-project",
+                  state: "running",
+                  visible: true,
+                  can_stop: true,
+                },
+              ],
+              can_change_sponsor: false,
+            },
+          },
+        },
+      }),
+    };
+
+    render(
+      <IntlProvider locale="en">
+        <StartButton minimal />
+      </IntlProvider>,
+    );
+
+    await waitFor(() => {
+      expect(Modal.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Project start failed",
+          okText: "Close",
+        }),
+      );
+    });
+  });
 });
