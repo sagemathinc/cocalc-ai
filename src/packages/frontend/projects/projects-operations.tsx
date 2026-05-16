@@ -12,7 +12,7 @@
 
 import { Alert, Button, Modal, Space, Typography } from "antd";
 import { Map, Set } from "immutable";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -26,6 +26,11 @@ import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 
+import {
+  LeaveOrDeleteProjectsModal,
+  type LeaveOrDeleteProjectsPlan,
+} from "./leave-or-delete-projects-modal";
+
 interface Props {
   visible_projects: string[];
   selected_project_ids: string[];
@@ -33,14 +38,6 @@ interface Props {
   filteredCollaborators?: string[] | null;
   onClearCollaboratorFilter?: () => void;
 }
-
-type BulkPlan = {
-  deleteIds: string[];
-  transferIds: string[];
-  leaveIds: string[];
-  skippedIds: string[];
-  actionableIds: string[];
-};
 
 const { Text } = Typography;
 
@@ -57,6 +54,7 @@ export function ProjectsOperations({
   const projectLabelLower = projectLabel.toLowerCase();
   const projectsLabelLower = projectsLabel.toLowerCase();
   const actions = useActions("projects");
+  const [leaveDeleteModalOpen, setLeaveDeleteModalOpen] = useState(false);
   const project_map = useTypedRedux("projects", "project_map");
   const account_id = useTypedRedux("account", "account_id");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
@@ -127,8 +125,8 @@ export function ProjectsOperations({
     onClearCollaboratorFilter?.();
   }
 
-  const selectedPlan: BulkPlan = useMemo(() => {
-    const plan: BulkPlan = {
+  const selectedPlan: LeaveOrDeleteProjectsPlan = useMemo(() => {
+    const plan: LeaveOrDeleteProjectsPlan = {
       deleteIds: [],
       transferIds: [],
       leaveIds: [],
@@ -247,7 +245,7 @@ export function ProjectsOperations({
     });
   }
 
-  function confirmLeaveOrDeleteSelected() {
+  function openLeaveOrDeleteSelected() {
     const plan = selectedPlan;
     if (plan.actionableIds.length === 0) {
       Modal.warning({
@@ -256,95 +254,49 @@ export function ProjectsOperations({
       });
       return;
     }
-    Modal.confirm({
-      title: "Leave or delete selected projects",
-      width: 620,
-      icon: <Icon name="warning" style={{ color: COLORS.ANTD_RED }} />,
-      content: (
-        <Space direction="vertical" style={{ width: "100%" }}>
-          <div>
-            This applies the same cleanup policy as account deletion, but keeps
-            your account.
-          </div>
-          <ul style={{ marginBottom: 0 }}>
-            <li>
-              <strong>{plan.deleteIds.length}</strong> owned{" "}
-              {projectsLabelLower} with no collaborators will be permanently
-              deleted.
-            </li>
-            <li>
-              <strong>{plan.transferIds.length}</strong> owned{" "}
-              {projectsLabelLower} with collaborators will be transferred to the
-              most recently active collaborator, and you will be removed.
-            </li>
-            <li>
-              <strong>{plan.leaveIds.length}</strong> {projectsLabelLower} you
-              do not own will remove you as a collaborator.
-            </li>
-            <li>
-              <strong>{plan.skippedIds.length}</strong> selected{" "}
-              {projectsLabelLower} will be skipped.
-            </li>
-          </ul>
-          {plan.transferIds.length > 0 && (
-            <div>
-              <Text strong>Ownership will transfer for:</Text>
-              <ul style={{ maxHeight: 120, overflow: "auto", marginBottom: 0 }}>
-                {plan.transferIds.map((project_id) => (
-                  <li key={project_id}>{selectedTitle(project_id)}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </Space>
-      ),
-      okText: "Leave or Delete",
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        const accepted = await runFreshAuthAction(async () => {
-          const results =
-            await webapp_client.conat_client.hub.projects.leaveOrDeleteProjects(
-              {
-                project_ids: plan.actionableIds,
-                browser_id: webapp_client.browser_id,
-              },
-            );
-          const errors = results.filter((result) => result.action === "error");
-          const succeeded = results
-            .filter((result) => result.action !== "error")
-            .map((result) => result.project_id);
-          for (const project_id of succeeded) {
-            actions.redux.getActions("page").close_project_tab(project_id);
-          }
-          onSelectionChange(
-            selected_project_ids.filter((id) => !succeeded.includes(id)),
-          );
-          alert_message({
-            type: errors.length > 0 ? "warning" : "success",
-            message:
-              errors.length > 0
-                ? `Processed ${succeeded.length} project(s); ${errors.length} failed.`
-                : `Processed ${succeeded.length} selected project(s).`,
-          });
-          if (errors.length > 0) {
-            Modal.error({
-              title: "Some projects could not be processed",
-              content: (
-                <ul>
-                  {errors.map((result) => (
-                    <li key={result.project_id}>
-                      {selectedTitle(result.project_id)}: {result.error}
-                    </li>
-                  ))}
-                </ul>
-              ),
-            });
-          }
+    setLeaveDeleteModalOpen(true);
+  }
+
+  async function leaveOrDeleteSelected() {
+    const plan = selectedPlan;
+    await runFreshAuthAction(async () => {
+      const results =
+        await webapp_client.conat_client.hub.projects.leaveOrDeleteProjects({
+          project_ids: plan.actionableIds,
+          browser_id: webapp_client.browser_id,
         });
-        if (!accepted) {
-          return;
-        }
-      },
+      const errors = results.filter((result) => result.action === "error");
+      const succeeded = results
+        .filter((result) => result.action !== "error")
+        .map((result) => result.project_id);
+      for (const project_id of succeeded) {
+        actions.redux.getActions("page").close_project_tab(project_id);
+      }
+      onSelectionChange(
+        selected_project_ids.filter((id) => !succeeded.includes(id)),
+      );
+      setLeaveDeleteModalOpen(false);
+      alert_message({
+        type: errors.length > 0 ? "warning" : "success",
+        message:
+          errors.length > 0
+            ? `Processed ${succeeded.length} project(s); ${errors.length} failed.`
+            : `Processed ${succeeded.length} selected project(s).`,
+      });
+      if (errors.length > 0) {
+        Modal.error({
+          title: "Some projects could not be processed",
+          content: (
+            <ul>
+              {errors.map((result) => (
+                <li key={result.project_id}>
+                  {selectedTitle(result.project_id)}: {result.error}
+                </li>
+              ))}
+            </ul>
+          ),
+        });
+      }
     });
   }
 
@@ -447,13 +399,21 @@ export function ProjectsOperations({
               size="small"
               danger
               icon={<Icon name="trash" />}
-              onClick={confirmLeaveOrDeleteSelected}
+              onClick={openLeaveOrDeleteSelected}
             >
               Leave or Delete...
             </Button>
           </Space>
         </div>
       )}
+      <LeaveOrDeleteProjectsModal
+        open={leaveDeleteModalOpen}
+        plan={selectedPlan}
+        projectsLabelLower={projectsLabelLower}
+        projectTitle={selectedTitle}
+        onCancel={() => setLeaveDeleteModalOpen(false)}
+        onConfirm={leaveOrDeleteSelected}
+      />
       <FreshAuthModal {...freshAuthModalProps} />
     </>
   );

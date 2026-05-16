@@ -211,7 +211,7 @@ export function HardDeleteProjectModal({
   );
 }
 
-function IconBadge({
+export function IconBadge({
   icon,
   tone,
 }: {
@@ -226,7 +226,7 @@ function IconBadge({
   );
 }
 
-function InfoSection({
+export function InfoSection({
   icon,
   title,
   tone,
@@ -260,7 +260,13 @@ function InfoSection({
   );
 }
 
-function InfoRow({ icon, children }: { icon: IconName; children: ReactNode }) {
+export function InfoRow({
+  icon,
+  children,
+}: {
+  icon: IconName;
+  children: ReactNode;
+}) {
   return (
     <div
       style={{
