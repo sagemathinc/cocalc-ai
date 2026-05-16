@@ -1163,6 +1163,7 @@ export interface Projects {
   }) => Promise<void>;
   hardDeleteProject: (opts: {
     account_id?: string;
+    browser_id?: string | null;
     session_hash?: string | null;
     project_id: string;
     backup_retention_days?: number;

@@ -2356,12 +2356,14 @@ export async function setProjectDeleted({
 
 export async function hardDeleteProject({
   account_id,
+  browser_id,
   session_hash,
   project_id,
   backup_retention_days,
   purge_backups_now,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   project_id: string;
   backup_retention_days?: number;
@@ -2378,6 +2380,7 @@ export async function hardDeleteProject({
   }
   await requireDangerousProjectMutationAuth({
     account_id,
+    browser_id,
     session_hash,
   });
   await assertHardDeleteProjectPermission({
