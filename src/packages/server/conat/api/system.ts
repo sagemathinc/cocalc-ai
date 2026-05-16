@@ -2491,6 +2491,7 @@ import {
   sendTestEmail as sendTestEmail0,
   type TestEmailResult,
 } from "@cocalc/server/email/test-email";
+import { getEmailLaneDiagnostic } from "@cocalc/server/email/send-email";
 import type { EmailLane } from "@cocalc/util/notification-email";
 
 export async function sendTestEmail({
@@ -2521,7 +2522,13 @@ export async function sendEmailVerification({
   }
   const resp = await sendEmailVerification0(account_id, only_verify);
   if (resp) {
-    throw Error(resp);
+    let diagnostic = "";
+    try {
+      diagnostic = await getEmailLaneDiagnostic("critical");
+    } catch (_) {
+      // Preserve the original verification error if diagnostic collection fails.
+    }
+    throw Error(diagnostic ? `${resp} (${diagnostic})` : resp);
   }
 }
 

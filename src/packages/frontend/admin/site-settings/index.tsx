@@ -493,6 +493,8 @@ export default function SiteSettings({ close }) {
 
   function EmailTest() {
     const email = redux.getStore("account").get("email_address");
+    const primarySmtp = emailTestResult?.configured?.primary_smtp;
+    const secondarySmtp = emailTestResult?.configured?.secondary_smtp;
     return (
       <div style={{ margin: "4px 0 12px 0", maxWidth: "900px" }}>
         <Button
@@ -523,6 +525,28 @@ export default function SiteSettings({ close }) {
                   <code>{emailTestResult.lane_backend}</code>, resolved{" "}
                   <code>{emailTestResult.resolved_backend || "none"}</code>
                 </div>
+                {primarySmtp != null && (
+                  <div>
+                    Primary SMTP: server{" "}
+                    <code>{primarySmtp.server ? "set" : "missing"}</code>, from{" "}
+                    <code>{primarySmtp.from ? "set" : "missing"}</code>,
+                    username{" "}
+                    <code>{primarySmtp.login ? "set" : "missing"}</code>,
+                    password{" "}
+                    <code>{primarySmtp.password ? "set" : "missing"}</code>
+                  </div>
+                )}
+                {secondarySmtp?.enabled && (
+                  <div>
+                    Secondary SMTP: server{" "}
+                    <code>{secondarySmtp.server ? "set" : "missing"}</code>,
+                    from <code>{secondarySmtp.from ? "set" : "missing"}</code>,
+                    username{" "}
+                    <code>{secondarySmtp.login ? "set" : "missing"}</code>,
+                    password{" "}
+                    <code>{secondarySmtp.password ? "set" : "missing"}</code>
+                  </div>
+                )}
                 {emailTestResult.route?.map((step, i) =>
                   step.error ? (
                     <div key={i}>

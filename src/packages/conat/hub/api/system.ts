@@ -1677,6 +1677,22 @@ export interface System {
     resolved_backend: "" | "none" | "sendgrid" | "smtp";
     default_backend: "" | "none" | "sendgrid" | "smtp";
     lane_backend: "default" | "" | "none" | "sendgrid" | "smtp";
+    configured: {
+      sendgrid_key: boolean;
+      primary_smtp: {
+        server: boolean;
+        from: boolean;
+        login: boolean;
+        password: boolean;
+      };
+      secondary_smtp: {
+        enabled: boolean;
+        server: boolean;
+        from: boolean;
+        login: boolean;
+        password: boolean;
+      };
+    };
     route: {
       backend: "sendgrid" | "smtp";
       source: "lane" | "default-fallback";

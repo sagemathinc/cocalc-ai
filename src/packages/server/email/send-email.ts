@@ -15,10 +15,22 @@ import sendEmailThrottle from "./throttle";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
   normalizeEmailBackend,
+  normalizeEmailLane,
   notificationEmailBackendSettingName,
   resolveEmailBackendForLane,
   type EmailLane,
 } from "@cocalc/util/notification-email";
+
+export async function getEmailLaneDiagnostic(
+  lane: EmailLane = "transactional",
+): Promise<string> {
+  const normalizedLane = normalizeEmailLane(lane);
+  const settings = await getServerSettings();
+  const defaultBackend = normalizeEmailBackend(settings.email_backend);
+  const laneBackend = `${settings[notificationEmailBackendSettingName(normalizedLane)] ?? "default"}`;
+  const resolvedBackend = resolveEmailBackendForLane(settings, normalizedLane);
+  return `${normalizedLane} lane: default=${defaultBackend || "none"}, lane=${laneBackend || "none"}, resolved=${resolvedBackend || "none"}`;
+}
 
 export const testEmails: Message[] = [];
 export function resetTestEmails() {

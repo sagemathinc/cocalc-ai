@@ -32,7 +32,44 @@ export interface TestEmailResult {
   resolved_backend: EmailBackend;
   default_backend: EmailBackend;
   lane_backend: EmailLaneBackend;
+  configured: {
+    sendgrid_key: boolean;
+    primary_smtp: {
+      server: boolean;
+      from: boolean;
+      login: boolean;
+      password: boolean;
+    };
+    secondary_smtp: {
+      enabled: boolean;
+      server: boolean;
+      from: boolean;
+      login: boolean;
+      password: boolean;
+    };
+  };
   route: TestEmailRouteStep[];
+}
+
+function getConfigured(
+  settings: Record<string, any>,
+): TestEmailResult["configured"] {
+  return {
+    sendgrid_key: !!settings.sendgrid_key,
+    primary_smtp: {
+      server: !!settings.email_smtp_server,
+      from: !!settings.email_smtp_from,
+      login: !!settings.email_smtp_login,
+      password: !!settings.email_smtp_password,
+    },
+    secondary_smtp: {
+      enabled: settings.password_reset_override === "smtp",
+      server: !!settings.password_reset_smtp_server,
+      from: !!settings.password_reset_smtp_from,
+      login: !!settings.password_reset_smtp_login,
+      password: !!settings.password_reset_smtp_password,
+    },
+  };
 }
 
 function sanitizeError(err: unknown): string {
@@ -92,6 +129,7 @@ export async function sendTestEmail({
   const lane_backend = `${
     settings[notificationEmailBackendSettingName(normalizedLane)] ?? "default"
   }` as EmailLaneBackend;
+  const configured = getConfigured(settings);
   const resolved_backend = resolveEmailBackendForLane(settings, normalizedLane);
   const fallback_backend =
     resolved_backend === "smtp" && default_backend !== "smtp"
@@ -110,6 +148,7 @@ export async function sendTestEmail({
       resolved_backend,
       default_backend,
       lane_backend,
+      configured,
       route,
     };
   }
@@ -134,6 +173,7 @@ export async function sendTestEmail({
         resolved_backend,
         default_backend,
         lane_backend,
+        configured,
         route,
       };
     } catch (err) {
@@ -153,6 +193,7 @@ export async function sendTestEmail({
     resolved_backend,
     default_backend,
     lane_backend,
+    configured,
     route,
   };
 }
