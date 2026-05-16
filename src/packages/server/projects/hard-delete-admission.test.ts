@@ -22,21 +22,33 @@ const PROJECT_ID = "22222222-2222-4222-8222-222222222222";
 
 function counts({
   account_inflight = 0,
+  account_queued = 0,
+  account_running = 0,
   account_recent = 0,
   global_inflight = 0,
+  global_queued = 0,
+  global_running = 0,
   same_project_active = 0,
 }: Partial<{
   account_inflight: number;
+  account_queued: number;
+  account_running: number;
   account_recent: number;
   global_inflight: number;
+  global_queued: number;
+  global_running: number;
   same_project_active: number;
 }> = {}) {
   return {
     rows: [
       {
         account_inflight,
+        account_queued,
+        account_running,
         account_recent,
         global_inflight,
+        global_queued,
+        global_running,
         same_project_active,
       },
     ],
@@ -68,8 +80,12 @@ describe("hard-delete admission", () => {
       }),
     ).resolves.toMatchObject({
       account_inflight: 0,
+      account_queued: 0,
+      account_running: 0,
       account_recent: 0,
       global_inflight: 0,
+      global_queued: 0,
+      global_running: 0,
       same_project_active: 0,
     });
     expect(ensureLroSchemaMock).toHaveBeenCalledTimes(1);
@@ -122,35 +138,44 @@ describe("hard-delete admission", () => {
   it.each([
     [
       "account_inflight",
-      counts({ account_inflight: 2 }),
+      counts({ account_inflight: 2, account_queued: 2 }),
       "project_delete_rate_limited_account_inflight",
+      "queued=2, running=0, total=2, limit=2",
     ],
     [
       "account_recent",
       counts({ account_recent: 10 }),
       "project_delete_rate_limited_account_recent",
+      "recent=10, limit=10, window_seconds=3600",
     ],
     [
       "global_inflight",
-      counts({ global_inflight: 100 }),
+      counts({ global_inflight: 100, global_queued: 99, global_running: 1 }),
       "project_delete_rate_limited_global_inflight",
+      "queued=99, running=1, total=100, limit=100",
     ],
-  ])("rejects when %s reaches its limit", async (_name, result, code) => {
-    queryMock.mockResolvedValueOnce(result);
+  ])(
+    "rejects when %s reaches its limit",
+    async (_name, result, code, messagePart) => {
+      queryMock.mockResolvedValueOnce(result);
 
-    const { assertProjectHardDeleteAdmission } =
-      await import("./hard-delete-admission");
-    await expect(
-      assertProjectHardDeleteAdmission({
-        account_id: ACCOUNT_ID,
-        project_id: PROJECT_ID,
-        limits: {
-          account_inflight: 2,
-          account_recent: 10,
-          account_recent_window_seconds: 60 * 60,
-          global_inflight: 100,
-        },
-      }),
-    ).rejects.toMatchObject({ code });
-  });
+      const { assertProjectHardDeleteAdmission } =
+        await import("./hard-delete-admission");
+      await expect(
+        assertProjectHardDeleteAdmission({
+          account_id: ACCOUNT_ID,
+          project_id: PROJECT_ID,
+          limits: {
+            account_inflight: 2,
+            account_recent: 10,
+            account_recent_window_seconds: 60 * 60,
+            global_inflight: 100,
+          },
+        }),
+      ).rejects.toMatchObject({
+        code,
+        message: expect.stringContaining(messagePart),
+      });
+    },
+  );
 });

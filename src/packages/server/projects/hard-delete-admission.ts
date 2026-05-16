@@ -25,8 +25,12 @@ export interface ProjectHardDeleteAdmissionLimits {
 
 export interface ProjectHardDeleteAdmissionCounts {
   account_inflight: number;
+  account_queued: number;
+  account_running: number;
   account_recent: number;
   global_inflight: number;
+  global_queued: number;
+  global_running: number;
   same_project_active: number;
 }
 
@@ -82,6 +86,49 @@ function deny({
   throw new ConatError(message, { code });
 }
 
+function accountInflightMessage({
+  counts,
+  limits,
+}: {
+  counts: ProjectHardDeleteAdmissionCounts;
+  limits: ProjectHardDeleteAdmissionLimits;
+}): string {
+  return (
+    "Too many project deletes are already queued or running for this account " +
+    `(queued=${counts.account_queued}, running=${counts.account_running}, ` +
+    `total=${counts.account_inflight}, limit=${limits.account_inflight}).`
+  );
+}
+
+function accountRecentMessage({
+  counts,
+  limits,
+}: {
+  counts: ProjectHardDeleteAdmissionCounts;
+  limits: ProjectHardDeleteAdmissionLimits;
+}): string {
+  return (
+    "Too many projects were deleted by this account recently " +
+    `(recent=${counts.account_recent}, limit=${limits.account_recent}, ` +
+    `window_seconds=${limits.account_recent_window_seconds}).`
+  );
+}
+
+function globalInflightMessage({
+  counts,
+  limits,
+}: {
+  counts: ProjectHardDeleteAdmissionCounts;
+  limits: ProjectHardDeleteAdmissionLimits;
+}): string {
+  return (
+    "Too many project deletes are already queued or running globally " +
+    `(queued=${counts.global_queued}, running=${counts.global_running}, ` +
+    `total=${counts.global_inflight}, limit=${limits.global_inflight}). ` +
+    "Try again later."
+  );
+}
+
 export async function getProjectHardDeleteAdmissionCounts({
   account_id,
   project_id,
@@ -110,6 +157,18 @@ export async function getProjectHardDeleteAdmissionCounts({
         )::int AS account_inflight,
         COUNT(*) FILTER (
           WHERE created_by=$1
+            AND expires_at > now()
+            AND status='queued'
+        )::int AS account_queued,
+        COUNT(*) FILTER (
+          WHERE created_by=$1
+            AND expires_at > now()
+            AND status='running'
+            AND heartbeat_at IS NOT NULL
+            AND heartbeat_at >= now() - ($6::text || ' milliseconds')::interval
+        )::int AS account_running,
+        COUNT(*) FILTER (
+          WHERE created_by=$1
             AND created_at >= now() - ($2::int * interval '1 second')
             AND status <> 'expired'
         )::int AS account_recent,
@@ -125,6 +184,16 @@ export async function getProjectHardDeleteAdmissionCounts({
               )
             )
         )::int AS global_inflight,
+        COUNT(*) FILTER (
+          WHERE expires_at > now()
+            AND status='queued'
+        )::int AS global_queued,
+        COUNT(*) FILTER (
+          WHERE expires_at > now()
+            AND status='running'
+            AND heartbeat_at IS NOT NULL
+            AND heartbeat_at >= now() - ($6::text || ' milliseconds')::interval
+        )::int AS global_running,
         COUNT(*) FILTER (
           WHERE dedupe_key=$4
             AND expires_at > now()
@@ -145,8 +214,12 @@ export async function getProjectHardDeleteAdmissionCounts({
   const row = rows[0] ?? {};
   return {
     account_inflight: asInteger(row.account_inflight),
+    account_queued: asInteger(row.account_queued),
+    account_running: asInteger(row.account_running),
     account_recent: asInteger(row.account_recent),
     global_inflight: asInteger(row.global_inflight),
+    global_queued: asInteger(row.global_queued),
+    global_running: asInteger(row.global_running),
     same_project_active: asInteger(row.same_project_active),
   };
 }
@@ -171,21 +244,19 @@ export async function assertProjectHardDeleteAdmission({
   if (counts.account_inflight >= limits.account_inflight) {
     deny({
       code: "project_delete_rate_limited_account_inflight",
-      message:
-        "Too many project deletes are already queued or running for this account.",
+      message: accountInflightMessage({ counts, limits }),
     });
   }
   if (counts.account_recent >= limits.account_recent) {
     deny({
       code: "project_delete_rate_limited_account_recent",
-      message: "Too many projects were deleted by this account recently.",
+      message: accountRecentMessage({ counts, limits }),
     });
   }
   if (counts.global_inflight >= limits.global_inflight) {
     deny({
       code: "project_delete_rate_limited_global_inflight",
-      message:
-        "Too many project deletes are already queued or running. Try again later.",
+      message: globalInflightMessage({ counts, limits }),
     });
   }
   return counts;
