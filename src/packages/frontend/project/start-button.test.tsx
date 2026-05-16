@@ -369,7 +369,7 @@ describe("StartButton", () => {
     await waitFor(() => {
       expect(Modal.info).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: "Select how to start project",
+          title: "Choose how to start this project",
         }),
       );
     });

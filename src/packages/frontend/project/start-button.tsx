@@ -42,7 +42,6 @@ import { progressBarStatus } from "@cocalc/frontend/lro/utils";
 import { useProjectActiveOperation } from "./use-project-active-op";
 import {
   extractRuntimeSponsorDenial,
-  formatRuntimeSponsorDenial,
   type RuntimeSponsorDenial,
 } from "@cocalc/util/runtime-sponsor-denial";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
@@ -181,8 +180,11 @@ export function StartButton({
     minimalStartAttemptOpIdsRef.current.delete(startLroSummary.op_id);
     Modal.info({
       title: runtimeSponsorDenial
-        ? "Select how to start project"
+        ? "Choose how to start this project"
         : "Project start failed",
+      icon: runtimeSponsorDenial ? (
+        <Icon name="rocket" style={{ color: COLORS.BLUE_D }} />
+      ) : undefined,
       content: renderStartFailureDescription(),
       okText: "Close",
       width: 720,
@@ -241,7 +243,8 @@ export function StartButton({
     const denial = extractRuntimeSponsorDenial(err);
     if (denial) {
       Modal.info({
-        title: "Select how to start project",
+        title: "Choose how to start this project",
+        icon: <Icon name="rocket" style={{ color: COLORS.BLUE_D }} />,
         content: renderStartErrorDescription(err),
         width: 720,
       });
@@ -631,8 +634,8 @@ function RuntimeSponsorDenialDescription({
     Record<string, true>
   >({});
   const [changingSponsor, setChangingSponsor] = useState(false);
-  const [membershipOpen, setMembershipOpen] = useState(false);
   const [stopError, setStopError] = useState<string>("");
+  const [actionMessage, setActionMessage] = useState<string>("");
   const visibleProjects = denial.active_projects.filter(
     (project) => project.visible !== false,
   );
@@ -644,13 +647,16 @@ function RuntimeSponsorDenialDescription({
 
   async function stopProjectAndRetry(projectToStopId: string) {
     setStopError("");
+    setActionMessage("Stopping the selected project...");
     setStoppingProjectIds((ids) => ({ ...ids, [projectToStopId]: true }));
     try {
       await redux.getActions("projects").stop_project(projectToStopId);
+      setActionMessage("Starting this project...");
       await redux.getActions("projects").start_project(project_id);
       Modal.destroyAll();
     } catch (err) {
       setStopError(`${err}`);
+      setActionMessage("");
     } finally {
       setStoppingProjectIds((ids) => {
         const next = { ...ids };
@@ -662,31 +668,79 @@ function RuntimeSponsorDenialDescription({
 
   async function useMyMembershipAndRetry() {
     setStopError("");
+    setActionMessage("Switching the runtime sponsor...");
     setChangingSponsor(true);
     try {
       await redux
         .getActions("projects")
         .set_project_runtime_sponsor_to_me(project_id);
+      setActionMessage("Starting this project...");
       await redux.getActions("projects").start_project(project_id);
       Modal.destroyAll();
     } catch (err) {
       setStopError(`${err}`);
+      setActionMessage("");
     } finally {
       setChangingSponsor(false);
     }
   }
 
   function openMembershipDetails() {
-    setMembershipOpen(true);
+    Modal.destroyAll();
+    setTimeout(() => {
+      Modal.info({
+        title: "Membership",
+        content: <MembershipStatusPanel showHeader={false} />,
+        width: 900,
+        okText: "Close",
+      });
+    }, 0);
   }
+
+  const sponsorName = denial.sponsor_display_name ?? "The runtime sponsor";
+  const sponsorPossessive = sponsorName.endsWith("s")
+    ? `${sponsorName}'`
+    : `${sponsorName}'s`;
+  const slotMessage =
+    denial.limit <= 0
+      ? `${sponsorName} does not currently have sponsored running-project slots available.`
+      : denial.limit === 1
+        ? `${sponsorPossessive} sponsored running-project slot is already in use.`
+        : `${sponsorName} is using all ${denial.limit} sponsored running-project slots.`;
 
   return (
     <div>
-      <div>{formatRuntimeSponsorDenial(denial)}</div>
+      <Alert
+        type="info"
+        showIcon={false}
+        style={{ marginBottom: "12px" }}
+        message={
+          <div>
+            <b>{slotMessage}</b>
+          </div>
+        }
+        description={
+          canStopAnyVisibleProject
+            ? "Stop one project below to free a slot. CoCalc will then start this project automatically."
+            : "Free a slot or review membership details, then try starting this project again."
+        }
+      />
       {visibleProjects.length > 0 && (
-        <ul style={{ margin: "8px 0 0 18px", padding: 0 }}>
+        <div style={{ display: "grid", gap: "8px" }}>
           {visibleProjects.map((project) => (
-            <li key={project.project_id}>
+            <div
+              key={project.project_id}
+              style={{
+                alignItems: "center",
+                background: COLORS.GRAY_LLL,
+                border: `1px solid ${COLORS.GRAY_LL}`,
+                borderRadius: "6px",
+                display: "flex",
+                gap: "8px",
+                justifyContent: "space-between",
+                padding: "8px 10px",
+              }}
+            >
               <Space size="small" align="center" wrap>
                 {project.can_stop !== false && (
                   <Button
@@ -700,33 +754,35 @@ function RuntimeSponsorDenialDescription({
                 <ProjectTitle project_id={project.project_id} trunc={60} />
                 {project.state && <span>({project.state})</span>}
               </Space>
-            </li>
+            </div>
           ))}
-        </ul>
-      )}
-      {canStopAnyVisibleProject && (
-        <div style={{ marginTop: "8px" }}>
-          Stop one of these projects to free a running-project slot and start
-          the project you were trying to start.
         </div>
       )}
-      {denial.can_upgrade && (
-        <div style={{ marginTop: "8px" }}>
-          <Button size="small" onClick={openMembershipDetails}>
-            Open membership details
-          </Button>
+      {actionMessage && (
+        <div style={{ marginTop: "12px" }}>
+          <Space size="small">
+            <Spin size="small" />
+            <span>{actionMessage}</span>
+          </Space>
         </div>
       )}
-      {denial.can_change_sponsor && (
-        <div style={{ marginTop: "8px" }}>
-          <Button
-            size="small"
-            loading={changingSponsor}
-            onClick={useMyMembershipAndRetry}
-          >
-            Use my membership and try again
-          </Button>
-        </div>
+      {(denial.can_upgrade || denial.can_change_sponsor) && (
+        <Space size="small" style={{ marginTop: "12px" }} wrap>
+          {denial.can_upgrade && (
+            <Button size="small" onClick={openMembershipDetails}>
+              Open membership details
+            </Button>
+          )}
+          {denial.can_change_sponsor && (
+            <Button
+              size="small"
+              loading={changingSponsor}
+              onClick={useMyMembershipAndRetry}
+            >
+              Use my membership and try again
+            </Button>
+          )}
+        </Space>
       )}
       {stopError && (
         <div style={{ marginTop: "8px", color: COLORS.ANTD_RED_WARN }}>
@@ -740,15 +796,6 @@ function RuntimeSponsorDenialDescription({
           here because your account is not a collaborator.
         </div>
       )}
-      <Modal
-        width={800}
-        open={membershipOpen}
-        title="Membership"
-        onCancel={() => setMembershipOpen(false)}
-        onOk={() => setMembershipOpen(false)}
-      >
-        <MembershipStatusPanel showHeader={false} />
-      </Modal>
     </div>
   );
 }
