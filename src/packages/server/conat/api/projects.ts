@@ -2267,10 +2267,12 @@ export async function getProjectActiveOperation({
 
 export async function deleteProject({
   account_id,
+  browser_id,
   session_hash,
   project_id,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   project_id: string;
 }): Promise<void> {
@@ -2279,6 +2281,7 @@ export async function deleteProject({
   }
   await requireDangerousProjectMutationAuth({
     account_id,
+    browser_id,
     session_hash,
   });
   await deleteProjectControl({
@@ -2289,11 +2292,13 @@ export async function deleteProject({
 
 export async function setProjectDeleted({
   account_id,
+  browser_id,
   session_hash,
   project_id,
   deleted,
 }: {
   account_id?: string;
+  browser_id?: string | null;
   session_hash?: string | null;
   project_id: string;
   deleted: boolean;
@@ -2303,6 +2308,7 @@ export async function setProjectDeleted({
   }
   await requireDangerousProjectMutationAuth({
     account_id,
+    browser_id,
     session_hash,
   });
   await setProjectDeletedControl({

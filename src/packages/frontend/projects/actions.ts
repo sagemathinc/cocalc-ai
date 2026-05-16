@@ -48,6 +48,7 @@ import {
 } from "./offline-move-confirmation";
 import type { DStream } from "@cocalc/conat/sync/dstream";
 import { isTerminal } from "@cocalc/frontend/lro/utils";
+import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
 
 import type {
   CourseInfo,
@@ -1403,12 +1404,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   in the projects table!  Otherwise, bad things will happen.
   */
   private async have_project(project_id: string): Promise<boolean> {
-    const table = await this.getProjectTable();
-    if (!table) {
-      return false;
-    }
-    const t = table._table;
-    return t.get(project_id) != null;
+    return !!store.get("project_map")?.has(project_id);
   }
 
   private setProjectLocalScalarField = (
@@ -1422,6 +1418,22 @@ export class ProjectsActions extends Actions<ProjectsState> {
     }
     this.setState({
       project_map: project_map.setIn([project_id, field], value),
+    } as ProjectsState);
+  };
+
+  private setProjectLocalTheme = (
+    project_id: string,
+    theme: ProjectTheme | null | undefined,
+  ): void => {
+    const project_map = store.get("project_map");
+    if (project_map == null || !project_map.has(project_id)) {
+      return;
+    }
+    this.setState({
+      project_map: project_map.setIn(
+        [project_id, "theme"],
+        theme == null ? theme : fromJS(theme),
+      ),
     } as ProjectsState);
   };
 
@@ -1483,11 +1495,24 @@ export class ProjectsActions extends Actions<ProjectsState> {
       this.setProjectLocalScalarField(project_id, field, before);
       throw err;
     }
-    await this.redux.getProjectActions(project_id).async_log({
+    this.logProjectMetadataUpdate(project_id, {
       event: "set",
       [field]: value,
     });
   };
+
+  private logProjectMetadataUpdate(project_id: string, event: any): void {
+    this.redux
+      .getProjectActions(project_id)
+      ?.async_log(event)
+      .catch((err) => {
+        console.warn("error recording project metadata log entry", {
+          project_id,
+          err,
+          event,
+        });
+      });
+  }
 
   set_project_title = async (
     project_id: string,
@@ -1675,22 +1700,20 @@ export class ProjectsActions extends Actions<ProjectsState> {
     const before = store.getIn(["project_map", project_id, "theme"]);
     const beforeJS = before?.toJS?.() ?? before ?? null;
     if (isEqual(beforeJS, normalizedTheme)) return;
+    this.setProjectLocalTheme(project_id, normalizedTheme);
     try {
-      await this.projects_table_set({
+      await this.projects_query_set({
         project_id,
-        theme: normalizedTheme,
-      });
-      await this.redux.getProjectActions(project_id).async_log({
-        event: "set",
         theme: normalizedTheme,
       });
     } catch (err) {
-      await this.projects_table_set({
-        project_id,
-        theme: beforeJS ?? {},
-      });
+      this.setProjectLocalTheme(project_id, beforeJS);
       throw err;
     }
+    this.logProjectMetadataUpdate(project_id, {
+      event: "set",
+      theme: normalizedTheme,
+    });
   };
 
   add_ssh_key_to_project = async (opts: {
@@ -2294,7 +2317,13 @@ export class ProjectsActions extends Actions<ProjectsState> {
           void this.ensure_host_info(host_id, true);
         }
       } catch (err) {
-        actions.setState({ control_error: `Error starting project -- ${err}` });
+        if (extractRuntimeSponsorDenial(err)) {
+          actions.setState({ control_error: "" });
+        } else {
+          actions.setState({
+            control_error: `Error starting project -- ${err}`,
+          });
+        }
         throw err;
       }
       actions.setState({ control_error: "" });
@@ -2971,6 +3000,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
   public async delete_project(project_id: string): Promise<void> {
     await webapp_client.conat_client.hub.projects.setProjectDeleted({
       project_id,
+      browser_id: webapp_client.browser_id,
       deleted: true,
     });
     await this.project_log(project_id, { event: "delete_project" });
@@ -2982,6 +3012,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
 
     await webapp_client.conat_client.hub.projects.setProjectDeleted({
       project_id,
+      browser_id: webapp_client.browser_id,
       deleted: !is_deleted,
     });
     await this.project_log(project_id, {

@@ -39,6 +39,13 @@ jest.mock("antd", () => {
       {children}
     </button>
   );
+  const Modal = ({ children, open }: any) =>
+    open ? <div>{children}</div> : null;
+  Modal.confirm = jest.fn();
+  Modal.error = jest.fn();
+  Modal.info = jest.fn();
+  Modal.destroyAll = jest.fn();
+  Modal.useModal = jest.fn(() => [jest.fn(), null]);
   return {
     Alert: ({ title, description, children }: any) => (
       <div>
@@ -48,11 +55,7 @@ jest.mock("antd", () => {
       </div>
     ),
     Button,
-    Modal: {
-      confirm: jest.fn(),
-      error: jest.fn(),
-      destroyAll: jest.fn(),
-    },
+    Modal,
     Progress: Div,
     Space: Div,
     Spin: Div,
@@ -125,6 +128,10 @@ jest.mock("@cocalc/frontend/projects/host-operational", () => ({
 
 jest.mock("@cocalc/frontend/project/settings/move-project", () => () => null);
 
+jest.mock("@cocalc/frontend/account/membership-status", () => ({
+  MembershipStatusPanel: () => <div>membership status panel</div>,
+}));
+
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {
@@ -149,6 +156,7 @@ describe("StartButton", () => {
     mockStopProject.mockReset();
     mockSetProjectRuntimeSponsorToMe.mockReset();
     (Modal.confirm as jest.Mock).mockReset();
+    (Modal.info as jest.Mock).mockReset();
     mockAccountId = undefined;
     mockIsAdmin = false;
     startLroRecord = {
@@ -253,9 +261,7 @@ describe("StartButton", () => {
       </IntlProvider>,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /stop and start this project/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /^stop$/i }));
 
     await waitFor(() => {
       expect(mockStopProject).toHaveBeenCalledWith("running-project");
@@ -361,12 +367,79 @@ describe("StartButton", () => {
     );
 
     await waitFor(() => {
-      expect(Modal.error).toHaveBeenCalledWith(
+      expect(Modal.info).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: "Project start failed",
-          okText: "Close",
+          title: "Choose how to start this project",
         }),
       );
     });
+  });
+
+  it("renders structured project start infrastructure errors as user-facing text", () => {
+    startLroRecord = {
+      toJS: () => ({
+        summary: {
+          status: "failed",
+          op_id: "op-1",
+          scope_type: "project",
+          scope_id: "project-1",
+          error: JSON.stringify({
+            error:
+              "Unknown system error -122: Unknown system error -122, open '/mnt/cocalc/project-1/.local/share/cocalc/rootfs/current-image.txt'",
+            event: { type: "error" },
+          }),
+        },
+      }),
+    };
+
+    render(
+      <IntlProvider locale="en">
+        <StartButton />
+      </IntlProvider>,
+    );
+
+    expect(
+      screen.getByText(/could not finish preparing the project software/i),
+    ).toBeTruthy();
+    expect(screen.getByText("Technical details")).toBeTruthy();
+  });
+
+  it("opens membership details from sponsor recovery inside the normal React tree", async () => {
+    startLroRecord = undefined;
+    mockStartProject.mockRejectedValue(
+      new Error(
+        'COCALC_RUNTIME_SPONSOR_DENIAL:{"code":"runtime_sponsor_slots_exhausted","sponsor_account_id":"user-1","limit":1,"current":1,"active_projects":[],"sponsor_display_name":"Bella Boo","can_upgrade":true,"can_change_sponsor":false}',
+      ),
+    );
+
+    const view = render(
+      <IntlProvider locale="en">
+        <StartButton />
+      </IntlProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /start project/i }));
+
+    let content: React.ReactElement | undefined;
+    await waitFor(() => {
+      content = (Modal.info as jest.Mock).mock.calls[0][0].content;
+      expect(content).toBeTruthy();
+    });
+
+    view.rerender(
+      <IntlProvider locale="en">
+        <StartButton />
+        {content}
+      </IntlProvider>,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /open membership details/i,
+      }),
+    );
+
+    expect(Modal.destroyAll).toHaveBeenCalled();
+    expect(screen.getByText("membership status panel")).toBeTruthy();
   });
 });

@@ -15,6 +15,9 @@ export function defaultOpenProjectTarget({
   if (target != null && target !== "") {
     return target;
   }
+  if (target === "" && activeProjectTab === "settings") {
+    return "project-home";
+  }
   if (!switchTo) {
     return undefined;
   }

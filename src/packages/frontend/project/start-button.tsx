@@ -31,6 +31,7 @@ import {
   hostLabel,
   normalizeProjectStateForDisplay,
 } from "@cocalc/frontend/projects/host-operational";
+import { MembershipStatusPanel } from "@cocalc/frontend/account/membership-status";
 import MoveProject from "@cocalc/frontend/project/settings/move-project";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -41,7 +42,6 @@ import { progressBarStatus } from "@cocalc/frontend/lro/utils";
 import { useProjectActiveOperation } from "./use-project-active-op";
 import {
   extractRuntimeSponsorDenial,
-  formatRuntimeSponsorDenial,
   type RuntimeSponsorDenial,
 } from "@cocalc/util/runtime-sponsor-denial";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
@@ -103,6 +103,7 @@ export function StartButton({
     hostOperational.reason ?? "Assigned host is unavailable.";
   const assignedHostLabel = hostLabel(hostInfo, host_id);
   const lastNotRunningRef = useRef<null | number>(null);
+  const [membershipDetailsOpen, setMembershipDetailsOpen] = useState(false);
   const startLroRecord = useTypedRedux(
     { project_id: resolvedProjectId },
     "start_lro",
@@ -178,8 +179,13 @@ export function StartButton({
       return;
     }
     minimalStartAttemptOpIdsRef.current.delete(startLroSummary.op_id);
-    Modal.error({
-      title: "Project start failed",
+    Modal.info({
+      title: runtimeSponsorDenial
+        ? "Choose how to start this project"
+        : "Project start failed",
+      icon: runtimeSponsorDenial ? (
+        <Icon name="rocket" style={{ color: COLORS.BLUE_D }} />
+      ) : undefined,
       content: renderStartFailureDescription(),
       okText: "Close",
       width: 720,
@@ -212,9 +218,13 @@ export function StartButton({
       <RuntimeSponsorDenialDescription
         denial={runtimeSponsorDenial}
         project_id={resolvedProjectId}
+        onOpenMembershipDetails={() => {
+          Modal.destroyAll();
+          setMembershipDetailsOpen(true);
+        }}
       />
     ) : (
-      startLroError
+      <ProjectStartFailureDescription error={startLroError} />
     );
   }
 
@@ -224,21 +234,34 @@ export function StartButton({
       <RuntimeSponsorDenialDescription
         denial={denial}
         project_id={resolvedProjectId}
+        onOpenMembershipDetails={() => {
+          Modal.destroyAll();
+          setMembershipDetailsOpen(true);
+        }}
       />
     ) : err instanceof Error ? (
-      err.message
+      <ProjectStartFailureDescription error={err.message} />
     ) : startPolicyBlock ? (
       formatProjectStartPolicyBlock(startPolicyBlock)
     ) : (
-      `${err}`
+      <ProjectStartFailureDescription error={`${err}`} />
     );
   }
 
   function showStartError(err: unknown) {
+    const denial = extractRuntimeSponsorDenial(err);
+    if (denial) {
+      Modal.info({
+        title: "Choose how to start this project",
+        icon: <Icon name="rocket" style={{ color: COLORS.BLUE_D }} />,
+        content: renderStartErrorDescription(err),
+        width: 720,
+      });
+      return;
+    }
     Modal.error({
       title: "Unable to start project",
       content: renderStartErrorDescription(err),
-      width: extractRuntimeSponsorDenial(err) ? 720 : undefined,
     });
   }
 
@@ -402,7 +425,15 @@ export function StartButton({
   }
 
   if (minimal) {
-    return render_start_project_button();
+    return (
+      <>
+        {render_start_project_button()}
+        <MembershipDetailsModal
+          open={membershipDetailsOpen}
+          onClose={() => setMembershipDetailsOpen(false)}
+        />
+      </>
+    );
   }
 
   // In case user is admin viewing another user's project, we provide a
@@ -507,8 +538,147 @@ export function StartButton({
       {state == null && redux.getStore("account")?.get("is_admin")
         ? render_admin_view()
         : render_normal_view()}
+      <MembershipDetailsModal
+        open={membershipDetailsOpen}
+        onClose={() => setMembershipDetailsOpen(false)}
+      />
     </div>
   );
+}
+
+function MembershipDetailsModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+
+  return (
+    <Modal
+      width={800}
+      title="Membership"
+      open={open}
+      onCancel={onClose}
+      onOk={onClose}
+    >
+      <MembershipStatusPanel showHeader={false} />
+    </Modal>
+  );
+}
+
+function ProjectStartFailureDescription({ error }: { error: string }) {
+  const { message, technical } = getProjectStartErrorDisplay(error);
+  const showTechnical =
+    !!technical &&
+    normalizeErrorText(technical) !== normalizeErrorText(message);
+
+  return (
+    <div>
+      <div>{message}</div>
+      {showTechnical && (
+        <details style={{ marginTop: "8px", fontSize: "12px" }}>
+          <summary>Technical details</summary>
+          <pre
+            style={{
+              background: COLORS.GRAY_LLL,
+              border: `1px solid ${COLORS.GRAY_LL}`,
+              borderRadius: "4px",
+              marginTop: "6px",
+              maxHeight: "160px",
+              overflow: "auto",
+              padding: "8px",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {technical}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function getProjectStartErrorDisplay(error: string): {
+  message: string;
+  technical: string;
+} {
+  const technical = `${error ?? ""}`.trim();
+  const extracted = extractErrorMessage(technical);
+  const lower = extracted.toLowerCase();
+
+  if (
+    lower.includes("current-image.txt") ||
+    lower.includes("unknown system error -122")
+  ) {
+    return {
+      message:
+        "CoCalc could not finish preparing the project software environment on this host. Try starting the project again; if it keeps failing, the project may need to be restored or moved to a healthy host.",
+      technical,
+    };
+  }
+
+  if (lower.includes("project volume does not exist")) {
+    return {
+      message:
+        "This project does not currently have an active filesystem volume on this host. Starting it should restore or provision the project from backup; if it keeps failing, the host or backup state needs attention.",
+      technical,
+    };
+  }
+
+  return {
+    message: extracted || "The project did not start.",
+    technical,
+  };
+}
+
+function extractErrorMessage(error: string): string {
+  const trimmed = stripErrorPrefix(error.trim());
+  if (!trimmed) return "";
+  const parsed = parseMaybeJson(trimmed);
+  if (parsed == null) return trimmed;
+  return extractErrorMessageFromValue(parsed) ?? trimmed;
+}
+
+function extractErrorMessageFromValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    const trimmed = stripErrorPrefix(value.trim());
+    const parsed = parseMaybeJson(trimmed);
+    if (parsed != null) {
+      return extractErrorMessageFromValue(parsed);
+    }
+    return trimmed || undefined;
+  }
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  for (const key of ["message", "error", "reason", "stderr"]) {
+    const extracted = extractErrorMessageFromValue(record[key]);
+    if (extracted) return extracted;
+  }
+  for (const key of ["event", "detail", "result"]) {
+    const extracted = extractErrorMessageFromValue(record[key]);
+    if (extracted) return extracted;
+  }
+  return undefined;
+}
+
+function parseMaybeJson(value: string): unknown | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+}
+
+function stripErrorPrefix(value: string): string {
+  return value.replace(/^error:\s*/i, "").trim();
+}
+
+function normalizeErrorText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 const START_PHASE_LABELS: Record<string, string> = {
@@ -612,15 +782,18 @@ function MoveProgressInline({ moveLro }: { moveLro: MoveLroState }) {
 function RuntimeSponsorDenialDescription({
   denial,
   project_id,
+  onOpenMembershipDetails,
 }: {
   denial: RuntimeSponsorDenial;
   project_id: string;
+  onOpenMembershipDetails: () => void;
 }) {
   const [stoppingProjectIds, setStoppingProjectIds] = useState<
     Record<string, true>
   >({});
   const [changingSponsor, setChangingSponsor] = useState(false);
   const [stopError, setStopError] = useState<string>("");
+  const [actionMessage, setActionMessage] = useState<string>("");
   const visibleProjects = denial.active_projects.filter(
     (project) => project.visible !== false,
   );
@@ -630,30 +803,18 @@ function RuntimeSponsorDenialDescription({
     (project) => project.can_stop !== false,
   );
 
-  async function stopProject(project_id: string) {
-    setStopError("");
-    setStoppingProjectIds((ids) => ({ ...ids, [project_id]: true }));
-    try {
-      await redux.getActions("projects").stop_project(project_id);
-    } catch (err) {
-      setStopError(`${err}`);
-    } finally {
-      setStoppingProjectIds((ids) => {
-        const next = { ...ids };
-        delete next[project_id];
-        return next;
-      });
-    }
-  }
-
   async function stopProjectAndRetry(projectToStopId: string) {
     setStopError("");
+    setActionMessage("Stopping the selected project...");
     setStoppingProjectIds((ids) => ({ ...ids, [projectToStopId]: true }));
     try {
       await redux.getActions("projects").stop_project(projectToStopId);
+      setActionMessage("Starting this project...");
       await redux.getActions("projects").start_project(project_id);
+      Modal.destroyAll();
     } catch (err) {
       setStopError(`${err}`);
+      setActionMessage("");
     } finally {
       setStoppingProjectIds((ids) => {
         const next = { ...ids };
@@ -665,84 +826,109 @@ function RuntimeSponsorDenialDescription({
 
   async function useMyMembershipAndRetry() {
     setStopError("");
+    setActionMessage("Switching the runtime sponsor...");
     setChangingSponsor(true);
     try {
       await redux
         .getActions("projects")
         .set_project_runtime_sponsor_to_me(project_id);
+      setActionMessage("Starting this project...");
       await redux.getActions("projects").start_project(project_id);
+      Modal.destroyAll();
     } catch (err) {
       setStopError(`${err}`);
+      setActionMessage("");
     } finally {
       setChangingSponsor(false);
     }
   }
 
-  function openMembershipDetails() {
-    Modal.destroyAll();
-    redux.getActions("page").set_active_tab("account");
-  }
+  const sponsorName = denial.sponsor_display_name ?? "The runtime sponsor";
+  const sponsorPossessive = sponsorName.endsWith("s")
+    ? `${sponsorName}'`
+    : `${sponsorName}'s`;
+  const slotMessage =
+    denial.limit <= 0
+      ? `${sponsorName} does not currently have sponsored running-project slots available.`
+      : denial.limit === 1
+        ? `${sponsorPossessive} sponsored running-project slot is already in use.`
+        : `${sponsorName} is using all ${denial.limit} sponsored running-project slots.`;
 
   return (
     <div>
-      <div>{formatRuntimeSponsorDenial(denial)}</div>
+      <Alert
+        type="info"
+        showIcon={false}
+        style={{ marginBottom: "12px" }}
+        message={
+          <div>
+            <b>{slotMessage}</b>
+          </div>
+        }
+        description={
+          canStopAnyVisibleProject
+            ? "Stop one project below to free a slot. CoCalc will then start this project automatically."
+            : "Free a slot or review membership details, then try starting this project again."
+        }
+      />
       {visibleProjects.length > 0 && (
-        <ul style={{ margin: "8px 0 0 18px", padding: 0 }}>
+        <div style={{ display: "grid", gap: "8px" }}>
           {visibleProjects.map((project) => (
-            <li key={project.project_id}>
+            <div
+              key={project.project_id}
+              style={{
+                alignItems: "center",
+                background: COLORS.GRAY_LLL,
+                border: `1px solid ${COLORS.GRAY_LL}`,
+                borderRadius: "6px",
+                display: "flex",
+                gap: "8px",
+                justifyContent: "space-between",
+                padding: "8px 10px",
+              }}
+            >
               <Space size="small" align="center" wrap>
+                {project.can_stop !== false && (
+                  <Button
+                    size="small"
+                    loading={!!stoppingProjectIds[project.project_id]}
+                    onClick={() => stopProjectAndRetry(project.project_id)}
+                  >
+                    Stop
+                  </Button>
+                )}
                 <ProjectTitle project_id={project.project_id} trunc={60} />
                 {project.state && <span>({project.state})</span>}
-                {project.can_stop !== false && (
-                  <>
-                    <Button
-                      size="small"
-                      loading={!!stoppingProjectIds[project.project_id]}
-                      onClick={() => stopProject(project.project_id)}
-                    >
-                      Stop
-                    </Button>
-                    {denial.can_change_sponsor !== true && (
-                      <Button
-                        size="small"
-                        type="primary"
-                        loading={!!stoppingProjectIds[project.project_id]}
-                        onClick={() => stopProjectAndRetry(project.project_id)}
-                      >
-                        Stop and start this project
-                      </Button>
-                    )}
-                  </>
-                )}
               </Space>
-            </li>
+            </div>
           ))}
-        </ul>
-      )}
-      {canStopAnyVisibleProject && (
-        <div style={{ marginTop: "8px" }}>
-          Stop one of these projects, then try starting this project again.
-          {denial.can_change_sponsor !== true &&
-            " Or use one of the buttons above to do both in one step."}
         </div>
       )}
-      {denial.can_upgrade && (
-        <div style={{ marginTop: "8px" }}>
-          <Button size="small" onClick={openMembershipDetails}>
-            Open membership details
-          </Button>
+      {actionMessage && (
+        <div style={{ marginTop: "12px" }}>
+          <Space size="small">
+            <Spin size="small" />
+            <span>{actionMessage}</span>
+          </Space>
         </div>
       )}
-      {denial.can_change_sponsor && (
-        <div style={{ marginTop: "8px" }}>
-          <Button
-            size="small"
-            loading={changingSponsor}
-            onClick={useMyMembershipAndRetry}
-          >
-            Use my membership and try again
-          </Button>
-        </div>
+      {(denial.can_upgrade || denial.can_change_sponsor) && (
+        <Space size="small" style={{ marginTop: "12px" }} wrap>
+          {denial.can_upgrade && (
+            <Button size="small" onClick={onOpenMembershipDetails}>
+              Open membership details
+            </Button>
+          )}
+          {denial.can_change_sponsor && (
+            <Button
+              size="small"
+              loading={changingSponsor}
+              onClick={useMyMembershipAndRetry}
+            >
+              Use my membership and try again
+            </Button>
+          )}
+        </Space>
       )}
       {stopError && (
         <div style={{ marginTop: "8px", color: COLORS.ANTD_RED_WARN }}>

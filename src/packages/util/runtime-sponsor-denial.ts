@@ -57,13 +57,49 @@ export function extractRuntimeSponsorDenial(
   const jsonText = text.slice(
     markerIndex + RUNTIME_SPONSOR_DENIAL_MARKER.length,
   );
+  const objectText = extractFirstJsonObjectText(jsonText);
+  if (objectText == null) {
+    return undefined;
+  }
   try {
-    const parsed = JSON.parse(jsonText);
+    const parsed = JSON.parse(objectText);
     if (isRuntimeSponsorDenial(parsed)) {
       return parsed;
     }
   } catch {
     // ignore malformed denial payloads and fall back to generic errors
+  }
+  return undefined;
+}
+
+function extractFirstJsonObjectText(text: string): string | undefined {
+  const start = text.indexOf("{");
+  if (start < 0) return undefined;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+    } else if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
   }
   return undefined;
 }
