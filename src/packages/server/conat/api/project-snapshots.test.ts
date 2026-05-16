@@ -8,6 +8,7 @@ let getProjectFileServerClientMock: jest.Mock;
 let assertProjectOwnerCanIncreaseAccountStorageMock: jest.Mock;
 let getProjectSnapshotLimitMock: jest.Mock;
 let requireDangerousProjectMutationAuthMock: jest.Mock;
+let poolQueryMock: jest.Mock;
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -46,6 +47,13 @@ jest.mock("@cocalc/conat/persist/util", () => ({
   SERVICE: "persist-service",
 }));
 
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: jest.fn(() => ({
+    query: (...args: any[]) => poolQueryMock(...args),
+  })),
+}));
+
 jest.mock("./util", () => ({
   __esModule: true,
   assertCollab: (...args: any[]) => assertCollabMock(...args),
@@ -77,6 +85,18 @@ describe("project-snapshots.createSnapshot", () => {
     jest.resetModules();
     assertCollabMock = jest.fn(async () => undefined);
     getProjectSnapshotLimitMock = jest.fn(async () => 8);
+    poolQueryMock = jest.fn(async () => ({
+      rows: [
+        {
+          snapshots: {
+            frequent: 1,
+            daily: 1,
+            weekly: 0,
+            monthly: 0,
+          },
+        },
+      ],
+    }));
     getProjectFileServerClientMock = jest.fn(async () => ({
       createSnapshot: jest.fn(),
       deleteSnapshot: jest.fn(),
@@ -106,7 +126,38 @@ describe("project-snapshots.createSnapshot", () => {
     });
     await expect(
       getSnapshotQuota({ account_id: "acct-1", project_id: "proj-1" }),
-    ).resolves.toEqual({ limit: 8 });
+    ).resolves.toEqual({
+      limit: 8,
+      manual: {
+        limit: 6,
+        current: 0,
+        rolling_reserved: 2,
+      },
+    });
+  });
+
+  it("blocks manual snapshot creation when named snapshots fill manual slots", async () => {
+    getProjectFileServerClientMock = jest.fn(async () => ({
+      createSnapshot: jest.fn(),
+      deleteSnapshot: jest.fn(),
+      updateSnapshots: jest.fn(),
+      allSnapshotUsage: jest.fn(async () => [
+        { name: "manual-1" },
+        { name: "manual-2" },
+      ]),
+      getSnapshotFileText: jest.fn(),
+    }));
+    getProjectSnapshotLimitMock = jest.fn(async () => 3);
+    const { createSnapshot } = await import("./project-snapshots");
+    await expect(
+      createSnapshot({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        name: "manual-3",
+      }),
+    ).rejects.toThrow("Manual snapshot limit reached");
+    const client = await getProjectFileServerClientMock.mock.results[0].value;
+    expect(client.createSnapshot).not.toHaveBeenCalled();
   });
 });
 

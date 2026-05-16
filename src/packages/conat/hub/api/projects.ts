@@ -1065,7 +1065,14 @@ export interface Projects {
   getSnapshotQuota: (opts: {
     account_id?: string;
     project_id: string;
-  }) => Promise<{ limit: number }>;
+  }) => Promise<{
+    limit: number;
+    manual?: {
+      limit: number;
+      current: number;
+      rolling_reserved: number;
+    };
+  }>;
 
   allSnapshotUsage: (opts: { project_id: string }) => Promise<SnapshotUsage[]>;
 
