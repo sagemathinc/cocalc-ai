@@ -250,6 +250,25 @@ export default function RootFilesystemImage({
     );
   }, [previousProjectRootfsState, rootfsImages]);
   const currentDisplayEntry = useMemo(() => {
+    const liveImage = value.trim();
+    const liveImageId = imageId.trim();
+    if (selectedRootfsEntry) {
+      return selectedRootfsEntry;
+    }
+    if (
+      liveImage &&
+      currentProjectRootfsState?.image &&
+      liveImage !== currentProjectRootfsState.image
+    ) {
+      return undefined;
+    }
+    if (
+      liveImageId &&
+      currentProjectRootfsState?.image_id &&
+      liveImageId !== currentProjectRootfsState.image_id
+    ) {
+      return undefined;
+    }
     if (!currentProjectRootfsState) return undefined;
     if (
       currentProjectRootfsEntry &&
@@ -257,19 +276,15 @@ export default function RootFilesystemImage({
     ) {
       return currentProjectRootfsEntry;
     }
-    if (
-      selectedRootfsEntry &&
-      selectedRootfsEntry.image === currentProjectRootfsState.image
-    ) {
-      return selectedRootfsEntry;
-    }
-    return currentProjectRootfsEntry ?? selectedRootfsEntry;
+    return currentProjectRootfsEntry;
   }, [
     currentProjectRootfsEntry,
     currentProjectRootfsState,
+    imageId,
     selectedRootfsEntry,
+    value,
   ]);
-  const activeDisplayEntry = currentDisplayEntry ?? selectedRootfsEntry;
+  const activeDisplayEntry = currentDisplayEntry;
   const pickerRootfsImages = useMemo(
     () =>
       latestRootfsVersionEntries(rootfsImages, {
