@@ -19,12 +19,10 @@ import {
 import { PROJECT_CAPABILITY_SPECS } from "@cocalc/util/project-capabilities";
 import { COLORS } from "@cocalc/util/theme";
 
+import { EnvironmentConfigurationSummary } from "./environment-configuration-summary";
 import { EnvironmentFeatureGroups } from "./environment-feature-groups";
-import { Environment as CustomEnvironmentVariables } from "./environment";
-import { LauncherDefaults } from "./launcher-defaults";
 import { ProjectCapabilities } from "./project-capabilites";
 import RootFilesystemImage from "./root-filesystem-image";
-import { ProjectSecrets } from "./secrets";
 import type { Project } from "./types";
 
 type Mode = "project" | "flyout";
@@ -347,12 +345,10 @@ export function EnvironmentOverview({
           <Typography.Text type="secondary">
             Launcher defaults, process environment, and mounted secrets.
           </Typography.Text>
-          <LauncherDefaults project_id={project_id} />
-          <CustomEnvironmentVariables
+          <EnvironmentConfigurationSummary
+            mode={mode}
             project_id={project_id}
-            mode={detailMode}
           />
-          <ProjectSecrets project_id={project_id} mode={detailMode} />
         </Space>
       ),
     },
