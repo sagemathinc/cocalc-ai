@@ -61,6 +61,11 @@ import { close as terminatePersistServer } from "@cocalc/backend/conat/persist";
 import * as Module from "module";
 import { delay } from "awaiting";
 import { recordServiceAdmissionDenialLocal } from "./service-admission-denials";
+import {
+  getServiceAdmissionLimit,
+  serviceAdmissionLimitEnvName,
+} from "@cocalc/conat/admission/limits";
+import { recordServiceAdmissionNearLimit } from "@cocalc/conat/admission/denials";
 
 const ssh = {} as any;
 const reflect = {} as any;
@@ -84,24 +89,6 @@ export const hubApi: HubApi = {
 
 const logger = getLogger("server:conat:api");
 
-function positiveIntegerEnv({
-  name,
-  fallback,
-}: {
-  name: string;
-  fallback: number;
-}): number {
-  const value = Number(process.env[name]);
-  if (!Number.isFinite(value) || value <= 0) {
-    return fallback;
-  }
-  return Math.floor(value);
-}
-
-const MAX_ACTIVE_API_REQUESTS = positiveIntegerEnv({
-  name: "COCALC_HUB_CONAT_API_MAX_ACTIVE",
-  fallback: 200,
-});
 let activeApiRequests = 0;
 
 export function initAPI() {
@@ -197,20 +184,24 @@ async function handleMessage({ api, subject, mesg }) {
   } else {
     // we explicitly do NOT await this, since we want this hub server to handle
     // potentially many messages at once, not one at a time!
-    if (activeApiRequests >= MAX_ACTIVE_API_REQUESTS) {
+    const maxActiveApiRequests = getServiceAdmissionLimit(
+      "hub_conat_api_max_active",
+    );
+    const limitName = serviceAdmissionLimitEnvName("hub_conat_api_max_active");
+    if (activeApiRequests >= maxActiveApiRequests) {
       void recordServiceAdmissionDenialLocal({
         surface: "hub-conat-api",
         source: "hub-api",
-        limit: "COCALC_HUB_CONAT_API_MAX_ACTIVE",
+        limit: limitName,
         current: activeApiRequests,
-        maximum: MAX_ACTIVE_API_REQUESTS,
+        maximum: maxActiveApiRequests,
         reason: "hub api server is busy",
         subject: mesg.subject,
         key: request?.name,
       });
       logger.warn("rejecting hub.api request; active request cap reached", {
         active: activeApiRequests,
-        max: MAX_ACTIVE_API_REQUESTS,
+        max: maxActiveApiRequests,
         name: request?.name,
       });
       mesg.respond(null, {
@@ -222,6 +213,16 @@ async function handleMessage({ api, subject, mesg }) {
       });
       return;
     }
+    recordServiceAdmissionNearLimit({
+      surface: "hub-conat-api",
+      source: "hub-api",
+      limit: limitName,
+      current: activeApiRequests + 1,
+      maximum: maxActiveApiRequests,
+      reason: "hub api server is near capacity",
+      subject: mesg.subject,
+      key: request?.name,
+    });
     activeApiRequests += 1;
     void handleApiRequest({ request, mesg }).finally(() => {
       activeApiRequests -= 1;

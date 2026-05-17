@@ -15,10 +15,10 @@ Statuses:
 - `accepted-risk`: explicitly accepted for first release.
 - `done`: implemented and validated enough for release.
 
-Current score after the 2026-05-16 refresh:
+Current score after the 2026-05-16 SEC-WS refresh:
 
-- `done`: 2 findings.
-- `guarded`: 11 findings.
+- `done`: 3 findings.
+- `guarded`: 10 findings.
 - `blocked`: 0 findings.
 
 ## Summary
@@ -28,7 +28,7 @@ Current score after the 2026-05-16 refresh:
 | SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Revisit defaults after load testing.                                                                                                                                         |
 | SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Add actor-account limit cache if collaborator caps must differ from owner caps.                                                                                              |
 | SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper, count against ACP turn caps, and are also bounded by `acp_max_active_automations_per_project`. Denied automations are paused and surfaced in thread automation state.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Add broader abuse/account usage reporting if central ACP denial telemetry and CLI reporting are not sufficient.                                                              |
-| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, app proxy websockets, and raw Conat socket events; these now fast-fail above conservative active-request/message caps.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Tune per-identity limits and production alert thresholds from telemetry.                                                                                                     |
+| SEC-WS-001      | General hub/project-host websocket admission | done    | critical | Websocket/Conat admission now has admin-configurable limits for hub API dispatch, generic/typed Conat service handlers, Conat websocket connection caps, raw Conat socket event windows, app-proxy websockets, and project exec streams. Denials and throttled near-limit events are centrally recorded.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Revisit default values after production telemetry and add dashboards if central-log reporting is not enough.                                                                 |
 | SEC-BROWSER-001 | Browser exec/session automation              | guarded | critical | Browser-session async exec history was bounded, but active raw/QuickJS exec and typed action work per browser tab was not. Local per-tab caps now fast-fail excess work, `browser_raw_exec_policy` gates raw JS by admin setting, and the browser-session service now exposes a local allow/deny audit stream for raw exec, async exec, typed actions, and QuickJS sandbox host actions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Continue QuickJS host-capability review and decide whether browser automation audit events need central persistence.                                                         |
 | SEC-CLI-001     | `cocalc-cli` authority classes               | guarded | high     | First-pass authority matrix completed. CLI auth config and daemon runtime storage now force private local permissions; ambient env auth can be disabled per invocation. Second-pass dangerous-operation audit completed in `src/.agents/cli-api-key-dangerous-operation-audit-2026-05-14.md`; CLI freshness transport exists via forwarded `auth_session_hash` and `cocalc auth elevate`. Fresh-auth implementation now gates account delete/rehome/drain/repair, admin membership/entitlement mutation, organization create/member/admin mutation, host delete/deprovision, host RootFS mutation, host SSH authorized-key mutation, RootFS catalog/release admin mutation, project soft delete/undelete, project hard delete, project move/rehome, backup delete/restore, and snapshot delete/restore with the shared dangerous-session helper. Host SSH authorized-key operations now route to authoritative host bays; project move checks freshness on the caller bay before inter-bay forwarding. Legacy `auth_tokens` and org token CLI/API surfaces were removed.                                                               | Add a lightweight dangerous-RPC registry or regression test so future destructive/admin RPCs must make an explicit fresh-auth decision.                                      |
 | SEC-KEY-001     | Account/project API keys                     | guarded | high     | Legacy project-scoped CoCalc API-key management, auth, schema, UI, and project-rehome portability were removed. Account API keys now require explicit capabilities and project allowlists; API-key websocket hub RPC fails closed and HTTP Conat bridges deny unreviewed RPCs by default. Second-pass dangerous-operation audit found no API-key path that can directly call dangerous hub/admin/project metadata RPCs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Add central audit events for API-key create/delete/use/deny. Propagate auth method through websocket hub dispatch only if API-key hub RPC support is intentionally expanded. |
@@ -123,7 +123,7 @@ Validation target:
 
 ### SEC-ACP-002: Codex/ACP Durable Turn Queue Has No Membership-Backed Admission
 
-Status: `guarded`.
+Status: `done`.
 
 Severity: critical.
 
@@ -340,8 +340,8 @@ Implemented first guard:
   - `COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_TOTAL`, default `256`.
 - Raw Conat/socket.io protocol events now have sliding-window admission guards
   before publish/RPC/subscription handler work:
-  - `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW`, default `2000`.
-  - `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW`, default `10000`.
+  - `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW`, default `10000`.
+  - `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW`, default `50000`.
   - `COCALC_CONAT_INBOUND_EVENT_WINDOW_MS`, default `10000`.
   - `COCALC_CONAT_INBOUND_EVENT_BLOCK_MS`, default `10000`.
   - Denials return normal 429-style responses for acked events. Per-socket
@@ -360,10 +360,17 @@ Implemented first guard:
 
 Residual risk:
 
-- This pass now bounds active handler count and high-rate raw Conat socket
-  messages both per connection and per authenticated identity across multiple
-  simultaneous sockets. These are local process budgets, not global
-  cross-cluster budgets.
+- This pass now bounds active handler count, websocket counts, and high-rate raw
+  Conat socket messages both per connection and per authenticated identity
+  across multiple simultaneous sockets. These are local process budgets, not
+  global cross-cluster budgets.
+- Admin settings now cover hub API dispatch, generic/typed service handler
+  concurrency, Conat total/per-user/per-hub-user websocket counts, Conat
+  inbound event windows/block times, app-proxy websocket totals/per-target caps,
+  project exec-stream concurrency, near-limit threshold percent, and near-limit
+  log interval.
+- Denials record `service_admission_denied` central-log events; near-limit
+  crossings record throttled `service_admission_near_limit` central-log events.
 - Defaults are intentionally broad and should be tuned with production load
   testing and observability.
 
@@ -371,8 +378,8 @@ Suggested next audit steps:
 
 1. Decide whether any Conat protocol budgets need cross-cluster aggregation
    after production telemetry is available.
-2. Add dashboards/alerts once production baselines for
-   `service_admission_denied` are known.
+2. Add dashboards/alerts if central-log reports for `service_admission_denied`
+   and `service_admission_near_limit` are not operationally visible enough.
 
 ### SEC-BROWSER-001: Browser Exec/Session Automation Needs Per-Tab Admission and Policy Audit
 

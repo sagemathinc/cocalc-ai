@@ -13,6 +13,7 @@ interface Options {
   maxPerUser?: number;
   getMaxPerUser?: (user: JSONValue) => number | undefined;
   max?: number;
+  getMax?: () => number | undefined;
   log?: (...args) => void;
 }
 
@@ -44,6 +45,10 @@ export class UsageMonitor extends EventEmitter {
 
   private getMaxPerUser = (user: JSONValue): number | undefined => {
     return this.options.getMaxPerUser?.(user) ?? this.options.maxPerUser;
+  };
+
+  private getMax = (): number | undefined => {
+    return this.options.getMax?.() ?? this.options.max;
   };
 
   private initLogging = () => {
@@ -99,10 +104,11 @@ export class UsageMonitor extends EventEmitter {
     const u = this.toJson(user);
     let count = this.perUser[u] ?? 0;
     const maxPerUser = this.getMaxPerUser(user);
-    if (this.options.max && this.total >= this.options.max) {
-      this.emit("deny", user, this.options.max, "global");
+    const max = this.getMax();
+    if (max && this.total >= max) {
+      this.emit("deny", user, max, "global");
       throw new ConatError(
-        `There is a global limit of ${this.options.max} ${this.options.resource}.   Please close browser tabs or files or come back later.`,
+        `There is a global limit of ${max} ${this.options.resource}.   Please close browser tabs or files or come back later.`,
         // http error code "429 Too Many Requests."
         { code: 429 },
       );
@@ -118,7 +124,7 @@ export class UsageMonitor extends EventEmitter {
     this.total += 1;
     count++;
     this.perUser[u] = count;
-    this.emit("total", this.total, this.options.max);
+    this.emit("total", this.total, max);
     this.emit("add", user, count, maxPerUser);
   };
 

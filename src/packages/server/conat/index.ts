@@ -35,6 +35,7 @@ import {
 import { initInterBayServices } from "@cocalc/server/inter-bay/service";
 import { startMembershipSideEffectsMaintenance } from "@cocalc/server/membership/side-effects";
 import { configureHubServiceAdmissionDenialRecorder } from "./api/service-admission-denials";
+import { startConatAdmissionSettingsRefresh } from "./admission-settings";
 
 export { loadConatConfiguration };
 
@@ -76,6 +77,7 @@ export async function initConatApi() {
   });
   await loadConatConfiguration();
   configureHubServiceAdmissionDenialRecorder();
+  startConatAdmissionSettingsRefresh();
   logProjectionReadModes();
   enableDbAccountRowFeedPublishing();
   enableDbCollaboratorAccountFeedPublishing();

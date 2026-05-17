@@ -20,6 +20,7 @@ import { wireNotificationsApi } from "./hub/notifications";
 import { startConatRouterManagedEgressLoop } from "./conat-router-egress";
 import { getProjectHostManagedEgressMode } from "./managed-egress-runtime";
 import { configureProjectHostServiceAdmissionDenialRecorder } from "./hub/service-admission-denials";
+import { startProjectHostConatAdmissionSettingsRefresh } from "./hub/admission-settings";
 
 const logger = getLogger("project-host:conat-router-daemon");
 
@@ -54,6 +55,7 @@ function connectMasterClient({ hostId }: { hostId: string }) {
   configureProjectHostServiceAdmissionDenialRecorder();
   wireSystemApi();
   wireNotificationsApi();
+  startProjectHostConatAdmissionSettingsRefresh();
   return client;
 }
 

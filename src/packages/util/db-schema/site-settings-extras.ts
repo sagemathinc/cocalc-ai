@@ -119,6 +119,20 @@ const google_sso_enabled = (conf: SiteSettings) =>
     ],
   );
 
+function optionalPositiveInteger(value: string): boolean {
+  const trimmed = `${value ?? ""}`.trim();
+  return trimmed === "" || (/^[0-9]+$/.test(trimmed) && Number(trimmed) > 0);
+}
+
+function optionalPercent(value: string): boolean {
+  const trimmed = `${value ?? ""}`.trim();
+  const n = Number(trimmed);
+  return (
+    trimmed === "" ||
+    (/^[0-9]+$/.test(trimmed) && Number.isFinite(n) && n >= 1 && n <= 100)
+  );
+}
+
 // Ollama and Custom OpenAI have the same schema
 function custom_ai_model_valid(value: string): boolean {
   if (isEmpty(value) || !parsableJson(value)) {
@@ -210,6 +224,20 @@ export type SiteSettingsExtrasKeys =
   | "pii_retention"
   | "conat_heading"
   | "conat_password"
+  | "conat_admission_hub_api_max_active"
+  | "conat_admission_service_max_parallel_active"
+  | "conat_admission_max_connections"
+  | "conat_admission_max_connections_per_user"
+  | "conat_admission_max_connections_per_hub_user"
+  | "conat_admission_inbound_events_per_socket_window"
+  | "conat_admission_inbound_events_per_identity_window"
+  | "conat_admission_inbound_event_window_ms"
+  | "conat_admission_inbound_event_block_ms"
+  | "conat_admission_app_proxy_max_active_websockets_total"
+  | "conat_admission_app_proxy_max_active_websockets_per_target"
+  | "conat_admission_project_exec_stream_max_active"
+  | "conat_admission_near_limit_percent"
+  | "conat_admission_near_limit_log_interval_ms"
   | "software_licenses_heading"
   | "software_license_private_key"
   | "stripe_heading"
@@ -313,6 +341,146 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Conat"],
     group: "System / Advanced",
     subgroup: "Conat",
+  },
+  conat_admission_hub_api_max_active: {
+    name: "Hub API Active Request Limit",
+    desc: "Maximum simultaneously running hub Conat API requests. Blank uses `COCALC_HUB_CONAT_API_MAX_ACTIVE` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_service_max_parallel_active: {
+    name: "Service Parallel Handler Limit",
+    desc: "Default maximum simultaneously running handlers for parallel Conat services and typed fast-RPC services. Blank uses `COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_max_connections: {
+    name: "Conat Total Connection Limit",
+    desc: "Maximum total Conat websocket connections per Conat server process. Blank uses `COCALC_CONAT_MAX_CONNECTIONS` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_max_connections_per_user: {
+    name: "Conat Connections Per User",
+    desc: "Maximum Conat websocket connections per ordinary user identity. Blank uses `COCALC_CONAT_MAX_CONNECTIONS_PER_USER` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_max_connections_per_hub_user: {
+    name: "Conat Connections Per Hub User",
+    desc: "Maximum Conat websocket connections for trusted hub/system identities. Blank uses `COCALC_CONAT_MAX_CONNECTIONS_PER_HUB_USER` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_inbound_events_per_socket_window: {
+    name: "Conat Events Per Socket Window",
+    desc: "Maximum inbound Conat socket events per connection in the configured event window. Blank uses `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_inbound_events_per_identity_window: {
+    name: "Conat Events Per Identity Window",
+    desc: "Maximum inbound Conat socket events per authenticated identity in the configured event window. Blank uses `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_inbound_event_window_ms: {
+    name: "Conat Event Window Milliseconds",
+    desc: "Sliding window length for Conat inbound event rate limits. Blank uses `COCALC_CONAT_INBOUND_EVENT_WINDOW_MS` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_inbound_event_block_ms: {
+    name: "Conat Event Block Milliseconds",
+    desc: "How long to reject Conat socket events after an inbound event rate limit is exceeded. Blank uses `COCALC_CONAT_INBOUND_EVENT_BLOCK_MS` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_app_proxy_max_active_websockets_total: {
+    name: "App Proxy Websocket Total Limit",
+    desc: "Maximum active app-proxy websockets per project process. Blank uses `COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_TOTAL` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_app_proxy_max_active_websockets_per_target: {
+    name: "App Proxy Websockets Per Target",
+    desc: "Maximum active app-proxy websockets per target app/port. Blank uses `COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_PER_TARGET` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_project_exec_stream_max_active: {
+    name: "Project Exec Stream Limit",
+    desc: "Maximum active project exec-stream requests per project process. Blank uses `COCALC_PROJECT_EXEC_STREAM_MAX_ACTIVE` or the built-in default.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_near_limit_percent: {
+    name: "Admission Near-Limit Alert Percent",
+    desc: "Percent of an admission limit at which near-limit telemetry is recorded. Blank uses 80.",
+    default: "",
+    valid: optionalPercent,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
+  },
+  conat_admission_near_limit_log_interval_ms: {
+    name: "Admission Near-Limit Log Interval",
+    desc: "Minimum milliseconds between repeated near-limit telemetry records for the same surface/identity/key. Blank uses 60000.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["Conat"],
+    group: "System / Advanced",
+    subgroup: "Conat Admission",
   },
   software_licenses_heading: {
     name: "Software Licensing",

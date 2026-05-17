@@ -16,6 +16,7 @@ import { getIdentity } from "./connection";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import { init as initExecStream } from "@cocalc/project/exec-stream";
 import { update as initAuthorizedKeys } from "./authorized-keys";
+import { startProjectConatAdmissionSettingsRefresh } from "./admission-settings";
 
 const logger = getLogger("project:conat:index");
 
@@ -31,6 +32,7 @@ export default async function init(opts?: {
     enableProjectInfo,
   });
 
+  startProjectConatAdmissionSettingsRefresh();
   initTerminalServer(opts);
   await initAPI(opts);
   await initJupyter(opts);

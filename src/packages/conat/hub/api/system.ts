@@ -2,6 +2,7 @@ import {
   noAuth,
   authFirst,
   authFirstRequireAccount,
+  authFirstRequireProject,
   requireSignedIn,
 } from "./util";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
@@ -131,6 +132,9 @@ export const system = {
   releaseProjectAppPublicSubdomain: authFirst,
   recordManagedProjectEgress: authFirst,
   getManagedProjectEgressPolicy: authFirst,
+  recordServiceAdmissionDenial: authFirstRequireProject,
+  recordServiceAdmissionNearLimit: authFirstRequireProject,
+  getServiceAdmissionConfig: authFirst,
   resolveManagedProjectSshKeyAccount: authFirst,
 
   adminSalesloftSync: authFirst,
@@ -2062,6 +2066,38 @@ export interface System {
     metadata?: Record<string, unknown>;
   }) => Promise<{ recorded: boolean; account_id?: string }>;
 
+  recordServiceAdmissionDenial: (opts: {
+    surface: string;
+    limit: string;
+    current: number;
+    maximum: number;
+    source?: string;
+    reason?: string;
+    host_id?: string;
+    account_id?: string;
+    project_id?: string;
+    subject?: string;
+    path?: string;
+    key?: string;
+    time?: number;
+  }) => Promise<void>;
+
+  recordServiceAdmissionNearLimit: (opts: {
+    surface: string;
+    limit: string;
+    current: number;
+    maximum: number;
+    source?: string;
+    reason?: string;
+    host_id?: string;
+    account_id?: string;
+    project_id?: string;
+    subject?: string;
+    path?: string;
+    key?: string;
+    time?: number;
+  }) => Promise<void>;
+
   getManagedProjectEgressPolicy: (opts: {
     account_id?: string;
     project_id?: string;
@@ -2077,6 +2113,14 @@ export interface System {
     egress_7d_bytes?: number;
     managed_egress_categories_5h_bytes?: Record<string, number>;
     managed_egress_categories_7d_bytes?: Record<string, number>;
+  }>;
+
+  getServiceAdmissionConfig: () => Promise<{
+    limits: Record<string, number>;
+    near_limit: {
+      thresholdPercent: number;
+      logIntervalMs: number;
+    };
   }>;
 
   resolveManagedProjectSshKeyAccount: (opts: {

@@ -221,6 +221,12 @@ import { getClusterConfig } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
+import { getConatAdmissionConfig } from "../admission-settings";
+import {
+  recordServiceAdmissionDenialLocal,
+  recordServiceAdmissionNearLimitLocal,
+} from "./service-admission-denials";
+import type { ServiceAdmissionDenialEvent } from "@cocalc/conat/admission/denials";
 
 const logger = getLogger("server:conat:api:system");
 // Non-serializable capability used only by trusted in-process inter-bay handlers.
@@ -1208,6 +1214,33 @@ export async function getServiceAdmissionDenialReport({
     min_count: minCount,
     groups: rows.map(parseServiceDenialSummaryRow),
   };
+}
+
+export async function getServiceAdmissionConfig(): Promise<{
+  limits: Record<string, number>;
+  near_limit: { thresholdPercent: number; logIntervalMs: number };
+}> {
+  return await getConatAdmissionConfig();
+}
+
+export async function recordServiceAdmissionDenial({
+  project_id,
+  ...event
+}: ServiceAdmissionDenialEvent): Promise<void> {
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  await recordServiceAdmissionDenialLocal({ ...event, project_id });
+}
+
+export async function recordServiceAdmissionNearLimit({
+  project_id,
+  ...event
+}: ServiceAdmissionDenialEvent): Promise<void> {
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  await recordServiceAdmissionNearLimitLocal({ ...event, project_id });
 }
 
 function dateToIso(value: unknown): string {

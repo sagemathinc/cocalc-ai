@@ -60,6 +60,7 @@ import { handleHealth } from "./health";
 import { handleMetrics, initMetrics } from "./metrics";
 import { startHubConatManagedEgressLoop } from "./managed-egress";
 import { configureHubServiceAdmissionDenialRecorder } from "../api/service-admission-denials";
+import { startConatAdmissionSettingsRefresh } from "../admission-settings";
 
 const logger = getLogger("conat-server");
 
@@ -137,6 +138,7 @@ export async function init(
 ) {
   logger.debug("init");
   configureHubServiceAdmissionDenialRecorder();
+  startConatAdmissionSettingsRefresh();
   const { kucalc, ...options } = options0;
 
   if (kucalc) {

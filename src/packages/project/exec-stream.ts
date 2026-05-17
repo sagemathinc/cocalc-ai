@@ -10,22 +10,16 @@ import { getProjectConatClient } from "@cocalc/project/conat/runtime-client";
 import { project_id } from "@cocalc/project/data";
 import { getLogger } from "@cocalc/project/logger";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
-import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
+import {
+  recordServiceAdmissionDenial,
+  recordServiceAdmissionNearLimit,
+} from "@cocalc/conat/admission/denials";
+import {
+  getServiceAdmissionLimit,
+  serviceAdmissionLimitEnvName,
+} from "@cocalc/conat/admission/limits";
 
 const logger = getLogger("project:exec-stream");
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  const n = parseInt(value ?? "", 10);
-  if (Number.isFinite(n) && n > 0) {
-    return n;
-  }
-  return fallback;
-}
-
-const MAX_ACTIVE_EXEC_STREAMS = parsePositiveInt(
-  process.env.COCALC_PROJECT_EXEC_STREAM_MAX_ACTIVE,
-  16,
-);
 
 let activeExecStreams = 0;
 
@@ -53,27 +47,26 @@ async function serve(opts?: {
     `serve: creating exec-stream service for project ${project_id} and subject='${subject}'`,
   );
   const api = await cn.subscribe(subject, { queue: "q" });
-  await listen(
-    api,
-    subject,
-    opts?.maxActiveExecStreams ?? MAX_ACTIVE_EXEC_STREAMS,
-  );
+  await listen(api, subject, opts?.maxActiveExecStreams);
 }
 
 async function listen(
   api: Subscription,
   subject: string,
-  maxActiveExecStreams: number,
+  configuredMaxActiveExecStreams?: number,
 ) {
   logger.debug(`Listening on subject='${subject}'`);
 
   for await (const mesg of api) {
+    const maxActiveExecStreams =
+      configuredMaxActiveExecStreams ??
+      getServiceAdmissionLimit("project_exec_stream_max_active");
     if (activeExecStreams >= maxActiveExecStreams) {
       const error = "project exec-stream service is busy";
       recordServiceAdmissionDenial({
         surface: "project-exec-stream",
         source: "project-service",
-        limit: "COCALC_PROJECT_EXEC_STREAM_MAX_ACTIVE",
+        limit: serviceAdmissionLimitEnvName("project_exec_stream_max_active"),
         current: activeExecStreams,
         maximum: maxActiveExecStreams,
         reason: error,
@@ -89,6 +82,16 @@ async function listen(
       mesg.respondSync(null);
       continue;
     }
+    recordServiceAdmissionNearLimit({
+      surface: "project-exec-stream",
+      source: "project-service",
+      limit: serviceAdmissionLimitEnvName("project_exec_stream_max_active"),
+      current: activeExecStreams + 1,
+      maximum: maxActiveExecStreams,
+      reason: "project exec-stream service is near capacity",
+      project_id,
+      subject,
+    });
     activeExecStreams += 1;
     void handleMessage(mesg).finally(() => {
       activeExecStreams -= 1;
