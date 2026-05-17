@@ -5,7 +5,7 @@
 
 import { Button, Card, Collapse, Space, Typography } from "antd";
 import type { CSSProperties, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
@@ -237,6 +237,8 @@ export function EnvironmentOverview({
   const isFlyout = mode === "flyout";
   const [activeKeys, setActiveKeys] = useState<string[]>([]);
   const [featureDetailsOpen, setFeatureDetailsOpen] = useState(false);
+  const collapseHeaderRefs = useRef<Record<string, HTMLSpanElement | null>>({});
+  const featureDetailsRef = useRef<HTMLDivElement | null>(null);
   const { env } = useProjectEnv(project_id);
   const { secrets } = useProjectSecrets(project_id);
   const { rootfs } = useProjectRootfs(project_id);
@@ -257,8 +259,32 @@ export function EnvironmentOverview({
   const networkSummary = runQuota?.network ? "Internet enabled" : "Restricted";
   const memberHost = runQuota?.member_host ? "member host" : undefined;
 
+  function scrollToElement(element: HTMLElement | null): void {
+    if (element == null) return;
+    const scroll = () =>
+      element.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => requestAnimationFrame(scroll));
+    } else {
+      setTimeout(scroll, 0);
+    }
+  }
+
   function expand(key: string): void {
     setActiveKeys((keys) => (keys.includes(key) ? keys : [...keys, key]));
+    scrollToElement(collapseHeaderRefs.current[key]);
+  }
+
+  function collapseLabel(key: string, label: ReactNode): ReactNode {
+    return (
+      <span
+        ref={(node) => {
+          collapseHeaderRefs.current[key] = node;
+        }}
+      >
+        {label}
+      </span>
+    );
   }
 
   function renderAction(key: string, label = "Details") {
@@ -274,7 +300,10 @@ export function EnvironmentOverview({
       <Button
         size="small"
         type="link"
-        onClick={() => setFeatureDetailsOpen(true)}
+        onClick={() => {
+          setFeatureDetailsOpen(true);
+          scrollToElement(featureDetailsRef.current);
+        }}
       >
         Details
       </Button>
@@ -362,13 +391,15 @@ export function EnvironmentOverview({
         ))}
       </div>
 
-      <EnvironmentFeatureGroups
-        expanded={featureDetailsOpen}
-        mode={mode}
-        onDetails={() => expand("diagnostics")}
-        onExpandedChange={setFeatureDetailsOpen}
-        project_id={project_id}
-      />
+      <div ref={featureDetailsRef}>
+        <EnvironmentFeatureGroups
+          expanded={featureDetailsOpen}
+          mode={mode}
+          onDetails={() => expand("diagnostics")}
+          onExpandedChange={setFeatureDetailsOpen}
+          project_id={project_id}
+        />
+      </div>
 
       <Collapse
         activeKey={activeKeys}
@@ -378,7 +409,7 @@ export function EnvironmentOverview({
         items={[
           {
             key: "configuration",
-            label: "Configuration",
+            label: collapseLabel("configuration", "Configuration"),
             children: (
               <Space direction="vertical" size={12} style={{ width: "100%" }}>
                 <Typography.Text type="secondary">
@@ -395,12 +426,12 @@ export function EnvironmentOverview({
           },
           {
             key: "runtime-image",
-            label: "Runtime Image",
+            label: collapseLabel("runtime-image", "Runtime Image"),
             children: <RootFilesystemImage />,
           },
           {
             key: "diagnostics",
-            label: "Technical Details",
+            label: collapseLabel("diagnostics", "Technical Details"),
             children: (
               <Space direction="vertical" size={12} style={{ width: "100%" }}>
                 <Typography.Text type="secondary">
