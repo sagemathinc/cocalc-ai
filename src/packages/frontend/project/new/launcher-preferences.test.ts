@@ -35,6 +35,9 @@ describe("launcher exact-list preferences", () => {
     expect(getSiteLauncherDefaults([" chat ", "ipynb", "chat"])).toEqual({
       quickCreate: ["chat", "ipynb"],
     });
+    expect(getSiteLauncherDefaults("whiteboard,term,whiteboard")).toEqual({
+      quickCreate: ["whiteboard", "term"],
+    });
   });
 
   test("reads account prefs and ignores legacy per-project layers", () => {
@@ -74,7 +77,7 @@ describe("launcher exact-list preferences", () => {
     });
   });
 
-  test("resetting account prefs removes the exact-list override", () => {
+  test("resetting account prefs clears the exact-list override", () => {
     expect(
       updateAccountLauncherPrefs(
         {
@@ -83,8 +86,6 @@ describe("launcher exact-list preferences", () => {
         },
         null,
       ),
-    ).toEqual({
-      unrelated: true,
-    });
+    ).toBeNull();
   });
 });

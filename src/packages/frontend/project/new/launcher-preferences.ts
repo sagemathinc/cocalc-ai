@@ -26,6 +26,9 @@ function normalizeList(value: unknown): string[] {
   } else if (typeof (value as any).toArray === "function") {
     value = (value as any).toArray();
   }
+  if (typeof value === "string") {
+    return uniqNonEmpty(value.split(","));
+  }
   if (Array.isArray(value)) {
     return uniqNonEmpty(value.filter((item) => typeof item === "string"));
   }
@@ -95,7 +98,7 @@ export function getAccountLauncherPrefs(settings: unknown): LauncherPrefs {
 export function updateAccountLauncherPrefs(
   settings: unknown,
   prefs: LauncherPrefs | null,
-): LauncherPrefs {
+): LauncherPrefs | null {
   const obj = normalizeObject<Record<string, unknown>>(settings);
   const rest = { ...obj };
   delete rest.apps;
@@ -105,8 +108,7 @@ export function updateAccountLauncherPrefs(
   delete rest.quickCreateOrder;
   delete rest.perProject;
   if (prefs == null) {
-    delete rest.quickCreate;
-    return rest as LauncherPrefs;
+    return null;
   }
   return {
     ...rest,
