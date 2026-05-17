@@ -111,6 +111,18 @@ export type RootfsReleaseScanRun = {
   error_code?: string;
 };
 
+export type RootfsReleaseScanReport = {
+  report_id: string;
+  scan_run_id: string;
+  release_id: string;
+  format: string;
+  report_json: TrivyJsonReport;
+  report_bytes?: number;
+  report_sha256?: string;
+  retention_until?: string;
+  created_at: string;
+};
+
 export type RootfsTrivyHostScanRequest = {
   scan_run_id: string;
   target: TrivyRootfsScanTarget;
@@ -127,6 +139,7 @@ export type RootfsTrivyHostScanRequest = {
 export type RootfsTrivyHostScanResponse = {
   summary: RootfsScanSummary;
   duration_ms: number;
+  report_json?: TrivyJsonReport;
   report: {
     bytes: number;
     compressed_bytes: number;

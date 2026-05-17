@@ -1053,6 +1053,7 @@ export async function startMasterRegistration({
         return {
           summary: result.summary,
           duration_ms: result.duration_ms,
+          report_json: result.report_json,
           report: {
             bytes: result.report.bytes,
             compressed_bytes: result.report.compressed_bytes,

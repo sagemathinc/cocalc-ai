@@ -129,8 +129,10 @@ import {
   completeRootfsReleaseScanRun,
   createRootfsReleaseScanRun,
   failRootfsReleaseScanRun,
+  getRootfsReleaseScanReport,
   loadRootfsReleaseForScan,
   markRootfsReleaseScanRunStarted,
+  storeRootfsReleaseScanReport,
 } from "@cocalc/server/rootfs/scans";
 import { runPendingRootfsReleaseGc } from "@cocalc/server/rootfs/releases";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
@@ -140,7 +142,10 @@ import type {
   PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
 } from "@cocalc/util/rootfs-images";
-import type { RootfsReleaseScanRun } from "@cocalc/util/rootfs-scan";
+import type {
+  RootfsReleaseScanReport,
+  RootfsReleaseScanRun,
+} from "@cocalc/util/rootfs-scan";
 import {
   getProjectRootfsStates as getProjectRootfsStates0,
   setProjectRootfsImageWithRollback,
@@ -2792,10 +2797,21 @@ export async function scanRootfsRelease(opts: {
       tmpfs_size,
     });
     const retention = new Date(Date.now() + 730 * 24 * 60 * 60 * 1000);
+    const reportArtifact =
+      result.report_json != null
+        ? await storeRootfsReleaseScanReport({
+            scan_run_id: run.scan_run_id,
+            release_id,
+            report_json: result.report_json,
+            report: result.report,
+            retention_until: retention,
+          })
+        : undefined;
     const summary = {
       ...result.summary,
       report: {
         ...(result.summary.report ?? {}),
+        ...(reportArtifact ?? {}),
         ...result.report,
         format: "trivy-json",
         retention_until: retention.toISOString(),
@@ -2815,6 +2831,21 @@ export async function scanRootfsRelease(opts: {
       host_id,
     });
   }
+}
+
+export async function getRootfsScanReport(opts: {
+  account_id?: string;
+  report_id: string;
+}): Promise<RootfsReleaseScanReport> {
+  const { account_id, report_id } = opts;
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const report = await getRootfsReleaseScanReport({ report_id });
+  if (!report) {
+    throw new Error(`RootFS scan report ${report_id} not found`);
+  }
+  return report;
 }
 
 async function publishQueuedLroSafe({ op }: { op: LroSummary }) {

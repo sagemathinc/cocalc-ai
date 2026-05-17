@@ -12,6 +12,7 @@ import type {
   RootfsScanSummary,
 } from "@cocalc/util/rootfs-images";
 import type {
+  RootfsReleaseScanReport,
   RootfsReleaseScanRun,
   RootfsReleaseScanRunStatus,
 } from "@cocalc/util/rootfs-scan";
@@ -60,6 +61,18 @@ type RootfsReleaseScanRunRow = {
   error_code: string | null;
 };
 
+type RootfsReleaseScanReportRow = {
+  report_id: string;
+  scan_run_id: string;
+  release_id: string;
+  format: string;
+  report_json: RootfsReleaseScanReport["report_json"];
+  report_bytes: number | null;
+  report_sha256: string | null;
+  retention_until: Date | null;
+  created_at: Date;
+};
+
 function rowToRelease(row: RootfsReleaseScanRow): RootfsReleaseForScan {
   return {
     release_id: row.release_id,
@@ -96,6 +109,22 @@ function rowToScanRun(row: RootfsReleaseScanRunRow): RootfsReleaseScanRun {
     report_retention_until: row.report_retention_until?.toISOString(),
     error: row.error ?? undefined,
     error_code: row.error_code ?? undefined,
+  };
+}
+
+function rowToScanReport(
+  row: RootfsReleaseScanReportRow,
+): RootfsReleaseScanReport {
+  return {
+    report_id: row.report_id,
+    scan_run_id: row.scan_run_id,
+    release_id: row.release_id,
+    format: row.format,
+    report_json: row.report_json,
+    report_bytes: row.report_bytes ?? undefined,
+    report_sha256: row.report_sha256 ?? undefined,
+    retention_until: row.retention_until?.toISOString(),
+    created_at: row.created_at.toISOString(),
   };
 }
 
@@ -215,6 +244,69 @@ export async function markRootfsReleaseScanRunStarted({
     payload: { scan_run_id, host_id: host_id ?? null },
   });
   return rowToScanRun(rows[0]);
+}
+
+export async function storeRootfsReleaseScanReport({
+  scan_run_id,
+  release_id,
+  report_json,
+  report,
+  retention_until,
+}: {
+  scan_run_id: string;
+  release_id: string;
+  report_json: unknown;
+  report: {
+    bytes?: number;
+    sha256?: string;
+  };
+  retention_until: Date;
+}): Promise<RootfsScanReportRef> {
+  const report_id = uuid();
+  await getPool("medium").query(
+    `INSERT INTO rootfs_release_scan_reports
+     (report_id, scan_run_id, release_id, format, report_json, report_bytes, report_sha256, retention_until, created_at)
+     VALUES ($1, $2, $3, 'trivy-json', $4::JSONB, $5, $6, $7, NOW())`,
+    [
+      report_id,
+      scan_run_id,
+      release_id,
+      JSON.stringify(report_json ?? {}),
+      report.bytes ?? null,
+      report.sha256 ?? null,
+      retention_until,
+    ],
+  );
+  return {
+    artifact_id: report_id,
+    format: "trivy-json",
+    bytes: report.bytes,
+    sha256: report.sha256,
+    retention_until: retention_until.toISOString(),
+  };
+}
+
+export async function getRootfsReleaseScanReport({
+  report_id,
+}: {
+  report_id: string;
+}): Promise<RootfsReleaseScanReport | undefined> {
+  const { rows } = await getPool("medium").query<RootfsReleaseScanReportRow>(
+    `SELECT report_id,
+            scan_run_id,
+            release_id,
+            format,
+            report_json,
+            report_bytes,
+            report_sha256,
+            retention_until,
+            created_at
+       FROM rootfs_release_scan_reports
+      WHERE report_id=$1
+      LIMIT 1`,
+    [report_id],
+  );
+  return rows[0] ? rowToScanReport(rows[0]) : undefined;
 }
 
 export async function completeRootfsReleaseScanRun({

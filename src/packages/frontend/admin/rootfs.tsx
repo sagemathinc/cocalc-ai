@@ -522,6 +522,28 @@ export function RootfsAdmin() {
     }
   }
 
+  async function downloadScanReport(entry: RootfsAdminCatalogEntry) {
+    const report_id = entry.scan?.report?.artifact_id;
+    if (!report_id) return;
+    setActionImageId(entry.id);
+    try {
+      const report = await hub.system.getRootfsScanReport({ report_id });
+      const blob = new Blob([JSON.stringify(report.report_json, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `rootfs-scan-${entry.id}-${report_id}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      message.error(`Failed to download scan report: ${err}`);
+    } finally {
+      setActionImageId(undefined);
+    }
+  }
+
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Paragraph type="secondary">
@@ -641,9 +663,13 @@ export function RootfsAdmin() {
                     </Typography.Link>
                   ) : null}
                   {entry.scan?.report?.artifact_id ? (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      report: {entry.scan.report.artifact_id}
-                    </Typography.Text>
+                    <Button
+                      size="small"
+                      loading={actionImageId === entry.id}
+                      onClick={() => downloadScanReport(entry)}
+                    >
+                      Download report
+                    </Button>
                   ) : null}
                   {entry.scanned_at ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>

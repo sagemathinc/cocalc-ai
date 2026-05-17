@@ -780,6 +780,29 @@ export function registerRootfsCommand(
     );
 
   rootfs
+    .command("scan-report")
+    .description("download a retained admin RootFS scan JSON report")
+    .requiredOption("--report-id <id>", "scan report artifact id")
+    .action(
+      async (
+        opts: {
+          reportId: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs scan-report", async (ctx) => {
+          const report = await ctx.hub.system.getRootfsScanReport({
+            report_id: `${opts.reportId ?? ""}`.trim(),
+          });
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            return report;
+          }
+          return JSON.stringify(report.report_json, null, 2);
+        });
+      },
+    );
+
+  rootfs
     .command("save")
     .description("create or update a RootFS catalog entry")
     .requiredOption("--image <image>", "runtime image reference")
