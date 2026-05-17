@@ -15,10 +15,10 @@ Statuses:
 - `accepted-risk`: explicitly accepted for first release.
 - `done`: implemented and validated enough for release.
 
-Current score after the 2026-05-17 SEC-SCAN scheduled-scan smoke:
+Current score after the 2026-05-17 SEC-MASTER production-like smoke:
 
-- `done`: 8 findings.
-- `guarded`: 6 findings.
+- `done`: 9 findings.
+- `guarded`: 5 findings.
 - `blocked`: 0 findings.
 
 ## Summary
@@ -36,7 +36,7 @@ Current score after the 2026-05-17 SEC-SCAN scheduled-scan smoke:
 | SEC-SSO-001     | SSO signup/sign-in policy                    | guarded | high     | Shared account-creation policy now covers password signup and legacy Passport SSO account creation. Public SSO creation on token-gated sites no longer bypasses registration tokens; admin-configured exclusive/domain SSO can act as the signup gate for matching domains. SSO-created accounts require verified/trusted email before creation and before marking the email verified. Google is now the only built-in public SSO provider; Facebook, GitHub, and Twitter implementations/dependencies were removed. Public sign-in now queries domain SSO policy from the email field. Google SSO client configuration is now admin-managed with encrypted secret storage, optional domain restriction/routing, explicit account-creation mode, and direct OIDC runtime validation. First-class `sso_providers` and `sso_domain_policies` tables/admin UI now exist. Enabled `sso_required` policies feed sign-in routing/runtime metadata, domain `signup_mode` is enforced for password and SSO account creation, and domain `require_cocalc_2fa` blocks password/SSO sign-in unless a CoCalc second factor is active and verified.                                                                | Treat remaining non-Google organization Passport paths and SAML/OIDC admin UI polish as deferred unless a launch customer requires them.                                                  |
 | SEC-ROOTFS-001  | Root filesystem count/storage quotas         | guarded | critical | Rootfs creation/storage is now guarded by membership-tier caps for active count, total storage, per-rootfs storage, and arbitrary remote OCI-image usage. Denials are logged as `rootfs_quota_denied`, admins can report top users/near-limit accounts via cluster-aggregated `cocalc admin rootfs-quotas` output with per-row `bay_id`, clone creation validates the actual current RootFS state before copying files, and account deletion retires owned RootFS catalog entries before marking the account deleted. A follow-up edge audit covered durable RootFS save/publish/select/delete/account-deletion behavior and added regression coverage for replacement growth, deleted-entry reuse, and metadata-only updates.                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Add user-facing current-usage display if needed for launch; decide whether exact concurrent create/publish serialization is warranted beyond current admission checks.                    |
 | SEC-SCAN-001    | Official RootFS vulnerability trust scanning | done    | high     | Official RootFS trust scanning is implemented as an admin-only Trivy control for immutable RootFS releases. Scan runs and full JSON reports are stored, latest status is projected onto RootFS releases/catalog rows, admin UI can trigger scans with fresh auth and host selection, RootFS/project settings show scan status, ordinary users are blocked from selecting official images with unresolved critical findings, project hosts lazily prepare the Trivy scanner container/cache, and weekly scheduled scans cover official non-hidden images.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Keep scanner image/cache provisioning in host automation and add admin exception-note workflow only if admins need documented critical-finding overrides beyond the current admin bypass. |
-| SEC-MASTER-001  | Master-key storage/unlock                    | guarded | high     | Secret-settings encryption and project-backup repo password encryption now derive purpose-specific keys from one local `site-master-key`; the raw site key is not used directly for AES-GCM payload encryption. Local admin CLI lifecycle commands can initialize, status-check, passphrase-export, restore, doctor-check, and offline-migrate the single key. Legacy `server-settings-key` and `backup-master-key` files are read only as migration fallbacks. Production bay systemd units load `/etc/cocalc/site-master-key` through `LoadCredential=` and set `COCALC_REQUIRE_SITE_MASTER_KEY=1`, so startup fails closed instead of creating a fresh key on a production bay. CLI smoke validation covered isolated init, encrypted export, restore to a clean data dir, checksum match, file permissions, files-only doctor, and fail-closed required-key behavior. Production runbook exists at `docs/security/site-master-key-production-runbook.md`.                                                                                                                                                                                                                                         | Smoke-test the production runbook on one disposable production-like VM or bay instance. Later consider KMS/TPM envelope unseal.                                                           |
+| SEC-MASTER-001  | Master-key storage/unlock                    | done    | high     | Secret-settings encryption and project-backup repo password encryption now derive purpose-specific keys from one local `site-master-key`; the raw site key is not used directly for AES-GCM payload encryption. Local admin CLI lifecycle commands can initialize, status-check, passphrase-export, restore, doctor-check, and offline-migrate the single key. Legacy `server-settings-key` and `backup-master-key` files are read only as migration fallbacks. Production bay systemd units directly set `COCALC_REQUIRE_SITE_MASTER_KEY=1` and load `/etc/cocalc/site-master-key` through `LoadCredential=`, so missing keys fail closed even if optional env files are absent. Production-like smoke validation covered isolated key creation, encrypted backup, restore, systemd credential source, files-only doctor, fail-closed missing-key behavior, and unit credential/env assertions. Production runbook exists at `docs/security/site-master-key-production-runbook.md`.                                                                                                                                                                                                                  | Later consider KMS/TPM envelope unseal; operational off-host backup storage remains a human deployment checklist item.                                                                    |
 | SEC-START-001   | Simultaneous running project admission       | done    | critical | Sponsored runtime slots are implemented. Runtime admission uses `max_sponsored_running_projects`, durable `project_runtime_slots`, runtime sponsors, inter-bay sponsor-home admission, start/restart enforcement, autostart policy, collaborator-start controls, central slot event logs, admin reporting, and `cocalc project runtime-slots`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Deeper course/team dashboards and bulk classroom operations are follow-up product polish, not a release-security blocker.                                                                 |
 | SEC-DEP-001     | Dependency advisory reconciliation           | guarded | critical | Local remediation removed `sanitize-html` from npm dependencies and replaced reachable frontend/server sanitization with explicit allowlist sanitizers plus advisory regression tests. `pnpm audit` now reports no known vulnerabilities. Python `uv.lock` now resolves only patched `urllib3`, `pytest`, `requests`, and `Pygments` versions after dropping Python 3.9 support for the unreleased `cocalc-api` package; the previous open Dependabot alerts were caused by vulnerable Python 3.9 lock branches.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | After push/merge, verify GitHub Dependabot open alerts close or document any remaining non-production/unreachable residual alerts by manifest and path.                                   |
 
@@ -928,7 +928,7 @@ Future scope:
 
 ### SEC-MASTER-001: Site Master Key Storage and Recovery
 
-Status: `guarded`.
+Status: `done`.
 
 Severity: high.
 
@@ -987,12 +987,36 @@ CLI smoke validation, 2026-05-14:
   data dir exited nonzero and reported `site master key is required but
 missing`.
 
+Production-like runbook smoke validation, 2026-05-17:
+
+- Rebuilt the CLI and ran the runbook lifecycle against isolated temporary
+  directories, not the live dev data directory.
+- Generated one source `site-master-key`; verified status reported an existing,
+  valid key with mode `0600`.
+- Exported an encrypted backup; verified the backup file mode was `0600`, the
+  JSON had `encrypted=true`, and no plaintext `key` field was present.
+- Restored the encrypted backup into a clean data dir; verified the restored key
+  SHA-256 matched the source key SHA-256.
+- Simulated systemd credential provisioning by copying the same raw key to a
+  temporary `CREDENTIALS_DIRECTORY/site-master-key`; verified
+  `cocalc admin master-key status` reported `source=systemd-credential`,
+  `read_only=true`, `required=true`, and the same SHA-256.
+- Ran `cocalc admin master-key doctor --files-only` with the simulated systemd
+  credential and `COCALC_REQUIRE_SITE_MASTER_KEY=1`; it reported `ok=true`.
+- Verified `COCALC_REQUIRE_SITE_MASTER_KEY=1 cocalc admin master-key init` in
+  an empty data dir exited nonzero, preserving fail-closed behavior.
+- The first scaffold assertion found that bay units relied on optional
+  `/etc/cocalc/bay-secrets.env` for `COCALC_REQUIRE_SITE_MASTER_KEY=1`. The
+  units now set that environment directly as well as loading the site key with
+  `LoadCredential=site-master-key:/etc/cocalc/site-master-key`.
+- Re-ran the smoke and verified all hub/router/persist/migration units include
+  both the direct fail-closed environment and the systemd credential directive.
+
 Residual risk:
 
-- This validates the CLI lifecycle mechanics, not the human runbook.
-- A production operator still needs to create and store an off-host encrypted
-  backup, provision the same key to every bay, verify all systemd units see the
-  credential, and test disaster restore from a backup set.
+- A production operator still needs to create and store the off-host encrypted
+  backup, provision the same key to every bay, and compare key SHA-256 values
+  across bays during rollout.
 - KMS/TPM envelope unseal remains a future hardening improvement, not a first
   release blocker.
 
