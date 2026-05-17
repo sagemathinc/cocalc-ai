@@ -50,11 +50,12 @@ Done:
   periodic soft-delete unlink job, or frontend `project.deleted` behavior remain.
   Legacy `projects.deleted` is treated only as a compatibility marker for stale
   rows/events.
+- Targeted integration coverage exists for account-deletion ownership transfer
+  and bulk leave/delete transfer/remove-self behavior, including immediate feed
+  events and account-project-index projection refresh for old and new owners.
 
 Remaining blockers:
 
-- Add final integration coverage for account deletion, ownership transfer, bulk
-  leave/delete, and cross-session projection refresh.
 - Finish CLI parity by removing normal undelete exposure and ensuring hard
   delete is the normal CLI delete path with structured errors.
 - Audit `purgeProjectRows` against the final project-scoped table list.
