@@ -405,7 +405,7 @@ export function RootfsAdmin() {
 
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     onUnhandledError: (err) => {
-      message.error(`Failed to scan RootFS image: ${err}`);
+      message.error(`RootFS admin action failed: ${err}`);
       void load();
     },
   });
@@ -471,21 +471,28 @@ export function RootfsAdmin() {
   );
 
   async function requestDelete(entry: RootfsAdminCatalogEntry) {
-    setActiveAction({ image_id: entry.id, action: "delete" });
     try {
-      const result = await hub.system.requestRootfsImageDeletion({
-        image_id: entry.id,
-        reason: "admin-ui cleanup",
+      await runFreshAuthAction(async () => {
+        setActiveAction({ image_id: entry.id, action: "delete" });
+        try {
+          const result = await hub.system.requestRootfsImageDeletion({
+            image_id: entry.id,
+            reason: "admin-ui cleanup",
+            browser_id: webapp_client.browser_id,
+          });
+          message.success(
+            result.blockers.total > 0
+              ? "Catalog entry deleted; release remains blocked by references."
+              : "Catalog entry deleted and release queued for GC.",
+          );
+          await load();
+        } finally {
+          setActiveAction(undefined);
+        }
       });
-      message.success(
-        result.blockers.total > 0
-          ? "Catalog entry deleted; release remains blocked by references."
-          : "Catalog entry deleted and release queued for GC.",
-      );
-      await load();
     } catch (err) {
       message.error(`Failed to delete RootFS image: ${err}`);
-    } finally {
+      await load();
       setActiveAction(undefined);
     }
   }
@@ -496,54 +503,70 @@ export function RootfsAdmin() {
     success: string,
     action: RootfsAdminAction,
   ) {
-    setActiveAction({ image_id: entry.id, action });
     try {
-      await hub.system.saveRootfsCatalogEntry({
-        image_id: entry.id,
-        image: entry.image,
-        label: entry.label,
-        description: entry.description,
-        visibility: entry.visibility,
-        arch: entry.arch,
-        gpu: entry.gpu,
-        size_gb: entry.size_gb,
-        tags: entry.tags,
-        theme: entry.theme,
-        family: entry.family,
-        version: entry.version,
-        channel: entry.channel,
-        supersedes_image_id: entry.supersedes_image_id,
-        official: patch.official ?? entry.official,
-        prepull: patch.prepull ?? entry.prepull,
-        hidden: patch.hidden ?? entry.hidden,
-        blocked: patch.blocked ?? entry.blocked,
-        blocked_reason:
-          patch.blocked === false
-            ? undefined
-            : (patch.blocked_reason ??
-              entry.blocked_reason ??
-              "Blocked by admin"),
+      await runFreshAuthAction(async () => {
+        setActiveAction({ image_id: entry.id, action });
+        try {
+          await hub.system.saveRootfsCatalogEntry({
+            image_id: entry.id,
+            image: entry.image,
+            label: entry.label,
+            description: entry.description,
+            visibility: entry.visibility,
+            arch: entry.arch,
+            gpu: entry.gpu,
+            size_gb: entry.size_gb,
+            tags: entry.tags,
+            theme: entry.theme,
+            family: entry.family,
+            version: entry.version,
+            channel: entry.channel,
+            supersedes_image_id: entry.supersedes_image_id,
+            official: patch.official ?? entry.official,
+            prepull: patch.prepull ?? entry.prepull,
+            hidden: patch.hidden ?? entry.hidden,
+            blocked: patch.blocked ?? entry.blocked,
+            blocked_reason:
+              patch.blocked === false
+                ? undefined
+                : (patch.blocked_reason ??
+                  entry.blocked_reason ??
+                  "Blocked by admin"),
+            browser_id: webapp_client.browser_id,
+          });
+          message.success(success);
+          await load();
+        } finally {
+          setActiveAction(undefined);
+        }
       });
-      message.success(success);
-      await load();
     } catch (err) {
       message.error(`Failed to update RootFS image: ${err}`);
-    } finally {
+      await load();
       setActiveAction(undefined);
     }
   }
 
   async function runGc() {
-    setGcRunning(true);
     try {
-      const result = await hub.system.runRootfsReleaseGc({ limit: 100 });
-      message.success(
-        `RootFS GC deleted ${result.deleted} ${plural(result.deleted, "release")} and blocked ${result.blocked}.`,
-      );
-      await load();
+      await runFreshAuthAction(async () => {
+        setGcRunning(true);
+        try {
+          const result = await hub.system.runRootfsReleaseGc({
+            limit: 100,
+            browser_id: webapp_client.browser_id,
+          });
+          message.success(
+            `RootFS GC deleted ${result.deleted} ${plural(result.deleted, "release")} and blocked ${result.blocked}.`,
+          );
+          await load();
+        } finally {
+          setGcRunning(false);
+        }
+      });
     } catch (err) {
       message.error(`Failed to run RootFS GC: ${err}`);
-    } finally {
+      await load();
       setGcRunning(false);
     }
   }
