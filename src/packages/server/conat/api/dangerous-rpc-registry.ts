@@ -23,6 +23,26 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
+  "agent.run": {
+    decision: "fresh-auth-not-required",
+    reason: "agent run is not implemented; normal account auth is sufficient",
+  },
+  "db.deleteOldestAccountBlobs": {
+    decision: "fresh-auth-not-required",
+    reason: "caller-owned blob cleanup",
+  },
+  "db.deleteOldestProjectBlobs": {
+    decision: "fresh-auth-not-required",
+    reason: "collaborator-authorized project blob cleanup",
+  },
+  "db.removeBlobTtls": {
+    decision: "fresh-auth-not-required",
+    reason: "caller-owned blob retention update",
+  },
+  "db.saveBlob": {
+    decision: "fresh-auth-not-required",
+    reason: "quota-checked blob write",
+  },
   "hosts.addHostSshAuthorizedKey": {
     decision: "fresh-auth-required",
     reason: "host SSH trust mutation",
@@ -279,6 +299,46 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "lro.cancel": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "lro.dismiss": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "messages.send": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "messages.sendSystemNotice": {
+    decision: "fresh-auth-not-required",
+    reason: "admin-only notification send",
+  },
+  "notifications.archive": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "notifications.createAccountNotice": {
+    decision: "fresh-auth-not-required",
+    reason: "admin-only account notification creation",
+  },
+  "notifications.createCodexTurnNotice": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "notifications.createMention": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "notifications.markRead": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "notifications.save": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
   "org.addAdmin": {
     decision: "fresh-auth-required",
     reason: "organization administrator grant",
@@ -312,6 +372,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: ORDINARY_AUTHZ,
   },
   "projects.beginRestoreStaging": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "projects.cancelPendingCopy": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
@@ -455,6 +519,26 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
+  "software.createLicense": {
+    decision: "fresh-auth-not-required",
+    reason: "admin-only software license mutation",
+  },
+  "software.restoreLicense": {
+    decision: "fresh-auth-not-required",
+    reason: "admin-only software license mutation",
+  },
+  "software.revokeLicense": {
+    decision: "fresh-auth-not-required",
+    reason: "admin-only software license mutation",
+  },
+  "software.upsertLicenseTier": {
+    decision: "fresh-auth-not-required",
+    reason: "admin-only software license tier mutation",
+  },
+  "sync.purgeHistory": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
   "system.adminCreateUser": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -591,6 +675,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "RootFS catalog/release garbage collection",
   },
+  "system.saveRootfsCatalogEntry": {
+    decision: "fresh-auth-required",
+    reason: "RootFS catalog/release mutation",
+  },
   "system.scanRootfsRelease": {
     decision: "fresh-auth-required",
     reason: "admin RootFS vulnerability scan execution",
@@ -626,6 +714,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.setSiteSettings": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "system.sendEmailVerification": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "system.sendTestEmail": {
+    decision: "fresh-auth-not-required",
+    reason: "admin-only email diagnostic",
   },
   "system.syncSiteSettingsToBays": {
     decision: "fresh-auth-not-required",

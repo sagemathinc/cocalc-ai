@@ -1,11 +1,11 @@
-import { authFirst, authFirstRequireAccount, requireAccount } from "./util";
+import { authFirst, authFirstRequireAccount } from "./util";
 
 export const db = {
   userQuery: authFirst,
   touch: authFirst,
   getLegacyTimeTravelInfo: authFirst,
   getLegacyTimeTravelPatches: authFirst,
-  removeBlobTtls: requireAccount,
+  removeBlobTtls: authFirstRequireAccount,
   saveBlob: authFirst,
   deleteOldestAccountBlobs: authFirstRequireAccount,
   deleteOldestProjectBlobs: authFirstRequireAccount,
@@ -39,7 +39,10 @@ export interface DB {
     // also, make this bigger:
     timeout?: number;
   }) => Promise<string>;
-  removeBlobTtls: (opts: { uuids: string[] }) => Promise<void>;
+  removeBlobTtls: (opts: {
+    account_id?: string;
+    uuids: string[];
+  }) => Promise<void>;
   saveBlob: (opts: {
     account_id?: string;
     project_id?: string;

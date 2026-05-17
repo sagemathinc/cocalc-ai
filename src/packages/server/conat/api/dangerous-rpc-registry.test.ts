@@ -17,6 +17,11 @@ type SourceModule = {
 };
 
 const SOURCE_MODULES: SourceModule[] = [
+  { filename: "agent.ts", hubGroup: "agent" },
+  { filename: "db.ts", hubGroup: "db" },
+  { filename: "lro.ts", hubGroup: "lro" },
+  { filename: "messages.ts", hubGroup: "messages" },
+  { filename: "notifications.ts", hubGroup: "notifications" },
   { filename: "projects.ts", hubGroup: "projects" },
   { filename: "project-backups.ts", hubGroup: "projects" },
   { filename: "project-snapshots.ts", hubGroup: "projects" },
@@ -24,13 +29,15 @@ const SOURCE_MODULES: SourceModule[] = [
   { filename: "system.ts", hubGroup: "system" },
   { filename: "org.ts", hubGroup: "org" },
   { filename: "purchases.ts", hubGroup: "purchases" },
+  { filename: "software.ts", hubGroup: "software" },
+  { filename: "sync.ts", hubGroup: "sync" },
 ];
 
 const RISKY_EXPORT_PATTERN =
   /^export\s+(?:async\s+)?function\s+(\w+)|^export\s+const\s+(\w+)\s*=\s*(?:reuseInFlight\()?/gm;
 
 const DANGEROUS_RPC_NAME_PATTERN =
-  /^(?:add|admin|archive|assign|begin|claim|clear|cleanup|create|delete|drain|finalize|force|gc|hard|issue|leave|move|publish|pull|purchase|reconcile|record|release|remove|repair|request|reserve|restart|restore|rehome|revoke|rollout|run|scan|set|start|stop|sync|terminate|update|upgrade|upsert)/i;
+  /^(?:add|admin|archive|assign|begin|cancel|claim|clear|cleanup|create|delete|dismiss|drain|finalize|force|gc|hard|issue|leave|mark|move|publish|pull|purchase|purge|reconcile|record|release|remove|repair|request|reserve|restart|restore|rehome|revoke|rollout|run|save|scan|send|set|start|stop|sync|terminate|update|upgrade|upsert)/i;
 
 function exportedNames(source: string): string[] {
   const names: string[] = [];

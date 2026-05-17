@@ -81,13 +81,22 @@ export async function getLegacyTimeTravelPatches({
   return blob.toString();
 }
 
-export async function removeBlobTtls({ uuids }: { uuids: string[] }) {
+export async function removeBlobTtls({
+  account_id,
+  uuids,
+}: {
+  account_id?: string;
+  uuids: string[];
+}) {
+  if (!account_id) {
+    throw Error("account_id must be set");
+  }
   const pool = getPool();
   const v = uuids.filter(isValidUUID);
   if (v.length > 0) {
     await pool.query(
-      "UPDATE blobs SET expire=NULL WHERE id::UUID=ANY($1::UUID[])",
-      [v],
+      "UPDATE blobs SET expire=NULL WHERE id::UUID=ANY($1::UUID[]) AND account_id=$2",
+      [v, account_id],
     );
   }
 }
