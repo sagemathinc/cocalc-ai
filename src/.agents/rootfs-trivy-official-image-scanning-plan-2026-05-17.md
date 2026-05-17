@@ -685,6 +685,63 @@ Host smoke test:
 - Keep the scan itself network-disabled and `--pull=never`; only the separate
   host maintenance path should pull/update scanner assets.
 
+## Deferred: User-Requested Scans For User-Published Images
+
+This is intentionally out of scope for the first official-image scanner. It is
+still worth designing for, because the same scanner pipeline can later support
+users who update a project, publish a new immutable RootFS image, and want
+evidence that their published image no longer has known critical
+vulnerabilities.
+
+Recommended product semantics:
+
+- Keep official-image scans policy-enforcing: unresolved critical findings block
+  ordinary users from selecting the official/shared image, with admin bypass.
+- Treat user-published image scans as advisory at first. Show warnings and scan
+  evidence, but do not initially block the owner from using their own image.
+- Clearly state in the UI that a scan applies to the immutable published RootFS
+  image, not to later package changes made inside projects that use it.
+- When a project uses an image with known critical findings, explain that the
+  user can update packages in the project, publish a new RootFS image, switch to
+  it, and scan that new image.
+
+Possible flow:
+
+1. User publishes a RootFS image from a project.
+2. The image shows scan status: `not scanned`, `queued`, `scanning`, `passed`,
+   `warnings`, or `critical`.
+3. User clicks "Request scan".
+4. Hub validates that the user owns/administers the published image, the image is
+   immutable and not deleted, the image was not recently scanned, and the
+   account/project is within scan limits.
+5. Hub reuses the official-image scan primitive, preferring a running host where
+   the image is already cached and otherwise choosing a suitable scanner host.
+6. Host runs the same locked-down Trivy scanner container.
+7. Hub stores the scan summary, report artifact, scanner metadata, and audit
+   event.
+8. RootFS image lists, image details, and project settings show the advisory scan
+   result.
+
+Required controls before enabling user scans:
+
+- Per-account and per-image rate limits.
+- Global scan queue/concurrency limits.
+- Maximum scan duration and image size safeguards.
+- Admin-visible audit trail for requested scans and failures.
+- No user-controlled scanner arguments or mounts.
+- Same read-only target mount, network-disabled scan, and managed Trivy DB cache
+  used by official-image scans.
+
+Implementation shape:
+
+- Add a user-facing RPC such as `rootfs.requestImageScan` or
+  `projects.scanPublishedRootfsImage`.
+- Route both admin and user RPCs into a shared internal helper such as
+  `enqueueOrRunRootfsReleaseScan({ release_id, requested_by, mode })`.
+- Prefer a queued job model over long frontend RPCs before exposing this broadly
+  to users. Queued jobs make rate limiting, polling, retries, and audit evidence
+  much cleaner than synchronous scan calls.
+
 ## Open Questions
 
 1. Exact exception storage: separate normalized table versus event table plus
