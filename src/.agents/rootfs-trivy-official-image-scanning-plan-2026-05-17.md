@@ -22,14 +22,16 @@ Implemented in the first slice:
   scan coverage.
 - Operational knobs are admin-configurable site settings with env/per-request
   overrides.
+- Project hosts lazily prepare scan prerequisites by pulling the configured
+  Trivy scanner image when missing and seeding the host-local Trivy DB cache
+  before the offline scan container runs.
 
 Deferred after this first slice:
 
 - Automatic weekly rescan scheduling.
 - Admin exception-note workflow for bypass/accepted-risk entries.
 - Prometheus metric export.
-- A production smoke test using the pinned scanner image and real Trivy DB
-  cache.
+- A production smoke test using the pinned scanner image and real Trivy DB cache.
 
 This plan scopes `SEC-SCAN-001` to one product goal:
 

@@ -46,7 +46,10 @@ import {
   buildCachedRootfsManifest,
   buildProjectRootfsManifest,
 } from "./rootfs-manifest";
-import { runRootfsTrivyScan } from "./rootfs-scan";
+import {
+  ensureRootfsTrivyScannerPrepared,
+  runRootfsTrivyScan,
+} from "./rootfs-scan";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import {
@@ -1034,9 +1037,19 @@ export async function startMasterRegistration({
       async scanRootfsRelease(opts) {
         await awaitReadyForControl("scanRootfsRelease", waitUntilReady);
         const image = opts.target.runtime_image;
-        await pullRootfsCacheEntry(image, {
-          awaitRegionalReplication: true,
-        });
+        await Promise.all([
+          pullRootfsCacheEntry(image, {
+            awaitRegionalReplication: true,
+          }),
+          ensureRootfsTrivyScannerPrepared({
+            trivy_cache_dir: opts.trivy_cache_dir,
+            scanner_image: opts.scanner_image,
+            timeout_ms: opts.timeout_ms,
+            memory_limit: opts.memory_limit,
+            cpu_limit: opts.cpu_limit,
+            tmpfs_size: opts.tmpfs_size,
+          }),
+        ]);
         const result = await runRootfsTrivyScan({
           scan_run_id: opts.scan_run_id,
           target: opts.target,

@@ -19,6 +19,9 @@ export const ROOTFS_SCAN_SEVERITIES: RootfsScanSeverity[] = [
   "unknown",
 ];
 
+export const DEFAULT_TRIVY_SCANNER_IMAGE = "docker.io/aquasec/trivy:latest";
+export const DEFAULT_TRIVY_CACHE_DIR = "/mnt/cocalc/data/trivy-cache";
+
 const SEVERITY_RANK: Record<RootfsScanSeverity, number> = {
   critical: 5,
   high: 4,

@@ -8,7 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  buildRootfsTrivyDbSeedPodmanArgs,
   buildRootfsTrivyPodmanArgs,
+  ensureRootfsTrivyScannerPrepared,
   runRootfsTrivyScan,
   type CommandRunner,
 } from "./rootfs-scan";
@@ -74,6 +76,79 @@ describe("buildRootfsTrivyPodmanArgs", () => {
         scanner_image: "scanner",
       }),
     ).toThrow("rootfs_path must be an absolute path");
+  });
+});
+
+describe("buildRootfsTrivyDbSeedPodmanArgs", () => {
+  it("builds a constrained podman command that can update the Trivy DB cache", () => {
+    const args = buildRootfsTrivyDbSeedPodmanArgs({
+      trivy_cache_dir: "/cache/trivy",
+      scanner_image: "registry.example/trivy@sha256:abc",
+    });
+
+    expect(args).toContain("--pull=never");
+    expect(args).toContain("--read-only");
+    expect(args).toContain("--cap-drop=all");
+    expect(args).toContain("--entrypoint=trivy");
+    expect(args).toContain("registry.example/trivy@sha256:abc");
+    expect(args).toContain("image");
+    expect(args).toContain("--download-db-only");
+    expect(args.join("\n")).toContain(
+      "type=bind,src=/cache/trivy,dst=/trivy-cache",
+    );
+  });
+});
+
+describe("ensureRootfsTrivyScannerPrepared", () => {
+  it("pulls a missing scanner image and seeds the Trivy cache", async () => {
+    const base = await mkdtemp(join(tmpdir(), "rootfs-scan-setup-test-"));
+    const cache = join(base, "trivy-cache");
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const runner: CommandRunner = async (command, args) => {
+      calls.push({ command, args });
+      if (args[0] === "image" && args[1] === "exists") {
+        throw new Error("image missing");
+      }
+      if (args.includes("--download-db-only")) {
+        await mkdir(join(cache, "db"), { recursive: true });
+        await writeFile(join(cache, "db", "metadata.json"), "{}");
+      }
+      return { stdout: "", stderr: "" };
+    };
+
+    await ensureRootfsTrivyScannerPrepared({
+      trivy_cache_dir: cache,
+      scanner_image: "scanner",
+      command_runner: runner,
+    });
+
+    expect(calls.map(({ args }) => args.slice(0, 2))).toEqual([
+      ["image", "exists"],
+      ["pull", "scanner"],
+      ["run", "--rm"],
+    ]);
+  });
+
+  it("skips database seeding when the cache is already present", async () => {
+    const base = await mkdtemp(join(tmpdir(), "rootfs-scan-setup-test-"));
+    const cache = join(base, "trivy-cache");
+    await mkdir(join(cache, "db"), { recursive: true });
+    await writeFile(join(cache, "db", "metadata.json"), "{}");
+    const calls: string[][] = [];
+    const runner: CommandRunner = async (_command, args) => {
+      calls.push(args);
+      return { stdout: "", stderr: "" };
+    };
+
+    await ensureRootfsTrivyScannerPrepared({
+      trivy_cache_dir: cache,
+      scanner_image: "scanner",
+      command_runner: runner,
+    });
+
+    expect(calls.map((args) => args.slice(0, 2))).toEqual([
+      ["image", "exists"],
+    ]);
   });
 });
 
