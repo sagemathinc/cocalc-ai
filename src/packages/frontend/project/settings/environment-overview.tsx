@@ -9,7 +9,6 @@ import { useMemo, useRef, useState } from "react";
 
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
-import { lite } from "@cocalc/frontend/lite";
 import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
 import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
@@ -250,8 +249,6 @@ export function EnvironmentOverview({
     { project_id },
     "configuration_loading",
   );
-  const hostId = `${project.get("host_id") ?? ""}`;
-
   const avail = availableFeatures?.toJS?.();
   const features = useMemo(() => featureSummary(avail), [avail]);
   const envCount = countConfiguredEnv(env);
@@ -324,7 +321,9 @@ export function EnvironmentOverview({
     );
   }
 
-  const summaryColumns = isFlyout ? "1fr" : "repeat(3, minmax(0, 1fr))";
+  const summaryColumns = isFlyout
+    ? "1fr"
+    : "repeat(auto-fit, minmax(220px, 1fr))";
 
   const detailMode: Mode = "flyout";
   const SummaryComponent = isFlyout ? SummaryRow : SummaryCard;
@@ -433,12 +432,6 @@ export function EnvironmentOverview({
       title: "Network",
       value: networkSummary,
       subtitle: memberHost ?? "Project access",
-    },
-    {
-      icon: "terminal",
-      title: "SSH",
-      value: lite ? "Unavailable" : "Available",
-      subtitle: hostId ? `Host ${hostId.slice(0, 8)}` : "Remote access",
     },
   ];
 
