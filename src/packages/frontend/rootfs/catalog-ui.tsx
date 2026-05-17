@@ -7,6 +7,7 @@ import { Tag } from "antd";
 
 import { Icon } from "@cocalc/frontend/components";
 import { blobImageUrl } from "@cocalc/frontend/components/theme-image-input";
+import { RootfsScanStatusTag } from "@cocalc/frontend/rootfs/scan-status";
 import {
   managedRootfsContentKey,
   type RootfsImageEntry,
@@ -159,17 +160,6 @@ export function rootfsThemeImageUrl(
   return blobImageUrl(theme?.image_blob, "rootfs-theme.png");
 }
 
-function scanTagColor(entry: RootfsImageEntry): string | undefined {
-  if (!entry.scan?.status || entry.scan.status === "unknown") return undefined;
-  return entry.scan.status === "clean"
-    ? "green"
-    : entry.scan.status === "findings"
-      ? "orange"
-      : entry.scan.status === "error"
-        ? "red"
-        : "blue";
-}
-
 function shortRootfsRef(image: string): string {
   const contentKey = managedRootfsContentKey(image);
   if (contentKey) {
@@ -285,11 +275,7 @@ export function renderRootfsCatalogOption(entry: RootfsImageEntry) {
                 GPU
               </Tag>
             ) : null}
-            {scanTagColor(entry) ? (
-              <Tag color={scanTagColor(entry)} style={{ marginInlineEnd: 0 }}>
-                scan {entry.scan?.status}
-              </Tag>
-            ) : null}
+            <RootfsScanStatusTag entry={entry} showUnknown={entry.official} />
           </div>
           <div
             title={entry.image}

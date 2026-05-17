@@ -40,12 +40,24 @@ describe("rootfs membership limits", () => {
       }
     | undefined;
   let trusted = false;
+  let scanEntry:
+    | {
+        image_id: string;
+        release_id: string | null;
+        official: boolean | null;
+        scan_status: string | null;
+        scan_tool: string | null;
+        scanned_at: Date | null;
+        scan_summary: any;
+      }
+    | undefined;
 
   beforeEach(() => {
     jest.resetModules();
     usage = { count: 0, total_storage_bytes: 0 };
     existing = undefined;
     trusted = false;
+    scanEntry = undefined;
     isAdminMock = jest.fn(async () => false);
     centralLogMock = jest.fn(async () => undefined);
     resolveMembershipForAccountMock = jest.fn(async () => ({
@@ -75,6 +87,9 @@ describe("rootfs membership limits", () => {
       }
       if (sql.includes("SELECT COALESCE(official, false)")) {
         return { rows: trusted ? [{ trusted: true }] : [] };
+      }
+      if (sql.includes("rel.scan_status")) {
+        return { rows: scanEntry ? [scanEntry] : [] };
       }
       return { rows: [] };
     });
@@ -295,5 +310,74 @@ describe("rootfs membership limits", () => {
         image_id: "official-example",
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it("blocks ordinary users from selecting official images with unresolved critical scan findings", async () => {
+    scanEntry = {
+      image_id: "official-example",
+      release_id: "release-1",
+      official: true,
+      scan_status: "findings",
+      scan_tool: "trivy",
+      scanned_at: new Date("2026-05-17T00:00:00Z"),
+      scan_summary: {
+        status: "findings",
+        tool: "trivy",
+        severity_counts: {
+          critical: 1,
+          high: 0,
+          medium: 0,
+          low: 0,
+          unknown: 0,
+        },
+      },
+    };
+    const { assertCanSelectProjectRootfsImage } =
+      await import("./rootfs-limits");
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "cocalc.local/rootfs/official",
+        image_id: "official-example",
+      }),
+    ).rejects.toThrow("critical vulnerabilities");
+    expect(centralLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "rootfs_scan_policy_blocked",
+        value: expect.objectContaining({
+          image_id: "official-example",
+          release_id: "release-1",
+        }),
+      }),
+    );
+  });
+
+  it("does not apply official scan blocking to admins", async () => {
+    isAdminMock.mockResolvedValue(true);
+    scanEntry = {
+      image_id: "official-example",
+      release_id: "release-1",
+      official: true,
+      scan_status: "findings",
+      scan_tool: "trivy",
+      scanned_at: new Date("2026-05-17T00:00:00Z"),
+      scan_summary: {
+        status: "findings",
+        tool: "trivy",
+        severity_counts: { critical: 1 },
+      },
+    };
+    const { assertCanSelectProjectRootfsImage } =
+      await import("./rootfs-limits");
+    await expect(
+      assertCanSelectProjectRootfsImage({
+        account_id,
+        image: "cocalc.local/rootfs/official",
+        image_id: "official-example",
+      }),
+    ).resolves.toBeUndefined();
+    expect(centralLogMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: "rootfs_scan_policy_blocked" }),
+    );
   });
 });

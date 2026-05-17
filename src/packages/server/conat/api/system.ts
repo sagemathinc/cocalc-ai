@@ -125,13 +125,27 @@ import {
   requestRootfsImageDeletion as requestRootfsImageDeletion0,
   saveRootfsImage,
 } from "@cocalc/server/rootfs/catalog";
+import {
+  completeRootfsReleaseScanRun,
+  createRootfsReleaseScanRun,
+  failRootfsReleaseScanRun,
+  getRootfsReleaseScanReport,
+  loadRootfsReleaseForScan,
+  markRootfsReleaseScanRunStarted,
+  storeRootfsReleaseScanReport,
+} from "@cocalc/server/rootfs/scans";
 import { runPendingRootfsReleaseGc } from "@cocalc/server/rootfs/releases";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import type {
   ProjectRootfsStateEntry,
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
 } from "@cocalc/util/rootfs-images";
+import type {
+  RootfsReleaseScanReport,
+  RootfsReleaseScanRun,
+} from "@cocalc/util/rootfs-scan";
 import {
   getProjectRootfsStates as getProjectRootfsStates0,
   setProjectRootfsImageWithRollback,
@@ -2687,6 +2701,187 @@ export async function runRootfsReleaseGc(opts: {
     require_second_factor: true,
   });
   return await runPendingRootfsReleaseGc({ limit });
+}
+
+function optionalPositiveInteger(value: unknown): number | undefined {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.floor(n);
+}
+
+async function rootfsScanConfig({
+  scanner_image,
+  trivy_cache_dir,
+}: {
+  scanner_image?: string;
+  trivy_cache_dir?: string;
+}): Promise<{
+  scanner_image: string;
+  trivy_cache_dir: string;
+  timeout_ms: number;
+  max_target_bytes?: number;
+  max_report_bytes: number;
+  retention_days: number;
+}> {
+  const settings = await getServerSettings();
+  const image =
+    `${scanner_image ?? (settings as any).rootfs_scan_container_image ?? process.env.COCALC_ROOTFS_SCAN_TRIVY_IMAGE ?? ""}`.trim();
+  const cache =
+    `${trivy_cache_dir ?? (settings as any).rootfs_scan_trivy_cache_dir ?? process.env.COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR ?? ""}`.trim();
+  if (!image) {
+    throw new Error(
+      "RootFS scan scanner image is not configured; set COCALC_ROOTFS_SCAN_TRIVY_IMAGE or pass scanner_image",
+    );
+  }
+  if (!cache) {
+    throw new Error(
+      "RootFS scan Trivy cache directory is not configured; set COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR or pass trivy_cache_dir",
+    );
+  }
+  const timeoutMinutes =
+    optionalPositiveInteger((settings as any).rootfs_scan_timeout_minutes) ??
+    30;
+  const maxTargetGb = optionalPositiveInteger(
+    (settings as any).rootfs_scan_max_target_gb,
+  );
+  const maxReportMb =
+    optionalPositiveInteger((settings as any).rootfs_scan_max_report_mb) ?? 64;
+  const retentionDays =
+    optionalPositiveInteger(
+      (settings as any).rootfs_scan_full_report_retention_days,
+    ) ?? 730;
+  return {
+    scanner_image: image,
+    trivy_cache_dir: cache,
+    timeout_ms: timeoutMinutes * 60 * 1000,
+    max_target_bytes:
+      maxTargetGb == null ? undefined : maxTargetGb * 1_000_000_000,
+    max_report_bytes: maxReportMb * 1024 * 1024,
+    retention_days: retentionDays,
+  };
+}
+
+export async function scanRootfsRelease(opts: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  release_id: string;
+  host_id: string;
+  scanner_image?: string;
+  trivy_cache_dir?: string;
+  timeout_ms?: number;
+  max_target_bytes?: number;
+  max_report_bytes?: number;
+  memory_limit?: string;
+  cpu_limit?: string;
+  tmpfs_size?: string;
+}): Promise<RootfsReleaseScanRun> {
+  const {
+    account_id,
+    browser_id,
+    session_hash,
+    release_id,
+    host_id,
+    memory_limit,
+    cpu_limit,
+    tmpfs_size,
+  } = opts;
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
+  const config = await rootfsScanConfig(opts);
+  const timeout_ms = opts.timeout_ms ?? config.timeout_ms;
+  const max_target_bytes = opts.max_target_bytes ?? config.max_target_bytes;
+  const max_report_bytes = opts.max_report_bytes ?? config.max_report_bytes;
+  const release = await loadRootfsReleaseForScan({ release_id });
+  if (!release) {
+    throw new Error(`RootFS release ${release_id} not found`);
+  }
+  const run = await createRootfsReleaseScanRun({
+    release_id,
+    requested_by: account_id,
+  });
+  try {
+    await markRootfsReleaseScanRunStarted({
+      scan_run_id: run.scan_run_id,
+      host_id,
+    });
+    const client = await getRoutedHostControlClient({
+      host_id,
+      timeout: timeout_ms,
+      fresh: true,
+      account_id,
+    });
+    const result = await client.scanRootfsRelease({
+      scan_run_id: run.scan_run_id,
+      target: release,
+      scanner_image: config.scanner_image,
+      trivy_cache_dir: config.trivy_cache_dir,
+      timeout_ms,
+      max_target_bytes,
+      max_report_bytes,
+      memory_limit,
+      cpu_limit,
+      tmpfs_size,
+    });
+    const retention = new Date(
+      Date.now() + config.retention_days * 24 * 60 * 60 * 1000,
+    );
+    const reportArtifact =
+      result.report_json != null
+        ? await storeRootfsReleaseScanReport({
+            scan_run_id: run.scan_run_id,
+            release_id,
+            report_json: result.report_json,
+            report: result.report,
+            retention_until: retention,
+          })
+        : undefined;
+    const summary = {
+      ...result.summary,
+      report: {
+        ...(result.summary.report ?? {}),
+        ...(reportArtifact ?? {}),
+        ...result.report,
+        format: "trivy-json",
+        retention_until: retention.toISOString(),
+      },
+    };
+    return await completeRootfsReleaseScanRun({
+      scan_run_id: run.scan_run_id,
+      summary,
+      host_id,
+      report_retention_until: retention,
+    });
+  } catch (err) {
+    return await failRootfsReleaseScanRun({
+      scan_run_id: run.scan_run_id,
+      err,
+      error_code: "scan_execution_failed",
+      host_id,
+    });
+  }
+}
+
+export async function getRootfsScanReport(opts: {
+  account_id?: string;
+  report_id: string;
+}): Promise<RootfsReleaseScanReport> {
+  const { account_id, report_id } = opts;
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  const report = await getRootfsReleaseScanReport({ report_id });
+  if (!report) {
+    throw new Error(`RootFS scan report ${report_id} not found`);
+  }
+  return report;
 }
 
 async function publishQueuedLroSafe({ op }: { op: LroSummary }) {

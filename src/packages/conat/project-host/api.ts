@@ -15,6 +15,10 @@ import type {
   ProjectSecretsRuntimeCache,
   ProjectSecretSshKeySetupResult,
 } from "@cocalc/util/project-secrets";
+import type {
+  RootfsTrivyHostScanRequest,
+  RootfsTrivyHostScanResponse,
+} from "@cocalc/util/rootfs-scan";
 export { DEFAULT_RUNTIME_RETENTION_POLICY } from "./retention-policy";
 
 export interface HostCreateProjectRequest extends CreateProjectOptions {
@@ -351,6 +355,9 @@ export interface HostControlApi {
   listRootfsImages: () => Promise<HostRootfsCacheEntry[]>;
   pullRootfsImage: (opts: { image: string }) => Promise<HostRootfsCacheEntry>;
   deleteRootfsImage: (opts: { image: string }) => Promise<{ removed: boolean }>;
+  scanRootfsRelease: (
+    opts: RootfsTrivyHostScanRequest,
+  ) => Promise<RootfsTrivyHostScanResponse>;
   listHostSshAuthorizedKeys: () => Promise<HostSshAuthorizedKeysResponse>;
   addHostSshAuthorizedKey: (opts: {
     public_key: string;

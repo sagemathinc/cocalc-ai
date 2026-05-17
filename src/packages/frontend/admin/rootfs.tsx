@@ -22,6 +22,7 @@ import {
   TimeAgo,
   Tooltip,
 } from "@cocalc/frontend/components";
+import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
   RootfsAdminCatalogEntry,
@@ -49,21 +50,6 @@ function lifecycleTags(entry: RootfsAdminCatalogEntry): React.ReactNode[] {
       break;
   }
   return tags;
-}
-
-function scanTag(entry: RootfsAdminCatalogEntry): React.ReactNode {
-  switch (entry.scan_status) {
-    case "clean":
-      return <Tag color="green">clean</Tag>;
-    case "findings":
-      return <Tag color="orange">findings</Tag>;
-    case "error":
-      return <Tag color="red">error</Tag>;
-    case "pending":
-      return <Tag color="blue">pending</Tag>;
-    default:
-      return <Tag>unknown</Tag>;
-  }
 }
 
 function blockerSummary(entry: RootfsAdminCatalogEntry): React.ReactNode {
@@ -430,6 +416,22 @@ export function RootfsAdmin() {
       blocked: rows.filter(
         (entry) => entry.blocked || entry.release_gc_status === "blocked",
       ).length,
+      officialUnscanned: rows.filter(
+        (entry) =>
+          entry.official &&
+          !entry.deleted &&
+          (!entry.scan_status || entry.scan_status === "unknown"),
+      ).length,
+      officialCritical: rows.filter(
+        (entry) =>
+          entry.official &&
+          !entry.deleted &&
+          (entry.scan?.severity_counts?.critical ?? 0) > 0,
+      ).length,
+      officialScanFailed: rows.filter(
+        (entry) =>
+          entry.official && !entry.deleted && entry.scan_status === "error",
+      ).length,
     }),
     [rows],
   );
@@ -511,6 +513,53 @@ export function RootfsAdmin() {
     }
   }
 
+  async function runScan(entry: RootfsAdminCatalogEntry) {
+    if (!entry.release_id) {
+      message.error("This catalog entry does not reference a managed release.");
+      return;
+    }
+    const host_id = window.prompt(
+      `Project host id to scan '${entry.label}' on:`,
+    );
+    if (!host_id?.trim()) return;
+    setActionImageId(entry.id);
+    try {
+      const result = await hub.system.scanRootfsRelease({
+        release_id: entry.release_id,
+        host_id: host_id.trim(),
+      });
+      message.success(`RootFS scan ${result.status}: ${entry.label}`);
+      await load();
+    } catch (err) {
+      message.error(`Failed to scan RootFS image: ${err}`);
+      await load();
+    } finally {
+      setActionImageId(undefined);
+    }
+  }
+
+  async function downloadScanReport(entry: RootfsAdminCatalogEntry) {
+    const report_id = entry.scan?.report?.artifact_id;
+    if (!report_id) return;
+    setActionImageId(entry.id);
+    try {
+      const report = await hub.system.getRootfsScanReport({ report_id });
+      const blob = new Blob([JSON.stringify(report.report_json, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `rootfs-scan-${entry.id}-${report_id}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      message.error(`Failed to download scan report: ${err}`);
+    } finally {
+      setActionImageId(undefined);
+    }
+  }
+
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <Typography.Paragraph type="secondary">
@@ -539,6 +588,9 @@ export function RootfsAdmin() {
         <Tag color="red">{counts.deleted} deleted</Tag>
         <Tag color="orange">{counts.pendingDelete} pending release GC</Tag>
         <Tag color="gold">{counts.blocked} blocked</Tag>
+        <Tag>{counts.officialUnscanned} official unscanned</Tag>
+        <Tag color="red">{counts.officialCritical} official critical</Tag>
+        <Tag color="red">{counts.officialScanFailed} scan failed</Tag>
       </Space>
       {error ? <ErrorDisplay error={error} /> : null}
       {loading && rows.length === 0 ? (
@@ -618,15 +670,7 @@ export function RootfsAdmin() {
               key: "scan",
               render: (_, entry) => (
                 <Space orientation="vertical" size={0}>
-                  <Space wrap>
-                    {scanTag(entry)}
-                    {entry.scan_tool ? <Tag>{entry.scan_tool}</Tag> : null}
-                  </Space>
-                  {entry.scan?.summary ? (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {entry.scan.summary}
-                    </Typography.Text>
-                  ) : null}
+                  <RootfsScanStatus entry={entry} />
                   {entry.scan?.report_url ? (
                     <Typography.Link
                       href={entry.scan.report_url}
@@ -636,6 +680,15 @@ export function RootfsAdmin() {
                     >
                       View report
                     </Typography.Link>
+                  ) : null}
+                  {entry.scan?.report?.artifact_id ? (
+                    <Button
+                      size="small"
+                      loading={actionImageId === entry.id}
+                      onClick={() => downloadScanReport(entry)}
+                    >
+                      Download report
+                    </Button>
                   ) : null}
                   {entry.scanned_at ? (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -737,6 +790,16 @@ export function RootfsAdmin() {
                   ) : (
                     <Typography.Text type="secondary">Deleted</Typography.Text>
                   )}
+                  {!entry.deleted ? (
+                    <Button
+                      size="small"
+                      loading={actionImageId === entry.id}
+                      disabled={!entry.release_id}
+                      onClick={() => runScan(entry)}
+                    >
+                      Scan now
+                    </Button>
+                  ) : null}
                 </Space>
               ),
             },

@@ -44,6 +44,7 @@ import {
   setProjectRootfsImage,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
+import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
 import {
   groupedRootfsOptions,
   latestRootfsVersionEntries,
@@ -1095,7 +1096,9 @@ export default function RootFilesystemImage() {
                   </Paragraph>
                 )}
                 {draftRootfsEntry && renderRootfsWarning(draftRootfsEntry)}
-                {draftRootfsEntry && renderRootfsScan(draftRootfsEntry)}
+                {draftRootfsEntry && (
+                  <RootfsScanStatus entry={draftRootfsEntry} />
+                )}
                 <Space wrap>
                   {draftRootfsEntry?.section && (
                     <Tag color={sectionTagColor(draftRootfsEntry.section)}>
@@ -2049,28 +2052,4 @@ function renderRootfsWarning(
       </Paragraph>
     );
   }
-}
-
-function renderRootfsScan(
-  entry: RootfsImageEntry,
-): React.JSX.Element | undefined {
-  const scan = entry.scan;
-  if (!scan?.status || scan.status === "unknown") {
-    return;
-  }
-  const color =
-    scan.status === "clean"
-      ? "green"
-      : scan.status === "findings"
-        ? "orange"
-        : scan.status === "error"
-          ? "red"
-          : "blue";
-  return (
-    <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-      <Tag color={color}>Scan: {scan.status}</Tag>
-      {scan.tool ? ` ${scan.tool}` : ""}
-      {scan.summary ? ` - ${scan.summary}` : ""}
-    </Paragraph>
-  );
 }

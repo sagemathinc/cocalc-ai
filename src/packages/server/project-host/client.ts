@@ -72,6 +72,8 @@ export async function getRoutedHostControlClient({
         await bridge.pullRootfsImage({ host_id, pull }),
       deleteRootfsImage: async (del) =>
         await bridge.deleteRootfsImage({ host_id, del }),
+      scanRootfsRelease: async (scan) =>
+        await bridge.scanRootfsRelease({ host_id, scan }),
       listHostSshAuthorizedKeys: async () =>
         await bridge.listHostSshAuthorizedKeys({ host_id }),
       addHostSshAuthorizedKey: async (add) =>

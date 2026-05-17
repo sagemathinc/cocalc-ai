@@ -81,6 +81,11 @@ describe("project-host client routing", () => {
         running_project_ids: [],
       })),
       deleteRootfsImage: jest.fn(async () => ({ removed: true })),
+      scanRootfsRelease: jest.fn(async () => ({
+        summary: { status: "clean", tool: "trivy" },
+        duration_ms: 1,
+        report: { bytes: 2, compressed_bytes: 3, sha256: "a".repeat(64) },
+      })),
       listHostSshAuthorizedKeys: jest.fn(async () => ({
         user: "u",
         home: "/h",

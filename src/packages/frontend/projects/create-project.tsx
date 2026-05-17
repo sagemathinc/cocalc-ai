@@ -50,6 +50,7 @@ import {
   managedRootfsCatalogUrl,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
+import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
 import {
   groupedRootfsOptions,
   latestRootfsVersionEntries,
@@ -444,7 +445,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
                 </Paragraph>
               )}
               {activeEntry && renderRootfsWarning(activeEntry)}
-              {activeEntry && renderRootfsScan(activeEntry)}
+              {activeEntry && <RootfsScanStatus entry={activeEntry} />}
               <Space wrap>
                 {activeEntry?.section && (
                   <Tag color={sectionTagColor(activeEntry.section)}>
@@ -543,7 +544,9 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
             </code>
           )}
           {selectedRootfsEntry && renderRootfsWarning(selectedRootfsEntry)}
-          {selectedRootfsEntry && renderRootfsScan(selectedRootfsEntry)}
+          {selectedRootfsEntry && (
+            <RootfsScanStatus entry={selectedRootfsEntry} />
+          )}
           {renderRootfsModal()}
         </Space>
       </Card>
@@ -696,28 +699,4 @@ function renderRootfsWarning(
       </Paragraph>
     );
   }
-}
-
-function renderRootfsScan(
-  entry: RootfsImageEntry,
-): React.JSX.Element | undefined {
-  const scan = entry.scan;
-  if (!scan?.status || scan.status === "unknown") {
-    return;
-  }
-  const color =
-    scan.status === "clean"
-      ? "green"
-      : scan.status === "findings"
-        ? "orange"
-        : scan.status === "error"
-          ? "red"
-          : "blue";
-  return (
-    <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-      <Tag color={color}>Scan: {scan.status}</Tag>
-      {scan.tool ? ` ${scan.tool}` : ""}
-      {scan.summary ? ` - ${scan.summary}` : ""}
-    </Paragraph>
-  );
 }

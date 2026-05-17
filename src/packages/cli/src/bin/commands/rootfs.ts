@@ -9,6 +9,7 @@ import type {
   RootfsImageVisibility,
   RootfsReleaseGcRunResult,
 } from "@cocalc/util/rootfs-images";
+import type { RootfsReleaseScanRun } from "@cocalc/util/rootfs-scan";
 
 export type RootfsCommandDeps = {
   withContext: any;
@@ -365,6 +366,127 @@ function formatRootfsGcResultHuman(result: RootfsReleaseGcRunResult): string {
   return lines.join("\n");
 }
 
+function formatRootfsScanResultHuman(result: RootfsReleaseScanRun): string {
+  const counts = result.severity_counts ?? result.summary?.severity_counts;
+  const lines = [
+    `scan_run_id: ${result.scan_run_id}`,
+    `release_id: ${result.release_id}`,
+    `image: ${result.runtime_image}`,
+    `status: ${result.status}`,
+    `host_id: ${result.host_id ?? "-"}`,
+    `tool: ${result.tool ?? result.summary?.tool ?? "-"}`,
+    `tool_version: ${result.tool_version ?? result.summary?.tool_version ?? "-"}`,
+    `db_updated_at: ${result.db_updated_at ?? result.summary?.db?.updated_at ?? "-"}`,
+    `requested_at: ${result.requested_at}`,
+    `started_at: ${result.started_at ?? "-"}`,
+    `completed_at: ${result.completed_at ?? "-"}`,
+  ];
+  if (counts) {
+    lines.push(
+      `severity_counts: critical=${counts.critical ?? 0} high=${counts.high ?? 0} medium=${counts.medium ?? 0} low=${counts.low ?? 0} unknown=${counts.unknown ?? 0}`,
+    );
+  }
+  if (result.report_sha256 || result.report_bytes != null) {
+    lines.push(
+      `report: bytes=${result.report_bytes ?? "-"} compressed_bytes=${result.report_compressed_bytes ?? "-"} sha256=${result.report_sha256 ?? "-"}`,
+    );
+  }
+  const findings = result.summary?.highest_findings ?? [];
+  if (findings.length > 0) {
+    lines.push("highest_findings:");
+    for (const finding of findings) {
+      lines.push(
+        `  - ${finding.id} ${finding.severity} ${finding.package_name ?? "-"} ${finding.installed_version ?? "-"} -> ${finding.fixed_version ?? "-"}`,
+      );
+      if (finding.title) {
+        lines.push(`    ${finding.title}`);
+      }
+    }
+  }
+  if (result.error) {
+    lines.push(`error: ${result.error}`);
+  }
+  return lines.join("\n");
+}
+
+function scanCriticalCount(entry: RootfsAdminCatalogEntry): number {
+  return entry.scan?.severity_counts?.critical ?? 0;
+}
+
+function scanHighCount(entry: RootfsAdminCatalogEntry): number {
+  return entry.scan?.severity_counts?.high ?? 0;
+}
+
+function isScanStale(
+  entry: RootfsAdminCatalogEntry,
+  staleDays: number,
+): boolean {
+  if (!entry.scanned_at) return false;
+  const scanned = Date.parse(entry.scanned_at);
+  if (!Number.isFinite(scanned)) return false;
+  return Date.now() - scanned > staleDays * 24 * 60 * 60 * 1000;
+}
+
+function buildRootfsScanAudit(
+  entries: RootfsAdminCatalogEntry[],
+  staleDays: number,
+) {
+  const official = entries.filter((entry) => entry.official && !entry.deleted);
+  return {
+    checked_at: new Date().toISOString(),
+    stale_days: staleDays,
+    totals: {
+      official: official.length,
+      unscanned: official.filter(
+        (entry) => !entry.scan_status || entry.scan_status === "unknown",
+      ).length,
+      stale: official.filter((entry) => isScanStale(entry, staleDays)).length,
+      failed: official.filter((entry) => entry.scan_status === "error").length,
+      findings: official.filter((entry) => entry.scan_status === "findings")
+        .length,
+      critical: official.filter((entry) => scanCriticalCount(entry) > 0).length,
+      high: official.filter((entry) => scanHighCount(entry) > 0).length,
+    },
+    unscanned: official.filter(
+      (entry) => !entry.scan_status || entry.scan_status === "unknown",
+    ),
+    stale: official.filter((entry) => isScanStale(entry, staleDays)),
+    failed: official.filter((entry) => entry.scan_status === "error"),
+    findings: official.filter((entry) => entry.scan_status === "findings"),
+    critical: official.filter((entry) => scanCriticalCount(entry) > 0),
+  };
+}
+
+function formatRootfsScanAuditHuman(
+  audit: ReturnType<typeof buildRootfsScanAudit>,
+): string {
+  const lines = [
+    `checked_at: ${audit.checked_at}`,
+    `official_images: ${audit.totals.official}`,
+    `unscanned: ${audit.totals.unscanned}`,
+    `stale: ${audit.totals.stale} (>${audit.stale_days} days)`,
+    `failed: ${audit.totals.failed}`,
+    `findings: ${audit.totals.findings}`,
+    `critical: ${audit.totals.critical}`,
+    `high: ${audit.totals.high}`,
+  ];
+  for (const [label, entries] of [
+    ["critical", audit.critical],
+    ["failed", audit.failed],
+    ["unscanned", audit.unscanned],
+    ["stale", audit.stale],
+  ] as const) {
+    if (!entries.length) continue;
+    lines.push("", `${label}:`);
+    for (const entry of entries) {
+      lines.push(
+        `  - ${entry.label} image_id=${entry.id} release_id=${entry.release_id ?? "-"} scan=${entry.scan_status ?? "unknown"} scanned_at=${entry.scanned_at ?? "-"}`,
+      );
+    }
+  }
+  return lines.join("\n");
+}
+
 async function loadAdminRootfsEntryById(ctx: any, image_id: string) {
   const trimmed = `${image_id ?? ""}`.trim();
   if (!trimmed) {
@@ -653,6 +775,133 @@ export function registerRootfsCommand(
             return result;
           }
           return formatRootfsGcResultHuman(result);
+        });
+      },
+    );
+
+  rootfs
+    .command("scan")
+    .description("run an admin Trivy scan for a managed RootFS release")
+    .option("--image-id <id>", "catalog image id to scan")
+    .option("--release-id <id>", "release id to scan")
+    .requiredOption(
+      "--host-id <id>",
+      "project host that should materialize and scan the RootFS",
+    )
+    .option(
+      "--scanner-image <image>",
+      "pinned Trivy scanner container image; defaults to server settings/env",
+    )
+    .option(
+      "--trivy-cache-dir <path>",
+      "host-local Trivy DB/cache directory; defaults to server settings/env",
+    )
+    .option("--timeout-ms <n>", "scan timeout in milliseconds")
+    .option("--max-target-bytes <n>", "maximum RootFS target bytes")
+    .option("--max-report-bytes <n>", "maximum raw Trivy JSON report bytes")
+    .option("--memory-limit <value>", "podman memory limit, e.g. 4g")
+    .option("--cpu-limit <value>", "podman CPU limit, e.g. 2")
+    .option("--tmpfs-size <value>", "scanner /tmp tmpfs size, e.g. 512m")
+    .action(
+      async (
+        opts: {
+          imageId?: string;
+          releaseId?: string;
+          hostId: string;
+          scannerImage?: string;
+          trivyCacheDir?: string;
+          timeoutMs?: string;
+          maxTargetBytes?: string;
+          maxReportBytes?: string;
+          memoryLimit?: string;
+          cpuLimit?: string;
+          tmpfsSize?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs scan", async (ctx) => {
+          let release_id = `${opts.releaseId ?? ""}`.trim();
+          if (!release_id && opts.imageId) {
+            const entry = await loadAdminRootfsEntryById(ctx, opts.imageId);
+            release_id = `${entry.release_id ?? ""}`.trim();
+            if (!release_id) {
+              throw new Error(
+                `rootfs image '${opts.imageId}' does not reference a managed release`,
+              );
+            }
+          }
+          if (!release_id) {
+            throw new Error("specify --release-id or --image-id");
+          }
+          const result = await ctx.hub.system.scanRootfsRelease({
+            release_id,
+            host_id: `${opts.hostId ?? ""}`.trim(),
+            scanner_image: opts.scannerImage,
+            trivy_cache_dir: opts.trivyCacheDir,
+            timeout_ms: opts.timeoutMs ? Number(opts.timeoutMs) : undefined,
+            max_target_bytes: opts.maxTargetBytes
+              ? Number(opts.maxTargetBytes)
+              : undefined,
+            max_report_bytes: opts.maxReportBytes
+              ? Number(opts.maxReportBytes)
+              : undefined,
+            memory_limit: opts.memoryLimit,
+            cpu_limit: opts.cpuLimit,
+            tmpfs_size: opts.tmpfsSize,
+          });
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            return result;
+          }
+          return formatRootfsScanResultHuman(result);
+        });
+      },
+    );
+
+  rootfs
+    .command("scan-report")
+    .description("download a retained admin RootFS scan JSON report")
+    .requiredOption("--report-id <id>", "scan report artifact id")
+    .action(
+      async (
+        opts: {
+          reportId: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs scan-report", async (ctx) => {
+          const report = await ctx.hub.system.getRootfsScanReport({
+            report_id: `${opts.reportId ?? ""}`.trim(),
+          });
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            return report;
+          }
+          return JSON.stringify(report.report_json, null, 2);
+        });
+      },
+    );
+
+  rootfs
+    .command("scan-audit")
+    .description("summarize official RootFS vulnerability scan coverage")
+    .option("--stale-days <n>", "scan age considered stale", "30")
+    .action(
+      async (
+        opts: {
+          staleDays?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs scan-audit", async (ctx) => {
+          const entries: RootfsAdminCatalogEntry[] =
+            (await ctx.hub.system.getRootfsCatalogAdmin({})) ?? [];
+          const audit = buildRootfsScanAudit(
+            entries,
+            parseLimit(opts.staleDays, 30),
+          );
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            return audit;
+          }
+          return formatRootfsScanAuditHuman(audit);
         });
       },
     );

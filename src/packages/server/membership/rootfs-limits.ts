@@ -13,7 +13,9 @@ import { humanSize } from "@cocalc/util/misc";
 import {
   BUILTIN_ROOTFS_IMAGES,
   isManagedRootfsImageName,
+  type RootfsScanSummary,
 } from "@cocalc/util/rootfs-images";
+import { evaluateRootfsScanSelection } from "@cocalc/util/rootfs-scan";
 import type { MembershipResolution } from "@cocalc/conat/hub/api/purchases";
 
 const logger = getLogger("server:membership:rootfs-limits");
@@ -90,6 +92,43 @@ async function recordRootfsQuotaDenial({
       account_id,
       operation,
       limit,
+      err: `${err}`,
+    });
+  }
+}
+
+async function recordRootfsScanPolicyBlock({
+  account_id,
+  operation,
+  image,
+  image_id,
+  release_id,
+  reason,
+}: {
+  account_id: string;
+  operation: RootfsQuotaOperation;
+  image: string;
+  image_id?: string;
+  release_id?: string;
+  reason: string;
+}) {
+  try {
+    await centralLog({
+      event: "rootfs_scan_policy_blocked",
+      value: {
+        account_id,
+        operation,
+        image: image.slice(0, 512),
+        image_id: image_id ? image_id.slice(0, 128) : undefined,
+        release_id,
+        reason,
+        time: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    logger.warn("unable to record rootfs scan policy block", {
+      account_id,
+      operation,
       err: `${err}`,
     });
   }
@@ -204,6 +243,86 @@ async function catalogImageIsTrusted({
   return rows[0]?.trusted === true;
 }
 
+async function assertRootfsScanSelectionAllowed({
+  account_id,
+  image,
+  image_id,
+  operation,
+}: {
+  account_id: string;
+  image: string;
+  image_id?: string;
+  operation: RootfsQuotaOperation;
+}) {
+  const pool = getPool("medium");
+  const params: string[] = [];
+  const clauses: string[] = [];
+  const id = `${image_id ?? ""}`.trim();
+  if (id) {
+    params.push(id);
+    clauses.push(`img.image_id=$${params.length}`);
+  }
+  if (image) {
+    params.push(image);
+    clauses.push(`img.runtime_image=$${params.length}`);
+  }
+  if (!clauses.length) return;
+  const { rows } = await pool.query<{
+    image_id: string;
+    release_id: string | null;
+    official: boolean | null;
+    scan_status: string | null;
+    scan_tool: string | null;
+    scanned_at: Date | null;
+    scan_summary: RootfsScanSummary | null;
+  }>(
+    `SELECT img.image_id,
+            img.release_id,
+            COALESCE(img.official, false) AS official,
+            rel.scan_status,
+            rel.scan_tool,
+            rel.scanned_at,
+            rel.scan_summary
+       FROM rootfs_images AS img
+       LEFT JOIN rootfs_releases AS rel ON rel.release_id = img.release_id
+      WHERE (${clauses.join(" OR ")})
+        AND COALESCE(img.deleted, false)=false
+      ORDER BY COALESCE(img.official, false) DESC,
+               img.updated DESC
+      LIMIT 1`,
+    params,
+  );
+  const row = rows[0];
+  if (!row?.official) return;
+  const summary: RootfsScanSummary | undefined =
+    row.scan_status || row.scan_tool || row.scanned_at || row.scan_summary
+      ? {
+          ...(row.scan_summary ?? {}),
+          status: (row.scan_status as RootfsScanSummary["status"]) ?? undefined,
+          tool: row.scan_tool ?? row.scan_summary?.tool,
+          scanned_at:
+            row.scanned_at?.toISOString() ?? row.scan_summary?.scanned_at,
+        }
+      : undefined;
+  const decision = evaluateRootfsScanSelection({
+    summary,
+    official: true,
+  });
+  if (decision.allowed) return;
+  const reason =
+    decision.message ??
+    "this official RootFS image is blocked by vulnerability scan policy";
+  await recordRootfsScanPolicyBlock({
+    account_id,
+    operation,
+    image,
+    image_id: id || row.image_id,
+    release_id: row.release_id ?? undefined,
+    reason,
+  });
+  throw new Error(reason);
+}
+
 async function assertRemoteOciAllowed({
   account_id,
   image,
@@ -254,6 +373,12 @@ export async function assertCanSelectProjectRootfsImage({
   if (!trimmed || (await isAdmin(account_id))) {
     return;
   }
+  await assertRootfsScanSelectionAllowed({
+    account_id,
+    image: trimmed,
+    image_id,
+    operation: "select-project-image",
+  });
   await assertRemoteOciAllowed({
     account_id,
     image: trimmed,
