@@ -438,7 +438,15 @@ export function EnvironmentFeatureGroups({
           ) : undefined}
         </Space>
       ) : (
-        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+        <div
+          style={{
+            display: "grid",
+            gap: isFlyout ? 8 : 10,
+            gridTemplateColumns: isFlyout
+              ? "1fr"
+              : "repeat(auto-fit, minmax(170px, 1fr))",
+          }}
+        >
           {groups.map(([category, rows]) => (
             <div key={category}>
               <Typography.Text
@@ -460,7 +468,7 @@ export function EnvironmentFeatureGroups({
               </Space>
             </div>
           ))}
-        </Space>
+        </div>
       )}
 
       <div style={{ marginTop: 10 }}>

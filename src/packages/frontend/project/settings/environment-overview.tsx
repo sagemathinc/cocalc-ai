@@ -119,7 +119,11 @@ function SummaryCard({
   return (
     <Card
       size="small"
-      style={{ borderColor: COLORS.GRAY_LL, height: "100%" }}
+      style={{
+        borderColor: COLORS.GRAY_LL,
+        height: "100%",
+        position: "relative",
+      }}
       styles={{ body: CARD_BODY_STYLE }}
     >
       <div
@@ -146,7 +150,14 @@ function SummaryCard({
           <Icon name={icon as any} />
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          <Typography.Text
+            type="secondary"
+            style={{
+              display: "block",
+              fontSize: 12,
+              marginRight: action == null ? undefined : 52,
+            }}
+          >
             {title}
           </Typography.Text>
           <div
@@ -164,8 +175,10 @@ function SummaryCard({
             <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{subtitle}</div>
           ) : undefined}
         </div>
-        {action != null ? <div>{action}</div> : undefined}
       </div>
+      {action != null ? (
+        <div style={{ position: "absolute", right: 8, top: 6 }}>{action}</div>
+      ) : undefined}
     </Card>
   );
 }
