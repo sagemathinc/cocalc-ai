@@ -33,6 +33,7 @@ import {
   hasApiKeyProjectCapability,
   type ApiKeyPrincipal,
 } from "@cocalc/server/api/api-key-scope";
+import { recordApiKeyAuditEventSoon } from "@cocalc/server/api/api-key-audit";
 import { getHubManagedEgressBlockedMessage } from "./managed-egress-runtime";
 import { recordBrowserAuthSession } from "./browser-auth-sessions";
 import {
@@ -434,10 +435,26 @@ async function isApiKeyAllowed({
     type,
   });
   if (common != null && !subject.startsWith(`hub.account.${account_id}.`)) {
+    if (!common) {
+      recordConatApiKeyDenial({
+        user,
+        subject,
+        type,
+        reason: "common subject policy denied API key access",
+        code: "api_key_common_subject_denied",
+      });
+    }
     return common;
   }
   const project_id = extractProjectSubject(subject);
   if (!project_id) {
+    recordConatApiKeyDenial({
+      user,
+      subject,
+      type,
+      reason: "API key subject is not a project subject",
+      code: "api_key_subject_denied",
+    });
     return false;
   }
   if (
@@ -450,11 +467,61 @@ async function isApiKeyAllowed({
       project_id,
     )
   ) {
+    recordConatApiKeyDenial({
+      user,
+      subject,
+      type,
+      project_id,
+      reason: "API key lacks project:exec capability for project",
+      code: "api_key_project_capability_denied",
+    });
     return false;
   }
-  return await hasProjectCollaboratorAccessAllowRemote({
+  const allowed = await hasProjectCollaboratorAccessAllowRemote({
     account_id,
     project_id,
+  });
+  if (!allowed) {
+    recordConatApiKeyDenial({
+      user,
+      subject,
+      type,
+      project_id,
+      reason: "account is not a project collaborator",
+      code: "api_key_project_collaborator_denied",
+    });
+  }
+  return allowed;
+}
+
+function recordConatApiKeyDenial({
+  user,
+  subject,
+  type,
+  project_id,
+  reason,
+  code,
+}: {
+  user: CoCalcUserWithApiKey;
+  subject: string;
+  type: "sub" | "pub";
+  project_id?: string;
+  reason: string;
+  code: string;
+}): void {
+  recordApiKeyAuditEventSoon({
+    event: "api_key_denied",
+    value: {
+      account_id: user.account_id,
+      api_key_id: user.api_key_id,
+      key_id: user.key_id,
+      source: "conat-websocket",
+      subject,
+      conat_operation: type,
+      project_id,
+      reason,
+      code,
+    },
   });
 }
 

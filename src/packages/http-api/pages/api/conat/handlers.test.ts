@@ -20,6 +20,13 @@ jest.mock("@cocalc/backend/conat", () => ({
 jest.mock("@cocalc/server/api/hub-bridge", () => jest.fn());
 jest.mock("@cocalc/server/api/project-bridge", () => jest.fn());
 jest.mock("@cocalc/server/projects/is-collaborator", () => jest.fn());
+jest.mock(
+  "@cocalc/server/api/api-key-audit",
+  () => ({
+    recordApiKeyAuditEventSoon: jest.fn(),
+  }),
+  { virtual: true },
+);
 
 const mockConat = jest.mocked(conat);
 const mockGetAccountFromApiKey = jest.mocked(getAccountFromApiKey);
