@@ -685,6 +685,22 @@ Host smoke test:
 - Keep the scan itself network-disabled and `--pull=never`; only the separate
   host maintenance path should pull/update scanner assets.
 
+## Scheduled Official Scans
+
+Implemented scheduler behavior:
+
+- Conat API startup launches RootFS scan maintenance alongside RootFS release GC.
+- The scheduler is enabled by default via `rootfs_scan_scheduled_enabled`.
+- Visible official images are rescanned when their referenced immutable release
+  has never been scanned or when `scanned_at` is older than
+  `rootfs_scan_rescan_period_days`, default 7 days.
+- Hidden, deleted, non-official, deleted-release, and currently pending-scan
+  entries are skipped.
+- Each bay scans with its own running project hosts, preferring hosts that
+  already have the exact runtime image cached.
+- The maintenance loop uses a bay-local advisory lock and a conservative default
+  batch size of one scan per tick so weekly scans do not stampede hosts.
+
 ## Deferred: User-Requested Scans For User-Published Images
 
 This is intentionally out of scope for the first official-image scanner. It is

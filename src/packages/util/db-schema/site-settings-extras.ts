@@ -244,6 +244,8 @@ export type SiteSettingsExtrasKeys =
   | "rootfs_scan_max_target_gb"
   | "rootfs_scan_max_report_mb"
   | "rootfs_scan_full_report_retention_days"
+  | "rootfs_scan_scheduled_enabled"
+  | "rootfs_scan_rescan_period_days"
   | "software_licenses_heading"
   | "software_license_private_key"
   | "stripe_heading"
@@ -541,6 +543,26 @@ export const EXTRAS: SettingsExtras = {
   rootfs_scan_full_report_retention_days: {
     name: "RootFS Scan: Full Report Retention Days",
     desc: "How long to retain full Trivy JSON reports for admin/SOC-2 evidence. Blank uses 730 days.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["RootFS", "Security", "Project Hosts"],
+    group: "Compute / Project Hosts",
+    subgroup: "RootFS Scanning",
+  },
+  rootfs_scan_scheduled_enabled: {
+    name: "RootFS Scan: Scheduled Official Scans",
+    desc: "Run scheduled vulnerability scans for official non-hidden RootFS images. Blank or yes enables weekly scanning; no disables the scheduler.",
+    default: "",
+    valid: only_booleans,
+    to_val: to_bool,
+    tags: ["RootFS", "Security", "Project Hosts"],
+    group: "Compute / Project Hosts",
+    subgroup: "RootFS Scanning",
+  },
+  rootfs_scan_rescan_period_days: {
+    name: "RootFS Scan: Rescan Period Days",
+    desc: "How often official non-hidden RootFS images should be rescanned. Blank uses 7 days.",
     default: "",
     valid: optionalPositiveInteger,
     to_val: to_trimmed_str,
