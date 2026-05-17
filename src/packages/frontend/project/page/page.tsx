@@ -75,6 +75,7 @@ import {
 } from "./keyboard-navigation";
 import { shouldRenderMoveStatus } from "./move-status";
 import { getRecoverableActiveEditorPath } from "./active-editor-recovery";
+import { HardDeleteProjectModal } from "@cocalc/frontend/projects/hard-delete-project-modal";
 
 const START_BANNER = false;
 
@@ -102,6 +103,11 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   const actions = useActions({ project_id });
   const project = useRedux(["projects", "project_map", project_id]);
   const project_color = projectThemeColor(project);
+  const hardDeleteState = `${project?.getIn(["state", "state"]) ?? ""}`;
+  const hardDeleteBlocked =
+    hardDeleteState === "deleting" || hardDeleteState === "delete_failed";
+  const hardDeleteOpId = `${project?.getIn(["state", "hard_delete_op_id"]) ?? ""}`;
+  const hardDeleteError = `${project?.getIn(["state", "hard_delete_error"]) ?? ""}`;
   const projectCtx = useProjectContextProvider({
     project_id,
     is_active,
@@ -269,6 +275,14 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     }
   }, [archivedLike, actions, active_project_tab, is_active, open_files_order]);
 
+  useEffect(() => {
+    if (!is_active || !actions || !hardDeleteBlocked) {
+      return;
+    }
+    actions.close_all_files?.();
+    actions.set_active_tab?.("home", { change_history: false });
+  }, [actions, hardDeleteBlocked, is_active]);
+
   const recoverActiveEditorComponent = React.useCallback(() => {
     if (
       typeof document !== "undefined" &&
@@ -391,7 +405,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   }
 
   function renderEditorContent() {
-    if (archivedLike) {
+    if (archivedLike || hardDeleteBlocked) {
       return [];
     }
     const v: React.JSX.Element[] = [];
@@ -434,6 +448,9 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
 
   // fixed tab -- not an editor
   function render_project_content() {
+    if (hardDeleteBlocked) {
+      return;
+    }
     if (!is_active) {
       // see https://github.com/sagemathinc/cocalc/issues/3799
       // Some of the fixed project tabs (none editors) are hooked
@@ -513,7 +530,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   function renderTopRow() {
     if (fullscreen && fullscreen !== "project") return;
 
-    if (workspaceBlocked) {
+    if (workspaceBlocked || hardDeleteBlocked) {
       return (
         <div style={{ display: "flex", height: "36px" }}>
           {hideActionButtons ? <HiddenActivityBarLauncher /> : null}
@@ -555,7 +572,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   }
 
   function renderHostUnavailableBanner() {
-    if (!hostUnavailable) return;
+    if (!hostUnavailable || hardDeleteBlocked) return;
     return (
       <Alert
         showIcon
@@ -640,6 +657,18 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
   }
 
   function renderMainContent() {
+    if (hardDeleteBlocked) {
+      return (
+        <HardDeleteProjectStatus
+          project_id={project_id}
+          title={project?.get("title")}
+          state={hardDeleteState}
+          op_id={hardDeleteOpId || undefined}
+          error={hardDeleteError || undefined}
+        />
+      );
+    }
+
     if (moveStatusVisible && moveLro) {
       return <MoveInProgress project_id={project_id} moveLro={moveLro} />;
     }
@@ -674,7 +703,7 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
     );
   }
 
-  if (open_files_order == null) {
+  if (open_files_order == null && !hardDeleteBlocked) {
     return <Loading />;
   }
 
@@ -706,21 +735,157 @@ export const ProjectPage: React.FC<Props> = (props: Props) => {
             }}
           />
         ) : null}
-        <DiskSpaceWarning project_id={project_id} />
-        <RamWarning project_id={project_id} />
-        <OOMWarning project_id={project_id} />
-        <ProjectWarningBanner />
+        {!hardDeleteBlocked && <DiskSpaceWarning project_id={project_id} />}
+        {!hardDeleteBlocked && <RamWarning project_id={project_id} />}
+        {!hardDeleteBlocked && <OOMWarning project_id={project_id} />}
+        {!hardDeleteBlocked && <ProjectWarningBanner />}
         {renderHostUnavailableBanner()}
         {renderTopRow()}
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-          {!workspaceBlocked && renderActivityBarButtons()}
-          {!workspaceBlocked && renderFlyout()}
+          {!workspaceBlocked &&
+            !hardDeleteBlocked &&
+            renderActivityBarButtons()}
+          {!workspaceBlocked && !hardDeleteBlocked && renderFlyout()}
           {renderMainContent()}
         </div>
       </div>
     </ProjectContext.Provider>
   );
 };
+
+function HardDeleteProjectStatus({
+  project_id,
+  title,
+  state,
+  op_id,
+  error,
+}: {
+  project_id: string;
+  title?: string;
+  state: string;
+  op_id?: string;
+  error?: string;
+}) {
+  const failed = state === "delete_failed";
+  const [retryOpen, setRetryOpen] = useState(false);
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        background: failed ? COLORS.ANTD_BG_RED_L : COLORS.YELL_LLL,
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 720,
+          width: "100%",
+          background: "white",
+          border: `1px solid ${failed ? COLORS.ANTD_BG_RED_M : COLORS.YELL_LL}`,
+          borderRadius: 12,
+          padding: 24,
+          boxShadow: "0 12px 32px rgba(15, 23, 42, 0.14)",
+        }}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Space align="start" size="middle">
+            <span
+              style={{
+                alignItems: "center",
+                background: failed ? COLORS.ANTD_BG_RED_L : COLORS.YELL_LLL,
+                border: `1px solid ${
+                  failed ? COLORS.ANTD_BG_RED_M : COLORS.YELL_LL
+                }`,
+                borderRadius: 12,
+                color: failed ? COLORS.FG_RED : COLORS.YELL_D,
+                display: "inline-flex",
+                fontSize: 22,
+                height: 44,
+                justifyContent: "center",
+                width: 44,
+              }}
+            >
+              <Icon name={failed ? "warning" : "trash"} />
+            </span>
+            <div>
+              <h2 style={{ margin: "0 0 4px" }}>
+                {failed
+                  ? "Project deletion failed"
+                  : "Project deletion in progress"}
+              </h2>
+              <div style={{ color: COLORS.GRAY_M }}>
+                {failed
+                  ? "Permanent deletion could not finish. Normal project actions are disabled until deletion is retried or support resolves the failure."
+                  : "This project is being permanently deleted. It cannot be opened, started, edited, archived, or moved."}
+              </div>
+            </div>
+          </Space>
+          <Alert
+            showIcon
+            type={failed ? "error" : "warning"}
+            message={
+              failed
+                ? "Deletion failed after it had already been accepted."
+                : "Deletion has already been accepted and cannot be undone."
+            }
+            description={
+              <Space direction="vertical" size={4}>
+                {op_id ? (
+                  <span>
+                    Operation id: <code>{op_id}</code>
+                  </span>
+                ) : null}
+                {error ? (
+                  <span>
+                    Error: <code>{error}</code>
+                  </span>
+                ) : null}
+                <span>
+                  Project id: <code>{project_id}</code>
+                </span>
+              </Space>
+            }
+          />
+          <Space wrap>
+            {failed ? (
+              <Button danger onClick={() => setRetryOpen(true)}>
+                <Icon name="trash" /> Retry permanent delete
+              </Button>
+            ) : null}
+            <Button
+              type={failed ? "default" : "primary"}
+              onClick={() => {
+                redux.getActions("page").close_project_tab(project_id);
+                redux.getActions("page").set_active_tab("projects");
+              }}
+            >
+              <Icon name="arrow-left" /> Back to projects
+            </Button>
+            <Button
+              onClick={() => {
+                void navigator?.clipboard?.writeText?.(project_id);
+              }}
+            >
+              <Icon name="copy" /> Copy project id
+            </Button>
+          </Space>
+        </Space>
+      </div>
+      <HardDeleteProjectModal
+        open={retryOpen}
+        project_id={project_id}
+        title={title}
+        onCancel={() => setRetryOpen(false)}
+        onDeleted={() => {
+          redux.getActions("page").close_project_tab(project_id);
+        }}
+      />
+    </div>
+  );
+}
 
 function FlyoutDragbar({
   resetFlyoutWidth,

@@ -208,8 +208,15 @@ export const ProjectsPage: React.FC = () => {
 
   useEffect(() => {
     const visible = new Set(visible_projects);
-    setSelectedProjectIds((ids) => ids.filter((id) => visible.has(id)));
-  }, [visible_projects]);
+    setSelectedProjectIds((ids) =>
+      ids.filter((id) => {
+        const state = `${project_map?.getIn([id, "state", "state"]) ?? ""}`;
+        return (
+          visible.has(id) && state !== "deleting" && state !== "delete_failed"
+        );
+      }),
+    );
+  }, [project_map, visible_projects]);
 
   useEffect(() => {
     if (!project_map) return;

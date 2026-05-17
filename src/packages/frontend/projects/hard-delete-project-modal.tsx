@@ -8,13 +8,13 @@ import { useState, type CSSProperties, type ReactNode } from "react";
 import { useIntl } from "react-intl";
 
 import { alert_message } from "@cocalc/frontend/alerts";
+import { redux } from "@cocalc/frontend/app-framework";
 import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { Icon, type IconName } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COLORS } from "@cocalc/util/theme";
 
 interface Props {
@@ -59,10 +59,7 @@ export function HardDeleteProjectModal({
     const action = async () => {
       setDeleting(true);
       try {
-        await webapp_client.conat_client.hub.projects.hardDeleteProject({
-          project_id,
-          browser_id: webapp_client.browser_id,
-        });
+        await redux.getActions("projects").hard_delete_project(project_id);
         setConfirmation("");
         alert_message({
           type: "success",

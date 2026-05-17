@@ -187,6 +187,11 @@ function isProjectHardDeleting(project: any): boolean {
   return project?.getIn?.(["state", "state"]) === "deleting";
 }
 
+function isProjectHardDeleteBlocked(project: any): boolean {
+  const state = project?.getIn?.(["state", "state"]);
+  return state === "deleting" || state === "delete_failed";
+}
+
 function projectHardDeletingMessage(): string {
   return "This project is being permanently deleted. It cannot be opened or started.";
 }
@@ -2051,12 +2056,30 @@ export class ProjectsActions extends Actions<ProjectsState> {
         await switch_to_project(opts.project_id);
       }
     }
-    if (isProjectHardDeleting(store.getIn(["project_map", opts.project_id]))) {
-      alert_message({
-        type: "warning",
-        message: projectHardDeletingMessage(),
-        timeout: 12,
+    if (
+      isProjectHardDeleteBlocked(store.getIn(["project_map", opts.project_id]))
+    ) {
+      const project_actions = redux.getProjectActions(opts.project_id);
+      if (!this.isProjectOpen(opts.project_id)) {
+        this.setProjectOpen(opts.project_id);
+      }
+      project_actions?.set_active_tab?.("home", {
+        change_history: false,
       });
+      if (opts.switch_to) {
+        redux
+          .getActions("page")
+          .set_active_tab(opts.project_id, opts.change_history);
+      }
+      if (
+        isProjectHardDeleting(store.getIn(["project_map", opts.project_id]))
+      ) {
+        alert_message({
+          type: "warning",
+          message: projectHardDeletingMessage(),
+          timeout: 12,
+        });
+      }
       return;
     }
     const host_id = store.getIn(["project_map", opts.project_id, "host_id"]);
@@ -2511,6 +2534,23 @@ export class ProjectsActions extends Actions<ProjectsState> {
         });
       }
     }
+  };
+
+  public mark_project_hard_delete_accepted = (
+    project_id: string,
+    op_id?: string,
+  ) => {
+    const project_map = store.get("project_map");
+    if (project_map == null) return;
+    const project = project_map.get(project_id);
+    if (project == null) return;
+    const nextState = (project.get("state") ?? Map<string, any>())
+      .set("state", "deleting")
+      .set("time", new Date())
+      .set("hard_delete_op_id", op_id);
+    this.setState({
+      project_map: project_map.set(project_id, project.set("state", nextState)),
+    } as ProjectsState);
   };
 
   private watchMoveLro = (
@@ -3156,12 +3196,16 @@ export class ProjectsActions extends Actions<ProjectsState> {
     await this.set_project_hide(account_id, project_id, !hide);
   }
 
-  public async hard_delete_project(project_id: string): Promise<void> {
-    await webapp_client.conat_client.hub.projects.hardDeleteProject({
+  public async hard_delete_project(project_id: string): Promise<{
+    op_id: string;
+  }> {
+    const op = await webapp_client.conat_client.hub.projects.hardDeleteProject({
       project_id,
       browser_id: webapp_client.browser_id,
     });
+    this.mark_project_hard_delete_accepted(project_id, op.op_id);
     await this.project_log(project_id, { event: "delete_project" });
+    return op;
   }
 
   public display_hidden_projects(hidden: boolean): void {

@@ -123,6 +123,7 @@ export function ProjectsTable({
         displayState && rawState?.get?.("state") !== displayState
           ? rawState.set("state", displayState)
           : rawState;
+      const stateName = `${state?.get?.("state") ?? ""}`;
       return {
         project_id,
         starred: isProjectBookmarked(project_id),
@@ -136,7 +137,10 @@ export function ProjectsTable({
         last_edited: project.get("last_edited"),
         color: projectThemeColor(project),
         state,
-        deleting: state?.get?.("state") === "deleting",
+        deleting: stateName === "deleting",
+        deleteFailed: stateName === "delete_failed",
+        deletionBlocked:
+          stateName === "deleting" || stateName === "delete_failed",
         deleted: !!project.get("deleted"),
         hidden: !!project.getIn(["users", current_account_id, "hide"]),
         collaborators,
@@ -228,9 +232,6 @@ export function ProjectsTable({
   );
 
   function handleRowClick(record: ProjectTableRecord, e?: React.MouseEvent) {
-    if (record.deleting) {
-      return;
-    }
     actions.open_project({
       project_id: record.project_id,
       target: "project-home",
@@ -273,7 +274,7 @@ export function ProjectsTable({
         onChange: (keys) =>
           onSelectedProjectIdsChange(keys.map((key) => `${key}`)),
         getCheckboxProps: (record) => ({
-          disabled: record.deleting,
+          disabled: record.deletionBlocked,
         }),
       }}
       pagination={false}
@@ -285,13 +286,13 @@ export function ProjectsTable({
         onClick: (e) => handleRowClick(record, e),
         onMouseDown: (e) => {
           // Support middle-click to open in background
-          if (e.button === 1 && !record.deleting) {
+          if (e.button === 1) {
             handleRowClick(record, e);
           }
         },
         style: {
-          cursor: record.deleting ? "not-allowed" : "pointer",
-          opacity: record.deleting ? 0.72 : undefined,
+          cursor: "pointer",
+          opacity: record.deletionBlocked ? 0.72 : undefined,
           outlineLeft: `4px solid ${record.color ?? "transparent"}`,
         },
       })}

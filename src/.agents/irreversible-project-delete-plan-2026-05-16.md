@@ -21,6 +21,49 @@ The current model also creates trust and policy problems:
 
 ## Current Code Status
 
+### Implementation Status Snapshot
+
+Status as of 2026-05-16:
+
+Done:
+
+- Owner-only normal project hard delete is implemented through
+  `HardDeleteProjectModal` and `hub.projects.hardDeleteProject`.
+- Hard-delete admission rate limits exist and return structured denial details.
+- Accepted hard deletes mark projects as `state.state = "deleting"` and publish
+  account/project feed invalidations before slow cleanup runs.
+- Hard-delete worker marks `state.state = "delete_failed"` when cleanup fails
+  before the project row is removed.
+- Account deletion and bulk "leave or delete selected projects" use
+  ownership-transfer semantics for shared projects.
+- `transferProjectOwnership` exists and chooses the remaining collaborator who
+  most recently used the project, falling back deterministically.
+- Project-list bulk actions use explicit checkbox selection.
+- Destructive storage-history controls exist for snapshot/backup delete,
+  schedule changes, archive, and move.
+- Archive has a shared confirmation modal, handles running/off/deprovisioned
+  hosts, and has an in-project trust-operation banner.
+- Hard-delete in-progress UX is implemented for project rows, row actions,
+  blocked project/deep-link opens, and `delete_failed` retry/support details.
+
+Remaining blockers:
+
+- Remove or quarantine remaining normal soft-delete code and reversible-delete
+  product behavior.
+- Add final integration coverage for account deletion, ownership transfer, bulk
+  leave/delete, and cross-session projection refresh.
+- Finish CLI parity by removing normal undelete exposure and ensuring hard
+  delete is the normal CLI delete path with structured errors.
+- Audit `purgeProjectRows` against the final project-scoped table list.
+
+Deferred:
+
+- Dedicated admin/support delete tooling.
+- Operator reports for queued/running/failed hard deletes and pending backup
+  purges.
+- Removing the `projects.deleted` database field entirely, if no compatibility
+  path still needs it after soft-delete code is quarantined.
+
 Soft delete path:
 
 - `src/packages/frontend/projects/actions.ts`

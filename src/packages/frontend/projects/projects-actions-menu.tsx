@@ -70,6 +70,8 @@ export function ProjectActionsMenu({ record }: Props) {
   const projectLabel = intl.formatMessage(labels.project);
   const projectLabelLower = projectLabel.toLowerCase();
   const isDeleting = record.deleting === true;
+  const deleteFailed = record.deleteFailed === true;
+  const deletionBlocked = record.deletionBlocked === true;
   const project_map = useTypedRedux("projects", "project_map");
   const currentHostId = project_map?.getIn([record.project_id, "host_id"]) as
     | string
@@ -110,7 +112,7 @@ export function ProjectActionsMenu({ record }: Props) {
       "allow_collaborator_destructive_storage_actions",
     ]) !== true;
   const archiveDisabled =
-    isDeleting ||
+    deletionBlocked ||
     ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
       `${record.state?.get?.("state") ?? ""}`,
     ) ||
@@ -143,7 +145,7 @@ export function ProjectActionsMenu({ record }: Props) {
   );
 
   function openProjectTab(tab: string) {
-    if (isDeleting) {
+    if (deletionBlocked) {
       return;
     }
     actions.open_project({
@@ -165,26 +167,25 @@ export function ProjectActionsMenu({ record }: Props) {
 
     switch (key) {
       case "open":
-        if (isDeleting) break;
         actions.open_project({
           project_id: record.project_id,
           switch_to: true,
         });
         break;
       case "explorer":
-        if (isDeleting) break;
+        if (deletionBlocked) break;
         openProjectTab("files");
         break;
       case "new":
-        if (isDeleting) break;
+        if (deletionBlocked) break;
         openProjectTab("new");
         break;
       case "log":
-        if (isDeleting) break;
+        if (deletionBlocked) break;
         openProjectTab("log");
         break;
       case "move":
-        if (isDeleting) break;
+        if (deletionBlocked) break;
         await refreshProjectRegion();
         setMoveOpen(true);
         break;
@@ -193,7 +194,7 @@ export function ProjectActionsMenu({ record }: Props) {
         setArchiveOpen(true);
         break;
       case "settings":
-        if (isDeleting) break;
+        if (deletionBlocked) break;
         actions.open_project({
           project_id: record.project_id,
           switch_to: true,
@@ -208,6 +209,7 @@ export function ProjectActionsMenu({ record }: Props) {
         setDeleteOpen(true);
         break;
       case "remove-self":
+        if (deletionBlocked) break;
         confirmRemoveMyselfFromProject({
           project_id: record.project_id,
           account_id,
@@ -216,7 +218,7 @@ export function ProjectActionsMenu({ record }: Props) {
         });
         break;
       default:
-        if (isDeleting) {
+        if (deletionBlocked) {
           break;
         }
         // Handle starred files - check if key starts with "starred-file:"
@@ -235,12 +237,18 @@ export function ProjectActionsMenu({ record }: Props) {
   };
 
   const menuItems: MenuProps["items"] = [
-    ...(isDeleting
+    ...(deletionBlocked
       ? [
           {
             key: "deleting",
-            label: "Permanent deletion in progress",
-            icon: <Icon name="spinner" spin />,
+            label: deleteFailed
+              ? "Permanent deletion failed"
+              : "Permanent deletion in progress",
+            icon: deleteFailed ? (
+              <Icon name="warning" />
+            ) : (
+              <Icon name="spinner" spin />
+            ),
             disabled: true,
           },
           {
@@ -252,7 +260,7 @@ export function ProjectActionsMenu({ record }: Props) {
       key: "explorer",
       label: intl.formatMessage(labels.explorer),
       icon: <Icon name={FIXED_PROJECT_TABS.files.icon} />,
-      disabled: isDeleting,
+      disabled: deletionBlocked,
     },
     {
       type: "divider",
@@ -263,7 +271,7 @@ export function ProjectActionsMenu({ record }: Props) {
       icon: <Icon name="star-filled" />,
       children: starredFilesSubmenu,
       popupClassName: "cc-starred-files-submenu",
-      disabled: isDeleting,
+      disabled: deletionBlocked,
     },
     {
       key: "recent-files",
@@ -271,7 +279,7 @@ export function ProjectActionsMenu({ record }: Props) {
       icon: <Icon name="history" />,
       children: recentFilesSubmenu,
       popupClassName: "cc-recent-files-submenu",
-      disabled: isDeleting,
+      disabled: deletionBlocked,
     },
     {
       key: "apps",
@@ -279,7 +287,7 @@ export function ProjectActionsMenu({ record }: Props) {
       icon: <Icon name="server" />,
       children: serversSubmenu,
       popupClassName: "cc-apps-submenu",
-      disabled: isDeleting,
+      disabled: deletionBlocked,
     },
     {
       type: "divider",
@@ -288,25 +296,25 @@ export function ProjectActionsMenu({ record }: Props) {
       key: "new",
       label: intl.formatMessage(labels.new),
       icon: <Icon name={FIXED_PROJECT_TABS.new.icon} />,
-      disabled: isDeleting,
+      disabled: deletionBlocked,
     },
     {
       key: "log",
       label: "Log",
       icon: <Icon name={FIXED_PROJECT_TABS.log.icon} />,
-      disabled: isDeleting,
+      disabled: deletionBlocked,
     },
     {
       key: "settings",
       label: "Settings",
       icon: <Icon name={FIXED_PROJECT_TABS.settings.icon} />,
-      disabled: isDeleting,
+      disabled: deletionBlocked,
     },
     {
       key: "move",
       label: "Move to host…",
       icon: <Icon name="server" />,
-      disabled: isDeleting,
+      disabled: deletionBlocked,
     },
     {
       key: "archive",
@@ -324,6 +332,7 @@ export function ProjectActionsMenu({ record }: Props) {
             label: "Remove Myself as Collaborator",
             icon: <Icon name="user-times" />,
             danger: true,
+            disabled: deletionBlocked,
           },
           {
             type: "divider" as const,
@@ -339,7 +348,9 @@ export function ProjectActionsMenu({ record }: Props) {
       ? [
           {
             key: "delete",
-            label: `Delete ${projectLabel}`,
+            label: deleteFailed
+              ? `Retry Delete ${projectLabel}`
+              : `Delete ${projectLabel}`,
             icon: <Icon name="trash" />,
             danger: true,
             disabled: isDeleting,
