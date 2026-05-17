@@ -98,7 +98,6 @@ describe("account_project_index projector", () => {
           project: expect.objectContaining({
             project_id: PROJECT_ID,
             title: "Projected Project",
-            deleted: false,
           }),
         },
       ],
@@ -197,7 +196,6 @@ describe("account_project_index projector", () => {
           account_id: ACCOUNT_LOCAL,
           project: expect.objectContaining({
             project_id: PROJECT_ID,
-            deleted: false,
           }),
         },
       ],
@@ -263,7 +261,6 @@ describe("account_project_index projector", () => {
           account_id: ACCOUNT_LOCAL,
           project: expect.objectContaining({
             project_id: PROJECT_ID,
-            deleted: false,
           }),
         },
       ],
@@ -310,12 +307,10 @@ describe("account_project_index projector", () => {
       deleted_rows: 1,
       feed_events: [
         {
-          type: "project.upsert",
+          type: "project.remove",
           account_id: ACCOUNT_LOCAL,
-          project: expect.objectContaining({
-            project_id: PROJECT_ID,
-            deleted: true,
-          }),
+          project_id: PROJECT_ID,
+          reason: "membership_removed",
         },
       ],
       event_types: {

@@ -94,7 +94,6 @@ export function ProjectsTable({
           title: `Unknown ${projectLabel}`,
           description: "",
           last_edited: undefined,
-          deleted: false,
           hidden: false,
           collaborators: [],
         };
@@ -141,7 +140,6 @@ export function ProjectsTable({
         deleteFailed: stateName === "delete_failed",
         deletionBlocked:
           stateName === "deleting" || stateName === "delete_failed",
-        deleted: !!project.get("deleted"),
         hidden: !!project.getIn(["users", current_account_id, "hide"]),
         collaborators,
       };

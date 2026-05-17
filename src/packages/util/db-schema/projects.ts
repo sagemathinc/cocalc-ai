@@ -71,7 +71,6 @@ Table({
       "((state IS NULL))", // not covered by the above
       "((settings ->> 'always_running'))", // to quickly know which projects have this setting
       "((run_quota ->> 'always_running'))", // same reason as above
-      "deleted", // in various queries we quickly fiter deleted projects
       "host_id", // project-host placement lookup
       "owning_bay_id", // owning control-plane bay lookup
       "usage_account_id", // membership usage, storage, and egress attribution

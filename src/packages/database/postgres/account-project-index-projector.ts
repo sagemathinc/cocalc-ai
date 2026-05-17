@@ -174,6 +174,13 @@ export async function computeAccountProjectFeedEvents(opts: {
     opts.previous_local_account_ids ??
     Array.from((await existingLastOpenedAt(db, payload.project_id)).keys());
   const visibleAccountIds = visibleAccountIdsFromUsers(payload.users_summary);
+  if (payload.deleted) {
+    return projectRemoveEvents({
+      account_ids: previousLocalAccountIds,
+      project_id: payload.project_id,
+      event_ts: opts.event_ts,
+    });
+  }
   const localAccounts = await localHomeAccountIds(db, {
     bay_id,
     account_ids: visibleAccountIds,
@@ -223,7 +230,6 @@ function projectRowForFeed(opts: {
     last_active: payload.last_activity_by_account ?? {},
     last_edited: payload.last_edited_at ?? null,
     last_backup: payload.last_backup_at ?? null,
-    deleted: !!payload.deleted,
   };
 }
 

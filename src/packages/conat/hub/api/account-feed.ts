@@ -55,7 +55,8 @@ export interface AccountFeedProjectRow {
   last_active: Record<string, any>;
   last_edited: string | null;
   last_backup?: string | null;
-  deleted: boolean;
+  /** Legacy input from older project feeds. New code uses project.remove events. */
+  deleted?: boolean;
 }
 
 export interface AccountFeedCollaboratorRow {

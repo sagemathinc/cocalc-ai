@@ -111,11 +111,6 @@ import {
   user_is_in_project_group,
 } from "./postgres/project/queries";
 
-import {
-  permanently_unlink_all_deleted_projects_of_user,
-  unlink_old_deleted_projects,
-} from "./postgres/project/delete-projects";
-
 import { get_personal_user } from "./postgres/account/personal";
 
 import {
@@ -1677,19 +1672,6 @@ export class PostgreSQL extends EventEmitter implements PostgreSQLMethods {
     name: string,
   ) {
     return await project_datastore_del(this, account_id, project_id, name);
-  }
-
-  async permanently_unlink_all_deleted_projects_of_user(
-    account_id_or_email_address,
-  ) {
-    return await permanently_unlink_all_deleted_projects_of_user(
-      this,
-      account_id_or_email_address,
-    );
-  }
-
-  async unlink_old_deleted_projects() {
-    return await unlink_old_deleted_projects(this);
   }
 
   // this *merges* in the run_quota; it doesn't replace it.

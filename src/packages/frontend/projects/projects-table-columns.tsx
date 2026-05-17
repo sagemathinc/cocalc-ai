@@ -84,7 +84,6 @@ export interface ProjectTableRecord {
   deleting?: boolean;
   deleteFailed?: boolean;
   deletionBlocked?: boolean;
-  deleted: boolean;
   hidden: boolean;
   collaborators: string[]; // Array of collaborator account_ids (excluding current user)
 }

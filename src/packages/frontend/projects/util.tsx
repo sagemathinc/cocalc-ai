@@ -227,10 +227,7 @@ function project_is_in_filter(
 ): boolean {
   const { account_id } = webapp_client;
   if (account_id == null) return true;
-  return (
-    !project.get("deleted") &&
-    !!project.getIn(["users", account_id, "hide"]) == hidden
-  );
+  return !!project.getIn(["users", account_id, "hide"]) == hidden;
 }
 
 /**

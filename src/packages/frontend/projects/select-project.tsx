@@ -76,10 +76,7 @@ export function SelectProject({
     const others: ProjectSelectionList = [];
     for (let i of v) {
       const is_hidden = !!i.users?.[account_id ?? ""]?.hide;
-      if (
-        i.project_id == value ||
-        (!i.deleted && is_hidden == include_hidden)
-      ) {
+      if (i.project_id == value || is_hidden == include_hidden) {
         others.push({ id: i.project_id, title: i.title });
       }
     }

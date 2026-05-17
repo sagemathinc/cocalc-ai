@@ -1611,7 +1611,7 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
             expect(where).toEqual(
               expect.arrayContaining([
                 expect.objectContaining({
-                  "project_id = ANY(ARRAY(SELECT visible_projects.project_id FROM (SELECT $::UUID AS account_id) AS current_account CROSS JOIN LATERAL (SELECT project_id FROM account_project_index WHERE account_id = current_account.account_id UNION SELECT project_id FROM projects WHERE users ? current_account.account_id::TEXT AND deleted IS TRUE) AS visible_projects))":
+                  "project_id = ANY(ARRAY(SELECT project_id FROM account_project_index WHERE account_id = $::UUID))":
                     "11111111-1111-4111-8111-111111111111",
                 }),
               ]),
@@ -1647,7 +1647,7 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
             expect(where).toEqual(
               expect.arrayContaining([
                 expect.objectContaining({
-                  "project_id = ANY(ARRAY(SELECT visible_projects.project_id FROM (SELECT $::UUID AS account_id) AS current_account CROSS JOIN LATERAL (SELECT project_id FROM account_project_index WHERE account_id = current_account.account_id UNION SELECT project_id FROM projects WHERE users ? current_account.account_id::TEXT AND deleted IS TRUE) AS visible_projects))":
+                  "project_id = ANY(ARRAY(SELECT project_id FROM account_project_index WHERE account_id = $::UUID))":
                     "11111111-1111-4111-8111-111111111111",
                 }),
               ]),

@@ -55,7 +55,9 @@ describe("ProjectsActions project metadata updates", () => {
   function makeActions() {
     const async_log = jest.fn(async () => undefined);
     const redux = {
-      getStore: jest.fn(() => ({})),
+      getStore: jest.fn((name) =>
+        name === "account" ? { get: jest.fn(() => "acct-1") } : {},
+      ),
       _set_state: jest.fn(),
       removeActions: jest.fn(),
       getProjectActions: jest.fn(() => ({ async_log })),

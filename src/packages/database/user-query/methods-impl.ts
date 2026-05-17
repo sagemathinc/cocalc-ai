@@ -1597,19 +1597,6 @@ export async function _user_set_query_project_change_after(
     }
   };
   try {
-    if (
-      new_val?.deleted !== undefined &&
-      new_val?.deleted !== old_val?.deleted
-    ) {
-      await appendProjectOutboxEventForProject({
-        event_type: new_val.deleted
-          ? "project.deleted"
-          : "project.summary_changed",
-        project_id,
-      });
-      await publishImmediateFeed();
-      return cb();
-    }
     const summaryFields = [
       "title",
       "description",
@@ -1979,7 +1966,7 @@ export function _user_get_query_where(
         pg_where[i] = { "project_id = $::UUID": "project_id" };
       } else if (shouldUseProjectedBrowserProjectReads({ table, account_id })) {
         pg_where[i] = {
-          "project_id = ANY(ARRAY(SELECT visible_projects.project_id FROM (SELECT $::UUID AS account_id) AS current_account CROSS JOIN LATERAL (SELECT project_id FROM account_project_index WHERE account_id = current_account.account_id UNION SELECT project_id FROM projects WHERE users ? current_account.account_id::TEXT AND deleted IS TRUE) AS visible_projects))":
+          "project_id = ANY(ARRAY(SELECT project_id FROM account_project_index WHERE account_id = $::UUID))":
             "account_id",
         };
       } else {

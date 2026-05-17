@@ -59,7 +59,7 @@ describe("project user-query outbox hooks", () => {
     });
   });
 
-  it("emits project.deleted when a project is newly marked deleted", async () => {
+  it("ignores legacy project deleted marker changes", async () => {
     await runHook(
       {
         project_id: "11111111-1111-4111-8111-111111111111",
@@ -70,13 +70,10 @@ describe("project user-query outbox hooks", () => {
         deleted: true,
       },
     );
-    expect(appendProjectOutboxEventForProject).toHaveBeenCalledWith({
-      event_type: "project.deleted",
-      project_id: "11111111-1111-4111-8111-111111111111",
-    });
-    expect(ctx.publishProjectAccountFeedEventsBestEffort).toHaveBeenCalledWith({
-      project_id: "11111111-1111-4111-8111-111111111111",
-    });
+    expect(appendProjectOutboxEventForProject).not.toHaveBeenCalled();
+    expect(
+      ctx.publishProjectAccountFeedEventsBestEffort,
+    ).not.toHaveBeenCalled();
   });
 
   it("emits project.membership_changed for users updates", async () => {

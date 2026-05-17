@@ -219,7 +219,7 @@ export class ProjectsStore extends Store<ProjectsState> {
   date_when_course_payment_required = (
     project_id: string,
   ): undefined | Date => {
-    if (!this.isStudent(project_id) || this.is_deleted(project_id)) {
+    if (!this.isStudent(project_id)) {
       return;
     }
     const info = this.get_course_info(project_id);
@@ -244,10 +244,6 @@ export class ProjectsStore extends Store<ProjectsState> {
       }
     }
   };
-
-  public is_deleted(project_id: string): boolean {
-    return !!this.getIn(["project_map", project_id, "deleted"]);
-  }
 
   public is_hidden_from(project_id: string, account_id: string): boolean {
     return !!this.getIn([
@@ -411,10 +407,7 @@ export class ProjectsStore extends Store<ProjectsState> {
     if (project == null) {
       return false;
     }
-    return (
-      !project.get("deleted") &&
-      !!project.getIn(["users", account_id, "hide"]) == hidden
-    );
+    return !!project.getIn(["users", account_id, "hide"]) == hidden;
   }
 
   // Returns true if the user has any hidden projects

@@ -45,11 +45,14 @@ Done:
   hosts, and has an in-project trust-operation banner.
 - Hard-delete in-progress UX is implemented for project rows, row actions,
   blocked project/deep-link opens, and `delete_failed` retry/support details.
+- Normal soft-project-delete code is removed/quarantined: no
+  `setProjectDeleted`, `delete_project`, `toggle_delete_project`, undelete UI,
+  periodic soft-delete unlink job, or frontend `project.deleted` behavior remain.
+  Legacy `projects.deleted` is treated only as a compatibility marker for stale
+  rows/events.
 
 Remaining blockers:
 
-- Remove or quarantine remaining normal soft-delete code and reversible-delete
-  product behavior.
 - Add final integration coverage for account deletion, ownership transfer, bulk
   leave/delete, and cross-session projection refresh.
 - Finish CLI parity by removing normal undelete exposure and ensuring hard
@@ -66,23 +69,16 @@ Deferred:
 
 Soft delete path:
 
-- `src/packages/frontend/projects/actions.ts`
-  - `delete_project` and `toggle_delete_project` call
-    `hub.projects.setProjectDeleted`.
-- `src/packages/frontend/project/settings/hide-delete-box.tsx`
-  - UI describes delete as undoable for a few days.
-- `src/packages/frontend/projects/projects-actions-menu.tsx`
-  - Project-list row action calls `toggle_delete_project`.
-- `src/packages/frontend/projects/projects-operations.tsx`
-  - Bulk delete/undelete calls `toggle_delete_project`.
-- `src/packages/server/projects/delete.ts`
-  - Stops the project best-effort.
-  - Sets `projects.deleted`.
-  - Emits `project.deleted` / `project.summary_changed`.
-  - Releases/restores backup repo assignment.
-- `src/packages/server/membership/project-usage.ts`
-  - Project count excludes `p.deleted IS NOT NULL`, so soft-deleted projects do
-    not count toward project limits.
+- Removed from normal product behavior. The old frontend actions, settings copy,
+  bulk reversible flow, backend soft-delete implementation, and periodic
+  soft-delete unlink job have been removed or replaced by hard-delete /
+  remove-myself flows.
+- User-query project changes no longer emit `project.deleted` from
+  `projects.deleted` changes.
+- Project-list/front-end filtering no longer treats `project.deleted` as a
+  supported visibility state.
+- `projects.deleted` remains a legacy database field only so stale rows/events
+  can be ignored or removed safely during compatibility cleanup.
 
 Hard delete foundation:
 
@@ -645,20 +641,18 @@ runtime-slot tables.
 
 ### Phase 8: Remove or Quarantine Soft Delete
 
-USER: just remove it completely and all code, database fields, etc., cocalc-ai is NOT RELEASED YET, so it's fine to do this.
+Completed/quarantined:
 
-Options:
-
-1. Remove normal `setProjectDeleted` access entirely.
-2. Keep it as admin/debug-only with scary naming.
-3. Keep it only for internal tests/migrations.
-
-Recommendation:
-
-- Keep backend function temporarily for migration/test compatibility.
-- Remove it from normal Conat project API or require admin/dev-only authority.
-- Delete frontend undelete and reversible-delete flows.
-- Update old copy: no more "deleted projects can be undeleted after a few days."
+- Removed normal `setProjectDeleted` access, frontend undelete and reversible
+  delete flows, and old copy about undeleting projects.
+- Removed the periodic soft-delete unlink job and the database helper methods
+  that operated on `projects.deleted = true`.
+- User-query project changes no longer publish `project.deleted` when
+  `projects.deleted` changes.
+- Frontend project list/filtering no longer treats `project.deleted` as a
+  supported visibility state.
+- Legacy `projects.deleted` remains only as a compatibility marker until the DB
+  schema field can be removed separately.
 
 ### Phase 9: Observability
 

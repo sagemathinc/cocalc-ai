@@ -69,9 +69,8 @@ function visibleAccountIdsFromUsers(
 
 function buildProjectFeedRow(opts: {
   payload: ProjectOutboxPayload;
-  account_id: string;
 }): AccountFeedProjectRow {
-  const { payload, account_id } = opts;
+  const { payload } = opts;
   return {
     project_id: payload.project_id,
     title: payload.title ?? "",
@@ -85,11 +84,6 @@ function buildProjectFeedRow(opts: {
     last_active: payload.last_activity_by_account ?? {},
     last_edited: payload.last_edited_at ?? null,
     last_backup: payload.last_backup_at ?? null,
-    deleted:
-      !!payload.deleted ||
-      !VISIBLE_PROJECT_GROUPS.has(
-        `${payload.users_summary?.[account_id]?.group ?? ""}`.trim(),
-      ),
   };
 }
 
@@ -147,16 +141,6 @@ function sortKeyForFeedProject(opts: {
 export async function applyAccountProjectFeedUpsertOnHomeBay(
   event: AccountFeedProjectUpsertEvent,
 ): Promise<void> {
-  if (event.project.deleted) {
-    await applyAccountProjectFeedRemoveOnHomeBay({
-      type: "project.remove",
-      ts: event.ts,
-      account_id: event.account_id,
-      project_id: event.project.project_id,
-      reason: "membership_removed",
-    });
-    return;
-  }
   const updated_at = new Date(event.ts);
   const last_activity_at =
     parseDate(event.project.last_active?.[event.account_id]) ?? null;
@@ -279,7 +263,6 @@ async function forwardRemoteProjectFeedEventsBestEffort(opts: {
           account_id,
           project: buildProjectFeedRow({
             payload: opts.payload,
-            account_id,
           }),
         });
       }

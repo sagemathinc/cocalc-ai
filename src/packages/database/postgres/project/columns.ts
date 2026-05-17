@@ -12,7 +12,6 @@ export const PUBLIC_PROJECT_COLUMNS = [
   "last_edited",
   "title",
   "description",
-  "deleted",
   "created",
   "env",
 ] as const;

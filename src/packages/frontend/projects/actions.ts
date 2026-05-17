@@ -112,7 +112,6 @@ export function buildProjectRecordFromFeedRow(
     owning_bay_id: row.owning_bay_id,
     users: row.users ?? {},
     state: row.state ?? {},
-    deleted: !!row.deleted,
   }) as Map<string, any>;
   record = record
     .set("last_edited", dateOrNull(row.last_edited))
@@ -209,7 +208,6 @@ type DirectProjectBootstrapRow = {
   last_active?: Record<string, any> | null;
   last_edited?: string | Date | null;
   last_backup?: string | Date | null;
-  deleted?: boolean | null;
 };
 
 // Define projects actions
@@ -563,7 +561,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
             row.last_activity_at == null
               ? {}
               : { [account_id]: row.last_activity_at },
-          deleted: false,
         });
         let nextProject = currentProject.mergeDeep(projectedRecord);
         if (
@@ -1208,7 +1205,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
               last_active: null,
               last_edited: null,
               last_backup: null,
-              deleted: null,
             },
           ],
         },
@@ -1239,7 +1235,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
       last_active: row.last_active ?? {},
       last_edited: dateOrNull(row.last_edited)?.toISOString() ?? null,
       last_backup: dateOrNull(row.last_backup)?.toISOString() ?? null,
-      deleted: !!row.deleted,
     });
     return true;
   }
