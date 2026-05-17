@@ -242,16 +242,25 @@ export function ProjectsOperations({
   }
 
   async function stopSelectedProjects(projectIds: string[]) {
-    const succeeded: string[] = [];
-    const errors: Array<{ project_id: string; error: string }> = [];
-    for (const project_id of projectIds) {
-      try {
-        await actions.stop_project(project_id);
-        succeeded.push(project_id);
-      } catch (err) {
-        errors.push({ project_id, error: `${err}` });
-      }
-    }
+    const results = await Promise.all(
+      projectIds.map(async (project_id) => {
+        try {
+          await actions.stop_project(project_id);
+          return { project_id, ok: true as const };
+        } catch (err) {
+          return { project_id, ok: false as const, error: `${err}` };
+        }
+      }),
+    );
+    const succeeded = results
+      .filter((result) => result.ok)
+      .map((result) => result.project_id);
+    const errors: Array<{ project_id: string; error: string }> =
+      results.flatMap((result) =>
+        result.ok
+          ? []
+          : [{ project_id: result.project_id, error: result.error }],
+      );
     alert_message({
       type: errors.length > 0 ? "warning" : "success",
       message:
