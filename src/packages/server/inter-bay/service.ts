@@ -256,6 +256,7 @@ import {
   BAY_OPS_INTERNAL_AUTH,
   getBayBackups,
   getBayLoad,
+  getRootfsQuotaReport,
 } from "@cocalc/server/conat/api/system";
 
 const logger = getLogger("server:inter-bay:service");
@@ -336,6 +337,11 @@ async function startBayOpsService(): Promise<void> {
       await getBayBackups({
         account_id,
         bay_id,
+        internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+    getRootfsQuotaReport: async (opts) =>
+      await getRootfsQuotaReport({
+        ...opts,
         internalAuth: BAY_OPS_INTERNAL_AUTH,
       }),
     setServerSetting: async (opts) => {

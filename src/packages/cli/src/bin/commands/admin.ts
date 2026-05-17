@@ -538,7 +538,10 @@ function formatRootfsQuotaPrometheus(report: any): string {
     "# TYPE cocalc_rootfs_quota_usage_count gauge",
   ];
   for (const row of report?.top_users ?? []) {
-    const labels = prometheusLabels({ account_id: row.account_id ?? "" });
+    const labels = prometheusLabels({
+      bay_id: row.bay_id ?? "",
+      account_id: row.account_id ?? "",
+    });
     lines.push(
       `cocalc_rootfs_quota_usage_count{${labels}} ${Number(row.count) || 0}`,
     );
@@ -548,7 +551,10 @@ function formatRootfsQuotaPrometheus(report: any): string {
     "# TYPE cocalc_rootfs_quota_usage_total_storage_bytes gauge",
   );
   for (const row of report?.top_users ?? []) {
-    const labels = prometheusLabels({ account_id: row.account_id ?? "" });
+    const labels = prometheusLabels({
+      bay_id: row.bay_id ?? "",
+      account_id: row.account_id ?? "",
+    });
     lines.push(
       `cocalc_rootfs_quota_usage_total_storage_bytes{${labels}} ${Number(row.total_storage_bytes) || 0}`,
     );
@@ -566,6 +572,7 @@ function formatRootfsQuotaPrometheus(report: any): string {
       const ratio = Number(value);
       if (!Number.isFinite(ratio)) continue;
       const labels = prometheusLabels({
+        bay_id: row.bay_id ?? "",
         account_id: row.account_id ?? "",
         limit,
         near_percent: report?.near_percent ?? "",
@@ -579,6 +586,7 @@ function formatRootfsQuotaPrometheus(report: any): string {
   );
   for (const group of report?.denials ?? []) {
     const labels = prometheusLabels({
+      bay_id: group.bay_id ?? "",
       account_id: group.account_id ?? "",
       limit: group.limit ?? "unknown",
       operation: group.operation ?? "unknown",

@@ -213,6 +213,9 @@ import type {
   ProjectRuntimeSlotReport,
   ProjectRuntimeSlotReportSlot,
   ProjectRuntimeSlotReportSponsor,
+  RootfsQuotaReport,
+  RootfsQuotaDenialSummary,
+  RootfsQuotaUsageRow,
   ServiceAdmissionDenialReport,
   ServiceAdmissionDenialSummary,
   ProjectBackupShardAdminStatus,
@@ -1218,8 +1221,70 @@ export async function getServiceAdmissionDenialReport({
   };
 }
 
+function boundedRootfsPositiveInteger({
+  value,
+  fallback,
+  max,
+}: {
+  value?: number;
+  fallback: number;
+  max: number;
+}): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(Math.floor(parsed), max);
+}
+
+function boundedRootfsReportLimit(value: number | undefined): number {
+  return boundedRootfsPositiveInteger({ value, fallback: 50, max: 500 });
+}
+
+function boundedRootfsWindowMinutes(value: number | undefined): number {
+  return boundedRootfsPositiveInteger({
+    value,
+    fallback: 60,
+    max: 7 * 24 * 60,
+  });
+}
+
+function boundedRootfsMinCount(value: number | undefined): number {
+  return boundedRootfsPositiveInteger({
+    value,
+    fallback: 1,
+    max: 1_000_000,
+  });
+}
+
+function boundedRootfsNearPercent(value: number | undefined): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 80;
+  return Math.min(Math.max(parsed, 1), 100);
+}
+
+function withRootfsReportBayId(
+  report: RootfsQuotaReport,
+  bay_id: string,
+): RootfsQuotaReport {
+  const withUsageBay = (row: RootfsQuotaUsageRow) => ({
+    ...row,
+    bay_id: row.bay_id || report.bay_id || bay_id,
+  });
+  const withDenialBay = (row: RootfsQuotaDenialSummary) => ({
+    ...row,
+    bay_id: row.bay_id || report.bay_id || bay_id,
+  });
+  return {
+    ...report,
+    bay_id: report.bay_id || bay_id,
+    top_users: (report.top_users ?? []).map(withUsageBay),
+    near_limit_users: (report.near_limit_users ?? []).map(withUsageBay),
+    denials: (report.denials ?? []).map(withDenialBay),
+  };
+}
+
 export async function getRootfsQuotaReport({
   account_id,
+  internalAuth,
   window_minutes,
   min_count,
   limit,
@@ -1229,6 +1294,7 @@ export async function getRootfsQuotaReport({
   operation,
 }: {
   account_id?: string;
+  internalAuth?: typeof BAY_OPS_INTERNAL_AUTH;
   window_minutes?: number;
   min_count?: number;
   limit?: number;
@@ -1237,8 +1303,8 @@ export async function getRootfsQuotaReport({
   denial_limit?: string | null;
   operation?: string | null;
 } = {}) {
-  await assertAdmin(account_id);
-  return await getRootfsQuotaReport0({
+  const currentBayId = getConfiguredBayId();
+  const request = {
     window_minutes,
     min_count,
     limit,
@@ -1246,7 +1312,93 @@ export async function getRootfsQuotaReport({
     user_account_id,
     denial_limit,
     operation,
+  };
+  if (internalAuth === BAY_OPS_INTERNAL_AUTH) {
+    return await getRootfsQuotaReport0({
+      bay_id: currentBayId,
+      ...request,
+    });
+  }
+  await assertAdmin(account_id);
+  const bayIds = [
+    ...new Set(
+      (await listConfiguredBays())
+        .map((bay) => `${bay.bay_id ?? ""}`.trim())
+        .filter(Boolean)
+        .concat(currentBayId),
+    ),
+  ].sort();
+  const settled = await Promise.allSettled(
+    bayIds.map(async (bay_id) => {
+      const report =
+        bay_id === currentBayId
+          ? await getRootfsQuotaReport0({ bay_id, ...request })
+          : await getInterBayBridge()
+              .bayOps(bay_id, { timeout_ms: 15_000 })
+              .getRootfsQuotaReport({ account_id, ...request });
+      return {
+        bay_id,
+        report: withRootfsReportBayId(report, bay_id),
+      };
+    }),
+  );
+  const checkedAt = new Date();
+  const rowLimit = boundedRootfsReportLimit(limit);
+  const successfulReports: RootfsQuotaReport[] = [];
+  const bays = bayIds.map((bay_id, i) => {
+    const result = settled[i];
+    if (result.status === "fulfilled") {
+      successfulReports.push(result.value.report);
+      return { bay_id, ok: true };
+    }
+    return {
+      bay_id,
+      ok: false,
+      error: `${result.reason}`,
+    };
   });
+  return {
+    current_bay_id: currentBayId,
+    checked_at: checkedAt.toISOString(),
+    since: new Date(
+      checkedAt.valueOf() - boundedRootfsWindowMinutes(window_minutes) * 60_000,
+    ).toISOString(),
+    window_minutes: boundedRootfsWindowMinutes(window_minutes),
+    min_count: boundedRootfsMinCount(min_count),
+    near_percent: boundedRootfsNearPercent(near_percent),
+    top_users: successfulReports
+      .flatMap((report) => report.top_users ?? [])
+      .sort(
+        (a, b) =>
+          b.total_storage_bytes - a.total_storage_bytes || b.count - a.count,
+      )
+      .slice(0, rowLimit),
+    near_limit_users: successfulReports
+      .flatMap((report) => report.near_limit_users ?? [])
+      .sort((a, b) => {
+        const aRatio = Math.max(
+          a.count_ratio ?? 0,
+          a.total_storage_ratio ?? 0,
+          a.max_rootfs_ratio ?? 0,
+        );
+        const bRatio = Math.max(
+          b.count_ratio ?? 0,
+          b.total_storage_ratio ?? 0,
+          b.max_rootfs_ratio ?? 0,
+        );
+        return bRatio - aRatio || b.total_storage_bytes - a.total_storage_bytes;
+      })
+      .slice(0, rowLimit),
+    denials: successfulReports
+      .flatMap((report) => report.denials ?? [])
+      .sort(
+        (a, b) =>
+          b.count - a.count ||
+          new Date(b.last_time).getTime() - new Date(a.last_time).getTime(),
+      )
+      .slice(0, rowLimit),
+    bays,
+  };
 }
 
 export async function getServiceAdmissionConfig(): Promise<{

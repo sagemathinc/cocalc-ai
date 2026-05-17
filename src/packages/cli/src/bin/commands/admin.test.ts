@@ -499,6 +499,7 @@ test("admin rootfs-quotas can emit prometheus text", async () => {
               near_percent: 80,
               top_users: [
                 {
+                  bay_id: "bay-1",
                   account_id: "acct",
                   count: 3,
                   total_storage_bytes: 4000000000,
@@ -507,6 +508,7 @@ test("admin rootfs-quotas can emit prometheus text", async () => {
               ],
               near_limit_users: [
                 {
+                  bay_id: "bay-1",
                   account_id: "acct",
                   count: 3,
                   total_storage_bytes: 4000000000,
@@ -517,6 +519,7 @@ test("admin rootfs-quotas can emit prometheus text", async () => {
               ],
               denials: [
                 {
+                  bay_id: "bay-1",
                   account_id: "acct",
                   limit: "rootfs_count",
                   operation: "publish",
@@ -551,6 +554,7 @@ test("admin rootfs-quotas can emit prometheus text", async () => {
   assert.match(output, /cocalc_rootfs_quota_usage_count/);
   assert.match(output, /cocalc_rootfs_quota_near_limit_ratio/);
   assert.match(output, /cocalc_rootfs_quota_denials_window_total/);
+  assert.match(output, /bay_id="bay-1"/);
   assert.match(output, /limit="rootfs_count"/);
   assert.match(output, / 2\n/);
 });
