@@ -142,9 +142,11 @@ import type {
   PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
 } from "@cocalc/util/rootfs-images";
-import type {
-  RootfsReleaseScanReport,
-  RootfsReleaseScanRun,
+import {
+  DEFAULT_TRIVY_CACHE_DIR,
+  DEFAULT_TRIVY_SCANNER_IMAGE,
+  type RootfsReleaseScanReport,
+  type RootfsReleaseScanRun,
 } from "@cocalc/util/rootfs-scan";
 import {
   getProjectRootfsStates as getProjectRootfsStates0,
@@ -2709,6 +2711,14 @@ function optionalPositiveInteger(value: unknown): number | undefined {
   return Math.floor(n);
 }
 
+function firstNonEmptyString(...values: unknown[]): string {
+  for (const value of values) {
+    const trimmed = `${value ?? ""}`.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
 async function rootfsScanConfig({
   scanner_image,
   trivy_cache_dir,
@@ -2724,18 +2734,26 @@ async function rootfsScanConfig({
   retention_days: number;
 }> {
   const settings = await getServerSettings();
-  const image =
-    `${scanner_image ?? (settings as any).rootfs_scan_container_image ?? process.env.COCALC_ROOTFS_SCAN_TRIVY_IMAGE ?? ""}`.trim();
-  const cache =
-    `${trivy_cache_dir ?? (settings as any).rootfs_scan_trivy_cache_dir ?? process.env.COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR ?? ""}`.trim();
+  const image = firstNonEmptyString(
+    scanner_image,
+    (settings as any).rootfs_scan_container_image,
+    process.env.COCALC_ROOTFS_SCAN_TRIVY_IMAGE,
+    DEFAULT_TRIVY_SCANNER_IMAGE,
+  );
+  const cache = firstNonEmptyString(
+    trivy_cache_dir,
+    (settings as any).rootfs_scan_trivy_cache_dir,
+    process.env.COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR,
+    DEFAULT_TRIVY_CACHE_DIR,
+  );
   if (!image) {
     throw new Error(
-      "RootFS scan scanner image is not configured; set COCALC_ROOTFS_SCAN_TRIVY_IMAGE or pass scanner_image",
+      "RootFS scan scanner image is not configured; set rootfs_scan_container_image, COCALC_ROOTFS_SCAN_TRIVY_IMAGE, or pass scanner_image",
     );
   }
   if (!cache) {
     throw new Error(
-      "RootFS scan Trivy cache directory is not configured; set COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR or pass trivy_cache_dir",
+      "RootFS scan Trivy cache directory is not configured; set rootfs_scan_trivy_cache_dir, COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR, or pass trivy_cache_dir",
     );
   }
   const timeoutMinutes =

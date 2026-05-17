@@ -490,7 +490,7 @@ export const EXTRAS: SettingsExtras = {
   },
   rootfs_scan_container_image: {
     name: "RootFS Scan: Trivy Container Image",
-    desc: "Pinned Trivy scanner container image used by project hosts for official RootFS vulnerability scans. Prefer an internal image reference pinned by digest.",
+    desc: "Pinned Trivy scanner container image used by project hosts for official RootFS vulnerability scans. Blank uses docker.io/aquasec/trivy:latest; production should use an internal image reference pinned by digest.",
     default: "",
     valid: () => true,
     to_val: to_trimmed_str,
@@ -500,7 +500,7 @@ export const EXTRAS: SettingsExtras = {
   },
   rootfs_scan_trivy_cache_dir: {
     name: "RootFS Scan: Trivy Cache Directory",
-    desc: "Absolute project-host path for the preloaded Trivy vulnerability database/cache. Scan jobs mount this read-only and run with network disabled.",
+    desc: "Absolute project-host path for the Trivy vulnerability database/cache. Project hosts seed this cache before scans; scan jobs mount it read-only and run with network disabled. Blank uses /mnt/cocalc/data/trivy-cache.",
     default: "",
     valid: () => true,
     to_val: to_trimmed_str,

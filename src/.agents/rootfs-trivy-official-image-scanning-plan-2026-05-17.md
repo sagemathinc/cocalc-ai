@@ -22,14 +22,16 @@ Implemented in the first slice:
   scan coverage.
 - Operational knobs are admin-configurable site settings with env/per-request
   overrides.
+- Project hosts lazily prepare scan prerequisites by pulling the configured
+  Trivy scanner image when missing and seeding the host-local Trivy DB cache
+  before the offline scan container runs.
 
 Deferred after this first slice:
 
 - Automatic weekly rescan scheduling.
 - Admin exception-note workflow for bypass/accepted-risk entries.
 - Prometheus metric export.
-- A production smoke test using the pinned scanner image and real Trivy DB
-  cache.
+- A production smoke test using the pinned scanner image and real Trivy DB cache.
 
 This plan scopes `SEC-SCAN-001` to one product goal:
 
@@ -672,6 +674,16 @@ Host smoke test:
 - scan a tiny synthetic RootFS with a known package database if practical,
 - verify no network access during scan job,
 - verify target path remains read-only/unmodified.
+
+## Follow-Up From First Live Scan
+
+- Automate scanner image/cache seeding in host bootstrap or runtime reconcile.
+  The first live scan required manually pulling `docker.io/aquasec/trivy:latest`
+  and preloading `/mnt/cocalc/data/trivy-cache` on the upgraded project host.
+  Production should instead use a pinned internal scanner image digest and a
+  managed host-local Trivy DB cache update path.
+- Keep the scan itself network-disabled and `--pull=never`; only the separate
+  host maintenance path should pull/update scanner assets.
 
 ## Open Questions
 
