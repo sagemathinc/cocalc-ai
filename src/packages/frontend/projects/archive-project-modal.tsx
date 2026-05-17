@@ -7,6 +7,7 @@ import { Alert, Button, Modal, Space } from "antd";
 import { useState, type CSSProperties } from "react";
 import { useIntl } from "react-intl";
 
+import { alert_message } from "@cocalc/frontend/alerts";
 import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
 import { COLORS } from "@cocalc/util/theme";
@@ -17,6 +18,7 @@ export interface ArchiveProjectModalItem {
   project_id: string;
   title?: string | null;
   state?: string | null;
+  archiveAllowedByAdminOnly?: boolean;
 }
 
 interface Props {
@@ -43,6 +45,9 @@ export function ArchiveProjectModal({
   const runningCount = projects.filter(({ state }) =>
     ["running", "starting"].includes(`${state ?? ""}`),
   ).length;
+  const adminOnlyCount = projects.filter(
+    ({ archiveAllowedByAdminOnly }) => archiveAllowedByAdminOnly === true,
+  ).length;
   const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState("");
 
@@ -55,11 +60,16 @@ export function ArchiveProjectModal({
   async function archive() {
     setArchiving(true);
     setError("");
+    onCancel();
     try {
       await onArchive(projectIds);
-      onCancel();
     } catch (err) {
-      setError(`${err}`);
+      alert_message({
+        type: "error",
+        message: single
+          ? `Unable to archive ${projectLabelLower}: ${err}`
+          : `Unable to archive selected ${projectsLabelLower}: ${err}`,
+      });
     } finally {
       setArchiving(false);
     }
@@ -133,6 +143,26 @@ export function ArchiveProjectModal({
           {single ? `this ${projectLabelLower}` : `these ${projectsLabelLower}`}{" "}
           away when you do not need active compute.
         </div>
+        {adminOnlyCount > 0 ? (
+          <Alert
+            type="warning"
+            showIcon
+            message={
+              single
+                ? `Archive is available because you are an administrator`
+                : `${adminOnlyCount} selected ${projectsLabelLower} can be archived because you are an administrator`
+            }
+            description={
+              single
+                ? `The owner has not enabled Storage history for collaborators on this ${projectLabelLower}.`
+                : `The owner has not enabled Storage history for collaborators on ${
+                    adminOnlyCount === 1
+                      ? `one selected ${projectLabelLower}`
+                      : `${adminOnlyCount} selected ${projectsLabelLower}`
+                  }.`
+            }
+          />
+        ) : undefined}
         <InfoSection
           icon="check-circle"
           tone="positive"

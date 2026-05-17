@@ -189,9 +189,14 @@ export function ProjectsOperations({
           project_id,
           title: project?.get("title"),
           state: `${project?.getIn(["state", "state"]) ?? ""}`,
+          archiveAllowedByAdminOnly: archiveAllowedByAdminOnly(
+            project,
+            account_id,
+            isAdmin,
+          ),
         };
       }),
-    [selectedArchiveIds, project_map],
+    [selectedArchiveIds, project_map, account_id, isAdmin],
   );
 
   function selectedTitle(project_id: string): string {
@@ -534,14 +539,29 @@ function canArchiveProject(
   ) {
     return false;
   }
-  if (isAdmin) {
-    return true;
+  const group = account_id
+    ? `${project.getIn?.(["users", account_id, "group"]) ?? ""}`
+    : "";
+  return (
+    isAdmin ||
+    group === "owner" ||
+    project.get?.("allow_collaborator_destructive_storage_actions") === true
+  );
+}
+
+function archiveAllowedByAdminOnly(
+  project: any,
+  account_id: string | undefined,
+  isAdmin: boolean,
+): boolean {
+  if (!isAdmin) {
+    return false;
   }
   const group = account_id
     ? `${project.getIn?.(["users", account_id, "group"]) ?? ""}`
     : "";
   return (
-    group === "owner" ||
-    project.get?.("allow_collaborator_destructive_storage_actions") === true
+    group !== "owner" &&
+    project.get?.("allow_collaborator_destructive_storage_actions") !== true
   );
 }

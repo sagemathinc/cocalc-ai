@@ -101,6 +101,14 @@ export function ProjectActionsMenu({ record }: Props) {
       record.project_id,
       "allow_collaborator_destructive_storage_actions",
     ]) === true;
+  const archiveAllowedByAdminOnly =
+    canArchive &&
+    isAdmin &&
+    !isOwner &&
+    project_map?.getIn([
+      record.project_id,
+      "allow_collaborator_destructive_storage_actions",
+    ]) !== true;
   const archiveDisabled =
     isDeleting ||
     ["starting", "stopping", "archiving", "unarchiving", "archived"].includes(
@@ -415,6 +423,7 @@ export function ProjectActionsMenu({ record }: Props) {
             project_id: record.project_id,
             title: record.title,
             state: record.state?.get?.("state"),
+            archiveAllowedByAdminOnly,
           },
         ]}
         onCancel={() => setArchiveOpen(false)}

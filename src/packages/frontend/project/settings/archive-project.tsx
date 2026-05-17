@@ -22,7 +22,12 @@ export function ArchiveProject({ project_id, disabled, size }: Props) {
   const [open, setOpen] = useState(false);
   const actions = useActions("projects");
   const project_map = useTypedRedux("projects", "project_map");
+  const account_id = useTypedRedux("account", "account_id");
+  const isAdmin = !!useTypedRedux("account", "is_admin");
   const project = project_map?.get(project_id);
+  const isOwner = project?.getIn(["users", account_id, "group"]) === "owner";
+  const storageHistoryEnabled =
+    project?.get("allow_collaborator_destructive_storage_actions") === true;
 
   return (
     <>
@@ -44,6 +49,8 @@ export function ArchiveProject({ project_id, disabled, size }: Props) {
             project_id,
             title: project?.get("title"),
             state: `${project?.getIn(["state", "state"]) ?? ""}`,
+            archiveAllowedByAdminOnly:
+              isAdmin && !isOwner && !storageHistoryEnabled,
           },
         ]}
         onCancel={() => setOpen(false)}
