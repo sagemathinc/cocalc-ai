@@ -1100,6 +1100,7 @@ export type HostConnectionMethod =
   | "get-project-start-metadata"
   | "get-backup-config"
   | "get-project-owner-effective-limits"
+  | "get-account-effective-limits"
   | "get-seed-backup-config"
   | "resolve-seed-backup-repo-assignment"
   | "release-seed-backup-repo-assignment"
@@ -1447,6 +1448,9 @@ export interface InterBayHostConnectionApi {
   getProjectOwnerEffectiveLimits: (
     opts: Parameters<Hosts["getProjectOwnerEffectiveLimits"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["getProjectOwnerEffectiveLimits"]>>>;
+  getAccountEffectiveLimits: (
+    opts: Parameters<Hosts["getAccountEffectiveLimits"]>[0],
+  ) => Promise<Awaited<ReturnType<Hosts["getAccountEffectiveLimits"]>>>;
   recordAcpAdmissionDenial: (
     opts: Parameters<Hosts["recordAcpAdmissionDenial"]>[0],
   ) => Promise<Awaited<ReturnType<Hosts["recordAcpAdmissionDenial"]>>>;
@@ -1639,6 +1643,10 @@ const HOST_CONNECTION_METHOD_SPECS = [
   {
     name: "getProjectOwnerEffectiveLimits",
     method: "get-project-owner-effective-limits",
+  },
+  {
+    name: "getAccountEffectiveLimits",
+    method: "get-account-effective-limits",
   },
   {
     name: "getSeedBackupConfig",

@@ -175,6 +175,7 @@ import {
   resolveHostBay,
   resolveProjectBay,
 } from "@cocalc/server/inter-bay/directory";
+import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
 import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
@@ -1298,6 +1299,63 @@ export async function getProjectOwnerEffectiveLimitsLocal({
     };
   }
   const resolution = await resolveMembershipForAccount(account_id);
+  return resolution.effective_limits ?? {};
+}
+
+export async function getAccountEffectiveLimits({
+  host_id,
+  account_id,
+}: {
+  host_id?: string;
+  account_id?: string;
+}): Promise<MembershipEffectiveLimits> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  const accountId = `${account_id ?? ""}`.trim();
+  if (!accountId) {
+    throw new Error("account_id must be specified");
+  }
+  const location = await resolveAccountHomeBay({
+    account_id: accountId,
+    user_account_id: accountId,
+  });
+  const homeBayId =
+    `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  if (homeBayId !== getConfiguredBayId()) {
+    return await getInterBayBridge()
+      .hostConnection(homeBayId)
+      .getAccountEffectiveLimits({
+        host_id,
+        account_id: accountId,
+      });
+  }
+  return await getAccountEffectiveLimitsLocal({ account_id: accountId });
+}
+
+export async function getAccountEffectiveLimitsLocal({
+  account_id,
+}: {
+  host_id?: string;
+  account_id?: string;
+}): Promise<MembershipEffectiveLimits> {
+  const accountId = `${account_id ?? ""}`.trim();
+  if (!accountId) {
+    throw new Error("account_id must be specified");
+  }
+  const trust = await getAccountProductAccessTrust(accountId);
+  if (!trust.trusted) {
+    return {
+      acp_max_queued_per_account: 0,
+      acp_max_queued_per_thread: 0,
+      acp_max_created_5h_per_account: 0,
+      acp_max_created_7d_per_account: 0,
+      acp_max_running_per_account: 0,
+      acp_max_running_per_project: 0,
+      acp_max_active_automations_per_project: 0,
+    };
+  }
+  const resolution = await resolveMembershipForAccount(accountId);
   return resolution.effective_limits ?? {};
 }
 

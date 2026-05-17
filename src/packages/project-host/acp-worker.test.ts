@@ -29,6 +29,10 @@ const getProjectOwnerEffectiveLimitsMock = jest.fn(async (project_id) => ({
   project_id,
   acp_max_queued_per_account: 10,
 }));
+const getAccountEffectiveLimitsMock = jest.fn(async (account_id) => ({
+  account_id,
+  acp_max_queued_per_account: 4,
+}));
 const resolveProjectHostPreferredMasterConatServerMock = jest.fn(
   () => "http://master.example",
 );
@@ -134,6 +138,8 @@ jest.mock("./hub/system", () => ({
 }));
 
 jest.mock("./hub/projects", () => ({
+  getAccountEffectiveLimits: (...args: any[]) =>
+    getAccountEffectiveLimitsMock(...args),
   getProjectOwnerEffectiveLimits: (...args: any[]) =>
     getProjectOwnerEffectiveLimitsMock(...args),
   PROJECT_RUNNER_RPC_TIMEOUT_MS: 1234,
@@ -205,12 +211,33 @@ describe("project-host ACP worker runtime wiring", () => {
     expect(runDetachedAcpQueueWorkerMock).toHaveBeenCalledTimes(1);
   });
 
-  it("installs ACP admission limit lookup backed by project-owner effective limits", async () => {
+  it("installs ACP admission limit lookup backed by actor-account effective limits", async () => {
     const { main } = await import("./acp-worker");
 
     await main();
 
     const provider = setAcpAdmissionLimitsProviderMock.mock.calls[0][0];
+    await expect(
+      provider({
+        account_id: "11111111-1111-4111-8111-111111111111",
+        project_id: "00000000-0000-4000-8000-000000000123",
+      }),
+    ).resolves.toEqual({
+      converted: {
+        account_id: "11111111-1111-4111-8111-111111111111",
+        acp_max_queued_per_account: 4,
+      },
+    });
+    expect(getAccountEffectiveLimitsMock).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+    );
+    expect(getProjectOwnerEffectiveLimitsMock).not.toHaveBeenCalled();
+    expect(acpAdmissionLimitsFromEffectiveLimitsMock).toHaveBeenCalledWith({
+      account_id: "11111111-1111-4111-8111-111111111111",
+      acp_max_queued_per_account: 4,
+    });
+
+    acpAdmissionLimitsFromEffectiveLimitsMock.mockClear();
     await expect(
       provider({ project_id: "00000000-0000-4000-8000-000000000123" }),
     ).resolves.toEqual({

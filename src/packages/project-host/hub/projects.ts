@@ -137,6 +137,13 @@ const projectOwnerLimitsInflight = new Map<
   string,
   Promise<MembershipEffectiveLimits>
 >();
+const accountLimitsCache = new TTL<string, MembershipEffectiveLimits>({
+  ttl: PROJECT_OWNER_LIMITS_CACHE_TTL_MS,
+});
+const accountLimitsInflight = new Map<
+  string,
+  Promise<MembershipEffectiveLimits>
+>();
 let listeningProjectPortOffsetsCache:
   | {
       value: Set<number>;
@@ -482,6 +489,54 @@ export async function getProjectOwnerEffectiveLimits(
     }
   })();
   projectOwnerLimitsInflight.set(project_id, inflight);
+  return await inflight;
+}
+
+export async function getAccountEffectiveLimits(
+  account_id: string,
+): Promise<MembershipEffectiveLimits> {
+  const accountId = `${account_id ?? ""}`.trim();
+  if (!accountId) {
+    return {};
+  }
+  const cached = accountLimitsCache.get(accountId);
+  if (cached != null) {
+    return cached;
+  }
+  const existing = accountLimitsInflight.get(accountId);
+  if (existing != null) {
+    return await existing;
+  }
+  const inflight = (async () => {
+    const client = getMasterConatClient();
+    const host_id = getLocalHostId();
+    if (!client || !host_id) {
+      return {};
+    }
+    try {
+      const limits = await callHub({
+        client,
+        host_id,
+        name: "hosts.getAccountEffectiveLimits",
+        args: [{ account_id: accountId }],
+      });
+      const normalized =
+        limits != null && typeof limits === "object"
+          ? (limits as MembershipEffectiveLimits)
+          : {};
+      accountLimitsCache.set(accountId, normalized);
+      return normalized;
+    } catch (err) {
+      logger.warn("unable to load account effective limits", {
+        account_id: accountId,
+        err: `${err}`,
+      });
+      return {};
+    } finally {
+      accountLimitsInflight.delete(accountId);
+    }
+  })();
+  accountLimitsInflight.set(accountId, inflight);
   return await inflight;
 }
 

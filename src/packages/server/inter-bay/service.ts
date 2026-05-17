@@ -188,6 +188,7 @@ import {
   getHostMetricsHistory,
   getHostRuntimeDeploymentStatus,
   getHostRuntimeLog,
+  getAccountEffectiveLimitsLocal,
   getProjectOwnerEffectiveLimitsLocal,
   getProjectStartMetadataLocal,
   recordAcpAdmissionDenialLocal,
@@ -1305,6 +1306,11 @@ async function startHostConnectionService(): Promise<void> {
       await getProjectOwnerEffectiveLimitsLocal({
         host_id,
         project_id,
+      }),
+    getAccountEffectiveLimits: async ({ host_id, account_id }) =>
+      await getAccountEffectiveLimitsLocal({
+        host_id,
+        account_id,
       }),
     recordAcpAdmissionDenial: async (opts) =>
       await recordAcpAdmissionDenialLocal(opts),

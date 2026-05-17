@@ -51,6 +51,7 @@ import { init as initChangefeeds } from "@cocalc/lite/hub/changefeeds";
 import { hubApi, init as initHubApi } from "@cocalc/lite/hub/api";
 import { listAcpAutomationProjectIds } from "@cocalc/lite/hub/sqlite/acp-automations";
 import {
+  getAccountEffectiveLimits,
   getProjectOwnerEffectiveLimits,
   PROJECT_RUNNER_RPC_TIMEOUT_MS,
   wireProjectsApi,
@@ -525,7 +526,13 @@ export async function main(
   configureProjectHostAcpContainerFileIO();
   initCodexProjectRunner();
   initCodexSiteKeyGovernor();
-  setAcpAdmissionLimitsProvider(async ({ project_id }) => {
+  setAcpAdmissionLimitsProvider(async ({ account_id, project_id }) => {
+    const accountId = `${account_id ?? ""}`.trim();
+    if (accountId) {
+      return acpAdmissionLimitsFromEffectiveLimits(
+        await getAccountEffectiveLimits(accountId),
+      );
+    }
     const id = `${project_id ?? ""}`.trim();
     if (!id) return undefined;
     return acpAdmissionLimitsFromEffectiveLimits(

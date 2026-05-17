@@ -1129,6 +1129,7 @@ export const hosts = {
   setHostStar: authFirstRequireAccount,
   getBackupConfig: authFirstRequireHost,
   getProjectOwnerEffectiveLimits: authFirstRequireHost,
+  getAccountEffectiveLimits: authFirstRequireHost,
   recordAcpAdmissionDenial: authFirstRequireHost,
   recordServiceAdmissionDenial: authFirstRequireHost,
   recordServiceAdmissionNearLimit: authFirstRequireHost,
@@ -1346,6 +1347,10 @@ export interface Hosts {
   getProjectOwnerEffectiveLimits: (opts: {
     host_id?: string;
     project_id?: string;
+  }) => Promise<MembershipEffectiveLimits>;
+  getAccountEffectiveLimits: (opts: {
+    host_id?: string;
+    account_id?: string;
   }) => Promise<MembershipEffectiveLimits>;
   recordAcpAdmissionDenial: (opts: AcpAdmissionDenialRecord) => Promise<void>;
   recordServiceAdmissionDenial: (

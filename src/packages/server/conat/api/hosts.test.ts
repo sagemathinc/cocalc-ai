@@ -49,6 +49,7 @@ let hostConnectionGetHostManagedComponentStatusMock: jest.Mock;
 let hostConnectionGetProjectStartMetadataMock: jest.Mock;
 let hostConnectionGetBackupConfigMock: jest.Mock;
 let hostConnectionGetProjectOwnerEffectiveLimitsMock: jest.Mock;
+let hostConnectionGetAccountEffectiveLimitsMock: jest.Mock;
 let hostConnectionRecordProjectBackupMock: jest.Mock;
 let hostConnectionRecordProjectBackupIndexMock: jest.Mock;
 let hostConnectionGetProjectBackupIndexesMock: jest.Mock;
@@ -387,6 +388,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         hostConnectionGetBackupConfigMock(...args),
       getProjectOwnerEffectiveLimits: (...args: any[]) =>
         hostConnectionGetProjectOwnerEffectiveLimitsMock(...args),
+      getAccountEffectiveLimits: (...args: any[]) =>
+        hostConnectionGetAccountEffectiveLimitsMock(...args),
       recordProjectBackup: (...args: any[]) =>
         hostConnectionRecordProjectBackupMock(...args),
       recordProjectBackupIndex: (...args: any[]) =>
@@ -702,6 +705,7 @@ beforeEach(() => {
   hostConnectionGetProjectStartMetadataMock = jest.fn();
   hostConnectionGetBackupConfigMock = jest.fn();
   hostConnectionGetProjectOwnerEffectiveLimitsMock = jest.fn();
+  hostConnectionGetAccountEffectiveLimitsMock = jest.fn();
   hostConnectionRecordProjectBackupMock = jest.fn(async () => undefined);
   hostConnectionRecordProjectBackupIndexMock = jest.fn(async () => undefined);
   hostConnectionGetProjectBackupIndexesMock = jest.fn(async () => []);
@@ -4156,6 +4160,58 @@ describe("hosts.resolveHostConnection", () => {
       host_id: REMOTE_HOST_ID,
       project_id: REMOTE_PROJECT_ID,
     });
+  });
+
+  it("returns account effective limits locally for host callers", async () => {
+    resolveMembershipForAccountMock = jest.fn(async (account_id: string) => {
+      expect(account_id).toBe("actor-1");
+      return {
+        effective_limits: {
+          acp_max_queued_per_account: 12,
+          acp_max_running_per_account: 3,
+        },
+      };
+    });
+    const { getAccountEffectiveLimits } = await import("./hosts");
+    await expect(
+      getAccountEffectiveLimits({
+        host_id: REMOTE_HOST_ID,
+        account_id: "actor-1",
+      }),
+    ).resolves.toEqual({
+      acp_max_queued_per_account: 12,
+      acp_max_running_per_account: 3,
+    });
+    expect(resolveAccountHomeBayMock).toHaveBeenCalledWith({
+      account_id: "actor-1",
+      user_account_id: "actor-1",
+    });
+  });
+
+  it("routes account effective limits lookup to the account home bay when remote", async () => {
+    resolveAccountHomeBayMock = jest.fn(async () => ({
+      home_bay_id: "bay-7",
+      epoch: 2,
+    }));
+    hostConnectionGetAccountEffectiveLimitsMock = jest.fn(async () => ({
+      acp_max_queued_per_account: 12,
+      acp_max_running_per_account: 3,
+    }));
+    const { getAccountEffectiveLimits } = await import("./hosts");
+    await expect(
+      getAccountEffectiveLimits({
+        host_id: REMOTE_HOST_ID,
+        account_id: "actor-1",
+      }),
+    ).resolves.toEqual({
+      acp_max_queued_per_account: 12,
+      acp_max_running_per_account: 3,
+    });
+    expect(hostConnectionGetAccountEffectiveLimitsMock).toHaveBeenCalledWith({
+      host_id: REMOTE_HOST_ID,
+      account_id: "actor-1",
+    });
+    expect(resolveMembershipForAccountMock).not.toHaveBeenCalled();
   });
 
   it("routes project backup recording to the owning bay when the project is remote", async () => {

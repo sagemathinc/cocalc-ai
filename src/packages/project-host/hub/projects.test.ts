@@ -1042,6 +1042,28 @@ describe("project host start ACP rehydrate ordering", () => {
     );
   });
 
+  it("looks up account effective limits over the host hub bridge", async () => {
+    getMasterConatClient.mockReturnValue({ nats: true });
+    callHub.mockResolvedValue({
+      acp_max_queued_per_account: 4,
+      acp_max_running_per_account: 2,
+    });
+
+    const { getAccountEffectiveLimits } = await import("./projects");
+
+    await expect(getAccountEffectiveLimits("actor-1")).resolves.toEqual({
+      acp_max_queued_per_account: 4,
+      acp_max_running_per_account: 2,
+    });
+    expect(callHub).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host_id: "host-1",
+        name: "hosts.getAccountEffectiveLimits",
+        args: [{ account_id: "actor-1" }],
+      }),
+    );
+  });
+
   it("passes the owner backup limit from the hub bridge into host-local backup creation", async () => {
     const runnerApi = {
       start: jest.fn(),
