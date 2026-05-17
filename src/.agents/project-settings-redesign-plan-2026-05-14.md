@@ -597,3 +597,292 @@ Validation:
 - Focused settings/flyout tests.
 - Start button tests if any shared sponsor wording/types are touched.
 - Frontend typecheck and lint.
+
+## Follow-Up Implementation Plan: Environment Card Redesign
+
+The current Environment section is the most vertically expensive part of the
+settings page. It mixes runtime image identity, project access, feature probes,
+software availability, configuration, and low-level diagnostics into one long
+stack. The redesign should not simply restyle the existing content; it should
+separate summary, actions, and technical detail.
+
+### Product Direction
+
+The default Environment view should answer three questions in the first screen:
+
+- What environment am I running?
+- What can this environment do?
+- Where do I go to change, refresh, or inspect it?
+
+Everything else should be available through details, search, or expandable
+technical sections.
+
+Use this structure:
+
+- Top summary strip: compact cards for runtime image, host, resources, storage,
+  network, SSH, and features.
+- Runtime Image card: current image name/version, short status, and right-side
+  actions.
+- Available Features card: grouped feature chips and search/show-all controls.
+- Access cards: SSH and network/egress summaries with explicit actions.
+- Diagnostics: collapsed by default, containing long probe output, raw config,
+  package details, and other support/debugging information.
+
+Do not show raw JSON, giant feature lists, or repeated paragraphs in the default
+view.
+
+### Information Architecture
+
+#### Top Summary Strip
+
+Render 4-6 compact cards at the top of the Environment section. Each card should
+have:
+
+- icon
+- title
+- primary value
+- one short secondary line
+- one obvious action when applicable
+
+Suggested cards:
+
+- `Runtime Image`: image name/tag, "Change" or "Details".
+- `Host`: host display name and bay/region when available, "Host Details".
+- `Resources`: CPU/RAM plan summary, "Open Runtime" or project info link.
+- `Storage`: compact disk usage meter, "Disk Usage".
+- `Network`: internet/member-host/egress status, "Egress".
+- `SSH`: enabled/access status, "SSH Instructions" or "Manage Keys".
+
+If a value is missing, omit the secondary line or show a neutral loading/unknown
+state. Do not create new backend RPCs for the first pass unless no existing data
+source exists.
+
+#### Runtime Image Card
+
+The image/runtime identity deserves its own focused card instead of being buried
+inside a long environment dump.
+
+Show:
+
+- current image name prominently
+- image tag/build/version when available
+- short description if already available
+- whether it is default/custom/unknown if that state exists
+- right-side actions: `Change Image`, `Details`, or existing equivalent actions
+
+Move long image metadata into an expandable `Technical details` area.
+
+#### Available Features Card
+
+Replace the current large feature/configuration presentation with grouped chips
+and progressive disclosure.
+
+Default view:
+
+- Header: `Available Features`
+- Header actions: `Refresh`
+- Category groups:
+  - `Languages`
+  - `Notebooks`
+  - `Terminals`
+  - `Network`
+  - `Storage`
+  - `System`
+- Show important available features as chips.
+- Show counts, e.g. `Python`, `Jupyter`, `Terminal`, `Internet`, `Member Host`.
+
+Expanded/search view:
+
+- Search input filters features by label/key.
+- `Show all` reveals the complete list.
+- Missing features are hidden by default unless the missing state is actionable
+  or surprising.
+- Keep install/agent actions if they already exist, but put them beside the
+  relevant feature row, not in paragraphs.
+
+The refresh button belongs in the `Available Features` header, not at the top of
+the whole Environment section.
+
+#### Access Cards
+
+Keep SSH and network separate from feature detection.
+
+SSH card:
+
+- enabled/disabled or available/unavailable status
+- primary action to open SSH instructions or copy the command
+- secondary action to manage keys if available
+- no long explanation in the default card
+
+Network card:
+
+- internet access status
+- member host status when relevant
+- compact egress usage/rate summary if available
+- action to open egress monitor/history
+
+#### Diagnostics
+
+Create a collapsed `Diagnostics` or `Technical Details` card at the bottom.
+
+This is where the current verbose content belongs:
+
+- raw feature probe output
+- package/tool version details
+- low-level runtime configuration
+- long explanatory paragraphs
+- support-oriented debug information
+
+The collapsed header should make it clear that this is not normal user-facing
+settings content.
+
+### Suggested Component Shape
+
+Add a new presenter for the redesigned section and keep existing behavior behind
+small adapters:
+
+- `src/packages/frontend/project/settings/environment-overview.tsx`
+- `src/packages/frontend/project/settings/environment-summary-card.tsx`
+- `src/packages/frontend/project/settings/environment-feature-groups.tsx`
+- optional: `src/packages/frontend/project/settings/environment-diagnostics.tsx`
+
+The first pass can be implemented entirely inside one file if that is faster,
+then split once the shape stabilizes.
+
+Reuse existing components/data sources where possible:
+
+- existing `Environment` component for feature probing/data loading
+- existing `ProjectCapabilities` data/rendering logic, but expose a compact mode
+- existing `DiskUsage` summary/modal trigger or the extracted health rail helper
+- existing host details modal trigger
+- existing SSH panel actions
+- existing managed egress monitor/history action
+- existing runtime/process/project info link for runtime details
+
+Avoid introducing a new independent probe layer. The redesign should be a
+presentation refactor first.
+
+### Implementation Steps
+
+#### Commit 1: Inventory And Extract Environment Data
+
+Goal: identify exactly which current components provide which data and extract
+minimal summary helpers without changing the UI.
+
+Tasks:
+
+- Read the current `Environment`, `ProjectCapabilities`, `SSHPanel`, runtime
+  image, host details, disk usage, and managed egress components.
+- Document the existing data sources in comments or this plan if there are
+  surprises.
+- Extract helper functions only where needed, e.g. feature categorization or
+  compact disk/network summary.
+- Add no new UX in this commit unless required for extraction.
+
+Validation:
+
+- Focused tests for extracted helpers if non-trivial.
+- `pnpm -C src lint:frontend`
+- `pnpm -C src tsc`
+
+#### Commit 2: Add Environment Overview Shell
+
+Goal: replace the one huge Environment stack with a structured overview while
+preserving all existing functionality.
+
+Tasks:
+
+- Add `EnvironmentOverview`.
+- Render the top summary strip.
+- Render a Runtime Image card.
+- Render compact SSH/network/storage cards using existing actions.
+- Keep the old verbose components under a collapsed `Diagnostics` card so no
+  functionality disappears.
+- Wire the settings section to use `EnvironmentOverview` in the full page first.
+
+Validation:
+
+- Full page settings smoke test if available.
+- Flyout settings test if the shared environment section changes.
+- `pnpm -C src lint:frontend`
+- `pnpm -C src tsc`
+
+#### Commit 3: Redesign Available Features
+
+Goal: replace the dense feature list with grouped chips plus search/show-all.
+
+Tasks:
+
+- Categorize feature keys into the initial groups:
+  `Languages`, `Notebooks`, `Terminals`, `Network`, `Storage`, `System`, and
+  `Other`.
+- Show only available/important features by default.
+- Add search and `Show all`.
+- Move `Refresh` into the `Available Features` card header.
+- Preserve any existing "install with agent" or related actions.
+- Hide unavailable features by default unless actionable.
+
+Validation:
+
+- Unit tests for feature categorization if implemented as a helper.
+- Render tests for empty/loading/error feature states if the component has test
+  coverage.
+- `pnpm -C src lint:frontend`
+- `pnpm -C src tsc`
+
+#### Commit 4: Collapse Diagnostics And Remove Redundancy
+
+Goal: make the default Environment section fit on one normal screen.
+
+Tasks:
+
+- Move raw/verbose content into `Diagnostics`.
+- Remove repeated explanatory text across Runtime Image, Features, SSH, and
+  Network cards.
+- Ensure there is one source of truth for each action:
+  - image change/details
+  - refresh features
+  - disk usage
+  - egress monitor
+  - SSH instructions/keys
+  - host details
+- Ensure collapsed default view is useful without opening diagnostics.
+
+Validation:
+
+- Manual browser screenshot of full Environment section at desktop width.
+- Verify each action still opens the existing modal/page.
+- `pnpm -C src lint:frontend`
+- `pnpm -C src tsc`
+
+#### Commit 5: Share Compact Environment With Flyout
+
+Goal: make the flyout and full page use the same compact environment summary
+where practical.
+
+Tasks:
+
+- Add a `mode="page" | "flyout"` or equivalent prop to `EnvironmentOverview`.
+- Use the same Runtime Image and Available Features summaries in the flyout.
+- Keep the flyout more compact: fewer summary cards, shorter diagnostics, and no
+  giant scroll region by default.
+- Ensure the refresh button remains near `Available Features` in both modes.
+
+Validation:
+
+- `project/page/flyouts/settings.test.tsx`
+- Manual browser screenshot of flyout Environment section.
+- `pnpm -C src lint:frontend`
+- `pnpm -C src tsc`
+
+### Design Rules For This Work
+
+- The default Environment section should not require four screenshots.
+- Summary cards should be systematic: title, value, secondary text, action.
+- Long lists must support search or `Show all`.
+- Raw diagnostics are allowed, but only behind an explicit collapsed section.
+- Do not invent new terminology when existing user-facing labels work.
+- Prefer `Available Features` over `Features and Configuration`.
+- Use `COLORS` from `@cocalc/util/theme`.
+- Preserve existing security/access behavior. This is a presentation refactor,
+  not a permissions change.
