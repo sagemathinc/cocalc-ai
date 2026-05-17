@@ -46,10 +46,7 @@ import {
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
 import {
-  groupedRootfsOptions,
   latestRootfsVersionEntries,
-  renderRootfsCatalogOption,
-  rootfsOptionSearchText,
   rootfsThemeImageUrl,
   sectionLabel,
   sectionTagColor,
@@ -115,6 +112,7 @@ export default function RootFilesystemImage({
   const [rootfsDraftId, setRootfsDraftId] = useState<string>("");
   const [catalogRefresh, setCatalogRefresh] = useState<number>(0);
   const [showOlderVersions, setShowOlderVersions] = useState<boolean>(false);
+  const [rootfsSearch, setRootfsSearch] = useState<string>("");
   const [projectRootfsStates, setProjectRootfsStates] = useState<
     ProjectRootfsStateEntry[]
   >([]);
@@ -298,10 +296,6 @@ export default function RootFilesystemImage({
       showOlderVersions,
     ],
   );
-  const rootfsOptions = useMemo(
-    () => groupedRootfsOptions(pickerRootfsImages),
-    [pickerRootfsImages],
-  );
   const relatedVersionEntries = useMemo(() => {
     if (!currentDisplayEntry?.family) return [];
     return rootfsImages
@@ -330,6 +324,21 @@ export default function RootFilesystemImage({
     );
     return newerVersions[0];
   }, [currentDisplayEntry, relatedVersionEntries]);
+  const filteredPickerRootfsImages = useMemo(() => {
+    const query = rootfsSearch.trim().toLowerCase();
+    if (!query) return pickerRootfsImages;
+    return pickerRootfsImages.filter((entry) =>
+      rootfsCatalogSearchText(entry).includes(query),
+    );
+  }, [pickerRootfsImages, rootfsSearch]);
+  const visiblePickerRootfsImages = useMemo(() => {
+    if (!suggestedUpgradeEntry) return filteredPickerRootfsImages;
+    return [...filteredPickerRootfsImages].sort((a, b) => {
+      if (a.id === suggestedUpgradeEntry.id) return -1;
+      if (b.id === suggestedUpgradeEntry.id) return 1;
+      return 0;
+    });
+  }, [filteredPickerRootfsImages, suggestedUpgradeEntry]);
   const publishAssistCommand = useMemo(
     () =>
       buildRootfsPublishAssistCommand({
@@ -449,6 +458,7 @@ export default function RootFilesystemImage({
     setRootfsDraft(currentEntry?.image ?? current);
     setRootfsDraftId(currentEntry?.id ?? "");
     setRootfsMode(currentEntry ? "catalog" : "custom");
+    setRootfsSearch("");
     setOpen(true);
   }
 
@@ -1021,7 +1031,7 @@ export default function RootFilesystemImage({
       )}
       {open && (
         <Modal
-          width={760}
+          width={920}
           open
           onCancel={() => {
             const current = getImage(rootfs, effectiveDefaultRootfs);
@@ -1127,74 +1137,135 @@ export default function RootFilesystemImage({
               )}
             {rootfsMode === "catalog" ? (
               <>
-                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                  Pick a managed catalog image. These entries have CoCalc
-                  metadata, visibility, and lifecycle management on top of the
-                  underlying runtime image.
-                </Paragraph>
-                <Select
-                  showSearch
-                  options={rootfsOptions}
-                  value={rootfsDraftId || undefined}
-                  placeholder="Select an image"
-                  style={{ width: "100%" }}
-                  listHeight={420}
-                  filterOption={(input, option) =>
-                    rootfsOptionSearchText(option).includes(
-                      input.trim().toLowerCase(),
-                    )
-                  }
-                  optionRender={(option) =>
-                    renderRootfsCatalogOption((option.data as any).entry)
-                  }
-                  onChange={(nextId) => {
-                    const next = rootfsImages.find(
-                      (entry) => entry.id === nextId,
-                    );
-                    setRootfsDraft(next?.image || "");
-                    setRootfsDraftId(next?.id || "");
+                <div
+                  style={{
+                    alignItems: "center",
+                    display: "grid",
+                    gap: 12,
+                    gridTemplateColumns: "minmax(0, 1fr) auto",
                   }}
-                  loading={rootfsLoading}
-                  disabled={rootfsLoading}
-                />
-                <Checkbox
-                  checked={showOlderVersions}
-                  onChange={(e) => setShowOlderVersions(e.target.checked)}
                 >
-                  Show older versions
-                </Checkbox>
-                <Button
-                  type="link"
-                  onClick={() => setRootfsMode("custom")}
-                  style={{ paddingLeft: 0, width: "fit-content" }}
+                  <Input.Search
+                    allowClear
+                    disabled={rootfsLoading}
+                    onChange={(e) => setRootfsSearch(e.target.value)}
+                    placeholder="Search by name, image, publisher, tag, or version"
+                    value={rootfsSearch}
+                  />
+                  <Space wrap size="small">
+                    <Checkbox
+                      checked={showOlderVersions}
+                      onChange={(e) => setShowOlderVersions(e.target.checked)}
+                    >
+                      Show older versions
+                    </Checkbox>
+                    <Button
+                      type="link"
+                      onClick={() => setRootfsMode("custom")}
+                      style={{ paddingLeft: 0, width: "fit-content" }}
+                    >
+                      Advanced image
+                    </Button>
+                  </Space>
+                </div>
+                <div
+                  style={{
+                    border: `1px solid ${COLORS.GRAY_LL}`,
+                    borderRadius: 12,
+                    maxHeight: 430,
+                    overflowY: "auto",
+                    padding: 10,
+                  }}
                 >
-                  Use an advanced OCI or Docker image instead
-                </Button>
-                {draftRootfsEntry?.description && (
-                  <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-                    {draftRootfsEntry.description}
-                  </Paragraph>
-                )}
-                {draftRootfsEntry && renderRootfsWarning(draftRootfsEntry)}
-                {draftRootfsEntry && renderRootfsScan(draftRootfsEntry)}
-                <Space wrap>
-                  {draftRootfsEntry?.section && (
-                    <Tag color={sectionTagColor(draftRootfsEntry.section)}>
-                      {sectionLabel(draftRootfsEntry.section)}
-                    </Tag>
+                  {rootfsLoading ? (
+                    <div style={{ padding: 28, textAlign: "center" }}>
+                      <Spin />
+                    </div>
+                  ) : visiblePickerRootfsImages.length > 0 ? (
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 10,
+                        gridTemplateColumns:
+                          "repeat(auto-fit, minmax(270px, 1fr))",
+                      }}
+                    >
+                      {visiblePickerRootfsImages.map((entry) => (
+                        <RootfsCatalogCard
+                          key={entry.id}
+                          current={
+                            entry.id === currentDisplayEntry?.id ||
+                            entry.image ===
+                              (currentProjectRootfsState?.image ??
+                                value ??
+                                effectiveDefaultRootfs)
+                          }
+                          entry={entry}
+                          onSelect={() => {
+                            setRootfsDraft(entry.image);
+                            setRootfsDraftId(entry.id);
+                          }}
+                          recommended={entry.id === suggestedUpgradeEntry?.id}
+                          selected={
+                            entry.id === rootfsDraftId ||
+                            entry.image === rootfsDraft
+                          }
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        color: COLORS.GRAY_M,
+                        padding: 28,
+                        textAlign: "center",
+                      }}
+                    >
+                      No catalog images match this search.
+                    </div>
                   )}
-                  {draftRootfsEntry?.version && (
-                    <Tag>{draftRootfsEntry.version}</Tag>
-                  )}
-                  {draftRootfsEntry?.channel && (
-                    <Tag color="cyan">{draftRootfsEntry.channel}</Tag>
-                  )}
-                  {draftRootfsEntry?.gpu && <Tag color="purple">GPU image</Tag>}
-                  {draftRootfsEntry?.owner_name &&
-                    draftRootfsEntry.section !== "mine" && (
-                      <Tag>{draftRootfsEntry.owner_name}</Tag>
-                    )}
-                </Space>
+                </div>
+                {draftRootfsEntry ? (
+                  <div
+                    style={{
+                      background: COLORS.GRAY_LL,
+                      borderRadius: 12,
+                      padding: "12px 14px",
+                    }}
+                  >
+                    <Space
+                      direction="vertical"
+                      size={6}
+                      style={{ width: "100%" }}
+                    >
+                      <div style={{ fontWeight: 700 }}>
+                        Selected:{" "}
+                        {displayRootfsUpgradeLabel(
+                          draftRootfsEntry,
+                          draftRootfsEntry.image,
+                        )}
+                      </div>
+                      {draftRootfsEntry.description ? (
+                        <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                          {draftRootfsEntry.description}
+                        </Paragraph>
+                      ) : null}
+                      <div
+                        style={{
+                          color: COLORS.GRAY_M,
+                          fontFamily: "monospace",
+                          fontSize: 11,
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {draftRootfsEntry.image}
+                      </div>
+                      {renderRootfsEntryFacts(draftRootfsEntry)}
+                      {renderRootfsWarning(draftRootfsEntry)}
+                      {renderRootfsScan(draftRootfsEntry)}
+                    </Space>
+                  </div>
+                ) : null}
               </>
             ) : (
               <Space
@@ -1899,6 +1970,156 @@ function renderRootfsTags(
       {entry.channel ? <Tag color="cyan">{entry.channel}</Tag> : null}
       {entry.gpu ? <Tag color="purple">GPU image</Tag> : null}
     </>
+  );
+}
+
+function rootfsCatalogSearchText(entry: RootfsImageEntry): string {
+  return [
+    entry.label,
+    entry.image,
+    entry.description,
+    entry.owner_name,
+    entry.family,
+    entry.version,
+    entry.channel,
+    entry.section,
+    ...(entry.tags ?? []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function RootfsCatalogCard({
+  current,
+  entry,
+  onSelect,
+  recommended,
+  selected,
+}: {
+  current: boolean;
+  entry: RootfsImageEntry;
+  onSelect: () => void;
+  recommended: boolean;
+  selected: boolean;
+}): React.JSX.Element {
+  const themeColor = entry.theme?.color?.trim() || COLORS.GRAY_L;
+  const accentColor = entry.theme?.accent_color?.trim();
+  const label = displayRootfsUpgradeLabel(entry, entry.image);
+  const facts = [
+    formatRootfsBaseSize(entry.size_gb),
+    describeRootfsPublisher(entry),
+  ]
+    .filter(Boolean)
+    .join(" • ");
+
+  return (
+    <button
+      onClick={onSelect}
+      style={{
+        appearance: "none",
+        background: selected
+          ? COLORS.ANTD_BG_BLUE_L
+          : accentColor
+            ? `${accentColor}14`
+            : "white",
+        border: `1px solid ${
+          selected
+            ? COLORS.ANTD_LINK_BLUE
+            : recommended
+              ? COLORS.BG_WARNING
+              : themeColor
+        }`,
+        borderRadius: 12,
+        boxShadow: selected
+          ? "0 8px 20px rgba(22, 119, 255, 0.12)"
+          : "0 2px 8px rgba(0, 0, 0, 0.03)",
+        color: "inherit",
+        cursor: "pointer",
+        display: "flex",
+        font: "inherit",
+        gap: 12,
+        minHeight: 150,
+        padding: 12,
+        textAlign: "left",
+        width: "100%",
+      }}
+      type="button"
+    >
+      {renderRootfsThemePreview(entry)}
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <Space wrap size={[6, 4]} style={{ marginBottom: 5, width: "100%" }}>
+          {selected ? (
+            <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+              Selected
+            </Tag>
+          ) : null}
+          {current ? (
+            <Tag color="green" style={{ marginInlineEnd: 0 }}>
+              Current
+            </Tag>
+          ) : null}
+          {recommended ? (
+            <Tag color="gold" style={{ marginInlineEnd: 0 }}>
+              Recommended
+            </Tag>
+          ) : null}
+          {renderRootfsTags(entry)}
+        </Space>
+        <div
+          title={label}
+          style={{
+            fontWeight: 700,
+            marginBottom: 4,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {label}
+        </div>
+        {entry.description ? (
+          <div
+            style={{
+              color: COLORS.GRAY_D,
+              display: "-webkit-box",
+              fontSize: 12,
+              lineHeight: "17px",
+              marginBottom: 8,
+              overflow: "hidden",
+              WebkitBoxOrient: "vertical",
+              WebkitLineClamp: 2,
+            }}
+          >
+            {entry.description}
+          </div>
+        ) : null}
+        {facts ? (
+          <div
+            style={{
+              color: COLORS.GRAY_M,
+              fontSize: 11,
+              marginBottom: 6,
+            }}
+          >
+            {facts}
+          </div>
+        ) : null}
+        <div
+          title={entry.image}
+          style={{
+            color: COLORS.GRAY_M,
+            fontFamily: "monospace",
+            fontSize: 11,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {entry.image}
+        </div>
+      </div>
+    </button>
   );
 }
 
