@@ -1259,6 +1259,7 @@ export interface Hosts {
   listHostRootfsImages: (opts: {
     account_id?: string;
     id: string;
+    timeout?: number;
   }) => Promise<HostRootfsImage[]>;
   pullHostRootfsImage: (opts: {
     account_id?: string;

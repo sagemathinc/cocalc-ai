@@ -7,7 +7,9 @@ import {
   Alert,
   Button,
   Input,
+  Modal,
   Popconfirm,
+  Radio,
   Space,
   Table,
   Tag,
@@ -26,6 +28,7 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
+import type { Host, HostRootfsImage } from "@cocalc/conat/hub/api/hosts";
 import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
@@ -36,6 +39,7 @@ import type {
 import { plural } from "@cocalc/util/misc";
 
 const ROOTFS_SCAN_ADMIN_TIMEOUT_MS = 35 * 60 * 1000;
+const ROOTFS_SCAN_HOST_CACHE_TIMEOUT_MS = 8 * 1000;
 
 type RootfsAdminAction =
   | "download"
@@ -45,6 +49,13 @@ type RootfsAdminAction =
   | "block"
   | "unblock"
   | "scan";
+
+type RootfsScanHostCandidate = {
+  host: Host;
+  cached: boolean;
+  cache_entry?: HostRootfsImage;
+  cache_error?: string;
+};
 
 function lifecycleTags(entry: RootfsAdminCatalogEntry): React.ReactNode[] {
   const tags: React.ReactNode[] = [];
@@ -365,6 +376,68 @@ function storageSummary(entry: RootfsAdminCatalogEntry): React.ReactNode {
   );
 }
 
+function hostDisplayName(host: Host): string {
+  const name = `${host.name ?? ""}`.trim();
+  return name || host.id;
+}
+
+function hostIsAvailableForScan(host: Host): boolean {
+  return !host.deleted && host.status === "running";
+}
+
+function hostHasRootfsImage({
+  entry,
+  image,
+}: {
+  entry: RootfsAdminCatalogEntry;
+  image: HostRootfsImage;
+}): boolean {
+  return (
+    image.image === entry.image ||
+    (!!entry.release_id && image.release_id === entry.release_id)
+  );
+}
+
+function compareScanHostCandidates(
+  a: RootfsScanHostCandidate,
+  b: RootfsScanHostCandidate,
+): number {
+  if (a.cached !== b.cached) return a.cached ? -1 : 1;
+  return hostDisplayName(a.host).localeCompare(hostDisplayName(b.host));
+}
+
+function scanHostCandidateLabel(candidate: RootfsScanHostCandidate) {
+  const host = candidate.host;
+  const details = [
+    host.region,
+    host.bay_id ? `bay ${host.bay_id}` : undefined,
+    host.status,
+  ].filter(Boolean);
+  return (
+    <Space direction="vertical" size={0}>
+      <Space wrap>
+        <Typography.Text strong>{hostDisplayName(host)}</Typography.Text>
+        <Typography.Text type="secondary" copyable={{ text: host.id }}>
+          {host.id}
+        </Typography.Text>
+        {candidate.cached ? (
+          <Tag color="green">RootFS cached</Tag>
+        ) : (
+          <Tag>Will pull first</Tag>
+        )}
+        {candidate.cache_error ? <Tag color="orange">Cache unknown</Tag> : null}
+      </Space>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        {details.join(" · ") || "online host"}
+        {candidate.cache_entry?.size_bytes
+          ? ` · cached ${Math.round(candidate.cache_entry.size_bytes / 1_000_000_000)} GB`
+          : ""}
+        {candidate.cache_error ? ` · ${candidate.cache_error}` : ""}
+      </Typography.Text>
+    </Space>
+  );
+}
+
 export function RootfsAdmin() {
   const hub = webapp_client.conat_client.hub;
   const [rows, setRows] = React.useState<RootfsAdminCatalogEntry[]>([]);
@@ -376,6 +449,14 @@ export function RootfsAdmin() {
     image_id: string;
     action: RootfsAdminAction;
   }>();
+  const [scanEntry, setScanEntry] =
+    React.useState<RootfsAdminCatalogEntry | null>(null);
+  const [scanHosts, setScanHosts] = React.useState<RootfsScanHostCandidate[]>(
+    [],
+  );
+  const [scanHostId, setScanHostId] = React.useState<string>();
+  const [scanHostsLoading, setScanHostsLoading] = React.useState(false);
+  const [scanHostError, setScanHostError] = React.useState<string>("");
 
   function actionLoading(
     entry: RootfsAdminCatalogEntry,
@@ -571,17 +652,69 @@ export function RootfsAdmin() {
     }
   }
 
-  async function runScan(entry: RootfsAdminCatalogEntry) {
+  async function loadScanHosts(entry: RootfsAdminCatalogEntry) {
+    setScanHostsLoading(true);
+    setScanHostError("");
+    setScanHosts([]);
+    setScanHostId(undefined);
+    try {
+      const hosts = await hub.hosts.listHosts({
+        admin_view: true,
+        show_all: true,
+      });
+      const onlineHosts = hosts.filter(hostIsAvailableForScan);
+      const candidates = await Promise.all(
+        onlineHosts.map(async (host): Promise<RootfsScanHostCandidate> => {
+          try {
+            const cachedImages = await hub.hosts.listHostRootfsImages({
+              id: host.id,
+              timeout: ROOTFS_SCAN_HOST_CACHE_TIMEOUT_MS,
+            });
+            const cache_entry = cachedImages.find((image) =>
+              hostHasRootfsImage({ entry, image }),
+            );
+            return {
+              host,
+              cached: !!cache_entry,
+              cache_entry,
+            };
+          } catch (err) {
+            return {
+              host,
+              cached: false,
+              cache_error: `${err}`,
+            };
+          }
+        }),
+      );
+      candidates.sort(compareScanHostCandidates);
+      setScanHosts(candidates);
+      setScanHostId(candidates[0]?.host.id);
+      if (candidates.length === 0) {
+        setScanHostError("No online project hosts are available for scanning.");
+      }
+    } catch (err) {
+      setScanHostError(`${err}`);
+    } finally {
+      setScanHostsLoading(false);
+    }
+  }
+
+  async function openScanHostPicker(entry: RootfsAdminCatalogEntry) {
+    if (!entry.release_id) {
+      message.error("This catalog entry does not reference a managed release.");
+      return;
+    }
+    setScanEntry(entry);
+    await loadScanHosts(entry);
+  }
+
+  async function runScan(entry: RootfsAdminCatalogEntry, hostId: string) {
     const release_id = entry.release_id;
     if (!release_id) {
       message.error("This catalog entry does not reference a managed release.");
       return;
     }
-    const host_id = window.prompt(
-      `Project host id to scan '${entry.label}' on:`,
-    );
-    if (!host_id?.trim()) return;
-    const hostId = host_id.trim();
     try {
       await runFreshAuthAction(async () => {
         setActiveAction({ image_id: entry.id, action: "scan" });
@@ -594,6 +727,7 @@ export function RootfsAdmin() {
           });
           message.success(`RootFS scan ${result.status}: ${entry.label}`);
           await load();
+          setScanEntry(null);
         } finally {
           setActiveAction(undefined);
         }
@@ -603,6 +737,11 @@ export function RootfsAdmin() {
       await load();
       setActiveAction(undefined);
     }
+  }
+
+  async function runSelectedScan() {
+    if (!scanEntry || !scanHostId) return;
+    await runScan(scanEntry, scanHostId);
   }
 
   async function downloadScanReport(entry: RootfsAdminCatalogEntry) {
@@ -630,6 +769,60 @@ export function RootfsAdmin() {
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
       <FreshAuthModal {...freshAuthModalProps} />
+      <Modal
+        open={!!scanEntry}
+        title={
+          scanEntry ? `Scan RootFS image "${scanEntry.label}"` : "Scan RootFS"
+        }
+        okText="Start scan"
+        onOk={() => void runSelectedScan()}
+        onCancel={() => setScanEntry(null)}
+        okButtonProps={{
+          disabled: !scanHostId || scanHostsLoading,
+          loading: scanEntry ? actionLoading(scanEntry, "scan") : false,
+        }}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Typography.Paragraph type="secondary">
+            Choose an online project host to run the scan. Hosts that already
+            have this RootFS cached are listed first; otherwise the host will
+            pull the RootFS before scanning.
+          </Typography.Paragraph>
+          {scanHostError ? (
+            <Alert type="warning" showIcon message={scanHostError} />
+          ) : null}
+          {scanHostsLoading ? (
+            <Loading />
+          ) : (
+            <Radio.Group
+              value={scanHostId}
+              onChange={(event) => setScanHostId(event.target.value)}
+              style={{ width: "100%" }}
+            >
+              <Space
+                direction="vertical"
+                size="middle"
+                style={{ width: "100%" }}
+              >
+                {scanHosts.map((candidate) => (
+                  <Radio key={candidate.host.id} value={candidate.host.id}>
+                    {scanHostCandidateLabel(candidate)}
+                  </Radio>
+                ))}
+              </Space>
+            </Radio.Group>
+          )}
+          {scanEntry ? (
+            <Button
+              size="small"
+              onClick={() => void loadScanHosts(scanEntry)}
+              loading={scanHostsLoading}
+            >
+              Refresh hosts
+            </Button>
+          ) : null}
+        </Space>
+      </Modal>
       <Typography.Paragraph type="secondary">
         Manage all RootFS catalog entries and inspect central lifecycle state.
         Deleting an image here removes the catalog entry immediately and lets
@@ -867,7 +1060,7 @@ export function RootfsAdmin() {
                       size="small"
                       loading={actionLoading(entry, "scan")}
                       disabled={!entry.release_id}
-                      onClick={() => runScan(entry)}
+                      onClick={() => void openScanHostPicker(entry)}
                     >
                       Scan now
                     </Button>
