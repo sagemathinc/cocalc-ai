@@ -33,7 +33,6 @@ interface Props {
 }
 
 export const NewButton: React.FC<Props> = ({
-  project_id,
   file_search = "",
   actions,
   create_folder,

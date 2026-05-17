@@ -37,7 +37,6 @@ import type {
   SaveNotificationOptions,
 } from "@cocalc/conat/hub/api/notifications";
 import type {
-  ProjectLauncherSettings,
   ProjectRegion,
   ProjectCreated,
   ProjectEnv,
@@ -210,7 +209,6 @@ function requireLiteProjectId(value?: string): string {
 }
 
 interface LiteProjectReadDetails {
-  launcher: ProjectLauncherSettings;
   region: ProjectRegion;
   created: ProjectCreated;
   env: ProjectEnv;
@@ -240,7 +238,6 @@ function getLiteProjectReadDetailsLocal(
   const image = `${row.rootfs_image ?? ""}`.trim();
   const image_id = `${row.rootfs_image_id ?? ""}`.trim();
   return {
-    launcher: row.launcher ?? null,
     region: row.region ?? null,
     created: row.created ?? null,
     env: row.env ?? null,
@@ -270,19 +267,6 @@ async function getLiteProjectReadDetails(opts: {
   requireLiteAccountId(opts.account_id);
   const project_id = requireLiteProjectId(opts.project_id);
   return getLiteProjectReadDetailsLocal(project_id);
-}
-
-async function getProjectLauncherLite(opts: {
-  account_id?: string;
-  project_id: string;
-}): Promise<ProjectLauncherSettings> {
-  if (hasRemote) {
-    return await callRemoteHub({
-      name: "projects.getProjectLauncher",
-      args: [opts],
-    });
-  }
-  return (await getLiteProjectReadDetails(opts)).launcher;
 }
 
 async function getProjectRegionLite(opts: {
@@ -1475,7 +1459,6 @@ export const hubApi: HubApi = {
     archive: archiveNotificationLite,
   },
   projects: {
-    getProjectLauncher: getProjectLauncherLite,
     getProjectRegion: getProjectRegionLite,
     getProjectCreated: getProjectCreatedLite,
     getProjectEnv: getProjectEnvLite,
