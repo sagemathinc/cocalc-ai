@@ -5,6 +5,7 @@ import { ProjectsActions } from "./actions";
 import { store } from "./store";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { getBackups } from "@cocalc/frontend/project/archive-info";
+import { alert_message } from "@cocalc/frontend/alerts";
 
 jest.mock("./store", () => ({
   store: {
@@ -17,6 +18,10 @@ jest.mock("./store", () => ({
 
 jest.mock("@cocalc/frontend/project/archive-info", () => ({
   getBackups: jest.fn(),
+}));
+
+jest.mock("@cocalc/frontend/alerts", () => ({
+  alert_message: jest.fn(),
 }));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
@@ -63,6 +68,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 const mockedStore = store as jest.Mocked<typeof store>;
 const mockedWebappClient = webapp_client as jest.Mocked<typeof webapp_client>;
 const getBackupsMock = getBackups as jest.MockedFunction<typeof getBackups>;
+const alertMessageMock = alert_message as jest.MockedFunction<
+  typeof alert_message
+>;
 
 describe("ProjectsActions archive flow", () => {
   const project_id = "11111111-1111-4111-8111-111111111111";
@@ -70,12 +78,20 @@ describe("ProjectsActions archive flow", () => {
   function configureProject({
     state,
     lastEdited,
+    lastBackup,
     hostId,
+    hostInfo,
   }: {
     state: string;
     lastEdited?: Date;
+    lastBackup?: Date;
     hostId?: string;
+    hostInfo?: Record<string, unknown>;
   }) {
+    const hostInfoMap =
+      hostId != null && hostInfo != null
+        ? ImmutableMap([[hostId, ImmutableMap(hostInfo)]])
+        : undefined;
     const projectMap = ImmutableMap([
       [
         project_id,
@@ -83,12 +99,19 @@ describe("ProjectsActions archive flow", () => {
           host_id: hostId,
           state: ImmutableMap({ state }),
           last_edited: lastEdited,
+          last_backup: lastBackup,
         }),
       ],
     ]);
-    mockedStore.get.mockImplementation((key) =>
-      key === "project_map" ? projectMap : undefined,
-    );
+    mockedStore.get.mockImplementation((key) => {
+      if (key === "project_map") {
+        return projectMap;
+      }
+      if (key === "host_info") {
+        return hostInfoMap;
+      }
+      return undefined;
+    });
     mockedStore.getIn.mockImplementation((path) => {
       if (path[0] !== "project_map") {
         return undefined;
@@ -256,6 +279,80 @@ describe("ProjectsActions archive flow", () => {
     });
     expect(setState).toHaveBeenCalledWith({
       control_status: "Archiving project...",
+    });
+  });
+
+  it("archives a deprovisioned host without creating another backup", async () => {
+    configureProject({
+      state: "opened",
+      lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+      lastBackup: new Date("2026-04-25T15:00:00.000Z"),
+      hostId: "host-1",
+      hostInfo: { status: "deprovisioned", online: false },
+    });
+    const { actions, setState, trackBackupOp } = makeActions();
+    jest
+      .spyOn(actions, "ensure_host_info" as any)
+      .mockResolvedValue(undefined as any);
+
+    await actions.archive_project(project_id);
+
+    expect(getBackupsMock).not.toHaveBeenCalledWith({
+      project_id,
+      indexed_only: true,
+    });
+    expect(
+      mockedWebappClient.conat_client.hub.projects.createBackup,
+    ).not.toHaveBeenCalled();
+    expect(mockedWebappClient.conat_client.lroWait).not.toHaveBeenCalled();
+    expect(trackBackupOp).not.toHaveBeenCalled();
+    expect(setState).toHaveBeenCalledWith({
+      control_status: "Archiving project from deprovisioned host...",
+    });
+    expect(
+      mockedWebappClient.conat_client.hub.projects.archiveProject,
+    ).toHaveBeenCalledWith({
+      project_id,
+      timeout: 30000,
+    });
+  });
+
+  it("archives an unavailable host from the latest backup without creating another backup", async () => {
+    configureProject({
+      state: "opened",
+      lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+      lastBackup: new Date("2026-04-25T15:00:00.000Z"),
+      hostId: "host-1",
+      hostInfo: { status: "off", online: false },
+    });
+    const { actions, setState } = makeActions();
+    jest
+      .spyOn(actions, "ensure_host_info" as any)
+      .mockResolvedValue(undefined as any);
+
+    await actions.archive_project(project_id);
+
+    expect(getBackupsMock).not.toHaveBeenCalledWith({
+      project_id,
+      indexed_only: true,
+    });
+    expect(
+      mockedWebappClient.conat_client.hub.projects.createBackup,
+    ).not.toHaveBeenCalled();
+    expect(alertMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "warning",
+        message: expect.stringContaining("cannot create a final backup"),
+      }),
+    );
+    expect(setState).toHaveBeenCalledWith({
+      control_status: "Archiving project using the latest available backup...",
+    });
+    expect(
+      mockedWebappClient.conat_client.hub.projects.archiveProject,
+    ).toHaveBeenCalledWith({
+      project_id,
+      timeout: 30000,
     });
   });
 

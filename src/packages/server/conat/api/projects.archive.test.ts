@@ -214,6 +214,7 @@ describe("projects.archiveProject", () => {
           backup_repo_id: "repo-1",
           provisioned: true,
           state: { state: "running" },
+          host_status: "running",
         },
       ],
     });
@@ -271,6 +272,7 @@ describe("projects.archiveProject", () => {
           backup_repo_id: "repo-1",
           provisioned: true,
           state: { state: "opened" },
+          host_status: "running",
         },
       ],
     });
@@ -294,16 +296,21 @@ describe("projects.archiveProject", () => {
   });
 
   it("continues when archive-info is temporarily unavailable", async () => {
-    poolQueryMock.mockResolvedValueOnce({
-      rows: [
-        {
-          host_id: "host-1",
-          backup_repo_id: "repo-1",
-          provisioned: true,
-          state: { state: "opened" },
-        },
-      ],
-    });
+    poolQueryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            host_id: "host-1",
+            backup_repo_id: "repo-1",
+            provisioned: true,
+            state: { state: "opened" },
+            host_status: "running",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ "?column?": 1 }],
+      });
     getBackupsMock = jest.fn(async () => {
       throw new Error(
         "request -- no subscribers matching 'project.proj-1.archive-info.-'",
@@ -322,6 +329,70 @@ describe("projects.archiveProject", () => {
       project_id: "proj-1",
       host_id: "host-1",
     });
+    expect(poolConnectQueryMock).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE projects"),
+      expect.anything(),
+    );
+  });
+
+  it("archives a deprovisioned host without contacting archive-info or deleting host data", async () => {
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          host_id: "host-1",
+          backup_repo_id: "repo-1",
+          provisioned: true,
+          state: { state: "opened" },
+          host_status: "deprovisioned",
+        },
+      ],
+    });
+
+    const { archiveProject } = await import("./projects");
+    await expect(
+      archiveProject({
+        account_id: "owner-1",
+        project_id: "proj-1",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(getBackupsMock).not.toHaveBeenCalled();
+    expect(interBayStopMock).not.toHaveBeenCalled();
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
+    expect(poolConnectQueryMock).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE projects"),
+      expect.anything(),
+    );
+  });
+
+  it("archives an off host with existing backups without stopping or deleting host data", async () => {
+    poolQueryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          host_id: "host-1",
+          backup_repo_id: "repo-1",
+          provisioned: true,
+          state: { state: "opened" },
+          host_status: "off",
+        },
+      ],
+    });
+
+    const { archiveProject } = await import("./projects");
+    await expect(
+      archiveProject({
+        account_id: "owner-1",
+        project_id: "proj-1",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(getBackupsMock).toHaveBeenCalledWith({
+      client: expect.any(Object),
+      project_id: "proj-1",
+      indexed_only: true,
+    });
+    expect(interBayStopMock).not.toHaveBeenCalled();
+    expect(deleteProjectDataOnHostMock).not.toHaveBeenCalled();
     expect(poolConnectQueryMock).toHaveBeenCalledWith(
       expect.stringContaining("UPDATE projects"),
       expect.anything(),

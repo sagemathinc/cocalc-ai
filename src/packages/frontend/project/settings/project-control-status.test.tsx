@@ -7,6 +7,9 @@ const useTypedReduxMock = jest.fn();
 
 jest.mock("antd", () => ({
   Alert: ({ message }: any) => <div>{message}</div>,
+  Progress: () => <div>progress</div>,
+  Space: ({ children }: any) => <div>{children}</div>,
+  Tag: ({ children }: any) => <span>{children}</span>,
 }));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -40,6 +43,7 @@ describe("ProjectControlStatus", () => {
       .mockReturnValueOnce("Creating final backup before archive...")
       .mockReturnValueOnce(undefined);
     render(<ProjectControlStatus />);
+    expect(screen.getByText("Archiving project")).toBeInTheDocument();
     expect(
       screen.getByText("Creating final backup before archive..."),
     ).toBeInTheDocument();

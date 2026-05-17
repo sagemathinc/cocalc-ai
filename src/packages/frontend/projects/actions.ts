@@ -2839,6 +2839,65 @@ export class ProjectsActions extends Actions<ProjectsState> {
       project_id,
       "last_edited",
     ]) as Date | undefined;
+    const lastBackup = store.getIn([
+      "project_map",
+      project_id,
+      "last_backup",
+    ]) as Date | undefined;
+    const host_id = store.getIn(["project_map", project_id, "host_id"]) as
+      | string
+      | undefined;
+
+    if (host_id) {
+      await this.ensure_host_info(host_id, true);
+      const hostInfo = store.get("host_info")?.get(host_id);
+      const hostStatus = `${hostInfo?.get?.("status") ?? ""}`
+        .trim()
+        .toLowerCase();
+      const hostOperational = evaluateHostOperational(hostInfo);
+      if (hostStatus === "deprovisioned") {
+        actions?.setState?.({
+          control_status: "Archiving project from deprovisioned host...",
+        });
+        await this.project_log(project_id, {
+          event: "project_archive_backup_skipped",
+          reason: "host_deprovisioned",
+          host_id,
+          backup_time:
+            lastBackup instanceof Date ? lastBackup.toISOString() : undefined,
+        });
+        return;
+      }
+      if (hostOperational.state === "unavailable") {
+        actions?.setState?.({
+          control_status:
+            "Archiving project using the latest available backup...",
+        });
+        const backupDescription =
+          lastBackup instanceof Date
+            ? `the latest available backup from ${lastBackup.toLocaleString()}`
+            : "the latest available backup";
+        alert_message({
+          type: "warning",
+          message: `The assigned host ${hostLabel(
+            hostInfo,
+            host_id,
+          )} is unavailable, so CoCalc cannot create a final backup. Archiving will use ${backupDescription}; newer edits may be lost.`,
+          timeout: 20,
+        });
+        await this.project_log(project_id, {
+          event: "project_archive_backup_skipped",
+          reason: "host_unavailable",
+          host_id,
+          host_status: hostStatus || hostOperational.status,
+          last_edited:
+            lastEdited instanceof Date ? lastEdited.toISOString() : undefined,
+          backup_time:
+            lastBackup instanceof Date ? lastBackup.toISOString() : undefined,
+        });
+        return;
+      }
+    }
 
     let latestBackupTime: Date | undefined;
     try {

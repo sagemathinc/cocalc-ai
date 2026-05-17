@@ -2135,15 +2135,22 @@ export async function archiveProject({
 
   const { rows } = await getPool().query<{
     host_id: string | null;
+    host_status: string | null;
     backup_repo_id: string | null;
     provisioned: boolean | null;
     state: { state?: string } | null;
   }>(
     `
-      SELECT host_id, backup_repo_id, provisioned, state
+      SELECT projects.host_id,
+             project_hosts.status AS host_status,
+             projects.backup_repo_id,
+             projects.provisioned,
+             projects.state
       FROM projects
-      WHERE project_id = $1
-        AND deleted IS NULL
+      LEFT JOIN project_hosts
+        ON project_hosts.id = projects.host_id
+      WHERE projects.project_id = $1
+        AND projects.deleted IS NULL
       LIMIT 1
     `,
     [project_id],
@@ -2162,37 +2169,54 @@ export async function archiveProject({
       "project must have a configured backup repository before it can be archived",
     );
   }
+  const hostStatus = `${row.host_status ?? ""}`.trim().toLowerCase();
+  const hostDeprovisioned = hostStatus === "deprovisioned";
+  const hostCanRunMutations =
+    !hostStatus || hostStatus === "active" || hostStatus === "running";
 
-  const routedClient = conatWithProjectRoutingForAccount({
-    account_id: account_id!,
-  });
-  try {
+  if (!hostDeprovisioned) {
+    const routedClient = conatWithProjectRoutingForAccount({
+      account_id: account_id!,
+    });
     try {
-      const backups = await getBackups({
-        client: routedClient,
-        project_id,
-        indexed_only: true,
-      });
-      if (!backups.length) {
-        throw new Error(
-          "project must have at least one backup before it can be archived",
-        );
+      try {
+        const backups = await getBackups({
+          client: routedClient,
+          project_id,
+          indexed_only: true,
+        });
+        if (!backups.length) {
+          throw new Error(
+            "project must have at least one backup before it can be archived",
+          );
+        }
+      } catch (err) {
+        if (
+          !isArchiveInfoUnavailableError(err) ||
+          !(await hasIndexedProjectBackup(project_id))
+        ) {
+          throw err;
+        }
+        log.warn("archiveProject: verified backup via database index", {
+          project_id,
+          error: `${err}`,
+        });
       }
-    } catch (err) {
-      if (!isArchiveInfoUnavailableError(err)) {
-        throw err;
+    } finally {
+      try {
+        routedClient.close();
+      } catch {
+        // ignore close errors
       }
-      log.warn("archiveProject: unable to verify indexed backups", {
+    }
+  } else {
+    log.info(
+      "archiveProject: skipping backup verification for deprovisioned host",
+      {
         project_id,
-        error: `${err}`,
-      });
-    }
-  } finally {
-    try {
-      routedClient.close();
-    } catch {
-      // ignore close errors
-    }
+        host_id: row.host_id,
+      },
+    );
   }
 
   const ownership = await resolveProjectBay(project_id);
@@ -2200,14 +2224,17 @@ export async function archiveProject({
     throw new Error(`project ${project_id} not found`);
   }
 
-  if (["running", "starting", "pending", "stopping"].includes(currentState)) {
+  if (
+    hostCanRunMutations &&
+    ["running", "starting", "pending", "stopping"].includes(currentState)
+  ) {
     await getInterBayBridge().projectControl(ownership.bay_id).stop({
       project_id,
       epoch: ownership.epoch,
     });
   }
 
-  if (row.provisioned !== false) {
+  if (row.provisioned !== false && hostCanRunMutations) {
     const host_id = `${row.host_id ?? ""}`.trim();
     if (!host_id) {
       throw new Error("project has no assigned host to archive from");
@@ -2215,6 +2242,12 @@ export async function archiveProject({
     await deleteProjectDataOnHost({
       project_id,
       host_id,
+    });
+  } else if (row.provisioned !== false) {
+    log.info("archiveProject: marking project archived without host mutation", {
+      project_id,
+      host_id: row.host_id,
+      host_status: hostStatus || undefined,
     });
   }
 
@@ -2271,6 +2304,27 @@ function isArchiveInfoUnavailableError(err: unknown): boolean {
     message.includes("no subscribers matching") &&
     message.includes(".archive-info.")
   );
+}
+
+async function hasIndexedProjectBackup(project_id: string): Promise<boolean> {
+  try {
+    const { rows } = await getPool().query(
+      `
+        SELECT 1
+        FROM project_backup_indexes
+        WHERE project_id = $1
+          AND status = 'complete'
+        LIMIT 1
+      `,
+      [project_id],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    if (`${err}`.includes("project_backup_indexes")) {
+      return false;
+    }
+    throw err;
+  }
 }
 
 export async function getProjectState({
