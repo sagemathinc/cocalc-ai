@@ -8,6 +8,12 @@ import type { Request } from "express";
 import generateHash from "@cocalc/server/auth/hash";
 import { REMEMBER_ME_COOKIE_NAME } from "@cocalc/backend/auth/cookie-names";
 import isBanned from "@cocalc/server/accounts/is-banned";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import {
+  deriveBrowserCookieName,
+  deriveSiteHostnameFromRequestOrigin,
+  detectRequestOrigin,
+} from "@cocalc/server/bay-public-origin";
 
 // Create a remember me cookie for the given account_id and store
 // it in the database.  The cookie is similar to using a server
@@ -104,7 +110,10 @@ export function getRememberMeCookieValues(req: Request): string[] {
     typeof (req as any)?.header === "function"
       ? (req as any).header("cookie")
       : (req as any)?.headers?.cookie;
-  const values = getRememberMeCookieValuesFromHeader(header);
+  const values = getRememberMeCookieValuesFromHeader(
+    header,
+    getRememberMeCookieNamesForRequest(req),
+  );
   if (values.length > 0) {
     return values;
   }
@@ -115,19 +124,21 @@ export function getRememberMeCookieValues(req: Request): string[] {
 
 export function getRememberMeCookieValuesFromHeader(
   cookieHeader?: string,
+  cookieNames: readonly string[] = [REMEMBER_ME_COOKIE_NAME],
 ): string[] {
   if (!cookieHeader) {
     return [];
   }
   const values: string[] = [];
   const seen = new Set<string>();
+  const names = new Set(cookieNames);
   for (const part of cookieHeader.split(";")) {
     const index = part.indexOf("=");
     if (index < 0) {
       continue;
     }
     const name = part.slice(0, index).trim();
-    if (name !== REMEMBER_ME_COOKIE_NAME) {
+    if (!names.has(name)) {
       continue;
     }
     const rawValue = part.slice(index + 1).trim();
@@ -144,6 +155,24 @@ export function getRememberMeCookieValuesFromHeader(
     }
   }
   return values;
+}
+
+export function getRememberMeCookieNamesForRequest(
+  req: Pick<Request, "headers" | "protocol" | "secure">,
+): string[] {
+  const request_origin = detectRequestOrigin(req as Request);
+  const site_hostname = deriveSiteHostnameFromRequestOrigin({
+    request_origin,
+    current_bay_id: getConfiguredBayId(),
+  });
+  const names = [
+    REMEMBER_ME_COOKIE_NAME,
+    deriveBrowserCookieName({
+      name: REMEMBER_ME_COOKIE_NAME,
+      site_hostname,
+    }),
+  ];
+  return [...new Set(names)];
 }
 
 export function getRememberMeHashFromCookieValue(

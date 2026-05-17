@@ -5,6 +5,7 @@
 import { getAccountIdFromRememberMe } from "@cocalc/server/auth/get-account";
 import { parse } from "cookie";
 import {
+  getRememberMeCookieNamesForRequest,
   getRememberMeCookieValuesFromHeader,
   getRememberMeHashFromCookieValue,
 } from "@cocalc/server/auth/remember-me";
@@ -236,6 +237,14 @@ export async function getUser(
 
   const values = getRememberMeCookieValuesFromHeader(
     socket.handshake.headers.cookie,
+    getRememberMeCookieNamesForRequest({
+      headers: socket.handshake.headers,
+      protocol:
+        `${socket.handshake.headers["x-forwarded-proto"] ?? ""}`
+          .split(",")[0]
+          .trim() || "https",
+      secure: true,
+    } as any),
   );
   if (values.length === 0) {
     throw Error(`must set one of the following cookies: ${COOKIES}`);
