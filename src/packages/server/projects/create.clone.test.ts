@@ -27,6 +27,36 @@ const ACCOUNT_ID = "6e22d250-68d4-46fb-9851-80fbeaa2d6b6";
 const SOURCE_PROJECT_ID = "9a79d9ef-d6a5-4ae1-a215-f594e864637c";
 const HOST_ID = "39d74365-65fe-4f13-8efc-ad6b6e58f3ee";
 
+function isRootfsScanSelectionQuery(sql: string): boolean {
+  return (
+    sql.includes("SELECT img.image_id") &&
+    sql.includes("FROM rootfs_images AS img") &&
+    sql.includes("LEFT JOIN rootfs_releases AS rel")
+  );
+}
+
+function rootfsScanAllowedRows({
+  image_id = "official-cocalc-base",
+  release_id = null,
+}: {
+  image_id?: string;
+  release_id?: string | null;
+} = {}) {
+  return {
+    rows: [
+      {
+        image_id,
+        release_id,
+        official: true,
+        scan_status: null,
+        scan_tool: null,
+        scanned_at: null,
+        scan_summary: null,
+      },
+    ],
+  };
+}
+
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({
@@ -247,6 +277,9 @@ describe("projects.createProject clone routing", () => {
         expect(params).toEqual([SOURCE_PROJECT_ID]);
         return { rows: [] };
       }
+      if (isRootfsScanSelectionQuery(sql)) {
+        return rootfsScanAllowedRows();
+      }
       if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
         expect(params).toEqual([HOST_ID]);
         return {
@@ -409,6 +442,9 @@ describe("projects.createProject clone routing", () => {
             },
           ],
         };
+      }
+      if (isRootfsScanSelectionQuery(sql)) {
+        return { rows: [] };
       }
       if (sql.includes("SELECT COALESCE(official, false)")) {
         return { rows: [] };
@@ -620,6 +656,9 @@ describe("projects.createProject clone routing", () => {
         expect(params[8]).toBe("wnam");
         expect(params[9]).toBe("bay-0");
         return { rowCount: 1 };
+      }
+      if (isRootfsScanSelectionQuery(sql)) {
+        return rootfsScanAllowedRows({ image_id: "official-cocalc-base" });
       }
       if (
         sql.includes("SELECT release_id") &&

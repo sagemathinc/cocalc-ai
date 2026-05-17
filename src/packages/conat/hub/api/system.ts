@@ -1984,6 +1984,7 @@ export interface System {
   scanRootfsRelease: (opts: {
     release_id: string;
     host_id: string;
+    timeout?: number;
     scanner_image?: string;
     trivy_cache_dir?: string;
     timeout_ms?: number;
