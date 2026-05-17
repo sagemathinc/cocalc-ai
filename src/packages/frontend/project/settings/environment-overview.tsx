@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Collapse, Space, Tag, Typography } from "antd";
+import { Button, Card, Collapse, Space, Typography } from "antd";
 import type { CSSProperties, ReactNode } from "react";
 import { useMemo, useState } from "react";
 
@@ -13,9 +13,14 @@ import { lite } from "@cocalc/frontend/lite";
 import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
 import { useProjectRootfs } from "@cocalc/frontend/project/use-project-rootfs";
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
+import {
+  managedRootfsCatalogUrl,
+  useRootfsImages,
+} from "@cocalc/frontend/rootfs/manifest";
 import { PROJECT_CAPABILITY_SPECS } from "@cocalc/util/project-capabilities";
 import { COLORS } from "@cocalc/util/theme";
 
+import { EnvironmentFeatureGroups } from "./environment-feature-groups";
 import { Environment as CustomEnvironmentVariables } from "./environment";
 import { LauncherDefaults } from "./launcher-defaults";
 import { ProjectCapabilities } from "./project-capabilites";
@@ -35,6 +40,7 @@ interface Props {
 type SummaryCardProps = {
   action?: ReactNode;
   icon: string;
+  isLast?: boolean;
   subtitle?: ReactNode;
   title: ReactNode;
   value: ReactNode;
@@ -42,7 +48,6 @@ type SummaryCardProps = {
 
 type FeatureSummary = {
   availableCount: number;
-  chips: string[];
   formatterCount: number;
 };
 
@@ -68,14 +73,12 @@ function countConfiguredEnv(env: unknown): number {
 
 function featureSummary(avail: any): FeatureSummary {
   if (avail == null) {
-    return { availableCount: 0, chips: [], formatterCount: 0 };
+    return { availableCount: 0, formatterCount: 0 };
   }
-  const chips: string[] = [];
   let availableCount = 0;
   for (const spec of PROJECT_CAPABILITY_SPECS) {
     if (avail[spec.key]) {
       availableCount += 1;
-      chips.push(spec.label);
     }
   }
   const formatter = avail.formatting;
@@ -85,15 +88,23 @@ function featureSummary(avail: any): FeatureSummary {
       : formatter === true
         ? 1
         : 0;
-  return { availableCount, chips: chips.slice(0, 8), formatterCount };
+  return { availableCount, formatterCount };
 }
 
-function rootfsLabel(rootfs: unknown): string {
+function rootfsLabel(rootfs: unknown, rootfsImages: any[]): string {
   const image = `${(rootfs as any)?.image ?? ""}`.trim();
+  const imageId = `${(rootfs as any)?.image_id ?? ""}`.trim();
+  const entry =
+    (imageId
+      ? rootfsImages.find((entry) => entry.id === imageId)
+      : undefined) ??
+    (image ? rootfsImages.find((entry) => entry.image === image) : undefined);
+  if (entry?.label) {
+    return entry.version ? `${entry.label} ${entry.version}` : entry.label;
+  }
   if (image) {
     return image.split("/").slice(-1)[0] || image;
   }
-  const imageId = `${(rootfs as any)?.image_id ?? ""}`.trim();
   if (imageId) {
     return imageId;
   }
@@ -161,6 +172,63 @@ function SummaryCard({
   );
 }
 
+function SummaryRow({
+  action,
+  icon,
+  isLast,
+  subtitle,
+  title,
+  value,
+}: SummaryCardProps) {
+  return (
+    <div
+      style={{
+        alignItems: "center",
+        borderBottom: isLast ? undefined : `1px solid ${COLORS.GRAY_LL}`,
+        display: "grid",
+        gap: 8,
+        gridTemplateColumns: "24px minmax(0, 1fr) auto",
+        padding: "8px 0",
+      }}
+    >
+      <Icon
+        name={icon as any}
+        style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 15 }}
+      />
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            alignItems: "baseline",
+            display: "flex",
+            gap: 6,
+            minWidth: 0,
+          }}
+        >
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {title}
+          </Typography.Text>
+          <div
+            style={{
+              fontWeight: 600,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={typeof value === "string" ? value : undefined}
+          >
+            {value}
+          </div>
+        </div>
+        {subtitle != null ? (
+          <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{subtitle}</div>
+        ) : undefined}
+      </div>
+      {action != null ? <div>{action}</div> : undefined}
+    </div>
+  );
+}
+
 export function EnvironmentOverview({
   project,
   project_id,
@@ -171,6 +239,7 @@ export function EnvironmentOverview({
   const { env } = useProjectEnv(project_id);
   const { secrets } = useProjectSecrets(project_id);
   const { rootfs } = useProjectRootfs(project_id);
+  const { images: rootfsImages } = useRootfsImages([managedRootfsCatalogUrl()]);
   const runQuota = useRunQuota(project_id, null);
   const availableFeatures = useTypedRedux({ project_id }, "available_features");
   const configurationLoading = useTypedRedux(
@@ -183,7 +252,7 @@ export function EnvironmentOverview({
   const features = useMemo(() => featureSummary(avail), [avail]);
   const envCount = countConfiguredEnv(env);
   const secretCount = secrets?.length ?? 0;
-  const runtimeImage = rootfsLabel(rootfs);
+  const runtimeImage = rootfsLabel(rootfs, rootfsImages);
   const networkSummary = runQuota?.network ? "Internet enabled" : "Restricted";
   const memberHost = runQuota?.member_host ? "member host" : undefined;
 
@@ -199,11 +268,56 @@ export function EnvironmentOverview({
     );
   }
 
-  const summaryColumns = isFlyout
-    ? "repeat(2, minmax(0, 1fr))"
-    : "repeat(3, minmax(0, 1fr))";
+  const summaryColumns = isFlyout ? "1fr" : "repeat(3, minmax(0, 1fr))";
 
   const detailMode: Mode = "flyout";
+  const SummaryComponent = isFlyout ? SummaryRow : SummaryCard;
+  const summaryItems: SummaryCardProps[] = [
+    {
+      icon: "disk-drive",
+      title: "Runtime Image",
+      value: runtimeImage,
+      subtitle: "Base software environment",
+      action: renderAction("rootfs"),
+    },
+    {
+      icon: "clipboard-check",
+      title: "Available Features",
+      value: configurationLoading
+        ? "Refreshing..."
+        : `${features.availableCount} features`,
+      subtitle: features.formatterCount
+        ? `${features.formatterCount} formatter${features.formatterCount === 1 ? "" : "s"}`
+        : "Feature probe",
+      action: renderAction("features"),
+    },
+    {
+      icon: "bars",
+      title: "Environment Variables",
+      value: `${envCount} configured`,
+      subtitle: "Custom process environment",
+      action: renderAction("env"),
+    },
+    {
+      icon: "key",
+      title: "Project Secrets",
+      value: `${secretCount} secret${secretCount === 1 ? "" : "s"}`,
+      subtitle: "Mounted encrypted files",
+      action: renderAction("secrets"),
+    },
+    {
+      icon: "network",
+      title: "Network",
+      value: networkSummary,
+      subtitle: memberHost ?? "Project access",
+    },
+    {
+      icon: "terminal",
+      title: "SSH",
+      value: lite ? "Unavailable" : "Available",
+      subtitle: hostId ? `Host ${hostId.slice(0, 8)}` : "Remote access",
+    },
+  ];
 
   return (
     <Space
@@ -216,85 +330,30 @@ export function EnvironmentOverview({
           display: "grid",
           gap: isFlyout ? 8 : 10,
           gridTemplateColumns: summaryColumns,
+          ...(isFlyout
+            ? {
+                background: "white",
+                border: `1px solid ${COLORS.GRAY_LL}`,
+                borderRadius: 10,
+                padding: "0 10px",
+              }
+            : {}),
         }}
       >
-        <SummaryCard
-          icon="disk-drive"
-          title="Runtime Image"
-          value={runtimeImage}
-          subtitle="Base software environment"
-          action={renderAction("rootfs")}
-        />
-        <SummaryCard
-          icon="clipboard-check"
-          title="Available Features"
-          value={
-            configurationLoading
-              ? "Refreshing..."
-              : `${features.availableCount} features`
-          }
-          subtitle={
-            features.formatterCount
-              ? `${features.formatterCount} formatter${features.formatterCount === 1 ? "" : "s"}`
-              : "Feature probe"
-          }
-          action={renderAction("features", "Show")}
-        />
-        <SummaryCard
-          icon="bars"
-          title="Environment Variables"
-          value={`${envCount} configured`}
-          subtitle="Custom process environment"
-          action={renderAction("env")}
-        />
-        <SummaryCard
-          icon="key"
-          title="Project Secrets"
-          value={`${secretCount} secret${secretCount === 1 ? "" : "s"}`}
-          subtitle="Mounted encrypted files"
-          action={renderAction("secrets")}
-        />
-        <SummaryCard
-          icon="network"
-          title="Network"
-          value={networkSummary}
-          subtitle={memberHost ?? "Project access"}
-        />
-        <SummaryCard
-          icon="terminal"
-          title="SSH"
-          value={lite ? "Unavailable" : "Available"}
-          subtitle={hostId ? `Host ${hostId.slice(0, 8)}` : "Remote access"}
-        />
+        {summaryItems.map((item, index) => (
+          <SummaryComponent
+            key={`${item.title}`}
+            {...item}
+            isLast={index === summaryItems.length - 1}
+          />
+        ))}
       </div>
 
-      {features.chips.length > 0 ? (
-        <Card
-          size="small"
-          style={{ borderColor: COLORS.GRAY_LL }}
-          styles={{ body: { padding: isFlyout ? 10 : 12 } }}
-        >
-          <div
-            style={{
-              alignItems: "center",
-              display: "flex",
-              gap: 8,
-              justifyContent: "space-between",
-              marginBottom: 8,
-            }}
-          >
-            <Typography.Text strong>Available Features</Typography.Text>
-            {renderAction("features", "Show all")}
-          </div>
-          <Space size={[6, 6]} wrap>
-            {features.chips.map((label) => (
-              <Tag key={label} color="green" style={{ marginInlineEnd: 0 }}>
-                {label}
-              </Tag>
-            ))}
-          </Space>
-        </Card>
-      ) : undefined}
+      <EnvironmentFeatureGroups
+        mode={mode}
+        onDetails={() => expand("features")}
+        project_id={project_id}
+      />
 
       <Collapse
         activeKey={activeKeys}
