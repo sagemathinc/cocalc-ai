@@ -7,7 +7,7 @@ import { Button, Card, Collapse, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
 import { useMemo, useRef, useState } from "react";
 
-import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
@@ -15,16 +15,17 @@ import { useProjectLauncher } from "@cocalc/frontend/project/use-project-launche
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
 import { COLORS } from "@cocalc/util/theme";
 
+import { LauncherCustomizeModal } from "../new/launcher-customize-modal";
 import {
   getProjectLauncherDefaults,
   getSiteLauncherDefaults,
+  LAUNCHER_GLOBAL_DEFAULTS,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SITE_REMOVE_QUICK_KEY,
   mergeLauncherSettings,
 } from "../new/launcher-preferences";
 import { QUICK_CREATE_MAP } from "../new/launcher-catalog";
 import { Environment as CustomEnvironmentVariables } from "./environment";
-import { LauncherDefaults } from "./launcher-defaults";
 import { ProjectSecrets } from "./secrets";
 
 type Mode = "project" | "flyout";
@@ -122,6 +123,7 @@ export function EnvironmentConfigurationSummary({
 }: Props) {
   const isFlyout = mode === "flyout";
   const [activeKeys, setActiveKeys] = useState<string[]>([]);
+  const [showLauncherModal, setShowLauncherModal] = useState(false);
   const detailsRef = useRef<HTMLDivElement | null>(null);
   const siteLauncherQuick = useTypedRedux(
     "customize",
@@ -131,21 +133,37 @@ export function EnvironmentConfigurationSummary({
     "customize",
     LAUNCHER_SITE_REMOVE_QUICK_KEY,
   );
-  const { launcher } = useProjectLauncher(project_id);
+  const { launcher, setLauncher } = useProjectLauncher(project_id);
   const { env } = useProjectEnv(project_id);
   const { secrets } = useProjectSecrets(project_id);
 
-  const launcherDefaults = useMemo(() => {
-    const siteDefaults = getSiteLauncherDefaults({
-      hiddenQuickCreate: siteRemoveQuick,
-      quickCreate: siteLauncherQuick,
-    });
-    const projectDefaults = getProjectLauncherDefaults(launcher);
-    return mergeLauncherSettings({
-      globalDefaults: siteDefaults,
-      projectDefaults,
-    }).quickCreate;
-  }, [launcher, siteLauncherQuick, siteRemoveQuick]);
+  const siteLauncherDefaults = useMemo(
+    () =>
+      getSiteLauncherDefaults({
+        hiddenQuickCreate: siteRemoveQuick,
+        quickCreate: siteLauncherQuick,
+      }),
+    [siteLauncherQuick, siteRemoveQuick],
+  );
+  const projectDefaults = useMemo(
+    () => getProjectLauncherDefaults(launcher),
+    [launcher],
+  );
+  const inheritedForProjectDefaults = useMemo(
+    () =>
+      mergeLauncherSettings({
+        globalDefaults: siteLauncherDefaults,
+      }),
+    [siteLauncherDefaults],
+  );
+  const launcherDefaults = useMemo(
+    () =>
+      mergeLauncherSettings({
+        globalDefaults: siteLauncherDefaults,
+        projectDefaults,
+      }).quickCreate,
+    [projectDefaults, siteLauncherDefaults],
+  );
   const launcherLabels = useMemo(
     () =>
       launcherDefaults.map((id) => {
@@ -160,6 +178,11 @@ export function EnvironmentConfigurationSummary({
     () => [...(secrets ?? [])].map((secret) => secret.name).sort(),
     [secrets],
   );
+
+  async function saveLauncherDefaults(prefs: any): Promise<void> {
+    await redux.getActions("projects").set_project_launcher(project_id, prefs);
+    setLauncher(prefs);
+  }
 
   function open(key: string): void {
     setActiveKeys((keys) => (keys.includes(key) ? keys : [...keys, key]));
@@ -203,7 +226,11 @@ export function EnvironmentConfigurationSummary({
           subtitle="Quick Create buttons for this project"
           status={`${launcherDefaults.length} default${launcherDefaults.length === 1 ? "" : "s"}`}
           action={
-            <Button size="small" type="link" onClick={() => open("launcher")}>
+            <Button
+              size="small"
+              type="link"
+              onClick={() => setShowLauncherModal(true)}
+            >
               Edit
             </Button>
           }
@@ -238,6 +265,34 @@ export function EnvironmentConfigurationSummary({
         </ConfigurationCard>
       </div>
 
+      <LauncherCustomizeModal
+        open={showLauncherModal}
+        onClose={() => setShowLauncherModal(false)}
+        initialQuickCreate={launcherDefaults}
+        projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
+        onSaveProject={saveLauncherDefaults}
+        saveMode="project"
+        contributions={[
+          {
+            key: "built-in",
+            title: "Built-in defaults",
+            quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
+          },
+          {
+            key: "site",
+            title: "Site defaults",
+            quickCreateAdd: siteLauncherDefaults.quickCreate,
+            quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
+          },
+          {
+            key: "project",
+            title: "Project defaults",
+            quickCreateAdd: projectDefaults.quickCreate,
+            quickCreateRemove: projectDefaults.hiddenQuickCreate,
+          },
+        ]}
+      />
+
       <div ref={detailsRef}>
         {activeKeys.length > 0 ? (
           <Collapse
@@ -248,13 +303,6 @@ export function EnvironmentConfigurationSummary({
               )
             }
             items={[
-              {
-                key: "launcher",
-                label: "Launcher defaults editor",
-                children: (
-                  <LauncherDefaults project_id={project_id} mode={detailMode} />
-                ),
-              },
               {
                 key: "env",
                 label: "Environment variables editor",
