@@ -19,11 +19,18 @@ export interface BlobUsageSummary {
   total_bytes: number;
 }
 
+export interface BlobDeleteSummary {
+  deleted_count: number;
+  deleted_bytes: number;
+}
+
 type BlobQuotaLimit =
   | "blob_account_total_bytes"
   | "blob_account_count"
   | "blob_project_total_bytes"
   | "blob_project_count";
+
+export const MAX_USER_BLOB_DELETE_LIMIT = 1000;
 
 function finiteNonnegativeInteger(value: unknown): number | undefined {
   const number = Number(value);
@@ -180,6 +187,108 @@ export async function getProjectBlobUsage({
     count: Number(rows[0]?.count) || 0,
     total_bytes: Number(rows[0]?.total_bytes) || 0,
   };
+}
+
+function normalizeDeleteLimit(limit: number): number {
+  const normalized = finiteNonnegativeInteger(limit);
+  if (normalized == null || normalized <= 0) {
+    throw Error("limit must be a positive integer");
+  }
+  return Math.min(normalized, MAX_USER_BLOB_DELETE_LIMIT);
+}
+
+function summarizeDeletedRows(
+  rows: { size: number | string | null | undefined }[],
+): BlobDeleteSummary {
+  return {
+    deleted_count: rows.length,
+    deleted_bytes: rows.reduce(
+      (total, row) => total + (Number(row.size) || 0),
+      0,
+    ),
+  };
+}
+
+export async function deleteOldestAccountBlobs({
+  account_id,
+  limit,
+  client,
+}: {
+  account_id: string;
+  limit: number;
+  client?: PoolClient;
+}): Promise<BlobDeleteSummary> {
+  const { rows } = await (client ?? getPool()).query<{
+    size: number | string | null;
+  }>(
+    `
+      WITH doomed AS (
+        SELECT id
+          FROM blobs
+         WHERE account_id=$1::uuid
+           AND (expire IS NULL OR expire > NOW())
+         ORDER BY created ASC NULLS FIRST, id ASC
+         LIMIT $2
+      )
+      DELETE FROM blobs
+            USING doomed
+       WHERE blobs.id=doomed.id
+      RETURNING COALESCE(blobs.size, 0)::bigint AS size
+    `,
+    [account_id, normalizeDeleteLimit(limit)],
+  );
+  return summarizeDeletedRows(rows);
+}
+
+export async function deleteOldestProjectBlobs({
+  project_id,
+  limit,
+  client,
+}: {
+  project_id: string;
+  limit: number;
+  client?: PoolClient;
+}): Promise<BlobDeleteSummary> {
+  const { rows } = await (client ?? getPool()).query<{
+    size: number | string | null;
+  }>(
+    `
+      WITH doomed AS (
+        SELECT id
+          FROM blobs
+         WHERE project_id=$1
+           AND (expire IS NULL OR expire > NOW())
+         ORDER BY created ASC NULLS FIRST, id ASC
+         LIMIT $2
+      )
+      DELETE FROM blobs
+            USING doomed
+       WHERE blobs.id=doomed.id
+      RETURNING COALESCE(blobs.size, 0)::bigint AS size
+    `,
+    [project_id, normalizeDeleteLimit(limit)],
+  );
+  return summarizeDeletedRows(rows);
+}
+
+export async function deleteBlobsForAccountDeletion({
+  account_id,
+  client,
+}: {
+  account_id: string;
+  client?: PoolClient;
+}): Promise<BlobDeleteSummary> {
+  const { rows } = await (client ?? getPool()).query<{
+    size: number | string | null;
+  }>(
+    `
+      DELETE FROM blobs
+       WHERE account_id=$1::uuid
+      RETURNING COALESCE(size, 0)::bigint AS size
+    `,
+    [account_id],
+  );
+  return summarizeDeletedRows(rows);
 }
 
 async function limitsForAccount(

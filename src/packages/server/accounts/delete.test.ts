@@ -7,6 +7,7 @@ const poolQueryMock = jest.fn();
 const disposeOwnedProjectsForAccountDeletionMock = jest.fn();
 const deleteRootfsImagesForAccountDeletionMock = jest.fn();
 const deleteAllRememberMeMock = jest.fn();
+const deleteBlobsForAccountDeletionMock = jest.fn();
 const revokeAllAuthSessionsMock = jest.fn();
 const recordAccountRevocationMock = jest.fn();
 const withAccountRehomeWriteFenceMock = jest.fn();
@@ -32,6 +33,12 @@ jest.mock("@cocalc/server/rootfs/catalog", () => ({
 jest.mock("@cocalc/server/auth/remember-me", () => ({
   __esModule: true,
   deleteAllRememberMe: (...args: any[]) => deleteAllRememberMeMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/blob-limits", () => ({
+  __esModule: true,
+  deleteBlobsForAccountDeletion: (...args: any[]) =>
+    deleteBlobsForAccountDeletionMock(...args),
 }));
 
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
@@ -67,6 +74,7 @@ describe("delete account", () => {
     disposeOwnedProjectsForAccountDeletionMock.mockReset();
     deleteRootfsImagesForAccountDeletionMock.mockReset();
     deleteAllRememberMeMock.mockReset();
+    deleteBlobsForAccountDeletionMock.mockReset();
     revokeAllAuthSessionsMock.mockReset();
     recordAccountRevocationMock.mockReset();
     withAccountRehomeWriteFenceMock.mockReset();
@@ -77,6 +85,10 @@ describe("delete account", () => {
     recordAccountRevocationMock.mockResolvedValue(undefined);
     disposeOwnedProjectsForAccountDeletionMock.mockResolvedValue([]);
     deleteRootfsImagesForAccountDeletionMock.mockResolvedValue([]);
+    deleteBlobsForAccountDeletionMock.mockResolvedValue({
+      deleted_count: 0,
+      deleted_bytes: 0,
+    });
     poolQueryMock.mockResolvedValue({
       rows: [{ email_address: "user@example.com" }],
     });
@@ -95,6 +107,9 @@ describe("delete account", () => {
     deleteRootfsImagesForAccountDeletionMock.mockImplementation(async () => {
       calls.push("delete-rootfs-images");
     });
+    deleteBlobsForAccountDeletionMock.mockImplementation(async () => {
+      calls.push("delete-blobs");
+    });
     withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
       calls.push("mark-deleted");
       await fn({
@@ -111,9 +126,13 @@ describe("delete account", () => {
     expect(deleteRootfsImagesForAccountDeletionMock).toHaveBeenCalledWith(
       ACCOUNT_ID,
     );
+    expect(deleteBlobsForAccountDeletionMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+    });
     expect(calls).toEqual([
       "dispose-projects",
       "delete-rootfs-images",
+      "delete-blobs",
       "mark-deleted",
     ]);
   });

@@ -9,6 +9,7 @@ import { lazy, Suspense, type ReactNode } from "react";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { lite } from "@cocalc/frontend/lite";
+import { BlobCleanupButton } from "@cocalc/frontend/blobs/cleanup-button";
 import { ProjectCollaboratorsContent } from "@cocalc/frontend/project/page/project-collaborators";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
 import {
@@ -194,13 +195,20 @@ export function useProjectSettingsSections({
         className: "cc-project-flyout-settings-panel",
         extra: showDatastore ? recoveryExtra : undefined,
         children: (
-          <RecoveryPanel
-            project_id={project_id}
-            project={project}
-            mode={componentMode}
-            showDatastore={showDatastore}
-            datastoreReload={datastoreReload}
-          />
+          <Space
+            direction="vertical"
+            size={sectionGap}
+            style={{ width: "100%" }}
+          >
+            <RecoveryPanel
+              project_id={project_id}
+              project={project}
+              mode={componentMode}
+              showDatastore={showDatastore}
+              datastoreReload={datastoreReload}
+            />
+            <BlobCleanupButton mode="project" project_id={project_id} />
+          </Space>
         ),
       },
     );

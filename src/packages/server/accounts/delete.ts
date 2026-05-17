@@ -4,6 +4,7 @@ import { recordAccountRevocation } from "@cocalc/server/accounts/revocation";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { revokeAllAuthSessions } from "@cocalc/server/auth/auth-sessions";
 import { deleteAllRememberMe } from "@cocalc/server/auth/remember-me";
+import { deleteBlobsForAccountDeletion } from "@cocalc/server/membership/blob-limits";
 import { disposeOwnedProjectsForAccountDeletion } from "@cocalc/server/projects/ownership";
 import { deleteRootfsImagesForAccountDeletion } from "@cocalc/server/rootfs/catalog";
 import { StripeClient } from "@cocalc/server/stripe/client";
@@ -33,6 +34,10 @@ export default async function deleteAccount(account_id: string): Promise<void> {
   // Retire them before marking the account deleted so the existing release-GC
   // blocker logic can remove artifacts that are no longer referenced.
   await deleteRootfsImagesForAccountDeletion(account_id);
+
+  // Account-attributed blobs count against membership quota and can be costly
+  // if left behind. Project-attributed blobs are handled by project hard delete.
+  await deleteBlobsForAccountDeletion({ account_id });
 
   // Mark the account as deleted -- do this last since once done, user is locked out.
   // Any step above could fail, and user could just try again in that case.

@@ -136,4 +136,58 @@ describe("blob membership limits", () => {
     ).resolves.toBeUndefined();
     expect(resolveMembershipForAccountMock).not.toHaveBeenCalled();
   });
+
+  it("deletes the oldest account blobs up to the bounded user limit", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      expect(sql).toContain("DELETE FROM blobs");
+      expect(sql).toContain("account_id=$1::uuid");
+      expect(params).toEqual([account_id, 1000]);
+      return {
+        rows: [{ size: "10" }, { size: 20 }],
+      };
+    });
+    const { deleteOldestAccountBlobs } = await import("./blob-limits");
+    await expect(
+      deleteOldestAccountBlobs({ account_id, limit: 50_000 }),
+    ).resolves.toEqual({
+      deleted_count: 2,
+      deleted_bytes: 30,
+    });
+  });
+
+  it("deletes the oldest project blobs", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      expect(sql).toContain("DELETE FROM blobs");
+      expect(sql).toContain("project_id=$1");
+      expect(params).toEqual([project_id, 25]);
+      return {
+        rows: [{ size: "100" }],
+      };
+    });
+    const { deleteOldestProjectBlobs } = await import("./blob-limits");
+    await expect(
+      deleteOldestProjectBlobs({ project_id, limit: 25 }),
+    ).resolves.toEqual({
+      deleted_count: 1,
+      deleted_bytes: 100,
+    });
+  });
+
+  it("deletes all account blobs during account deletion cleanup", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      expect(sql).toContain("DELETE FROM blobs");
+      expect(sql).toContain("account_id=$1::uuid");
+      expect(params).toEqual([account_id]);
+      return {
+        rows: [{ size: "7" }, { size: null }],
+      };
+    });
+    const { deleteBlobsForAccountDeletion } = await import("./blob-limits");
+    await expect(
+      deleteBlobsForAccountDeletion({ account_id }),
+    ).resolves.toEqual({
+      deleted_count: 2,
+      deleted_bytes: 7,
+    });
+  });
 });

@@ -5,7 +5,12 @@ import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 import { assertCollab } from "./util";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
-import { assertCanSaveBlobForAccount } from "@cocalc/server/membership/blob-limits";
+import {
+  assertCanSaveBlobForAccount,
+  deleteOldestAccountBlobs as deleteOldestAccountBlobsForMembership,
+  deleteOldestProjectBlobs as deleteOldestProjectBlobsForMembership,
+  type BlobDeleteSummary,
+} from "@cocalc/server/membership/blob-limits";
 
 export { userQuery };
 
@@ -131,4 +136,36 @@ export async function saveBlob({
     check: true,
   });
   return { uuid };
+}
+
+export async function deleteOldestAccountBlobs({
+  account_id,
+  limit,
+}: {
+  account_id: string;
+  limit: number;
+}): Promise<BlobDeleteSummary> {
+  if (!account_id) {
+    throw Error("account_id must be set");
+  }
+  return await deleteOldestAccountBlobsForMembership({ account_id, limit });
+}
+
+export async function deleteOldestProjectBlobs({
+  account_id,
+  project_id,
+  limit,
+}: {
+  account_id: string;
+  project_id: string;
+  limit: number;
+}): Promise<BlobDeleteSummary> {
+  if (!account_id) {
+    throw Error("account_id must be set");
+  }
+  if (!project_id) {
+    throw Error("project_id must be set");
+  }
+  await assertCollab({ account_id, project_id });
+  return await deleteOldestProjectBlobsForMembership({ project_id, limit });
 }
