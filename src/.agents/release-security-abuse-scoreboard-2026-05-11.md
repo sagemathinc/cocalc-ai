@@ -15,10 +15,10 @@ Statuses:
 - `accepted-risk`: explicitly accepted for first release.
 - `done`: implemented and validated enough for release.
 
-Current score after the 2026-05-17 SEC-SCAN rootfs-trust narrowing:
+Current score after the 2026-05-17 SEC-SCAN scheduled-scan smoke:
 
-- `done`: 7 findings.
-- `guarded`: 7 findings.
+- `done`: 8 findings.
+- `guarded`: 6 findings.
 - `blocked`: 0 findings.
 
 ## Summary
@@ -35,7 +35,7 @@ Current score after the 2026-05-17 SEC-SCAN rootfs-trust narrowing:
 | SEC-REG-001     | Registration-token signup policy             | done    | high     | Public signup without a registration token is explicit opt-in via `public_signup_without_registration_token`, default `no`. Deleting/disabling all tokens blocks signup, failed token attempts are throttled, and the admin page shows the effective policy. Signup no longer signs in existing accounts, accepts signup tags, accepts signup reason, or returns account-specific errors before token validation. Normal token rows are encrypted for admin redisplay; bootstrap-admin token rows are hash-only, hidden from admin token listing, and deleted after successful use. Focused PGlite regression coverage now verifies encrypted normal tokens, hash-only hidden bootstrap-admin tokens, and opportunistic legacy plaintext protection.                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Watch token-table size; current table-scan lookup is accepted for the expected small admin-managed token set. SSO signup policy is tracked under `SEC-SSO-001`.                           |
 | SEC-SSO-001     | SSO signup/sign-in policy                    | guarded | high     | Shared account-creation policy now covers password signup and legacy Passport SSO account creation. Public SSO creation on token-gated sites no longer bypasses registration tokens; admin-configured exclusive/domain SSO can act as the signup gate for matching domains. SSO-created accounts require verified/trusted email before creation and before marking the email verified. Google is now the only built-in public SSO provider; Facebook, GitHub, and Twitter implementations/dependencies were removed. Public sign-in now queries domain SSO policy from the email field. Google SSO client configuration is now admin-managed with encrypted secret storage, optional domain restriction/routing, explicit account-creation mode, and direct OIDC runtime validation. First-class `sso_providers` and `sso_domain_policies` tables/admin UI now exist. Enabled `sso_required` policies feed sign-in routing/runtime metadata, domain `signup_mode` is enforced for password and SSO account creation, and domain `require_cocalc_2fa` blocks password/SSO sign-in unless a CoCalc second factor is active and verified.                                                                | Treat remaining non-Google organization Passport paths and SAML/OIDC admin UI polish as deferred unless a launch customer requires them.                                                  |
 | SEC-ROOTFS-001  | Root filesystem count/storage quotas         | guarded | critical | Rootfs creation/storage is now guarded by membership-tier caps for active count, total storage, per-rootfs storage, and arbitrary remote OCI-image usage. Denials are logged as `rootfs_quota_denied`, admins can report top users/near-limit accounts via cluster-aggregated `cocalc admin rootfs-quotas` output with per-row `bay_id`, clone creation validates the actual current RootFS state before copying files, and account deletion retires owned RootFS catalog entries before marking the account deleted. A follow-up edge audit covered durable RootFS save/publish/select/delete/account-deletion behavior and added regression coverage for replacement growth, deleted-entry reuse, and metadata-only updates.                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Add user-facing current-usage display if needed for launch; decide whether exact concurrent create/publish serialization is warranted beyond current admission checks.                    |
-| SEC-SCAN-001    | Official RootFS vulnerability trust scanning | guarded | high     | Narrowed to an admin-only launch trust control for official/shared RootFS images. Existing RootFS release/catalog data already has scan placeholders; the first product goal is to show vulnerability scan status in the RootFS image list and project settings, preserve scanner/tool/timestamp/findings/admin-exception metadata, and block ordinary users from selecting official images with unresolved critical vulnerabilities. Trivy is still the likely first scanner, but the implementation should validate that choice against credible free alternatives before standardizing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Design the RootFS-only scan pipeline and UI policy: admin-triggered scans, release-tied immutable results, exception notes, selection blocking for critical findings, and SOC-2 evidence. |
+| SEC-SCAN-001    | Official RootFS vulnerability trust scanning | done    | high     | Official RootFS trust scanning is implemented as an admin-only Trivy control for immutable RootFS releases. Scan runs and full JSON reports are stored, latest status is projected onto RootFS releases/catalog rows, admin UI can trigger scans with fresh auth and host selection, RootFS/project settings show scan status, ordinary users are blocked from selecting official images with unresolved critical findings, project hosts lazily prepare the Trivy scanner container/cache, and weekly scheduled scans cover official non-hidden images.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Keep scanner image/cache provisioning in host automation and add admin exception-note workflow only if admins need documented critical-finding overrides beyond the current admin bypass. |
 | SEC-MASTER-001  | Master-key storage/unlock                    | guarded | high     | Secret-settings encryption and project-backup repo password encryption now derive purpose-specific keys from one local `site-master-key`; the raw site key is not used directly for AES-GCM payload encryption. Local admin CLI lifecycle commands can initialize, status-check, passphrase-export, restore, doctor-check, and offline-migrate the single key. Legacy `server-settings-key` and `backup-master-key` files are read only as migration fallbacks. Production bay systemd units load `/etc/cocalc/site-master-key` through `LoadCredential=` and set `COCALC_REQUIRE_SITE_MASTER_KEY=1`, so startup fails closed instead of creating a fresh key on a production bay. CLI smoke validation covered isolated init, encrypted export, restore to a clean data dir, checksum match, file permissions, files-only doctor, and fail-closed required-key behavior. Production runbook exists at `docs/security/site-master-key-production-runbook.md`.                                                                                                                                                                                                                                         | Smoke-test the production runbook on one disposable production-like VM or bay instance. Later consider KMS/TPM envelope unseal.                                                           |
 | SEC-START-001   | Simultaneous running project admission       | done    | critical | Sponsored runtime slots are implemented. Runtime admission uses `max_sponsored_running_projects`, durable `project_runtime_slots`, runtime sponsors, inter-bay sponsor-home admission, start/restart enforcement, autostart policy, collaborator-start controls, central slot event logs, admin reporting, and `cocalc project runtime-slots`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Deeper course/team dashboards and bulk classroom operations are follow-up product polish, not a release-security blocker.                                                                 |
 | SEC-DEP-001     | Dependency advisory reconciliation           | guarded | critical | Local remediation removed `sanitize-html` from npm dependencies and replaced reachable frontend/server sanitization with explicit allowlist sanitizers plus advisory regression tests. `pnpm audit` now reports no known vulnerabilities. Python `uv.lock` now resolves only patched `urllib3`, `pytest`, `requests`, and `Pygments` versions after dropping Python 3.9 support for the unreleased `cocalc-api` package; the previous open Dependabot alerts were caused by vulnerable Python 3.9 lock branches.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | After push/merge, verify GitHub Dependabot open alerts close or document any remaining non-production/unreachable residual alerts by manifest and path.                                   |
@@ -851,7 +851,7 @@ Remaining audit steps:
 
 ### SEC-SCAN-001: Official RootFS Vulnerability Trust Scanning
 
-Status: `guarded`.
+Status: `done`.
 
 Severity: high.
 
@@ -871,73 +871,53 @@ Motivation:
   checked, records what scanner/database produced the result, and preserves
   admin exception/remediation decisions.
 
-Required release policy:
+Implemented release policy:
 
-- Scope the first implementation to admin-only scanning and policy for
-  RootFS catalog entries/releases, especially official images and images shared
-  broadly enough to appear in user selection flows.
-- Show scan state directly in:
-  - the RootFS image list,
-  - the selected-image details pane,
-  - and project settings where users choose or review their RootFS image.
-- Record at least: scanner name/version, vulnerability database version or
-  timestamp, target release/content identifier, requested/completed timestamps,
-  status, severity counts, report location or compact report payload, admin
-  notes, false-positive/accepted-risk notes, and remediation target when known.
-- Gate new selections of official/shared images with unresolved critical
-  findings. Existing projects should not be forcibly changed by the scanner
-  alone, but project settings should clearly warn and encourage switching.
-- Keep policy admin-controlled: severity threshold, stale-scan age, whether
-  unscanned images are selectable, and whether admin-only bypasses are allowed.
-- Treat scan results as trust/evidence metadata. They should block only the
-  narrow RootFS image-selection path defined above; they should not delete
-  images or scan/inspect arbitrary user project files.
-
-Current tool candidate:
-
-- Trivy remains the likely first candidate because it can scan filesystem/rootfs
-  and image-style targets with machine-readable output, vulnerability metadata,
-  SBOM/license modes, and offline database/cache support.
-- Before implementation, compare Trivy with Syft/Grype, OSV-Scanner, and any
-  other credible free option specifically for RootFS image trust, not for broad
-  arbitrary user-project scanning.
-
-Required tool-selection step:
-
-- Compare Trivy with other credible free/open-source options before committing
-  to an implementation. At minimum evaluate:
-  - vulnerability database coverage and update model,
-  - filesystem/rootfs/image scanning support,
-  - OS package and language package lockfile coverage inside RootFS images,
-  - SBOM/license support,
-  - offline/cache behavior for private deployments,
-  - resource limits and sandboxability,
-  - JSON/SARIF output quality,
-  - operational maturity, release cadence, and maintenance health.
-- Document why the chosen scanner is the best free option for official RootFS
-  trust scanning and list accepted gaps.
-- The RootFS-only Trivy-first implementation plan is documented in
+- The launch scope is intentionally narrow: official non-hidden RootFS images
+  and immutable RootFS releases, not arbitrary user project files.
+- Trivy was selected for the first implementation because it supports rootfs
+  filesystem scanning, OS and language-package vulnerability metadata,
+  machine-readable JSON, offline/cache operation, and containerized execution.
+  The scanner decision and deferred user-image scan extension are documented in
   `rootfs-trivy-official-image-scanning-plan-2026-05-17.md`.
+- Scan runs are first-class evidence rows in `rootfs_release_scan_runs`; full
+  JSON reports are retained in `rootfs_release_scan_reports`; latest status,
+  tool, timestamp, and summary are projected onto `rootfs_releases`.
+- Admin-triggered scans require fresh auth. The admin RootFS page fetches
+  online hosts, prefers hosts that already cache the target image, and can
+  download full reports without making admins paste host UUIDs.
+- Project hosts lazily prepare the Trivy scanner container and cache directory,
+  then run scans in a bounded container with read-only RootFS input and a
+  write-only report output area.
+- RootFS catalog and project settings surfaces show scan status so users can
+  see whether their selected base image has known findings.
+- Ordinary users are blocked from selecting official images with unresolved
+  critical findings. Admins retain operational bypass authority; explicit
+  exception-note workflow remains a follow-up only if admins need documented
+  critical-finding overrides.
+- Weekly scheduled scans are implemented for official non-hidden images, with
+  admin settings for enablement, rescan period, host timeout, scan timeout, and
+  report retention/size.
 
-Suggested implementation sequence:
+Validation:
 
-1. Write a short RootFS-specific scanner comparison note and pick the default
-   scanner.
-2. Extend the existing RootFS scan fields or add a normalized
-   `rootfs_release_scan_runs` table if historical runs/admin exception history
-   should be first-class instead of only latest-state metadata.
-3. Add admin settings for enablement, severity threshold, stale-scan age,
-   max concurrency, timeout, max target size, and unscanned-image policy.
-4. Add a bounded admin-triggered scan job for a specific immutable RootFS
-   release/content key, with read-only target access and scanner binary/database
-   version capture.
-5. Render concise scan status in the RootFS list and project settings, with a
-   drill-down panel for findings, scanner metadata, and admin notes.
-6. Enforce selection blocking for official/shared images with unresolved
-   critical findings, while allowing admin bypass only with an explicit note.
-7. Add regression tests for scan-state rendering, stale/unscanned policy,
-   critical-finding selection blocking, admin bypass notes, report parsing, and
-   job failure states.
+- Focused server tests cover scan policy blocking for ordinary users and clone
+  creation interactions with the RootFS selection policy.
+- Frontend/admin fixes were validated through the live admin scan flow: fresh
+  auth, long-running scan behavior, host selection, report status refresh, and
+  hide/unhide mutations.
+- Live hub smoke on 2026-05-17 forced the official `standard` release due and
+  verified the scheduler scanned it successfully:
+  `scanned=1`, `skipped_no_host=0`, `failed=0`.
+
+Residual follow-up:
+
+- Keep scanner image/cache provisioning in host image automation so live hosts
+  do not depend on manual Trivy setup.
+- Add admin exception notes only if the current admin bypass is too opaque for
+  operational audit needs.
+- Add broader user-requested scans for user-published images later; the plan
+  exists, but it is intentionally outside the launch control.
 
 Future scope:
 

@@ -553,7 +553,7 @@ export const EXTRAS: SettingsExtras = {
   rootfs_scan_scheduled_enabled: {
     name: "RootFS Scan: Scheduled Official Scans",
     desc: "Run scheduled vulnerability scans for official non-hidden RootFS images. Blank or yes enables weekly scanning; no disables the scheduler.",
-    default: "",
+    default: "yes",
     valid: only_booleans,
     to_val: to_bool,
     tags: ["RootFS", "Security", "Project Hosts"],
