@@ -52,6 +52,8 @@ import {
 } from "./rootfs-manifest";
 import {
   ensureRootfsTrivyScannerPrepared,
+  getRootfsTrivyScannerProvisioningStatus,
+  prepareDefaultRootfsTrivyScanner,
   runRootfsTrivyScan,
 } from "./rootfs-scan";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
@@ -196,6 +198,13 @@ const STOP_POLICY_RECONCILE_RECENT_DAYS = Math.max(
 const ROOTFS_CACHE_GC_MS = Math.max(
   60_000,
   Number(process.env.COCALC_PROJECT_HOST_ROOTFS_CACHE_GC_MS ?? 15 * 60_000),
+);
+const ROOTFS_SCANNER_PREPARE_MS = Math.max(
+  60 * 60_000,
+  Number(
+    process.env.COCALC_PROJECT_HOST_ROOTFS_SCANNER_PREPARE_MS ??
+      24 * 60 * 60_000,
+  ),
 );
 const USER_DELTA_CURSOR_KEY = "users-delta-cursor";
 const STOP_POLICY_DELTA_CURSOR_KEY = "stop-policy-delta-cursor";
@@ -1231,6 +1240,7 @@ export async function startMasterRegistration({
     const versions = getSoftwareVersions();
     const softwareInventory = getInstalledRuntimeArtifacts();
     const observedComponents = getManagedComponentStatus();
+    const rootfsScanner = getRootfsTrivyScannerProvisioningStatus();
     const hostAgentState = readHostAgentState();
     const currentMetrics = hostMetrics.getCurrentSnapshot();
     const pressureState: HostPressureState | undefined =
@@ -1256,6 +1266,7 @@ export async function startMasterRegistration({
           : {}),
         host_agent: hostAgentState,
         observed_components: observedComponents,
+        rootfs_scanner: rootfsScanner,
         software: versions,
         software_inventory: softwareInventory,
       },
@@ -1815,6 +1826,7 @@ export async function startMasterRegistration({
   } catch (err) {
     logger.warn("initial managed RootFS cache GC failed", { err });
   }
+  void prepareDefaultRootfsTrivyScanner({ reason: "startup" }).catch(() => {});
   const timer = setInterval(() => void send("heartbeat"), 30_000);
   const deltaTimer = setInterval(() => {
     void syncUserDeltas("interval").catch((err) =>
@@ -1850,6 +1862,12 @@ export async function startMasterRegistration({
       .catch((err) => logger.debug("managed RootFS cache GC failed", { err }));
   }, ROOTFS_CACHE_GC_MS);
   rootfsGcTimer.unref?.();
+  const rootfsScannerPrepareTimer = setInterval(() => {
+    void prepareDefaultRootfsTrivyScanner({ reason: "interval" }).catch(
+      () => {},
+    );
+  }, ROOTFS_SCANNER_PREPARE_MS);
+  rootfsScannerPrepareTimer.unref?.();
   let tokenRotationRetryStep = 0;
   let tokenRotationTimer: NodeJS.Timeout | undefined;
   const scheduleTokenRotation = (delayMs: number) => {
@@ -1896,6 +1914,7 @@ export async function startMasterRegistration({
     clearInterval(stopPolicyReconcileTimer);
     pressureController?.stop();
     clearInterval(rootfsGcTimer);
+    clearInterval(rootfsScannerPrepareTimer);
     clearInterval(missingTokenProbe);
     if (tokenRotationTimer) {
       clearTimeout(tokenRotationTimer);

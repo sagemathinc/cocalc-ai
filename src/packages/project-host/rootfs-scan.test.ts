@@ -150,6 +150,35 @@ describe("ensureRootfsTrivyScannerPrepared", () => {
       ["image", "exists"],
     ]);
   });
+
+  it("refreshes scanner image and database cache when requested", async () => {
+    const base = await mkdtemp(join(tmpdir(), "rootfs-scan-setup-test-"));
+    const cache = join(base, "trivy-cache");
+    await mkdir(join(cache, "db"), { recursive: true });
+    await writeFile(join(cache, "db", "metadata.json"), "{}");
+    const calls: string[][] = [];
+    const runner: CommandRunner = async (_command, args) => {
+      calls.push(args);
+      if (args.includes("--download-db-only")) {
+        await writeFile(join(cache, "db", "metadata.json"), "{}");
+      }
+      return { stdout: "", stderr: "" };
+    };
+
+    await ensureRootfsTrivyScannerPrepared({
+      trivy_cache_dir: cache,
+      scanner_image: "scanner",
+      command_runner: runner,
+      refresh_image: true,
+      refresh_db: true,
+    });
+
+    expect(calls.map((args) => args.slice(0, 2))).toEqual([
+      ["image", "exists"],
+      ["pull", "scanner"],
+      ["run", "--rm"],
+    ]);
+  });
 });
 
 describe("runRootfsTrivyScan", () => {

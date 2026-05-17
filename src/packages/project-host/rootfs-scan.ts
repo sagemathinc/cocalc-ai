@@ -5,13 +5,17 @@
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { gzipSync } from "node:zlib";
 
+import getLogger from "@cocalc/backend/logger";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import {
+  DEFAULT_TRIVY_CACHE_DIR,
+  DEFAULT_TRIVY_SCANNER_IMAGE,
   parseTrivyRootfsJsonReport,
   type TrivyJsonReport,
   type TrivyRootfsScanTarget,
@@ -25,6 +29,7 @@ const DEFAULT_CPU_LIMIT = "2";
 const DEFAULT_TMPFS_SIZE = "512m";
 const DEFAULT_SETUP_TIMEOUT_MS = 10 * 60 * 1000;
 const TRIVY_DB_METADATA_RELATIVE_PATH = "db/metadata.json";
+const logger = getLogger("project-host:rootfs-scan");
 
 export type RootfsTrivyPodmanOptions = {
   scan_run_id: string;
@@ -47,6 +52,28 @@ export type RootfsTrivyScannerSetupOptions = {
   timeout_ms?: number;
   podman_binary?: string;
   command_runner?: CommandRunner;
+  refresh_image?: boolean;
+  refresh_db?: boolean;
+};
+
+export type RootfsTrivyScannerProvisioningStatus = {
+  enabled: boolean;
+  scanner_image: string;
+  trivy_cache_dir: string;
+  cache_metadata_path: string;
+  cache_present: boolean;
+  prepared: boolean;
+  last_prepare_reason?: string;
+  last_prepare_started_at?: string;
+  last_prepare_finished_at?: string;
+  last_prepare_error?: string;
+};
+
+type RootfsTrivyScannerProvisioningState = {
+  last_prepare_reason?: string;
+  last_prepare_started_at?: string;
+  last_prepare_finished_at?: string;
+  last_prepare_error?: string;
 };
 
 export type RunRootfsTrivyScanOptions = {
@@ -85,6 +112,8 @@ export type CommandRunner = (
   args: string[],
   opts: { timeout_ms: number; error_context?: string },
 ) => Promise<{ stdout: string; stderr: string }>;
+
+const provisioningState: RootfsTrivyScannerProvisioningState = {};
 
 function assertAbsolutePath(name: string, path: string): void {
   if (!isAbsolute(path)) {
@@ -220,6 +249,8 @@ export async function ensureRootfsTrivyScannerPrepared({
   timeout_ms = DEFAULT_SETUP_TIMEOUT_MS,
   podman_binary = "podman",
   command_runner = defaultCommandRunner,
+  refresh_image = false,
+  refresh_db = false,
 }: RootfsTrivyScannerSetupOptions): Promise<void> {
   assertAbsolutePath("trivy_cache_dir", trivy_cache_dir);
   if (!scanner_image.trim()) {
@@ -235,12 +266,16 @@ export async function ensureRootfsTrivyScannerPrepared({
 
   const task = (async () => {
     await mkdir(trivy_cache_dir, { recursive: true, mode: 0o755 });
+    let imagePresent = true;
     try {
       await command_runner(podman_binary, ["image", "exists", scanner_image], {
         timeout_ms,
         error_context: "podman scanner image check",
       });
     } catch {
+      imagePresent = false;
+    }
+    if (!imagePresent || refresh_image) {
       await command_runner(podman_binary, ["pull", scanner_image], {
         timeout_ms,
         error_context: "podman scanner image pull",
@@ -248,7 +283,7 @@ export async function ensureRootfsTrivyScannerPrepared({
     }
 
     const metadataPath = join(trivy_cache_dir, TRIVY_DB_METADATA_RELATIVE_PATH);
-    if (await pathExists(metadataPath)) {
+    if (!refresh_db && (await pathExists(metadataPath))) {
       return;
     }
 
@@ -277,6 +312,82 @@ export async function ensureRootfsTrivyScannerPrepared({
   });
   scannerSetupInFlight.set(key, task);
   await task;
+}
+
+export function defaultRootfsTrivyScannerConfig(): {
+  scanner_image: string;
+  trivy_cache_dir: string;
+  timeout_ms: number;
+} {
+  return {
+    scanner_image:
+      `${process.env.COCALC_ROOTFS_SCAN_TRIVY_IMAGE ?? ""}`.trim() ||
+      DEFAULT_TRIVY_SCANNER_IMAGE,
+    trivy_cache_dir:
+      `${process.env.COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR ?? ""}`.trim() ||
+      DEFAULT_TRIVY_CACHE_DIR,
+    timeout_ms: DEFAULT_SETUP_TIMEOUT_MS,
+  };
+}
+
+export function getRootfsTrivyScannerProvisioningStatus(): RootfsTrivyScannerProvisioningStatus {
+  const config = defaultRootfsTrivyScannerConfig();
+  const cacheMetadataPath = join(
+    config.trivy_cache_dir,
+    TRIVY_DB_METADATA_RELATIVE_PATH,
+  );
+  const cachePresent = existsSync(cacheMetadataPath);
+  return {
+    enabled: true,
+    scanner_image: config.scanner_image,
+    trivy_cache_dir: config.trivy_cache_dir,
+    cache_metadata_path: cacheMetadataPath,
+    cache_present: cachePresent,
+    prepared: cachePresent && !provisioningState.last_prepare_error,
+    ...provisioningState,
+  };
+}
+
+export async function prepareDefaultRootfsTrivyScanner({
+  reason,
+  refresh_image = true,
+  refresh_db = true,
+}: {
+  reason: string;
+  refresh_image?: boolean;
+  refresh_db?: boolean;
+}): Promise<RootfsTrivyScannerProvisioningStatus> {
+  const config = defaultRootfsTrivyScannerConfig();
+  provisioningState.last_prepare_reason = reason;
+  provisioningState.last_prepare_started_at = new Date().toISOString();
+  delete provisioningState.last_prepare_finished_at;
+  delete provisioningState.last_prepare_error;
+  try {
+    await ensureRootfsTrivyScannerPrepared({
+      ...config,
+      refresh_image,
+      refresh_db,
+    });
+    provisioningState.last_prepare_finished_at = new Date().toISOString();
+    logger.info("RootFS Trivy scanner prepared", {
+      reason,
+      scanner_image: config.scanner_image,
+      trivy_cache_dir: config.trivy_cache_dir,
+      refresh_image,
+      refresh_db,
+    });
+  } catch (err) {
+    provisioningState.last_prepare_error = `${err}`;
+    provisioningState.last_prepare_finished_at = new Date().toISOString();
+    logger.warn("RootFS Trivy scanner preparation failed", {
+      reason,
+      scanner_image: config.scanner_image,
+      trivy_cache_dir: config.trivy_cache_dir,
+      err,
+    });
+    throw err;
+  }
+  return getRootfsTrivyScannerProvisioningStatus();
 }
 
 export function buildRootfsTrivyPodmanArgs({
