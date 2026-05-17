@@ -1,4 +1,7 @@
-import { createBrowserAutomationAuditBuffer } from "./automation-audit";
+import {
+  classifyCentralBrowserAutomationAuditEvent,
+  createBrowserAutomationAuditBuffer,
+} from "./automation-audit";
 
 describe("browser automation audit buffer", () => {
   it("lists filtered automation decisions and tracks dropped rows", () => {
@@ -53,5 +56,49 @@ describe("browser automation audit buffer", () => {
       next_seq: 1,
       total_buffered: 0,
     });
+  });
+
+  it("classifies only high-risk central audit events", () => {
+    expect(
+      classifyCentralBrowserAutomationAuditEvent({
+        kind: "exec",
+        decision: "allow",
+        mode: "raw_js",
+      }),
+    ).toBe("browser_raw_exec_allowed");
+    expect(
+      classifyCentralBrowserAutomationAuditEvent({
+        kind: "exec",
+        decision: "deny",
+        requested_raw_exec: true,
+      }),
+    ).toBe("browser_raw_exec_denied");
+    expect(
+      classifyCentralBrowserAutomationAuditEvent({
+        kind: "start_exec",
+        decision: "deny",
+      }),
+    ).toBe("browser_async_exec_denied");
+    expect(
+      classifyCentralBrowserAutomationAuditEvent({
+        kind: "sandbox_action",
+        decision: "deny",
+        action_name: "click",
+      }),
+    ).toBe("browser_quickjs_host_action_denied");
+    expect(
+      classifyCentralBrowserAutomationAuditEvent({
+        kind: "action",
+        decision: "deny",
+        action_name: "click",
+      }),
+    ).toBeUndefined();
+    expect(
+      classifyCentralBrowserAutomationAuditEvent({
+        kind: "exec",
+        decision: "allow",
+        mode: "quickjs_wasm",
+      }),
+    ).toBeUndefined();
   });
 });

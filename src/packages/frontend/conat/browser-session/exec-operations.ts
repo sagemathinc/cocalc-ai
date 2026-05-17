@@ -48,6 +48,7 @@ export function createBrowserExecOperations({
   onAudit?: (
     event: Omit<BrowserAutomationAuditEvent, "seq" | "ts" | "kind"> & {
       kind?: "start_exec";
+      requested_raw_exec?: boolean;
     },
   ) => void;
 }): {
@@ -201,6 +202,8 @@ export function createBrowserExecOperations({
         decision: "deny",
         project_id,
         posture,
+        requested_raw_exec:
+          (posture ?? "dev") !== "prod" || !!policy?.allow_raw_exec,
         reason: `${err}`,
       });
       throw err;
