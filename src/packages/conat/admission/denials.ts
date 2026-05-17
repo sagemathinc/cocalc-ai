@@ -4,6 +4,7 @@
  */
 
 import { getLogger } from "@cocalc/conat/logger";
+import { getServiceAdmissionNearLimitConfig } from "./limits";
 
 const logger = getLogger("conat:admission:denials");
 
@@ -28,11 +29,21 @@ type ServiceAdmissionDenialRecorder = (
 ) => void | Promise<void>;
 
 let serviceAdmissionDenialRecorder: ServiceAdmissionDenialRecorder | undefined;
+let serviceAdmissionNearLimitRecorder:
+  | ServiceAdmissionDenialRecorder
+  | undefined;
+const nearLimitLastRecorded = new Map<string, number>();
 
 export function setServiceAdmissionDenialRecorder(
   recorder?: ServiceAdmissionDenialRecorder,
 ): void {
   serviceAdmissionDenialRecorder = recorder;
+}
+
+export function setServiceAdmissionNearLimitRecorder(
+  recorder?: ServiceAdmissionDenialRecorder,
+): void {
+  serviceAdmissionNearLimitRecorder = recorder;
 }
 
 function nonnegativeInteger(value: unknown): number {
@@ -69,6 +80,56 @@ export function recordServiceAdmissionDenial(
     .then(() => recorder(normalized))
     .catch((err) => {
       logger.warn("failed to record service admission denial", {
+        err: `${err}`,
+        surface: normalized.surface,
+        limit: normalized.limit,
+        source: normalized.source,
+      });
+    });
+}
+
+function nearLimitThrottleKey(event: ServiceAdmissionDenialEvent): string {
+  return [
+    event.surface,
+    event.limit,
+    event.source,
+    event.host_id,
+    event.account_id,
+    event.project_id,
+    event.subject,
+    event.path,
+    event.key,
+  ]
+    .map((value) => `${value ?? ""}`)
+    .join("\n");
+}
+
+export function recordServiceAdmissionNearLimit(
+  event: ServiceAdmissionDenialEvent,
+): void {
+  const recorder = serviceAdmissionNearLimitRecorder;
+  if (recorder == null) {
+    return;
+  }
+  const normalized = normalizeServiceAdmissionDenialEvent(event);
+  const { thresholdPercent, logIntervalMs } =
+    getServiceAdmissionNearLimitConfig();
+  if (
+    normalized.maximum <= 0 ||
+    normalized.current * 100 < normalized.maximum * thresholdPercent
+  ) {
+    return;
+  }
+  const key = nearLimitThrottleKey(normalized);
+  const lastRecorded = nearLimitLastRecorded.get(key) ?? 0;
+  if (normalized.time! - lastRecorded < logIntervalMs) {
+    return;
+  }
+  nearLimitLastRecorded.set(key, normalized.time!);
+  void Promise.resolve()
+    .then(() => recorder(normalized))
+    .catch((err) => {
+      logger.warn("failed to record service admission near-limit event", {
         err: `${err}`,
         surface: normalized.surface,
         limit: normalized.limit,

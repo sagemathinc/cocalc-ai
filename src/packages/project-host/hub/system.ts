@@ -78,6 +78,10 @@ export function wireSystemApi(): void {
     ]);
   };
 
+  hubApi.system.getServiceAdmissionConfig = async () => {
+    return await forwardSystem("system.getServiceAdmissionConfig", []);
+  };
+
   hubApi.system.getCustomize = async (fields?: string[]) => {
     return await forwardSystem("system.getCustomize", [fields]);
   };

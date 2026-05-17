@@ -112,6 +112,7 @@ import {
 } from "./hub/acp/worker-manager";
 import { configureProjectHostAcpAdmissionDenialRecorder } from "./hub/acp/admission-denials";
 import { configureProjectHostServiceAdmissionDenialRecorder } from "./hub/service-admission-denials";
+import { startProjectHostConatAdmissionSettingsRefresh } from "./hub/admission-settings";
 import { main as runHostAgentMain } from "./host-agent";
 import { matchAppRequest } from "./app-public-access";
 import { maybeHandleStaticAppRequest } from "./static-apps";
@@ -499,6 +500,7 @@ export async function main(
   wireSystemApi();
   wireHostsApi();
   wireNotificationsApi();
+  startProjectHostConatAdmissionSettingsRefresh();
   const projectTouchService = await initProjectTouchService(conatClient);
   const projectStorageInfoService =
     await initProjectStorageInfoService(conatClient);

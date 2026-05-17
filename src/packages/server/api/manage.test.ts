@@ -9,6 +9,7 @@ let getClusterAccountApiKeyByKeyIdMock: jest.Mock;
 let touchClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
 let upsertClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
 let deleteClusterAccountApiKeyDirectoryEntryMock: jest.Mock;
+let centralLogMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -60,8 +61,18 @@ jest.mock("@cocalc/backend/logger", () => ({
   })),
 }));
 
+jest.mock("@cocalc/database/postgres/central-log", () => ({
+  __esModule: true,
+  default: (...args: any[]) => centralLogMock(...args),
+}));
+
 describe("manageApiKeys local bay access", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+
+  async function flushAuditEvents(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+  }
 
   function nonSchemaQueries() {
     return queryMock.mock.calls.filter(([sql]) => {
@@ -97,6 +108,7 @@ describe("manageApiKeys local bay access", () => {
     deleteClusterAccountApiKeyDirectoryEntryMock = jest.fn(
       async () => undefined,
     );
+    centralLogMock = jest.fn(async () => undefined);
   });
 
   it("allows account-wide api key management", async () => {
@@ -144,10 +156,54 @@ describe("manageApiKeys local bay access", () => {
     expect(key?.key_id).toBe("random-key-id");
     expect(key?.secret).toMatch(/^sk-cc-v2\.random-key-id\.[A-Za-z0-9_-]+$/);
     expect(key?.trunc).toMatch(/^sk-cc\.\.\.[A-Za-z0-9_-]{8}$/);
+    expect(centralLogMock).toHaveBeenCalledWith({
+      event: "api_key_created",
+      value: {
+        account_id: ACCOUNT_ID,
+        api_key_id: 17,
+        key_id: "random-key-id",
+        source: "account-api-key-management",
+      },
+    });
     const update = nonSchemaQueries().find(([sql]) =>
       `${sql}`.includes("UPDATE api_keys SET trunc=$1,hash=$2"),
     );
     expect(update).toBeTruthy();
+  });
+
+  it("audits deleted api keys without exposing the secret", async () => {
+    queryMock = jest.fn(async (sql) => {
+      const text = `${sql}`;
+      if (text.includes("SELECT id,key_id,account_id")) {
+        return {
+          rows: [
+            {
+              id: 17,
+              key_id: "random-key-id",
+              account_id: ACCOUNT_ID,
+              capabilities: ["account:read"],
+              allowed_project_ids: [],
+            },
+          ],
+        };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+    const { default: manageApiKeys } = await import("./manage");
+    await manageApiKeys({
+      account_id: ACCOUNT_ID,
+      action: "delete",
+      id: 17,
+    });
+    expect(centralLogMock).toHaveBeenCalledWith({
+      event: "api_key_deleted",
+      value: {
+        account_id: ACCOUNT_ID,
+        api_key_id: 17,
+        key_id: "random-key-id",
+        source: "account-api-key-management",
+      },
+    });
   });
 
   it("rejects api key creation without explicit capabilities", async () => {
@@ -190,6 +246,16 @@ describe("manageApiKeys local bay access", () => {
       capabilities: ["account:read"],
       allowed_project_ids: [],
     });
+    await flushAuditEvents();
+    expect(centralLogMock).toHaveBeenCalledWith({
+      event: "api_key_used",
+      value: {
+        account_id: ACCOUNT_ID,
+        api_key_id: 9,
+        key_id: "key-id-123",
+        source: "api-key-auth-local",
+      },
+    });
     expect(nonSchemaQueries()[0]).toEqual([
       "SELECT id,key_id,account_id,hash,expire,capabilities,allowed_project_ids FROM api_keys WHERE key_id=$1",
       ["key-id-123"],
@@ -223,6 +289,16 @@ describe("manageApiKeys local bay access", () => {
     expect(touchClusterAccountApiKeyDirectoryEntryMock).toHaveBeenCalledWith({
       key_id: "key-id-remote",
     });
+    await flushAuditEvents();
+    expect(centralLogMock).toHaveBeenCalledWith({
+      event: "api_key_used",
+      value: {
+        account_id: ACCOUNT_ID,
+        api_key_id: -1,
+        key_id: "key-id-remote",
+        source: "api-key-auth-directory",
+      },
+    });
   });
 
   it("rejects pre-v2 api key formats without lookup", async () => {
@@ -233,6 +309,52 @@ describe("manageApiKeys local bay access", () => {
     await expect(
       getAccountWithApiKey("sk-oldintegerid000001"),
     ).resolves.toBeUndefined();
+    await flushAuditEvents();
+    expect(centralLogMock).toHaveBeenCalledWith({
+      event: "api_key_denied",
+      value: {
+        source: "api-key-auth",
+        reason: "invalid API key format",
+        code: "api_key_invalid_format",
+      },
+    });
     expect(nonSchemaQueries()).toHaveLength(0);
+  });
+
+  it("audits api key secret mismatches by key id only", async () => {
+    verifyPasswordMock = jest.fn(() => false);
+    const secret = "sk-cocalc-v2.key-id-123.secret-part";
+    queryMock = jest.fn(async (sql) => {
+      if (`${sql}`.includes("WHERE key_id=$1")) {
+        return {
+          rows: [
+            {
+              id: 9,
+              key_id: "key-id-123",
+              account_id: ACCOUNT_ID,
+              hash: "hash",
+              expire: null,
+              capabilities: ["account:read"],
+              allowed_project_ids: [],
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+    const { getAccountWithApiKey } = await import("./manage");
+    await expect(getAccountWithApiKey(secret)).resolves.toBeUndefined();
+    await flushAuditEvents();
+    expect(centralLogMock).toHaveBeenCalledWith({
+      event: "api_key_denied",
+      value: {
+        account_id: ACCOUNT_ID,
+        api_key_id: 9,
+        key_id: "key-id-123",
+        source: "api-key-auth-local",
+        reason: "API key secret does not match",
+        code: "api_key_secret_mismatch",
+      },
+    });
   });
 });

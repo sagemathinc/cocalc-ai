@@ -5,6 +5,7 @@ import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
+import { ConatError } from "@cocalc/conat/core/client";
 import getPool from "@cocalc/database/pool";
 import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
 import {
@@ -241,7 +242,10 @@ async function getProjectAccess({
   if (isOwner(project.users, account_id)) {
     return { project };
   }
-  throw new Error("must be a project owner to permanently delete a workspace");
+  throw new ConatError(
+    "must be a project owner to permanently delete a workspace",
+    { code: "project_delete_not_owner" },
+  );
 }
 
 export async function assertHardDeleteProjectPermission({
@@ -503,75 +507,84 @@ async function purgeProjectRows({
       ],
     );
 
+    const projectScopedTables = [
+      "project_collab_invites",
+      "project_collab_invite_inbox",
+      "project_moves",
+      "project_rehome_operations",
+      "project_active_operations",
+      "project_runtime_slots",
+      "project_rootfs_states",
+      "project_host_route_invalidations",
+      "project_secrets",
+      "project_backup_indexes",
+      "project_backup_repo_assignments",
+      "mentions",
+      "listings",
+      "usage_info",
+      "external_credentials",
+      "bookmarks",
+      "project_app_public_subdomains",
+      "notification_events_outbox",
+      "project_events_outbox",
+      "account_project_index",
+      "account_notification_index",
+    ];
+    for (const table of projectScopedTables) {
+      await runDeleteMaybeMissingTable({
+        client,
+        table,
+        query: `DELETE FROM ${table} WHERE project_id=$1`,
+        params: [project.project_id],
+        purged,
+      });
+    }
+
+    const customProjectDeleteSpecs = [
+      {
+        table: "project_copies",
+        query:
+          "DELETE FROM project_copies WHERE src_project_id=$1 OR dest_project_id=$1",
+      },
+      {
+        table: "long_running_operations",
+        query:
+          "DELETE FROM long_running_operations WHERE scope_type='project' AND scope_id=$1",
+      },
+      {
+        table: "notification_events",
+        query: "DELETE FROM notification_events WHERE source_project_id=$1",
+      },
+      {
+        table: "blobs",
+        query:
+          "DELETE FROM blobs WHERE project_id=$1::text OR id IN (SELECT archived FROM syncstrings WHERE project_id=$1::uuid AND archived IS NOT NULL)",
+      },
+      {
+        table: "patches",
+        query:
+          "DELETE FROM patches WHERE string_id IN (SELECT string_id FROM syncstrings WHERE project_id=$1)",
+      },
+      {
+        table: "cursors",
+        query:
+          "DELETE FROM cursors WHERE string_id IN (SELECT string_id FROM syncstrings WHERE project_id=$1)",
+      },
+    ];
+    for (const { table, query } of customProjectDeleteSpecs) {
+      await runDeleteMaybeMissingTable({
+        client,
+        table,
+        query,
+        params: [project.project_id],
+        purged,
+      });
+    }
+
     await runDeleteMaybeMissingTable({
       client,
-      table: "project_collab_invites",
-      query: "DELETE FROM project_collab_invites WHERE project_id=$1",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
-      table: "project_copies",
-      query:
-        "DELETE FROM project_copies WHERE src_project_id=$1 OR dest_project_id=$1",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
-      table: "project_moves",
-      query: "DELETE FROM project_moves WHERE project_id=$1",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
-      table: "long_running_operations",
-      query:
-        "DELETE FROM long_running_operations WHERE scope_type='project' AND scope_id=$1",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
-      table: "mentions",
-      query: "DELETE FROM mentions WHERE project_id=$1",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
-      table: "listings",
-      query: "DELETE FROM listings WHERE project_id=$1",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
-      table: "usage_info",
-      query: "DELETE FROM usage_info WHERE project_id=$1",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
-      table: "external_credentials",
-      query: "DELETE FROM external_credentials WHERE project_id=$1",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
-      table: "project_events_outbox",
-      query: "DELETE FROM project_events_outbox WHERE project_id=$1",
-      params: [project.project_id],
-      purged,
-    });
-    await runDeleteMaybeMissingTable({
-      client,
-      table: "account_project_index",
-      query: "DELETE FROM account_project_index WHERE project_id=$1",
+      table: "syncstrings",
+      query: "DELETE FROM syncstrings WHERE project_id=$1",
       params: [project.project_id],
       purged,
     });

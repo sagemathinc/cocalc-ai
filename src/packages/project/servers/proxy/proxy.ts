@@ -54,7 +54,14 @@ import {
   APP_PROXY_EXPOSURE_HEADER,
   type AppProxyExposureMode,
 } from "@cocalc/backend/auth/app-proxy";
-import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
+import {
+  recordServiceAdmissionDenial,
+  recordServiceAdmissionNearLimit,
+} from "@cocalc/conat/admission/denials";
+import {
+  getServiceAdmissionLimit,
+  serviceAdmissionLimitEnvName,
+} from "@cocalc/conat/admission/limits";
 import listen from "@cocalc/backend/misc/async-server-listen";
 import { resolveProxyListenPort } from "./config";
 import {
@@ -71,22 +78,6 @@ import { getProjectHubApi } from "../../conat/hub";
 const logger = getLogger("project:servers:proxy");
 const STATIC_CACHE_CONTROL_DEFAULT = "public, max-age=300";
 
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  const n = parseInt(value ?? "", 10);
-  if (Number.isFinite(n) && n > 0) {
-    return n;
-  }
-  return fallback;
-}
-
-const MAX_ACTIVE_WEBSOCKETS_PER_TARGET = parsePositiveInt(
-  process.env.COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_PER_TARGET,
-  64,
-);
-const MAX_ACTIVE_WEBSOCKETS_TOTAL = parsePositiveInt(
-  process.env.COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_TOTAL,
-  256,
-);
 const activeWebsocketsByTarget = new Map<string, number>();
 let activeWebsocketsTotal = 0;
 
@@ -155,25 +146,55 @@ function claimProxyWebsocket({ key }: { key: string }):
       active: number;
       max: number;
     } {
-  if (activeWebsocketsTotal >= MAX_ACTIVE_WEBSOCKETS_TOTAL) {
+  const totalLimit = getServiceAdmissionLimit(
+    "app_proxy_max_active_websockets_total",
+  );
+  const targetLimit = getServiceAdmissionLimit(
+    "app_proxy_max_active_websockets_per_target",
+  );
+  if (activeWebsocketsTotal >= totalLimit) {
     return {
       allowed: false,
       reason: "app proxy websocket total limit reached",
       active: activeWebsocketsTotal,
-      max: MAX_ACTIVE_WEBSOCKETS_TOTAL,
+      max: totalLimit,
     };
   }
   const activeForTarget = activeWebsocketsByTarget.get(key) ?? 0;
-  if (activeForTarget >= MAX_ACTIVE_WEBSOCKETS_PER_TARGET) {
+  if (activeForTarget >= targetLimit) {
     return {
       allowed: false,
       reason: "app proxy websocket target limit reached",
       active: activeForTarget,
-      max: MAX_ACTIVE_WEBSOCKETS_PER_TARGET,
+      max: targetLimit,
     };
   }
   activeWebsocketsTotal += 1;
   activeWebsocketsByTarget.set(key, activeForTarget + 1);
+  recordServiceAdmissionNearLimit({
+    surface: "app-proxy-websocket",
+    source: "project-app-proxy",
+    limit: serviceAdmissionLimitEnvName(
+      "app_proxy_max_active_websockets_total",
+    ),
+    current: activeWebsocketsTotal,
+    maximum: totalLimit,
+    reason: "app proxy websocket total is near capacity",
+    project_id,
+    key,
+  });
+  recordServiceAdmissionNearLimit({
+    surface: "app-proxy-websocket",
+    source: "project-app-proxy",
+    limit: serviceAdmissionLimitEnvName(
+      "app_proxy_max_active_websockets_per_target",
+    ),
+    current: activeForTarget + 1,
+    maximum: targetLimit,
+    reason: "app proxy websocket target is near capacity",
+    project_id,
+    key,
+  });
   return { allowed: true };
 }
 
@@ -201,8 +222,10 @@ function rejectWebsocket({
     source: "project-app-proxy",
     limit:
       admission.reason === "app proxy websocket total limit reached"
-        ? "COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_TOTAL"
-        : "COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_PER_TARGET",
+        ? serviceAdmissionLimitEnvName("app_proxy_max_active_websockets_total")
+        : serviceAdmissionLimitEnvName(
+            "app_proxy_max_active_websockets_per_target",
+          ),
     current: admission.active,
     maximum: admission.max,
     reason: admission.reason,

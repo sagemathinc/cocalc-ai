@@ -532,6 +532,66 @@ function formatServiceDenialPrometheus(report: any): string {
   return `${lines.join("\n")}\n`;
 }
 
+function formatRootfsQuotaPrometheus(report: any): string {
+  const lines = [
+    "# HELP cocalc_rootfs_quota_usage_count Active RootFS image count by account.",
+    "# TYPE cocalc_rootfs_quota_usage_count gauge",
+  ];
+  for (const row of report?.top_users ?? []) {
+    const labels = prometheusLabels({ account_id: row.account_id ?? "" });
+    lines.push(
+      `cocalc_rootfs_quota_usage_count{${labels}} ${Number(row.count) || 0}`,
+    );
+  }
+  lines.push(
+    "# HELP cocalc_rootfs_quota_usage_total_storage_bytes Active RootFS storage bytes by account.",
+    "# TYPE cocalc_rootfs_quota_usage_total_storage_bytes gauge",
+  );
+  for (const row of report?.top_users ?? []) {
+    const labels = prometheusLabels({ account_id: row.account_id ?? "" });
+    lines.push(
+      `cocalc_rootfs_quota_usage_total_storage_bytes{${labels}} ${Number(row.total_storage_bytes) || 0}`,
+    );
+  }
+  lines.push(
+    "# HELP cocalc_rootfs_quota_near_limit_ratio RootFS quota usage ratio for accounts at or above the configured near-limit threshold.",
+    "# TYPE cocalc_rootfs_quota_near_limit_ratio gauge",
+  );
+  for (const row of report?.near_limit_users ?? []) {
+    for (const [limit, value] of [
+      ["rootfs_count", row.count_ratio],
+      ["rootfs_total_storage_gb", row.total_storage_ratio],
+      ["rootfs_max_storage_gb", row.max_rootfs_ratio],
+    ]) {
+      const ratio = Number(value);
+      if (!Number.isFinite(ratio)) continue;
+      const labels = prometheusLabels({
+        account_id: row.account_id ?? "",
+        limit,
+        near_percent: report?.near_percent ?? "",
+      });
+      lines.push(`cocalc_rootfs_quota_near_limit_ratio{${labels}} ${ratio}`);
+    }
+  }
+  lines.push(
+    "# HELP cocalc_rootfs_quota_denials_window_total RootFS quota denials in the selected recent time window.",
+    "# TYPE cocalc_rootfs_quota_denials_window_total gauge",
+  );
+  for (const group of report?.denials ?? []) {
+    const labels = prometheusLabels({
+      account_id: group.account_id ?? "",
+      limit: group.limit ?? "unknown",
+      operation: group.operation ?? "unknown",
+      reason: group.reason ?? "",
+      window_minutes: report?.window_minutes ?? "",
+    });
+    lines.push(
+      `cocalc_rootfs_quota_denials_window_total{${labels}} ${Number(group.count) || 0}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export function registerAdminCommand(
   program: Command,
   deps: AdminCommandDeps,
@@ -942,6 +1002,77 @@ export function registerAdminCommand(
             return formatServiceDenialPrometheus(report);
           }
           return report.groups ?? [];
+        });
+      },
+    );
+
+  admin
+    .command("rootfs-quotas")
+    .description(
+      "show RootFS top users, near-limit accounts, and recent quota denials (admin-only)",
+    )
+    .option("--limit <n>", "maximum rows in each report section", "50")
+    .option("--near-percent <n>", "near-limit threshold percentage", "80")
+    .option("--window-minutes <n>", "denial lookback window in minutes", "60")
+    .option("--min-count <n>", "minimum grouped denial count", "1")
+    .option("--account <account>", "filter by account id, email, or name query")
+    .option("--denial-limit <name>", "filter by denial limit")
+    .option("--operation <operation>", "filter by operation")
+    .option(
+      "--prometheus",
+      "emit Prometheus text exposition for command-based scraping",
+    )
+    .action(
+      async (
+        opts: {
+          limit?: string;
+          nearPercent?: string;
+          windowMinutes?: string;
+          minCount?: string;
+          account?: string;
+          denialLimit?: string;
+          operation?: string;
+          prometheus?: boolean;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin rootfs-quotas", async (ctx) => {
+          const userAccountId = opts.account
+            ? await resolveTargetAccountId(ctx, opts.account)
+            : undefined;
+          const report = await ctx.hub.system.getRootfsQuotaReport({
+            limit: parsePositiveIntegerOption({
+              name: "--limit",
+              value: opts.limit,
+              fallback: 50,
+              max: 500,
+            }),
+            near_percent: parsePositiveIntegerOption({
+              name: "--near-percent",
+              value: opts.nearPercent,
+              fallback: 80,
+              max: 100,
+            }),
+            window_minutes: parsePositiveIntegerOption({
+              name: "--window-minutes",
+              value: opts.windowMinutes,
+              fallback: 60,
+              max: 7 * 24 * 60,
+            }),
+            min_count: parsePositiveIntegerOption({
+              name: "--min-count",
+              value: opts.minCount,
+              fallback: 1,
+              max: 1_000_000,
+            }),
+            user_account_id: userAccountId,
+            denial_limit: opts.denialLimit?.trim() || undefined,
+            operation: opts.operation?.trim() || undefined,
+          });
+          if (opts.prometheus) {
+            return formatRootfsQuotaPrometheus(report);
+          }
+          return report;
         });
       },
     );

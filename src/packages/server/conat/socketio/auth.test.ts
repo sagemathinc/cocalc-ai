@@ -6,6 +6,12 @@ pnpm test `pwd`/auth.test.ts
 
 import { getUser, isAllowed } from "./auth";
 import { inboxPrefix } from "@cocalc/conat/names";
+import { recordApiKeyAuditEventSoon } from "@cocalc/server/api/api-key-audit";
+
+jest.mock("@cocalc/server/api/api-key-audit", () => ({
+  __esModule: true,
+  recordApiKeyAuditEventSoon: jest.fn(),
+}));
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
   __esModule: true,
@@ -46,6 +52,8 @@ import {
   getRememberMeCookieValuesFromHeader,
   getRememberMeHashFromCookieValue,
 } from "@cocalc/server/auth/remember-me";
+
+const mockRecordApiKeyAuditEventSoon = jest.mocked(recordApiKeyAuditEventSoon);
 
 const getHubManagedEgressBlockedMessageMock = jest.fn();
 
@@ -371,6 +379,7 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
 describe("test isAllowed for account API keys", () => {
   beforeEach(() => {
     (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockReset();
+    mockRecordApiKeyAuditEventSoon.mockClear();
   });
 
   const apiKeyUser = {
@@ -390,6 +399,20 @@ describe("test isAllowed for account API keys", () => {
         subject: `hub.account.${account_id}.api`,
       }),
     ).toBe(false);
+    expect(mockRecordApiKeyAuditEventSoon).toHaveBeenCalledWith({
+      event: "api_key_denied",
+      value: {
+        account_id,
+        api_key_id: 1,
+        key_id: "key-1",
+        source: "conat-websocket",
+        subject: `hub.account.${account_id}.api`,
+        conat_operation: "pub",
+        project_id: undefined,
+        reason: "API key subject is not a project subject",
+        code: "api_key_subject_denied",
+      },
+    });
   });
 
   it("allows allowed project subjects with project:exec and collaborator access", async () => {

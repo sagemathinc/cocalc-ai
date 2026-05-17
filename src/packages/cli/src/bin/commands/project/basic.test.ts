@@ -544,6 +544,20 @@ test("project delete defaults to irreversible hard delete", async () => {
   assert.equal(returned?.op_id, "op-1");
 });
 
+test("project delete does not expose a compatibility --hard option", () => {
+  const program = new Command();
+  const project = program.command("project");
+  registerProjectBasicCommands(project, {} as any);
+  const deleteCommand = project.commands.find(
+    (command) => command.name() === "delete",
+  );
+
+  assert.equal(
+    deleteCommand?.options.some((option) => option.long === "--hard"),
+    false,
+  );
+});
+
 test("project delete asks for hard-delete confirmation unless --yes is used", async () => {
   const projectId = "11111111-1111-4111-8111-111111111111";
   let confirmationOpts: any;

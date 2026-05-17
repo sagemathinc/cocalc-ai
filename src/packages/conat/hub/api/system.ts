@@ -2,6 +2,7 @@ import {
   noAuth,
   authFirst,
   authFirstRequireAccount,
+  authFirstRequireProject,
   requireSignedIn,
 } from "./util";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
@@ -42,6 +43,7 @@ export const system = {
   getBayBackups: authFirst,
   getAcpAdmissionDenialReport: authFirstRequireAccount,
   getServiceAdmissionDenialReport: authFirstRequireAccount,
+  getRootfsQuotaReport: authFirstRequireAccount,
   getProjectRuntimeSlotReport: authFirstRequireAccount,
   getProjectBackupShards: authFirst,
   runBayBackup: authFirst,
@@ -131,6 +133,9 @@ export const system = {
   releaseProjectAppPublicSubdomain: authFirst,
   recordManagedProjectEgress: authFirst,
   getManagedProjectEgressPolicy: authFirst,
+  recordServiceAdmissionDenial: authFirstRequireProject,
+  recordServiceAdmissionNearLimit: authFirstRequireProject,
+  getServiceAdmissionConfig: authFirst,
   resolveManagedProjectSshKeyAccount: authFirst,
 
   adminSalesloftSync: authFirst,
@@ -508,6 +513,46 @@ export interface ServiceAdmissionDenialReport {
   window_minutes: number;
   min_count: number;
   groups: ServiceAdmissionDenialSummary[];
+}
+
+export interface RootfsQuotaUsageRow {
+  account_id: string;
+  count: number;
+  total_storage_bytes: number;
+  max_rootfs_bytes: number;
+  last_updated?: string | null;
+  rootfs_count_limit?: number | null;
+  rootfs_total_storage_bytes_limit?: number | null;
+  rootfs_max_storage_bytes_limit?: number | null;
+  count_ratio?: number | null;
+  total_storage_ratio?: number | null;
+  max_rootfs_ratio?: number | null;
+}
+
+export interface RootfsQuotaDenialSummary {
+  account_id: string | null;
+  limit: string;
+  operation: string;
+  reason?: string | null;
+  count: number;
+  first_time: string;
+  last_time: string;
+  max_current: number;
+  max_maximum: number;
+  max_requested: number;
+  sample_image?: string | null;
+  sample_image_id?: string | null;
+}
+
+export interface RootfsQuotaReport {
+  checked_at: string;
+  since: string;
+  window_minutes: number;
+  min_count: number;
+  near_percent: number;
+  top_users: RootfsQuotaUsageRow[];
+  near_limit_users: RootfsQuotaUsageRow[];
+  denials: RootfsQuotaDenialSummary[];
 }
 
 export interface ProjectRuntimeSlotReportSlot {
@@ -1390,6 +1435,17 @@ export interface System {
     source?: string | null;
   }) => Promise<ServiceAdmissionDenialReport>;
 
+  getRootfsQuotaReport: (opts?: {
+    account_id?: string;
+    window_minutes?: number;
+    min_count?: number;
+    limit?: number;
+    near_percent?: number;
+    user_account_id?: string | null;
+    denial_limit?: string | null;
+    operation?: string | null;
+  }) => Promise<RootfsQuotaReport>;
+
   getProjectRuntimeSlotReport: (opts?: {
     account_id?: string;
     sponsor_account_id?: string | null;
@@ -2062,6 +2118,38 @@ export interface System {
     metadata?: Record<string, unknown>;
   }) => Promise<{ recorded: boolean; account_id?: string }>;
 
+  recordServiceAdmissionDenial: (opts: {
+    surface: string;
+    limit: string;
+    current: number;
+    maximum: number;
+    source?: string;
+    reason?: string;
+    host_id?: string;
+    account_id?: string;
+    project_id?: string;
+    subject?: string;
+    path?: string;
+    key?: string;
+    time?: number;
+  }) => Promise<void>;
+
+  recordServiceAdmissionNearLimit: (opts: {
+    surface: string;
+    limit: string;
+    current: number;
+    maximum: number;
+    source?: string;
+    reason?: string;
+    host_id?: string;
+    account_id?: string;
+    project_id?: string;
+    subject?: string;
+    path?: string;
+    key?: string;
+    time?: number;
+  }) => Promise<void>;
+
   getManagedProjectEgressPolicy: (opts: {
     account_id?: string;
     project_id?: string;
@@ -2077,6 +2165,14 @@ export interface System {
     egress_7d_bytes?: number;
     managed_egress_categories_5h_bytes?: Record<string, number>;
     managed_egress_categories_7d_bytes?: Record<string, number>;
+  }>;
+
+  getServiceAdmissionConfig: () => Promise<{
+    limits: Record<string, number>;
+    near_limit: {
+      thresholdPercent: number;
+      logIntervalMs: number;
+    };
   }>;
 
   resolveManagedProjectSshKeyAccount: (opts: {

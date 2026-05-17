@@ -19,6 +19,10 @@ const PII_EVENTS = new Set([
   "sso_sign_in_allowed",
   "sso_sign_in_denied",
   "sso_required_password_sign_in_blocked",
+  "api_key_created",
+  "api_key_deleted",
+  "api_key_used",
+  "api_key_denied",
 ]);
 
 export default async function centralLog({

@@ -64,7 +64,10 @@ import type { ProjectSecretsRuntimeCache } from "@cocalc/util/project-secrets";
 import getLogger from "@cocalc/backend/logger";
 import getPool from "@cocalc/database/pool";
 import centralLog from "@cocalc/database/postgres/central-log";
-import { recordServiceAdmissionDenialLocal as recordServiceAdmissionDenialCentralLog } from "./service-admission-denials";
+import {
+  recordServiceAdmissionDenialLocal as recordServiceAdmissionDenialCentralLog,
+  recordServiceAdmissionNearLimitLocal as recordServiceAdmissionNearLimitCentralLog,
+} from "./service-admission-denials";
 import { appendProjectOutboxEventForProject } from "@cocalc/database/postgres/project-events-outbox";
 import { publishProjectAccountFeedEventsBestEffort } from "@cocalc/server/account/project-feed";
 import {
@@ -1446,6 +1449,57 @@ export async function recordServiceAdmissionDenialLocal({
     project_id,
   });
   await recordServiceAdmissionDenialCentralLog({
+    host_id,
+    project_id,
+    ...event,
+  });
+}
+
+export async function recordServiceAdmissionNearLimit({
+  host_id,
+  project_id,
+  ...event
+}: ServiceAdmissionDenialRecord): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  const ownership = await resolveProjectBay(project_id);
+  if (ownership?.bay_id && ownership.bay_id !== getConfiguredBayId()) {
+    await getInterBayBridge()
+      .hostConnection(ownership.bay_id)
+      .recordServiceAdmissionNearLimit({
+        host_id,
+        project_id,
+        ...event,
+      });
+    return;
+  }
+  await recordServiceAdmissionNearLimitLocal({
+    host_id,
+    project_id,
+    ...event,
+  });
+}
+
+export async function recordServiceAdmissionNearLimitLocal({
+  host_id,
+  project_id,
+  ...event
+}: ServiceAdmissionDenialRecord): Promise<void> {
+  if (!host_id) {
+    throw new Error("host_id must be specified");
+  }
+  if (!project_id) {
+    throw new Error("project_id must be specified");
+  }
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+  });
+  await recordServiceAdmissionNearLimitCentralLog({
     host_id,
     project_id,
     ...event,

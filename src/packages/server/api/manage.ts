@@ -32,6 +32,10 @@ import {
 } from "@cocalc/server/inter-bay/accounts";
 import { type ApiKeyPrincipal, normalizeApiKeyScope } from "./api-key-scope";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
+import {
+  recordApiKeyAuditEvent,
+  recordApiKeyAuditEventSoon,
+} from "./api-key-audit";
 
 const log = getLogger("server:api:manage");
 
@@ -213,6 +217,17 @@ async function deleteApiKey({ account_id, id }) {
   await deleteClusterAccountApiKeyDirectoryEntry({
     key_id: `${existing?.key_id ?? ""}`.trim(),
   });
+  if (existing != null) {
+    await recordApiKeyAuditEvent({
+      event: "api_key_deleted",
+      value: {
+        account_id,
+        api_key_id: existing.id,
+        key_id: existing.key_id,
+        source: "account-api-key-management",
+      },
+    });
+  }
 }
 
 async function numKeys(account_id: string): Promise<number> {
@@ -277,6 +292,15 @@ async function createApiKey({
     allowed_project_ids: scope.allowed_project_ids,
     expire: expire ?? null,
     last_active: null,
+  });
+  await recordApiKeyAuditEvent({
+    event: "api_key_created",
+    value: {
+      account_id,
+      api_key_id: id,
+      key_id,
+      source: "account-api-key-management",
+    },
   });
   return { ...rows[0], trunc, secret };
 }
@@ -406,6 +430,14 @@ export async function getAccountWithApiKey(
 
   const v2 = parseApiKeyV2(secret);
   if (!v2) {
+    recordApiKeyAuditEventSoon({
+      event: "api_key_denied",
+      value: {
+        source: "api-key-auth",
+        reason: "invalid API key format",
+        code: "api_key_invalid_format",
+      },
+    });
     return undefined;
   }
   const { rows } = await pool.query(
@@ -413,21 +445,37 @@ export async function getAccountWithApiKey(
     [v2.key_id],
   );
   return (
-    (await checkApiKeyRows({ rows, secret })) ??
-    (await checkClusterAccountApiKeyDirectoryEntry({ secret }))
+    (await checkApiKeyRows({ rows, secret, key_id: v2.key_id })) ??
+    (await checkClusterAccountApiKeyDirectoryEntry({
+      secret,
+      key_id: v2.key_id,
+    }))
   );
 }
 
 async function checkApiKeyRows({
   rows,
   secret,
+  key_id,
 }: {
   rows: any[];
   secret: string;
+  key_id: string;
 }): Promise<ApiKeyPrincipal | undefined> {
   if (rows.length == 0) return undefined;
   if (await isBanned(rows[0].account_id)) {
     log.debug("getAccountWithApiKey: banned api key ", rows[0]?.account_id);
+    recordApiKeyAuditEventSoon({
+      event: "api_key_denied",
+      value: {
+        account_id: rows[0].account_id,
+        api_key_id: rows[0].id,
+        key_id: rows[0].key_id ?? key_id,
+        source: "api-key-auth-local",
+        reason: "account is banned",
+        code: "api_key_account_banned",
+      },
+    });
     return;
   }
   if (verifyPassword(secret, rows[0].hash)) {
@@ -436,6 +484,17 @@ async function checkApiKeyRows({
       // expired entries will get automatically deleted eventually by database
       // maintenance, but we obviously shouldn't depend on that.
       await deleteApiKey(rows[0]);
+      recordApiKeyAuditEventSoon({
+        event: "api_key_denied",
+        value: {
+          account_id: rows[0].account_id,
+          api_key_id: rows[0].id,
+          key_id: rows[0].key_id ?? key_id,
+          source: "api-key-auth-local",
+          reason: "API key is expired",
+          code: "api_key_expired",
+        },
+      });
       return undefined;
     }
 
@@ -454,6 +513,15 @@ async function checkApiKeyRows({
         expire: rows[0].expire ?? null,
         last_active: new Date(),
       });
+      recordApiKeyAuditEventSoon({
+        event: "api_key_used",
+        value: {
+          account_id: rows[0].account_id,
+          api_key_id: rows[0].id,
+          key_id: rows[0].key_id ?? key_id,
+          source: "api-key-auth-local",
+        },
+      });
       return {
         account_id: rows[0].account_id,
         api_key_id: rows[0].id,
@@ -464,30 +532,93 @@ async function checkApiKeyRows({
       };
     }
   }
+  recordApiKeyAuditEventSoon({
+    event: "api_key_denied",
+    value: {
+      account_id: rows[0]?.account_id,
+      api_key_id: rows[0]?.id,
+      key_id: rows[0]?.key_id ?? key_id,
+      source: "api-key-auth-local",
+      reason: "API key secret does not match",
+      code: "api_key_secret_mismatch",
+    },
+  });
   return undefined;
 }
 
 async function checkClusterAccountApiKeyDirectoryEntry({
   secret,
+  key_id,
 }: {
   secret: string;
+  key_id: string;
 }): Promise<ApiKeyPrincipal | undefined> {
   const v2 = parseApiKeyV2(secret);
   if (!v2) return undefined;
   const entry = await getClusterAccountApiKeyByKeyId(v2.key_id);
-  if (!entry?.account_id || !entry.hash) return undefined;
+  if (!entry?.account_id || !entry.hash) {
+    recordApiKeyAuditEventSoon({
+      event: "api_key_denied",
+      value: {
+        key_id,
+        source: "api-key-auth-directory",
+        reason: "API key not found",
+        code: "api_key_not_found",
+      },
+    });
+    return undefined;
+  }
   const account = await getClusterAccountById(entry.account_id);
   if (account?.banned) {
+    recordApiKeyAuditEventSoon({
+      event: "api_key_denied",
+      value: {
+        account_id: entry.account_id,
+        key_id: entry.key_id,
+        source: "api-key-auth-directory",
+        reason: "account is banned",
+        code: "api_key_account_banned",
+      },
+    });
     return undefined;
   }
   if (!verifyPassword(secret, entry.hash)) {
+    recordApiKeyAuditEventSoon({
+      event: "api_key_denied",
+      value: {
+        account_id: entry.account_id,
+        key_id: entry.key_id,
+        source: "api-key-auth-directory",
+        reason: "API key secret does not match",
+        code: "api_key_secret_mismatch",
+      },
+    });
     return undefined;
   }
   if (entry.expire != null && entry.expire <= Date.now()) {
     await deleteClusterAccountApiKeyDirectoryEntry({ key_id: v2.key_id });
+    recordApiKeyAuditEventSoon({
+      event: "api_key_denied",
+      value: {
+        account_id: entry.account_id,
+        key_id: entry.key_id,
+        source: "api-key-auth-directory",
+        reason: "API key is expired",
+        code: "api_key_expired",
+      },
+    });
     return undefined;
   }
   await touchClusterAccountApiKeyDirectoryEntry({ key_id: v2.key_id });
+  recordApiKeyAuditEventSoon({
+    event: "api_key_used",
+    value: {
+      account_id: entry.account_id,
+      api_key_id: -1,
+      key_id: entry.key_id,
+      source: "api-key-auth-directory",
+    },
+  });
   return {
     account_id: entry.account_id,
     api_key_id: -1,

@@ -8,7 +8,14 @@ import type { Options, ServiceCall } from "./service";
 import { until } from "@cocalc/util/async-utils";
 import { randomId } from "@cocalc/conat/names";
 import { DataEncoding, decode, encode } from "../core/codec";
-import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
+import {
+  recordServiceAdmissionDenial,
+  recordServiceAdmissionNearLimit,
+} from "@cocalc/conat/admission/denials";
+import {
+  getServiceAdmissionLimit,
+  serviceAdmissionLimitEnvName,
+} from "@cocalc/conat/admission/limits";
 export type { ConatService };
 
 type ServiceTransport = "fast-rpc" | "request";
@@ -27,25 +34,6 @@ const TYPED_SERVICE_ENCODING = DataEncoding.MsgPack;
 // and fall back to legacy request transport whenever either side would exceed
 // this budget.
 const MAX_FAST_RPC_TYPED_SERVICE_BYTES = 4 * 1024 * 1024;
-
-function positiveIntegerEnv({
-  name,
-  fallback,
-}: {
-  name: string;
-  fallback: number;
-}): number {
-  const value = Number(process.env[name]);
-  if (!Number.isFinite(value) || value <= 0) {
-    return fallback;
-  }
-  return Math.floor(value);
-}
-
-const DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS = positiveIntegerEnv({
-  name: "COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE",
-  fallback: 128,
-});
 
 function serviceTransport(options: { transport?: ServiceTransport }) {
   return (
@@ -180,16 +168,20 @@ export function createServiceHandler<Api>({
   let closed = false;
   let handle: { close: () => void; stop: () => void } | undefined;
   let activeFastRpcHandlers = 0;
-  const maxFastRpcHandlers =
-    options.maxParallelHandlers ?? DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS;
+  const maxFastRpcHandlers = () =>
+    options.maxParallelHandlers ??
+    getServiceAdmissionLimit("conat_service_max_parallel_active");
   const runFastRpcHandler = async ({ raw }: { raw: Uint8Array }) => {
-    if (activeFastRpcHandlers >= maxFastRpcHandlers) {
+    const maximum = maxFastRpcHandlers();
+    if (activeFastRpcHandlers >= maximum) {
       recordServiceAdmissionDenial({
         surface: "conat-typed-service",
         source: "fast-rpc-handler",
-        limit: "COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE",
+        limit: serviceAdmissionLimitEnvName(
+          "conat_service_max_parallel_active",
+        ),
         current: activeFastRpcHandlers,
-        maximum: maxFastRpcHandlers,
+        maximum,
         reason: `typed service '${options.service}' is busy`,
         subject,
         project_id: options.project_id,
@@ -200,6 +192,18 @@ export function createServiceHandler<Api>({
       (err as any).code = 503;
       throw err;
     }
+    recordServiceAdmissionNearLimit({
+      surface: "conat-typed-service",
+      source: "fast-rpc-handler",
+      limit: serviceAdmissionLimitEnvName("conat_service_max_parallel_active"),
+      current: activeFastRpcHandlers + 1,
+      maximum,
+      reason: `typed service '${options.service}' is near capacity`,
+      subject,
+      project_id: options.project_id,
+      account_id: options.account_id,
+      key: options.service,
+    });
     activeFastRpcHandlers += 1;
     try {
       const mesg = decode({ encoding: TYPED_SERVICE_ENCODING, data: raw });

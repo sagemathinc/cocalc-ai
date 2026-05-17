@@ -44,9 +44,6 @@ import {
 } from "./client";
 import {
   RESOURCE,
-  MAX_CONNECTIONS_PER_USER,
-  MAX_CONNECTIONS_PER_HUB_USER,
-  MAX_CONNECTIONS,
   MAX_PAYLOAD,
   MAX_SUBSCRIPTIONS_PER_CLIENT,
   MAX_SUBSCRIPTIONS_PER_HUB,
@@ -123,7 +120,14 @@ import { type SysConatServer, sysApiSubject, sysApi } from "./sys";
 import { forkedConatServer } from "./start-server";
 import { EventEmitter } from "events";
 import { Metrics } from "../types";
-import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
+import {
+  recordServiceAdmissionDenial,
+  recordServiceAdmissionNearLimit,
+} from "@cocalc/conat/admission/denials";
+import {
+  getServiceAdmissionLimit,
+  serviceAdmissionLimitEnvName,
+} from "@cocalc/conat/admission/limits";
 
 const logger = getLogger("conat:core:server");
 
@@ -326,10 +330,14 @@ export class ConatServer extends EventEmitter {
   private stats: { [id: string]: ConnectionStats } = {};
   private usage: UsageMonitor;
   public state: State = "init";
-  private readonly maxInboundEventsPerSocketWindow: number;
-  private readonly maxInboundEventsPerIdentityWindow: number;
-  private readonly inboundEventWindowMs: number;
-  private readonly inboundEventBlockMs: number;
+  private readonly configuredMaxInboundEventsPerSocketWindow: number;
+  private readonly configuredMaxInboundEventsPerIdentityWindow: number;
+  private readonly configuredInboundEventWindowMs: number;
+  private readonly configuredInboundEventBlockMs: number;
+  private readonly explicitMaxInboundEventsPerSocketWindow: boolean;
+  private readonly explicitMaxInboundEventsPerIdentityWindow: boolean;
+  private readonly explicitInboundEventWindowMs: boolean;
+  private readonly explicitInboundEventBlockMs: boolean;
   private inboundAdmissionBySocket: Map<string, InboundAdmissionRecord> =
     new Map();
   private inboundAdmissionByIdentity: Map<string, InboundAdmissionRecord> =
@@ -411,10 +419,18 @@ export class ConatServer extends EventEmitter {
       ),
     } = options;
     this.clusterName = clusterName;
-    this.maxInboundEventsPerSocketWindow = maxInboundEventsPerSocketWindow;
-    this.maxInboundEventsPerIdentityWindow = maxInboundEventsPerIdentityWindow;
-    this.inboundEventWindowMs = inboundEventWindowMs;
-    this.inboundEventBlockMs = inboundEventBlockMs;
+    this.explicitMaxInboundEventsPerSocketWindow =
+      options.maxInboundEventsPerSocketWindow != null;
+    this.explicitMaxInboundEventsPerIdentityWindow =
+      options.maxInboundEventsPerIdentityWindow != null;
+    this.explicitInboundEventWindowMs = options.inboundEventWindowMs != null;
+    this.explicitInboundEventBlockMs = options.inboundEventBlockMs != null;
+    this.configuredMaxInboundEventsPerSocketWindow =
+      maxInboundEventsPerSocketWindow;
+    this.configuredMaxInboundEventsPerIdentityWindow =
+      maxInboundEventsPerIdentityWindow;
+    this.configuredInboundEventWindowMs = inboundEventWindowMs;
+    this.configuredInboundEventBlockMs = inboundEventBlockMs;
     this.options = {
       port,
       ssl,
@@ -525,24 +541,106 @@ export class ConatServer extends EventEmitter {
 
   private initUsage = () => {
     this.usage = new UsageMonitor({
-      maxPerUser: MAX_CONNECTIONS_PER_USER,
+      maxPerUser: getServiceAdmissionLimit("conat_max_connections_per_user"),
       getMaxPerUser: (user) =>
-        isHubUser(user) ? MAX_CONNECTIONS_PER_HUB_USER : undefined,
-      max: MAX_CONNECTIONS,
+        isHubUser(user)
+          ? getServiceAdmissionLimit("conat_max_connections_per_hub_user")
+          : getServiceAdmissionLimit("conat_max_connections_per_user"),
+      max: getServiceAdmissionLimit("conat_max_connections"),
+      getMax: () => getServiceAdmissionLimit("conat_max_connections"),
       resource: RESOURCE,
       log: (...args) => this.log("usage", ...args),
     });
+    this.usage.on("deny", (user, limit, type) => {
+      const userRecord =
+        typeof user === "object" && user != null ? (user as any) : {};
+      recordServiceAdmissionDenial({
+        surface: "conat-websocket",
+        source: type === "global" ? "connection-total" : "connection-user",
+        limit:
+          type === "global"
+            ? serviceAdmissionLimitEnvName("conat_max_connections")
+            : isHubUser(user)
+              ? serviceAdmissionLimitEnvName(
+                  "conat_max_connections_per_hub_user",
+                )
+              : serviceAdmissionLimitEnvName("conat_max_connections_per_user"),
+        current: type === "global" ? this.usage.stats().total : limit,
+        maximum: limit,
+        reason: "Conat websocket connection limit reached",
+        account_id:
+          typeof userRecord.account_id === "string"
+            ? userRecord.account_id
+            : undefined,
+        project_id:
+          typeof userRecord.project_id === "string"
+            ? userRecord.project_id
+            : undefined,
+      });
+    });
+    this.usage.on("total", (total, limit) => {
+      recordServiceAdmissionNearLimit({
+        surface: "conat-websocket",
+        source: "connection-total",
+        limit: serviceAdmissionLimitEnvName("conat_max_connections"),
+        current: total,
+        maximum: limit ?? 0,
+        reason: "Conat websocket connection total is near capacity",
+      });
+    });
+    this.usage.on("add", (user, count, limit) => {
+      const userRecord =
+        typeof user === "object" && user != null ? (user as any) : {};
+      recordServiceAdmissionNearLimit({
+        surface: "conat-websocket",
+        source: "connection-user",
+        limit: isHubUser(user)
+          ? serviceAdmissionLimitEnvName("conat_max_connections_per_hub_user")
+          : serviceAdmissionLimitEnvName("conat_max_connections_per_user"),
+        current: count,
+        maximum: limit ?? 0,
+        reason: "Conat websocket user connection count is near capacity",
+        account_id:
+          typeof userRecord.account_id === "string"
+            ? userRecord.account_id
+            : undefined,
+        project_id:
+          typeof userRecord.project_id === "string"
+            ? userRecord.project_id
+            : undefined,
+      });
+    });
   };
+
+  private maxInboundEventsPerSocketWindow = (): number =>
+    this.explicitMaxInboundEventsPerSocketWindow
+      ? this.configuredMaxInboundEventsPerSocketWindow
+      : getServiceAdmissionLimit("conat_inbound_events_per_socket_window");
+
+  private maxInboundEventsPerIdentityWindow = (): number =>
+    this.explicitMaxInboundEventsPerIdentityWindow
+      ? this.configuredMaxInboundEventsPerIdentityWindow
+      : getServiceAdmissionLimit("conat_inbound_events_per_identity_window");
+
+  private inboundEventWindowMs = (): number =>
+    this.explicitInboundEventWindowMs
+      ? this.configuredInboundEventWindowMs
+      : getServiceAdmissionLimit("conat_inbound_event_window_ms");
+
+  private inboundEventBlockMs = (): number =>
+    this.explicitInboundEventBlockMs
+      ? this.configuredInboundEventBlockMs
+      : getServiceAdmissionLimit("conat_inbound_event_block_ms");
 
   public getUsage = (): Metrics => {
     return {
       ...this.usage.getMetrics(),
       "inbound-deny:count": this.inboundAdmissionDeniedCount,
       "inbound-identity-deny:count": this.inboundIdentityAdmissionDeniedCount,
-      "inbound-event-window:limit": this.maxInboundEventsPerSocketWindow,
+      "inbound-event-window:limit": this.maxInboundEventsPerSocketWindow(),
       "inbound-identity-event-window:limit":
-        this.maxInboundEventsPerIdentityWindow,
-      "inbound-event-window:ms": this.inboundEventWindowMs,
+        this.maxInboundEventsPerIdentityWindow(),
+      "inbound-event-window:ms": this.inboundEventWindowMs(),
     };
   };
 
@@ -725,15 +823,16 @@ export class ConatServer extends EventEmitter {
     if (isHubUser(user) || isProjectUser(user)) {
       return Number.MAX_SAFE_INTEGER;
     }
-    return this.maxInboundEventsPerSocketWindow;
+    return this.maxInboundEventsPerSocketWindow();
   };
 
   private pruneInboundAdmission = (now: number) => {
-    if (now - this.lastInboundAdmissionPrune < this.inboundEventWindowMs) {
+    const windowMs = this.inboundEventWindowMs();
+    if (now - this.lastInboundAdmissionPrune < windowMs) {
       return;
     }
     this.lastInboundAdmissionPrune = now;
-    const maxAge = this.inboundEventWindowMs + this.inboundEventBlockMs;
+    const maxAge = windowMs + this.inboundEventBlockMs();
     const prune = (records: Map<string, InboundAdmissionRecord>) => {
       for (const [key, record] of records) {
         if (record.blockedUntil > now) {
@@ -784,8 +883,12 @@ export class ConatServer extends EventEmitter {
       source: dimension,
       limit:
         dimension === "identity"
-          ? "COCALC_CONAT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW"
-          : "COCALC_CONAT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW",
+          ? serviceAdmissionLimitEnvName(
+              "conat_inbound_events_per_identity_window",
+            )
+          : serviceAdmissionLimitEnvName(
+              "conat_inbound_events_per_socket_window",
+            ),
       current: record.count,
       maximum: limit,
       reason: "high-rate Conat socket event stream",
@@ -796,7 +899,7 @@ export class ConatServer extends EventEmitter {
       subject: event,
       key,
     });
-    if (now - record.lastLogged >= this.inboundEventBlockMs) {
+    if (now - record.lastLogged >= this.inboundEventBlockMs()) {
       record.lastLogged = now;
       logger.warn("rejecting high-rate Conat socket event stream", {
         id: this.id,
@@ -806,7 +909,7 @@ export class ConatServer extends EventEmitter {
         event,
         count: record.count,
         limit,
-        windowMs: this.inboundEventWindowMs,
+        windowMs: this.inboundEventWindowMs(),
         retryMs,
         user: this.stats[socket.id]?.user,
       });
@@ -848,7 +951,7 @@ export class ConatServer extends EventEmitter {
     let record = records.get(key);
     if (
       record == null ||
-      now - record.windowStart > this.inboundEventWindowMs ||
+      now - record.windowStart > this.inboundEventWindowMs() ||
       (record.blockedUntil > 0 && record.blockedUntil <= now)
     ) {
       records.set(key, {
@@ -873,9 +976,31 @@ export class ConatServer extends EventEmitter {
     }
     record.count += 1;
     if (record.count <= limit) {
+      const user = this.stats[socket.id]?.user;
+      recordServiceAdmissionNearLimit({
+        surface: "conat-socket",
+        source: dimension,
+        limit:
+          dimension === "identity"
+            ? serviceAdmissionLimitEnvName(
+                "conat_inbound_events_per_identity_window",
+              )
+            : serviceAdmissionLimitEnvName(
+                "conat_inbound_events_per_socket_window",
+              ),
+        current: record.count,
+        maximum: limit,
+        reason: "Conat socket event stream is near capacity",
+        account_id:
+          typeof user?.account_id === "string" ? user.account_id : undefined,
+        project_id:
+          typeof user?.project_id === "string" ? user.project_id : undefined,
+        subject: event,
+        key,
+      });
       return true;
     }
-    record.blockedUntil = now + this.inboundEventBlockMs;
+    record.blockedUntil = now + this.inboundEventBlockMs();
     return this.denyInboundEvent({
       socket,
       event,
@@ -923,7 +1048,7 @@ export class ConatServer extends EventEmitter {
       records: this.inboundAdmissionByIdentity,
       key: this.inboundIdentityKey(socket),
       dimension: "identity",
-      limit: this.maxInboundEventsPerIdentityWindow,
+      limit: this.maxInboundEventsPerIdentityWindow(),
       now,
       respond,
     });

@@ -5,6 +5,7 @@ import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fenc
 import { revokeAllAuthSessions } from "@cocalc/server/auth/auth-sessions";
 import { deleteAllRememberMe } from "@cocalc/server/auth/remember-me";
 import { disposeOwnedProjectsForAccountDeletion } from "@cocalc/server/projects/ownership";
+import { deleteRootfsImagesForAccountDeletion } from "@cocalc/server/rootfs/catalog";
 import { StripeClient } from "@cocalc/server/stripe/client";
 
 export default async function deleteAccount(account_id: string): Promise<void> {
@@ -27,6 +28,11 @@ export default async function deleteAccount(account_id: string): Promise<void> {
   // owner-only projects are hard-deleted, and shared projects transfer to a
   // remaining collaborator so they never become ownerless storage.
   await disposeOwnedProjectsForAccountDeletion(account_id);
+
+  // Owned RootFS catalog entries are account-owned durable storage resources.
+  // Retire them before marking the account deleted so the existing release-GC
+  // blocker logic can remove artifacts that are no longer referenced.
+  await deleteRootfsImagesForAccountDeletion(account_id);
 
   // Mark the account as deleted -- do this last since once done, user is locked out.
   // Any step above could fail, and user could just try again in that case.

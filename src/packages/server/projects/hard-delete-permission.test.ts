@@ -102,8 +102,9 @@ describe("hard-delete permission", () => {
         project_id: PROJECT_ID,
         account_id: COLLABORATOR_ID,
       }),
-    ).rejects.toThrow(
-      "must be a project owner to permanently delete a workspace",
-    );
+    ).rejects.toMatchObject({
+      code: "project_delete_not_owner",
+      message: "must be a project owner to permanently delete a workspace",
+    });
   });
 });

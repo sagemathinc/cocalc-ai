@@ -159,3 +159,52 @@ test("emitError emits structured fresh-auth hint in json mode", () => {
   assert.equal(parsed.error.code, "fresh_auth_required");
   assert.match(parsed.error.hint, /cocalc auth elevate/);
 });
+
+test("emitError emits structured project hard-delete rate-limit details in json mode", () => {
+  const output = withStderrCapture(() => {
+    emitError(
+      {
+        globals: { output: "json" },
+        apiBaseUrl: "https://lite.example.test",
+        accountId: "acct-1",
+      },
+      "project delete",
+      new Error(
+        "Too many project deletes are already queued or running for this account (queued=2, running=1, total=3, limit=3). - callHub: subject='hub.account.acct-1.api', name='projects.hardDeleteProject', code='project_delete_rate_limited_account_inflight' ",
+      ),
+      (url) => url,
+    );
+  });
+
+  const parsed = JSON.parse(output);
+  assert.equal(
+    parsed.error.code,
+    "project_delete_rate_limited_account_inflight",
+  );
+  assert.deepEqual(parsed.error.details, {
+    queued: 2,
+    running: 1,
+    total: 3,
+    limit: 3,
+  });
+});
+
+test("emitError emits structured project hard-delete not-owner code in json mode", () => {
+  const output = withStderrCapture(() => {
+    emitError(
+      {
+        globals: { output: "json" },
+        apiBaseUrl: "https://lite.example.test",
+        accountId: "acct-1",
+      },
+      "project delete",
+      new Error(
+        "must be a project owner to permanently delete a workspace - callHub: subject='hub.account.acct-1.api', name='projects.hardDeleteProject', code='project_delete_not_owner' ",
+      ),
+      (url) => url,
+    );
+  });
+
+  const parsed = JSON.parse(output);
+  assert.equal(parsed.error.code, "project_delete_not_owner");
+});

@@ -7,6 +7,7 @@ import centralLog from "@cocalc/database/postgres/central-log";
 import {
   normalizeServiceAdmissionDenialEvent,
   setServiceAdmissionDenialRecorder,
+  setServiceAdmissionNearLimitRecorder,
   type ServiceAdmissionDenialEvent,
 } from "@cocalc/conat/admission/denials";
 
@@ -19,9 +20,22 @@ function optionalString(value: unknown, maxLength: number): string | undefined {
 export async function recordServiceAdmissionDenialLocal(
   event: ServiceAdmissionDenialEvent,
 ): Promise<void> {
+  await recordServiceAdmissionEventLocal("service_admission_denied", event);
+}
+
+export async function recordServiceAdmissionNearLimitLocal(
+  event: ServiceAdmissionDenialEvent,
+): Promise<void> {
+  await recordServiceAdmissionEventLocal("service_admission_near_limit", event);
+}
+
+async function recordServiceAdmissionEventLocal(
+  centralLogEvent: "service_admission_denied" | "service_admission_near_limit",
+  event: ServiceAdmissionDenialEvent,
+): Promise<void> {
   const normalized = normalizeServiceAdmissionDenialEvent(event);
   await centralLog({
-    event: "service_admission_denied",
+    event: centralLogEvent,
     value: {
       surface: optionalString(normalized.surface, 120) ?? "unknown",
       limit: optionalString(normalized.limit, 120) ?? "unknown",
@@ -42,4 +56,5 @@ export async function recordServiceAdmissionDenialLocal(
 
 export function configureHubServiceAdmissionDenialRecorder(): void {
   setServiceAdmissionDenialRecorder(recordServiceAdmissionDenialLocal);
+  setServiceAdmissionNearLimitRecorder(recordServiceAdmissionNearLimitLocal);
 }

@@ -338,23 +338,31 @@ export default async function createProject(opts: CreateProjectOptions) {
     if (!requested_region_raw && rows[0]?.region) {
       requested_region_raw = rows[0].region;
     }
-    if (!opts.rootfs_image && rows[0]?.rootfs_image) {
+    const currentRootfsRows = await pool.query<{
+      image: string | null;
+      image_id: string | null;
+    }>(
+      `SELECT runtime_image AS image, image_id
+       FROM project_rootfs_states
+       WHERE project_id=$1 AND state_role='current'
+       LIMIT 1`,
+      [src_project_id],
+    );
+    const sourceRootfs = currentRootfsRows.rows[0];
+    if (sourceRootfs?.image) {
+      opts.rootfs_image = sourceRootfs.image;
+      opts.rootfs_image_id = sourceRootfs.image_id ?? undefined;
+    } else if (!opts.rootfs_image && rows[0]?.rootfs_image) {
       opts.rootfs_image = rows[0].rootfs_image;
-    }
-    if (!opts.rootfs_image_id && rows[0]?.rootfs_image_id) {
-      opts.rootfs_image_id = rows[0].rootfs_image_id;
+      if (!opts.rootfs_image_id && rows[0]?.rootfs_image_id) {
+        opts.rootfs_image_id = rows[0].rootfs_image_id;
+      }
     }
     if (!host_id && rows[0]?.owning_bay_id) {
       projectOwningBayId =
         `${rows[0].owning_bay_id}`.trim() || projectOwningBayId;
     }
     preferredBackupRepoId = rows[0]?.backup_repo_id ?? null;
-    // create filesystem for new project as a clone.
-    // Route clone to the host that owns the source project.
-    const client = await getProjectFileServerClient({
-      project_id: src_project_id,
-    });
-    await client.clone({ project_id, src_project_id });
   }
 
   const projectRootfsImage = opts.rootfs_image ?? rootfs_image;
@@ -365,6 +373,15 @@ export default async function createProject(opts: CreateProjectOptions) {
       image: projectRootfsImage,
       image_id: projectRootfsImageId ?? undefined,
     });
+  }
+
+  if (src_project_id) {
+    // Create filesystem for new project as a clone after RootFS policy
+    // validation. Route clone to the host that owns the source project.
+    const client = await getProjectFileServerClient({
+      project_id: src_project_id,
+    });
+    await client.clone({ project_id, src_project_id });
   }
 
   const requestedRegion = parseR2Region(requested_region_raw);

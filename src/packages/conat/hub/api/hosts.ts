@@ -1131,6 +1131,7 @@ export const hosts = {
   getProjectOwnerEffectiveLimits: authFirstRequireHost,
   recordAcpAdmissionDenial: authFirstRequireHost,
   recordServiceAdmissionDenial: authFirstRequireHost,
+  recordServiceAdmissionNearLimit: authFirstRequireHost,
   recordProjectBackup: authFirstRequireHost,
   recordProjectBackupIndex: authFirstRequireHost,
   getProjectBackupIndexes: authFirstRequireHost,
@@ -1347,6 +1348,9 @@ export interface Hosts {
   }) => Promise<MembershipEffectiveLimits>;
   recordAcpAdmissionDenial: (opts: AcpAdmissionDenialRecord) => Promise<void>;
   recordServiceAdmissionDenial: (
+    opts: ServiceAdmissionDenialRecord,
+  ) => Promise<void>;
+  recordServiceAdmissionNearLimit: (
     opts: ServiceAdmissionDenialRecord,
   ) => Promise<void>;
   recordProjectBackup: (opts: {

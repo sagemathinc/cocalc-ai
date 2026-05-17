@@ -15,23 +15,73 @@ Statuses:
 - `accepted-risk`: explicitly accepted for first release.
 - `done`: implemented and validated enough for release.
 
+Current score after the 2026-05-17 SEC-SCAN tracking update:
+
+- `done`: 6 findings.
+- `guarded`: 8 findings.
+- `blocked`: 0 findings.
+
 ## Summary
 
-| ID              | Surface                                      | Status  | Severity | Current Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Next Action                                                                                                                                                                        |
-| --------------- | -------------------------------------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Revisit defaults after load testing.                                                                                                                                               |
-| SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Add actor-account limit cache if collaborator caps must differ from owner caps.                                                                                                    |
-| SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Add membership-backed automation-specific caps if needed.                                                                                                                          |
-| SEC-WS-001      | General hub/project-host websocket admission | guarded | critical | First pass found unbounded hub Conat API dispatch, generic parallel Conat services, raw project-host stream/socket services, app proxy websockets, and raw Conat socket events; these now fast-fail above conservative active-request/message caps.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Tune per-identity limits and production alert thresholds from telemetry.                                                                                                           |
-| SEC-BROWSER-001 | Browser exec/session automation              | guarded | critical | Browser-session async exec history was bounded, but active raw/QuickJS exec and typed action work per browser tab was not. Local per-tab caps now fast-fail excess work, `browser_raw_exec_policy` gates raw JS by admin setting, and the browser-session service now exposes a local allow/deny audit stream for raw exec, async exec, typed actions, and QuickJS sandbox host actions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Continue QuickJS host-capability review and decide whether browser automation audit events need central persistence.                                                               |
-| SEC-CLI-001     | `cocalc-cli` authority classes               | guarded | high     | First-pass authority matrix completed. CLI auth config and daemon runtime storage now force private local permissions; ambient env auth can be disabled per invocation. Second-pass dangerous-operation audit completed in `src/.agents/cli-api-key-dangerous-operation-audit-2026-05-14.md`; CLI freshness transport exists via forwarded `auth_session_hash` and `cocalc auth elevate`. Fresh-auth implementation now gates account delete/rehome/drain/repair, admin membership/entitlement mutation, organization create/member/admin mutation, host delete/deprovision, host RootFS mutation, host SSH authorized-key mutation, RootFS catalog/release admin mutation, project soft delete/undelete, project hard delete, project move/rehome, backup delete/restore, and snapshot delete/restore with the shared dangerous-session helper. Host SSH authorized-key operations now route to authoritative host bays; project move checks freshness on the caller bay before inter-bay forwarding. Legacy `auth_tokens` and org token CLI/API surfaces were removed.                                                               | Add a lightweight dangerous-RPC registry or regression test so future destructive/admin RPCs must make an explicit fresh-auth decision.                                            |
-| SEC-KEY-001     | Account/project API keys                     | guarded | high     | Legacy project-scoped CoCalc API-key management, auth, schema, UI, and project-rehome portability were removed. Account API keys now require explicit capabilities and project allowlists; API-key websocket hub RPC fails closed and HTTP Conat bridges deny unreviewed RPCs by default. Second-pass dangerous-operation audit found no API-key path that can directly call dangerous hub/admin/project metadata RPCs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Add central audit events for API-key create/delete/use/deny. Propagate auth method through websocket hub dispatch only if API-key hub RPC support is intentionally expanded.       |
-| SEC-REG-001     | Registration-token signup policy             | guarded | high     | Public signup without a registration token is explicit opt-in via `public_signup_without_registration_token`, default `no`. Deleting/disabling all tokens blocks signup, failed token attempts are throttled, and the admin page shows the effective policy. Signup no longer signs in existing accounts, accepts signup tags, accepts signup reason, or returns account-specific errors before token validation. Normal token rows are encrypted for admin redisplay; bootstrap-admin token rows are hash-only, hidden from admin token listing, and deleted after successful use.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Review SSO-specific signup policy separately and add direct regression coverage for registration-token protected-at-rest behavior if needed.                                       |
-| SEC-SSO-001     | SSO signup/sign-in policy                    | guarded | high     | Shared account-creation policy now covers password signup and legacy Passport SSO account creation. Public SSO creation on token-gated sites no longer bypasses registration tokens; admin-configured exclusive/domain SSO can act as the signup gate for matching domains. SSO-created accounts require verified/trusted email before creation and before marking the email verified. Google is now the only built-in public SSO provider; Facebook, GitHub, and Twitter implementations/dependencies were removed. Public sign-in now queries domain SSO policy from the email field. Google SSO client configuration is now admin-managed with encrypted secret storage, optional domain restriction/routing, explicit account-creation mode, and direct OIDC runtime validation. First-class `sso_providers` and `sso_domain_policies` tables/admin UI now exist. Enabled `sso_required` policies feed sign-in routing/runtime metadata, domain `signup_mode` is enforced for password and SSO account creation, and domain `require_cocalc_2fa` blocks password/SSO sign-in unless a CoCalc second factor is active and verified. | Replace remaining non-Google organization Passport paths with direct SAML/OIDC where needed.                                                                                       |
-| SEC-ROOTFS-001  | Root filesystem count/storage quotas         | guarded | critical | Rootfs creation/storage is now guarded by membership-tier caps for active count, total storage, per-rootfs storage, and arbitrary remote OCI-image usage. Denials are logged as `rootfs_quota_denied`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Add top-user/near-limit admin or CLI reporting and continue auditing clone/import/grow edge paths.                                                                                 |
-| SEC-MASTER-001  | Master-key storage/unlock                    | guarded | high     | Secret-settings encryption and project-backup repo password encryption now derive purpose-specific keys from one local `site-master-key`; the raw site key is not used directly for AES-GCM payload encryption. Local admin CLI lifecycle commands can initialize, status-check, passphrase-export, restore, doctor-check, and offline-migrate the single key. Legacy `server-settings-key` and `backup-master-key` files are read only as migration fallbacks. Production bay systemd units load `/etc/cocalc/site-master-key` through `LoadCredential=` and set `COCALC_REQUIRE_SITE_MASTER_KEY=1`, so startup fails closed instead of creating a fresh key on a production bay. CLI smoke validation covered isolated init, encrypted export, restore to a clean data dir, checksum match, file permissions, files-only doctor, and fail-closed required-key behavior. Production runbook exists at `docs/security/site-master-key-production-runbook.md`.                                                                                                                                                                          | Smoke-test the production runbook on one disposable production-like VM or bay instance. Later consider KMS/TPM envelope unseal.                                                    |
-| SEC-START-001   | Simultaneous running project admission       | blocked | critical | Project start/restart is routed through project ownership and host placement, and storage restore checks use `usage_account_id`, but there is not yet an explicit simultaneous-running-project cap by owner, `usage_account_id`, host, or bay. This leaves course/team patterns where one high-entitlement account can implicitly sponsor many free collaborators' simultaneously running projects without a clear purchased runtime-slot model.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Add membership-backed active project slot limits, charged to `usage_account_id ?? owner`, enforced before project-host placement/start, with course/team sponsored-slot semantics. |
-| SEC-DEP-001     | Dependency advisory reconciliation           | guarded | critical | Local remediation removed `sanitize-html` from npm dependencies and replaced reachable frontend/server sanitization with explicit allowlist sanitizers plus advisory regression tests. `pnpm audit` now reports no known vulnerabilities. Python `uv.lock` was updated so current Python resolves patched `urllib3`, `pytest`, `requests`, and `Pygments` versions. The GitHub Dependabot list will still show old alerts until it scans the updated branch/default branch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | After push/merge, verify GitHub Dependabot open alerts close or document any remaining non-production/unreachable residual alerts by manifest and path.                            |
+| ID              | Surface                                      | Status  | Severity | Current Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Next Action                                                                                                                                                                  |
+| --------------- | -------------------------------------------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SEC-ACP-001     | ACP Conat handler admission                  | done    | high     | Added a bounded pending-request guard before work enters the `p-limit` queue.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Revisit defaults after load testing.                                                                                                                                         |
+| SEC-ACP-002     | Codex/ACP durable turn scheduling            | guarded | critical | Project-host-local admission now bounds queued, created, and running ACP jobs before normal enqueue/claim. Project-host now overlays cached project-owner membership/admin limits, records central denial events, and exposes an admin/CLI denial report.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Add actor-account limit cache if collaborator caps must differ from owner caps.                                                                                              |
+| SEC-ACP-003     | ACP automation scheduling                    | guarded | high     | Manual/scheduled automation runs now use the same local ACP admission helper, count against ACP turn caps, and are also bounded by `acp_max_active_automations_per_project`. Denied automations are paused and surfaced in thread automation state.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Add broader abuse/account usage reporting if central ACP denial telemetry and CLI reporting are not sufficient.                                                              |
+| SEC-WS-001      | General hub/project-host websocket admission | done    | critical | Websocket/Conat admission now has admin-configurable limits for hub API dispatch, generic/typed Conat service handlers, Conat websocket connection caps, raw Conat socket event windows, app-proxy websockets, and project exec streams. Denials and throttled near-limit events are centrally recorded.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Revisit default values after production telemetry and add dashboards if central-log reporting is not enough.                                                                 |
+| SEC-BROWSER-001 | Browser exec/session automation              | guarded | critical | Browser-session async exec history was bounded, but active raw/QuickJS exec and typed action work per browser tab was not. Local per-tab caps now fast-fail excess work, `browser_raw_exec_policy` gates raw JS by admin setting, and the browser-session service now exposes a local allow/deny audit stream for raw exec, async exec, typed actions, and QuickJS sandbox host actions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Continue QuickJS host-capability review and decide whether browser automation audit events need central persistence.                                                         |
+| SEC-CLI-001     | `cocalc-cli` authority classes               | done    | high     | First-pass authority matrix completed. CLI auth config and daemon runtime storage now force private local permissions; ambient env auth can be disabled per invocation. Second-pass dangerous-operation audit completed in `src/.agents/cli-api-key-dangerous-operation-audit-2026-05-14.md`; CLI freshness transport exists via forwarded `auth_session_hash` and `cocalc auth elevate`. Fresh-auth implementation now gates account delete/rehome/drain/repair, admin membership/entitlement mutation, organization create/member/admin mutation, host delete/deprovision, host RootFS mutation, host SSH authorized-key mutation, RootFS catalog/release admin mutation, project hard delete, project move/rehome, backup delete/restore, and snapshot delete/restore with the shared dangerous-session helper. Host SSH authorized-key operations now route to authoritative host bays; project move checks freshness on the caller bay before inter-bay forwarding. Legacy `auth_tokens` and org token CLI/API surfaces were removed. A dangerous-RPC decision registry plus static regression test now requires new destructive/admin-looking hub RPC exports to declare a fresh-auth decision. | Add central audit events for hub-password account bootstrap and CLI browser/session automation if product launch telemetry needs them.                                       |
+| SEC-KEY-001     | Account/project API keys                     | done    | high     | Legacy project-scoped CoCalc API-key management, auth, schema, UI, and project-rehome portability were removed. Account API keys now require explicit capabilities and project allowlists; API-key websocket hub RPC fails closed and HTTP Conat bridges deny unreviewed RPCs by default. Second-pass dangerous-operation audit found no API-key path that can directly call dangerous hub/admin/project metadata RPCs. Central audit events now cover account API-key create, delete, successful local/directory use, invalid/expired/mismatched auth denial, HTTP Conat policy denial, and websocket subject/collaborator denial without logging raw key material.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Propagate auth method through websocket hub dispatch only if API-key hub RPC support is intentionally expanded. Expand reviewed API-key capabilities only for concrete product workflows. |
+| SEC-REG-001     | Registration-token signup policy             | done    | high     | Public signup without a registration token is explicit opt-in via `public_signup_without_registration_token`, default `no`. Deleting/disabling all tokens blocks signup, failed token attempts are throttled, and the admin page shows the effective policy. Signup no longer signs in existing accounts, accepts signup tags, accepts signup reason, or returns account-specific errors before token validation. Normal token rows are encrypted for admin redisplay; bootstrap-admin token rows are hash-only, hidden from admin token listing, and deleted after successful use. Focused PGlite regression coverage now verifies encrypted normal tokens, hash-only hidden bootstrap-admin tokens, and opportunistic legacy plaintext protection.                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Watch token-table size; current table-scan lookup is accepted for the expected small admin-managed token set. SSO signup policy is tracked under `SEC-SSO-001`.              |
+| SEC-SSO-001     | SSO signup/sign-in policy                    | guarded | high     | Shared account-creation policy now covers password signup and legacy Passport SSO account creation. Public SSO creation on token-gated sites no longer bypasses registration tokens; admin-configured exclusive/domain SSO can act as the signup gate for matching domains. SSO-created accounts require verified/trusted email before creation and before marking the email verified. Google is now the only built-in public SSO provider; Facebook, GitHub, and Twitter implementations/dependencies were removed. Public sign-in now queries domain SSO policy from the email field. Google SSO client configuration is now admin-managed with encrypted secret storage, optional domain restriction/routing, explicit account-creation mode, and direct OIDC runtime validation. First-class `sso_providers` and `sso_domain_policies` tables/admin UI now exist. Enabled `sso_required` policies feed sign-in routing/runtime metadata, domain `signup_mode` is enforced for password and SSO account creation, and domain `require_cocalc_2fa` blocks password/SSO sign-in unless a CoCalc second factor is active and verified.                                                                | Treat remaining non-Google organization Passport paths and SAML/OIDC admin UI polish as deferred unless a launch customer requires them.                                     |
+| SEC-ROOTFS-001  | Root filesystem count/storage quotas         | guarded | critical | Rootfs creation/storage is now guarded by membership-tier caps for active count, total storage, per-rootfs storage, and arbitrary remote OCI-image usage. Denials are logged as `rootfs_quota_denied`, admins can report top users/near-limit accounts via `cocalc admin rootfs-quotas`, clone creation validates the actual current RootFS state before copying files, and account deletion retires owned RootFS catalog entries before marking the account deleted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Continue auditing import/grow/delete and ownership-transfer edge cases; add user-facing current-usage display if needed for launch.                                          |
+| SEC-SCAN-001    | In-place security scanning                    | guarded | high     | Added as a launch/SOC-2 readiness workstream. CoCalc should have an optional, bounded way for admins and possibly project/rootfs owners to scan projects, rootfs images, and related filesystem targets in place for known vulnerabilities, secrets, misconfiguration, licenses, and SBOM inventory. Trivy is a plausible free/open-source candidate because it supports filesystem/rootfs/image-style scanning and machine-readable output, but tool choice has not been validated yet.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Compare Trivy against other credible free options, then design a read-only bounded scan job, report storage, admin/CLI/UI surface, alerting policy, and SOC-2 evidence trail. |
+| SEC-MASTER-001  | Master-key storage/unlock                    | guarded | high     | Secret-settings encryption and project-backup repo password encryption now derive purpose-specific keys from one local `site-master-key`; the raw site key is not used directly for AES-GCM payload encryption. Local admin CLI lifecycle commands can initialize, status-check, passphrase-export, restore, doctor-check, and offline-migrate the single key. Legacy `server-settings-key` and `backup-master-key` files are read only as migration fallbacks. Production bay systemd units load `/etc/cocalc/site-master-key` through `LoadCredential=` and set `COCALC_REQUIRE_SITE_MASTER_KEY=1`, so startup fails closed instead of creating a fresh key on a production bay. CLI smoke validation covered isolated init, encrypted export, restore to a clean data dir, checksum match, file permissions, files-only doctor, and fail-closed required-key behavior. Production runbook exists at `docs/security/site-master-key-production-runbook.md`.                                                                                                                                                                                                                                         | Smoke-test the production runbook on one disposable production-like VM or bay instance. Later consider KMS/TPM envelope unseal.                                              |
+| SEC-START-001   | Simultaneous running project admission       | done    | critical | Sponsored runtime slots are implemented. Runtime admission uses `max_sponsored_running_projects`, durable `project_runtime_slots`, runtime sponsors, inter-bay sponsor-home admission, start/restart enforcement, autostart policy, collaborator-start controls, central slot event logs, admin reporting, and `cocalc project runtime-slots`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Deeper course/team dashboards and bulk classroom operations are follow-up product polish, not a release-security blocker.                                                    |
+| SEC-DEP-001     | Dependency advisory reconciliation           | guarded | critical | Local remediation removed `sanitize-html` from npm dependencies and replaced reachable frontend/server sanitization with explicit allowlist sanitizers plus advisory regression tests. `pnpm audit` now reports no known vulnerabilities. Python `uv.lock` was updated so current Python resolves patched `urllib3`, `pytest`, `requests`, and `Pygments` versions. The GitHub Dependabot list will still show old alerts until it scans the updated branch/default branch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | After push/merge, verify GitHub Dependabot open alerts close or document any remaining non-production/unreachable residual alerts by manifest and path.                      |
+
+## Big-Picture Remaining Launch Priorities
+
+This scoreboard now has no known release-blocking item, but the highest-value
+remaining work is not all equal.
+
+To reduce the chance of being compromised at launch:
+
+1. Keep external authority surfaces narrow: browser cookies, CLI auth, account
+   API keys, SSO, project-host bootstrap tokens, and admin/bay credentials
+   should all have explicit capability boundaries and audit trails.
+2. Preserve fresh-auth requirements for destructive/admin operations and add a
+   regression guard so new dangerous RPCs cannot silently ship as ordinary
+   `authFirst` methods.
+3. Treat production secret material as an operational release gate: site master
+   key runbook smoke test, off-host encrypted backup, fail-closed startup, and
+   backup restore validation.
+4. Keep dependency and supply-chain checks explicit across npm and Python
+   manifests, with every remaining alert fixed or documented by reachability.
+5. Centralize audit events for high-risk credential paths, especially API-key
+   create/delete/use/deny and browser automation when raw execution is enabled.
+
+To reduce intentional or accidental abuse at launch:
+
+1. Make resource admission tunable at runtime by admins, not only environment
+   variables: websocket/Conat active handlers, raw protocol message rates,
+   app-proxy websockets, ACP queues, browser automation, runtime slots, and
+   rootfs quotas.
+2. Turn denials into operator signals: central logs, admin/CLI reports,
+   near-limit reports, and alert thresholds for repeated denials by account,
+   project, host, browser session, API key, and IP/identity.
+3. Keep expensive work behind cheap admission checks: project starts, Codex/ACP
+   turns, automations, rootfs import/publish/grow, archive/delete/backup
+   operations, file streams, terminal/exec streams, and browser automation.
+4. Give users safe self-service recovery paths when admission blocks them: stop
+   sponsored projects, change runtime sponsor, archive projects, clean up
+   storage, and understand which quota was hit.
+5. Add optional in-place scanning as a detection and evidence control for
+   projects, rootfs images, and runtime artifacts; validate the scanner choice
+   before standardizing on Trivy or any other free tool.
+6. Run launch with conservative defaults and short feedback loops; then relax
+   limits from telemetry instead of discovering runaway behavior after the
+   fact.
 
 ## Findings
 
@@ -77,7 +127,7 @@ Validation target:
 
 ### SEC-ACP-002: Codex/ACP Durable Turn Queue Has No Membership-Backed Admission
 
-Status: `guarded`.
+Status: `done`.
 
 Severity: critical.
 
@@ -214,12 +264,18 @@ Implemented first guard:
   the denial message is projected back into thread automation state.
 - Automation-created turns count against the same local ACP job caps as human
   turns.
+- `acp_max_active_automations_per_project` is now a first-class membership
+  usage limit and entitlement override.
+- Enabling scheduled automations is admitted against the active automation cap
+  for the project, and denials are recorded through the ACP admission denial
+  path.
+- Existing unattended-run protection remains in place via
+  `pause_after_unacknowledged_runs`.
 
 Remaining release gap:
 
-- There is not yet a distinct unattended automation cap separate from human
-  Codex turns.
-- Central operator observability still needs an abuse/account usage feed.
+- Central ACP denial telemetry and the CLI/admin denial report exist, but there
+  is not yet a broader in-product abuse/account usage dashboard.
 
 ## Open Questions
 
@@ -288,8 +344,8 @@ Implemented first guard:
   - `COCALC_APP_PROXY_MAX_ACTIVE_WEBSOCKETS_TOTAL`, default `256`.
 - Raw Conat/socket.io protocol events now have sliding-window admission guards
   before publish/RPC/subscription handler work:
-  - `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW`, default `2000`.
-  - `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW`, default `10000`.
+  - `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_SOCKET_WINDOW`, default `10000`.
+  - `COCALC_CONAT_MAX_INBOUND_EVENTS_PER_IDENTITY_WINDOW`, default `50000`.
   - `COCALC_CONAT_INBOUND_EVENT_WINDOW_MS`, default `10000`.
   - `COCALC_CONAT_INBOUND_EVENT_BLOCK_MS`, default `10000`.
   - Denials return normal 429-style responses for acked events. Per-socket
@@ -308,10 +364,17 @@ Implemented first guard:
 
 Residual risk:
 
-- This pass now bounds active handler count and high-rate raw Conat socket
-  messages both per connection and per authenticated identity across multiple
-  simultaneous sockets. These are local process budgets, not global
-  cross-cluster budgets.
+- This pass now bounds active handler count, websocket counts, and high-rate raw
+  Conat socket messages both per connection and per authenticated identity
+  across multiple simultaneous sockets. These are local process budgets, not
+  global cross-cluster budgets.
+- Admin settings now cover hub API dispatch, generic/typed service handler
+  concurrency, Conat total/per-user/per-hub-user websocket counts, Conat
+  inbound event windows/block times, app-proxy websocket totals/per-target caps,
+  project exec-stream concurrency, near-limit threshold percent, and near-limit
+  log interval.
+- Denials record `service_admission_denied` central-log events; near-limit
+  crossings record throttled `service_admission_near_limit` central-log events.
 - Defaults are intentionally broad and should be tuned with production load
   testing and observability.
 
@@ -319,8 +382,8 @@ Suggested next audit steps:
 
 1. Decide whether any Conat protocol budgets need cross-cluster aggregation
    after production telemetry is available.
-2. Add dashboards/alerts once production baselines for
-   `service_admission_denied` are known.
+2. Add dashboards/alerts if central-log reports for `service_admission_denied`
+   and `service_admission_near_limit` are not operationally visible enough.
 
 ### SEC-BROWSER-001: Browser Exec/Session Automation Needs Per-Tab Admission and Policy Audit
 
@@ -399,7 +462,7 @@ Suggested next audit steps:
 
 ### SEC-CLI-001: cocalc-cli Authority Classes Needed First-Pass Audit
 
-Status: `guarded`.
+Status: `done`.
 
 Severity: high.
 
@@ -457,25 +520,28 @@ Second-pass audit:
   add/remove, admin grant/revoke, and account creation into an organization.
 - The reviewed destructive/admin endpoint families now have endpoint-level
   freshness gates.
+- Added `dangerous-rpc-registry.ts` plus a static regression test that scans
+  public hub API modules for destructive/admin-looking exported RPC names. New
+  matching exports now fail tests until they are added to the registry with an
+  explicit fresh-auth decision.
 
 Residual risk:
 
-- There is no central dangerous-RPC registry, so future destructive/admin RPCs
-  can still be added as ordinary `authFirst` methods unless review catches them.
-- Hub-password account bootstrap should have central audit coverage if not
-  already logged server-side.
+- The registry is a naming-pattern regression guard, not a formal verifier that
+  every implementation calls the exact expected helper. It is intended to make
+  future risky endpoint additions visible during review.
+- Hub-password account bootstrap and CLI browser/session automation can still
+  benefit from central audit events if launch telemetry requires them.
 
 Suggested next audit steps:
 
-1. Add a lightweight dangerous-RPC registry or regression test so new
-   destructive/admin RPCs must make an explicit fresh-auth decision.
-2. Add focused tests for each freshness-gated endpoint family.
-3. Consider central audit events for hub-password account bootstrap and CLI
+1. Add focused tests for any freshness-gated endpoint family that gets changed.
+2. Consider central audit events for hub-password account bootstrap and CLI
    browser/session automation.
 
 ### SEC-KEY-001: Account and Project API Key Scope Audit
 
-Status: `guarded`.
+Status: `done`.
 
 Severity: high.
 
@@ -512,6 +578,15 @@ Implemented first guard/removal:
 - The second pass did not find an account API-key path that can directly call
   dangerous hub/admin/project metadata RPCs such as account delete, host delete,
   membership override, rootfs catalog mutation, or project hard delete.
+- Added central audit events for account API-key creation, deletion,
+  successful local/directory authentication, invalid/expired/mismatched
+  authentication denials, HTTP Conat policy denials, and websocket
+  subject/collaborator denials. Audit values include account/key IDs, source,
+  capability/project/RPC/subject context, and denial codes, but never raw API
+  key secrets.
+- Added focused regression coverage for API-key management/auth audit events,
+  HTTP Conat policy-denial audit events, and websocket API-key denial audit
+  events.
 
 Residual risk:
 
@@ -519,14 +594,14 @@ Residual risk:
   came from a browser cookie, account API key, or agent bearer token into
   endpoint transforms. Websocket API-key hub RPCs are therefore denied rather
   than scoped at function granularity.
-- Central audit events for API-key create/delete/use/deny are still a follow-up.
+- Additional reviewed API-key capabilities should only be added for concrete
+  product workflows with their own policy tests.
 
 Suggested next audit steps:
 
-1. Add central audit events for API-key create/delete/use/deny.
-2. Propagate auth method through hub dispatch only if websocket API-key hub RPCs
+1. Propagate auth method through hub dispatch only if websocket API-key hub RPCs
    are intentionally expanded.
-3. Expand reviewed API-key capabilities only for concrete product workflows.
+2. Expand reviewed API-key capabilities only for concrete product workflows.
 
 ### SEC-SSO-001: SSO Signup and Sign-In Policy
 
@@ -627,7 +702,7 @@ Suggested next audit steps:
 
 ### SEC-REG-001: Registration-Token Signup Policy
 
-Status: `guarded`.
+Status: `done`.
 
 Severity: high.
 
@@ -675,19 +750,17 @@ Implemented guard:
   hash-only bootstrap row is encountered after process restart, it is deleted
   and replaced with a fresh one instead of being displayed.
 - Added focused tests for the server and hub policy helpers.
+- Added focused PGlite regression coverage for encrypted normal tokens,
+  hash-only hidden bootstrap-admin tokens, and opportunistic encryption of
+  legacy plaintext token rows during validation.
 
 Residual risk:
 
-- This pass covers the email/password registration-token policy. SSO signup
-  behavior should be reviewed separately if public SSO strategies are used to
-  create new accounts.
 - The registration-token database column remains the primary key, so lookup is
-  currently table-scan based for protected values. This is acceptable for the
-  expected small admin-managed token set, but direct regression tests for
-  encrypted normal tokens, hash-only bootstrap tokens, and legacy plaintext
-  opportunistic protection would reduce future regression risk.
-- SSO account-creation behavior still needs its own policy pass before public
-  SSO signup is enabled.
+  currently table-scan based for protected values. This is accepted for the
+  expected small admin-managed token set; revisit only if token-table size grows
+  enough for lookup cost to matter.
+- SSO account-creation behavior is tracked separately under `SEC-SSO-001`.
 
 ### SEC-ROOTFS-001: Root Filesystem Count and Storage Quotas
 
@@ -740,15 +813,102 @@ Current result:
   membership tier explicitly enables `rootfs_oci_images`; built-in, managed, and
   trusted catalog images remain selectable.
 - Rootfs quota denials are logged centrally as `rootfs_quota_denied`.
+- Added admin/system quota reporting for top rootfs users, near-limit accounts,
+  and recent grouped denial events. The CLI exposes this as
+  `cocalc admin rootfs-quotas`, with Prometheus text output for alert scraping.
+- Project clone creation now validates the source project's actual
+  `project_rootfs_states.current` binding before any filesystem clone side
+  effect, and stores that current RootFS binding on the destination project row
+  instead of trusting a stale legacy `projects.rootfs_image` value.
+- Account deletion now retires all active RootFS catalog entries owned by the
+  deleted account before marking the account deleted. Existing release blocker
+  and GC logic decides whether artifacts can be removed immediately or must
+  remain while still referenced by projects/catalog entries.
 
 Remaining audit steps:
 
-1. Add admin/CLI readouts for top rootfs users and near-limit users.
-2. Continue auditing clone/import/grow/delete paths and ownership-transfer edge
-   cases.
-3. Add user-facing current-usage display next to the effective rootfs limits.
-4. Decide whether exact concurrent create/publish serialization is warranted
+1. Continue auditing import/grow/delete paths and ownership-transfer edge cases.
+2. Add user-facing current-usage display next to the effective rootfs limits.
+3. Decide whether exact concurrent create/publish serialization is warranted
    beyond the current admission checks.
+
+### SEC-SCAN-001: Optional In-Place Security Scanning
+
+Status: `guarded`.
+
+Severity: high.
+
+Motivation:
+
+- Ongoing vulnerability, secret, and configuration scanning is a standard
+  security-control expectation and is likely relevant to SOC-2 readiness.
+- CoCalc hosts user-created projects, custom rootfs images, project-host
+  filesystems, and long-lived base/runtime artifacts. These can accumulate
+  vulnerable packages, accidentally committed secrets, risky configuration, and
+  license/SBOM inventory gaps.
+- Package-manager audit alone only covers CoCalc's own source tree. It does not
+  inspect user projects, rootfs artifacts, project filesystem state, archived
+  content, or runtime images.
+
+Required release policy:
+
+- Provide an optional, bounded way to scan targets in place:
+  - projects,
+  - rootfs images/releases,
+  - project-host filesystem targets,
+  - and possibly archived/restored project snapshots when operationally useful.
+- Run scans read-only with explicit CPU, memory, time, concurrency, and target
+  size limits.
+- Treat scanner output as detection/evidence, not as an authorization boundary.
+  Do not automatically delete, quarantine, or block user access based only on a
+  scanner finding.
+- Store durable scan metadata: scanner name/version/database version, target
+  type/id, target content version or timestamp, requester, start/end time,
+  status, summary counts, and report location.
+- Make scan access policy explicit: likely admin-only first, then optional
+  owner/self-service scans for project/rootfs owners if the cost and UX are
+  acceptable.
+- Provide operator-facing reports for recent high/critical findings, scan
+  failures, stale scans, and targets that have never been scanned.
+- Preserve a SOC-2 evidence trail: configuration, schedule/manual trigger
+  history, reports, exceptions, and remediation status.
+
+Current tool candidate:
+
+- Trivy is a plausible first candidate because it is free/open source and
+  appears to support filesystem/rootfs/container-image style scans with
+  machine-readable output for vulnerabilities, secrets, misconfiguration,
+  licenses, and SBOM-style inventory.
+- Trivy was only identified by a quick initial search. It is not yet accepted
+  as the final tool.
+
+Required tool-selection step:
+
+- Compare Trivy with other credible free/open-source options before committing
+  to an implementation. At minimum evaluate:
+  - vulnerability database coverage and update model,
+  - filesystem/rootfs/image scanning support,
+  - secret scanning quality and false-positive controls,
+  - SBOM/license support,
+  - offline/cache behavior for private deployments,
+  - resource limits and sandboxability,
+  - JSON/SARIF output quality,
+  - operational maturity, release cadence, and maintenance health.
+- Document why the chosen scanner is the best free option for CoCalc's project
+  and rootfs scanning needs, and list accepted gaps.
+
+Suggested implementation sequence:
+
+1. Write a short scanner comparison note and pick the default scanner.
+2. Add scanner binary discovery/configuration and admin settings for enablement,
+   max concurrency, timeout, max target size, scanner modes, and severity
+   thresholds.
+3. Add a bounded background job for read-only project/rootfs scans.
+4. Add `security_scan_runs` metadata and report storage.
+5. Add admin/CLI commands to start scans and list/report results.
+6. Add optional UI actions only after admin flows are reliable.
+7. Add regression tests for policy, job limits, report parsing, and failure
+   states.
 
 ### SEC-MASTER-001: Site Master Key Storage and Recovery
 
@@ -822,23 +982,18 @@ Residual risk:
 
 ### SEC-START-001: Simultaneous Running Project Admission
 
-Status: `blocked`.
+Status: `done`.
 
 Severity: critical.
 
-Evidence from 2026-05-14 pass:
+Evidence from 2026-05-14 pass before the fix:
 
-- Project start/restart first checks project collaborator access, then creates a
-  project-start LRO and routes the operation to the project's owning bay.
-- The owning bay calls project control, computes runtime quota, ensures host
-  placement, checks provisioned restore storage, and asks the assigned
-  project-host to start the project.
-- Membership usage limits currently include project count, storage, managed
-  egress, dedicated-host spend, rootfs, and ACP limits, but no obvious
-  `max_running_projects` / active project slot limit.
-- `usage_account_id` is already the right billing/usage attribution concept for
-  storage and managed egress. It is not yet used to bound simultaneous runtime
-  sponsorship.
+- Project start/restart was routed through project ownership and host placement,
+  but there was no explicit simultaneous-running-project cap by owner,
+  `usage_account_id`, host, or bay.
+- This left course/team patterns where one high-entitlement account could
+  implicitly sponsor many free collaborators' simultaneously running projects
+  without a clear purchased runtime-slot model.
 
 Risk:
 
@@ -851,34 +1006,38 @@ Risk:
   solve the economic/policy issue because projects can be spread across hosts
   and bays.
 
-Recommended release policy:
+Implemented release policy:
 
-- Add a membership usage limit such as `max_running_projects`.
-- Attribute the limit to `usage_account_id ?? owner_account_id`, not merely the
-  signed-in collaborator who clicked Start.
-- Enforce before project-host placement/start, on the owning bay, using the
-  authoritative project state plus a host/bay heartbeat cache for active
-  runtime state.
-- Treat courses/teams as explicit sponsorship: if an instructor or organization
-  sponsors projects, that entity needs enough sponsored active-project slots.
-- Free collaborators using a sponsored project consume the sponsor's slot, not a
-  free personal slot.
-- Keep host-local caps as a defense-in-depth guard, but do not rely on them for
-  product policy.
+- Added `max_sponsored_running_projects` to membership tier templates,
+  entitlement overrides, admin UI, and effective usage limits.
+- Added durable `project_runtime_slots` on the sponsor home bay, with reserve,
+  deny, heartbeat, release, expire, and admin-report flows.
+- Added `runtime_sponsor_account_id` as explicit project metadata for runtime
+  admission, priority, and RAM-limit attribution. Existing `usage_account_id`
+  remains the fallback sponsor before the owner.
+- Start/restart reserves a sponsored runtime slot before project-host
+  placement/start. Inter-bay start/restart routes to the sponsor home bay for
+  slot admission instead of relying on local counters.
+- Project-host heartbeats keep runtime slots alive while projects are
+  starting/running, and stale slots expire.
+- Slot denial propagates as a structured LRO result with visible running
+  projects, stop actions, sponsor upgrade routing, and CLI rendering.
+- Project owners, runtime sponsors, and admins can disable ordinary
+  collaborator starts that would consume the sponsor's slots.
+- Collaborators can explicitly switch a project to use their membership as the
+  runtime sponsor when allowed.
+- Autostart calls from frontend Codex, Jupyter, terminal, project-host SSH,
+  project-host HTTP proxy, and project-host Codex runtime wake paths are marked
+  as autostarts and denied before expensive start work when policy or slot
+  admission blocks the start.
+- Runtime slot reserve/deny/release/expire events are written to `central_log`.
+  Admins can query an active-slot report through the hub system API, and the CLI
+  exposes `cocalc project runtime-slots`.
 
-Implementation sketch:
+Follow-up polish:
 
-1. Add `max_running_projects` to membership tier templates, entitlement
-   overrides, admin UI, and effective usage limits.
-2. Add a central or owning-bay active-project count keyed by
-   `usage_account_id ?? owner_account_id`, with stale-running cleanup based on
-   project-host heartbeats.
-3. Call `assertCanStartAdditionalProjectRuntime({ project_id })` before
-   placement/start in the start/restart path.
-4. Record structured denials with account, project, usage account, owner, tier,
-   current count, max count, host, bay, and action.
-5. Expose current active-slot usage in account/admin membership views and
-   course/team administration if a course sponsorship UI exists.
+- Deeper course/team dashboards and bulk classroom slot-management operations
+  remain useful product polish, but the release security blocker is closed.
 
 ### SEC-DEP-001: Dependency Advisory Reconciliation
 

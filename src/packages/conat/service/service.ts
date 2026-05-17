@@ -17,30 +17,18 @@ import { EventEmitter } from "events";
 import { encodeBase64 } from "@cocalc/conat/util";
 import { type Client } from "@cocalc/conat/core/client";
 import { until } from "@cocalc/util/async-utils";
-import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
+import {
+  recordServiceAdmissionDenial,
+  recordServiceAdmissionNearLimit,
+} from "@cocalc/conat/admission/denials";
+import {
+  getServiceAdmissionLimit,
+  serviceAdmissionLimitEnvName,
+} from "@cocalc/conat/admission/limits";
 
 const DEFAULT_TIMEOUT = 10 * 1000;
 
 const logger = getLogger("conat:service");
-
-function positiveIntegerEnv({
-  name,
-  fallback,
-}: {
-  name: string;
-  fallback: number;
-}): number {
-  const value = Number(process.env[name]);
-  if (!Number.isFinite(value) || value <= 0) {
-    return fallback;
-  }
-  return Math.floor(value);
-}
-
-const DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS = positiveIntegerEnv({
-  name: "COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE",
-  fallback: 128,
-});
 
 export interface ServiceDescription extends Location {
   service: string;
@@ -201,6 +189,10 @@ export class ConatService extends EventEmitter {
     logger.debug(`service:subject='${this.subject}' -- `, ...args);
   };
 
+  private maxParallelHandlers = (): number =>
+    this.options.maxParallelHandlers ??
+    getServiceAdmissionLimit("conat_service_max_parallel_active");
+
   // create and run the service until something goes wrong, when this
   // willl return. It does not throw an error.
   private runService = async () => {
@@ -222,14 +214,25 @@ export class ConatService extends EventEmitter {
   private listen = async () => {
     for await (const mesg of this.sub) {
       if (this.options.parallel) {
-        if (
-          this.activeHandlers.size >=
-          (this.options.maxParallelHandlers ??
-            DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS)
-        ) {
+        const maximum = this.maxParallelHandlers();
+        if (this.activeHandlers.size >= maximum) {
           this.respondBusy(mesg);
           continue;
         }
+        recordServiceAdmissionNearLimit({
+          surface: "conat-service",
+          source: "parallel-handler",
+          limit: serviceAdmissionLimitEnvName(
+            "conat_service_max_parallel_active",
+          ),
+          current: this.activeHandlers.size + 1,
+          maximum,
+          reason: `service '${this.name}' is near capacity`,
+          subject: this.subject,
+          project_id: this.options.project_id,
+          account_id: this.options.account_id,
+          key: this.name,
+        });
         let task: Promise<void>;
         task = this.handleMessage(mesg)
           .catch((err) => {
@@ -273,12 +276,11 @@ export class ConatService extends EventEmitter {
 
   private respondBusy = (mesg): void => {
     const message = `service '${this.name}' is busy`;
-    const maximum =
-      this.options.maxParallelHandlers ?? DEFAULT_PARALLEL_MAX_ACTIVE_HANDLERS;
+    const maximum = this.maxParallelHandlers();
     recordServiceAdmissionDenial({
       surface: "conat-service",
       source: "parallel-handler",
-      limit: "COCALC_CONAT_SERVICE_MAX_PARALLEL_ACTIVE",
+      limit: serviceAdmissionLimitEnvName("conat_service_max_parallel_active"),
       current: this.activeHandlers.size,
       maximum,
       reason: message,
