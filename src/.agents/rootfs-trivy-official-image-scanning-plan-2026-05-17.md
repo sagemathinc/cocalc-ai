@@ -1,6 +1,35 @@
 # Trivy Scanning for Official RootFS Images
 
-Status: proposed implementation plan, 2026-05-17.
+Status: implemented first production slice, 2026-05-17.
+
+Implemented in the first slice:
+
+- Trivy was selected as the first scanner for official/shared RootFS trust.
+- Project hosts run Trivy through a locked-down Podman container against a
+  read-only materialized RootFS cache path.
+- Admin-triggered scans are routed through hub/system RPC and project-host
+  host-control RPC.
+- Scan runs are persisted in `rootfs_release_scan_runs`.
+- Full Trivy JSON reports are retained admin-only in
+  `rootfs_release_scan_reports`.
+- Latest compact scan state is projected into `rootfs_releases` and catalog
+  entries.
+- Project creation/settings/catalog pickers display scan status, severity
+  counts, top findings, and unscanned official-image state.
+- Ordinary users are blocked from newly selecting official images with
+  unresolved critical scan findings.
+- Admin UI and CLI can trigger scans, download reports, and audit official image
+  scan coverage.
+- Operational knobs are admin-configurable site settings with env/per-request
+  overrides.
+
+Deferred after this first slice:
+
+- Automatic weekly rescan scheduling.
+- Admin exception-note workflow for bypass/accepted-risk entries.
+- Prometheus metric export.
+- A production smoke test using the pinned scanner image and real Trivy DB
+  cache.
 
 This plan scopes `SEC-SCAN-001` to one product goal:
 
