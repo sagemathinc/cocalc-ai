@@ -19,9 +19,6 @@ export const LAUNCHER_GLOBAL_DEFAULTS: Required<LauncherPrefs> = {
 
 export const LAUNCHER_SITE_DEFAULTS_QUICK_KEY = "launcher_default_quick_create";
 
-// Temporary legacy export while callers are migrated off site remove lists.
-export const LAUNCHER_SITE_REMOVE_QUICK_KEY = "launcher_remove_quick_create";
-
 function normalizeList(value: unknown): string[] {
   if (value == null) return [];
   if (typeof (value as any).toJS === "function") {
@@ -133,52 +130,4 @@ export function getEffectiveLauncher({
     return { quickCreate: siteQuick };
   }
   return { quickCreate: LAUNCHER_GLOBAL_DEFAULTS.quickCreate };
-}
-
-// Temporary compatibility exports while the old project/per-project callers are
-// removed. These intentionally ignore project layers so every caller sees the
-// same exact site/account model during the transition.
-export type LauncherProjectDefaults = LauncherPrefs;
-export type LauncherUserPrefs = LauncherPrefs;
-export interface LauncherUserPrefsStore extends LauncherPrefs {}
-
-export function getProjectLauncherDefaults(_settings: unknown): LauncherPrefs {
-  return {};
-}
-
-export function getUserLauncherLayers(settings: unknown): {
-  account: LauncherPrefs;
-  project: LauncherPrefs;
-} {
-  return {
-    account: getAccountLauncherPrefs(settings),
-    project: {},
-  };
-}
-
-export function getUserLauncherPrefs(settings: unknown): LauncherPrefs {
-  return getAccountLauncherPrefs(settings);
-}
-
-export function updateUserLauncherPrefs(
-  settings: unknown,
-  _project_id: string | undefined,
-  prefs: LauncherPrefs | null,
-): LauncherPrefs {
-  return updateAccountLauncherPrefs(settings, prefs);
-}
-
-export function mergeLauncherSettings({
-  accountUserPrefs,
-  globalDefaults,
-}: {
-  projectDefaults?: LauncherPrefs;
-  accountUserPrefs?: LauncherPrefs;
-  projectUserPrefs?: LauncherPrefs;
-  globalDefaults?: LauncherPrefs;
-}): LauncherMerged {
-  return getEffectiveLauncher({
-    accountPrefs: accountUserPrefs,
-    siteDefaults: globalDefaults,
-  });
 }

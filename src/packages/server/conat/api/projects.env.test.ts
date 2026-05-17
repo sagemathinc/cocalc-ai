@@ -103,7 +103,6 @@ describe("project env helpers", () => {
     queryMock = jest.fn(async () => ({
       rows: [
         {
-          launcher: null,
           region: null,
           created: null,
           env: { FOO: "bar", PATH: "/custom/bin:$PATH" },

@@ -454,7 +454,6 @@ export interface ChatStoreDeleteResult {
   deleted_segments: number;
 }
 
-export type ProjectLauncherSettings = Record<string, any> | null;
 export type ProjectRegion = string | null;
 export type ProjectCreated = Date | string | null;
 export type ProjectEnv = Record<string, string> | null;
@@ -511,8 +510,6 @@ export const projects = {
   unblockCollabInviteSender: authFirstRequireAccount,
   listCollaborators: authFirstRequireAccount,
   listMyCollaborators: authFirstRequireAccount,
-  getProjectLauncher: authFirstRequireAccount,
-  setProjectLauncher: authFirstRequireAccount,
   getProjectRegion: authFirstRequireAccount,
   getProjectCreated: authFirstRequireAccount,
   getProjectEnv: authFirstRequireAccount,
@@ -659,17 +656,6 @@ export interface Projects {
     account_id?: string;
     op_id: string;
   }) => Promise<ProjectCopyRow[]>;
-
-  getProjectLauncher: (opts: {
-    account_id?: string;
-    project_id: string;
-  }) => Promise<ProjectLauncherSettings>;
-
-  setProjectLauncher: (opts: {
-    account_id?: string;
-    project_id: string;
-    launcher: ProjectLauncherSettings;
-  }) => Promise<void>;
 
   getProjectRegion: (opts: {
     account_id?: string;

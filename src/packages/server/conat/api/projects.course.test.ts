@@ -36,7 +36,6 @@ describe("project course info helpers", () => {
     queryMock = jest.fn(async () => ({
       rows: [
         {
-          launcher: null,
           region: null,
           created: null,
           env: null,

@@ -5,7 +5,6 @@
 
 import getPool from "@cocalc/database/pool";
 import type {
-  ProjectLauncherSettings,
   ProjectRegion,
   ProjectCreated,
   ProjectEnv,
@@ -18,7 +17,6 @@ import type {
 } from "@cocalc/conat/hub/api/projects";
 
 export interface ProjectReadDetails {
-  launcher: ProjectLauncherSettings;
   region: ProjectRegion;
   created: ProjectCreated;
   env: ProjectEnv;
@@ -34,7 +32,6 @@ export async function loadProjectReadDetailsDirect(
   project_id: string,
 ): Promise<ProjectReadDetails | null> {
   const { rows } = await getPool().query<{
-    launcher: ProjectLauncherSettings | null;
     region: ProjectRegion | null;
     created: ProjectCreated | null;
     env: ProjectEnv | null;
@@ -48,7 +45,6 @@ export async function loadProjectReadDetailsDirect(
   }>(
     `
       SELECT
-        launcher,
         region,
         created,
         env,
@@ -72,7 +68,6 @@ export async function loadProjectReadDetailsDirect(
   const image = `${row?.rootfs_image ?? ""}`.trim();
   const image_id = `${row?.rootfs_image_id ?? ""}`.trim();
   return {
-    launcher: row?.launcher ?? null,
     region: row?.region ?? null,
     created: row?.created ?? null,
     env: row?.env ?? null,

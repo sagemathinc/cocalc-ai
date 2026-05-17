@@ -54,7 +54,6 @@ describe("remote project detail reads", () => {
       epoch: 2,
     }));
     projectDetailsGetMock = jest.fn(async () => ({
-      launcher: null,
       region: "wnam",
       created: new Date("2026-04-08T20:00:00Z"),
       env: { FOO: "bar" },

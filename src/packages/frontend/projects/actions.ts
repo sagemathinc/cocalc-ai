@@ -1643,26 +1643,6 @@ export class ProjectsActions extends Actions<ProjectsState> {
     await this.projects_table_set({ project_id, settings }, "deep");
   };
 
-  set_project_launcher = async (
-    project_id: string,
-    launcher: object,
-  ): Promise<void> => {
-    if (!(await this.have_project(project_id))) {
-      console.warn(
-        `Can't set launcher defaults -- you are not a collaborator on project '${project_id}'.`,
-      );
-      return;
-    }
-    await webapp_client.conat_client.hub.projects.setProjectLauncher({
-      project_id,
-      launcher,
-    });
-    publishProjectDetailInvalidation({
-      project_id,
-      fields: ["launcher"],
-    });
-  };
-
   set_project_allow_collaborator_starts_using_sponsor = async (
     project_id: string,
     allow_collaborator_starts_using_sponsor: boolean,

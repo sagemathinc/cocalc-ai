@@ -141,7 +141,6 @@ Table({
           env: true,
           snapshots: true,
           backups: true,
-          launcher: true,
           theme: true,
         },
         required_fields: {
@@ -522,12 +521,6 @@ Table({
     theme: {
       type: "map",
       desc: "Project appearance theme used throughout list, navigation, and settings UI. Shape: {color, accent_color, icon, image_blob}.",
-      render: { type: "json", editable: true },
-    },
-    launcher: {
-      title: "Launcher",
-      type: "map",
-      desc: "Project-wide launcher defaults (quick create + app defaults).",
       render: { type: "json", editable: true },
     },
     notes: NOTES,

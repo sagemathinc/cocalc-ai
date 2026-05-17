@@ -41,7 +41,6 @@ import type {
   ProjectCourseInfo,
   ProjectCreated,
   ProjectEnv,
-  ProjectLauncherSettings,
   ProjectLogRow,
   ProjectQuotaSettings,
   ProjectRegion,
@@ -91,7 +90,6 @@ export interface ProjectReference {
 }
 
 export interface ProjectDetails {
-  launcher: ProjectLauncherSettings;
   region: ProjectRegion;
   created: ProjectCreated;
   env: ProjectEnv;

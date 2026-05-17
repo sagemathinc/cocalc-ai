@@ -50,22 +50,6 @@ interface Props {
   onSave?: (prefs: LauncherPrefs | null) => void;
   resetLabel?: string;
   title?: string;
-
-  // Legacy props retained until old project/per-project call sites are removed.
-  userBaseQuickCreate?: string[];
-  projectBaseQuickCreate?: string[];
-  onSaveUser?: (prefs: LauncherPrefs | null) => void;
-  onSaveProject?: (prefs: LauncherPrefs) => void;
-  canEditProjectDefaults?: boolean;
-  saveMode?: "user" | "project";
-  contributions?: LauncherContributionLayer[];
-}
-
-export interface LauncherContributionLayer {
-  key: string;
-  title: string;
-  quickCreateAdd?: string[];
-  quickCreateRemove?: string[];
 }
 
 export function LauncherCustomizeModal({
@@ -73,10 +57,7 @@ export function LauncherCustomizeModal({
   onClose,
   initialQuickCreate,
   onSave,
-  onSaveUser,
-  onSaveProject,
   resetLabel = "Reset to inherited default",
-  saveMode = "user",
   title = "Customize Launcher",
 }: Props) {
   const [quickCreate, setQuickCreate] = useState<string[]>([]);
@@ -101,24 +82,12 @@ export function LauncherCustomizeModal({
 
   function save() {
     const prefs = { quickCreate };
-    if (onSave != null) {
-      onSave(prefs);
-    } else if (saveMode === "project") {
-      onSaveProject?.(prefs);
-    } else {
-      onSaveUser?.(prefs);
-    }
+    onSave?.(prefs);
     onClose();
   }
 
   function reset() {
-    if (onSave != null) {
-      onSave(null);
-    } else if (saveMode === "project") {
-      onSaveProject?.({});
-    } else {
-      onSaveUser?.(null);
-    }
+    onSave?.(null);
     onClose();
   }
 

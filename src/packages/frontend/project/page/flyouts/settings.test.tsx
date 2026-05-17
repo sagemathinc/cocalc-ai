@@ -147,9 +147,6 @@ jest.mock("@cocalc/frontend/project/settings/hide-delete-box", () => ({
 jest.mock("@cocalc/frontend/project/settings/managed-egress", () => ({
   ManagedEgress: () => <div>ManagedEgress</div>,
 }));
-jest.mock("@cocalc/frontend/project/settings/launcher-defaults", () => ({
-  LauncherDefaults: () => <div>LauncherDefaults</div>,
-}));
 jest.mock("@cocalc/frontend/project/settings/project-capabilites", () => ({
   ProjectCapabilities: () => <div>ProjectCapabilities</div>,
 }));
