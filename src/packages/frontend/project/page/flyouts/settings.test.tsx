@@ -134,6 +134,9 @@ jest.mock("@cocalc/frontend/project/settings/environment", () => ({
   ENV_VARS_ICON: "terminal",
   Environment: () => <div>Environment</div>,
 }));
+jest.mock("@cocalc/frontend/project/settings/environment-overview", () => ({
+  EnvironmentOverview: () => <div>EnvironmentOverview</div>,
+}));
 jest.mock("@cocalc/frontend/project/settings/secrets", () => ({
   PROJECT_SECRETS_ICON: "key",
   ProjectSecrets: () => <div>ProjectSecrets</div>,
