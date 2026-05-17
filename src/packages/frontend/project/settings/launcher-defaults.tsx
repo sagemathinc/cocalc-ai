@@ -22,10 +22,12 @@ import { file_options } from "@cocalc/frontend/editor-tmp";
 import { useProjectLauncher } from "../use-project-launcher";
 
 interface Props {
+  mode?: "project" | "flyout";
   project_id: string;
 }
 
-export function LauncherDefaults({ project_id }: Props) {
+export function LauncherDefaults({ mode = "project", project_id }: Props) {
+  const isFlyout = mode === "flyout";
   const [showProjectModal, setShowProjectModal] = useState(false);
   const site_launcher_quick = useTypedRedux(
     "customize",
@@ -75,12 +77,15 @@ export function LauncherDefaults({ project_id }: Props) {
     });
   }, [effectiveQuickCreate]);
 
-  return (
-    <SettingBox title="Project Launcher Defaults" icon="rocket">
-      <Paragraph style={{ marginBottom: "12px" }}>
-        These are the default Quick Create buttons for everyone in this project.
-        Each user can still further customize their buttons on their +New page.
-      </Paragraph>
+  const body = (
+    <>
+      {!isFlyout ? (
+        <Paragraph style={{ marginBottom: "12px" }}>
+          These are the default Quick Create buttons for everyone in this
+          project. Each user can still further customize their buttons on their
+          +New page.
+        </Paragraph>
+      ) : undefined}
       <Space orientation="vertical" style={{ width: "100%" }}>
         <div>
           <div
@@ -106,38 +111,57 @@ export function LauncherDefaults({ project_id }: Props) {
           </Space>
         </div>
       </Space>
-      <LauncherCustomizeModal
-        open={showProjectModal}
-        onClose={() => setShowProjectModal(false)}
-        initialQuickCreate={effectiveQuickCreate}
-        projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
-        onSaveProject={async (prefs) => {
-          await redux
-            .getActions("projects")
-            .set_project_launcher(project_id, prefs);
-          setLauncher(prefs);
-        }}
-        saveMode="project"
-        contributions={[
-          {
-            key: "built-in",
-            title: "Built-in defaults",
-            quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
-          },
-          {
-            key: "site",
-            title: "Site defaults",
-            quickCreateAdd: siteLauncherDefaults.quickCreate,
-            quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
-          },
-          {
-            key: "project",
-            title: "Project defaults",
-            quickCreateAdd: projectDefaults.quickCreate,
-            quickCreateRemove: projectDefaults.hiddenQuickCreate,
-          },
-        ]}
-      />
+    </>
+  );
+
+  const modal = (
+    <LauncherCustomizeModal
+      open={showProjectModal}
+      onClose={() => setShowProjectModal(false)}
+      initialQuickCreate={effectiveQuickCreate}
+      projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
+      onSaveProject={async (prefs) => {
+        await redux
+          .getActions("projects")
+          .set_project_launcher(project_id, prefs);
+        setLauncher(prefs);
+      }}
+      saveMode="project"
+      contributions={[
+        {
+          key: "built-in",
+          title: "Built-in defaults",
+          quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
+        },
+        {
+          key: "site",
+          title: "Site defaults",
+          quickCreateAdd: siteLauncherDefaults.quickCreate,
+          quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
+        },
+        {
+          key: "project",
+          title: "Project defaults",
+          quickCreateAdd: projectDefaults.quickCreate,
+          quickCreateRemove: projectDefaults.hiddenQuickCreate,
+        },
+      ]}
+    />
+  );
+
+  if (isFlyout) {
+    return (
+      <>
+        {body}
+        {modal}
+      </>
+    );
+  }
+
+  return (
+    <SettingBox title="Project Launcher Defaults" icon="rocket">
+      {body}
+      {modal}
     </SettingBox>
   );
 }

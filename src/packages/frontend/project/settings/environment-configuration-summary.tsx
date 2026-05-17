@@ -251,7 +251,9 @@ export function EnvironmentConfigurationSummary({
               {
                 key: "launcher",
                 label: "Launcher defaults editor",
-                children: <LauncherDefaults project_id={project_id} />,
+                children: (
+                  <LauncherDefaults project_id={project_id} mode={detailMode} />
+                ),
               },
               {
                 key: "env",
