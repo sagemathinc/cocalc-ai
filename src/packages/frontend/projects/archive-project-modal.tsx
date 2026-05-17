@@ -162,6 +162,11 @@ export function ArchiveProjectModal({
             Create a final backup first if the latest backup is older than the
             latest edits.
           </InfoRow>
+          <InfoRow icon="history">
+            Remove the active host copy and filesystem snapshots; backups are
+            kept so the {single ? projectLabelLower : projectsLabelLower} can be
+            restored later.
+          </InfoRow>
           <InfoRow icon="clock">
             Starting later restores from backup, so it can take longer than
             starting an active {projectLabelLower}.
