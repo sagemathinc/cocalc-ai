@@ -486,11 +486,11 @@ export const InviteInboxPanel: React.FC<Props> = ({
     set_expanded(projectMode ? outgoing.length > 0 : incoming.length > 0);
   }, [expanded, incoming.length, loading, outgoing.length, projectMode]);
 
-  if (!loading && !error && total === 0 && !showWhenEmpty) {
+  if (!error && total === 0 && !showWhenEmpty) {
     return null;
   }
 
-  const isExpanded = expanded ?? false;
+  const isExpanded = expanded ?? !!error;
 
   function renderIncoming(): React.JSX.Element {
     return renderIncomingCards(incoming, busy, respond);
@@ -650,6 +650,46 @@ export const InviteInboxPanel: React.FC<Props> = ({
       <Icon name={isExpanded ? "caret-down" : "caret-right"} /> {title}
     </Button>
   );
+
+  if (projectMode && !isExpanded && !error) {
+    return (
+      <div
+        style={{
+          alignItems: "center",
+          background: "white",
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 10,
+          display: "flex",
+          gap: 12,
+          justifyContent: "space-between",
+          padding: "8px 12px",
+        }}
+      >
+        <Button
+          type="text"
+          size="small"
+          onClick={() => set_expanded(true)}
+          style={{ fontWeight: 600, height: "auto", paddingInline: 0 }}
+        >
+          <Icon name="caret-right" /> <Icon name="mail" /> Pending invitations
+        </Button>
+        <div style={{ alignItems: "center", display: "flex", gap: 8 }}>
+          <Tag color="purple" style={{ marginInlineEnd: 0 }}>
+            {outgoing.length} pending
+          </Tag>
+          <Button
+            type="text"
+            size="small"
+            onClick={() => void load()}
+            disabled={loading}
+            style={{ paddingInline: 4 }}
+          >
+            <Icon name="refresh" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <SettingBox title={titleNode} icon="mail">

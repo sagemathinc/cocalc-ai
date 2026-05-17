@@ -1385,6 +1385,8 @@ export interface Hosts {
   touchProject: (opts: {
     host_id?: string;
     project_id: string;
+    account_id?: string;
+    account_ids?: string[];
   }) => Promise<void>;
   claimPendingCopies: (opts: {
     host_id?: string;

@@ -9,13 +9,19 @@ export const PROJECT_TOUCH_SUBJECT = "project.*.touch.-";
 
 export async function handleProjectTouchRequest(this: {
   subject?: string;
-}): Promise<null> {
+}): Promise<null>;
+export async function handleProjectTouchRequest(
+  this: { subject?: string },
+  opts?: { account_id?: string },
+): Promise<null> {
   const subject = `${this?.subject ?? ""}`;
   const project_id = extractProjectSubject(subject);
   if (!project_id) {
     throw new Error(`invalid project touch subject '${subject}'`);
   }
-  await touchProjectLastEdited(project_id, "browser-touch");
+  await touchProjectLastEdited(project_id, "browser-touch", {
+    account_id: opts?.account_id,
+  });
   return null;
 }
 

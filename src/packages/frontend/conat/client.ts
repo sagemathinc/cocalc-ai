@@ -1734,10 +1734,14 @@ export class ConatClient extends EventEmitter {
     const subject = projectSubject({ project_id, service: "touch" });
     let cn = this.getOrCreateRoutedHubClient({ ...routing, project_id });
     try {
-      await cn.request(subject, ["touch", []], {
-        timeout,
-        waitForInterest: true,
-      });
+      await cn.request(
+        subject,
+        ["touch", [{ account_id: this.client.account_id }]],
+        {
+          timeout,
+          waitForInterest: true,
+        },
+      );
     } catch (err) {
       if (!this.isProjectHostAuthError(err)) {
         throw err;
@@ -1745,10 +1749,14 @@ export class ConatClient extends EventEmitter {
       this.invalidateProjectHostToken(routing.host_id);
       this.removeRoutedHubClient(routing.host_id);
       cn = this.getOrCreateRoutedHubClient({ ...routing, project_id });
-      await cn.request(subject, ["touch", []], {
-        timeout,
-        waitForInterest: true,
-      });
+      await cn.request(
+        subject,
+        ["touch", [{ account_id: this.client.account_id }]],
+        {
+          timeout,
+          waitForInterest: true,
+        },
+      );
     }
   };
 

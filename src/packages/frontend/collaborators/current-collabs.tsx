@@ -7,7 +7,7 @@ import { Button, Card, Popconfirm, Tag } from "antd";
 import React from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { CSS, redux, useRedux } from "@cocalc/frontend/app-framework";
-import { Gap, Icon, SettingBox } from "@cocalc/frontend/components";
+import { Icon, SettingBox, TimeAgo } from "@cocalc/frontend/components";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
 import { CancelText } from "@cocalc/frontend/i18n/components";
@@ -15,6 +15,7 @@ import { Project } from "@cocalc/frontend/project/settings/types";
 import { COLORS } from "@cocalc/util/theme";
 import { FIX_BORDER } from "../project/page/common";
 import { User } from "../users";
+import { Avatar } from "../account/avatar/avatar";
 
 interface Props {
   project: Project;
@@ -71,7 +72,7 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     if (student.disableCollaborators) return;
     const text = user_remove_confirm_text(account_id);
     const isOwner = group === "owner";
-    if (isOwner && isFlyout) {
+    if (isOwner) {
       return null;
     }
     return (
@@ -84,42 +85,101 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
       >
         <Button
           disabled={isOwner}
-          type={isFlyout ? "link" : "default"}
+          size="small"
+          type="text"
+          danger
           style={{
             marginBottom: "0",
-            ...(isFlyout
-              ? { color: COLORS.ANTD_RED_WARN, paddingInline: 0 }
-              : { float: "right" }),
+            paddingInline: isFlyout ? 0 : 8,
           }}
         >
-          <Icon name="user-times" /> {intl.formatMessage(labels.remove)} ...
+          <Icon name="user-times" /> {intl.formatMessage(labels.remove)}
         </Button>
       </Popconfirm>
     );
   }
 
   function render_user(user: any, is_last?: boolean) {
-    if (isFlyout) {
-      return render_flyout_user(user, is_last);
-    }
-    const style = {
-      width: "100%",
-      flex: "1 1 auto",
-      ...(!is_last ? { marginBottom: "20px" } : {}),
-    };
     return (
-      <div key={user.account_id} style={style}>
-        <User
-          account_id={user.account_id}
-          user_map={user_map}
-          last_active={user.last_active}
-          show_avatar={true}
-        />
-        <span>
-          <Gap />({user.group})
-        </span>
-        {user_remove_button(user.account_id, user.group)}
+      <div
+        key={user.account_id}
+        style={{
+          alignItems: "center",
+          background: "white",
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 10,
+          boxShadow: isFlyout ? undefined : "0 1px 2px rgba(14, 43, 89, 0.04)",
+          display: "grid",
+          gap: isFlyout ? 10 : 14,
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          marginBottom: is_last ? 0 : 8,
+          padding: isFlyout ? "8px 10px" : "11px 12px",
+        }}
+      >
+        <div
+          style={{
+            alignItems: "center",
+            display: "flex",
+            minWidth: 0,
+          }}
+        >
+          <Avatar
+            account_id={user.account_id}
+            no_tooltip={true}
+            no_loading
+            size={isFlyout ? 30 : 34}
+            style={{ flex: "0 0 auto" }}
+          />
+          <div style={{ marginLeft: 10, minWidth: 0 }}>
+            <User
+              account_id={user.account_id}
+              user_map={user_map}
+              show_avatar={false}
+            />
+            <div
+              style={{
+                color: COLORS.GRAY_M,
+                fontSize: "12px",
+                marginTop: 2,
+              }}
+            >
+              {render_last_active(user.account_id, user.last_active)}
+            </div>
+          </div>
+        </div>
+        <div
+          style={{
+            alignItems: "center",
+            display: "flex",
+            gap: 10,
+            justifyContent: "flex-end",
+            minWidth: isFlyout ? 138 : 178,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {render_role(user.group)}
+          {user_remove_button(user.account_id, user.group)}
+        </div>
       </div>
+    );
+  }
+
+  function render_last_active(account_id: string, last_active?: Date | number) {
+    if (!last_active) {
+      const accountLastActive = user_map?.getIn?.([account_id, "last_active"]);
+      if (accountLastActive) {
+        return (
+          <>
+            Account active <TimeAgo date={accountLastActive} />
+          </>
+        );
+      }
+      return "No project activity yet";
+    }
+    return (
+      <>
+        Last active <TimeAgo date={last_active} />
+      </>
     );
   }
 
@@ -132,35 +192,6 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
       >
         {isOwner && <Icon name="lock" />} {group ?? "collaborator"}
       </Tag>
-    );
-  }
-
-  function render_flyout_user(user: any, is_last?: boolean) {
-    return (
-      <div
-        key={user.account_id}
-        style={{
-          alignItems: "center",
-          borderBottom: is_last ? undefined : `1px solid ${COLORS.GRAY_LL}`,
-          display: "grid",
-          gap: 10,
-          gridTemplateColumns: "minmax(0, 1fr) auto auto",
-          padding: "8px 0",
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <User
-            account_id={user.account_id}
-            user_map={user_map}
-            last_active={user.last_active}
-            show_avatar={true}
-          />
-        </div>
-        {render_role(user.group)}
-        <div style={{ minWidth: 66, textAlign: "right" }}>
-          {user_remove_button(user.account_id, user.group)}
-        </div>
-      </div>
     );
   }
 
@@ -182,12 +213,13 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
 
   function render_collaborators_list(users = get_users()) {
     const style: CSS = {
-      maxHeight: isFlyout ? "240px" : "20em",
+      maxHeight: isFlyout ? "240px" : "24em",
       overflowY: "auto",
       overflowX: "hidden",
       marginBottom: "0",
       display: "flex",
       flexDirection: "column",
+      paddingRight: 3,
     };
     if (isFlyout) {
       return (
@@ -197,28 +229,64 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
       );
     } else {
       return (
-        <Card style={{ ...style, backgroundColor: COLORS.GRAY_LLL }}>
+        <Card
+          style={{
+            ...style,
+            backgroundColor: COLORS.GRAY_LLL,
+            borderColor: COLORS.GRAY_LL,
+          }}
+          styles={{ body: { padding: 10 } }}
+        >
           {render_users(users)}
         </Card>
       );
     }
   }
 
-  const introText = intl.formatMessage({
-    id: "collaborators.current-collabs.intro",
-    defaultMessage:
-      "Everybody listed below can collaboratively work with you on any Jupyter Notebook, Linux Terminal or file in this project, and add or remove other collaborators.",
-  });
+  function render_access_summary(users: any[]) {
+    return (
+      <div
+        style={{
+          alignItems: "center",
+          background: COLORS.ANTD_BG_BLUE_L,
+          border: `1px solid ${COLORS.BLUE_LLL}`,
+          borderRadius: 10,
+          display: "flex",
+          gap: 12,
+          justifyContent: "space-between",
+          marginBottom: 12,
+          padding: "10px 12px",
+        }}
+      >
+        <div style={{ alignItems: "center", display: "flex", gap: 10 }}>
+          <Icon
+            name="user"
+            style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 18 }}
+          />
+          <div>
+            <div style={{ fontWeight: 600 }}>Full project access</div>
+            <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>
+              Edit files, run code, manage settings, and invite people.
+            </div>
+          </div>
+        </div>
+        <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+          {users.length} {users.length === 1 ? "person" : "people"}
+        </Tag>
+      </div>
+    );
+  }
 
   switch (mode) {
-    case "project":
+    case "project": {
+      const users = get_users();
       return (
         <SettingBox title="Current Collaborators" icon="user">
-          {introText}
-          <hr />
-          {render_collaborators_list()}
+          {render_access_summary(users)}
+          {render_collaborators_list(users)}
         </SettingBox>
       );
+    }
     case "flyout": {
       const users = get_users();
       return (

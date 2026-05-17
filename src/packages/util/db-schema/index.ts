@@ -62,7 +62,6 @@ import "./notification-targets";
 import "./organizations";
 import "./password-reset";
 import "./pg-system";
-import "./project-invite-tokens";
 import "./project-hosts";
 import "./project-host-access";
 import "./project-host-bootstrap-tokens";

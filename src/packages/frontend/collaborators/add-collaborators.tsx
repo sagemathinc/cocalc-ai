@@ -23,7 +23,7 @@ import {
 import { Well } from "../antd-bootstrap";
 import { Icon, Loading, ErrorDisplay, Gap } from "../components";
 import { webapp_client } from "../webapp-client";
-import { SITE_NAME } from "@cocalc/util/theme";
+import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import {
   contains_url,
   plural,
@@ -36,7 +36,6 @@ import {
 } from "@cocalc/util/misc";
 import { Project } from "../projects/store";
 import { Avatar } from "../account/avatar/avatar";
-import { ProjectInviteTokens } from "./project-invite-tokens";
 import { alert_message } from "../alerts";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { useProjectRunQuota } from "@cocalc/frontend/project/use-project-run-quota";
@@ -54,6 +53,7 @@ interface RegisteredUser {
   label?: string;
   tag?: string;
   name?: string;
+  extra?: string[];
 }
 
 interface NonregisteredUser {
@@ -68,6 +68,7 @@ interface NonregisteredUser {
   label?: string;
   tag?: string;
   name?: string;
+  extra?: string[];
 }
 
 type User = RegisteredUser | NonregisteredUser;
@@ -124,6 +125,7 @@ export const AddCollaborators: React.FC<Props> = ({
   const [email_body, set_email_body] = useState<string>("");
   const [email_body_error, set_email_body_error] = useState<string>("");
   const [email_body_editing, set_email_body_editing] = useState<boolean>(false);
+  const [customize_email, set_customize_email] = useState<boolean>(false);
   const [invite_result, set_invite_result] = useState<string>("");
 
   const isMountedRef = useIsMountedRef();
@@ -147,6 +149,7 @@ export const AddCollaborators: React.FC<Props> = ({
     set_email_body("");
     set_email_body_error("");
     set_email_body_editing(false);
+    set_customize_email(false);
     set_select_open(false);
   }
 
@@ -230,6 +233,7 @@ export const AddCollaborators: React.FC<Props> = ({
     set_err(err);
     set_results(search_results);
     set_email_to("");
+    set_customize_email(false);
     set_select_open(true);
     select_ref.current?.focus();
   }
@@ -246,8 +250,6 @@ export const AddCollaborators: React.FC<Props> = ({
         }
         const tag = trunc_middle(name, 20);
 
-        // Extra display is a bit ugly, but we need to do it for now.  Need to make
-        // react rendered version of this that is much nicer (with pictures!) someday.
         const extra: string[] = [];
         if (r.account_id != null && user_map.get(r.account_id)) {
           extra.push("Collaborator");
@@ -269,24 +271,49 @@ export const AddCollaborators: React.FC<Props> = ({
             }
           }
         }
-        if (extra.length > 0) {
-          name += `  (${extra.join(", ")})`;
-        }
-        r.label = name.toLowerCase();
+        r.label = `${name} ${extra.join(" ")}`.toLowerCase();
         r.tag = tag;
         r.name = name;
+        r.extra = extra;
       }
       const x = r.account_id ?? r.email_address;
       options.push(
         <Select.Option key={x} value={x} label={r.label} tag={r.tag}>
-          <Avatar
-            size={36}
-            no_tooltip={true}
-            account_id={r.account_id}
-            first_name={r.account_id ? r.first_name : "@"}
-            last_name={r.last_name}
-          />{" "}
-          <span title={r.name}>{r.name}</span>
+          <div style={{ alignItems: "center", display: "flex", gap: 10 }}>
+            <Avatar
+              size={36}
+              no_tooltip={true}
+              account_id={r.account_id}
+              first_name={r.account_id ? r.first_name : "@"}
+              last_name={r.last_name}
+            />
+            <div style={{ lineHeight: 1.25, minWidth: 0 }}>
+              <div
+                style={{
+                  fontWeight: 500,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={r.name}
+              >
+                {r.name}
+              </div>
+              {r.extra != null && r.extra.length > 0 && (
+                <div
+                  style={{
+                    color: COLORS.GRAY_M,
+                    fontSize: 12,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {r.extra.join(" · ")}
+                </div>
+              )}
+            </div>
+          </div>
         </Select.Option>,
       );
     }
@@ -317,6 +344,7 @@ export const AddCollaborators: React.FC<Props> = ({
 
   function add_selected(): void {
     let errors = "";
+    const number_selected = selected_entries.length;
     for (const x of selected_entries) {
       try {
         if (is_valid_email_address(x)) {
@@ -339,10 +367,7 @@ export const AddCollaborators: React.FC<Props> = ({
       set_state("invited_errors");
     } else {
       set_invite_result(
-        `Successfully sent ${selected_entries.length} ${plural(
-          selected_entries.length,
-          "invitation",
-        )}.`,
+        `${number_selected} ${plural(number_selected, "invitation")} sent.`,
       );
       set_state("invited");
     }
@@ -452,6 +477,35 @@ export const AddCollaborators: React.FC<Props> = ({
     );
   }
 
+  function render_customize_message(): React.JSX.Element {
+    return (
+      <div style={{ marginTop: "8px" }}>
+        <Button
+          type="link"
+          style={{ padding: 0 }}
+          onClick={() => set_customize_email(!customize_email)}
+        >
+          <Icon name={customize_email ? "caret-down" : "caret-right"} />{" "}
+          Customize invite message
+        </Button>
+        {customize_email && (
+          <div
+            style={{
+              border: "1px solid lightgrey",
+              padding: "10px",
+              borderRadius: "5px",
+              backgroundColor: "white",
+              marginTop: "8px",
+            }}
+          >
+            {render_email_body_error()}
+            {render_email_textarea()}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function render_send_email(): React.JSX.Element | undefined {
     if (!email_to) {
       return;
@@ -468,22 +522,14 @@ export const AddCollaborators: React.FC<Props> = ({
             onChange={(e) => set_email_to((e.target as any).value)}
             autoFocus
           />
-          <div
-            style={{
-              padding: "20px 0",
-              backgroundColor: "white",
-              marginBottom: "15px",
-            }}
-          >
-            {render_email_body_error()}
-            {render_email_textarea()}
-          </div>
-          <div style={{ display: "flex" }}>
+          {render_customize_message()}
+          <div style={{ display: "flex", marginTop: "10px" }}>
             <Button
               onClick={() => {
                 set_email_to("");
                 set_email_body("");
                 set_email_body_editing(false);
+                set_customize_email(false);
               }}
             >
               {intl.formatMessage(labels.cancel)}
@@ -503,17 +549,27 @@ export const AddCollaborators: React.FC<Props> = ({
   }
 
   function render_search(): React.JSX.Element | undefined {
+    if (state == "searched") {
+      return;
+    }
     return (
-      <div style={{ marginBottom: "15px" }}>
-        {state == "searched" ? (
-          render_select_list_button()
-        ) : (
-          <>
-            Collaborators can view, edit, run code, manage files, and add or
-            remove other collaborators in this project. For teaching, add
-            students through the course.
-          </>
-        )}
+      <div
+        style={{
+          alignItems: "flex-start",
+          color: COLORS.GRAY_M,
+          display: "flex",
+          gap: 8,
+          marginBottom: 10,
+        }}
+      >
+        <Icon
+          name="info-circle"
+          style={{ color: COLORS.ANTD_LINK_BLUE, marginTop: 2 }}
+        />
+        <span>
+          Collaborators get full project access. For teaching, add students
+          through the course instead.
+        </span>
       </div>
     );
   }
@@ -537,13 +593,32 @@ export const AddCollaborators: React.FC<Props> = ({
         return <Alert type="info" title={"Press enter to search..."} />;
       }
     }
+    const hasSearchContentBelow =
+      showSelector ||
+      (focused && results.length === 0) ||
+      selected_entries.length > 0 ||
+      state == "searched";
 
     return (
-      <div style={{ marginBottom: "10px" }}>
-        <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
+      <div
+        style={{
+          background: COLORS.GRAY_LLL,
+          border: `1px solid ${COLORS.GRAY_LL}`,
+          borderRadius: 10,
+          marginBottom: 10,
+          padding: 12,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            marginBottom: hasSearchContentBelow ? 10 : 0,
+          }}
+        >
           <Input
             autoFocus={autoFocus}
-            placeholder="Name or email address..."
+            placeholder="Search by name or email address..."
             value={search}
             onChange={(e) => {
               const value = (e.target as any).value ?? "";
@@ -559,6 +634,7 @@ export const AddCollaborators: React.FC<Props> = ({
           <Button
             onClick={() => void do_search(search_ref.current)}
             disabled={state === ("searching" as State) || !search.trim()}
+            type={search.trim() ? "primary" : "default"}
           >
             Search
           </Button>
@@ -577,13 +653,17 @@ export const AddCollaborators: React.FC<Props> = ({
                 search_split(s.toLowerCase()),
               );
             }}
-            style={{ width: "100%", marginBottom: "10px" }}
+            style={{ width: "100%", marginBottom: 10 }}
             placeholder={`Select from ${users.length} ${plural(
               users.length,
               "matching user",
             )}.`}
             onChange={(value) => {
-              set_selected_entries(value as string[]);
+              const selected = value as string[];
+              set_selected_entries(selected);
+              if (selected.length > 0) {
+                set_select_open(false);
+              }
             }}
             value={selected_entries}
             optionLabelProp="tag"
@@ -604,20 +684,7 @@ export const AddCollaborators: React.FC<Props> = ({
           </Select>
         )}
         {render_search_help()}
-        {selected_entries.length > 0 && (
-          <div
-            style={{
-              border: "1px solid lightgrey",
-              padding: "10px",
-              borderRadius: "5px",
-              backgroundColor: "white",
-              margin: "10px 0",
-            }}
-          >
-            {render_email_body_error()}
-            {render_email_textarea()}
-          </div>
-        )}
+        {selected_entries.length > 0 && render_customize_message()}
         {state == "searched" && render_select_list_button()}
       </div>
     );
@@ -652,7 +719,7 @@ export const AddCollaborators: React.FC<Props> = ({
       disabled = true;
     }
     return (
-      <div style={{ display: "flex" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
         <Button onClick={reset}>Cancel</Button>
         <Gap />
         <Button disabled={disabled} onClick={add_selected} type="primary">
@@ -663,17 +730,17 @@ export const AddCollaborators: React.FC<Props> = ({
   }
 
   function render_invite_result(): React.JSX.Element | undefined {
-    if (state != "invited") {
+    if (state != "invited" && state != "invited_errors") {
       return;
     }
     return (
       <Alert
-        style={{ margin: "5px 0" }}
+        style={{ margin: "8px 0" }}
         showIcon
         closable
         onClose={reset}
-        type="success"
-        title={invite_result}
+        type={state == "invited_errors" ? "error" : "success"}
+        message={invite_result}
       />
     );
   }
@@ -692,7 +759,6 @@ export const AddCollaborators: React.FC<Props> = ({
       {render_select_list()}
       {render_send_email()}
       {render_invite_result()}
-      <ProjectInviteTokens project_id={project?.get("project_id")} />
     </div>
   );
 };

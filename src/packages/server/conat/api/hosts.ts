@@ -156,7 +156,7 @@ import {
   syncProjectBackupIndexes as syncProjectBackupIndexesLocalInternal,
 } from "@cocalc/server/project-backup";
 import { to_bool } from "@cocalc/util/db-schema/site-defaults";
-import { is_valid_email_address } from "@cocalc/util/misc";
+import { is_valid_email_address, isValidUUID } from "@cocalc/util/misc";
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import { computeAIUsageUnits } from "@cocalc/server/ai/usage-units";
 import { saveAIResponse } from "@cocalc/server/ai/save-response";
@@ -1726,9 +1726,13 @@ export async function deleteProjectBackupIndexLocal({
 export async function touchProject({
   host_id,
   project_id,
+  account_id,
+  account_ids,
 }: {
   host_id?: string;
   project_id: string;
+  account_id?: string;
+  account_ids?: string[];
 }): Promise<void> {
   if (!host_id) {
     throw new Error("host_id must be specified");
@@ -1736,15 +1740,44 @@ export async function touchProject({
   if (!project_id) {
     throw new Error("project_id must be specified");
   }
+  const activeAccountIds = Array.from(
+    new Set(
+      [account_id, ...(account_ids ?? [])].filter(
+        (id): id is string => typeof id === "string" && isValidUUID(id),
+      ),
+    ),
+  );
+  const activeByAccount = Object.fromEntries(
+    activeAccountIds.map((account_id) => [account_id, new Date()]),
+  );
   const { rowCount } = await pool().query(
     `
       UPDATE projects
-      SET last_edited=NOW()
+      SET last_edited=NOW(),
+          last_active=CASE
+            WHEN $3::JSONB = '{}'::JSONB THEN last_active
+            ELSE COALESCE(last_active, '{}'::JSONB) || COALESCE(
+              (
+                SELECT jsonb_object_agg(active.key, active.value)
+                  FROM jsonb_each($3::JSONB) AS active(key, value)
+                 WHERE users ? active.key
+              ),
+              '{}'::JSONB
+            )
+          END
       WHERE project_id=$1
         AND host_id=$2
         AND deleted IS NOT true
+        AND (
+          $4::TEXT[] = '{}'::TEXT[]
+          OR EXISTS (
+            SELECT 1
+              FROM unnest($4::TEXT[]) AS active_account_id
+             WHERE users ? active_account_id
+          )
+        )
     `,
-    [project_id, host_id],
+    [project_id, host_id, JSON.stringify(activeByAccount), activeAccountIds],
   );
   if (!rowCount) {
     logger.debug("touchProject ignored (host mismatch)", {

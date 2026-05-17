@@ -598,16 +598,9 @@ export async function addCollaborator({
   );
   let projects: undefined | string | string[] = opts.project_id;
   let accounts: undefined | string | string[] = opts.account_id;
-  let tokens: undefined | string | string[] = opts.token_id;
-  let is_single_token = false;
 
-  if (tokens) {
-    if (!is_array(tokens)) {
-      is_single_token = true;
-      tokens = [tokens];
-    }
-    // projects will get mutated below as tokens are used
-    projects = Array(tokens.length).fill("");
+  if (projects == null) {
+    throw new Error("project_id must be specified");
   }
   if (!is_array(projects)) {
     projects = [projects] as string[];
@@ -633,22 +626,13 @@ export async function addCollaborator({
     account_id,
     accounts as string[],
     projects as string[],
-    tokens as string[] | undefined,
   );
   for (const project_id of projects as string[]) {
     if (project_id) {
       await publishProjectAccountFeedEventsBestEffort({ project_id });
     }
   }
-  // Tokens determine the projects, and it may be useful to the client to know what
-  // project they just got added to!
-  let project_id;
-  if (is_single_token) {
-    project_id = projects[0];
-  } else {
-    project_id = projects;
-  }
-  return { project_id };
+  return { project_id: projects };
 }
 
 export async function createCollabInvite({
