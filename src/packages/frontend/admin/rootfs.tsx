@@ -22,6 +22,10 @@ import {
   TimeAgo,
   Tooltip,
 } from "@cocalc/frontend/components";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
 import { RootfsScanStatus } from "@cocalc/frontend/rootfs/scan-status";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type {
@@ -376,6 +380,13 @@ export function RootfsAdmin() {
     load();
   }, [load]);
 
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
+    onUnhandledError: (err) => {
+      message.error(`Failed to scan RootFS image: ${err}`);
+      void load();
+    },
+  });
+
   const filtered = React.useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (!needle) return rows;
@@ -514,7 +525,8 @@ export function RootfsAdmin() {
   }
 
   async function runScan(entry: RootfsAdminCatalogEntry) {
-    if (!entry.release_id) {
+    const release_id = entry.release_id;
+    if (!release_id) {
       message.error("This catalog entry does not reference a managed release.");
       return;
     }
@@ -522,18 +534,25 @@ export function RootfsAdmin() {
       `Project host id to scan '${entry.label}' on:`,
     );
     if (!host_id?.trim()) return;
-    setActionImageId(entry.id);
+    const hostId = host_id.trim();
     try {
-      const result = await hub.system.scanRootfsRelease({
-        release_id: entry.release_id,
-        host_id: host_id.trim(),
+      await runFreshAuthAction(async () => {
+        setActionImageId(entry.id);
+        try {
+          const result = await hub.system.scanRootfsRelease({
+            release_id,
+            host_id: hostId,
+            browser_id: webapp_client.browser_id,
+          });
+          message.success(`RootFS scan ${result.status}: ${entry.label}`);
+          await load();
+        } finally {
+          setActionImageId(undefined);
+        }
       });
-      message.success(`RootFS scan ${result.status}: ${entry.label}`);
-      await load();
     } catch (err) {
       message.error(`Failed to scan RootFS image: ${err}`);
       await load();
-    } finally {
       setActionImageId(undefined);
     }
   }
@@ -562,6 +581,7 @@ export function RootfsAdmin() {
 
   return (
     <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+      <FreshAuthModal {...freshAuthModalProps} />
       <Typography.Paragraph type="secondary">
         Manage all RootFS catalog entries and inspect central lifecycle state.
         Deleting an image here removes the catalog entry immediately and lets
