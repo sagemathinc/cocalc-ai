@@ -61,6 +61,10 @@ const NUMERIC_USAGE_LIMIT_KEYS = new Set<keyof MembershipUsageLimits>([
   "acp_max_running_per_account",
   "acp_max_running_per_project",
   "acp_max_active_automations_per_project",
+  "blob_account_total_bytes",
+  "blob_account_count",
+  "blob_project_total_bytes",
+  "blob_project_count",
   "rootfs_count",
   "rootfs_total_storage_gb",
   "rootfs_max_storage_gb",
@@ -250,6 +254,32 @@ const OVERRIDE_EFFECT_FIELDS = [
     key: "acp_max_active_automations_per_project",
     ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
       .acp_max_active_automations_per_project,
+  },
+  {
+    section: "usage_limits",
+    key: "blob_account_total_bytes",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .blob_account_total_bytes,
+    fromStored: (value: number) => value / 1_000_000_000,
+  },
+  {
+    section: "usage_limits",
+    key: "blob_account_count",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .blob_account_count,
+  },
+  {
+    section: "usage_limits",
+    key: "blob_project_total_bytes",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .blob_project_total_bytes,
+    fromStored: (value: number) => value / 1_000_000_000,
+  },
+  {
+    section: "usage_limits",
+    key: "blob_project_count",
+    ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
+      .blob_project_count,
   },
   {
     section: "usage_limits",

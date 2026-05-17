@@ -210,6 +210,34 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       userDescription:
         "Maximum enabled scheduled Codex/ACP automations in one project.",
     },
+    blob_account_total_bytes: {
+      label: "Blob storage per account",
+      unit: "GB",
+      adminDescription:
+        "Maximum active blob storage attributed to this account across direct uploads, generated images, notebook outputs, and project-scoped blob uploads.",
+      userDescription: "Maximum blob storage attributed to your account.",
+    },
+    blob_account_count: {
+      label: "Blob count per account",
+      unit: "blobs",
+      adminDescription:
+        "Maximum number of active blobs attributed to this account.",
+      userDescription: "Maximum number of blobs attributed to your account.",
+    },
+    blob_project_total_bytes: {
+      label: "Blob storage per project",
+      unit: "GB",
+      adminDescription:
+        "Maximum active blob storage attributed to any one project whose usage is sponsored by this account.",
+      userDescription: "Maximum blob storage in any one project.",
+    },
+    blob_project_count: {
+      label: "Blob count per project",
+      unit: "blobs",
+      adminDescription:
+        "Maximum number of active blobs attributed to any one project whose usage is sponsored by this account.",
+      userDescription: "Maximum number of blobs in any one project.",
+    },
     rootfs_count: {
       label: "Root filesystems",
       unit: "rootfs",

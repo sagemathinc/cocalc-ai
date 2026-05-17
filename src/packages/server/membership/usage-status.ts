@@ -19,6 +19,7 @@ import {
   getRecentManagedEgressEventsForAccount,
 } from "./managed-egress";
 import { getEffectiveMembershipUsageLimits } from "./effective-limits";
+import { getAccountBlobUsage } from "./blob-limits";
 import {
   listUsageProjectsForAccount,
   type ProjectUsageRow,
@@ -217,6 +218,9 @@ export async function getMembershipUsageStatusForAccount({
       typeof effectiveLimits.rootfs_max_storage_gb === "number"
         ? Math.floor(effectiveLimits.rootfs_max_storage_gb * 1_000_000_000)
         : undefined;
+    const blobUsage = await getAccountBlobUsage({ account_id });
+    const blob_count_limit = effectiveLimits.blob_account_count;
+    const blob_total_bytes_limit = effectiveLimits.blob_account_total_bytes;
 
     return {
       collected_at: new Date().toISOString(),
@@ -269,6 +273,28 @@ export async function getMembershipUsageStatusForAccount({
           ? rootfsUsage.total_storage_bytes > rootfs_total_storage_bytes_limit
           : undefined,
       rootfs_max_storage_bytes_limit,
+      blob_count: blobUsage.count,
+      blob_count_limit,
+      blob_remaining_count:
+        blob_count_limit != null
+          ? blob_count_limit - blobUsage.count
+          : undefined,
+      over_blob_count:
+        blob_count_limit != null
+          ? blobUsage.count > blob_count_limit
+          : undefined,
+      blob_total_bytes: blobUsage.total_bytes,
+      blob_total_bytes_limit,
+      blob_total_remaining_bytes:
+        blob_total_bytes_limit != null
+          ? blob_total_bytes_limit - blobUsage.total_bytes
+          : undefined,
+      over_blob_total_storage:
+        blob_total_bytes_limit != null
+          ? blobUsage.total_bytes > blob_total_bytes_limit
+          : undefined,
+      blob_project_count_limit: effectiveLimits.blob_project_count,
+      blob_project_total_bytes_limit: effectiveLimits.blob_project_total_bytes,
       ...managedEgress,
       managed_egress_recent_events: managedEgressRecentEvents,
     };

@@ -124,21 +124,15 @@ Table({
           blob: true,
         },
         async instead_of_change(
-          database,
+          _database,
           _old_value,
-          new_val,
-          account_id,
+          _new_val,
+          _account_id,
           cb,
         ): Promise<void> {
-          database.save_blob({
-            uuid: new_val.id,
-            blob: new_val.blob,
-            ttl: new_val.ttl,
-            project_id: new_val.project_id,
-            account_id,
-            check: true, // can't trust the user!
-            cb,
-          });
+          cb(
+            "direct blob table writes are disabled; use the /blobs upload endpoint or saveBlob RPC",
+          );
         },
       },
     },

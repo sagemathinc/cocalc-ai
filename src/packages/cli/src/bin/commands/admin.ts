@@ -268,6 +268,32 @@ export function buildEntitlementOverrideSchemaDoc() {
             .adminDescription,
       }),
       fieldDoc({
+        path: "usage_limits.blob_account_total_bytes",
+        ...descriptions.usage_limits.blob_account_total_bytes,
+        unit: "bytes",
+        description:
+          descriptions.usage_limits.blob_account_total_bytes.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.blob_account_count",
+        ...descriptions.usage_limits.blob_account_count,
+        description:
+          descriptions.usage_limits.blob_account_count.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.blob_project_total_bytes",
+        ...descriptions.usage_limits.blob_project_total_bytes,
+        unit: "bytes",
+        description:
+          descriptions.usage_limits.blob_project_total_bytes.adminDescription,
+      }),
+      fieldDoc({
+        path: "usage_limits.blob_project_count",
+        ...descriptions.usage_limits.blob_project_count,
+        description:
+          descriptions.usage_limits.blob_project_count.adminDescription,
+      }),
+      fieldDoc({
         path: "usage_limits.rootfs_count",
         ...descriptions.usage_limits.rootfs_count,
         description: descriptions.usage_limits.rootfs_count.adminDescription,

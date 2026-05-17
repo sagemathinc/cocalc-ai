@@ -11,6 +11,7 @@ import { getLogger } from "./logger";
 import { defaults, required, human_readable_size } from "@cocalc/util/misc";
 import { uuidsha1 } from "@cocalc/backend/misc_node";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
+import { assertCanSaveBlobForAccount } from "@cocalc/server/membership/blob-limits";
 
 const logger = getLogger("blobs");
 
@@ -66,20 +67,32 @@ export function save_blob(rawOpts: SaveBlobOpts): void {
     return;
   }
 
-  // Store the blob in the database, if it isn't there already.
-  opts.database.save_blob({
-    uuid: opts.uuid,
-    blob: opts.blob,
-    ttl: opts.ttl,
-    project_id: opts.project_id,
-    account_id: opts.account_id,
-    cb: (error, ttl) => {
-      if (error) {
-        dbg(`failed to store blob -- ${error}`);
-      } else {
-        dbg("successfully stored blob");
-      }
-      opts.cb(error, ttl);
-    },
+  (async () => {
+    await assertCanSaveBlobForAccount({
+      account_id: opts.account_id,
+      project_id: opts.project_id,
+      uuid: opts.uuid!,
+      blobSize: blobLength,
+    });
+
+    // Store the blob in the database, if it isn't there already.
+    opts.database.save_blob({
+      uuid: opts.uuid,
+      blob: opts.blob,
+      ttl: opts.ttl,
+      project_id: opts.project_id,
+      account_id: opts.account_id,
+      cb: (error, ttl) => {
+        if (error) {
+          dbg(`failed to store blob -- ${error}`);
+        } else {
+          dbg("successfully stored blob");
+        }
+        opts.cb(error, ttl);
+      },
+    });
+  })().catch((error) => {
+    dbg(`failed blob quota check -- ${error}`);
+    opts.cb(error);
   });
 }

@@ -38,6 +38,10 @@ export interface MembershipUsageLimits {
   acp_max_running_per_account?: number;
   acp_max_running_per_project?: number;
   acp_max_active_automations_per_project?: number;
+  blob_account_total_bytes?: number;
+  blob_account_count?: number;
+  blob_project_total_bytes?: number;
+  blob_project_count?: number;
   rootfs_count?: number;
   rootfs_total_storage_gb?: number;
   rootfs_max_storage_gb?: number;
@@ -105,6 +109,10 @@ export interface AccountUsageLimitOverrides {
   acp_max_running_per_account?: NumericLimitRule;
   acp_max_running_per_project?: NumericLimitRule;
   acp_max_active_automations_per_project?: NumericLimitRule;
+  blob_account_total_bytes?: NumericLimitRule;
+  blob_account_count?: NumericLimitRule;
+  blob_project_total_bytes?: NumericLimitRule;
+  blob_project_count?: NumericLimitRule;
   rootfs_count?: NumericLimitRule;
   rootfs_total_storage_gb?: NumericLimitRule;
   rootfs_max_storage_gb?: NumericLimitRule;
@@ -267,6 +275,16 @@ export interface MembershipUsageStatus {
   rootfs_total_storage_remaining_bytes?: number;
   over_rootfs_total_storage?: boolean;
   rootfs_max_storage_bytes_limit?: number;
+  blob_count?: number;
+  blob_count_limit?: number;
+  blob_remaining_count?: number;
+  over_blob_count?: boolean;
+  blob_total_bytes?: number;
+  blob_total_bytes_limit?: number;
+  blob_total_remaining_bytes?: number;
+  over_blob_total_storage?: boolean;
+  blob_project_count_limit?: number;
+  blob_project_total_bytes_limit?: number;
   managed_egress_5h_bytes?: number;
   managed_egress_7d_bytes?: number;
   managed_egress_5h_remaining_bytes?: number;

@@ -10,6 +10,7 @@ const getManagedEgressUsageForAccountMock = jest.fn();
 const getRecentManagedEgressEventsForAccountMock = jest.fn();
 const listUsageProjectsForAccountMock = jest.fn();
 const getRootfsUsageForAccountMock = jest.fn();
+const getAccountBlobUsageMock = jest.fn();
 const conatWithProjectRoutingForAccountMock = jest.fn(() => ({
   close: clientCloseMock,
 }));
@@ -47,6 +48,10 @@ jest.mock("./rootfs-limits", () => ({
     getRootfsUsageForAccountMock(...args),
 }));
 
+jest.mock("./blob-limits", () => ({
+  getAccountBlobUsage: (...args: any[]) => getAccountBlobUsageMock(...args),
+}));
+
 describe("getMembershipUsageStatusForAccount", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -62,6 +67,10 @@ describe("getMembershipUsageStatusForAccount", () => {
     getRootfsUsageForAccountMock.mockResolvedValue({
       count: 0,
       total_storage_bytes: 0,
+    });
+    getAccountBlobUsageMock.mockResolvedValue({
+      count: 0,
+      total_bytes: 0,
     });
   });
 

@@ -5,6 +5,7 @@ import getPool from "@cocalc/database/pool";
 import { isValidUUID } from "@cocalc/util/misc";
 import { assertCollab } from "./util";
 import { MAX_BLOB_SIZE } from "@cocalc/util/db-schema/blobs";
+import { assertCanSaveBlobForAccount } from "@cocalc/server/membership/blob-limits";
 
 export { userQuery };
 
@@ -114,6 +115,12 @@ export async function saveBlob({
       `blob is too large (${buffer.byteLength} bytes; max ${MAX_BLOB_SIZE})`,
     );
   }
+  await assertCanSaveBlobForAccount({
+    account_id,
+    project_id,
+    uuid,
+    blobSize: buffer.byteLength,
+  });
   const D = db();
   await callback2(D.save_blob, {
     uuid,

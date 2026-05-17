@@ -127,6 +127,18 @@ export function normalizeMembershipEffectiveLimits(
     acp_max_active_automations_per_project: normalizeNonNegativeInteger(
       usageLimits?.acp_max_active_automations_per_project,
     ),
+    blob_account_total_bytes: normalizeNonNegativeInteger(
+      usageLimits?.blob_account_total_bytes,
+    ),
+    blob_account_count: normalizeNonNegativeInteger(
+      usageLimits?.blob_account_count,
+    ),
+    blob_project_total_bytes: normalizeNonNegativeInteger(
+      usageLimits?.blob_project_total_bytes,
+    ),
+    blob_project_count: normalizeNonNegativeInteger(
+      usageLimits?.blob_project_count,
+    ),
     rootfs_count: normalizeNonNegativeInteger(usageLimits?.rootfs_count),
     rootfs_total_storage_gb: normalizeNonNegativeNumber(
       usageLimits?.rootfs_total_storage_gb,

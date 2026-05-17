@@ -74,6 +74,25 @@ function rootfsUsageLimits({
   };
 }
 
+function blobUsageLimits({
+  accountStorageGb,
+  accountCount,
+  projectStorageGb,
+  projectCount,
+}: {
+  accountStorageGb: number;
+  accountCount: number;
+  projectStorageGb: number;
+  projectCount: number;
+}) {
+  return {
+    blob_account_total_bytes: Math.floor(accountStorageGb * 1_000_000_000),
+    blob_account_count: accountCount,
+    blob_project_total_bytes: Math.floor(projectStorageGb * 1_000_000_000),
+    blob_project_count: projectCount,
+  };
+}
+
 function aiLimitsFromYearly(price_yearly: number, monthlyOverride?: number) {
   const monthlyCost = monthlyOverride ?? price_yearly / 12;
   const monthlyBudget = monthlyCost * 0.5;
@@ -125,6 +144,12 @@ export const TIER_TEMPLATES = {
         maxStorageGb: 0,
         ociImages: false,
       }),
+      ...blobUsageLimits({
+        accountStorageGb: 0.25,
+        accountCount: 200,
+        projectStorageGb: 0.25,
+        projectCount: 100,
+      }),
     }),
   },
   student: {
@@ -167,6 +192,12 @@ export const TIER_TEMPLATES = {
         totalStorageGb: 0,
         maxStorageGb: 0,
         ociImages: false,
+      }),
+      ...blobUsageLimits({
+        accountStorageGb: 1,
+        accountCount: 500,
+        projectStorageGb: 0.5,
+        projectCount: 250,
       }),
     }),
   },
@@ -213,6 +244,12 @@ export const TIER_TEMPLATES = {
         totalStorageGb: 25,
         maxStorageGb: 10,
         ociImages: false,
+      }),
+      ...blobUsageLimits({
+        accountStorageGb: 5,
+        accountCount: 2500,
+        projectStorageGb: 1,
+        projectCount: 500,
       }),
     }),
   },
@@ -261,6 +298,12 @@ export const TIER_TEMPLATES = {
         totalStorageGb: 250,
         maxStorageGb: 30,
         ociImages: true,
+      }),
+      ...blobUsageLimits({
+        accountStorageGb: 25,
+        accountCount: 10000,
+        projectStorageGb: 5,
+        projectCount: 2000,
       }),
     }),
   },
