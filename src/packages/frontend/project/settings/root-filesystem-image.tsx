@@ -5,6 +5,7 @@
 
 import {
   type CSSProperties,
+  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -670,188 +671,237 @@ export default function RootFilesystemImage({
     }
   }
 
+  const activeImage = value || effectiveDefaultRootfs;
+  const activeLabel = displayRootfsLabel(activeDisplayEntry, activeImage);
+  const activeDescription =
+    activeDisplayEntry?.description?.trim() ||
+    "This image defines the visible / software environment for terminals, notebooks, and project processes.";
+  const projectIsRunning = project.getIn(["state", "state"]) == "running";
+
   return (
     <div
       style={isModal ? undefined : { marginTop: "-4px", marginLeft: "-10px" }}
     >
       <RootfsPublishOps project_id={project_id} />
       <div style={isModal ? undefined : { marginLeft: "15px" }}>
-        <div style={rootfsSummaryCardStyle(activeDisplayEntry)}>
-          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-            {renderRootfsThemePreview(activeDisplayEntry)}
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <Paragraph style={{ marginBottom: "6px" }}>
-                <strong>{activeDisplayEntry?.label || value}</strong>
-              </Paragraph>
-              <Space wrap style={{ marginBottom: "6px" }}>
-                {activeDisplayEntry?.section && (
-                  <Tag color={sectionTagColor(activeDisplayEntry.section)}>
-                    {sectionLabel(activeDisplayEntry.section)}
-                  </Tag>
-                )}
-                {activeDisplayEntry?.version && (
-                  <Tag>{activeDisplayEntry.version}</Tag>
-                )}
-                {activeDisplayEntry?.channel && (
-                  <Tag color="cyan">{activeDisplayEntry.channel}</Tag>
-                )}
-                {activeDisplayEntry?.gpu && <Tag color="purple">GPU image</Tag>}
-              </Space>
-              <code style={{ fontSize: "11px", overflowWrap: "anywhere" }}>
-                {value || effectiveDefaultRootfs}
-              </code>
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <div
+            style={{
+              ...rootfsHeroCardStyle(activeDisplayEntry),
+              maxWidth: isModal ? undefined : 760,
+            }}
+          >
+            <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+              {renderRootfsThemePreview(activeDisplayEntry)}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <Space
+                  wrap
+                  size={[8, 6]}
+                  style={{ marginBottom: 6, width: "100%" }}
+                >
+                  <span
+                    style={{
+                      fontSize: 18,
+                      fontWeight: 700,
+                      lineHeight: "24px",
+                    }}
+                  >
+                    {activeLabel}
+                  </span>
+                  {renderRootfsTags(activeDisplayEntry)}
+                  {suggestedUpgradeEntry ? (
+                    <Tag color="blue">Upgrade available</Tag>
+                  ) : null}
+                </Space>
+                <Paragraph type="secondary" style={{ marginBottom: 8 }}>
+                  {activeDescription}
+                </Paragraph>
+                <div
+                  style={{
+                    background: "rgba(255, 255, 255, 0.72)",
+                    border: `1px solid ${COLORS.GRAY_LL}`,
+                    borderRadius: 8,
+                    color: COLORS.GRAY_D,
+                    fontFamily: "monospace",
+                    fontSize: 11,
+                    overflowWrap: "anywhere",
+                    padding: "6px 8px",
+                  }}
+                >
+                  {activeImage}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-        <Paragraph
-          type="secondary"
-          style={{ marginTop: "8px", marginBottom: 0 }}
-        >
-          Publish to reuse software and <code>/</code>-filesystem customizations
-          in your other projects, with collaborators, with students, or
-          publicly.
-        </Paragraph>
-        <Space wrap style={{ marginTop: "10px" }}>
-          <Button
-            type="primary"
-            disabled={open}
-            onClick={() =>
-              openPublishDialog({
-                image: value || effectiveDefaultRootfs,
-                entry: selectedRootfsEntry,
-                publishMode: "copy",
-                copyMode: "project",
-              })
-            }
-          >
-            Publish current RootFS...
-          </Button>
-          <Button disabled={open} onClick={openPicker}>
-            Change / upgrade image...
-          </Button>
-          {activeDisplayEntry?.can_manage ? (
-            <Button
-              disabled={open}
-              onClick={() =>
-                openPublishDialog({
-                  image: value || effectiveDefaultRootfs,
-                  entry: activeDisplayEntry,
-                  publishMode: "manage",
-                })
-              }
-            >
-              Manage current catalog entry...
-            </Button>
-          ) : null}
-          {previousProjectRootfsState && (
-            <Button
-              disabled={open || saving}
-              onClick={rollbackToPreviousRootfs}
-            >
-              Roll back to previous image
-            </Button>
-          )}
-        </Space>
-        {suggestedUpgradeEntry && (
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginTop: "14px", maxWidth: "760px" }}
-            title={
-              <>
-                Upgrade available:{" "}
-                <strong>
-                  {displayRootfsUpgradeLabel(
-                    suggestedUpgradeEntry,
-                    suggestedUpgradeEntry.image,
-                  )}
-                </strong>
-              </>
-            }
-            description={
-              <Space
-                orientation="vertical"
-                size="middle"
-                style={{ width: "100%" }}
-              >
-                <div>
-                  Switch from{" "}
-                  <code>
-                    {displayRootfsUpgradeLabel(
-                      activeDisplayEntry,
-                      value || effectiveDefaultRootfs,
-                    )}
-                  </code>{" "}
-                  to{" "}
-                  <code>
+
+          {suggestedUpgradeEntry ? (
+            <Alert
+              type="info"
+              showIcon
+              title={
+                <>
+                  Upgrade available:{" "}
+                  <strong>
                     {displayRootfsUpgradeLabel(
                       suggestedUpgradeEntry,
                       suggestedUpgradeEntry.image,
                     )}
-                  </code>
-                  . This changes the visible <code>/</code> software
-                  environment, but your current RootFS remains available as a
-                  rollback target.
-                </div>
-                <Space wrap size="small">
-                  <Button type="primary" onClick={() => setUpgradeOpen(true)}>
-                    Review upgrade
-                  </Button>
-                  <Button onClick={openPicker}>Other images</Button>
+                  </strong>
+                </>
+              }
+              description={
+                <Space
+                  direction="vertical"
+                  size="small"
+                  style={{ width: "100%" }}
+                >
+                  <span>
+                    This keeps your current RootFS available as the rollback
+                    target.
+                  </span>
+                  <Space wrap size="small">
+                    <Button type="primary" onClick={() => setUpgradeOpen(true)}>
+                      Review upgrade
+                    </Button>
+                    <Button onClick={openPicker}>Other images</Button>
+                  </Space>
                 </Space>
+              }
+            />
+          ) : null}
+
+          <div
+            style={{
+              display: "grid",
+              gap: 14,
+              gridTemplateColumns: isModal
+                ? "minmax(0, 1.15fr) minmax(280px, 0.85fr)"
+                : "1fr",
+            }}
+          >
+            <RuntimePanel
+              icon="bolt"
+              title="Recommended actions"
+              subtitle="Change, publish, or manage the image catalog entry."
+            >
+              <Space direction="vertical" size={10} style={{ width: "100%" }}>
+                <RuntimeAction
+                  title="Change or upgrade image"
+                  description="Pick another managed catalog image or use an advanced OCI image."
+                  action={
+                    <Button type="primary" disabled={open} onClick={openPicker}>
+                      Change
+                    </Button>
+                  }
+                />
+                <RuntimeAction
+                  title="Publish current RootFS"
+                  description={
+                    <>
+                      Reuse software and <code>/</code>-filesystem
+                      customizations in other projects or courses.
+                    </>
+                  }
+                  action={
+                    <Button
+                      disabled={open}
+                      onClick={() =>
+                        openPublishDialog({
+                          image: activeImage,
+                          entry: selectedRootfsEntry,
+                          publishMode: "copy",
+                          copyMode: "project",
+                        })
+                      }
+                    >
+                      Publish
+                    </Button>
+                  }
+                />
+                {activeDisplayEntry?.can_manage ? (
+                  <RuntimeAction
+                    title="Manage catalog entry"
+                    description="Update metadata, visibility, tags, version, or theme for this image."
+                    action={
+                      <Button
+                        disabled={open}
+                        onClick={() =>
+                          openPublishDialog({
+                            image: activeImage,
+                            entry: activeDisplayEntry,
+                            publishMode: "manage",
+                          })
+                        }
+                      >
+                        Manage
+                      </Button>
+                    }
+                  />
+                ) : null}
               </Space>
-            }
-          />
-        )}
+            </RuntimePanel>
+
+            <RuntimePanel
+              icon="check-circle"
+              title="Safety & lifecycle"
+              subtitle="What happens when this project's image changes."
+            >
+              <Space direction="vertical" size={10} style={{ width: "100%" }}>
+                <LifecycleRow
+                  label="Current"
+                  value={activeLabel}
+                  detail={
+                    currentProjectRootfsState?.set_by_name
+                      ? `Set by ${currentProjectRootfsState.set_by_name}`
+                      : "Active project image"
+                  }
+                />
+                <LifecycleRow
+                  label="Rollback"
+                  value={
+                    previousProjectRootfsState
+                      ? displayRootfsLabel(
+                          previousProjectRootfsEntry,
+                          previousProjectRootfsState.image,
+                        )
+                      : "Not available yet"
+                  }
+                  detail={
+                    previousProjectRootfsState
+                      ? "One previous image can be restored."
+                      : "After an image switch, the previous image becomes available here."
+                  }
+                  action={
+                    previousProjectRootfsState ? (
+                      <Button
+                        disabled={open || saving}
+                        onClick={rollbackToPreviousRootfs}
+                      >
+                        Roll back
+                      </Button>
+                    ) : undefined
+                  }
+                />
+                <LifecycleRow
+                  label="Restart"
+                  value={
+                    projectIsRunning ? "Project is running" : "Not running"
+                  }
+                  detail={
+                    projectIsRunning
+                      ? "Changing the image queues a project restart."
+                      : "The next start uses the selected image."
+                  }
+                />
+                <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+                  Managed image base layers do not count against project disk
+                  quota. Only your writable project data counts.
+                </Paragraph>
+              </Space>
+            </RuntimePanel>
+          </div>
+        </Space>
       </div>
-      {(currentProjectRootfsState || previousProjectRootfsState) && (
-        <div
-          style={{
-            marginLeft: "15px",
-            marginTop: "16px",
-            color: COLORS.GRAY_D,
-            borderLeft: `3px solid ${COLORS.GRAY_L}`,
-            paddingLeft: "12px",
-          }}
-        >
-          {currentProjectRootfsState && (
-            <Paragraph type="secondary" style={{ marginBottom: "8px" }}>
-              <strong>Current image:</strong>{" "}
-              <code>
-                {displayRootfsLabel(
-                  currentDisplayEntry,
-                  currentProjectRootfsState.image,
-                )}
-              </code>
-              {currentProjectRootfsState.set_by_name
-                ? ` set by ${currentProjectRootfsState.set_by_name}`
-                : ""}
-              {displayRootfsDetail(
-                currentDisplayEntry,
-                currentProjectRootfsState.image,
-              )}
-            </Paragraph>
-          )}
-          {previousProjectRootfsState && (
-            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              <strong>Previous rollback:</strong>{" "}
-              <code>
-                {displayRootfsLabel(
-                  previousProjectRootfsEntry,
-                  previousProjectRootfsState.image,
-                )}
-              </code>
-              {previousProjectRootfsState.set_by_name
-                ? ` set by ${previousProjectRootfsState.set_by_name}`
-                : ""}
-              {displayRootfsDetail(
-                previousProjectRootfsEntry,
-                previousProjectRootfsState.image,
-              )}
-            </Paragraph>
-          )}
-        </div>
-      )}
       {upgradeOpen && suggestedUpgradeEntry && currentDisplayEntry && (
         <Modal
           open
@@ -1692,15 +1742,6 @@ function displayRootfsUpgradeLabel(
   return `${label} ${version}`;
 }
 
-function displayRootfsDetail(
-  entry: RootfsImageEntry | undefined,
-  fallbackImage: string,
-): string {
-  const detail = entry?.image?.trim() || fallbackImage;
-  const label = entry?.label?.trim();
-  return detail && detail !== label ? ` (${detail})` : "";
-}
-
 function isRelatedRootfsVersion(
   current: RootfsImageEntry | undefined,
   next: RootfsImageEntry | undefined,
@@ -1812,6 +1853,151 @@ function renderRootfsThemePreview(entry?: {
       }}
     >
       <Icon name={iconName as any} style={{ fontSize: "24px" }} />
+    </div>
+  );
+}
+
+function rootfsHeroCardStyle(entry?: {
+  theme?: RootfsImageTheme;
+}): CSSProperties {
+  const base = rootfsSummaryCardStyle(entry);
+  return {
+    ...base,
+    background: `linear-gradient(135deg, ${base.background}, rgba(255, 255, 255, 0.94))`,
+    boxShadow: "0 10px 30px rgba(0, 0, 0, 0.06)",
+    padding: "18px 20px",
+  };
+}
+
+function renderRootfsTags(
+  entry: RootfsImageEntry | undefined,
+): React.JSX.Element | null {
+  if (!entry) return null;
+  return (
+    <>
+      {entry.section ? (
+        <Tag color={sectionTagColor(entry.section)}>
+          {sectionLabel(entry.section)}
+        </Tag>
+      ) : null}
+      {entry.version ? <Tag>{entry.version}</Tag> : null}
+      {entry.channel ? <Tag color="cyan">{entry.channel}</Tag> : null}
+      {entry.gpu ? <Tag color="purple">GPU image</Tag> : null}
+    </>
+  );
+}
+
+function RuntimePanel({
+  children,
+  icon,
+  subtitle,
+  title,
+}: {
+  children: ReactNode;
+  icon: string;
+  subtitle: ReactNode;
+  title: ReactNode;
+}): React.JSX.Element {
+  return (
+    <div
+      style={{
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: 12,
+        padding: 14,
+        background: "white",
+      }}
+    >
+      <Space align="start" size={10} style={{ marginBottom: 12 }}>
+        <div
+          style={{
+            alignItems: "center",
+            background: COLORS.ANTD_BG_BLUE_L,
+            borderRadius: 9,
+            color: COLORS.ANTD_LINK_BLUE,
+            display: "flex",
+            height: 34,
+            justifyContent: "center",
+            width: 34,
+          }}
+        >
+          <Icon name={icon as any} />
+        </div>
+        <div>
+          <div style={{ fontWeight: 700 }}>{title}</div>
+          <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{subtitle}</div>
+        </div>
+      </Space>
+      {children}
+    </div>
+  );
+}
+
+function RuntimeAction({
+  action,
+  description,
+  title,
+}: {
+  action: ReactNode;
+  description: ReactNode;
+  title: ReactNode;
+}): React.JSX.Element {
+  return (
+    <div
+      style={{
+        alignItems: "center",
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: 10,
+        display: "grid",
+        gap: 10,
+        gridTemplateColumns: "minmax(0, 1fr) auto",
+        padding: "10px 12px",
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontWeight: 600 }}>{title}</div>
+        <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{description}</div>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function LifecycleRow({
+  action,
+  detail,
+  label,
+  value,
+}: {
+  action?: ReactNode;
+  detail: ReactNode;
+  label: ReactNode;
+  value: ReactNode;
+}): React.JSX.Element {
+  return (
+    <div
+      style={{
+        alignItems: "start",
+        display: "grid",
+        gap: 8,
+        gridTemplateColumns: action ? "88px minmax(0, 1fr) auto" : "88px 1fr",
+      }}
+    >
+      <Tag style={{ marginInlineEnd: 0, textAlign: "center" }}>{label}</Tag>
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            fontWeight: 600,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={typeof value === "string" ? value : undefined}
+        >
+          {value}
+        </div>
+        <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{detail}</div>
+      </div>
+      {action}
     </div>
   );
 }
