@@ -11,7 +11,6 @@ import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { lite } from "@cocalc/frontend/lite";
 import { ProjectCollaboratorsContent } from "@cocalc/frontend/project/page/project-collaborators";
 import CloneProject from "@cocalc/frontend/project/explorer/clone";
-import { SettingBox } from "@cocalc/frontend/components";
 import {
   KUCALC_COCALC_COM,
   KUCALC_ON_PREMISES,
@@ -19,16 +18,12 @@ import {
 
 import { useProjectCourseInfo } from "../use-project-course";
 import { AboutBox } from "./about-box";
-import { Environment } from "./environment";
+import { EnvironmentOverview } from "./environment-overview";
 import { ProjectLocationBox } from "./hide-delete-box";
-import { LauncherDefaults } from "./launcher-defaults";
 import { ManagedEgress } from "./managed-egress";
-import { ProjectCapabilities } from "./project-capabilites";
 import { ProjectControl } from "./project-control";
 import { RecoveryPanel } from "./recovery-panel";
-import RootFilesystemImage from "./root-filesystem-image";
 import { useRunQuota } from "./run-quota/hooks";
-import { ProjectSecrets } from "./secrets";
 import type { ProjectSettingsNavItem } from "./section-nav";
 import { SSHPanel } from "./ssh";
 import type { Project } from "./types";
@@ -169,23 +164,11 @@ export function useProjectSettingsSections({
           "Launcher defaults, environment variables, secrets, software capability checks, and the root filesystem image.",
         className: "cc-project-flyout-settings-panel",
         children: (
-          <Space
-            direction="vertical"
-            size={sectionGap}
-            style={{ width: "100%" }}
-          >
-            <LauncherDefaults project_id={project_id} />
-            <Environment project_id={project_id} mode={componentMode} />
-            <ProjectSecrets project_id={project_id} mode={componentMode} />
-            <ProjectCapabilities
-              project={project}
-              project_id={project_id}
-              mode={componentMode}
-            />
-            <SettingBox title="Root Filesystem Image" icon="disk-drive">
-              <RootFilesystemImage />
-            </SettingBox>
-          </Space>
+          <EnvironmentOverview
+            project={project}
+            project_id={project_id}
+            mode={componentMode}
+          />
         ),
       },
       {
