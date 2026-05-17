@@ -4,7 +4,7 @@ version = "0.4.0"
 description = "Python client for the CoCalc API"
 authors = [{ name="William Stein", email="wstein@sagemath.com" }]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = ["httpx"]
 license = "MIT"
 
@@ -33,7 +33,9 @@ dev = [
     "ipython",
     "mkdocs",
     "mkdocs-material",
-    "mkdocstrings[python]",
+    "griffe<2",
+    "mkdocstrings[python]<1",
+    "mkdocstrings-python<2",
     "mypy",
     "pytest>=8.4.1",
     "ruff>=0.12.11",

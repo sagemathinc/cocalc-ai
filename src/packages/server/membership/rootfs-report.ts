@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import type {
   RootfsQuotaDenialSummary,
   RootfsQuotaReport,
@@ -65,6 +66,7 @@ function dateToIso(value: unknown): string | null {
 
 function parseUsageRow(row: Record<string, any>): RootfsQuotaUsageRow {
   return {
+    ...(row.bay_id ? { bay_id: row.bay_id } : {}),
     account_id: row.account_id,
     count: Math.max(0, Math.floor(Number(row.count) || 0)),
     total_storage_bytes: Math.max(
@@ -152,6 +154,7 @@ function isNearLimit(row: RootfsQuotaUsageRow, threshold: number): boolean {
 
 function parseDenialRow(row: Record<string, any>): RootfsQuotaDenialSummary {
   return {
+    ...(row.bay_id ? { bay_id: row.bay_id } : {}),
     account_id: row.account_id || null,
     limit: row.denial_limit || "unknown",
     operation: row.operation || "unknown",
@@ -254,6 +257,7 @@ async function loadDenials({
 }
 
 export async function getRootfsQuotaReport({
+  bay_id,
   window_minutes,
   min_count,
   limit,
@@ -262,6 +266,7 @@ export async function getRootfsQuotaReport({
   denial_limit,
   operation,
 }: {
+  bay_id?: string;
   window_minutes?: number;
   min_count?: number;
   limit?: number;
@@ -270,6 +275,7 @@ export async function getRootfsQuotaReport({
   denial_limit?: string | null;
   operation?: string | null;
 } = {}): Promise<RootfsQuotaReport> {
+  const resolvedBayId = `${bay_id ?? ""}`.trim() || getConfiguredBayId();
   const rowLimit = boundedPositiveInteger({
     value: limit,
     fallback: 50,
@@ -309,7 +315,8 @@ export async function getRootfsQuotaReport({
       (a, b) =>
         b.total_storage_bytes - a.total_storage_bytes || b.count - a.count,
     )
-    .slice(0, rowLimit);
+    .slice(0, rowLimit)
+    .map((row) => ({ bay_id: resolvedBayId, ...row }));
   const nearThreshold = nearPercent / 100;
   const nearLimitUsers = [...withLimits]
     .filter((row) => isNearLimit(row, nearThreshold))
@@ -326,9 +333,11 @@ export async function getRootfsQuotaReport({
       );
       return bRatio - aRatio || b.total_storage_bytes - a.total_storage_bytes;
     })
-    .slice(0, rowLimit);
+    .slice(0, rowLimit)
+    .map((row) => ({ bay_id: resolvedBayId, ...row }));
   const checkedAt = new Date();
   return {
+    bay_id: resolvedBayId,
     checked_at: checkedAt.toISOString(),
     since: new Date(checkedAt.valueOf() - windowMinutes * 60_000).toISOString(),
     window_minutes: windowMinutes,
@@ -336,13 +345,15 @@ export async function getRootfsQuotaReport({
     near_percent: nearPercent,
     top_users: topUsers,
     near_limit_users: nearLimitUsers,
-    denials: await loadDenials({
-      windowMinutes,
-      minCount,
-      limit: rowLimit,
-      user_account_id,
-      denial_limit,
-      operation,
-    }),
+    denials: (
+      await loadDenials({
+        windowMinutes,
+        minCount,
+        limit: rowLimit,
+        user_account_id,
+        denial_limit,
+        operation,
+      })
+    ).map((row) => ({ bay_id: resolvedBayId, ...row })),
   };
 }

@@ -473,6 +473,7 @@ export interface BrowserSessionInfo {
 }
 
 export interface AcpAdmissionDenialSummary {
+  bay_id?: string;
   account_id: string | null;
   project_id: string | null;
   limit: string;
@@ -487,14 +488,22 @@ export interface AcpAdmissionDenialSummary {
 }
 
 export interface AcpAdmissionDenialReport {
+  bay_id?: string;
+  current_bay_id?: string;
   checked_at: string;
   since: string;
   window_minutes: number;
   min_count: number;
   groups: AcpAdmissionDenialSummary[];
+  bays?: Array<{
+    bay_id: string;
+    ok: boolean;
+    error?: string;
+  }>;
 }
 
 export interface ServiceAdmissionDenialSummary {
+  bay_id?: string;
   host_id: string | null;
   account_id: string | null;
   project_id: string | null;
@@ -513,14 +522,22 @@ export interface ServiceAdmissionDenialSummary {
 }
 
 export interface ServiceAdmissionDenialReport {
+  bay_id?: string;
+  current_bay_id?: string;
   checked_at: string;
   since: string;
   window_minutes: number;
   min_count: number;
   groups: ServiceAdmissionDenialSummary[];
+  bays?: Array<{
+    bay_id: string;
+    ok: boolean;
+    error?: string;
+  }>;
 }
 
 export interface RootfsQuotaUsageRow {
+  bay_id?: string;
   account_id: string;
   count: number;
   total_storage_bytes: number;
@@ -535,6 +552,7 @@ export interface RootfsQuotaUsageRow {
 }
 
 export interface RootfsQuotaDenialSummary {
+  bay_id?: string;
   account_id: string | null;
   limit: string;
   operation: string;
@@ -550,6 +568,8 @@ export interface RootfsQuotaDenialSummary {
 }
 
 export interface RootfsQuotaReport {
+  bay_id?: string;
+  current_bay_id?: string;
   checked_at: string;
   since: string;
   window_minutes: number;
@@ -558,9 +578,15 @@ export interface RootfsQuotaReport {
   top_users: RootfsQuotaUsageRow[];
   near_limit_users: RootfsQuotaUsageRow[];
   denials: RootfsQuotaDenialSummary[];
+  bays?: Array<{
+    bay_id: string;
+    ok: boolean;
+    error?: string;
+  }>;
 }
 
 export interface ProjectRuntimeSlotReportSlot {
+  bay_id?: string;
   sponsor_account_id: string;
   project_id: string;
   title?: string | null;
@@ -576,6 +602,7 @@ export interface ProjectRuntimeSlotReportSlot {
 }
 
 export interface ProjectRuntimeSlotReportSponsor {
+  bay_id?: string;
   sponsor_account_id: string;
   sponsor_display_name?: string | null;
   current: number;
@@ -588,6 +615,7 @@ export interface ProjectRuntimeSlotReportSponsor {
 }
 
 export interface ProjectRuntimeSlotEventSummary {
+  bay_id?: string;
   event: string;
   count: number;
   first_time: string;
@@ -595,14 +623,20 @@ export interface ProjectRuntimeSlotEventSummary {
 }
 
 export interface ProjectRuntimeSlotReport {
+  bay_id?: string;
+  current_bay_id?: string;
   checked_at: string;
-  bay_id: string;
   since: string;
   window_minutes: number;
   active_only: boolean;
   slots: ProjectRuntimeSlotReportSlot[];
   top_sponsors: ProjectRuntimeSlotReportSponsor[];
   recent_events: ProjectRuntimeSlotEventSummary[];
+  bays?: Array<{
+    bay_id: string;
+    ok: boolean;
+    error?: string;
+  }>;
 }
 
 export interface BrowserSignInCookieInfo {
