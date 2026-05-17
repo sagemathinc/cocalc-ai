@@ -10,8 +10,8 @@ for a particular project without putting that field into the global
 
 The direction of the frontend projects transition is that `project_map` should
 stabilize as a small control-plane snapshot with a minimal, explicit set of
-fields. Project-specific detail fields such as launcher defaults, region,
-environment, rootfs configuration, etc., should instead be loaded through a
+fields. Project-specific detail fields such as region, environment, rootfs
+configuration, etc., should instead be loaded through a
 small per-field hook built on top of this helper.
 
 The helper gives each field:

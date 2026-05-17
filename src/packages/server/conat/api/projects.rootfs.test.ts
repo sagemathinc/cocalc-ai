@@ -36,7 +36,6 @@ describe("project rootfs helpers", () => {
     queryMock = jest.fn(async () => ({
       rows: [
         {
-          launcher: null,
           region: null,
           created: null,
           env: null,
@@ -91,7 +90,6 @@ describe("project rootfs helpers", () => {
     queryMock = jest.fn(async () => ({
       rows: [
         {
-          launcher: null,
           region: null,
           created: null,
           env: null,

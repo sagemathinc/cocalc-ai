@@ -113,7 +113,6 @@ export type SiteSettingsKeys =
   | "project_hosts_dns"
   | "project_hosts_app_public_subdomain_suffix"
   | "launcher_default_quick_create"
-  | "launcher_remove_quick_create"
   | "project_rootfs_default_image"
   | "project_rootfs_default_image_gpu"
   | "project_rootfs_prepull_images"
@@ -998,20 +997,9 @@ export const site_settings_conf: SiteSettings = {
     show: (conf) => (conf.cloudflare_mode ?? "none") === "self",
   },
   launcher_default_quick_create: {
-    name: "Launcher: Default Quick Create",
-    desc: "Comma-separated default quick-create ids used by workspaces when project and user defaults are unset (e.g. chat,ipynb,md,tex,term).",
+    name: "Launcher: Quick Create",
+    desc: "Comma-separated exact site-wide quick-create ids used when a user has not configured a personal launcher list (e.g. chat,ipynb,md,tex,term).",
     default: "chat,ipynb,md,tex,term",
-    to_val: split_csv_tokens,
-    tags: ["Workspace"],
-    group: "Branding & UI",
-    subgroup: "Launcher",
-    wizard: { name: "launcher-defaults", label: "Wizard..." },
-    managed_by_wizard: true,
-  },
-  launcher_remove_quick_create: {
-    name: "Launcher: Remove Quick Create",
-    desc: "Comma-separated quick-create ids removed from inherited launcher defaults at the site level.",
-    default: "",
     to_val: split_csv_tokens,
     tags: ["Workspace"],
     group: "Branding & UI",

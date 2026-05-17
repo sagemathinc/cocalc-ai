@@ -11,18 +11,17 @@ import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { useProjectEnv } from "@cocalc/frontend/project/use-project-env";
-import { useProjectLauncher } from "@cocalc/frontend/project/use-project-launcher";
 import { useProjectSecrets } from "@cocalc/frontend/project/use-project-secrets";
 import { COLORS } from "@cocalc/util/theme";
 
 import { LauncherCustomizeModal } from "../new/launcher-customize-modal";
 import {
-  getProjectLauncherDefaults,
+  getAccountLauncherPrefs,
+  getEffectiveLauncher,
   getSiteLauncherDefaults,
-  LAUNCHER_GLOBAL_DEFAULTS,
+  LAUNCHER_SETTINGS_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
-  LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  mergeLauncherSettings,
+  updateAccountLauncherPrefs,
 } from "../new/launcher-preferences";
 import { QUICK_CREATE_MAP } from "../new/launcher-catalog";
 import { Environment as CustomEnvironmentVariables } from "./environment";
@@ -129,40 +128,25 @@ export function EnvironmentConfigurationSummary({
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   );
-  const siteRemoveQuick = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  );
-  const { launcher, setLauncher } = useProjectLauncher(project_id);
+  const otherSettings = useTypedRedux("account", "other_settings");
   const { env } = useProjectEnv(project_id);
   const { secrets } = useProjectSecrets(project_id);
 
   const siteLauncherDefaults = useMemo(
-    () =>
-      getSiteLauncherDefaults({
-        hiddenQuickCreate: siteRemoveQuick,
-        quickCreate: siteLauncherQuick,
-      }),
-    [siteLauncherQuick, siteRemoveQuick],
+    () => getSiteLauncherDefaults(siteLauncherQuick),
+    [siteLauncherQuick],
   );
-  const projectDefaults = useMemo(
-    () => getProjectLauncherDefaults(launcher),
-    [launcher],
-  );
-  const inheritedForProjectDefaults = useMemo(
-    () =>
-      mergeLauncherSettings({
-        globalDefaults: siteLauncherDefaults,
-      }),
-    [siteLauncherDefaults],
+  const accountLauncherPrefs = useMemo(
+    () => getAccountLauncherPrefs(otherSettings?.get?.(LAUNCHER_SETTINGS_KEY)),
+    [otherSettings],
   );
   const launcherDefaults = useMemo(
     () =>
-      mergeLauncherSettings({
-        globalDefaults: siteLauncherDefaults,
-        projectDefaults,
+      getEffectiveLauncher({
+        accountPrefs: accountLauncherPrefs,
+        siteDefaults: siteLauncherDefaults,
       }).quickCreate,
-    [projectDefaults, siteLauncherDefaults],
+    [accountLauncherPrefs, siteLauncherDefaults],
   );
   const launcherLabels = useMemo(
     () =>
@@ -179,9 +163,12 @@ export function EnvironmentConfigurationSummary({
     [secrets],
   );
 
-  async function saveLauncherDefaults(prefs: any): Promise<void> {
-    await redux.getActions("projects").set_project_launcher(project_id, prefs);
-    setLauncher(prefs);
+  function saveLauncherDefaults(prefs: any | null): void {
+    const next = updateAccountLauncherPrefs(
+      otherSettings?.get?.(LAUNCHER_SETTINGS_KEY),
+      prefs,
+    );
+    redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
   }
 
   function open(key: string): void {
@@ -223,7 +210,7 @@ export function EnvironmentConfigurationSummary({
         <ConfigurationCard
           icon="rocket"
           title="Launcher defaults"
-          subtitle="Quick Create buttons for this project"
+          subtitle="Your Quick Create buttons"
           status={`${launcherDefaults.length} default${launcherDefaults.length === 1 ? "" : "s"}`}
           action={
             <Button
@@ -269,28 +256,7 @@ export function EnvironmentConfigurationSummary({
         open={showLauncherModal}
         onClose={() => setShowLauncherModal(false)}
         initialQuickCreate={launcherDefaults}
-        projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
-        onSaveProject={saveLauncherDefaults}
-        saveMode="project"
-        contributions={[
-          {
-            key: "built-in",
-            title: "Built-in defaults",
-            quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
-          },
-          {
-            key: "site",
-            title: "Site defaults",
-            quickCreateAdd: siteLauncherDefaults.quickCreate,
-            quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
-          },
-          {
-            key: "project",
-            title: "Project defaults",
-            quickCreateAdd: projectDefaults.quickCreate,
-            quickCreateRemove: projectDefaults.hiddenQuickCreate,
-          },
-        ]}
+        onSave={saveLauncherDefaults}
       />
 
       <div ref={detailsRef}>

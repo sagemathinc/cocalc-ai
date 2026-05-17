@@ -105,7 +105,6 @@ import type {
   ProjectRuntimeLog,
   ProjectRuntimeSponsorStatus,
   ProjectAddress,
-  ProjectLauncherSettings,
   ProjectRegion,
   ProjectCreated,
   ProjectEnv,
@@ -908,43 +907,6 @@ async function getProjectReadDetailsAllowRemote({
   return await getInterBayBridge()
     .projectDetails(ownership.bay_id)
     .get({ account_id, project_id });
-}
-
-export async function getProjectLauncher({
-  account_id,
-  project_id,
-}: {
-  account_id: string;
-  project_id: string;
-}): Promise<ProjectLauncherSettings> {
-  return (await getProjectReadDetailsAllowRemote({ account_id, project_id }))
-    .launcher;
-}
-
-export async function setProjectLauncher({
-  account_id,
-  project_id,
-  launcher,
-}: {
-  account_id: string;
-  project_id: string;
-  launcher: ProjectLauncherSettings;
-}): Promise<void> {
-  await assertCollab({ account_id, project_id });
-  await withProjectRehomeWriteFence({
-    project_id,
-    action: "set project launcher",
-    fn: async (db) => {
-      await db.query(
-        "UPDATE projects SET launcher = $2 WHERE project_id = $1",
-        [project_id, launcher],
-      );
-    },
-  });
-  await publishProjectDetailInvalidationBestEffort({
-    project_id,
-    fields: ["launcher"],
-  });
 }
 
 export async function getProjectRegion({

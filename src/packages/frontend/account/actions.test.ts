@@ -23,13 +23,7 @@ describe("AccountActions.set_other_settings", () => {
   it("replaces the nested other_settings object instead of deep-merging it", () => {
     const set = jest.fn();
     const launcher = {
-      perProject: {
-        p1: {
-          quickCreate: [],
-          hiddenQuickCreate: ["rmd", "qmd", "slides", "py"],
-          quickCreateOrder: [],
-        },
-      },
+      quickCreate: ["rmd", "qmd", "slides", "py"],
     };
     const redux = {
       getStore: () => ({
@@ -39,13 +33,7 @@ describe("AccountActions.set_other_settings", () => {
                 toJS: () => ({
                   vertical_fixed_bar: "both",
                   launcher: {
-                    perProject: {
-                      p1: {
-                        quickCreate: ["rmd", "qmd", "slides", "py"],
-                        hiddenQuickCreate: [],
-                        quickCreateOrder: ["rmd", "qmd", "slides", "py"],
-                      },
-                    },
+                    quickCreate: ["chat", "ipynb"],
                   },
                 }),
               }

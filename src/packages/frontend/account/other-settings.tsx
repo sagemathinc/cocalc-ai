@@ -38,14 +38,12 @@ import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import { QUICK_CREATE_MAP } from "@cocalc/frontend/project/new/launcher-catalog";
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
 import {
-  LAUNCHER_GLOBAL_DEFAULTS,
-  LAUNCHER_SITE_REMOVE_QUICK_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
-  getUserLauncherLayers,
   LAUNCHER_SETTINGS_KEY,
+  getAccountLauncherPrefs,
+  getEffectiveLauncher,
   getSiteLauncherDefaults,
-  mergeLauncherSettings,
-  updateUserLauncherPrefs,
+  updateAccountLauncherPrefs,
 } from "@cocalc/frontend/project/new/launcher-preferences";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import { OTHER_SETTINGS_AI_REPLY_ENGLISH_KEY } from "@cocalc/util/i18n/const";
@@ -78,10 +76,6 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   const site_launcher_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
-  );
-  const site_remove_quick = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_REMOVE_QUICK_KEY,
   );
   const { labels: showActBarLabels } = useActivityBarPreferences();
   const [showLauncherCustomize, setShowLauncherCustomize] = useState(false);
@@ -361,19 +355,13 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
     return <Loading />;
   }
 
-  const siteLauncherDefaults = getSiteLauncherDefaults({
-    quickCreate: site_launcher_quick,
-    hiddenQuickCreate: site_remove_quick,
-  });
-  const userLauncherLayers = getUserLauncherLayers(
+  const siteLauncherDefaults = getSiteLauncherDefaults(site_launcher_quick);
+  const accountLauncherPrefs = getAccountLauncherPrefs(
     props.other_settings.get(LAUNCHER_SETTINGS_KEY),
   );
-  const accountLauncher = mergeLauncherSettings({
-    globalDefaults: siteLauncherDefaults,
-    accountUserPrefs: userLauncherLayers.account,
-  });
-  const inheritedForAccount = mergeLauncherSettings({
-    globalDefaults: siteLauncherDefaults,
+  const accountLauncher = getEffectiveLauncher({
+    accountPrefs: accountLauncherPrefs,
+    siteDefaults: siteLauncherDefaults,
   });
   const accountQuickCreateSpecs = accountLauncher.quickCreate.map((id) => {
     const spec = QUICK_CREATE_MAP[id];
@@ -459,7 +447,7 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
               <Paragraph type="secondary" style={{ marginBottom: "8px" }}>
                 <FormattedMessage
                   id="account.other-settings.launcher_defaults.description"
-                  defaultMessage={`Set your personal default Quick Create buttons for all projects. You can still customize per-project from each +New page.`}
+                  defaultMessage={`Set your personal Quick Create buttons for all projects. Leave this reset to use the site default.`}
                 />
               </Paragraph>
               <Space wrap size={[8, 8]} style={{ marginBottom: "6px" }}>
@@ -485,36 +473,15 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
           open={showLauncherCustomize}
           onClose={() => setShowLauncherCustomize(false)}
           initialQuickCreate={accountLauncher.quickCreate}
-          userBaseQuickCreate={inheritedForAccount.quickCreate}
-          onSaveUser={(prefs) => {
+          onSave={(prefs) => {
             on_change(
               LAUNCHER_SETTINGS_KEY,
-              updateUserLauncherPrefs(
+              updateAccountLauncherPrefs(
                 props.other_settings.get(LAUNCHER_SETTINGS_KEY),
-                undefined,
                 prefs,
               ),
             );
           }}
-          contributions={[
-            {
-              key: "built-in",
-              title: "Built-in defaults",
-              quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
-            },
-            {
-              key: "site",
-              title: "Site defaults",
-              quickCreateAdd: siteLauncherDefaults.quickCreate,
-              quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
-            },
-            {
-              key: "account",
-              title: "Your account overrides",
-              quickCreateAdd: userLauncherLayers.account.quickCreate,
-              quickCreateRemove: userLauncherLayers.account.hiddenQuickCreate,
-            },
-          ]}
         />
       </>
     );

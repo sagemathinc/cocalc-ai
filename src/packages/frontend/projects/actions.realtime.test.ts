@@ -1798,13 +1798,13 @@ describe("ProjectsActions realtime feed", () => {
       ts: Date.now(),
       account_id: "acct-1",
       project_id: "project-1",
-      fields: ["launcher", "snapshots"],
+      fields: ["env", "snapshots"],
     });
     await flush();
 
     expect(invalidateProjectFieldsMock).toHaveBeenCalledWith({
       project_id: "project-1",
-      fields: ["launcher", "snapshots"],
+      fields: ["env", "snapshots"],
     });
   });
 
