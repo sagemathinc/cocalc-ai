@@ -125,13 +125,22 @@ import {
   requestRootfsImageDeletion as requestRootfsImageDeletion0,
   saveRootfsImage,
 } from "@cocalc/server/rootfs/catalog";
+import {
+  completeRootfsReleaseScanRun,
+  createRootfsReleaseScanRun,
+  failRootfsReleaseScanRun,
+  loadRootfsReleaseForScan,
+  markRootfsReleaseScanRunStarted,
+} from "@cocalc/server/rootfs/scans";
 import { runPendingRootfsReleaseGc } from "@cocalc/server/rootfs/releases";
+import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import type {
   ProjectRootfsStateEntry,
   ProjectRootfsPublishLroRef,
   PublishProjectRootfsBody,
   RootfsCatalogSaveBody,
 } from "@cocalc/util/rootfs-images";
+import type { RootfsReleaseScanRun } from "@cocalc/util/rootfs-scan";
 import {
   getProjectRootfsStates as getProjectRootfsStates0,
   setProjectRootfsImageWithRollback,
@@ -2687,6 +2696,125 @@ export async function runRootfsReleaseGc(opts: {
     require_second_factor: true,
   });
   return await runPendingRootfsReleaseGc({ limit });
+}
+
+function rootfsScanConfig({
+  scanner_image,
+  trivy_cache_dir,
+}: {
+  scanner_image?: string;
+  trivy_cache_dir?: string;
+}): { scanner_image: string; trivy_cache_dir: string } {
+  const image =
+    `${scanner_image ?? process.env.COCALC_ROOTFS_SCAN_TRIVY_IMAGE ?? ""}`.trim();
+  const cache =
+    `${trivy_cache_dir ?? process.env.COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR ?? ""}`.trim();
+  if (!image) {
+    throw new Error(
+      "RootFS scan scanner image is not configured; set COCALC_ROOTFS_SCAN_TRIVY_IMAGE or pass scanner_image",
+    );
+  }
+  if (!cache) {
+    throw new Error(
+      "RootFS scan Trivy cache directory is not configured; set COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR or pass trivy_cache_dir",
+    );
+  }
+  return { scanner_image: image, trivy_cache_dir: cache };
+}
+
+export async function scanRootfsRelease(opts: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  release_id: string;
+  host_id: string;
+  scanner_image?: string;
+  trivy_cache_dir?: string;
+  timeout_ms?: number;
+  max_target_bytes?: number;
+  max_report_bytes?: number;
+  memory_limit?: string;
+  cpu_limit?: string;
+  tmpfs_size?: string;
+}): Promise<RootfsReleaseScanRun> {
+  const {
+    account_id,
+    browser_id,
+    session_hash,
+    release_id,
+    host_id,
+    timeout_ms = 30 * 60 * 1000,
+    max_target_bytes,
+    max_report_bytes,
+    memory_limit,
+    cpu_limit,
+    tmpfs_size,
+  } = opts;
+  if (!account_id || !(await isAdmin(account_id))) {
+    throw Error("must be an admin");
+  }
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: true,
+  });
+  const config = rootfsScanConfig(opts);
+  const release = await loadRootfsReleaseForScan({ release_id });
+  if (!release) {
+    throw new Error(`RootFS release ${release_id} not found`);
+  }
+  const run = await createRootfsReleaseScanRun({
+    release_id,
+    requested_by: account_id,
+  });
+  try {
+    await markRootfsReleaseScanRunStarted({
+      scan_run_id: run.scan_run_id,
+      host_id,
+    });
+    const client = await getRoutedHostControlClient({
+      host_id,
+      timeout: timeout_ms,
+      fresh: true,
+      account_id,
+    });
+    const result = await client.scanRootfsRelease({
+      scan_run_id: run.scan_run_id,
+      target: release,
+      scanner_image: config.scanner_image,
+      trivy_cache_dir: config.trivy_cache_dir,
+      timeout_ms,
+      max_target_bytes,
+      max_report_bytes,
+      memory_limit,
+      cpu_limit,
+      tmpfs_size,
+    });
+    const retention = new Date(Date.now() + 730 * 24 * 60 * 60 * 1000);
+    const summary = {
+      ...result.summary,
+      report: {
+        ...(result.summary.report ?? {}),
+        ...result.report,
+        format: "trivy-json",
+        retention_until: retention.toISOString(),
+      },
+    };
+    return await completeRootfsReleaseScanRun({
+      scan_run_id: run.scan_run_id,
+      summary,
+      host_id,
+      report_retention_until: retention,
+    });
+  } catch (err) {
+    return await failRootfsReleaseScanRun({
+      scan_run_id: run.scan_run_id,
+      err,
+      error_code: "scan_execution_failed",
+      host_id,
+    });
+  }
 }
 
 async function publishQueuedLroSafe({ op }: { op: LroSummary }) {

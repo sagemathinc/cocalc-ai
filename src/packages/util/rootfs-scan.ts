@@ -77,6 +77,40 @@ export type RootfsScanSelectionDecision = {
   message?: string;
 };
 
+export type RootfsReleaseScanRunStatus =
+  | "pending"
+  | "running"
+  | "clean"
+  | "findings"
+  | "error";
+
+export type RootfsReleaseScanRun = {
+  scan_run_id: string;
+  release_id: string;
+  content_key: string;
+  runtime_image: string;
+  requested_by?: string;
+  requested_at: string;
+  started_at?: string;
+  completed_at?: string;
+  bay_id?: string;
+  host_id?: string;
+  tool?: string;
+  tool_version?: string;
+  db_version?: string;
+  db_updated_at?: string;
+  status: RootfsReleaseScanRunStatus;
+  severity_counts?: RootfsScanSummary["severity_counts"];
+  summary?: RootfsScanSummary;
+  report_artifact?: RootfsScanSummary["report"];
+  report_bytes?: number;
+  report_compressed_bytes?: number;
+  report_sha256?: string;
+  report_retention_until?: string;
+  error?: string;
+  error_code?: string;
+};
+
 export type RootfsTrivyHostScanRequest = {
   scan_run_id: string;
   target: TrivyRootfsScanTarget;
