@@ -35,8 +35,15 @@ describe("launcher exact-list preferences", () => {
     expect(getSiteLauncherDefaults([" chat ", "ipynb", "chat"])).toEqual({
       quickCreate: ["chat", "ipynb"],
     });
-    expect(getSiteLauncherDefaults("whiteboard,term,whiteboard")).toEqual({
-      quickCreate: ["whiteboard", "term"],
+    expect(getSiteLauncherDefaults("whiteboard,terminal,whiteboard")).toEqual({
+      quickCreate: ["board", "term"],
+    });
+    expect(
+      getSiteLauncherDefaults({
+        toJS: () => ["board", "slides", "chat"],
+      }),
+    ).toEqual({
+      quickCreate: ["board", "slides", "chat"],
     });
   });
 

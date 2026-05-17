@@ -9,6 +9,7 @@ import {
   QUICK_CREATE_CATALOG,
   QUICK_CREATE_MAP,
 } from "@cocalc/frontend/project/new/launcher-catalog";
+import { normalizeQuickCreate } from "@cocalc/frontend/project/new/launcher-preferences";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import type { IconName } from "@cocalc/frontend/components/icon";
 import { Icon } from "@cocalc/frontend/components";
@@ -30,7 +31,7 @@ function parseCsv(input: string | undefined): string[] {
 }
 
 function unique(values: string[]): string[] {
-  return [...new Set(values.map((v) => v.trim()).filter(Boolean))];
+  return normalizeQuickCreate(values);
 }
 
 function toCsv(values: string[]): string {

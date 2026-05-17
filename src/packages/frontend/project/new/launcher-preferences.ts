@@ -19,6 +19,12 @@ export const LAUNCHER_GLOBAL_DEFAULTS: Required<LauncherPrefs> = {
 
 export const LAUNCHER_SITE_DEFAULTS_QUICK_KEY = "launcher_default_quick_create";
 
+const LAUNCHER_ID_ALIASES: Record<string, string> = {
+  notebook: "ipynb",
+  terminal: "term",
+  whiteboard: "board",
+};
+
 function normalizeList(value: unknown): string[] {
   if (value == null) return [];
   if (typeof (value as any).toJS === "function") {
@@ -62,7 +68,8 @@ function uniqNonEmpty(list: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const raw of list) {
-    const id = `${raw ?? ""}`.trim();
+    const normalized = `${raw ?? ""}`.trim();
+    const id = LAUNCHER_ID_ALIASES[normalized] ?? normalized;
     if (!id || seen.has(id)) continue;
     seen.add(id);
     out.push(id);
@@ -78,7 +85,8 @@ export function getSiteLauncherDefaults(quickCreate: unknown): LauncherPrefs {
   const source =
     typeof quickCreate === "object" &&
     quickCreate != null &&
-    !Array.isArray(quickCreate)
+    !Array.isArray(quickCreate) &&
+    Object.prototype.hasOwnProperty.call(quickCreate, "quickCreate")
       ? (quickCreate as { quickCreate?: unknown }).quickCreate
       : quickCreate;
   const normalized = normalizeQuickCreate(source);
