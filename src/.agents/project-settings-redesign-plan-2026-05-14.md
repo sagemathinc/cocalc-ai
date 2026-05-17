@@ -736,6 +736,43 @@ This is where the current verbose content belongs:
 The collapsed header should make it clear that this is not normal user-facing
 settings content.
 
+#### Flyout Version
+
+The flyout should use the same data and component vocabulary, but it should not
+try to reproduce the full page layout inside a narrow panel. Treat it as a
+compact operational summary with drill-down links.
+
+Flyout default view:
+
+- one small Environment status header
+- 2-column mini-summary grid when width allows, otherwise single column
+- Runtime Image row/card
+- Available Features compact card with only the most important chips
+- SSH and Network compact rows
+- one collapsed `More environment details` section
+
+Flyout-specific rules:
+
+- No large diagnostics block by default.
+- No full feature table by default.
+- No multi-paragraph descriptions.
+- Use right-aligned compact actions, e.g. `Details`, `Refresh`, `SSH`.
+- Use `Show all` or `Open full settings` for dense information.
+- Keep vertical budget low enough that the Environment flyout section fits in
+  roughly one panel-height on a normal laptop.
+
+Recommended flyout content:
+
+- Runtime Image: image name/tag plus `Details`.
+- Features: 6-10 high-signal chips and `Show all`.
+- Network: internet/egress status plus `Egress`.
+- SSH: status plus `Open`.
+- Diagnostics: collapsed, labeled as advanced/support information.
+
+The flyout should share the same components with the full page through a
+`mode="page" | "flyout"` prop or equivalent, but mode should control density,
+not behavior.
+
 ### Suggested Component Shape
 
 Add a new presenter for the redesigned section and keep existing behavior behind
@@ -745,6 +782,7 @@ small adapters:
 - `src/packages/frontend/project/settings/environment-summary-card.tsx`
 - `src/packages/frontend/project/settings/environment-feature-groups.tsx`
 - optional: `src/packages/frontend/project/settings/environment-diagnostics.tsx`
+- optional: `src/packages/frontend/project/settings/environment-compact-row.tsx`
 
 The first pass can be implemented entirely inside one file if that is faster,
 then split once the shape stabilizes.
@@ -799,6 +837,8 @@ Tasks:
 - Keep the old verbose components under a collapsed `Diagnostics` card so no
   functionality disappears.
 - Wire the settings section to use `EnvironmentOverview` in the full page first.
+- Design the new component API with flyout mode in mind, even if the first
+  commit only renders page mode.
 
 Validation:
 
@@ -821,6 +861,10 @@ Tasks:
 - Move `Refresh` into the `Available Features` card header.
 - Preserve any existing "install with agent" or related actions.
 - Hide unavailable features by default unless actionable.
+- Add a compact feature-group rendering mode for flyout use:
+  - fewer chips
+  - no table by default
+  - `Show all` reveals the same searchable detail UI as page mode
 
 Validation:
 
@@ -864,14 +908,23 @@ Tasks:
 
 - Add a `mode="page" | "flyout"` or equivalent prop to `EnvironmentOverview`.
 - Use the same Runtime Image and Available Features summaries in the flyout.
-- Keep the flyout more compact: fewer summary cards, shorter diagnostics, and no
-  giant scroll region by default.
+- Render the flyout as a compact summary, not a scaled-down full page:
+  - small Environment status header
+  - mini-summary grid or stacked rows
+  - compact Runtime Image row
+  - compact Available Features chips
+  - SSH and Network rows
+  - collapsed `More environment details`
+- Keep diagnostics short and collapsed.
+- Use `Open full settings` or `Show all` for dense information.
 - Ensure the refresh button remains near `Available Features` in both modes.
 
 Validation:
 
 - `project/page/flyouts/settings.test.tsx`
 - Manual browser screenshot of flyout Environment section.
+- Confirm the flyout Environment section no longer requires long scrolling for
+  normal usage.
 - `pnpm -C src lint:frontend`
 - `pnpm -C src tsc`
 
@@ -883,6 +936,8 @@ Validation:
 - Raw diagnostics are allowed, but only behind an explicit collapsed section.
 - Do not invent new terminology when existing user-facing labels work.
 - Prefer `Available Features` over `Features and Configuration`.
+- Full-page and flyout versions should share data and actions, but not identical
+  density.
 - Use `COLORS` from `@cocalc/util/theme`.
 - Preserve existing security/access behavior. This is a presentation refactor,
   not a permissions change.
