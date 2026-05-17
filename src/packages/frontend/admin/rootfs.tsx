@@ -35,6 +35,17 @@ import type {
 } from "@cocalc/util/rootfs-images";
 import { plural } from "@cocalc/util/misc";
 
+const ROOTFS_SCAN_ADMIN_TIMEOUT_MS = 35 * 60 * 1000;
+
+type RootfsAdminAction =
+  | "download"
+  | "delete"
+  | "hide"
+  | "unhide"
+  | "block"
+  | "unblock"
+  | "scan";
+
 function lifecycleTags(entry: RootfsAdminCatalogEntry): React.ReactNode[] {
   const tags: React.ReactNode[] = [];
   if (entry.official) tags.push(<Tag color="green">Official</Tag>);
@@ -361,7 +372,19 @@ export function RootfsAdmin() {
   const [error, setError] = React.useState<string>("");
   const [search, setSearch] = React.useState("");
   const [gcRunning, setGcRunning] = React.useState(false);
-  const [actionImageId, setActionImageId] = React.useState<string>();
+  const [activeAction, setActiveAction] = React.useState<{
+    image_id: string;
+    action: RootfsAdminAction;
+  }>();
+
+  function actionLoading(
+    entry: RootfsAdminCatalogEntry,
+    action: RootfsAdminAction,
+  ): boolean {
+    return (
+      activeAction?.image_id === entry.id && activeAction.action === action
+    );
+  }
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -448,7 +471,7 @@ export function RootfsAdmin() {
   );
 
   async function requestDelete(entry: RootfsAdminCatalogEntry) {
-    setActionImageId(entry.id);
+    setActiveAction({ image_id: entry.id, action: "delete" });
     try {
       const result = await hub.system.requestRootfsImageDeletion({
         image_id: entry.id,
@@ -463,7 +486,7 @@ export function RootfsAdmin() {
     } catch (err) {
       message.error(`Failed to delete RootFS image: ${err}`);
     } finally {
-      setActionImageId(undefined);
+      setActiveAction(undefined);
     }
   }
 
@@ -471,8 +494,9 @@ export function RootfsAdmin() {
     entry: RootfsAdminCatalogEntry,
     patch: Partial<RootfsAdminCatalogEntry>,
     success: string,
+    action: RootfsAdminAction,
   ) {
-    setActionImageId(entry.id);
+    setActiveAction({ image_id: entry.id, action });
     try {
       await hub.system.saveRootfsCatalogEntry({
         image_id: entry.id,
@@ -505,7 +529,7 @@ export function RootfsAdmin() {
     } catch (err) {
       message.error(`Failed to update RootFS image: ${err}`);
     } finally {
-      setActionImageId(undefined);
+      setActiveAction(undefined);
     }
   }
 
@@ -537,30 +561,31 @@ export function RootfsAdmin() {
     const hostId = host_id.trim();
     try {
       await runFreshAuthAction(async () => {
-        setActionImageId(entry.id);
+        setActiveAction({ image_id: entry.id, action: "scan" });
         try {
           const result = await hub.system.scanRootfsRelease({
             release_id,
             host_id: hostId,
             browser_id: webapp_client.browser_id,
+            timeout: ROOTFS_SCAN_ADMIN_TIMEOUT_MS,
           });
           message.success(`RootFS scan ${result.status}: ${entry.label}`);
           await load();
         } finally {
-          setActionImageId(undefined);
+          setActiveAction(undefined);
         }
       });
     } catch (err) {
       message.error(`Failed to scan RootFS image: ${err}`);
       await load();
-      setActionImageId(undefined);
+      setActiveAction(undefined);
     }
   }
 
   async function downloadScanReport(entry: RootfsAdminCatalogEntry) {
     const report_id = entry.scan?.report?.artifact_id;
     if (!report_id) return;
-    setActionImageId(entry.id);
+    setActiveAction({ image_id: entry.id, action: "download" });
     try {
       const report = await hub.system.getRootfsScanReport({ report_id });
       const blob = new Blob([JSON.stringify(report.report_json, null, 2)], {
@@ -575,7 +600,7 @@ export function RootfsAdmin() {
     } catch (err) {
       message.error(`Failed to download scan report: ${err}`);
     } finally {
-      setActionImageId(undefined);
+      setActiveAction(undefined);
     }
   }
 
@@ -704,7 +729,7 @@ export function RootfsAdmin() {
                   {entry.scan?.report?.artifact_id ? (
                     <Button
                       size="small"
-                      loading={actionImageId === entry.id}
+                      loading={actionLoading(entry, "download")}
                       onClick={() => downloadScanReport(entry)}
                     >
                       Download report
@@ -727,12 +752,13 @@ export function RootfsAdmin() {
                     entry.hidden ? (
                       <Button
                         size="small"
-                        loading={actionImageId === entry.id}
+                        loading={actionLoading(entry, "unhide")}
                         onClick={() =>
                           saveEntry(
                             entry,
                             { hidden: false },
                             "RootFS image is visible again.",
+                            "unhide",
                           )
                         }
                       >
@@ -741,12 +767,13 @@ export function RootfsAdmin() {
                     ) : (
                       <Button
                         size="small"
-                        loading={actionImageId === entry.id}
+                        loading={actionLoading(entry, "hide")}
                         onClick={() =>
                           saveEntry(
                             entry,
                             { hidden: true },
                             "RootFS image hidden.",
+                            "hide",
                           )
                         }
                       >
@@ -758,12 +785,13 @@ export function RootfsAdmin() {
                     entry.blocked ? (
                       <Button
                         size="small"
-                        loading={actionImageId === entry.id}
+                        loading={actionLoading(entry, "unblock")}
                         onClick={() =>
                           saveEntry(
                             entry,
                             { blocked: false, blocked_reason: undefined },
                             "RootFS image unblocked.",
+                            "unblock",
                           )
                         }
                       >
@@ -773,7 +801,7 @@ export function RootfsAdmin() {
                       <Tooltip title="Prevent new selections while preserving existing projects.">
                         <Button
                           size="small"
-                          loading={actionImageId === entry.id}
+                          loading={actionLoading(entry, "block")}
                           onClick={() =>
                             saveEntry(
                               entry,
@@ -783,6 +811,7 @@ export function RootfsAdmin() {
                                   entry.blocked_reason ?? "Blocked by admin",
                               },
                               "RootFS image blocked.",
+                              "block",
                             )
                           }
                         >
@@ -802,7 +831,7 @@ export function RootfsAdmin() {
                       <Button
                         size="small"
                         danger
-                        loading={actionImageId === entry.id}
+                        loading={actionLoading(entry, "delete")}
                       >
                         Delete
                       </Button>
@@ -813,7 +842,7 @@ export function RootfsAdmin() {
                   {!entry.deleted ? (
                     <Button
                       size="small"
-                      loading={actionImageId === entry.id}
+                      loading={actionLoading(entry, "scan")}
                       disabled={!entry.release_id}
                       onClick={() => runScan(entry)}
                     >
