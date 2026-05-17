@@ -205,6 +205,25 @@ export type BrowserAutomationAuditKind =
 
 export type BrowserAutomationAuditDecision = "allow" | "deny";
 
+export type BrowserAutomationCentralAuditEvent =
+  | "browser_raw_exec_allowed"
+  | "browser_raw_exec_denied"
+  | "browser_async_exec_denied"
+  | "browser_quickjs_host_action_denied";
+
+export type BrowserAutomationCentralAuditValue = {
+  browser_id?: string;
+  project_id?: string;
+  source?: "browser-session";
+  kind?: BrowserAutomationAuditKind;
+  decision?: BrowserAutomationAuditDecision;
+  posture?: BrowserAutomationPosture;
+  mode?: "raw_js" | "quickjs_wasm";
+  action_name?: BrowserActionName;
+  reason?: string;
+  origin?: string;
+};
+
 export type BrowserAutomationAuditEvent = {
   seq: number;
   ts: string;

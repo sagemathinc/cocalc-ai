@@ -5,6 +5,7 @@
 
 import type {
   BrowserAutomationAuditDecision,
+  BrowserAutomationCentralAuditEvent,
   BrowserAutomationAuditEvent,
   BrowserAutomationAuditKind,
 } from "@cocalc/conat/service/browser-session";
@@ -13,6 +14,36 @@ type PendingBrowserAutomationAuditEvent = Omit<
   BrowserAutomationAuditEvent,
   "seq" | "ts"
 >;
+
+export type BrowserAutomationAuditRecord =
+  PendingBrowserAutomationAuditEvent & {
+    requested_raw_exec?: boolean;
+  };
+
+export function classifyCentralBrowserAutomationAuditEvent(
+  event: BrowserAutomationAuditRecord,
+): BrowserAutomationCentralAuditEvent | undefined {
+  if (
+    event.kind === "sandbox_action" &&
+    event.decision === "deny" &&
+    event.mode !== "raw_js"
+  ) {
+    return "browser_quickjs_host_action_denied";
+  }
+  if (event.kind === "start_exec" && event.decision === "deny") {
+    return "browser_async_exec_denied";
+  }
+  if (event.kind !== "exec" && event.kind !== "start_exec") {
+    return undefined;
+  }
+  if (event.decision === "allow" && event.mode === "raw_js") {
+    return "browser_raw_exec_allowed";
+  }
+  if (event.decision === "deny" && event.requested_raw_exec) {
+    return "browser_raw_exec_denied";
+  }
+  return undefined;
+}
 
 function normalizePositiveInteger(value: unknown, fallback: number): number {
   const parsed = Number(value);

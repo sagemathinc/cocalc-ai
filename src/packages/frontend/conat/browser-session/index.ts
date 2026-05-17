@@ -62,7 +62,11 @@ import {
   getSnapshotFileText as getProjectSnapshotFileText,
 } from "@cocalc/frontend/project/archive-info";
 import { createManagedSyncDocLeases } from "./syncdoc-leases";
-import { createBrowserAutomationAuditBuffer } from "./automation-audit";
+import {
+  classifyCentralBrowserAutomationAuditEvent,
+  createBrowserAutomationAuditBuffer,
+  type BrowserAutomationAuditRecord,
+} from "./automation-audit";
 import { createBrowserExecOperations } from "./exec-operations";
 import { createBrowserSessionHeartbeat } from "./session-heartbeat";
 import {
@@ -87,8 +91,8 @@ import {
   type BrowserActionName,
   type BrowserActionResult,
   type BrowserAutomationAuditDecision,
-  type BrowserAutomationAuditEvent,
   type BrowserAutomationAuditKind,
+  type BrowserAutomationPosture,
   type BrowserExecPolicyV1,
   type BrowserOpenFileInfo,
   type BrowserSessionServiceApi,
@@ -201,14 +205,43 @@ export function createBrowserSessionAutomation({
     typeof location !== "undefined" && location.origin
       ? `${location.origin}`
       : undefined;
-  const recordAutomationAudit = (
-    event: Omit<BrowserAutomationAuditEvent, "seq" | "ts">,
-  ): void => {
+  const callerRequestedRawExec = ({
+    posture,
+    policy,
+  }: {
+    posture?: BrowserAutomationPosture;
+    policy?: BrowserExecPolicyV1;
+  }): boolean => (posture ?? "dev") !== "prod" || !!policy?.allow_raw_exec;
+  const recordAutomationAudit = (event: BrowserAutomationAuditRecord): void => {
+    const origin = event.origin ?? currentOrigin();
+    const page_url = event.page_url ?? currentPageUrl();
+    const { requested_raw_exec, ...localEvent } = event;
     automationAudit.append({
-      ...event,
-      ...(event.page_url ? {} : { page_url: currentPageUrl() }),
-      ...(event.origin ? {} : { origin: currentOrigin() }),
+      ...localEvent,
+      ...(page_url ? { page_url } : {}),
+      ...(origin ? { origin } : {}),
     });
+    const centralEvent = classifyCentralBrowserAutomationAuditEvent(event);
+    if (!centralEvent) return;
+    client.conat_client.hub.system
+      .recordBrowserAutomationAudit({
+        event: centralEvent,
+        value: {
+          source: "browser-session",
+          browser_id: client.browser_id,
+          project_id: event.project_id,
+          kind: event.kind,
+          decision: event.decision,
+          posture: event.posture,
+          mode: event.mode,
+          action_name: event.action_name,
+          reason: event.reason,
+          origin,
+        },
+      })
+      .catch((err) =>
+        console.warn("failed to record browser automation audit event", err),
+      );
   };
   const heartbeatController = createBrowserSessionHeartbeat({
     hub,
@@ -2258,6 +2291,7 @@ export function createBrowserSessionAutomation({
         posture: event.posture,
         mode: event.mode,
         reason: event.reason,
+        requested_raw_exec: event.requested_raw_exec,
       }),
   });
 
@@ -2318,6 +2352,7 @@ export function createBrowserSessionAutomation({
           decision: "deny",
           project_id,
           posture,
+          requested_raw_exec: callerRequestedRawExec({ posture, policy }),
           reason: `${err}`,
         });
         throw err;

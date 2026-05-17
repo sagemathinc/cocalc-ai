@@ -29,6 +29,10 @@ import type {
   AccountRehomeOperationSummary,
   AccountRehomeResponse,
 } from "@cocalc/conat/inter-bay/api";
+import type {
+  BrowserAutomationCentralAuditEvent,
+  BrowserAutomationCentralAuditValue,
+} from "@cocalc/conat/service/browser-session";
 
 export const system = {
   getCustomize: noAuth,
@@ -68,6 +72,7 @@ export const system = {
   setParallelOpsLimit: authFirst,
   clearParallelOpsLimit: authFirst,
   userTracking: authFirst,
+  recordBrowserAutomationAudit: authFirstRequireAccount,
   logClientError: authFirst,
   webappError: authFirst,
   manageApiKeys: authFirst,
@@ -1535,6 +1540,12 @@ export interface System {
     event: string;
     value: object;
     account_id?: string;
+  }) => Promise<void>;
+
+  recordBrowserAutomationAudit: (opts: {
+    account_id?: string;
+    event: BrowserAutomationCentralAuditEvent;
+    value: BrowserAutomationCentralAuditValue;
   }) => Promise<void>;
 
   logClientError: (opts: {
