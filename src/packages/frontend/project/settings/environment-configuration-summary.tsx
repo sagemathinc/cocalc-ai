@@ -3,9 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Collapse, Space, Tag, Typography } from "antd";
+import { Button, Card, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
@@ -24,8 +24,8 @@ import {
   updateAccountLauncherPrefs,
 } from "../new/launcher-preferences";
 import { QUICK_CREATE_MAP } from "../new/launcher-catalog";
-import { Environment as CustomEnvironmentVariables } from "./environment";
-import { ProjectSecrets } from "./secrets";
+import { EnvironmentVariablesModal } from "./environment";
+import { ProjectSecretsModal } from "./secrets";
 
 type Mode = "project" | "flyout";
 
@@ -53,17 +53,6 @@ function normalizeEnv(env: unknown): Record<string, string> {
     }
   }
   return obj;
-}
-
-function scrollToElement(element: HTMLElement | null): void {
-  if (element == null) return;
-  const scroll = () =>
-    element.scrollIntoView?.({ behavior: "smooth", block: "start" });
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => requestAnimationFrame(scroll));
-  } else {
-    setTimeout(scroll, 0);
-  }
 }
 
 function ConfigurationCard({
@@ -121,9 +110,9 @@ export function EnvironmentConfigurationSummary({
   project_id,
 }: Props) {
   const isFlyout = mode === "flyout";
-  const [activeKeys, setActiveKeys] = useState<string[]>([]);
   const [showLauncherModal, setShowLauncherModal] = useState(false);
-  const detailsRef = useRef<HTMLDivElement | null>(null);
+  const [showEnvModal, setShowEnvModal] = useState(false);
+  const [showSecretsModal, setShowSecretsModal] = useState(false);
   const siteLauncherQuick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
@@ -171,11 +160,6 @@ export function EnvironmentConfigurationSummary({
     redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
   }
 
-  function open(key: string): void {
-    setActiveKeys((keys) => (keys.includes(key) ? keys : [...keys, key]));
-    scrollToElement(detailsRef.current);
-  }
-
   function renderTags(values: string[], empty: ReactNode, limit = 5) {
     if (values.length === 0) {
       return <Typography.Text type="secondary">{empty}</Typography.Text>;
@@ -193,8 +177,6 @@ export function EnvironmentConfigurationSummary({
       </Space>
     );
   }
-
-  const detailMode: Mode = "flyout";
 
   return (
     <Space direction="vertical" size={12} style={{ width: "100%" }}>
@@ -230,7 +212,11 @@ export function EnvironmentConfigurationSummary({
           subtitle="Process environment for terminals and kernels"
           status={`${envKeys.length} variable${envKeys.length === 1 ? "" : "s"}`}
           action={
-            <Button size="small" type="link" onClick={() => open("env")}>
+            <Button
+              size="small"
+              type="link"
+              onClick={() => setShowEnvModal(true)}
+            >
               Manage
             </Button>
           }
@@ -243,7 +229,11 @@ export function EnvironmentConfigurationSummary({
           subtitle="Encrypted files mounted into the project"
           status={`${secretNames.length} secret${secretNames.length === 1 ? "" : "s"}`}
           action={
-            <Button size="small" type="link" onClick={() => open("secrets")}>
+            <Button
+              size="small"
+              type="link"
+              onClick={() => setShowSecretsModal(true)}
+            >
               Manage
             </Button>
           }
@@ -259,38 +249,16 @@ export function EnvironmentConfigurationSummary({
         onSave={saveLauncherDefaults}
       />
 
-      <div ref={detailsRef}>
-        {activeKeys.length > 0 ? (
-          <Collapse
-            activeKey={activeKeys}
-            onChange={(keys) =>
-              setActiveKeys(
-                Array.isArray(keys) ? keys.map(String) : [String(keys)],
-              )
-            }
-            items={[
-              {
-                key: "env",
-                label: "Environment variables editor",
-                children: (
-                  <CustomEnvironmentVariables
-                    project_id={project_id}
-                    mode={detailMode}
-                  />
-                ),
-              },
-              {
-                key: "secrets",
-                label: "Project secrets editor",
-                children: (
-                  <ProjectSecrets project_id={project_id} mode={detailMode} />
-                ),
-              },
-            ]}
-            size={isFlyout ? "small" : undefined}
-          />
-        ) : undefined}
-      </div>
+      <EnvironmentVariablesModal
+        open={showEnvModal}
+        onClose={() => setShowEnvModal(false)}
+        project_id={project_id}
+      />
+      <ProjectSecretsModal
+        open={showSecretsModal}
+        onClose={() => setShowSecretsModal(false)}
+        project_id={project_id}
+      />
     </Space>
   );
 }
