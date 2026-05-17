@@ -55,11 +55,12 @@ Done:
 - Targeted integration coverage exists for account-deletion ownership transfer
   and bulk leave/delete transfer/remove-self behavior, including immediate feed
   events and account-project-index projection refresh for old and new owners.
+- CLI project delete defaults to irreversible hard delete, has no normal
+  undelete or compatibility `--hard` path, and emits structured JSON codes for
+  not-owner and hard-delete rate-limit errors.
 
 Remaining blockers:
 
-- Finish CLI parity by removing normal undelete exposure and ensuring hard
-  delete is the normal CLI delete path with structured errors.
 - Audit `purgeProjectRows` against the final project-scoped table list.
 
 Deferred:
@@ -104,7 +105,7 @@ Hard delete foundation:
   - Registers `project-hard-delete` as a global worker, currently with default
     effective limit 1.
 - `src/packages/cli/src/bin/commands/project/basic.ts`
-  - Supports `cocalc project delete --hard`.
+  - `cocalc project delete` performs irreversible hard delete by default.
   - Requires typing the `project_id` unless `--yes`.
 
 ## Policy Decisions
@@ -480,7 +481,8 @@ stale.
 ### CLI Delete
 
 Change CLI semantics so normal `cocalc project delete` means irreversible hard
-delete, or make `--hard` mandatory but deprecate soft delete explicitly.
+delete. Since cocalc-ai has not been released, there is no compatibility
+`--hard` option.
 
 Recommended cocalc-ai behavior:
 
@@ -488,7 +490,7 @@ Recommended cocalc-ai behavior:
 - It requires project-id typed confirmation unless `--yes`.
 - It requires fresh auth or local/dev fresh-auth bypass.
 - It prints LRO id and supports `--wait`.
-- Remove or hide `project undelete` from normal help.
+- No normal `project undelete` command exists.
 
 For compatibility during transition, if soft delete is retained at all, it
 should be admin/debug-only and clearly named `project soft-delete`.
@@ -630,17 +632,19 @@ runtime-slot tables.
 
 ### Phase 7: Update CLI
 
-- Make CLI delete call `hardDeleteProject` by default.
-- Keep typed project-id confirmation.
-- Keep `--wait`.
-- Ensure local/dev fresh-auth automation works.
-- Remove or clearly hide `project undelete`.
-- Add tests for:
-  - confirmation text;
-  - `--yes`;
-  - non-owner denial display;
-  - rate-limit denial display;
-  - LRO wait success/failure.
+Completed:
+
+- CLI delete calls `hardDeleteProject` by default.
+- Typed project-id confirmation remains unless `--yes` is passed.
+- `--wait` remains supported.
+- No normal `project undelete` command exists.
+- The unreleased compatibility `--hard` flag is removed.
+- Tests cover confirmation, `--yes`, no `--hard` option, and structured JSON
+  non-owner/rate-limit denial display.
+
+Still useful:
+
+- Add focused CLI tests for LRO wait success/failure if that behavior changes.
 
 ### Phase 8: Remove or Quarantine Soft Delete
 

@@ -375,7 +375,6 @@ export function registerProjectBasicCommands(
     .command("delete")
     .description("permanently delete a project")
     .requiredOption("-w, --project <project_id>", "project project_id (UUID)")
-    .option("--hard", "deprecated; delete is always permanent")
     .option(
       "--backup-retention-days <days>",
       "keep backups this many days before purge (default: 7)",
@@ -388,7 +387,6 @@ export function registerProjectBasicCommands(
       async (
         opts: {
           project: string;
-          hard?: boolean;
           backupRetentionDays?: string;
           purgeBackupsNow?: boolean;
           wait?: boolean;

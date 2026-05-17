@@ -35,6 +35,29 @@ function freshAuthHint(code: string, message: string): string | undefined {
   return "Run `cocalc auth elevate` and complete the browser passkey/TOTP challenge, then retry the command. Fresh-auth CLI actions require a browser-approved cookie profile; API keys, bearer tokens, and hub-password automation cannot provide human 2FA.";
 }
 
+function parseHardDeleteRateLimitDetails(
+  code: string,
+  message: string,
+): Record<string, number> | undefined {
+  if (!code.startsWith("project_delete_rate_limited_")) {
+    return undefined;
+  }
+  const match = message.match(/\(([^)]*)\)/);
+  if (!match) {
+    return undefined;
+  }
+  const details: Record<string, number> = {};
+  for (const part of match[1].split(",")) {
+    const [rawKey, rawValue] = part.split("=");
+    const key = rawKey?.trim();
+    const value = Number(rawValue?.trim());
+    if (key && Number.isFinite(value)) {
+      details[key] = value;
+    }
+  }
+  return Object.keys(details).length > 0 ? details : undefined;
+}
+
 export function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { value };
@@ -249,6 +272,7 @@ export function emitError(
   const message = error instanceof Error ? error.message : `${error}`;
   const code = errorCode(error, message);
   const hint = freshAuthHint(code, message);
+  const details = parseHardDeleteRateLimitDetails(code, message);
   let api = ctx.apiBaseUrl;
   if (!api && ctx.globals?.api) {
     try {
@@ -267,6 +291,7 @@ export function emitError(
       error: {
         code,
         message,
+        ...(details ? { details } : undefined),
         ...(hint ? { hint } : undefined),
       },
       meta: {

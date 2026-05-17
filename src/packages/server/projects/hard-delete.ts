@@ -5,6 +5,7 @@ import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
 import rustic from "@cocalc/backend/sandbox/rustic";
 import { parseOutput } from "@cocalc/backend/sandbox/exec";
+import { ConatError } from "@cocalc/conat/core/client";
 import getPool from "@cocalc/database/pool";
 import { publishAccountFeedEventBestEffort } from "@cocalc/server/account/feed";
 import {
@@ -241,7 +242,10 @@ async function getProjectAccess({
   if (isOwner(project.users, account_id)) {
     return { project };
   }
-  throw new Error("must be a project owner to permanently delete a workspace");
+  throw new ConatError(
+    "must be a project owner to permanently delete a workspace",
+    { code: "project_delete_not_owner" },
+  );
 }
 
 export async function assertHardDeleteProjectPermission({
