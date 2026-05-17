@@ -170,6 +170,27 @@ describe("bay-public-origin", () => {
     ).resolves.toBe("cocalc.ai");
   });
 
+  it("derives a site-namespaced browser cookie name from an attached bay request", async () => {
+    getServerSettingsMock = jest.fn(async () => ({}));
+    process.env.COCALC_BAY_ID = "bay-2";
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    const { getBrowserCookieNameForRequest } =
+      await import("./bay-public-origin");
+    await expect(
+      getBrowserCookieNameForRequest({
+        name: "remember_me",
+        req: {
+          headers: {
+            host: "bay-2-lite4b.cocalc.ai",
+            "x-forwarded-proto": "https",
+          },
+          protocol: "https",
+          secure: true,
+        } as any,
+      }),
+    ).resolves.toBe("lite4b_cocalc_ai_remember_me");
+  });
+
   it("falls back to the request-derived site origin when configured settings lookup hangs", async () => {
     getServerSettingsMock = jest.fn(() => new Promise(() => {}));
     process.env.COCALC_BAY_ID = "bay-2";
