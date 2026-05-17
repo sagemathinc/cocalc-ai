@@ -58,10 +58,12 @@ Done:
 - CLI project delete defaults to irreversible hard delete, has no normal
   undelete or compatibility `--hard` path, and emits structured JSON codes for
   not-owner and hard-delete rate-limit errors.
+- `purgeProjectRows` has been audited and expanded for project-scoped
+  projection, runtime, notification, backup-index, secret, public-share,
+  route-invalidation, move/copy/rehome, and legacy TimeTravel rows, with a
+  PGlite regression test for core cleanup.
 
-Remaining blockers:
-
-- Audit `purgeProjectRows` against the final project-scoped table list.
+Remaining blockers: none.
 
 Deferred:
 
@@ -566,26 +568,20 @@ Do not assume the local bay/database owns the project.
 
 ### Phase 4: Complete Cleanup Coverage
 
-Audit and expand `purgeProjectRows`.
+Completed:
 
-Known missing or suspicious cleanup targets:
-
-- `account_project_index`
-- `account_notification_index` rows scoped to the project
-- `project_runtime_slots`
-- project-scoped SSH key/authorized-key metadata if separate from project row
-- project-scoped API keys/secrets
-- project/account feed projection rows
-- public sharing/listing rows
-- LROs and project move/copy rows
-- chat/codex/project automation metadata if project-scoped in Postgres
-- backup indexes and restore/move bookkeeping
-
-Use `DELETE ... WHERE project_id=$1` for direct project-scoped tables and
-document tables intentionally retained for audit.
-
-Add regression tests that fail when the cleanup list misses core projection and
-runtime-slot tables.
+- Audited and expanded `purgeProjectRows` for the final known project-scoped
+  table list.
+- Cleanup now covers account/project projections, notification projections and
+  outboxes, runtime slots, active operations, rootfs state, backup indexes and
+  assignments, project secrets, public app subdomains, route invalidations,
+  move/copy/rehome bookkeeping, collaborator invites/inbox, listings, usage,
+  external credentials, project outbox rows, and legacy syncstring/patch/cursor
+  TimeTravel/blob rows.
+- Billing/analytics/audit records such as `purchases`, `ai_usage_log`, and
+  `central_log` are intentionally retained.
+- A PGlite regression test fails if core projection, runtime-slot,
+  backup-index, secret, or legacy TimeTravel cleanup regresses.
 
 ### Phase 5: Add Owner-Controlled Storage-History Destruction
 

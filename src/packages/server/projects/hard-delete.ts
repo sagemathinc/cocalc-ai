@@ -516,6 +516,13 @@ async function purgeProjectRows({
     });
     await runDeleteMaybeMissingTable({
       client,
+      table: "project_collab_invite_inbox",
+      query: "DELETE FROM project_collab_invite_inbox WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
       table: "project_copies",
       query:
         "DELETE FROM project_copies WHERE src_project_id=$1 OR dest_project_id=$1",
@@ -531,9 +538,65 @@ async function purgeProjectRows({
     });
     await runDeleteMaybeMissingTable({
       client,
+      table: "project_rehome_operations",
+      query: "DELETE FROM project_rehome_operations WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
       table: "long_running_operations",
       query:
         "DELETE FROM long_running_operations WHERE scope_type='project' AND scope_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "project_active_operations",
+      query: "DELETE FROM project_active_operations WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "project_runtime_slots",
+      query: "DELETE FROM project_runtime_slots WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "project_rootfs_states",
+      query: "DELETE FROM project_rootfs_states WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "project_host_route_invalidations",
+      query: "DELETE FROM project_host_route_invalidations WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "project_secrets",
+      query: "DELETE FROM project_secrets WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "project_backup_indexes",
+      query: "DELETE FROM project_backup_indexes WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "project_backup_repo_assignments",
+      query: "DELETE FROM project_backup_repo_assignments WHERE project_id=$1",
       params: [project.project_id],
       purged,
     });
@@ -567,6 +630,34 @@ async function purgeProjectRows({
     });
     await runDeleteMaybeMissingTable({
       client,
+      table: "bookmarks",
+      query: "DELETE FROM bookmarks WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "project_app_public_subdomains",
+      query: "DELETE FROM project_app_public_subdomains WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "notification_events",
+      query: "DELETE FROM notification_events WHERE source_project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "notification_events_outbox",
+      query: "DELETE FROM notification_events_outbox WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
       table: "project_events_outbox",
       query: "DELETE FROM project_events_outbox WHERE project_id=$1",
       params: [project.project_id],
@@ -576,6 +667,44 @@ async function purgeProjectRows({
       client,
       table: "account_project_index",
       query: "DELETE FROM account_project_index WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "account_notification_index",
+      query: "DELETE FROM account_notification_index WHERE project_id=$1",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "blobs",
+      query:
+        "DELETE FROM blobs WHERE project_id=$1::text OR id IN (SELECT archived FROM syncstrings WHERE project_id=$1::uuid AND archived IS NOT NULL)",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "patches",
+      query:
+        "DELETE FROM patches WHERE string_id IN (SELECT string_id FROM syncstrings WHERE project_id=$1)",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "cursors",
+      query:
+        "DELETE FROM cursors WHERE string_id IN (SELECT string_id FROM syncstrings WHERE project_id=$1)",
+      params: [project.project_id],
+      purged,
+    });
+    await runDeleteMaybeMissingTable({
+      client,
+      table: "syncstrings",
+      query: "DELETE FROM syncstrings WHERE project_id=$1",
       params: [project.project_id],
       purged,
     });
