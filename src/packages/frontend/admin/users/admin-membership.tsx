@@ -103,6 +103,20 @@ function getUsageAlerts(
       title: "This user is over the project limit.",
     });
   }
+  if (usageStatus.over_rootfs_count) {
+    alerts.push({
+      key: "rootfs-count",
+      type: "warning",
+      title: "This user is over the RootFS image count limit.",
+    });
+  }
+  if (usageStatus.over_rootfs_total_storage) {
+    alerts.push({
+      key: "rootfs-storage",
+      type: "warning",
+      title: "This user is over the RootFS storage limit.",
+    });
+  }
   if (
     usageStatus.unsampled_project_count > 0 ||
     (usageStatus.measurement_error_count ?? 0) > 0
@@ -558,6 +572,49 @@ export function AdminMembership({ account_id }: { account_id: string }) {
                         {usageStatus.remaining_project_slots < 0
                           ? `Over by ${Math.abs(usageStatus.remaining_project_slots)}`
                           : usageStatus.remaining_project_slots}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.rootfs_count === "number" && (
+                      <Descriptions.Item label="Root filesystems">
+                        {usageStatus.rootfs_count}
+                        {typeof usageStatus.rootfs_count_limit === "number"
+                          ? ` of ${usageStatus.rootfs_count_limit}`
+                          : ""}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.rootfs_remaining_count === "number" && (
+                      <Descriptions.Item label="Remaining RootFS slots">
+                        {usageStatus.rootfs_remaining_count < 0
+                          ? `Over by ${Math.abs(usageStatus.rootfs_remaining_count)}`
+                          : usageStatus.rootfs_remaining_count}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.rootfs_total_storage_bytes ===
+                      "number" && (
+                      <Descriptions.Item label="RootFS storage used">
+                        {humanSize(usageStatus.rootfs_total_storage_bytes)}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.rootfs_total_storage_bytes_limit ===
+                      "number" && (
+                      <Descriptions.Item label="RootFS storage cap">
+                        {humanSize(
+                          usageStatus.rootfs_total_storage_bytes_limit,
+                        )}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.rootfs_total_storage_remaining_bytes ===
+                      "number" && (
+                      <Descriptions.Item label="RootFS storage remaining">
+                        {formatRemaining(
+                          usageStatus.rootfs_total_storage_remaining_bytes,
+                        )}
+                      </Descriptions.Item>
+                    )}
+                    {typeof usageStatus.rootfs_max_storage_bytes_limit ===
+                      "number" && (
+                      <Descriptions.Item label="RootFS per-image cap">
+                        {humanSize(usageStatus.rootfs_max_storage_bytes_limit)}
                       </Descriptions.Item>
                     )}
                     {typeof usageStatus.managed_egress_5h_bytes ===

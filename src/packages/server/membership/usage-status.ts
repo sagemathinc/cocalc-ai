@@ -23,6 +23,7 @@ import {
   listUsageProjectsForAccount,
   type ProjectUsageRow,
 } from "./project-usage";
+import { getRootfsUsageForAccount } from "./rootfs-limits";
 
 const log = getLogger("server:membership:usage-status");
 
@@ -206,6 +207,16 @@ export async function getMembershipUsageStatusForAccount({
         account_id,
         limit: 20,
       });
+    const rootfsUsage = await getRootfsUsageForAccount({ account_id });
+    const rootfs_count_limit = effectiveLimits.rootfs_count;
+    const rootfs_total_storage_bytes_limit =
+      typeof effectiveLimits.rootfs_total_storage_gb === "number"
+        ? Math.floor(effectiveLimits.rootfs_total_storage_gb * 1_000_000_000)
+        : undefined;
+    const rootfs_max_storage_bytes_limit =
+      typeof effectiveLimits.rootfs_max_storage_gb === "number"
+        ? Math.floor(effectiveLimits.rootfs_max_storage_gb * 1_000_000_000)
+        : undefined;
 
     return {
       collected_at: new Date().toISOString(),
@@ -237,6 +248,27 @@ export async function getMembershipUsageStatusForAccount({
         max_projects != null ? max_projects - owned_project_count : undefined,
       over_max_projects:
         max_projects != null ? owned_project_count > max_projects : undefined,
+      rootfs_count: rootfsUsage.count,
+      rootfs_count_limit,
+      rootfs_remaining_count:
+        rootfs_count_limit != null
+          ? rootfs_count_limit - rootfsUsage.count
+          : undefined,
+      over_rootfs_count:
+        rootfs_count_limit != null
+          ? rootfsUsage.count > rootfs_count_limit
+          : undefined,
+      rootfs_total_storage_bytes: rootfsUsage.total_storage_bytes,
+      rootfs_total_storage_bytes_limit,
+      rootfs_total_storage_remaining_bytes:
+        rootfs_total_storage_bytes_limit != null
+          ? rootfs_total_storage_bytes_limit - rootfsUsage.total_storage_bytes
+          : undefined,
+      over_rootfs_total_storage:
+        rootfs_total_storage_bytes_limit != null
+          ? rootfsUsage.total_storage_bytes > rootfs_total_storage_bytes_limit
+          : undefined,
+      rootfs_max_storage_bytes_limit,
       ...managedEgress,
       managed_egress_recent_events: managedEgressRecentEvents,
     };

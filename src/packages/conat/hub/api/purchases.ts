@@ -258,6 +258,15 @@ export interface MembershipUsageStatus {
   max_projects?: number;
   remaining_project_slots?: number;
   over_max_projects?: boolean;
+  rootfs_count?: number;
+  rootfs_count_limit?: number;
+  rootfs_remaining_count?: number;
+  over_rootfs_count?: boolean;
+  rootfs_total_storage_bytes?: number;
+  rootfs_total_storage_bytes_limit?: number;
+  rootfs_total_storage_remaining_bytes?: number;
+  over_rootfs_total_storage?: boolean;
+  rootfs_max_storage_bytes_limit?: number;
   managed_egress_5h_bytes?: number;
   managed_egress_7d_bytes?: number;
   managed_egress_5h_remaining_bytes?: number;

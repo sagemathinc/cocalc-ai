@@ -434,6 +434,84 @@ function getUsageStatusItems(
     });
   }
   if (
+    typeof usageStatus.rootfs_count === "number" &&
+    Number.isFinite(usageStatus.rootfs_count)
+  ) {
+    items.push({
+      key: "rootfs_count",
+      label: "Root filesystems",
+      value: `${usageStatus.rootfs_count}`,
+      danger: usageStatus.over_rootfs_count === true,
+      progress:
+        typeof usageStatus.rootfs_count_limit === "number" &&
+        Number.isFinite(usageStatus.rootfs_count_limit)
+          ? {
+              current: usageStatus.rootfs_count,
+              limit: usageStatus.rootfs_count_limit,
+              caption: `${usageStatus.rootfs_count} of ${usageStatus.rootfs_count_limit} root filesystems`,
+            }
+          : undefined,
+    });
+  }
+  if (
+    typeof usageStatus.rootfs_remaining_count === "number" &&
+    Number.isFinite(usageStatus.rootfs_remaining_count)
+  ) {
+    items.push({
+      key: "rootfs_remaining_count",
+      label: "Remaining root filesystem slots",
+      value:
+        usageStatus.rootfs_remaining_count < 0
+          ? `Over by ${Math.abs(usageStatus.rootfs_remaining_count)}`
+          : `${usageStatus.rootfs_remaining_count}`,
+      danger: usageStatus.rootfs_remaining_count < 0,
+    });
+  }
+  if (
+    typeof usageStatus.rootfs_total_storage_bytes === "number" &&
+    Number.isFinite(usageStatus.rootfs_total_storage_bytes)
+  ) {
+    items.push({
+      key: "rootfs_total_storage_bytes",
+      label: "RootFS storage used",
+      value: humanSize(usageStatus.rootfs_total_storage_bytes),
+      danger: usageStatus.over_rootfs_total_storage === true,
+      progress:
+        typeof usageStatus.rootfs_total_storage_bytes_limit === "number" &&
+        Number.isFinite(usageStatus.rootfs_total_storage_bytes_limit) &&
+        usageStatus.rootfs_total_storage_bytes_limit > 0
+          ? {
+              current: usageStatus.rootfs_total_storage_bytes,
+              limit: usageStatus.rootfs_total_storage_bytes_limit,
+              caption: `${humanSize(usageStatus.rootfs_total_storage_bytes)} of ${humanSize(usageStatus.rootfs_total_storage_bytes_limit)}`,
+            }
+          : undefined,
+    });
+  }
+  if (
+    typeof usageStatus.rootfs_total_storage_remaining_bytes === "number" &&
+    Number.isFinite(usageStatus.rootfs_total_storage_remaining_bytes)
+  ) {
+    items.push({
+      key: "rootfs_total_storage_remaining_bytes",
+      label: "RootFS storage remaining",
+      value: humanSize(
+        Math.abs(usageStatus.rootfs_total_storage_remaining_bytes),
+      ),
+      danger: usageStatus.rootfs_total_storage_remaining_bytes < 0,
+    });
+  }
+  if (
+    typeof usageStatus.rootfs_max_storage_bytes_limit === "number" &&
+    Number.isFinite(usageStatus.rootfs_max_storage_bytes_limit)
+  ) {
+    items.push({
+      key: "rootfs_max_storage_bytes_limit",
+      label: "RootFS per-image cap",
+      value: humanSize(usageStatus.rootfs_max_storage_bytes_limit),
+    });
+  }
+  if (
     typeof usageStatus.managed_egress_5h_bytes === "number" &&
     Number.isFinite(usageStatus.managed_egress_5h_bytes)
   ) {
@@ -508,6 +586,22 @@ function getUsageStatusAlerts(
       type: "warning",
       title:
         "Your account is over the project limit. Creating new projects is blocked until you delete a project or upgrade membership.",
+    });
+  }
+  if (usageStatus.over_rootfs_count) {
+    alerts.push({
+      key: "over-rootfs-count",
+      type: "warning",
+      title:
+        "Your account is over the RootFS image count limit. Publishing or saving new RootFS images is blocked until you delete images or upgrade membership.",
+    });
+  }
+  if (usageStatus.over_rootfs_total_storage) {
+    alerts.push({
+      key: "over-rootfs-storage",
+      type: "warning",
+      title:
+        "Your account is over the RootFS storage limit. Publishing or saving larger RootFS images is blocked until you delete images or upgrade membership.",
     });
   }
   if (

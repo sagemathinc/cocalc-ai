@@ -9,6 +9,7 @@ const clientCloseMock = jest.fn();
 const getManagedEgressUsageForAccountMock = jest.fn();
 const getRecentManagedEgressEventsForAccountMock = jest.fn();
 const listUsageProjectsForAccountMock = jest.fn();
+const getRootfsUsageForAccountMock = jest.fn();
 const conatWithProjectRoutingForAccountMock = jest.fn(() => ({
   close: clientCloseMock,
 }));
@@ -41,6 +42,11 @@ jest.mock("./project-usage", () => ({
     listUsageProjectsForAccountMock(...args),
 }));
 
+jest.mock("./rootfs-limits", () => ({
+  getRootfsUsageForAccount: (...args: any[]) =>
+    getRootfsUsageForAccountMock(...args),
+}));
+
 describe("getMembershipUsageStatusForAccount", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -53,6 +59,10 @@ describe("getMembershipUsageStatusForAccount", () => {
     });
     getRecentManagedEgressEventsForAccountMock.mockResolvedValue([]);
     listUsageProjectsForAccountMock.mockResolvedValue([]);
+    getRootfsUsageForAccountMock.mockResolvedValue({
+      count: 0,
+      total_storage_bytes: 0,
+    });
   });
 
   it("aggregates owned project storage and compares against configured limits", async () => {
@@ -106,7 +116,46 @@ describe("getMembershipUsageStatusForAccount", () => {
       account_id: "account-1",
       limit: 20,
     });
+    expect(getRootfsUsageForAccountMock).toHaveBeenCalledWith({
+      account_id: "account-1",
+    });
     expect(clientCloseMock).toHaveBeenCalled();
+  });
+
+  it("includes RootFS usage and remaining membership capacity", async () => {
+    listUsageProjectsForAccountMock.mockResolvedValue([]);
+    getRootfsUsageForAccountMock.mockResolvedValue({
+      count: 3,
+      total_storage_bytes: 7_500_000_000,
+    });
+
+    const { getMembershipUsageStatusForAccount } =
+      await import("./usage-status");
+    const result = await getMembershipUsageStatusForAccount({
+      account_id: "account-1",
+      resolution: {
+        class: "pro",
+        source: "subscription",
+        entitlements: {
+          usage_limits: {
+            rootfs_count: 2,
+            rootfs_total_storage_gb: 10,
+            rootfs_max_storage_gb: 4,
+          },
+        },
+      },
+      fresh: true,
+    });
+
+    expect(result.rootfs_count).toBe(3);
+    expect(result.rootfs_count_limit).toBe(2);
+    expect(result.rootfs_remaining_count).toBe(-1);
+    expect(result.over_rootfs_count).toBe(true);
+    expect(result.rootfs_total_storage_bytes).toBe(7_500_000_000);
+    expect(result.rootfs_total_storage_bytes_limit).toBe(10_000_000_000);
+    expect(result.rootfs_total_storage_remaining_bytes).toBe(2_500_000_000);
+    expect(result.over_rootfs_total_storage).toBe(false);
+    expect(result.rootfs_max_storage_bytes_limit).toBe(4_000_000_000);
   });
 
   it("tracks sampling failures without failing the whole status call", async () => {
