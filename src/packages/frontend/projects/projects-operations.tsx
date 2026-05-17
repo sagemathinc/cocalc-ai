@@ -229,17 +229,50 @@ export function ProjectsOperations({
   }
 
   function confirmSelectedStop() {
+    const projectIds = selected_project_ids.slice();
     Modal.confirm({
       title: `Stop selected ${projectsLabelLower}`,
-      content: `Stop ${selected_project_ids.length} selected ${projectsLabelLower}?`,
+      content: `Stop ${projectIds.length} selected ${projectsLabelLower}?`,
       okText: "Stop",
       okButtonProps: { danger: true },
-      onOk: async () => {
-        for (const project_id of selected_project_ids) {
-          await actions.stop_project(project_id);
-        }
+      onOk: () => {
+        void stopSelectedProjects(projectIds);
       },
     });
+  }
+
+  async function stopSelectedProjects(projectIds: string[]) {
+    const succeeded: string[] = [];
+    const errors: Array<{ project_id: string; error: string }> = [];
+    for (const project_id of projectIds) {
+      try {
+        await actions.stop_project(project_id);
+        succeeded.push(project_id);
+      } catch (err) {
+        errors.push({ project_id, error: `${err}` });
+      }
+    }
+    alert_message({
+      type: errors.length > 0 ? "warning" : "success",
+      message:
+        errors.length > 0
+          ? `Stopped ${succeeded.length} project(s); ${errors.length} failed.`
+          : `Stopped ${succeeded.length} selected project(s).`,
+    });
+    if (errors.length > 0) {
+      Modal.error({
+        title: "Some projects could not be stopped",
+        content: (
+          <ul>
+            {errors.map((result) => (
+              <li key={result.project_id}>
+                {selectedTitle(result.project_id)}: {result.error}
+              </li>
+            ))}
+          </ul>
+        ),
+      });
+    }
   }
 
   function openSelectedArchive() {
