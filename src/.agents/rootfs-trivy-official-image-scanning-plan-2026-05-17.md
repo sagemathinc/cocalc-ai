@@ -179,8 +179,8 @@ type RootfsTrivyScanSummary = {
 };
 ```
 
-Add a normalized scan-run table if audit history must survive beyond the latest
-summary:
+Add a normalized scan-run table. This is SOC-2 evidence, so latest-state fields
+alone are not sufficient.
 
 - `rootfs_release_scan_runs`
 - primary key `scan_run_id`
@@ -199,9 +199,8 @@ summary:
 - `report_artifact`
 - `error`
 
-Recommendation: implement the table if this is meant as SOC-2 evidence. Latest
-fields are enough for the product UI, but historical runs are useful for audits,
-scanner upgrades, and evidence that stale findings were rechecked.
+Latest fields are enough for the product UI, but historical runs are necessary
+for audits, scanner upgrades, and evidence that stale findings were rechecked.
 
 ## Admin Settings
 
@@ -209,19 +208,35 @@ Add site settings for policy and operations:
 
 - `rootfs_scan_enabled`: default `no` until Trivy is installed/configured.
 - `rootfs_scan_tool`: default `trivy`.
+- `rootfs_scan_container_image`: pinned internal Trivy scanner image reference,
+  ideally by digest.
+- `rootfs_scan_container_image_digest`: expected image digest for startup
+  verification.
 - `rootfs_scan_max_concurrent_per_bay`: default `1`.
 - `rootfs_scan_max_concurrent_per_host`: default `1`.
 - `rootfs_scan_timeout_minutes`: default `30`.
 - `rootfs_scan_max_target_gb`: default based on current official image sizes.
 - `rootfs_scan_block_severity`: default `critical`.
-- `rootfs_scan_stale_after_days`: default `14` or `30`.
+- `rootfs_scan_stale_after_days`: default `30`.
 - `rootfs_scan_unscanned_official_policy`: `warn` first, later `block` if
   admins want strict release gates.
 - `rootfs_scan_admin_bypass_requires_note`: default `yes`.
+- `rootfs_scan_full_report_retention_days`: default `730`.
+- `rootfs_scan_rescan_period_days`: default `7`, adjustable after measuring
+  real resource usage.
 
 Operational settings should be readable by the owning bay and project-host scan
 worker. They should not rely on unversioned host-local environment variables
-except for scanner binary path and cache directory.
+except for deployment-local defaults such as scanner image cache and Trivy DB
+cache directory.
+
+Policy decisions for first implementation:
+
+- Unscanned official images are `warn`, not `block`, until baseline scans exist.
+- Full JSON reports are retained for two years.
+- Admin scan bypass requires fresh-auth and a required note.
+- Official images are scheduled for weekly re-scan, but the period remains
+  admin-configurable because real scan cost is not known yet.
 
 ## Project Host Execution
 
@@ -267,7 +282,7 @@ The host should:
 2. Verify the resolved path corresponds to the requested `content_key` /
    managed image metadata.
 3. Refuse targets over `max_target_bytes`.
-4. Run Trivy with a pinned argument policy.
+4. Run the pinned Trivy scanner container with a pinned argument policy.
 5. Capture JSON output to a temporary file.
 6. Parse and summarize findings.
 7. Store full report as a bounded internal artifact if report retention is
@@ -284,12 +299,107 @@ The scan must run:
 - with a host-local or bay-mirrored Trivy DB cache,
 - and without downloading databases during the scan itself.
 
+## Exact Runtime Model
+
+Run Trivy inside a locked-down Podman container on the project host. Do not run
+the Trivy binary directly on the host for production scans.
+
+The host should maintain:
+
+- a pinned scanner image, e.g.
+  `registry.cocalc.internal/security/trivy-rootfs@sha256:...`;
+- a host-local Trivy database cache, updated by a controlled ops job;
+- a per-scan temporary output directory;
+- and a read-only materialized RootFS target path.
+
+The scanner container should see only:
+
+- `/scan/rootfs`: read-only mount of the target immutable RootFS tree;
+- `/scan/out`: writable empty output directory for JSON/SBOM/report files;
+- `/trivy-cache`: read-only Trivy DB/cache directory during scan execution;
+- `/tmp`: small tmpfs.
+
+It should not see:
+
+- project home directories,
+- project secrets,
+- host `/var/run/podman.sock`,
+- host network,
+- bay credentials,
+- rustic repository secrets,
+- or arbitrary host filesystem paths.
+
+The scan job should have two container modes:
+
+1. DB update mode, run by ops/admin schedule, with network enabled only if the
+   deployment uses direct upstream DB refresh.
+2. Scan mode, run for each RootFS release, with `--network=none`,
+   `--skip-db-update`, and a read-only DB cache mount.
+
+Preferred scan-mode command shape:
+
+```sh
+podman run --rm \
+  --name "cocalc-rootfs-scan-${SCAN_RUN_ID}" \
+  --network=none \
+  --read-only \
+  --cap-drop=all \
+  --security-opt=no-new-privileges \
+  --pids-limit=512 \
+  --memory="${MEMORY_LIMIT}" \
+  --cpus="${CPU_LIMIT}" \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m \
+  --mount "type=bind,src=${ROOTFS_PATH},dst=/scan/rootfs,ro=true" \
+  --mount "type=bind,src=${OUTPUT_DIR},dst=/scan/out" \
+  --mount "type=bind,src=${TRIVY_CACHE_DIR},dst=/trivy-cache,ro=true" \
+  "${TRIVY_SCANNER_IMAGE}" \
+  trivy rootfs \
+    --format json \
+    --output /scan/out/report.json \
+    --scanners vuln \
+    --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+    --ignore-unfixed=false \
+    --offline-scan \
+    --skip-db-update \
+    --cache-dir /trivy-cache \
+    /scan/rootfs
+```
+
+Container user model:
+
+- Prefer rootless Podman if project-host deployment supports it.
+- Inside the scanner container, running as root is acceptable if it is root in a
+  user namespace, all capabilities are dropped, no new privileges are allowed,
+  the target mount is read-only, and network is disabled. This avoids false
+  negatives from unreadable package metadata in RootFS trees.
+- If non-root scanning has equivalent coverage in practice, switch to a
+  non-root scanner user after smoke testing.
+
+Report handling:
+
+- Trivy writes full JSON to `/scan/out/report.json`.
+- The host reads, bounds, hashes, and parses the report after the container
+  exits.
+- The host stores or uploads the full report only through the bay-approved
+  artifact path.
+- The host returns only compact summary metadata over host-control RPC.
+
+Failure handling:
+
+- Non-zero Trivy exit from findings must be distinguishable from scanner
+  execution failure. Prefer not using `--exit-code 1`; let policy decide from
+  parsed JSON.
+- Container timeout, OOM, missing DB, missing scanner image, target too large,
+  and malformed JSON become `scan_status='error'` with a compact error code.
+- The temporary output directory is deleted after successful artifact upload or
+  after bounded failure retention for debugging.
+
 ## Trivy Invocation Policy
 
 The exact command should be centralized and versioned, not assembled ad hoc in
 UI or CLI code.
 
-Expected shape:
+Expected command inside the scanner container:
 
 ```sh
 trivy rootfs \
@@ -323,10 +433,11 @@ Do not store raw reports in browser-visible catalog JSON.
 Store:
 
 - compact summary in `rootfs_releases.scan_summary`,
-- optional full Trivy JSON report in internal object storage or a DB-backed
-  artifact table,
+- full Trivy JSON report in internal object storage or a DB-backed artifact
+  table, retained for 730 days by default,
 - artifact checksum and byte size in the summary,
-- and admin notes/exceptions in either scan summary or a normalized notes table.
+- and admin notes/exceptions in a normalized notes table or scan-run-linked
+  event table, projected into latest summary for UI display.
 
 Full report access should be admin-only. User-facing UI should show concise
 severity counts, top findings, and remediation guidance.
@@ -467,11 +578,15 @@ Prometheus/reporting candidates:
 
 ### Phase 1: scanner decision and host proof-of-life
 
-- Add Trivy binary discovery on project hosts.
-- Add a host-local command/helper that can scan a known cached managed RootFS
-  path and produce parsed summary.
+- Add pinned Trivy scanner container image discovery/verification on project
+  hosts.
+- Add a host-local command/helper that runs the locked-down Podman scanner
+  container against a known cached managed RootFS path and produces parsed
+  summary.
 - Capture tool version and DB metadata.
 - Verify offline/cache-only mode works.
+- Verify `--network=none`, read-only target mount, output-only writable mount,
+  and no target modification.
 
 ### Phase 2: data model and admin scan API
 
@@ -523,7 +638,7 @@ Integration tests:
 
 Host smoke test:
 
-- install/pin Trivy,
+- install/pin the Trivy scanner container image,
 - preload/update DB through controlled path,
 - scan a tiny synthetic RootFS with a known package database if practical,
 - verify no network access during scan job,
@@ -531,13 +646,13 @@ Host smoke test:
 
 ## Open Questions
 
-1. Should strict launch policy block unscanned official images immediately, or
-   start with `warn` until all official images have baseline scans?
-2. Should the full JSON report be retained indefinitely, retained for a fixed
-   window, or regenerated on demand from immutable release content?
-3. Should scan exceptions live inside `scan_summary`, in a separate normalized
-   table, or as RootFS image events plus latest summary projection?
-4. Should admin scan/bypass require fresh-auth? It mutates trust metadata and
-   can override a critical security warning, so fresh-auth is defensible.
-5. How often should official images be automatically re-scanned as the Trivy DB
-   changes: daily, weekly, or only when admins trigger it?
+1. Exact exception storage: separate normalized table versus event table plus
+   latest projection. Recommendation: use a normalized table if exceptions can
+   expire or attach to specific finding IDs; otherwise RootFS image events plus
+   latest summary projection is enough.
+2. Full report size budget. Need empirical data from scanning current official
+   images before choosing DB versus object storage. Default assumption: object
+   storage or artifact table with 730-day retention.
+3. Re-scan cadence after production measurement. Default weekly, but tune based
+   on official image count, RootFS size, host idle capacity, and Trivy DB update
+   frequency.
