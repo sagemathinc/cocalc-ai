@@ -22,7 +22,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { EnvironmentConfigurationSummary } from "./environment-configuration-summary";
 import { EnvironmentFeatureGroups } from "./environment-feature-groups";
 import { ProjectCapabilities } from "./project-capabilites";
-import RootFilesystemImage from "./root-filesystem-image";
+import { RootFilesystemImageModal } from "./root-filesystem-image";
 import type { Project } from "./types";
 
 type Mode = "project" | "flyout";
@@ -247,6 +247,7 @@ export function EnvironmentOverview({
   const [activeKeys, setActiveKeys] = useState<string[]>([]);
   const [activeDetailKeys, setActiveDetailKeys] = useState<string[]>([]);
   const [featureDetailsOpen, setFeatureDetailsOpen] = useState(false);
+  const [runtimeImageOpen, setRuntimeImageOpen] = useState(false);
   const collapseHeaderRefs = useRef<Record<string, HTMLSpanElement | null>>({});
   const featureDetailsRef = useRef<HTMLDivElement | null>(null);
   const { env } = useProjectEnv(project_id);
@@ -353,13 +354,6 @@ export function EnvironmentOverview({
       ),
     },
     {
-      key: "runtime-image",
-      label: isFlyout
-        ? "Runtime Image"
-        : collapseLabel("runtime-image", "Runtime Image"),
-      children: <RootFilesystemImage />,
-    },
-    {
       key: "diagnostics",
       label: isFlyout
         ? "Technical Details"
@@ -405,7 +399,15 @@ export function EnvironmentOverview({
       title: "Runtime Image",
       value: runtimeImage,
       subtitle: "Base software environment",
-      action: renderAction("runtime-image"),
+      action: (
+        <Button
+          size="small"
+          type="link"
+          onClick={() => setRuntimeImageOpen(true)}
+        >
+          Details
+        </Button>
+      ),
     },
     {
       icon: "clipboard-check",
@@ -480,6 +482,10 @@ export function EnvironmentOverview({
           setActiveKeys(Array.isArray(keys) ? keys.map(String) : [String(keys)])
         }
         items={collapseItems}
+      />
+      <RootFilesystemImageModal
+        open={runtimeImageOpen}
+        onClose={() => setRuntimeImageOpen(false)}
       />
     </Space>
   );

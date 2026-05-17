@@ -84,7 +84,21 @@ type PublishDraft = {
   hidden: boolean;
 };
 
-export default function RootFilesystemImage() {
+type RootFilesystemImageMode = "inline" | "modal";
+
+interface RootFilesystemImageProps {
+  mode?: RootFilesystemImageMode;
+}
+
+interface RootFilesystemImageModalProps {
+  onClose: () => void;
+  open: boolean;
+}
+
+export default function RootFilesystemImage({
+  mode = "inline",
+}: RootFilesystemImageProps = {}) {
+  const isModal = mode === "modal";
   const { actions, project, project_id } = useProjectContext();
   const [open, setOpen] = useState<boolean>(false);
   const [upgradeOpen, setUpgradeOpen] = useState<boolean>(false);
@@ -657,9 +671,11 @@ export default function RootFilesystemImage() {
   }
 
   return (
-    <div style={{ marginTop: "-4px", marginLeft: "-10px" }}>
+    <div
+      style={isModal ? undefined : { marginTop: "-4px", marginLeft: "-10px" }}
+    >
       <RootfsPublishOps project_id={project_id} />
-      <div style={{ marginLeft: "15px" }}>
+      <div style={isModal ? undefined : { marginLeft: "15px" }}>
         <div style={rootfsSummaryCardStyle(activeDisplayEntry)}>
           <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
             {renderRootfsThemePreview(activeDisplayEntry)}
@@ -1588,6 +1604,29 @@ export default function RootFilesystemImage() {
         projectId={project_id}
       />
     </div>
+  );
+}
+
+export function RootFilesystemImageModal({
+  onClose,
+  open,
+}: RootFilesystemImageModalProps): React.JSX.Element {
+  return (
+    <Modal
+      destroyOnHidden
+      footer={null}
+      onCancel={onClose}
+      open={open}
+      title={
+        <>
+          <Icon name="docker" style={{ marginRight: 10 }} />
+          Runtime Image
+        </>
+      }
+      width={920}
+    >
+      <RootFilesystemImage mode="modal" />
+    </Modal>
   );
 }
 
