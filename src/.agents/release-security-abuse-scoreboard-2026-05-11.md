@@ -17,7 +17,7 @@ Statuses:
 
 Current score after the 2026-05-17 release-security closeout:
 
-- `done`: 14 findings.
+- `done`: 15 findings.
 - `guarded`: 0 findings.
 - `blocked`: 0 findings.
 
@@ -38,6 +38,7 @@ Current score after the 2026-05-17 release-security closeout:
 | SEC-SCAN-001    | Official RootFS vulnerability trust scanning | done   | high     | Official RootFS trust scanning is implemented as an admin-only Trivy control for immutable RootFS releases. Scan runs and full JSON reports are stored, latest status is projected onto RootFS releases/catalog rows, admin UI can trigger scans with fresh auth and host selection, RootFS/project settings show scan status, ordinary users are blocked from selecting official images with unresolved critical findings, project hosts automatically prepare/refresh the Trivy scanner container/cache, and weekly scheduled scans cover official non-hidden images.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Monitor scanner-prep failures from host heartbeat metadata and add admin exception-note workflow only if admins need documented critical-finding overrides beyond the current admin bypass. |
 | SEC-MASTER-001  | Master-key storage/unlock                    | done   | high     | Secret-settings encryption and project-backup repo password encryption now derive purpose-specific keys from one local `site-master-key`; the raw site key is not used directly for AES-GCM payload encryption. Local admin CLI lifecycle commands can initialize, status-check, passphrase-export, restore, doctor-check, and offline-migrate the single key. Legacy `server-settings-key` and `backup-master-key` files are read only as migration fallbacks. Production bay systemd units directly set `COCALC_REQUIRE_SITE_MASTER_KEY=1` and load `/etc/cocalc/site-master-key` through `LoadCredential=`, so missing keys fail closed even if optional env files are absent. Production-like smoke validation covered isolated key creation, encrypted backup, restore, systemd credential source, files-only doctor, fail-closed missing-key behavior, and unit credential/env assertions. Production runbook exists at `docs/security/site-master-key-production-runbook.md`.                                                                                                                                                                                                                                                | Later consider KMS/TPM envelope unseal; operational off-host backup storage remains a human deployment checklist item.                                                                      |
 | SEC-START-001   | Simultaneous running project admission       | done   | critical | Sponsored runtime slots are implemented. Runtime admission uses `max_sponsored_running_projects`, durable `project_runtime_slots`, runtime sponsors, inter-bay sponsor-home admission, start/restart enforcement, autostart policy, collaborator-start controls, central slot event logs, admin reporting, and `cocalc project runtime-slots`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Deeper course/team dashboards and bulk classroom operations are follow-up product polish, not a release-security blocker.                                                                   |
+| SEC-BLOB-001    | Central blob storage quotas and cleanup      | done   | high     | Central SHA1-addressed blob storage now has membership-tier limits for account-attributed total bytes/count and project-attributed total bytes/count. Hub uploads and Conat `saveBlob` enforce quotas before storing new non-deduplicated blobs, direct user writes to the legacy `blobs` schema path are disabled, denials are logged, membership usage status reports blob usage, and users can delete oldest account/project blobs from account preferences and project settings. Account deletion removes account-attributed blobs; project hard delete already removes project-attributed blob rows.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Add richer blob inventory/drilldown only if support needs it; the launch requirement is quota enforcement plus a safe self-service cleanup path.                                            |
 | SEC-DEP-001     | Dependency advisory reconciliation           | done   | critical | Local remediation removed `sanitize-html` from npm dependencies and replaced reachable frontend/server sanitization with explicit allowlist sanitizers plus advisory regression tests. `pnpm audit` now reports no known vulnerabilities. Python `uv.lock` now resolves only patched `urllib3`, `pytest`, `requests`, and `Pygments` versions after dropping Python 3.9 support for the unreleased `cocalc-api` package; the previous open Dependabot alerts were caused by vulnerable Python 3.9 lock branches. GitHub Dependabot was verified clean by the user on 2026-05-17.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Keep normal dependency monitoring; reconcile any future Dependabot alert by manifest path and production reachability.                                                                      |
 
 ## Big-Picture Remaining Launch Priorities
@@ -75,8 +76,8 @@ To reduce intentional or accidental abuse at launch:
    turns, automations, rootfs import/publish/grow, archive/delete/backup
    operations, file streams, terminal/exec streams, and browser automation.
 4. Give users safe self-service recovery paths when admission blocks them: stop
-   sponsored projects, change runtime sponsor, archive projects, clean up
-   storage, and understand which quota was hit.
+   sponsored projects, change runtime sponsor, archive projects, delete oldest
+   account/project blobs, clean up storage, and understand which quota was hit.
 5. Add official RootFS vulnerability scanning as a trust signal and release
    gate for shared images; keep broad user-project scanning as future scope
    unless a concrete SOC-2 or operations requirement demands it.
@@ -1082,6 +1083,66 @@ Follow-up polish:
 - Deeper course/team dashboards and bulk classroom slot-management operations
   remain useful product polish, but the release security blocker is closed.
 
+### SEC-BLOB-001: Central Blob Storage Needed Membership Quotas and Cleanup
+
+Status: `done`.
+
+Severity: high.
+
+Evidence:
+
+- `/blobs` uploads and Conat `saveBlob` write into a central SHA1-addressed blob
+  store.
+- The pre-existing per-blob size cap limited individual payload size, but there
+  was no durable per-account or per-project total size/count quota.
+- Without total quotas, a user or project could create many distinct blobs and
+  consume central database/blob storage indefinitely.
+- Quota enforcement without a cleanup path would be a dead end: users need a
+  simple way to free blob quota after hitting it.
+
+Implemented:
+
+- Added membership-tier usage limits for:
+  - `blob_account_total_bytes`
+  - `blob_account_count`
+  - `blob_project_total_bytes`
+  - `blob_project_count`
+- Added tier defaults, effective-limit normalization, admin entitlement
+  overrides, CLI schema documentation, and account membership usage reporting.
+- Hub `/blobs` upload and Conat `db.saveBlob` now check account/project blob
+  quota before saving a new non-deduplicated blob.
+- Existing SHA1-deduplicated blobs are not charged again, since they do not add
+  storage.
+- Direct user writes through the legacy `blobs` schema path are disabled so
+  users cannot bypass membership-aware upload/RPC paths.
+- Quota denials are recorded in `central_log` as `blob_quota_denied`.
+- Added bounded cleanup RPCs:
+  - `db.deleteOldestAccountBlobs`
+  - `db.deleteOldestProjectBlobs`
+- Project cleanup requires project collaborator access. Account cleanup requires
+  account authentication.
+- Account preferences now exposes a button to delete oldest account-attributed
+  blobs. Project settings exposes a button to delete oldest project-attributed
+  blobs.
+- Account deletion removes account-attributed blobs before marking the account
+  deleted. Project hard delete already removes project-scoped blob rows.
+
+Validation:
+
+- Focused server tests cover admission success, account-byte denial,
+  project-count denial, dedupe no-charge behavior, oldest account/project blob
+  cleanup, and account-deletion cleanup.
+- `conat`, `server`, and `frontend` package builds passed.
+- Frontend lint passed.
+
+Residual policy:
+
+- The admission check is not fully transaction-serialized against many
+  concurrent uploads. A small quota overshoot race is accepted for launch; add
+  advisory locks or transactional counters if telemetry shows abuse.
+- Blob inventory and selective deletion are deferred. Oldest-N cleanup is the
+  launch-safe recovery path.
+
 ### SEC-DEP-001: Dependency Advisory Reconciliation
 
 Status: `done`.
@@ -1164,10 +1225,9 @@ Residual policy:
 - Reconcile future open alerts by manifest path, patched version availability,
   and production reachability.
 
-Suggested next audit steps:
+Final closeout note:
 
-1. Smoke-test `docs/security/site-master-key-production-runbook.md` on one
-   disposable bay VM or launchpad-style instance.
-2. For the three pre-release dogfood/dev sites, run the offline migration once,
-   restart immediately after, then delete the migration code later if it is
-   truly one-time scaffolding.
+- The scoreboard has no known release-blocking security or abuse item after the
+  2026-05-17 pass.
+- Remaining items in this document are tuning, operational dashboards, richer
+  admin UX, or accepted residual risk, not launch blockers.
