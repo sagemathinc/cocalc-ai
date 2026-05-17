@@ -19,6 +19,13 @@ export type RootfsScanStatus =
   | "clean"
   | "findings"
   | "error";
+export type RootfsScanPolicyStatus = "allowed" | "blocked" | "admin_exception";
+export type RootfsScanSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "low"
+  | "unknown";
 export type RootfsImageEventType =
   | "catalog_created"
   | "hidden"
@@ -29,7 +36,15 @@ export type RootfsImageEventType =
   | "release_gc_pending"
   | "release_gc_blocked"
   | "release_gc_deleted"
-  | "release_gc_failed";
+  | "release_gc_failed"
+  | "scan_requested"
+  | "scan_started"
+  | "scan_completed"
+  | "scan_failed"
+  | "scan_policy_blocked"
+  | "scan_exception_added"
+  | "scan_exception_expired"
+  | "scan_admin_bypass";
 export type RootfsImageSection =
   | "official"
   | "mine"
@@ -50,13 +65,65 @@ export type RootfsImageTheme = {
 
 export type RootfsScanSummary = {
   status?: RootfsScanStatus;
+  policy_status?: RootfsScanPolicyStatus;
   tool?: string;
+  tool_version?: string;
   scanned_at?: string;
+  started_at?: string;
+  duration_ms?: number;
   scanner_version?: string;
   summary?: string;
   findings_summary?: Record<string, number>;
+  severity_counts?: Partial<Record<RootfsScanSeverity, number>>;
+  highest_findings?: RootfsScanFinding[];
   report_url?: string;
+  report?: RootfsScanReportRef;
+  db?: {
+    version?: string;
+    updated_at?: string;
+    source?: string;
+  };
+  target?: {
+    release_id?: string;
+    content_key?: string;
+    runtime_image?: string;
+    arch?: string;
+    size_bytes?: number;
+  };
+  admin_notes?: RootfsScanAdminNote[];
+  error?: {
+    message?: string;
+    code?: string;
+  };
   metadata?: Record<string, any>;
+};
+
+export type RootfsScanFinding = {
+  id: string;
+  severity: RootfsScanSeverity;
+  package_name?: string;
+  installed_version?: string;
+  fixed_version?: string;
+  title?: string;
+  primary_url?: string;
+};
+
+export type RootfsScanReportRef = {
+  artifact_id?: string;
+  format?: "trivy-json" | string;
+  sha256?: string;
+  bytes?: number;
+  compressed_bytes?: number;
+  retention_until?: string;
+};
+
+export type RootfsScanAdminNote = {
+  account_id?: string;
+  created_at?: string;
+  kind?: "false_positive" | "accepted_risk" | "remediation" | "admin_bypass";
+  note?: string;
+  finding_ids?: string[];
+  expires_at?: string;
 };
 
 export type RootfsImageEntry = {
