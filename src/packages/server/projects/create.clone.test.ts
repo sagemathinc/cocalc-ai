@@ -239,6 +239,14 @@ describe("projects.createProject clone routing", () => {
           ],
         };
       }
+      if (
+        sql.includes("SELECT runtime_image AS image") &&
+        sql.includes("FROM project_rootfs_states") &&
+        sql.includes("state_role='current'")
+      ) {
+        expect(params).toEqual([SOURCE_PROJECT_ID]);
+        return { rows: [] };
+      }
       if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
         expect(params).toEqual([HOST_ID]);
         return {
@@ -343,6 +351,96 @@ describe("projects.createProject clone routing", () => {
         }),
       }),
     );
+  });
+
+  it("validates the cloned current RootFS state before copying files", async () => {
+    queryMock = jest.fn(async (sql: string, params: any[]) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [], rowCount: null };
+      }
+      if (
+        sql.includes(
+          "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes(
+          "SELECT project_id FROM projects WHERE project_id=$1 LIMIT 1",
+        )
+      ) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes("SELECT COUNT(*)::BIGINT AS count") &&
+        sql.includes("COALESCE(users -> $1::text ->> 'group', '') = 'owner'")
+      ) {
+        return { rows: [{ count: "0" }] };
+      }
+      if (
+        sql.includes(
+          "SELECT host_id, region, rootfs_image, rootfs_image_id, owning_bay_id, backup_repo_id FROM projects WHERE project_id=$1",
+        )
+      ) {
+        return {
+          rows: [
+            {
+              host_id: HOST_ID,
+              region: "wnam",
+              rootfs_image: "buildpack-deps:noble-scm",
+              rootfs_image_id: "official-cocalc-base",
+              owning_bay_id: "bay-3",
+              backup_repo_id: null,
+            },
+          ],
+        };
+      }
+      if (
+        sql.includes("SELECT runtime_image AS image") &&
+        sql.includes("FROM project_rootfs_states") &&
+        sql.includes("state_role='current'")
+      ) {
+        return {
+          rows: [
+            {
+              image: "docker.io/library/ubuntu:latest",
+              image_id: null,
+            },
+          ],
+        };
+      }
+      if (sql.includes("SELECT COALESCE(official, false)")) {
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    resolveMembershipForAccountMock = jest.fn(async () => ({
+      entitlements: {
+        usage_limits: {
+          rootfs_oci_images: false,
+        },
+      },
+    }));
+    const createProject = (await import("./create")).default;
+
+    await expect(
+      createProject({
+        title: "Clone test",
+        description: "desc",
+        account_id: ACCOUNT_ID,
+        src_project_id: SOURCE_PROJECT_ID,
+        rootfs_image: "buildpack-deps:noble-scm",
+        rootfs_image_id: "official-cocalc-base",
+        start: false,
+      }),
+    ).rejects.toThrow(
+      "arbitrary remote OCI root filesystem images are disabled",
+    );
+
+    expect(getProjectFileServerClientMock).not.toHaveBeenCalled();
+    expect(cloneMock).not.toHaveBeenCalled();
+    expect(hostControlCreateProjectMock).not.toHaveBeenCalled();
   });
 
   it("fails clone creation when project secrets cannot be copied", async () => {

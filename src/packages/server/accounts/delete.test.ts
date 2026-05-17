@@ -5,6 +5,7 @@
 
 const poolQueryMock = jest.fn();
 const disposeOwnedProjectsForAccountDeletionMock = jest.fn();
+const deleteRootfsImagesForAccountDeletionMock = jest.fn();
 const deleteAllRememberMeMock = jest.fn();
 const revokeAllAuthSessionsMock = jest.fn();
 const recordAccountRevocationMock = jest.fn();
@@ -20,6 +21,12 @@ jest.mock("@cocalc/server/projects/ownership", () => ({
   __esModule: true,
   disposeOwnedProjectsForAccountDeletion: (...args: any[]) =>
     disposeOwnedProjectsForAccountDeletionMock(...args),
+}));
+
+jest.mock("@cocalc/server/rootfs/catalog", () => ({
+  __esModule: true,
+  deleteRootfsImagesForAccountDeletion: (...args: any[]) =>
+    deleteRootfsImagesForAccountDeletionMock(...args),
 }));
 
 jest.mock("@cocalc/server/auth/remember-me", () => ({
@@ -58,6 +65,7 @@ describe("delete account", () => {
     jest.resetModules();
     poolQueryMock.mockReset();
     disposeOwnedProjectsForAccountDeletionMock.mockReset();
+    deleteRootfsImagesForAccountDeletionMock.mockReset();
     deleteAllRememberMeMock.mockReset();
     revokeAllAuthSessionsMock.mockReset();
     recordAccountRevocationMock.mockReset();
@@ -68,6 +76,7 @@ describe("delete account", () => {
     revokeAllAuthSessionsMock.mockResolvedValue(undefined);
     recordAccountRevocationMock.mockResolvedValue(undefined);
     disposeOwnedProjectsForAccountDeletionMock.mockResolvedValue([]);
+    deleteRootfsImagesForAccountDeletionMock.mockResolvedValue([]);
     poolQueryMock.mockResolvedValue({
       rows: [{ email_address: "user@example.com" }],
     });
@@ -83,6 +92,9 @@ describe("delete account", () => {
     disposeOwnedProjectsForAccountDeletionMock.mockImplementation(async () => {
       calls.push("dispose-projects");
     });
+    deleteRootfsImagesForAccountDeletionMock.mockImplementation(async () => {
+      calls.push("delete-rootfs-images");
+    });
     withAccountRehomeWriteFenceMock.mockImplementation(async ({ fn }) => {
       calls.push("mark-deleted");
       await fn({
@@ -96,6 +108,13 @@ describe("delete account", () => {
     expect(disposeOwnedProjectsForAccountDeletionMock).toHaveBeenCalledWith(
       ACCOUNT_ID,
     );
-    expect(calls).toEqual(["dispose-projects", "mark-deleted"]);
+    expect(deleteRootfsImagesForAccountDeletionMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+    );
+    expect(calls).toEqual([
+      "dispose-projects",
+      "delete-rootfs-images",
+      "mark-deleted",
+    ]);
   });
 });

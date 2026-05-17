@@ -1223,3 +1223,28 @@ export async function requestRootfsImageDeletion({
     blockers,
   };
 }
+
+export async function deleteRootfsImagesForAccountDeletion(
+  account_id: string,
+): Promise<RootfsDeleteRequestResult[]> {
+  const pool = getPool("medium");
+  const { rows } = await pool.query<{ image_id: string }>(
+    `SELECT image_id
+     FROM rootfs_images
+     WHERE owner_id=$1
+       AND COALESCE(deleted, false)=false
+     ORDER BY created NULLS LAST, image_id`,
+    [account_id],
+  );
+  const results: RootfsDeleteRequestResult[] = [];
+  for (const row of rows) {
+    results.push(
+      await requestRootfsImageDeletion({
+        account_id,
+        image_id: row.image_id,
+        reason: "account deletion",
+      }),
+    );
+  }
+  return results;
+}
