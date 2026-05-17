@@ -916,6 +916,8 @@ Required tool-selection step:
   - operational maturity, release cadence, and maintenance health.
 - Document why the chosen scanner is the best free option for official RootFS
   trust scanning and list accepted gaps.
+- The RootFS-only Trivy-first implementation plan is documented in
+  `rootfs-trivy-official-image-scanning-plan-2026-05-17.md`.
 
 Suggested implementation sequence:
 
