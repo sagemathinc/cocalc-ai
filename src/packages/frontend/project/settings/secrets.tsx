@@ -8,6 +8,7 @@ import {
   Button,
   Checkbox,
   Input,
+  Modal,
   Popconfirm,
   Space,
   Typography,
@@ -51,7 +52,13 @@ export const PROJECT_SECRETS_ICON = "key";
 
 interface Props {
   project_id: string;
-  mode?: "project" | "flyout";
+  mode?: "project" | "flyout" | "modal";
+}
+
+interface ModalProps {
+  onClose: () => void;
+  open: boolean;
+  project_id: string;
 }
 
 const SECRET_NAME_RE = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
@@ -113,6 +120,7 @@ export const ProjectSecrets: React.FC<Props> = ({
   mode = "project",
 }: Props) => {
   const isFlyout = mode === "flyout";
+  const isModal = mode === "modal";
   const isMountedRef = useIsMountedRef();
   const { secrets, refresh, setSecrets } = useProjectSecrets(project_id);
   const sortedSecrets = useMemo(
@@ -520,7 +528,7 @@ export const ProjectSecrets: React.FC<Props> = ({
     return (
       <div style={{ padding: "10px" }}>
         <Space direction="vertical" style={{ width: "100%" }} size="middle">
-          {isFlyout ? (
+          {isFlyout || isModal ? (
             <Typography.Text strong>{title}</Typography.Text>
           ) : undefined}
           {error ? <ErrorDisplay banner error={error} /> : undefined}
@@ -714,7 +722,7 @@ export const ProjectSecrets: React.FC<Props> = ({
     );
   }
 
-  if (isFlyout) {
+  if (isFlyout || isModal) {
     return renderBody();
   }
 
@@ -724,3 +732,21 @@ export const ProjectSecrets: React.FC<Props> = ({
     </SettingBox>
   );
 };
+
+export function ProjectSecretsModal({
+  onClose,
+  open,
+  project_id,
+}: ModalProps): React.JSX.Element {
+  return (
+    <Modal
+      destroyOnHidden
+      footer={null}
+      onCancel={onClose}
+      open={open}
+      width={940}
+    >
+      <ProjectSecrets project_id={project_id} mode="modal" />
+    </Modal>
+  );
+}

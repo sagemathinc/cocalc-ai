@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Input, Space, Typography } from "antd";
+import { Alert, Button, Input, Modal, Space, Typography } from "antd";
 import { useIntl } from "react-intl";
 
 import {
@@ -29,7 +29,13 @@ export const ENV_VARS_ICON = "bars";
 
 interface Props {
   project_id: string;
-  mode?: "project" | "flyout";
+  mode?: "project" | "flyout" | "modal";
+}
+
+interface ModalProps {
+  onClose: () => void;
+  open: boolean;
+  project_id: string;
 }
 
 type EnvRow = {
@@ -103,6 +109,7 @@ export const Environment: React.FC<Props> = ({
   mode = "project",
 }: Props) => {
   const isFlyout = mode === "flyout";
+  const isModal = mode === "modal";
   const intl = useIntl();
   const projectLabelLower = intl.formatMessage(labels.project).toLowerCase();
   const { env, setEnv } = useProjectEnv(project_id);
@@ -208,7 +215,7 @@ export const Environment: React.FC<Props> = ({
     return (
       <div style={{ padding: "10px" }}>
         <Space direction="vertical" style={{ width: "100%" }} size="middle">
-          {isFlyout ? (
+          {isFlyout || isModal ? (
             <Typography.Text strong>{title}</Typography.Text>
           ) : undefined}
           {error ? <ErrorDisplay banner error={error} /> : undefined}
@@ -302,7 +309,7 @@ export const Environment: React.FC<Props> = ({
     );
   }
 
-  if (isFlyout) {
+  if (isFlyout || isModal) {
     return renderBody();
   }
 
@@ -312,3 +319,21 @@ export const Environment: React.FC<Props> = ({
     </SettingBox>
   );
 };
+
+export function EnvironmentVariablesModal({
+  onClose,
+  open,
+  project_id,
+}: ModalProps): React.JSX.Element {
+  return (
+    <Modal
+      destroyOnHidden
+      footer={null}
+      onCancel={onClose}
+      open={open}
+      width={860}
+    >
+      <Environment project_id={project_id} mode="modal" />
+    </Modal>
+  );
+}
