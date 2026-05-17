@@ -236,6 +236,7 @@ export function EnvironmentOverview({
 }: Props) {
   const isFlyout = mode === "flyout";
   const [activeKeys, setActiveKeys] = useState<string[]>([]);
+  const [activeDetailKeys, setActiveDetailKeys] = useState<string[]>([]);
   const [featureDetailsOpen, setFeatureDetailsOpen] = useState(false);
   const collapseHeaderRefs = useRef<Record<string, HTMLSpanElement | null>>({});
   const featureDetailsRef = useRef<HTMLDivElement | null>(null);
@@ -270,8 +271,21 @@ export function EnvironmentOverview({
     }
   }
 
-  function expand(key: string): void {
-    setActiveKeys((keys) => (keys.includes(key) ? keys : [...keys, key]));
+  function addActiveKey(
+    setter: (fn: (keys: string[]) => string[]) => void,
+    key: string,
+  ): void {
+    setter((keys) => (keys.includes(key) ? keys : [...keys, key]));
+  }
+
+  function openDetail(key: string): void {
+    if (isFlyout) {
+      addActiveKey(setActiveKeys, "more");
+      addActiveKey(setActiveDetailKeys, key);
+      scrollToElement(collapseHeaderRefs.current.more);
+      return;
+    }
+    addActiveKey(setActiveKeys, key);
     scrollToElement(collapseHeaderRefs.current[key]);
   }
 
@@ -289,7 +303,7 @@ export function EnvironmentOverview({
 
   function renderAction(key: string, label = "Details") {
     return (
-      <Button size="small" type="link" onClick={() => expand(key)}>
+      <Button size="small" type="link" onClick={() => openDetail(key)}>
         {label}
       </Button>
     );
@@ -314,6 +328,73 @@ export function EnvironmentOverview({
 
   const detailMode: Mode = "flyout";
   const SummaryComponent = isFlyout ? SummaryRow : SummaryCard;
+  const detailItems = [
+    {
+      key: "configuration",
+      label: isFlyout
+        ? "Configuration"
+        : collapseLabel("configuration", "Configuration"),
+      children: (
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            Launcher defaults, process environment, and mounted secrets.
+          </Typography.Text>
+          <LauncherDefaults project_id={project_id} />
+          <CustomEnvironmentVariables
+            project_id={project_id}
+            mode={detailMode}
+          />
+          <ProjectSecrets project_id={project_id} mode={detailMode} />
+        </Space>
+      ),
+    },
+    {
+      key: "runtime-image",
+      label: isFlyout
+        ? "Runtime Image"
+        : collapseLabel("runtime-image", "Runtime Image"),
+      children: <RootFilesystemImage />,
+    },
+    {
+      key: "diagnostics",
+      label: isFlyout
+        ? "Technical Details"
+        : collapseLabel("diagnostics", "Technical Details"),
+      children: (
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            Full feature probe output and formatter details for debugging or
+            support.
+          </Typography.Text>
+          <ProjectCapabilities
+            project={project}
+            project_id={project_id}
+            mode={detailMode}
+          />
+        </Space>
+      ),
+    },
+  ];
+  const collapseItems = isFlyout
+    ? [
+        {
+          key: "more",
+          label: collapseLabel("more", "More environment details"),
+          children: (
+            <Collapse
+              activeKey={activeDetailKeys}
+              onChange={(keys) =>
+                setActiveDetailKeys(
+                  Array.isArray(keys) ? keys.map(String) : [String(keys)],
+                )
+              }
+              items={detailItems}
+              size="small"
+            />
+          ),
+        },
+      ]
+    : detailItems;
   const summaryItems: SummaryCardProps[] = [
     {
       icon: "disk-drive",
@@ -395,7 +476,7 @@ export function EnvironmentOverview({
         <EnvironmentFeatureGroups
           expanded={featureDetailsOpen}
           mode={mode}
-          onDetails={() => expand("diagnostics")}
+          onDetails={() => openDetail("diagnostics")}
           onExpandedChange={setFeatureDetailsOpen}
           project_id={project_id}
         />
@@ -406,47 +487,7 @@ export function EnvironmentOverview({
         onChange={(keys) =>
           setActiveKeys(Array.isArray(keys) ? keys.map(String) : [String(keys)])
         }
-        items={[
-          {
-            key: "configuration",
-            label: collapseLabel("configuration", "Configuration"),
-            children: (
-              <Space direction="vertical" size={12} style={{ width: "100%" }}>
-                <Typography.Text type="secondary">
-                  Launcher defaults, process environment, and mounted secrets.
-                </Typography.Text>
-                <LauncherDefaults project_id={project_id} />
-                <CustomEnvironmentVariables
-                  project_id={project_id}
-                  mode={detailMode}
-                />
-                <ProjectSecrets project_id={project_id} mode={detailMode} />
-              </Space>
-            ),
-          },
-          {
-            key: "runtime-image",
-            label: collapseLabel("runtime-image", "Runtime Image"),
-            children: <RootFilesystemImage />,
-          },
-          {
-            key: "diagnostics",
-            label: collapseLabel("diagnostics", "Technical Details"),
-            children: (
-              <Space direction="vertical" size={12} style={{ width: "100%" }}>
-                <Typography.Text type="secondary">
-                  Full feature probe output and formatter details for debugging
-                  or support.
-                </Typography.Text>
-                <ProjectCapabilities
-                  project={project}
-                  project_id={project_id}
-                  mode={detailMode}
-                />
-              </Space>
-            ),
-          },
-        ]}
+        items={collapseItems}
       />
     </Space>
   );
