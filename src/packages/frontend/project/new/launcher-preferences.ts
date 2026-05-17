@@ -14,7 +14,17 @@ export interface LauncherMerged {
 }
 
 export const LAUNCHER_GLOBAL_DEFAULTS: Required<LauncherPrefs> = {
-  quickCreate: ["chat", "ipynb", "md", "tex", "term"],
+  quickCreate: [
+    "chat",
+    "ipynb",
+    "term",
+    "md",
+    "tex",
+    "board",
+    "tasks",
+    "slides",
+    "course",
+  ],
 };
 
 export const LAUNCHER_SITE_DEFAULTS_QUICK_KEY = "launcher_default_quick_create";
