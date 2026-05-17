@@ -35,19 +35,15 @@ import { NewFileButton } from "@cocalc/frontend/project/new/new-file-button";
 import { NewFileDropdown } from "@cocalc/frontend/project/new/new-file-dropdown";
 import { LauncherCustomizeModal } from "@cocalc/frontend/project/new/launcher-customize-modal";
 import {
-  LAUNCHER_GLOBAL_DEFAULTS,
-  LAUNCHER_SITE_REMOVE_QUICK_KEY,
   LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   LAUNCHER_SETTINGS_KEY,
-  getProjectLauncherDefaults,
+  getAccountLauncherPrefs,
+  getEffectiveLauncher,
   getSiteLauncherDefaults,
-  getUserLauncherLayers,
-  mergeLauncherSettings,
-  updateUserLauncherPrefs,
+  updateAccountLauncherPrefs,
 } from "@cocalc/frontend/project/new/launcher-preferences";
 import { QUICK_CREATE_MAP } from "@cocalc/frontend/project/new/launcher-catalog";
 import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-features";
-import { useProjectLauncher } from "@cocalc/frontend/project/use-project-launcher";
 import { NewFilenameFamilies } from "@cocalc/frontend/project/utils";
 import { DEFAULT_NEW_FILENAMES, NEW_FILENAMES } from "@cocalc/util/db-schema";
 import {
@@ -86,25 +82,10 @@ export function NewFlyout({
 }): React.JSX.Element {
   const intl = useIntl();
   const other_settings = useTypedRedux("account", "other_settings");
-  const account_id = useTypedRedux("account", "account_id");
   const site_launcher_quick = useTypedRedux(
     "customize",
     LAUNCHER_SITE_DEFAULTS_QUICK_KEY,
   );
-  const site_remove_quick = useTypedRedux(
-    "customize",
-    LAUNCHER_SITE_REMOVE_QUICK_KEY,
-  );
-  const { launcher: project_launcher, setLauncher: setProjectLauncher } =
-    useProjectLauncher(project_id);
-  const user_group = useTypedRedux("projects", "project_map")?.getIn([
-    project_id,
-    "users",
-    account_id,
-    "group",
-  ]);
-  const is_admin = useTypedRedux("account", "is_admin");
-  const can_edit_project_defaults = !!is_admin || user_group === "owner";
   const rfn = other_settings.get(NEW_FILENAMES);
   const selected = rfn ?? DEFAULT_NEW_FILENAMES;
   const actions = useActions({ project_id });
@@ -128,42 +109,21 @@ export function NewFlyout({
   const [creating, setCreating] = useState<boolean>(false);
   const [showCustomizeModal, setShowCustomizeModal] = useState<boolean>(false);
 
-  const projectLauncherDefaults = getProjectLauncherDefaults(project_launcher);
-  const siteLauncherDefaults = getSiteLauncherDefaults({
-    quickCreate: site_launcher_quick,
-    hiddenQuickCreate: site_remove_quick,
-  });
-  const userLauncherLayers = getUserLauncherLayers(
+  const siteLauncherDefaults = getSiteLauncherDefaults(site_launcher_quick);
+  const accountLauncherPrefs = getAccountLauncherPrefs(
     other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
-    project_id,
   );
-  const inheritedForProjectUser = mergeLauncherSettings({
-    globalDefaults: siteLauncherDefaults,
-    projectDefaults: projectLauncherDefaults,
-    accountUserPrefs: userLauncherLayers.account,
-  });
-  const inheritedForProjectDefaults = mergeLauncherSettings({
-    globalDefaults: siteLauncherDefaults,
-  });
-  const mergedLauncher = mergeLauncherSettings({
-    globalDefaults: siteLauncherDefaults,
-    projectDefaults: projectLauncherDefaults,
-    accountUserPrefs: userLauncherLayers.account,
-    projectUserPrefs: userLauncherLayers.project,
+  const mergedLauncher = getEffectiveLauncher({
+    accountPrefs: accountLauncherPrefs,
+    siteDefaults: siteLauncherDefaults,
   });
 
   function saveUserLauncherPrefs(prefs: any | null) {
-    const next = updateUserLauncherPrefs(
+    const next = updateAccountLauncherPrefs(
       other_settings?.get?.(LAUNCHER_SETTINGS_KEY),
-      project_id,
       prefs,
     );
     redux.getActions("account").set_other_settings(LAUNCHER_SETTINGS_KEY, next);
-  }
-
-  async function saveProjectLauncherDefaults(prefs: any) {
-    await redux.getActions("projects").set_project_launcher(project_id, prefs);
-    setProjectLauncher(prefs);
   }
 
   function isQuickCreateAvailable(id: string): boolean {
@@ -648,42 +608,7 @@ export function NewFlyout({
         open={showCustomizeModal}
         onClose={() => setShowCustomizeModal(false)}
         initialQuickCreate={mergedLauncher.quickCreate}
-        userBaseQuickCreate={inheritedForProjectUser.quickCreate}
-        projectBaseQuickCreate={inheritedForProjectDefaults.quickCreate}
-        onSaveUser={saveUserLauncherPrefs}
-        onSaveProject={saveProjectLauncherDefaults}
-        canEditProjectDefaults={can_edit_project_defaults}
-        contributions={[
-          {
-            key: "built-in",
-            title: "Built-in defaults",
-            quickCreateAdd: LAUNCHER_GLOBAL_DEFAULTS.quickCreate,
-          },
-          {
-            key: "site",
-            title: "Site defaults",
-            quickCreateAdd: siteLauncherDefaults.quickCreate,
-            quickCreateRemove: siteLauncherDefaults.hiddenQuickCreate,
-          },
-          {
-            key: "project",
-            title: "Project defaults",
-            quickCreateAdd: projectLauncherDefaults.quickCreate,
-            quickCreateRemove: projectLauncherDefaults.hiddenQuickCreate,
-          },
-          {
-            key: "account",
-            title: "Your account overrides",
-            quickCreateAdd: userLauncherLayers.account.quickCreate,
-            quickCreateRemove: userLauncherLayers.account.hiddenQuickCreate,
-          },
-          {
-            key: "project-user",
-            title: "This project overrides",
-            quickCreateAdd: userLauncherLayers.project.quickCreate,
-            quickCreateRemove: userLauncherLayers.project.hiddenQuickCreate,
-          },
-        ]}
+        onSave={saveUserLauncherPrefs}
       />
     </>
   );
