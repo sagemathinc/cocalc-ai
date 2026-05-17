@@ -139,6 +139,7 @@ import {
   assertCanCreateOrUpdateRootfs,
   assertCanSelectProjectRootfsImage,
 } from "@cocalc/server/membership/rootfs-limits";
+import { getRootfsQuotaReport as getRootfsQuotaReport0 } from "@cocalc/server/membership/rootfs-report";
 import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
 import { createLro } from "@cocalc/server/lro/lro-db";
 import { lroStreamName } from "@cocalc/conat/lro/names";
@@ -1214,6 +1215,37 @@ export async function getServiceAdmissionDenialReport({
     min_count: minCount,
     groups: rows.map(parseServiceDenialSummaryRow),
   };
+}
+
+export async function getRootfsQuotaReport({
+  account_id,
+  window_minutes,
+  min_count,
+  limit,
+  near_percent,
+  user_account_id,
+  denial_limit,
+  operation,
+}: {
+  account_id?: string;
+  window_minutes?: number;
+  min_count?: number;
+  limit?: number;
+  near_percent?: number;
+  user_account_id?: string | null;
+  denial_limit?: string | null;
+  operation?: string | null;
+} = {}) {
+  await assertAdmin(account_id);
+  return await getRootfsQuotaReport0({
+    window_minutes,
+    min_count,
+    limit,
+    near_percent,
+    user_account_id,
+    denial_limit,
+    operation,
+  });
 }
 
 export async function getServiceAdmissionConfig(): Promise<{

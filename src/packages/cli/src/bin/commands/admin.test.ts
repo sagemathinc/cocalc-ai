@@ -427,6 +427,134 @@ test("admin service-denials can emit prometheus text", async () => {
   assert.match(output, / 4\n/);
 });
 
+test("admin rootfs-quotas forwards filters to the hub report endpoint", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      system: {
+        getRootfsQuotaReport: async (opts: any) => {
+          captured = opts;
+          return {
+            checked_at: "2026-05-11T00:00:00.000Z",
+            since: "2026-05-10T23:00:00.000Z",
+            window_minutes: opts.window_minutes,
+            min_count: opts.min_count,
+            near_percent: opts.near_percent,
+            top_users: [],
+            near_limit_users: [],
+            denials: [],
+          };
+        },
+      },
+    }) as any,
+  );
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "rootfs-quotas",
+    "--limit",
+    "25",
+    "--near-percent",
+    "90",
+    "--window-minutes",
+    "30",
+    "--min-count",
+    "2",
+    "--account",
+    "alice@example.com",
+    "--denial-limit",
+    "rootfs_total_storage_gb",
+    "--operation",
+    "publish",
+  ]);
+
+  assert.deepEqual(captured, {
+    limit: 25,
+    near_percent: 90,
+    window_minutes: 30,
+    min_count: 2,
+    user_account_id: "22222222-2222-4222-8222-222222222222",
+    denial_limit: "rootfs_total_storage_gb",
+    operation: "publish",
+  });
+});
+
+test("admin rootfs-quotas can emit prometheus text", async () => {
+  let output = "";
+  const program = new Command();
+  registerAdminCommand(program, {
+    withContext: async (_command, _label, fn) => {
+      output = await fn({
+        hub: {
+          system: {
+            getRootfsQuotaReport: async () => ({
+              checked_at: "2026-05-11T00:00:00.000Z",
+              since: "2026-05-10T23:00:00.000Z",
+              window_minutes: 60,
+              min_count: 1,
+              near_percent: 80,
+              top_users: [
+                {
+                  account_id: "acct",
+                  count: 3,
+                  total_storage_bytes: 4000000000,
+                  max_rootfs_bytes: 2000000000,
+                },
+              ],
+              near_limit_users: [
+                {
+                  account_id: "acct",
+                  count: 3,
+                  total_storage_bytes: 4000000000,
+                  max_rootfs_bytes: 2000000000,
+                  count_ratio: 1,
+                  total_storage_ratio: 0.8,
+                },
+              ],
+              denials: [
+                {
+                  account_id: "acct",
+                  limit: "rootfs_count",
+                  operation: "publish",
+                  reason: "too many root filesystem images",
+                  count: 2,
+                  first_time: "2026-05-10T23:30:00.000Z",
+                  last_time: "2026-05-10T23:59:00.000Z",
+                  max_current: 3,
+                  max_maximum: 3,
+                  max_requested: 1,
+                },
+              ],
+            }),
+          },
+        },
+      });
+    },
+    resolveAccountByIdentifier: async () => {
+      throw new Error("not used");
+    },
+    isValidUUID: () => false,
+  } as any);
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "rootfs-quotas",
+    "--prometheus",
+  ]);
+
+  assert.match(output, /cocalc_rootfs_quota_usage_count/);
+  assert.match(output, /cocalc_rootfs_quota_near_limit_ratio/);
+  assert.match(output, /cocalc_rootfs_quota_denials_window_total/);
+  assert.match(output, /limit="rootfs_count"/);
+  assert.match(output, / 2\n/);
+});
+
 test("admin message send-system-notice forwards the system notice payload", async () => {
   let captured: any;
   const program = new Command();
