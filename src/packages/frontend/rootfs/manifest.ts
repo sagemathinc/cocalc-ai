@@ -16,6 +16,7 @@ import {
   RootfsImageManifest,
   mergeRootfsManifests,
 } from "@cocalc/util/rootfs-images";
+import type { RootfsProjectPreflightScanResult } from "@cocalc/util/rootfs-scan";
 
 type ManifestLoadState = {
   images: RootfsImageEntry[];
@@ -219,6 +220,15 @@ export async function setProjectRootfsImage(body: {
     fields: ["rootfs"],
   });
   return states;
+}
+
+export async function scanProjectRootfs(
+  project_id: string,
+): Promise<RootfsProjectPreflightScanResult> {
+  return await webapp_client.conat_client.hub.system.scanProjectRootfs({
+    project_id,
+    timeout: 35 * 60 * 1000,
+  });
 }
 
 export function managedRootfsCatalogUrl(refresh?: number | string): string {

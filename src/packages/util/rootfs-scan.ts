@@ -31,9 +31,11 @@ const SEVERITY_RANK: Record<RootfsScanSeverity, number> = {
 };
 
 export type TrivyRootfsScanTarget = {
-  release_id: string;
-  content_key: string;
+  target_kind?: "rootfs-release" | "project-rootfs";
+  release_id?: string;
+  content_key?: string;
   runtime_image: string;
+  project_id?: string;
   arch?: string;
   size_bytes?: number;
 };
@@ -139,6 +141,10 @@ export type RootfsTrivyHostScanRequest = {
   tmpfs_size?: string;
 };
 
+export type RootfsTrivyProjectHostScanRequest = RootfsTrivyHostScanRequest & {
+  project_id: string;
+};
+
 export type RootfsTrivyHostScanResponse = {
   summary: RootfsScanSummary;
   duration_ms: number;
@@ -148,6 +154,14 @@ export type RootfsTrivyHostScanResponse = {
     compressed_bytes: number;
     sha256: string;
   };
+};
+
+export type RootfsProjectPreflightScanResult = {
+  project_id: string;
+  host_id: string;
+  summary: RootfsScanSummary;
+  duration_ms: number;
+  report: RootfsTrivyHostScanResponse["report"];
 };
 
 function stringValue(value: unknown): string | undefined {

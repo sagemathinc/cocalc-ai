@@ -18,6 +18,7 @@ import type {
 import type {
   RootfsTrivyHostScanRequest,
   RootfsTrivyHostScanResponse,
+  RootfsTrivyProjectHostScanRequest,
 } from "@cocalc/util/rootfs-scan";
 export { DEFAULT_RUNTIME_RETENTION_POLICY } from "./retention-policy";
 
@@ -357,6 +358,9 @@ export interface HostControlApi {
   deleteRootfsImage: (opts: { image: string }) => Promise<{ removed: boolean }>;
   scanRootfsRelease: (
     opts: RootfsTrivyHostScanRequest,
+  ) => Promise<RootfsTrivyHostScanResponse>;
+  scanProjectRootfs: (
+    opts: RootfsTrivyProjectHostScanRequest,
   ) => Promise<RootfsTrivyHostScanResponse>;
   listHostSshAuthorizedKeys: () => Promise<HostSshAuthorizedKeysResponse>;
   addHostSshAuthorizedKey: (opts: {

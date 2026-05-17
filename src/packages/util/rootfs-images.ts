@@ -84,9 +84,11 @@ export type RootfsScanSummary = {
     source?: string;
   };
   target?: {
+    target_kind?: "rootfs-release" | "project-rootfs";
     release_id?: string;
     content_key?: string;
     runtime_image?: string;
+    project_id?: string;
     arch?: string;
     size_bytes?: number;
   };

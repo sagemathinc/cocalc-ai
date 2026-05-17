@@ -595,6 +595,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin RootFS vulnerability scan execution",
   },
+  "system.scanProjectRootfs": {
+    decision: "fresh-auth-not-required",
+    reason: "collaborator-authorized live project RootFS preflight scan",
+  },
   "system.setAccountEntitlementOverride": {
     decision: "fresh-auth-required",
     reason: "admin entitlement mutation",

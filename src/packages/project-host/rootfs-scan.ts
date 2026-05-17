@@ -359,7 +359,7 @@ export async function runRootfsTrivyScan({
     target.size_bytes > max_target_bytes
   ) {
     throw new Error(
-      `RootFS target ${target.release_id} is ${target.size_bytes} bytes, which exceeds scan limit ${max_target_bytes}`,
+      `RootFS target ${target.release_id ?? target.project_id ?? target.runtime_image} is ${target.size_bytes} bytes, which exceeds scan limit ${max_target_bytes}`,
     );
   }
   const output_dir = await mkdtemp(join(output_parent_dir, "rootfs-scan-"));

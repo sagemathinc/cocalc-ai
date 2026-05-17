@@ -34,6 +34,7 @@ import type {
   BrowserAutomationCentralAuditValue,
 } from "@cocalc/conat/service/browser-session";
 import type {
+  RootfsProjectPreflightScanResult,
   RootfsReleaseScanReport,
   RootfsReleaseScanRun,
 } from "@cocalc/util/rootfs-scan";
@@ -115,6 +116,7 @@ export const system = {
   requestRootfsImageDeletion: authFirstRequireAccount,
   runRootfsReleaseGc: authFirstRequireAccount,
   scanRootfsRelease: authFirstRequireAccount,
+  scanProjectRootfs: authFirstRequireAccount,
   getRootfsScanReport: authFirstRequireAccount,
   publishProjectRootfsImage: authFirstRequireAccount,
   getProjectRootfsStates: authFirstRequireAccount,
@@ -1997,6 +1999,20 @@ export interface System {
     browser_id?: string | null;
     session_hash?: string | null;
   }) => Promise<RootfsReleaseScanRun>;
+
+  scanProjectRootfs: (opts: {
+    project_id: string;
+    timeout?: number;
+    scanner_image?: string;
+    trivy_cache_dir?: string;
+    timeout_ms?: number;
+    max_target_bytes?: number;
+    max_report_bytes?: number;
+    memory_limit?: string;
+    cpu_limit?: string;
+    tmpfs_size?: string;
+    account_id?: string;
+  }) => Promise<RootfsProjectPreflightScanResult>;
 
   getRootfsScanReport: (opts: {
     report_id: string;

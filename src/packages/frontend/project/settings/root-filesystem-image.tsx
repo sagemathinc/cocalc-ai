@@ -41,6 +41,7 @@ import {
   managedRootfsCatalogUrl,
   publishProjectRootfsImage,
   saveRootfsCatalogEntry,
+  scanProjectRootfs,
   setProjectRootfsImage,
   useRootfsImages,
 } from "@cocalc/frontend/rootfs/manifest";
@@ -68,6 +69,7 @@ import type {
   RootfsImageTheme,
   RootfsImageVisibility,
 } from "@cocalc/util/rootfs-images";
+import type { RootfsProjectPreflightScanResult } from "@cocalc/util/rootfs-scan";
 
 type PublishDraft = {
   image: string;
@@ -92,6 +94,9 @@ export default function RootFilesystemImage() {
   const [publishOpen, setPublishOpen] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
   const [publishing, setPublishing] = useState<boolean>(false);
+  const [scanningLiveRootfs, setScanningLiveRootfs] = useState<boolean>(false);
+  const [liveRootfsScan, setLiveRootfsScan] =
+    useState<RootfsProjectPreflightScanResult>();
   const [help, setHelp] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [value, setValue] = useState<string>("");
@@ -605,6 +610,19 @@ export default function RootFilesystemImage() {
     }
   }
 
+  async function scanCurrentProjectRootfs() {
+    try {
+      setError("");
+      setScanningLiveRootfs(true);
+      const result = await scanProjectRootfs(project_id);
+      setLiveRootfsScan(result);
+    } catch (err) {
+      setError(`${err}`);
+    } finally {
+      setScanningLiveRootfs(false);
+    }
+  }
+
   async function sendPublishAssistToAgent() {
     const prompt = buildRootfsPublishAgentPrompt({
       projectId: project_id,
@@ -711,6 +729,13 @@ export default function RootFilesystemImage() {
           >
             Publish current RootFS...
           </Button>
+          <Button
+            disabled={open || scanningLiveRootfs}
+            loading={scanningLiveRootfs}
+            onClick={scanCurrentProjectRootfs}
+          >
+            Scan current RootFS
+          </Button>
           <Button disabled={open} onClick={openPicker}>
             Change / upgrade image...
           </Button>
@@ -737,6 +762,21 @@ export default function RootFilesystemImage() {
             </Button>
           )}
         </Space>
+        {liveRootfsScan && (
+          <Alert
+            type={
+              Number(liveRootfsScan.summary.severity_counts?.critical ?? 0) > 0
+                ? "warning"
+                : liveRootfsScan.summary.status === "error"
+                  ? "error"
+                  : "success"
+            }
+            showIcon
+            style={{ marginTop: "14px", maxWidth: "760px" }}
+            title="Live project RootFS preflight scan"
+            description={renderLiveRootfsScanSummary(liveRootfsScan)}
+          />
+        )}
         {suggestedUpgradeEntry && (
           <Alert
             type="info"
@@ -1212,6 +1252,43 @@ export default function RootFilesystemImage() {
                     saves catalog metadata for the current base image so it can
                     appear under My images.
                   </>
+                }
+              />
+            )}
+            {publishMode === "copy" && publishCopyMode === "project" && (
+              <Alert
+                type={
+                  liveRootfsScan
+                    ? Number(
+                        liveRootfsScan.summary.severity_counts?.critical ?? 0,
+                      ) > 0
+                      ? "warning"
+                      : "success"
+                    : "info"
+                }
+                showIcon
+                title="Preflight scan the live project RootFS before publishing"
+                description={
+                  <Space
+                    orientation="vertical"
+                    size="small"
+                    style={{ width: "100%" }}
+                  >
+                    <div>
+                      This scans the currently mounted project RootFS. Published
+                      images are scanned again after publication, but this check
+                      catches obvious vulnerabilities before creating the image.
+                    </div>
+                    {liveRootfsScan &&
+                      renderLiveRootfsScanSummary(liveRootfsScan)}
+                    <Button
+                      size="small"
+                      loading={scanningLiveRootfs}
+                      onClick={scanCurrentProjectRootfs}
+                    >
+                      Scan current RootFS now
+                    </Button>
+                  </Space>
                 }
               />
             )}
@@ -1907,6 +1984,42 @@ function describeRootfsPublisher(entry: RootfsImageEntry): string | undefined {
   if (entry.warning === "public") {
     return "Public community image";
   }
+}
+
+function renderLiveRootfsScanSummary(
+  result: RootfsProjectPreflightScanResult,
+): React.JSX.Element {
+  const counts = result.summary.severity_counts ?? {};
+  const countText = [
+    ["critical", counts.critical],
+    ["high", counts.high],
+    ["medium", counts.medium],
+    ["low", counts.low],
+    ["unknown", counts.unknown],
+  ]
+    .filter(([, count]) => Number(count ?? 0) > 0)
+    .map(([severity, count]) => `${severity}: ${count}`)
+    .join(", ");
+  const scannedAt = result.summary.scanned_at
+    ? new Date(result.summary.scanned_at).toLocaleString()
+    : "just now";
+  const tool = [result.summary.tool, result.summary.tool_version]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <Space orientation="vertical" size={4}>
+      <div>
+        {result.summary.summary ?? result.summary.status ?? "Scan complete"}
+        {countText ? ` (${countText})` : ""}.
+      </div>
+      <div>
+        Scanned live project RootFS on host <code>{result.host_id}</code> at{" "}
+        {scannedAt}
+        {tool ? ` using ${tool}` : ""}. This is a point-in-time preflight scan
+        of mutable project state, not the persisted official image scan.
+      </div>
+    </Space>
+  );
 }
 
 function buildRootfsPublishAssistCommand(opts: {

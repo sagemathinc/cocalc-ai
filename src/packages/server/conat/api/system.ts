@@ -126,7 +126,10 @@ import {
   saveRootfsImage,
 } from "@cocalc/server/rootfs/catalog";
 import { getRootfsReleaseScanReport } from "@cocalc/server/rootfs/scans";
-import { runRootfsReleaseScan } from "@cocalc/server/rootfs/scan-execution";
+import {
+  runProjectRootfsPreflightScan,
+  runRootfsReleaseScan,
+} from "@cocalc/server/rootfs/scan-execution";
 import { runPendingRootfsReleaseGc } from "@cocalc/server/rootfs/releases";
 import type {
   ProjectRootfsStateEntry,
@@ -135,6 +138,7 @@ import type {
   RootfsCatalogSaveBody,
 } from "@cocalc/util/rootfs-images";
 import type {
+  RootfsProjectPreflightScanResult,
   RootfsReleaseScanReport,
   RootfsReleaseScanRun,
 } from "@cocalc/util/rootfs-scan";
@@ -2732,6 +2736,37 @@ export async function scanRootfsRelease(opts: {
   return await runRootfsReleaseScan({
     release_id,
     host_id,
+    requested_by: account_id,
+    scanner_image: opts.scanner_image,
+    trivy_cache_dir: opts.trivy_cache_dir,
+    timeout_ms: opts.timeout_ms,
+    max_target_bytes: opts.max_target_bytes,
+    max_report_bytes: opts.max_report_bytes,
+    memory_limit,
+    cpu_limit,
+    tmpfs_size,
+  });
+}
+
+export async function scanProjectRootfs(opts: {
+  account_id?: string;
+  project_id: string;
+  scanner_image?: string;
+  trivy_cache_dir?: string;
+  timeout_ms?: number;
+  max_target_bytes?: number;
+  max_report_bytes?: number;
+  memory_limit?: string;
+  cpu_limit?: string;
+  tmpfs_size?: string;
+}): Promise<RootfsProjectPreflightScanResult> {
+  const { account_id, project_id, memory_limit, cpu_limit, tmpfs_size } = opts;
+  if (!account_id) {
+    throw Error("user must be signed in");
+  }
+  await assertProjectCollaboratorAccessAllowRemote({ account_id, project_id });
+  return await runProjectRootfsPreflightScan({
+    project_id,
     requested_by: account_id,
     scanner_image: opts.scanner_image,
     trivy_cache_dir: opts.trivy_cache_dir,

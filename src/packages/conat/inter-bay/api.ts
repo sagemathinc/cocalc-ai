@@ -1136,6 +1136,7 @@ export type HostControlMethod =
   | "pull-rootfs-image"
   | "delete-rootfs-image"
   | "scan-rootfs-release"
+  | "scan-project-rootfs"
   | "list-host-ssh-authorized-keys"
   | "add-host-ssh-authorized-key"
   | "remove-host-ssh-authorized-key"
@@ -1791,6 +1792,10 @@ export interface InterBayHostControlApi {
     host_id: string;
     scan: HostControlArg<"scanRootfsRelease">;
   }) => Promise<Awaited<ReturnType<HostControlApi["scanRootfsRelease"]>>>;
+  scanProjectRootfs: (opts: {
+    host_id: string;
+    scan: HostControlArg<"scanProjectRootfs">;
+  }) => Promise<Awaited<ReturnType<HostControlApi["scanProjectRootfs"]>>>;
   listHostSshAuthorizedKeys: (opts: {
     host_id: string;
   }) => Promise<HostSshAuthorizedKeysResponse>;
@@ -2141,6 +2146,7 @@ const HOST_CONTROL_METHOD_SPECS = [
   { name: "pullRootfsImage", method: "pull-rootfs-image" },
   { name: "deleteRootfsImage", method: "delete-rootfs-image" },
   { name: "scanRootfsRelease", method: "scan-rootfs-release" },
+  { name: "scanProjectRootfs", method: "scan-project-rootfs" },
   {
     name: "listHostSshAuthorizedKeys",
     method: "list-host-ssh-authorized-keys",

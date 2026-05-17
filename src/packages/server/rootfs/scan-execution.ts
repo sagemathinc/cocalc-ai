@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { randomUUID } from "node:crypto";
+
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { getAssignedProjectHostInfo } from "@cocalc/server/conat/project-host-assignment";
 import {
   completeRootfsReleaseScanRun,
   createRootfsReleaseScanRun,
@@ -13,9 +16,11 @@ import {
   storeRootfsReleaseScanReport,
 } from "@cocalc/server/rootfs/scans";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
+import { getProjectRootfsStates } from "@cocalc/server/projects/rootfs-state";
 import {
   DEFAULT_TRIVY_CACHE_DIR,
   DEFAULT_TRIVY_SCANNER_IMAGE,
+  type RootfsProjectPreflightScanResult,
   type RootfsReleaseScanRun,
 } from "@cocalc/util/rootfs-scan";
 
@@ -190,4 +195,78 @@ export async function runRootfsReleaseScan({
       host_id,
     });
   }
+}
+
+export async function runProjectRootfsPreflightScan({
+  project_id,
+  requested_by,
+  scanner_image,
+  trivy_cache_dir,
+  timeout_ms: timeoutMsOverride,
+  max_target_bytes: maxTargetBytesOverride,
+  max_report_bytes: maxReportBytesOverride,
+  memory_limit,
+  cpu_limit,
+  tmpfs_size,
+}: {
+  project_id: string;
+  requested_by?: string | null;
+  scanner_image?: string;
+  trivy_cache_dir?: string;
+  timeout_ms?: number;
+  max_target_bytes?: number;
+  max_report_bytes?: number;
+  memory_limit?: string;
+  cpu_limit?: string;
+  tmpfs_size?: string;
+}): Promise<RootfsProjectPreflightScanResult> {
+  const config = await getRootfsScanConfig({ scanner_image, trivy_cache_dir });
+  const timeout_ms = timeoutMsOverride ?? config.timeout_ms;
+  const max_target_bytes = maxTargetBytesOverride ?? config.max_target_bytes;
+  const max_report_bytes = maxReportBytesOverride ?? config.max_report_bytes;
+  const host = await getAssignedProjectHostInfo(project_id);
+  const states = await getProjectRootfsStates({ project_id });
+  const current = states.find((state) => state.state_role === "current");
+  const scan_run_id = randomUUID();
+  const client = await getRoutedHostControlClient({
+    host_id: host.host_id,
+    timeout: timeout_ms,
+    account_id: requested_by ?? undefined,
+  });
+  const result = await client.scanProjectRootfs({
+    project_id,
+    scan_run_id,
+    target: {
+      target_kind: "project-rootfs",
+      project_id,
+      release_id: current?.release_id,
+      content_key: current?.release_id ?? project_id,
+      runtime_image: current?.image ?? "project-rootfs",
+    },
+    scanner_image: config.scanner_image,
+    trivy_cache_dir: config.trivy_cache_dir,
+    timeout_ms,
+    max_target_bytes,
+    max_report_bytes,
+    memory_limit,
+    cpu_limit,
+    tmpfs_size,
+  });
+  return {
+    project_id,
+    host_id: host.host_id,
+    summary: {
+      ...result.summary,
+      metadata: {
+        ...(result.summary.metadata ?? {}),
+        scan_run_id,
+        target_kind: "project-rootfs",
+        host_id: host.host_id,
+        requested_by: requested_by ?? undefined,
+        preflight_only: true,
+      },
+    },
+    duration_ms: result.duration_ms,
+    report: result.report,
+  };
 }

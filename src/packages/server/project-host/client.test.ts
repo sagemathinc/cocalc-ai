@@ -86,6 +86,11 @@ describe("project-host client routing", () => {
         duration_ms: 1,
         report: { bytes: 2, compressed_bytes: 3, sha256: "a".repeat(64) },
       })),
+      scanProjectRootfs: jest.fn(async () => ({
+        summary: { status: "clean", tool: "trivy" },
+        duration_ms: 1,
+        report: { bytes: 2, compressed_bytes: 3, sha256: "a".repeat(64) },
+      })),
       listHostSshAuthorizedKeys: jest.fn(async () => ({
         user: "u",
         home: "/h",

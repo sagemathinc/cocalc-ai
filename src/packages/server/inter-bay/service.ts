@@ -1471,6 +1471,10 @@ async function startHostControlService(): Promise<void> {
       await (
         await getHostClient(host_id, scan.timeout_ms ?? 30 * 60 * 1000)
       ).scanRootfsRelease(scan),
+    scanProjectRootfs: async ({ host_id, scan }) =>
+      await (
+        await getHostClient(host_id, scan.timeout_ms ?? 30 * 60 * 1000)
+      ).scanProjectRootfs(scan),
     listHostSshAuthorizedKeys: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).listHostSshAuthorizedKeys(),
     addHostSshAuthorizedKey: async ({ host_id, add }) =>
