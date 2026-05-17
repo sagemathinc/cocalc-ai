@@ -151,6 +151,108 @@ describe("rootfs membership limits", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("blocks replacing an existing rootfs when the growth exceeds total storage quota", async () => {
+    usage = { count: 3, total_storage_bytes: 24_000_000_000 };
+    existing = {
+      image_id: "rootfs-1",
+      owner_id: account_id,
+      deleted: false,
+      size_bytes: 8_000_000_000,
+    };
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "member",
+      source: "subscription",
+      entitlements: {},
+      effective_limits: {
+        rootfs_count: 3,
+        rootfs_total_storage_gb: 25,
+        rootfs_max_storage_gb: 30,
+        rootfs_oci_images: false,
+      },
+    });
+    const { assertCanCreateOrUpdateRootfs } = await import("./rootfs-limits");
+    await expect(
+      assertCanCreateOrUpdateRootfs({
+        account_id,
+        image_id: "rootfs-1",
+        image: "cocalc.local/rootfs/replacement",
+        requested_size_bytes: 10_000_000_000,
+        operation: "publish",
+      }),
+    ).rejects.toThrow("rootfs total storage limit would be exceeded");
+    expect(centralLogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "rootfs_quota_denied",
+        value: expect.objectContaining({
+          limit: "rootfs_total_storage_gb",
+          current: 24_000_000_000,
+          requested: 10_000_000_000,
+        }),
+      }),
+    );
+  });
+
+  it("treats a deleted existing rootfs id as a new rootfs for quota purposes", async () => {
+    usage = { count: 1, total_storage_bytes: 5_000_000_000 };
+    existing = {
+      image_id: "rootfs-1",
+      owner_id: account_id,
+      deleted: true,
+      size_bytes: 5_000_000_000,
+    };
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "member",
+      source: "subscription",
+      entitlements: {},
+      effective_limits: {
+        rootfs_count: 1,
+        rootfs_total_storage_gb: 25,
+        rootfs_max_storage_gb: 10,
+        rootfs_oci_images: false,
+      },
+    });
+    const { assertCanCreateOrUpdateRootfs } = await import("./rootfs-limits");
+    await expect(
+      assertCanCreateOrUpdateRootfs({
+        account_id,
+        image_id: "rootfs-1",
+        image: "cocalc.local/rootfs/replacement",
+        requested_size_bytes: 1_000_000_000,
+        operation: "save",
+      }),
+    ).rejects.toThrow("rootfs count limit reached");
+  });
+
+  it("allows metadata-only updates to an existing own rootfs on a zero-storage tier", async () => {
+    usage = { count: 1, total_storage_bytes: 5_000_000_000 };
+    existing = {
+      image_id: "rootfs-1",
+      owner_id: account_id,
+      deleted: false,
+      size_bytes: 5_000_000_000,
+    };
+    resolveMembershipForAccountMock.mockResolvedValue({
+      class: "free",
+      source: "free",
+      entitlements: {},
+      effective_limits: {
+        rootfs_count: 1,
+        rootfs_total_storage_gb: 0,
+        rootfs_max_storage_gb: 0,
+        rootfs_oci_images: false,
+      },
+    });
+    const { assertCanCreateOrUpdateRootfs } = await import("./rootfs-limits");
+    await expect(
+      assertCanCreateOrUpdateRootfs({
+        account_id,
+        image_id: "rootfs-1",
+        image: "cocalc.local/rootfs/existing",
+        operation: "save",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("blocks arbitrary remote OCI images unless the tier allows them", async () => {
     resolveMembershipForAccountMock.mockResolvedValue({
       class: "member",
