@@ -238,6 +238,12 @@ export type SiteSettingsExtrasKeys =
   | "conat_admission_project_exec_stream_max_active"
   | "conat_admission_near_limit_percent"
   | "conat_admission_near_limit_log_interval_ms"
+  | "rootfs_scan_container_image"
+  | "rootfs_scan_trivy_cache_dir"
+  | "rootfs_scan_timeout_minutes"
+  | "rootfs_scan_max_target_gb"
+  | "rootfs_scan_max_report_mb"
+  | "rootfs_scan_full_report_retention_days"
   | "software_licenses_heading"
   | "software_license_private_key"
   | "stripe_heading"
@@ -481,6 +487,66 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Conat"],
     group: "System / Advanced",
     subgroup: "Conat Admission",
+  },
+  rootfs_scan_container_image: {
+    name: "RootFS Scan: Trivy Container Image",
+    desc: "Pinned Trivy scanner container image used by project hosts for official RootFS vulnerability scans. Prefer an internal image reference pinned by digest.",
+    default: "",
+    valid: () => true,
+    to_val: to_trimmed_str,
+    tags: ["RootFS", "Security", "Project Hosts"],
+    group: "Compute / Project Hosts",
+    subgroup: "RootFS Scanning",
+  },
+  rootfs_scan_trivy_cache_dir: {
+    name: "RootFS Scan: Trivy Cache Directory",
+    desc: "Absolute project-host path for the preloaded Trivy vulnerability database/cache. Scan jobs mount this read-only and run with network disabled.",
+    default: "",
+    valid: () => true,
+    to_val: to_trimmed_str,
+    tags: ["RootFS", "Security", "Project Hosts"],
+    group: "Compute / Project Hosts",
+    subgroup: "RootFS Scanning",
+  },
+  rootfs_scan_timeout_minutes: {
+    name: "RootFS Scan: Timeout Minutes",
+    desc: "Maximum runtime for one official RootFS vulnerability scan. Blank uses 30 minutes.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["RootFS", "Security", "Project Hosts"],
+    group: "Compute / Project Hosts",
+    subgroup: "RootFS Scanning",
+  },
+  rootfs_scan_max_target_gb: {
+    name: "RootFS Scan: Max Target GB",
+    desc: "Maximum RootFS release size that may be scanned. Blank disables this guard and relies on per-scan overrides.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["RootFS", "Security", "Project Hosts"],
+    group: "Compute / Project Hosts",
+    subgroup: "RootFS Scanning",
+  },
+  rootfs_scan_max_report_mb: {
+    name: "RootFS Scan: Max Report MB",
+    desc: "Maximum raw Trivy JSON report size retained for admin/SOC-2 evidence. Blank uses 64 MB.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["RootFS", "Security", "Project Hosts"],
+    group: "Compute / Project Hosts",
+    subgroup: "RootFS Scanning",
+  },
+  rootfs_scan_full_report_retention_days: {
+    name: "RootFS Scan: Full Report Retention Days",
+    desc: "How long to retain full Trivy JSON reports for admin/SOC-2 evidence. Blank uses 730 days.",
+    default: "",
+    valid: optionalPositiveInteger,
+    to_val: to_trimmed_str,
+    tags: ["RootFS", "Security", "Project Hosts"],
+    group: "Compute / Project Hosts",
+    subgroup: "RootFS Scanning",
   },
   software_licenses_heading: {
     name: "Software Licensing",

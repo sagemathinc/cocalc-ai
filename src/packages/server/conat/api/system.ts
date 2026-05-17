@@ -2703,17 +2703,31 @@ export async function runRootfsReleaseGc(opts: {
   return await runPendingRootfsReleaseGc({ limit });
 }
 
-function rootfsScanConfig({
+function optionalPositiveInteger(value: unknown): number | undefined {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.floor(n);
+}
+
+async function rootfsScanConfig({
   scanner_image,
   trivy_cache_dir,
 }: {
   scanner_image?: string;
   trivy_cache_dir?: string;
-}): { scanner_image: string; trivy_cache_dir: string } {
+}): Promise<{
+  scanner_image: string;
+  trivy_cache_dir: string;
+  timeout_ms: number;
+  max_target_bytes?: number;
+  max_report_bytes: number;
+  retention_days: number;
+}> {
+  const settings = await getServerSettings();
   const image =
-    `${scanner_image ?? process.env.COCALC_ROOTFS_SCAN_TRIVY_IMAGE ?? ""}`.trim();
+    `${scanner_image ?? (settings as any).rootfs_scan_container_image ?? process.env.COCALC_ROOTFS_SCAN_TRIVY_IMAGE ?? ""}`.trim();
   const cache =
-    `${trivy_cache_dir ?? process.env.COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR ?? ""}`.trim();
+    `${trivy_cache_dir ?? (settings as any).rootfs_scan_trivy_cache_dir ?? process.env.COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR ?? ""}`.trim();
   if (!image) {
     throw new Error(
       "RootFS scan scanner image is not configured; set COCALC_ROOTFS_SCAN_TRIVY_IMAGE or pass scanner_image",
@@ -2724,7 +2738,27 @@ function rootfsScanConfig({
       "RootFS scan Trivy cache directory is not configured; set COCALC_ROOTFS_SCAN_TRIVY_CACHE_DIR or pass trivy_cache_dir",
     );
   }
-  return { scanner_image: image, trivy_cache_dir: cache };
+  const timeoutMinutes =
+    optionalPositiveInteger((settings as any).rootfs_scan_timeout_minutes) ??
+    30;
+  const maxTargetGb = optionalPositiveInteger(
+    (settings as any).rootfs_scan_max_target_gb,
+  );
+  const maxReportMb =
+    optionalPositiveInteger((settings as any).rootfs_scan_max_report_mb) ?? 64;
+  const retentionDays =
+    optionalPositiveInteger(
+      (settings as any).rootfs_scan_full_report_retention_days,
+    ) ?? 730;
+  return {
+    scanner_image: image,
+    trivy_cache_dir: cache,
+    timeout_ms: timeoutMinutes * 60 * 1000,
+    max_target_bytes:
+      maxTargetGb == null ? undefined : maxTargetGb * 1_000_000_000,
+    max_report_bytes: maxReportMb * 1024 * 1024,
+    retention_days: retentionDays,
+  };
 }
 
 export async function scanRootfsRelease(opts: {
@@ -2748,9 +2782,6 @@ export async function scanRootfsRelease(opts: {
     session_hash,
     release_id,
     host_id,
-    timeout_ms = 30 * 60 * 1000,
-    max_target_bytes,
-    max_report_bytes,
     memory_limit,
     cpu_limit,
     tmpfs_size,
@@ -2764,7 +2795,10 @@ export async function scanRootfsRelease(opts: {
     session_hash,
     require_second_factor: true,
   });
-  const config = rootfsScanConfig(opts);
+  const config = await rootfsScanConfig(opts);
+  const timeout_ms = opts.timeout_ms ?? config.timeout_ms;
+  const max_target_bytes = opts.max_target_bytes ?? config.max_target_bytes;
+  const max_report_bytes = opts.max_report_bytes ?? config.max_report_bytes;
   const release = await loadRootfsReleaseForScan({ release_id });
   if (!release) {
     throw new Error(`RootFS release ${release_id} not found`);
@@ -2796,7 +2830,9 @@ export async function scanRootfsRelease(opts: {
       cpu_limit,
       tmpfs_size,
     });
-    const retention = new Date(Date.now() + 730 * 24 * 60 * 60 * 1000);
+    const retention = new Date(
+      Date.now() + config.retention_days * 24 * 60 * 60 * 1000,
+    );
     const reportArtifact =
       result.report_json != null
         ? await storeRootfsReleaseScanReport({
