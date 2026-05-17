@@ -673,6 +673,16 @@ Host smoke test:
 - verify no network access during scan job,
 - verify target path remains read-only/unmodified.
 
+## Follow-Up From First Live Scan
+
+- Automate scanner image/cache seeding in host bootstrap or runtime reconcile.
+  The first live scan required manually pulling `docker.io/aquasec/trivy:latest`
+  and preloading `/mnt/cocalc/data/trivy-cache` on the upgraded project host.
+  Production should instead use a pinned internal scanner image digest and a
+  managed host-local Trivy DB cache update path.
+- Keep the scan itself network-disabled and `--pull=never`; only the separate
+  host maintenance path should pull/update scanner assets.
+
 ## Open Questions
 
 1. Exact exception storage: separate normalized table versus event table plus

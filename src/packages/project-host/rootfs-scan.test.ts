@@ -51,6 +51,7 @@ describe("buildRootfsTrivyPodmanArgs", () => {
     expect(args).toContain("--cap-drop=all");
     expect(args).toContain("--security-opt=no-new-privileges");
     expect(args).toContain("--pull=never");
+    expect(args).toContain("--entrypoint=trivy");
     expect(args).toContain("--skip-db-update");
     expect(args).toContain("--offline-scan");
     expect(args).toContain("registry.example/trivy@sha256:abc");

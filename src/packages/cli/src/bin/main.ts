@@ -1229,8 +1229,8 @@ async function maybeReconnectAsRequestedAccount({
   const cleanRequestedAccountId = requestedAccountId as string;
   const signedInAccountId = resolveAccountIdFromRemote(remote);
   if (
-    !isValidUUID(signedInAccountId) ||
-    signedInAccountId === cleanRequestedAccountId
+    signedInAccountId === cleanRequestedAccountId &&
+    `${remote.user?.auth_session_hash ?? ""}`.trim()
   ) {
     return;
   }
