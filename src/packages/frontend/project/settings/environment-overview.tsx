@@ -24,7 +24,6 @@ import { Environment as CustomEnvironmentVariables } from "./environment";
 import { LauncherDefaults } from "./launcher-defaults";
 import { ProjectCapabilities } from "./project-capabilites";
 import RootFilesystemImage from "./root-filesystem-image";
-import { useRunQuota } from "./run-quota/hooks";
 import { ProjectSecrets } from "./secrets";
 import type { Project } from "./types";
 
@@ -243,7 +242,6 @@ export function EnvironmentOverview({
   const { secrets } = useProjectSecrets(project_id);
   const { rootfs } = useProjectRootfs(project_id);
   const { images: rootfsImages } = useRootfsImages([managedRootfsCatalogUrl()]);
-  const runQuota = useRunQuota(project_id, null);
   const availableFeatures = useTypedRedux({ project_id }, "available_features");
   const configurationLoading = useTypedRedux(
     { project_id },
@@ -254,8 +252,6 @@ export function EnvironmentOverview({
   const envCount = countConfiguredEnv(env);
   const secretCount = secrets?.length ?? 0;
   const runtimeImage = rootfsLabel(rootfs, rootfsImages);
-  const networkSummary = runQuota?.network ? "Internet enabled" : "Restricted";
-  const memberHost = runQuota?.member_host ? "member host" : undefined;
 
   function scrollToElement(element: HTMLElement | null): void {
     if (element == null) return;
@@ -426,12 +422,6 @@ export function EnvironmentOverview({
       value: `${secretCount} secret${secretCount === 1 ? "" : "s"}`,
       subtitle: "Mounted encrypted files",
       action: renderAction("configuration", "Configure"),
-    },
-    {
-      icon: "network",
-      title: "Network",
-      value: networkSummary,
-      subtitle: memberHost ?? "Project access",
     },
   ];
 
