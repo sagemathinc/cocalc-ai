@@ -193,7 +193,13 @@ function PolicySubNav({ slug }: { slug?: string }) {
   );
 }
 
-function BuiltinPolicyPageShell({ slug }: { slug?: string }) {
+function BuiltinPolicyPageShell({
+  siteName,
+  slug,
+}: {
+  siteName: string;
+  slug?: string;
+}) {
   if (getBuiltinPolicy(slug) == null) {
     return <EmptySection label="This policy page was not found." />;
   }
@@ -202,7 +208,7 @@ function BuiltinPolicyPageShell({ slug }: { slug?: string }) {
     <div style={{ display: "grid" }}>
       <PolicySubNav slug={slug} />
       <PublicSection>
-        <BuiltinPolicyPage slug={slug} />
+        <BuiltinPolicyPage siteName={siteName} slug={slug} />
       </PublicSection>
     </div>
   );
@@ -248,7 +254,10 @@ export default function PublicPoliciesApp({
         ) : !publicPoliciesUseBuiltin(config) ? (
           <EmptySection label="This policy page was not found." />
         ) : (
-          <BuiltinPolicyPageShell slug={initialRoute.policySlug} />
+          <BuiltinPolicyPageShell
+            siteName={siteName}
+            slug={initialRoute.policySlug}
+          />
         )
       ) : (
         <PoliciesHome config={config ?? {}} />

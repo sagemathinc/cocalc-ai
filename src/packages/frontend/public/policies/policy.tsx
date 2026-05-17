@@ -72,7 +72,18 @@ export function PolicySubsection({ children, id, title }: PolicyHeadingProps) {
   );
 }
 
-export function PolicyDocument({ policy }: { policy: PublicPolicy }) {
+export function PolicyDocument({
+  policy,
+  siteName,
+}: {
+  policy: PublicPolicy;
+  siteName: string;
+}) {
+  const metadata =
+    policy.updated == null
+      ? siteName
+      : `${siteName} · Last Updated: ${policy.updated}`;
+
   return (
     <article
       className="cocalc-public-policy-article"
@@ -82,11 +93,9 @@ export function PolicyDocument({ policy }: { policy: PublicPolicy }) {
       }}
     >
       <Title level={1}>{policy.title}</Title>
-      {policy.updated != null ? (
-        <Paragraph>
-          <Text type="secondary">Last Updated: {policy.updated}</Text>
-        </Paragraph>
-      ) : null}
+      <Paragraph>
+        <Text type="secondary">{metadata}</Text>
+      </Paragraph>
       {policy.content}
     </article>
   );

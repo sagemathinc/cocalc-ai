@@ -27,12 +27,18 @@ const BUILTIN_POLICY_BY_SLUG = Object.fromEntries(
   BUILTIN_POLICIES.map((policy) => [policy.slug, policy]),
 ) as Record<string, PublicPolicy>;
 
-export function BuiltinPolicyPage({ slug }: { slug?: string }) {
+export function BuiltinPolicyPage({
+  siteName,
+  slug,
+}: {
+  siteName: string;
+  slug?: string;
+}) {
   const policy = slug == null ? undefined : BUILTIN_POLICY_BY_SLUG[slug];
   if (policy == null) {
     return null;
   }
-  return <PolicyDocument policy={policy} />;
+  return <PolicyDocument policy={policy} siteName={siteName} />;
 }
 
 export function getBuiltinPolicy(
