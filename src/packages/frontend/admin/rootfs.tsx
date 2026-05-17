@@ -416,6 +416,22 @@ export function RootfsAdmin() {
       blocked: rows.filter(
         (entry) => entry.blocked || entry.release_gc_status === "blocked",
       ).length,
+      officialUnscanned: rows.filter(
+        (entry) =>
+          entry.official &&
+          !entry.deleted &&
+          (!entry.scan_status || entry.scan_status === "unknown"),
+      ).length,
+      officialCritical: rows.filter(
+        (entry) =>
+          entry.official &&
+          !entry.deleted &&
+          (entry.scan?.severity_counts?.critical ?? 0) > 0,
+      ).length,
+      officialScanFailed: rows.filter(
+        (entry) =>
+          entry.official && !entry.deleted && entry.scan_status === "error",
+      ).length,
     }),
     [rows],
   );
@@ -572,6 +588,9 @@ export function RootfsAdmin() {
         <Tag color="red">{counts.deleted} deleted</Tag>
         <Tag color="orange">{counts.pendingDelete} pending release GC</Tag>
         <Tag color="gold">{counts.blocked} blocked</Tag>
+        <Tag>{counts.officialUnscanned} official unscanned</Tag>
+        <Tag color="red">{counts.officialCritical} official critical</Tag>
+        <Tag color="red">{counts.officialScanFailed} scan failed</Tag>
       </Space>
       {error ? <ErrorDisplay error={error} /> : null}
       {loading && rows.length === 0 ? (

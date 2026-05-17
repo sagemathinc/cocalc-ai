@@ -409,6 +409,84 @@ function formatRootfsScanResultHuman(result: RootfsReleaseScanRun): string {
   return lines.join("\n");
 }
 
+function scanCriticalCount(entry: RootfsAdminCatalogEntry): number {
+  return entry.scan?.severity_counts?.critical ?? 0;
+}
+
+function scanHighCount(entry: RootfsAdminCatalogEntry): number {
+  return entry.scan?.severity_counts?.high ?? 0;
+}
+
+function isScanStale(
+  entry: RootfsAdminCatalogEntry,
+  staleDays: number,
+): boolean {
+  if (!entry.scanned_at) return false;
+  const scanned = Date.parse(entry.scanned_at);
+  if (!Number.isFinite(scanned)) return false;
+  return Date.now() - scanned > staleDays * 24 * 60 * 60 * 1000;
+}
+
+function buildRootfsScanAudit(
+  entries: RootfsAdminCatalogEntry[],
+  staleDays: number,
+) {
+  const official = entries.filter((entry) => entry.official && !entry.deleted);
+  return {
+    checked_at: new Date().toISOString(),
+    stale_days: staleDays,
+    totals: {
+      official: official.length,
+      unscanned: official.filter(
+        (entry) => !entry.scan_status || entry.scan_status === "unknown",
+      ).length,
+      stale: official.filter((entry) => isScanStale(entry, staleDays)).length,
+      failed: official.filter((entry) => entry.scan_status === "error").length,
+      findings: official.filter((entry) => entry.scan_status === "findings")
+        .length,
+      critical: official.filter((entry) => scanCriticalCount(entry) > 0).length,
+      high: official.filter((entry) => scanHighCount(entry) > 0).length,
+    },
+    unscanned: official.filter(
+      (entry) => !entry.scan_status || entry.scan_status === "unknown",
+    ),
+    stale: official.filter((entry) => isScanStale(entry, staleDays)),
+    failed: official.filter((entry) => entry.scan_status === "error"),
+    findings: official.filter((entry) => entry.scan_status === "findings"),
+    critical: official.filter((entry) => scanCriticalCount(entry) > 0),
+  };
+}
+
+function formatRootfsScanAuditHuman(
+  audit: ReturnType<typeof buildRootfsScanAudit>,
+): string {
+  const lines = [
+    `checked_at: ${audit.checked_at}`,
+    `official_images: ${audit.totals.official}`,
+    `unscanned: ${audit.totals.unscanned}`,
+    `stale: ${audit.totals.stale} (>${audit.stale_days} days)`,
+    `failed: ${audit.totals.failed}`,
+    `findings: ${audit.totals.findings}`,
+    `critical: ${audit.totals.critical}`,
+    `high: ${audit.totals.high}`,
+  ];
+  for (const [label, entries] of [
+    ["critical", audit.critical],
+    ["failed", audit.failed],
+    ["unscanned", audit.unscanned],
+    ["stale", audit.stale],
+  ] as const) {
+    if (!entries.length) continue;
+    lines.push("", `${label}:`);
+    for (const entry of entries) {
+      lines.push(
+        `  - ${entry.label} image_id=${entry.id} release_id=${entry.release_id ?? "-"} scan=${entry.scan_status ?? "unknown"} scanned_at=${entry.scanned_at ?? "-"}`,
+      );
+    }
+  }
+  return lines.join("\n");
+}
+
 async function loadAdminRootfsEntryById(ctx: any, image_id: string) {
   const trimmed = `${image_id ?? ""}`.trim();
   if (!trimmed) {
@@ -798,6 +876,32 @@ export function registerRootfsCommand(
             return report;
           }
           return JSON.stringify(report.report_json, null, 2);
+        });
+      },
+    );
+
+  rootfs
+    .command("scan-audit")
+    .description("summarize official RootFS vulnerability scan coverage")
+    .option("--stale-days <n>", "scan age considered stale", "30")
+    .action(
+      async (
+        opts: {
+          staleDays?: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "rootfs scan-audit", async (ctx) => {
+          const entries: RootfsAdminCatalogEntry[] =
+            (await ctx.hub.system.getRootfsCatalogAdmin({})) ?? [];
+          const audit = buildRootfsScanAudit(
+            entries,
+            parseLimit(opts.staleDays, 30),
+          );
+          if (ctx.globals.json || ctx.globals.output === "json") {
+            return audit;
+          }
+          return formatRootfsScanAuditHuman(audit);
         });
       },
     );
