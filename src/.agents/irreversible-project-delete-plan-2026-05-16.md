@@ -43,6 +43,8 @@ Done:
   schedule changes, archive, and move.
 - Archive has a shared confirmation modal, handles running/off/deprovisioned
   hosts, and has an in-project trust-operation banner.
+- Archive regression coverage exists for the frontend trust modal/admin-bypass
+  messaging and for running/off/deprovisioned host archive flows.
 - Hard-delete in-progress UX is implemented for project rows, row actions,
   blocked project/deep-link opens, and `delete_failed` retry/support details.
 - Normal soft-project-delete code is removed/quarantined: no
