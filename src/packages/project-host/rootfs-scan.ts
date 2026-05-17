@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { gzipSync } from "node:zlib";
 
+import { podmanEnv } from "@cocalc/backend/podman/env";
 import {
   parseTrivyRootfsJsonReport,
   type TrivyJsonReport,
@@ -95,7 +96,7 @@ function defaultCommandRunner(
         timeout: opts.timeout_ms,
         maxBuffer: 8 * 1024 * 1024,
         env: {
-          ...process.env,
+          ...podmanEnv(),
           PODMAN_SYSTEMD_UNIT: "cocalc-rootfs-scan",
         },
       },

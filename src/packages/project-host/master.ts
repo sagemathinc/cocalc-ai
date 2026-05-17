@@ -30,6 +30,7 @@ import { upgradeSoftware } from "./upgrade";
 import { executeCode } from "@cocalc/backend/execute-code";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { getConmonContainerProcesses } from "@cocalc/backend/podman/conmon";
+import { imageCachePath } from "@cocalc/project-runner/run/rootfs-base";
 import { deleteProjectLocal, upsertProject } from "./sqlite/projects";
 import { syncProjectSecretsCache as syncProjectSecretsCacheLocal } from "./project-secrets-cache";
 import { setupProjectSecretSshKey } from "./project-secret-ssh-key";
@@ -45,6 +46,7 @@ import {
   buildCachedRootfsManifest,
   buildProjectRootfsManifest,
 } from "./rootfs-manifest";
+import { runRootfsTrivyScan } from "./rootfs-scan";
 import { connect as connectToConat } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import {
@@ -1028,6 +1030,35 @@ export async function startMasterRegistration({
       },
       async deleteRootfsImage({ image }) {
         return await deleteRootfsCacheEntry(image);
+      },
+      async scanRootfsRelease(opts) {
+        await awaitReadyForControl("scanRootfsRelease", waitUntilReady);
+        const image = opts.target.runtime_image;
+        await pullRootfsCacheEntry(image, {
+          awaitRegionalReplication: true,
+        });
+        const result = await runRootfsTrivyScan({
+          scan_run_id: opts.scan_run_id,
+          target: opts.target,
+          rootfs_path: imageCachePath(image),
+          trivy_cache_dir: opts.trivy_cache_dir,
+          scanner_image: opts.scanner_image,
+          timeout_ms: opts.timeout_ms,
+          max_target_bytes: opts.max_target_bytes,
+          max_report_bytes: opts.max_report_bytes,
+          memory_limit: opts.memory_limit,
+          cpu_limit: opts.cpu_limit,
+          tmpfs_size: opts.tmpfs_size,
+        });
+        return {
+          summary: result.summary,
+          duration_ms: result.duration_ms,
+          report: {
+            bytes: result.report.bytes,
+            compressed_bytes: result.report.compressed_bytes,
+            sha256: result.report.sha256,
+          },
+        };
       },
       async listHostSshAuthorizedKeys() {
         return await listHostSshAuthorizedKeys();

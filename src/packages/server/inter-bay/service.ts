@@ -1467,6 +1467,10 @@ async function startHostControlService(): Promise<void> {
       ).pullRootfsImage(pull),
     deleteRootfsImage: async ({ host_id, del }) =>
       await (await getHostClient(host_id, 30_000)).deleteRootfsImage(del),
+    scanRootfsRelease: async ({ host_id, scan }) =>
+      await (
+        await getHostClient(host_id, scan.timeout_ms ?? 30 * 60 * 1000)
+      ).scanRootfsRelease(scan),
     listHostSshAuthorizedKeys: async ({ host_id }) =>
       await (await getHostClient(host_id, 30_000)).listHostSshAuthorizedKeys(),
     addHostSshAuthorizedKey: async ({ host_id, add }) =>

@@ -77,6 +77,29 @@ export type RootfsScanSelectionDecision = {
   message?: string;
 };
 
+export type RootfsTrivyHostScanRequest = {
+  scan_run_id: string;
+  target: TrivyRootfsScanTarget;
+  scanner_image: string;
+  trivy_cache_dir: string;
+  timeout_ms?: number;
+  max_target_bytes?: number;
+  max_report_bytes?: number;
+  memory_limit?: string;
+  cpu_limit?: string;
+  tmpfs_size?: string;
+};
+
+export type RootfsTrivyHostScanResponse = {
+  summary: RootfsScanSummary;
+  duration_ms: number;
+  report: {
+    bytes: number;
+    compressed_bytes: number;
+    sha256: string;
+  };
+};
+
 function stringValue(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
