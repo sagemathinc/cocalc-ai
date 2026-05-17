@@ -28,7 +28,9 @@ import { COLORS } from "@cocalc/util/theme";
 type Mode = "project" | "flyout";
 
 interface Props {
+  expanded?: boolean;
   mode?: Mode;
+  onExpandedChange?: (expanded: boolean) => void;
   onDetails?: () => void;
   project_id: string;
 }
@@ -144,12 +146,14 @@ function formatterCount(formatter: any): number {
 }
 
 export function EnvironmentFeatureGroups({
+  expanded,
   mode = "project",
+  onExpandedChange,
   onDetails,
   project_id,
 }: Props) {
   const isFlyout = mode === "flyout";
-  const [showAll, setShowAll] = useState(false);
+  const [uncontrolledShowAll, setUncontrolledShowAll] = useState(false);
   const [search, setSearch] = useState("");
   const [sendingAgentTarget, setSendingAgentTarget] = useState<string | null>(
     null,
@@ -160,6 +164,7 @@ export function EnvironmentFeatureGroups({
     "configuration_loading",
   );
   const avail = availableFeatures?.toJS?.();
+  const showAll = expanded ?? uncontrolledShowAll;
   const rows = useMemo(() => featureRows(avail), [avail]);
   const formatters = useMemo(() => formatterRows(avail?.formatting), [avail]);
   const query = search.trim().toLowerCase();
@@ -187,6 +192,13 @@ export function EnvironmentFeatureGroups({
 
   function reload(): void {
     redux.getProjectActions(project_id).reload_configuration();
+  }
+
+  function setShowAll(next: boolean): void {
+    if (expanded == null) {
+      setUncontrolledShowAll(next);
+    }
+    onExpandedChange?.(next);
   }
 
   async function sendInstallPrompt(opts: {
@@ -367,11 +379,6 @@ export function EnvironmentFeatureGroups({
           </div>
         </div>
         <Space size={6}>
-          {onDetails != null ? (
-            <Button size="small" type="link" onClick={onDetails}>
-              Details
-            </Button>
-          ) : undefined}
           <Button
             aria-label="Refresh available features"
             disabled={configurationLoading}

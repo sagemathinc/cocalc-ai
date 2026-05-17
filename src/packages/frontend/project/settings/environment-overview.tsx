@@ -236,6 +236,7 @@ export function EnvironmentOverview({
 }: Props) {
   const isFlyout = mode === "flyout";
   const [activeKeys, setActiveKeys] = useState<string[]>([]);
+  const [featureDetailsOpen, setFeatureDetailsOpen] = useState(false);
   const { env } = useProjectEnv(project_id);
   const { secrets } = useProjectSecrets(project_id);
   const { rootfs } = useProjectRootfs(project_id);
@@ -268,6 +269,18 @@ export function EnvironmentOverview({
     );
   }
 
+  function renderFeatureAction() {
+    return (
+      <Button
+        size="small"
+        type="link"
+        onClick={() => setFeatureDetailsOpen(true)}
+      >
+        Details
+      </Button>
+    );
+  }
+
   const summaryColumns = isFlyout ? "1fr" : "repeat(3, minmax(0, 1fr))";
 
   const detailMode: Mode = "flyout";
@@ -278,7 +291,7 @@ export function EnvironmentOverview({
       title: "Runtime Image",
       value: runtimeImage,
       subtitle: "Base software environment",
-      action: renderAction("rootfs"),
+      action: renderAction("runtime-image"),
     },
     {
       icon: "clipboard-check",
@@ -289,21 +302,21 @@ export function EnvironmentOverview({
       subtitle: features.formatterCount
         ? `${features.formatterCount} formatter${features.formatterCount === 1 ? "" : "s"}`
         : "Feature probe",
-      action: renderAction("features"),
+      action: renderFeatureAction(),
     },
     {
       icon: "bars",
       title: "Environment Variables",
       value: `${envCount} configured`,
       subtitle: "Custom process environment",
-      action: renderAction("env"),
+      action: renderAction("configuration", "Configure"),
     },
     {
       icon: "key",
       title: "Project Secrets",
       value: `${secretCount} secret${secretCount === 1 ? "" : "s"}`,
       subtitle: "Mounted encrypted files",
-      action: renderAction("secrets"),
+      action: renderAction("configuration", "Configure"),
     },
     {
       icon: "network",
@@ -350,8 +363,10 @@ export function EnvironmentOverview({
       </div>
 
       <EnvironmentFeatureGroups
+        expanded={featureDetailsOpen}
         mode={mode}
-        onDetails={() => expand("features")}
+        onDetails={() => expand("diagnostics")}
+        onExpandedChange={setFeatureDetailsOpen}
         project_id={project_id}
       />
 
@@ -362,42 +377,43 @@ export function EnvironmentOverview({
         }
         items={[
           {
-            key: "launcher",
-            label: "Launcher Defaults",
-            children: <LauncherDefaults project_id={project_id} />,
-          },
-          {
-            key: "env",
-            label: "Custom Environment Variables",
+            key: "configuration",
+            label: "Configuration",
             children: (
-              <CustomEnvironmentVariables
-                project_id={project_id}
-                mode={detailMode}
-              />
+              <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                <Typography.Text type="secondary">
+                  Launcher defaults, process environment, and mounted secrets.
+                </Typography.Text>
+                <LauncherDefaults project_id={project_id} />
+                <CustomEnvironmentVariables
+                  project_id={project_id}
+                  mode={detailMode}
+                />
+                <ProjectSecrets project_id={project_id} mode={detailMode} />
+              </Space>
             ),
           },
           {
-            key: "secrets",
-            label: "Project Secrets",
-            children: (
-              <ProjectSecrets project_id={project_id} mode={detailMode} />
-            ),
-          },
-          {
-            key: "features",
-            label: "Available Features and Formatters",
-            children: (
-              <ProjectCapabilities
-                project={project}
-                project_id={project_id}
-                mode={detailMode}
-              />
-            ),
-          },
-          {
-            key: "rootfs",
-            label: "Root Filesystem Image",
+            key: "runtime-image",
+            label: "Runtime Image",
             children: <RootFilesystemImage />,
+          },
+          {
+            key: "diagnostics",
+            label: "Technical Details",
+            children: (
+              <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                <Typography.Text type="secondary">
+                  Full feature probe output and formatter details for debugging
+                  or support.
+                </Typography.Text>
+                <ProjectCapabilities
+                  project={project}
+                  project_id={project_id}
+                  mode={detailMode}
+                />
+              </Space>
+            ),
           },
         ]}
       />
