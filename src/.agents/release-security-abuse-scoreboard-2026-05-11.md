@@ -822,14 +822,10 @@ Current result:
 - Added admin/system quota reporting for top rootfs users, near-limit accounts,
   and recent grouped denial events. The CLI exposes this as
   `cocalc admin rootfs-quotas`, with Prometheus text output for alert scraping.
-- The RootFS quota report is cluster-aggregated across configured bays and
-  includes per-row `bay_id` plus bay success/error status so admins do not get a
+- The RootFS quota, ACP admission-denial, service admission-denial, and project
+  runtime-slot admin reports are cluster-aggregated across configured bays and
+  include per-row `bay_id` plus bay success/error status so admins do not get a
   silently local report from whichever bay their CLI happened to connect to.
-- Scan note: the same local-report risk exists for other admin report endpoints
-  that intentionally query local `central_log` or local bay tables, including
-  ACP admission denials, service admission denials, and project runtime slots.
-  Those reports should either become cluster-aggregated or explicitly expose
-  their bay scope before relying on them for global launch operations.
 - Project clone creation now validates the source project's actual
   `project_rootfs_states.current` binding before any filesystem clone side
   effect, and stores that current RootFS binding on the destination project row

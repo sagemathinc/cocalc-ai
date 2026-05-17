@@ -284,6 +284,7 @@ test("admin acp-denials can emit prometheus text", async () => {
               min_count: 1,
               groups: [
                 {
+                  bay_id: "bay-1",
                   account_id: "acct",
                   project_id: "project",
                   limit: "running_per_account",
@@ -315,6 +316,7 @@ test("admin acp-denials can emit prometheus text", async () => {
   ]);
 
   assert.match(output, /cocalc_acp_admission_denials_window_total/);
+  assert.match(output, /bay_id="bay-1"/);
   assert.match(output, /limit="running_per_account"/);
   assert.match(output, / 4\n/);
 });
@@ -390,6 +392,7 @@ test("admin service-denials can emit prometheus text", async () => {
               min_count: 1,
               groups: [
                 {
+                  bay_id: "bay-1",
                   host_id: "host",
                   account_id: "acct",
                   project_id: "project",
@@ -423,6 +426,7 @@ test("admin service-denials can emit prometheus text", async () => {
   ]);
 
   assert.match(output, /cocalc_service_admission_denials_window_total/);
+  assert.match(output, /bay_id="bay-1"/);
   assert.match(output, /surface="jupyter-run-code"/);
   assert.match(output, / 4\n/);
 });

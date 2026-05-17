@@ -254,9 +254,12 @@ import {
 import { leaveOrDeleteProjectsForAccount } from "@cocalc/server/projects/ownership";
 import {
   BAY_OPS_INTERNAL_AUTH,
+  getAcpAdmissionDenialReport,
   getBayBackups,
   getBayLoad,
+  getProjectRuntimeSlotReport,
   getRootfsQuotaReport,
+  getServiceAdmissionDenialReport,
 } from "@cocalc/server/conat/api/system";
 
 const logger = getLogger("server:inter-bay:service");
@@ -341,6 +344,21 @@ async function startBayOpsService(): Promise<void> {
       }),
     getRootfsQuotaReport: async (opts) =>
       await getRootfsQuotaReport({
+        ...opts,
+        internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+    getAcpAdmissionDenialReport: async (opts) =>
+      await getAcpAdmissionDenialReport({
+        ...opts,
+        internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+    getServiceAdmissionDenialReport: async (opts) =>
+      await getServiceAdmissionDenialReport({
+        ...opts,
+        internalAuth: BAY_OPS_INTERNAL_AUTH,
+      }),
+    getProjectRuntimeSlotReport: async (opts) =>
+      await getProjectRuntimeSlotReport({
         ...opts,
         internalAuth: BAY_OPS_INTERNAL_AUTH,
       }),

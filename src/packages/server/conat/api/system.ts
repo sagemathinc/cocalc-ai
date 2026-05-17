@@ -953,6 +953,43 @@ function optionalFilter(value: unknown): string | undefined {
   return trimmed || undefined;
 }
 
+async function getClusterReportBayIds(): Promise<string[]> {
+  const currentBayId = getConfiguredBayId();
+  return [
+    ...new Set(
+      ((await listConfiguredBays()) ?? [])
+        .map((bay) => `${bay.bay_id ?? ""}`.trim())
+        .filter(Boolean)
+        .concat(currentBayId),
+    ),
+  ].sort();
+}
+
+type ClusterReportBayStatus = {
+  bay_id: string;
+  ok: boolean;
+  error?: string;
+};
+
+function reportBayStatuses<T>(
+  bayIds: string[],
+  settled: PromiseSettledResult<T>[],
+  successfulReports: T[],
+): ClusterReportBayStatus[] {
+  return bayIds.map((bay_id, i) => {
+    const result = settled[i];
+    if (result.status === "fulfilled") {
+      successfulReports.push(result.value);
+      return { bay_id, ok: true };
+    }
+    return {
+      bay_id,
+      ok: false,
+      error: `${result.reason}`,
+    };
+  });
+}
+
 function parseDenialSummaryRow(row: Record<string, any>) {
   const summary: AcpAdmissionDenialSummary = {
     account_id: row.account_id || null,
@@ -976,8 +1013,23 @@ function parseDenialSummaryRow(row: Record<string, any>) {
   return summary;
 }
 
+function withAcpAdmissionDenialReportBayId(
+  report: AcpAdmissionDenialReport,
+  bay_id: string,
+): AcpAdmissionDenialReport {
+  return {
+    ...report,
+    bay_id: report.bay_id || bay_id,
+    groups: (report.groups ?? []).map((group) => ({
+      ...group,
+      bay_id: group.bay_id || report.bay_id || bay_id,
+    })),
+  };
+}
+
 export async function getAcpAdmissionDenialReport({
   account_id,
+  internalAuth,
   window_minutes,
   min_count,
   limit,
@@ -987,6 +1039,7 @@ export async function getAcpAdmissionDenialReport({
   source,
 }: {
   account_id?: string;
+  internalAuth?: typeof BAY_OPS_INTERNAL_AUTH;
   window_minutes?: number;
   min_count?: number;
   limit?: number;
@@ -995,7 +1048,6 @@ export async function getAcpAdmissionDenialReport({
   denial_limit?: string | null;
   source?: string | null;
 } = {}): Promise<AcpAdmissionDenialReport> {
-  await assertAdmin(account_id);
   const windowMinutes = boundedPositiveInteger({
     value: window_minutes,
     fallback: 60,
@@ -1011,7 +1063,77 @@ export async function getAcpAdmissionDenialReport({
     fallback: 50,
     max: 500,
   });
+  const request = {
+    window_minutes: windowMinutes,
+    min_count: minCount,
+    limit: rowLimit,
+    user_account_id,
+    project_id,
+    denial_limit,
+    source,
+  };
 
+  if (internalAuth === BAY_OPS_INTERNAL_AUTH) {
+    return await getAcpAdmissionDenialReport0({
+      bay_id: getConfiguredBayId(),
+      ...request,
+    });
+  }
+
+  await assertAdmin(account_id);
+  const currentBayId = getConfiguredBayId();
+  const bayIds = await getClusterReportBayIds();
+  const settled = await Promise.allSettled(
+    bayIds.map(async (bay_id) => {
+      const report =
+        bay_id === currentBayId
+          ? await getAcpAdmissionDenialReport0({ bay_id, ...request })
+          : await getInterBayBridge()
+              .bayOps(bay_id, { timeout_ms: 15_000 })
+              .getAcpAdmissionDenialReport({ account_id, ...request });
+      return withAcpAdmissionDenialReportBayId(report, bay_id);
+    }),
+  );
+  const successfulReports: AcpAdmissionDenialReport[] = [];
+  const bays = reportBayStatuses(bayIds, settled, successfulReports);
+  const checkedAt = new Date();
+  return {
+    current_bay_id: currentBayId,
+    checked_at: checkedAt.toISOString(),
+    since: new Date(checkedAt.valueOf() - windowMinutes * 60_000).toISOString(),
+    window_minutes: windowMinutes,
+    min_count: minCount,
+    groups: successfulReports
+      .flatMap((report) => report.groups ?? [])
+      .sort(
+        (a, b) =>
+          b.count - a.count ||
+          new Date(b.last_time).getTime() - new Date(a.last_time).getTime(),
+      )
+      .slice(0, rowLimit),
+    bays,
+  };
+}
+
+async function getAcpAdmissionDenialReport0({
+  bay_id,
+  window_minutes: windowMinutes,
+  min_count: minCount,
+  limit: rowLimit,
+  user_account_id,
+  project_id,
+  denial_limit,
+  source,
+}: {
+  bay_id: string;
+  window_minutes: number;
+  min_count: number;
+  limit: number;
+  user_account_id?: string | null;
+  project_id?: string | null;
+  denial_limit?: string | null;
+  source?: string | null;
+}): Promise<AcpAdmissionDenialReport> {
   const params: any[] = [windowMinutes];
   const conditions = [
     "event = 'acp_admission_denied'",
@@ -1073,11 +1195,15 @@ export async function getAcpAdmissionDenialReport({
 
   const checkedAt = new Date();
   return {
+    bay_id,
     checked_at: checkedAt.toISOString(),
     since: new Date(checkedAt.valueOf() - windowMinutes * 60_000).toISOString(),
     window_minutes: windowMinutes,
     min_count: minCount,
-    groups: rows.map(parseDenialSummaryRow),
+    groups: rows.map((row) => ({
+      ...parseDenialSummaryRow(row),
+      bay_id,
+    })),
   };
 }
 
@@ -1109,8 +1235,23 @@ function parseServiceDenialSummaryRow(
   };
 }
 
+function withServiceAdmissionDenialReportBayId(
+  report: ServiceAdmissionDenialReport,
+  bay_id: string,
+): ServiceAdmissionDenialReport {
+  return {
+    ...report,
+    bay_id: report.bay_id || bay_id,
+    groups: (report.groups ?? []).map((group) => ({
+      ...group,
+      bay_id: group.bay_id || report.bay_id || bay_id,
+    })),
+  };
+}
+
 export async function getServiceAdmissionDenialReport({
   account_id,
+  internalAuth,
   window_minutes,
   min_count,
   limit,
@@ -1121,6 +1262,7 @@ export async function getServiceAdmissionDenialReport({
   source,
 }: {
   account_id?: string;
+  internalAuth?: typeof BAY_OPS_INTERNAL_AUTH;
   window_minutes?: number;
   min_count?: number;
   limit?: number;
@@ -1130,7 +1272,6 @@ export async function getServiceAdmissionDenialReport({
   denial_limit?: string | null;
   source?: string | null;
 } = {}): Promise<ServiceAdmissionDenialReport> {
-  await assertAdmin(account_id);
   const windowMinutes = boundedPositiveInteger({
     value: window_minutes,
     fallback: 60,
@@ -1146,7 +1287,80 @@ export async function getServiceAdmissionDenialReport({
     fallback: 50,
     max: 500,
   });
+  const request = {
+    window_minutes: windowMinutes,
+    min_count: minCount,
+    limit: rowLimit,
+    user_account_id,
+    project_id,
+    surface,
+    denial_limit,
+    source,
+  };
 
+  if (internalAuth === BAY_OPS_INTERNAL_AUTH) {
+    return await getServiceAdmissionDenialReport0({
+      bay_id: getConfiguredBayId(),
+      ...request,
+    });
+  }
+
+  await assertAdmin(account_id);
+  const currentBayId = getConfiguredBayId();
+  const bayIds = await getClusterReportBayIds();
+  const settled = await Promise.allSettled(
+    bayIds.map(async (bay_id) => {
+      const report =
+        bay_id === currentBayId
+          ? await getServiceAdmissionDenialReport0({ bay_id, ...request })
+          : await getInterBayBridge()
+              .bayOps(bay_id, { timeout_ms: 15_000 })
+              .getServiceAdmissionDenialReport({ account_id, ...request });
+      return withServiceAdmissionDenialReportBayId(report, bay_id);
+    }),
+  );
+  const successfulReports: ServiceAdmissionDenialReport[] = [];
+  const bays = reportBayStatuses(bayIds, settled, successfulReports);
+  const checkedAt = new Date();
+  return {
+    current_bay_id: currentBayId,
+    checked_at: checkedAt.toISOString(),
+    since: new Date(checkedAt.valueOf() - windowMinutes * 60_000).toISOString(),
+    window_minutes: windowMinutes,
+    min_count: minCount,
+    groups: successfulReports
+      .flatMap((report) => report.groups ?? [])
+      .sort(
+        (a, b) =>
+          b.count - a.count ||
+          new Date(b.last_time).getTime() - new Date(a.last_time).getTime(),
+      )
+      .slice(0, rowLimit),
+    bays,
+  };
+}
+
+async function getServiceAdmissionDenialReport0({
+  bay_id,
+  window_minutes: windowMinutes,
+  min_count: minCount,
+  limit: rowLimit,
+  user_account_id,
+  project_id,
+  surface,
+  denial_limit,
+  source,
+}: {
+  bay_id: string;
+  window_minutes: number;
+  min_count: number;
+  limit: number;
+  user_account_id?: string | null;
+  project_id?: string | null;
+  surface?: string | null;
+  denial_limit?: string | null;
+  source?: string | null;
+}): Promise<ServiceAdmissionDenialReport> {
   const params: any[] = [windowMinutes];
   const conditions = [
     "event = 'service_admission_denied'",
@@ -1213,11 +1427,15 @@ export async function getServiceAdmissionDenialReport({
 
   const checkedAt = new Date();
   return {
+    bay_id,
     checked_at: checkedAt.toISOString(),
     since: new Date(checkedAt.valueOf() - windowMinutes * 60_000).toISOString(),
     window_minutes: windowMinutes,
     min_count: minCount,
-    groups: rows.map(parseServiceDenialSummaryRow),
+    groups: rows.map((row) => ({
+      ...parseServiceDenialSummaryRow(row),
+      bay_id,
+    })),
   };
 }
 
@@ -1451,20 +1669,127 @@ async function runtimeSponsorLimit(
   }
 }
 
+function withProjectRuntimeSlotReportBayId(
+  report: ProjectRuntimeSlotReport,
+  bay_id: string,
+): ProjectRuntimeSlotReport {
+  return {
+    ...report,
+    bay_id: report.bay_id || bay_id,
+    slots: (report.slots ?? []).map((slot) => ({
+      ...slot,
+      bay_id: slot.bay_id || report.bay_id || bay_id,
+    })),
+    top_sponsors: (report.top_sponsors ?? []).map((sponsor) => ({
+      ...sponsor,
+      bay_id: sponsor.bay_id || report.bay_id || bay_id,
+    })),
+    recent_events: (report.recent_events ?? []).map((event) => ({
+      ...event,
+      bay_id: event.bay_id || report.bay_id || bay_id,
+    })),
+  };
+}
+
+async function aggregateRuntimeSlotSponsors(
+  reports: ProjectRuntimeSlotReport[],
+  rowLimit: number,
+): Promise<ProjectRuntimeSlotReportSponsor[]> {
+  const sponsors = new Map<string, ProjectRuntimeSlotReportSponsor>();
+  for (const sponsor of reports.flatMap(
+    (report) => report.top_sponsors ?? [],
+  )) {
+    const existing = sponsors.get(sponsor.sponsor_account_id) ?? {
+      sponsor_account_id: sponsor.sponsor_account_id,
+      sponsor_display_name: sponsor.sponsor_display_name ?? null,
+      current: 0,
+      limit: sponsor.limit ?? null,
+      active_projects: 0,
+      starting: 0,
+      running: 0,
+      oldest_heartbeat_at: null,
+      newest_heartbeat_at: null,
+    };
+    existing.current += Number(sponsor.current) || 0;
+    existing.active_projects += Number(sponsor.active_projects) || 0;
+    existing.starting += Number(sponsor.starting) || 0;
+    existing.running += Number(sponsor.running) || 0;
+    existing.sponsor_display_name =
+      existing.sponsor_display_name ?? sponsor.sponsor_display_name ?? null;
+    existing.limit = existing.limit ?? sponsor.limit ?? null;
+    if (
+      sponsor.oldest_heartbeat_at &&
+      (existing.oldest_heartbeat_at == null ||
+        sponsor.oldest_heartbeat_at < existing.oldest_heartbeat_at)
+    ) {
+      existing.oldest_heartbeat_at = sponsor.oldest_heartbeat_at;
+    }
+    if (
+      sponsor.newest_heartbeat_at &&
+      (existing.newest_heartbeat_at == null ||
+        sponsor.newest_heartbeat_at > existing.newest_heartbeat_at)
+    ) {
+      existing.newest_heartbeat_at = sponsor.newest_heartbeat_at;
+    }
+    sponsors.set(sponsor.sponsor_account_id, existing);
+  }
+  return await Promise.all(
+    [...sponsors.values()]
+      .sort((a, b) => b.current - a.current)
+      .slice(0, rowLimit)
+      .map(async (sponsor) => ({
+        ...sponsor,
+        sponsor_display_name:
+          sponsor.sponsor_display_name ??
+          (await getName(sponsor.sponsor_account_id).catch(() => null)),
+        limit:
+          sponsor.limit ??
+          (await runtimeSponsorLimit(sponsor.sponsor_account_id)),
+      })),
+  );
+}
+
+function aggregateRuntimeSlotEvents(
+  reports: ProjectRuntimeSlotReport[],
+): ProjectRuntimeSlotReport["recent_events"] {
+  const events = new Map<
+    string,
+    ProjectRuntimeSlotReport["recent_events"][0]
+  >();
+  for (const event of reports.flatMap((report) => report.recent_events ?? [])) {
+    const existing = events.get(event.event) ?? {
+      event: event.event,
+      count: 0,
+      first_time: event.first_time,
+      last_time: event.last_time,
+    };
+    existing.count += Number(event.count) || 0;
+    if (event.first_time < existing.first_time) {
+      existing.first_time = event.first_time;
+    }
+    if (event.last_time > existing.last_time) {
+      existing.last_time = event.last_time;
+    }
+    events.set(event.event, existing);
+  }
+  return [...events.values()].sort((a, b) => a.event.localeCompare(b.event));
+}
+
 export async function getProjectRuntimeSlotReport({
   account_id,
+  internalAuth,
   sponsor_account_id,
   active_only = true,
   window_minutes,
   limit,
 }: {
   account_id?: string;
+  internalAuth?: typeof BAY_OPS_INTERNAL_AUTH;
   sponsor_account_id?: string | null;
   active_only?: boolean;
   window_minutes?: number;
   limit?: number;
 } = {}): Promise<ProjectRuntimeSlotReport> {
-  await assertAdmin(account_id);
   const rowLimit = boundedPositiveInteger({
     value: limit,
     fallback: 100,
@@ -1475,6 +1800,73 @@ export async function getProjectRuntimeSlotReport({
     fallback: 24 * 60,
     max: 30 * 24 * 60,
   });
+  const request = {
+    sponsor_account_id,
+    active_only,
+    window_minutes: windowMinutes,
+    limit: rowLimit,
+  };
+  if (internalAuth === BAY_OPS_INTERNAL_AUTH) {
+    return await getProjectRuntimeSlotReport0({
+      bay_id: getConfiguredBayId(),
+      ...request,
+    });
+  }
+
+  await assertAdmin(account_id);
+  const currentBayId = getConfiguredBayId();
+  const bayIds = await getClusterReportBayIds();
+  const settled = await Promise.allSettled(
+    bayIds.map(async (bay_id) => {
+      const report =
+        bay_id === currentBayId
+          ? await getProjectRuntimeSlotReport0({ bay_id, ...request })
+          : await getInterBayBridge()
+              .bayOps(bay_id, { timeout_ms: 15_000 })
+              .getProjectRuntimeSlotReport({ account_id, ...request });
+      return withProjectRuntimeSlotReportBayId(report, bay_id);
+    }),
+  );
+  const successfulReports: ProjectRuntimeSlotReport[] = [];
+  const bays = reportBayStatuses(bayIds, settled, successfulReports);
+  const checkedAt = new Date();
+  return {
+    current_bay_id: currentBayId,
+    checked_at: checkedAt.toISOString(),
+    since: new Date(checkedAt.valueOf() - windowMinutes * 60_000).toISOString(),
+    window_minutes: windowMinutes,
+    active_only,
+    slots: successfulReports
+      .flatMap((report) => report.slots ?? [])
+      .sort(
+        (a, b) =>
+          new Date(b.heartbeat_at).getTime() -
+            new Date(a.heartbeat_at).getTime() ||
+          new Date(b.acquired_at).getTime() - new Date(a.acquired_at).getTime(),
+      )
+      .slice(0, rowLimit),
+    top_sponsors: await aggregateRuntimeSlotSponsors(
+      successfulReports,
+      rowLimit,
+    ),
+    recent_events: aggregateRuntimeSlotEvents(successfulReports),
+    bays,
+  };
+}
+
+async function getProjectRuntimeSlotReport0({
+  bay_id,
+  sponsor_account_id,
+  active_only,
+  window_minutes: windowMinutes,
+  limit: rowLimit,
+}: {
+  bay_id: string;
+  sponsor_account_id?: string | null;
+  active_only: boolean;
+  window_minutes: number;
+  limit: number;
+}): Promise<ProjectRuntimeSlotReport> {
   const sponsorFilter = optionalFilter(sponsor_account_id);
   const params: any[] = [rowLimit];
   const conditions: string[] = [];
@@ -1545,6 +1937,7 @@ export async function getProjectRuntimeSlotReport({
           () => null,
         ),
         limit: await runtimeSponsorLimit(sponsor.sponsor_account_id),
+        bay_id,
       })),
   );
 
@@ -1585,12 +1978,13 @@ export async function getProjectRuntimeSlotReport({
   const checkedAt = new Date();
   return {
     checked_at: checkedAt.toISOString(),
-    bay_id: getConfiguredBayId(),
+    bay_id,
     since: new Date(checkedAt.valueOf() - windowMinutes * 60_000).toISOString(),
     window_minutes: windowMinutes,
     active_only,
     slots: slotRows.map((row) => ({
       ...row,
+      bay_id,
       acquired_at: dateToIso(row.acquired_at),
       heartbeat_at: dateToIso(row.heartbeat_at),
       expires_at: dateToIso(row.expires_at),
@@ -1598,6 +1992,7 @@ export async function getProjectRuntimeSlotReport({
     top_sponsors,
     recent_events: eventRows.map((row) => ({
       event: row.event,
+      bay_id,
       count: Number(row.count) || 0,
       first_time: dateToIso(row.first_time),
       last_time: dateToIso(row.last_time),

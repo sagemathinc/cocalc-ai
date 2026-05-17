@@ -31,9 +31,12 @@ import type {
   MembershipResolution,
 } from "@cocalc/conat/hub/api/purchases";
 import type {
+  AcpAdmissionDenialReport,
   BayBackupsInfo,
   BayLoadInfo,
+  ProjectRuntimeSlotReport,
   RootfsQuotaReport,
+  ServiceAdmissionDenialReport,
 } from "@cocalc/conat/hub/api/system";
 import type {
   ProjectActiveOperationSummary,
@@ -907,6 +910,37 @@ export interface BayOpsRootfsQuotaReportRequest {
   operation?: string | null;
 }
 
+export interface BayOpsAcpAdmissionDenialReportRequest {
+  account_id?: string;
+  window_minutes?: number;
+  min_count?: number;
+  limit?: number;
+  user_account_id?: string | null;
+  project_id?: string | null;
+  denial_limit?: string | null;
+  source?: string | null;
+}
+
+export interface BayOpsServiceAdmissionDenialReportRequest {
+  account_id?: string;
+  window_minutes?: number;
+  min_count?: number;
+  limit?: number;
+  user_account_id?: string | null;
+  project_id?: string | null;
+  surface?: string | null;
+  denial_limit?: string | null;
+  source?: string | null;
+}
+
+export interface BayOpsProjectRuntimeSlotReportRequest {
+  account_id?: string;
+  sponsor_account_id?: string | null;
+  active_only?: boolean;
+  window_minutes?: number;
+  limit?: number;
+}
+
 export interface BayOpsSetServerSettingRequest {
   name: string;
   value: string;
@@ -1177,6 +1211,9 @@ export type BayOpsMethod =
   | "get-load"
   | "get-backups"
   | "get-rootfs-quota-report"
+  | "get-acp-admission-denial-report"
+  | "get-service-admission-denial-report"
+  | "get-project-runtime-slot-report"
   | "set-server-setting";
 export type ProjectCollabInviteMethod =
   | "upsert-inbox"
@@ -1959,6 +1996,15 @@ export interface InterBayBayOpsApi {
   getRootfsQuotaReport: (
     opts: BayOpsRootfsQuotaReportRequest,
   ) => Promise<RootfsQuotaReport>;
+  getAcpAdmissionDenialReport: (
+    opts: BayOpsAcpAdmissionDenialReportRequest,
+  ) => Promise<AcpAdmissionDenialReport>;
+  getServiceAdmissionDenialReport: (
+    opts: BayOpsServiceAdmissionDenialReportRequest,
+  ) => Promise<ServiceAdmissionDenialReport>;
+  getProjectRuntimeSlotReport: (
+    opts: BayOpsProjectRuntimeSlotReportRequest,
+  ) => Promise<ProjectRuntimeSlotReport>;
   setServerSetting: (opts: BayOpsSetServerSettingRequest) => Promise<void>;
 }
 
@@ -4034,11 +4080,46 @@ export function createInterBayBayOpsClient({
       method: "get-rootfs-quota-report",
     }),
   });
+  const acpAdmissionDenialReportClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getAcpAdmissionDenialReport">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-acp-admission-denial-report",
+    }),
+  });
+  const serviceAdmissionDenialReportClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getServiceAdmissionDenialReport">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-service-admission-denial-report",
+    }),
+  });
+  const projectRuntimeSlotReportClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getProjectRuntimeSlotReport">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-project-runtime-slot-report",
+    }),
+  });
   return {
     getLoad: async (opts) => await loadClient.getLoad(opts),
     getBackups: async (opts) => await backupsClient.getBackups(opts),
     getRootfsQuotaReport: async (opts) =>
       await rootfsQuotaReportClient.getRootfsQuotaReport(opts),
+    getAcpAdmissionDenialReport: async (opts) =>
+      await acpAdmissionDenialReportClient.getAcpAdmissionDenialReport(opts),
+    getServiceAdmissionDenialReport: async (opts) =>
+      await serviceAdmissionDenialReportClient.getServiceAdmissionDenialReport(
+        opts,
+      ),
+    getProjectRuntimeSlotReport: async (opts) =>
+      await projectRuntimeSlotReportClient.getProjectRuntimeSlotReport(opts),
     setServerSetting: async (opts) =>
       await setServerSettingClient.setServerSetting(opts),
   };
@@ -4116,6 +4197,48 @@ export function createInterBayBayOpsHandlers({
       impl: {
         getRootfsQuotaReport: async (opts) =>
           await impl.getRootfsQuotaReport(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "getAcpAdmissionDenialReport">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-acp-admission-denial-report",
+      }),
+      impl: {
+        getAcpAdmissionDenialReport: async (opts) =>
+          await impl.getAcpAdmissionDenialReport(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "getServiceAdmissionDenialReport">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-service-admission-denial-report",
+      }),
+      impl: {
+        getServiceAdmissionDenialReport: async (opts) =>
+          await impl.getServiceAdmissionDenialReport(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "getProjectRuntimeSlotReport">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-project-runtime-slot-report",
+      }),
+      impl: {
+        getProjectRuntimeSlotReport: async (opts) =>
+          await impl.getProjectRuntimeSlotReport(opts),
       },
     }),
   ];

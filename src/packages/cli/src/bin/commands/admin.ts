@@ -462,6 +462,7 @@ function formatAcpDenialPrometheus(report: any): string {
   const windowMinutes = report?.window_minutes ?? "";
   for (const group of report?.groups ?? []) {
     const labels = prometheusLabels({
+      bay_id: group.bay_id ?? "",
       account_id: group.account_id ?? "",
       project_id: group.project_id ?? "",
       limit: group.limit ?? "unknown",
@@ -478,6 +479,7 @@ function formatAcpDenialPrometheus(report: any): string {
   );
   for (const group of report?.groups ?? []) {
     const labels = prometheusLabels({
+      bay_id: group.bay_id ?? "",
       account_id: group.account_id ?? "",
       project_id: group.project_id ?? "",
       limit: group.limit ?? "unknown",
@@ -499,6 +501,7 @@ function formatServiceDenialPrometheus(report: any): string {
   const windowMinutes = report?.window_minutes ?? "";
   for (const group of report?.groups ?? []) {
     const labels = prometheusLabels({
+      bay_id: group.bay_id ?? "",
       host_id: group.host_id ?? "",
       account_id: group.account_id ?? "",
       project_id: group.project_id ?? "",
@@ -517,6 +520,7 @@ function formatServiceDenialPrometheus(report: any): string {
   );
   for (const group of report?.groups ?? []) {
     const labels = prometheusLabels({
+      bay_id: group.bay_id ?? "",
       host_id: group.host_id ?? "",
       account_id: group.account_id ?? "",
       project_id: group.project_id ?? "",
