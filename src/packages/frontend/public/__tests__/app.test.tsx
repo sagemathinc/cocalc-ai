@@ -444,7 +444,10 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(await screen.findByText("CoCalc - Privacy Policy")).not.toBeNull();
+    expect(
+      await screen.findByRole("heading", { name: "Privacy Policy" }),
+    ).not.toBeNull();
+    expect(screen.getByText("Last Updated: May 13, 2026")).not.toBeNull();
     expect(
       screen.getByText(/Protecting your privacy is really important to us/i),
     ).not.toBeNull();
@@ -470,8 +473,11 @@ describe("PublicApp", () => {
     );
 
     expect(
-      await screen.findByText("CoCalc - Data Processing Addendum"),
+      await screen.findByRole("heading", {
+        name: "Data Processing Addendum",
+      }),
     ).not.toBeNull();
+    expect(screen.getByText("Last Updated: April 15, 2026")).not.toBeNull();
     expect(
       screen.getByText(/The Controller \(User\) provides/i),
     ).not.toBeNull();
@@ -503,7 +509,9 @@ describe("PublicApp", () => {
       />,
     );
 
-    expect(await screen.findByText("CoCalc - Terms of Service")).not.toBeNull();
+    expect(
+      await screen.findByRole("heading", { name: "Terms of Service" }),
+    ).not.toBeNull();
     expect(
       screen.getByText(/Once you POST TO THE GENERAL PUBLIC/i),
     ).not.toBeNull();

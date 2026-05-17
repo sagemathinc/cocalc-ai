@@ -79,6 +79,46 @@ const PUBLIC_PAGE_CSS = `
   .cocalc-public-card .ant-card-head-title {
     color: ${PUBLIC_COLORS.heading};
   }
+
+  .cocalc-public-policy-article p,
+  .cocalc-public-policy-article li {
+    line-height: 1.75;
+  }
+
+  .cocalc-public-policy-article table {
+    border-collapse: collapse;
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .cocalc-public-policy-article th,
+  .cocalc-public-policy-article td {
+    border: 1px solid ${PUBLIC_COLORS.border};
+    padding: 0.5em;
+    vertical-align: top;
+  }
+
+  .cocalc-public-policy-article .uppercase {
+    text-transform: uppercase;
+  }
+
+  @media print {
+    .cocalc-public-header,
+    .cocalc-public-footer-band,
+    .cocalc-public-policy-subnav {
+      display: none !important;
+    }
+
+    .cocalc-public-content {
+      background: white !important;
+      padding: 0 !important;
+    }
+
+    .cocalc-public-policy-article {
+      max-width: none !important;
+    }
+  }
 `;
 
 const PAGE_BAND_STYLE = {
@@ -337,6 +377,7 @@ export function PublicPage({
             }}
           >
             <Header
+              className="cocalc-public-header"
               style={{
                 ...PAGE_BAND_STYLE,
                 background: PUBLIC_COLORS.brandTint,
@@ -351,6 +392,7 @@ export function PublicPage({
               <PublicTopNav active={active} />
             </Header>
             <Content
+              className="cocalc-public-content"
               style={{
                 ...PAGE_BAND_STYLE,
                 background: PUBLIC_COLORS.pageBackground,
@@ -373,6 +415,7 @@ export function PublicPage({
               </Flex>
             </Content>
             <Footer
+              className="cocalc-public-footer-band"
               style={{
                 ...PAGE_BAND_STYLE,
                 background: PUBLIC_COLORS.footerBackground,

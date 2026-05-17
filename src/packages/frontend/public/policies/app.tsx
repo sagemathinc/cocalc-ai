@@ -172,6 +172,7 @@ function PolicySubNav({ slug }: { slug?: string }) {
   }));
   return (
     <Flex
+      className="cocalc-public-policy-subnav"
       justify="center"
       style={{ minWidth: 0, paddingBlock: token.paddingXS }}
     >

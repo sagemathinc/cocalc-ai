@@ -5,39 +5,19 @@
 
 import {
   A,
-  Customize,
-  Footer,
-  Head,
-  Header,
-  Layout,
-  MAX_WIDTH,
-  withCustomize,
-} from "./compat";
+  PolicySection,
+  PolicySubsection,
+  type PublicPolicy,
+} from "./policy";
 
-export default function TermsOfService({ customize }) {
-  return (
-    <Customize value={customize}>
-      <Head title="Terms of Service" />
-      <Layout>
-        <Header page="policies" subPage="terms" />
-        <Layout.Content
-          style={{
-            backgroundColor: "white",
-          }}
-        >
-          <div
-            style={{
-              maxWidth: MAX_WIDTH,
-              margin: "15px auto",
-              padding: "15px",
-              backgroundColor: "white",
-            }}
-          >
-            <div style={{ textAlign: "center", color: "#444" }}>
-              <h1 style={{ fontSize: "28pt" }}>CoCalc - Terms of Service</h1>
-              <h2>Last Updated: April 15, 2026</h2>
-            </div>
-            <div style={{ fontSize: "12pt" }}>
+export const termsPolicy: PublicPolicy = {
+  description: "The core terms governing use of CoCalc and related services.",
+  navLabel: "Terms",
+  slug: "terms",
+  title: "Terms of Service",
+  updated: "April 15, 2026",
+  content: (
+    <>
               <p>
                 Welcome to the SageMath, Inc. ("<b>SMI</b>") website located at{" "}
                 <A href="https://cocalc.com">https://cocalc.com</A> (the "
@@ -47,7 +27,7 @@ export default function TermsOfService({ customize }) {
                 easier to read, the Site and our services are collectively
                 called the "<b>Services</b>".{" "}
               </p>
-              <h1>Agreement to Terms</h1>
+              <PolicySection title="Agreement to Terms">
               <p>
                 By using our Services, you agree to be bound by these Terms. If
                 you don’t agree to these Terms, do not use the Services. If you
@@ -57,7 +37,8 @@ export default function TermsOfService({ customize }) {
                 other legal entity to these Terms. In that case, "you" and
                 "your" will refer to that company or other legal entity.{" "}
               </p>
-              <h1>Changes to Terms or Services</h1>
+              </PolicySection>
+              <PolicySection title="Changes to Terms or Services">
               <p>
                 We may modify the Terms at any time, in our sole discretion. If
                 we do so, we’ll let you know either by posting the modified
@@ -77,14 +58,16 @@ export default function TermsOfService({ customize }) {
                 may change or discontinue all or any part of the Services, at
                 any time and without notice, at our sole discretion.{" "}
               </p>
-              <h1>Who May Use the Services</h1>
-              <h2>Eligibility</h2>
+              </PolicySection>
+              <PolicySection title="Who May Use the Services">
+              <PolicySubsection title="Eligibility">
               <p>
                 You may use the Services only if you are 13 years (16, if you
                 are an EU citizen) or older and are not barred from using the
                 Services under applicable law.{" "}
               </p>
-              <h2>Registration and Your Information</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Registration and Your Information">
               <p>
                 If you want to use certain features of the Services you’ll have
                 to create an account ("<b>Account</b>"). You can do this via the
@@ -96,8 +79,10 @@ export default function TermsOfService({ customize }) {
                 significantly more restrictive and we relaxed it to better
                 support student privacy requirements.){" "}
               </p>
-              <h1>Using the Services</h1>
-              <h2>Projects and Files</h2>
+              </PolicySubsection>
+              </PolicySection>
+              <PolicySection title="Using the Services">
+              <PolicySubsection title="Projects and Files">
               <p>
                 The Services offer a web-based environment through which users
                 can use SageMath and other open source math software online in
@@ -122,7 +107,8 @@ export default function TermsOfService({ customize }) {
                 the Services. If you don’t agree with the terms of a File
                 License, then you may not use the applicable Files.{" "}
               </p>
-              <h2>Collaborators</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Collaborators">
               <p>
                 You can elect to share your Files (which comprise User Content
                 (defined below)) with one or more Account holders of your
@@ -143,7 +129,8 @@ export default function TermsOfService({ customize }) {
                 will have the same rights to access and use your Files as those
                 granted to Collaborators in this paragraph.{" "}
               </p>
-              <h2>Posting</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Posting">
               <p>
                 You may also make your Files available to a broader audience by
                 posting them through our Services (hereinafter, "<b>Posting</b>
@@ -164,12 +151,15 @@ export default function TermsOfService({ customize }) {
                   before POSTING.{" "}
                 </span>{" "}
               </p>
-              <h2>Commercial Use</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Commercial Use">
               <p>
                 In order to use the Services for commercial purposes, you must
                 obtain a business license or subscription.
               </p>
-              <h1>API Terms</h1>
+              </PolicySubsection>
+              </PolicySection>
+              <PolicySection title="API Terms">
               <p>
                 You may access your Account data via our application programming
                 interface ("<b>API</b>"). Your use of the API, including use
@@ -206,7 +196,8 @@ export default function TermsOfService({ customize }) {
                   API key in order to use the API.
                 </li>
               </ul>
-              <h1>Payments and Refunds</h1>
+              </PolicySection>
+              <PolicySection title="Payments and Refunds">
               <p>
                 Your use of the Services can be on a free trial or paid basis.
                 If you are using the Services pursuant to a paid plan (or you
@@ -227,7 +218,7 @@ export default function TermsOfService({ customize }) {
                 Content, features, or capacity of your Account. SMI does not
                 accept any liability for such loss.
               </p>
-              <h2>Licenses and Subscriptions</h2>
+              <PolicySubsection title="Licenses and Subscriptions">
               <p>
                 A license allows you to use the Services with configurable
                 resources. It may have either set start and end dates, or be an
@@ -242,7 +233,8 @@ export default function TermsOfService({ customize }) {
                 Such notice may be provided at any time by posting the changes
                 to the Site or the Service itself.{" "}
               </p>
-              <h2>CoCalc Credit and Pay-As-You-Go Services</h2>
+              </PolicySubsection>
+              <PolicySubsection title="CoCalc Credit and Pay-As-You-Go Services">
               <p>
                 Some Services, such as compute servers, may require you to put
                 CoCalc Credit on your Account before you can access them. CoCalc
@@ -256,7 +248,9 @@ export default function TermsOfService({ customize }) {
                 Site or the Service itself. Typically these changes mirror fee
                 changes by cloud providers that we utilize.
               </p>
-              <h1>Feedback</h1>
+              </PolicySubsection>
+              </PolicySection>
+              <PolicySection title="Feedback">
               <p>
                 We welcome feedback, comments and suggestions for improvements
                 to the Services ("<b>Feedback</b>"). You can submit Feedback by
@@ -269,7 +263,8 @@ export default function TermsOfService({ customize }) {
                 use, copy, modify, create derivative works based upon and
                 otherwise exploit the Feedback for any purpose.{" "}
               </p>
-              <h1>Privacy Policy</h1>
+              </PolicySection>
+              <PolicySection title="Privacy Policy">
               <p>
                 Please refer to our Privacy Policy (
                 <A href="/policies/privacy">
@@ -282,7 +277,8 @@ export default function TermsOfService({ customize }) {
                 <A href="/policies/dpa">https://cocalc.com/policies/dpa</A>),
                 which is hereby incorporated into these Terms by reference.{" "}
               </p>
-              <h1>Content and Content Rights</h1>
+              </PolicySection>
+              <PolicySection title="Content and Content Rights">
               <p>
                 For purposes of these Terms: (i) "<b>Content</b>" means text,
                 graphics, images, software, works of authorship of any kind, and
@@ -293,7 +289,8 @@ export default function TermsOfService({ customize }) {
                 Services (including without limitation, Files). Content includes
                 without limitation User Content.{" "}
               </p>
-              <h1>Content Ownership and Responsibility</h1>
+              </PolicySection>
+              <PolicySection title="Content Ownership and Responsibility">
               <p>
                 SMI does not claim any ownership rights in any User Content and
                 nothing in these Terms will be deemed to restrict any rights
@@ -308,7 +305,7 @@ export default function TermsOfService({ customize }) {
                 notices incorporated in or accompanying the Services or
                 Content.{" "}
               </p>
-              <h2>Rights in User Content Granted by You</h2>
+              <PolicySubsection title="Rights in User Content Granted by You">
               <p>
                 By making any User Content available through Services: (i) you
                 hereby grant to SMI a non-exclusive, transferable,
@@ -335,7 +332,8 @@ export default function TermsOfService({ customize }) {
                 publicity or privacy, or result in the violation of any
                 applicable law or regulation.{" "}
               </p>
-              <h2>Aggregate Data Usage</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Aggregate Data Usage">
               <p>
                 You acknowledge and agree that SMI may (i) collect anonymous
                 usage and performance data with respect to your use of the
@@ -349,7 +347,8 @@ export default function TermsOfService({ customize }) {
                 various users’ use of the Services, but not specifically
                 identifying you).{" "}
               </p>
-              <h2>Rights in Content Granted by SMI</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Rights in Content Granted by SMI">
               <p>
                 Subject to your compliance with these Terms, SMI grants you, if
                 you are a non-Account holder user of the Services, a limited,
@@ -366,7 +365,9 @@ export default function TermsOfService({ customize }) {
                 of the Services and solely in connection with your permitted use
                 of the Services.{" "}
               </p>
-              <h1>General Prohibitions and SMI’s Enforcement Rights</h1>
+              </PolicySubsection>
+              </PolicySection>
+              <PolicySection title="General Prohibitions and SMI’s Enforcement Rights">
               <p> You agree not to do any of the following:</p>
               <ul>
                 <li>
@@ -472,7 +473,8 @@ export default function TermsOfService({ customize }) {
                 of the Services (including without limitation, file hosting)
                 until you can reduce your bandwidth consumption.{" "}
               </p>
-              <h1>DMCA/Copyright Policy</h1>
+              </PolicySection>
+              <PolicySection title="DMCA/Copyright Policy">
               <p>
                 SMI respects copyright law and expects its users to do the same.
                 It is SMI’s policy to terminate in appropriate circumstances
@@ -481,7 +483,8 @@ export default function TermsOfService({ customize }) {
                 <A href="/policies/copyright"> /policies/copyright </A> for
                 further information.{" "}
               </p>
-              <h1>Links to Third Party Websites or Resources</h1>
+              </PolicySection>
+              <PolicySection title="Links to Third Party Websites or Resources">
               <p>
                 The Services may contain links to third-party websites or
                 resources. We provide these links only as a convenience and are
@@ -491,7 +494,8 @@ export default function TermsOfService({ customize }) {
                 assume all risk arising from, your use of any third-party
                 websites or resources.{" "}
               </p>
-              <h1>Termination</h1>
+              </PolicySection>
+              <PolicySection title="Termination">
               <p>
                 We may terminate or suspend your access to and use of the
                 Services, at our sole discretion, at any time and without notice
@@ -506,7 +510,8 @@ export default function TermsOfService({ customize }) {
                 Rights; Indemnity; Limitation of Liability; Dispute Resolution;
                 Governing Law and Jurisdiction; General Terms.{" "}
               </p>
-              <h1>Warranty Disclaimers</h1>
+              </PolicySection>
+              <PolicySection title="Warranty Disclaimers">
               <p className="uppercase">
                 The Services and Content are provided "AS IS," without warranty
                 of any kind. Without limiting the foregoing, WE EXPLICITLY
@@ -544,7 +549,8 @@ export default function TermsOfService({ customize }) {
                 APPLICABLE ACCOUNT HOLDER OR NON-ACCOUNT HOLDER USER WHO
                 DOWNLOADS THE CONTENT.{" "}
               </p>
-              <h1>Indemnity</h1>
+              </PolicySection>
+              <PolicySection title="Indemnity">
               <p>
                 You will indemnify and hold harmless SMI and its officers,
                 directors, employees and agents, from and against any claims,
@@ -557,7 +563,8 @@ export default function TermsOfService({ customize }) {
                 with the applicable File License and a breach by you of any
                 representations or warranties in these Terms).{" "}
               </p>
-              <h1>Limitation of Liability</h1>
+              </PolicySection>
+              <PolicySection title="Limitation of Liability">
               <p className="uppercase">
                 NEITHER SMI NOR ANY OTHER PARTY INVOLVED IN CREATING, PRODUCING,
                 OR DELIVERING THE SERVICES OR CONTENT WILL BE LIABLE FOR ANY
@@ -591,14 +598,16 @@ export default function TermsOfService({ customize }) {
                 FUNDAMENTAL ELEMENTS OF THE BASIS OF THE BARGAIN BETWEEN CLIENT
                 AND YOU.{" "}
               </p>
-              <h1>Dispute Resolution</h1>
-              <h2>Governing Law</h2>
+              </PolicySection>
+              <PolicySection title="Dispute Resolution">
+              <PolicySubsection title="Governing Law">
               <p>
                 These Terms and any action related thereto will be governed by
                 the laws of the State of California without regard to its
                 conflict of laws provisions.{" "}
               </p>
-              <h2>Agreement to Arbitrate</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Agreement to Arbitrate">
               <p>
                 You and SMI agree that any dispute, claim or controversy arising
                 out of or relating to these Terms or the breach, termination,
@@ -631,7 +640,8 @@ export default function TermsOfService({ customize }) {
                 sentence, this "Dispute Resolution" section will survive any
                 termination of these Terms.{" "}
               </p>
-              <h2>Arbitration Rules</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Arbitration Rules">
               <p>
                 The arbitration will be administered by the American Arbitration
                 Association ("<b>AAA</b>") in accordance with the Commercial
@@ -644,7 +654,8 @@ export default function TermsOfService({ customize }) {
                 Act will govern the interpretation and enforcement of this
                 Section.{" "}
               </p>
-              <h2>Arbitration Process</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Arbitration Process">
               <p>
                 A party who desires to initiate arbitration must provide the
                 other party with a written Demand for Arbitration as specified
@@ -666,7 +677,8 @@ export default function TermsOfService({ customize }) {
                 the Demand for Arbitration, then the AAA will appoint the
                 arbitrator in accordance with the AAA Rules.{" "}
               </p>
-              <h2>Arbitration Location and Procedure</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Arbitration Location and Procedure">
               <p>
                 Unless you and SMI otherwise agree, the arbitration will be
                 conducted in the county where you reside. If your claim does not
@@ -680,7 +692,8 @@ export default function TermsOfService({ customize }) {
                 parties, consistent with the expedited nature of the
                 arbitration.{" "}
               </p>
-              <h2>Arbitrator’s Decision</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Arbitrator’s Decision">
               <p>
                 The arbitrator will render an award within the time frame
                 specified in the AAA Rules. The arbitrator’s decision will
@@ -699,7 +712,8 @@ export default function TermsOfService({ customize }) {
                 it may have under applicable law to recover, attorneys’ fees and
                 expenses if it prevails in arbitration.{" "}
               </p>
-              <h2>Fees</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Fees">
               <p>
                 Your responsibility to pay any AAA filing, administrative and
                 arbitrator fees will be solely as set forth in the AAA Rules.
@@ -710,7 +724,8 @@ export default function TermsOfService({ customize }) {
                 purpose (as measured by the standards set forth in Federal Rule
                 of Civil Procedure 11(b)).{" "}
               </p>
-              <h2>Changes</h2>
+              </PolicySubsection>
+              <PolicySubsection title="Changes">
               <p>
                 Notwithstanding the provisions of the "Modification" section
                 above, if SMI changes this "Dispute Resolution" section after
@@ -726,9 +741,8 @@ export default function TermsOfService({ customize }) {
                 you first accepted these Terms (or accepted any subsequent
                 changes to these Terms).{" "}
               </p>
-              <h2>
-                <b>General Terms</b>
-              </h2>
+              </PolicySubsection>
+              <PolicySubsection title="General Terms">
               <p>
                 These Terms constitute the entire and exclusive understanding
                 and agreement between SMI and you regarding the Services and
@@ -778,21 +792,17 @@ export default function TermsOfService({ customize }) {
                 </A>
                 .{" "}
               </p>
-              <h1>Contact Information</h1>
+              </PolicySubsection>
+              </PolicySection>
+              <PolicySection title="Contact Information">
               <p>
                 If you have any questions about these Terms or the Services,
                 please contact SMI at{" "}
                 <A href="mailto:help@sagemath.com">help@sagemath.com</A>.
               </p>
-            </div>
-          </div>
-          <Footer />
-        </Layout.Content>{" "}
-      </Layout>
-    </Customize>
-  );
-}
+              </PolicySection>
+    </>
+  ),
+};
 
-export async function getServerSideProps(context) {
-  return await withCustomize({ context });
-}
+export default termsPolicy;

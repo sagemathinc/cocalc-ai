@@ -1,38 +1,19 @@
 import {
   A,
-  Customize,
-  Footer,
-  Head,
-  Header,
-  Layout,
-  MAX_WIDTH,
-  withCustomize,
-} from "./compat";
+  PolicySection,
+  PolicySubsection,
+  type PublicPolicy,
+} from "./policy";
 
-export default function Privacy({ customize }) {
-  return (
-    <Customize value={customize}>
-      <Head title="Privacy Policy" />
-      <Layout>
-        <Header page="policies" subPage="privacy" />
-        <Layout.Content
-          style={{
-            backgroundColor: "white",
-          }}
-        >
-          <div
-            style={{
-              maxWidth: MAX_WIDTH,
-              margin: "15px auto",
-              padding: "15px",
-              backgroundColor: "white",
-            }}
-          >
-            <div style={{ textAlign: "center", color: "#444" }}>
-              <h1 style={{ fontSize: "28pt" }}>CoCalc - Privacy Policy</h1>
-              <h2>Last Updated: May 13, 2026</h2>
-            </div>
-            <div style={{ fontSize: "12pt" }}>
+export const privacyPolicy: PublicPolicy = {
+  description:
+    "How SageMath, Inc. collects, uses, and protects personal information.",
+  navLabel: "Privacy",
+  slug: "privacy",
+  title: "Privacy Policy",
+  updated: "May 13, 2026",
+  content: (
+    <>
               <p>
                 Protecting your privacy is really important to us. With this in
                 mind, we’re providing this Privacy Policy to explain our
@@ -46,19 +27,19 @@ export default function Privacy({ customize }) {
                 sure that you have read and understand our Terms of
                 Service.{" "}
               </p>
-              <h1>Revisions to this Privacy Policy</h1>
-              <p>
-                Any information that is collected via our Services is covered by
-                the Privacy Policy in effect at the time such information is
-                collected. We may revise this Privacy Policy from time to time.
-                If we make any material changes to this Privacy Policy, we’ll
-                notify you of those changes by posting them on the Services or
-                by sending you an email or other notification, and we’ll update
-                the "Revision history" below to indicate when those changes will
-                become effective.{" "}
-              </p>
-              <div id="purpose">
-                <h1>1 Purpose</h1>
+              <PolicySection title="Revisions to this Privacy Policy">
+                <p>
+                  Any information that is collected via our Services is covered by
+                  the Privacy Policy in effect at the time such information is
+                  collected. We may revise this Privacy Policy from time to time.
+                  If we make any material changes to this Privacy Policy, we’ll
+                  notify you of those changes by posting them on the Services or
+                  by sending you an email or other notification, and we’ll update
+                  the "Revision history" below to indicate when those changes will
+                  become effective.{" "}
+                </p>
+              </PolicySection>
+              <PolicySection id="purpose" title="1 Purpose">
                 <p>
                   This Privacy Policy is incorporated by reference into the
                   Sagemath Terms of Service (the <strong>“Terms”</strong>). The
@@ -72,9 +53,8 @@ export default function Privacy({ customize }) {
                   Section 13 or otherwise herein will have the meanings set
                   forth in the Terms.
                 </p>
-              </div>
-              <div id="scope">
-                <h1>2 Scope</h1>
+              </PolicySection>
+              <PolicySection id="scope" title="2 Scope">
                 <p>
                   This Privacy Policy applies to Personal Information that is
                   Processed by Sagemath in the course of our business, including
@@ -120,12 +100,8 @@ export default function Privacy({ customize }) {
                   subsidiary, affiliate, or branch of Sagemath that we may
                   subsequently form.{" "}
                 </p>{" "}
-              </div>{" "}
-              <div id="transparencynoticetypes-of-personal-information-we-collect-and-how-we-use-it">
-                <h1>
-                  3 Transparency Notice - Types of Personal Information We
-                  Collect and How We Use It
-                </h1>
+              </PolicySection>{" "}
+              <PolicySection id="transparencynoticetypes-of-personal-information-we-collect-and-how-we-use-it" title="3 Transparency Notice - Types of Personal Information We Collect and How We Use It">
                 <p>
                   The types of Personal Information we may collect, how we use
                   it, and the lawful basis for processing depend on the nature
@@ -148,9 +124,7 @@ export default function Privacy({ customize }) {
                   requests, comply with law, or process optional cookies and
                   marketing communications where consent is required.{" "}
                 </p>{" "}
-                <div id="types-of-personal-information-we-collect">
-                  {" "}
-                  <h2> 3.1 Types of Personal Information We Collect </h2>
+                <PolicySubsection id="types-of-personal-information-we-collect" title="3.1 Types of Personal Information We Collect">
                   <p>
                     Sagemath collects Personal Information regarding its
                     current, prospective, and former clients, customers, users,
@@ -227,10 +201,8 @@ export default function Privacy({ customize }) {
                     you with information about our business, products, and
                     Services.{" "}
                   </p>{" "}
-                </div>{" "}
-                <div id="how-sagemath-uses-your-information">
-                  {" "}
-                  <h2> 3.2 How Sagemath, Inc. Uses Your Information </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="how-sagemath-uses-your-information" title="3.2 How Sagemath, Inc. Uses Your Information">
                   <p>
                     {" "}
                     We Process Personal Information about Individuals for the
@@ -385,10 +357,8 @@ export default function Privacy({ customize }) {
                     you provide Personal Information or otherwise with your
                     consent.{" "}
                   </p>{" "}
-                </div>{" "}
-                <div id="cookies-pixel-tagsweb-beacons-analytics-information-and-interest-based-advertising">
-                  {" "}
-                  <h2> 3.3 Cookies and Pixel Tags (Web Beacons) </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="cookies-pixel-tagsweb-beacons-analytics-information-and-interest-based-advertising" title="3.3 Cookies and Pixel Tags (Web Beacons)">
                   <p>
                     {" "}
                     We, as well as Third-Parties that provide content,
@@ -408,10 +378,7 @@ export default function Privacy({ customize }) {
                         preferences. We use the following required cookies to
                         make sure that the Services work properly.{" "}
                       </p>{" "}
-                      <table
-                        cellPadding="5px"
-                        style={{ margin: "12px 0", border: "1px solid black" }}
-                      >
+                      <table cellPadding="5px">
                         <thead>
                           <tr>
                             <th align="left"> Cookies </th>
@@ -522,13 +489,8 @@ export default function Privacy({ customize }) {
                       </p>{" "}
                     </li>{" "}
                   </ul>{" "}
-                </div>{" "}
-                <div id="third-party-websites-social-media-platforms-and-software-development-kits">
-                  {" "}
-                  <h2>
-                    3.4 Third-Party Websites, Social Media Platforms, and
-                    Software Development Kits{" "}
-                  </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="third-party-websites-social-media-platforms-and-software-development-kits" title="3.4 Third-Party Websites, Social Media Platforms, and Software Development Kits">
                   <p>
                     {" "}
                     The Services may contain links to other websites and other
@@ -560,10 +522,8 @@ export default function Privacy({ customize }) {
                     <strong>“SDKs”</strong>), such as the Stripe, Inc. SDK, as
                     part of the functionality of our Services.{" "}
                   </p>{" "}
-                </div>{" "}
-                <div id="third-party-payment-processing">
-                  {" "}
-                  <h2>3.5 Third-Party Payment Processing </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="third-party-payment-processing" title="3.5 Third-Party Payment Processing">
                   <p>
                     {" "}
                     When you make purchases through the Services, payments are
@@ -578,10 +538,9 @@ export default function Privacy({ customize }) {
                     interests in preventing fraud and abuse. You can review
                     Stripe&apos;s privacy policy on Stripe&apos;s website.
                   </p>{" "}
-                </div>{" "}
-              </div>{" "}
-              <div id="human-resources-data">
-                <h1>4 Human Resources Data</h1>
+                </PolicySubsection>{" "}
+              </PolicySection>{" "}
+              <PolicySection id="human-resources-data" title="4 Human Resources Data">
                 <p>
                   Sagemath collects Personal Information from current,
                   prospective, and former Employees, their contact points in
@@ -641,17 +600,9 @@ export default function Privacy({ customize }) {
                   </li>{" "}
                   <li>Acquisitions, divestitures, and integrations. </li>{" "}
                 </ul>{" "}
-              </div>{" "}
-              <div id="onward-transfersagemath-may-disclose-your-information">
-                <h1>
-                  <span>5</span> Onward Transfer — Sagemath May Disclose Your
-                  Information{" "}
-                </h1>{" "}
-                <div id="information-we-share">
-                  {" "}
-                  <h2>
-                    <span>5.1</span> Information We Share
-                  </h2>
+              </PolicySection>{" "}
+              <PolicySection id="onward-transfersagemath-may-disclose-your-information" title="5 Onward Transfer — Sagemath May Disclose Your Information">
+                <PolicySubsection id="information-we-share" title="5.1 Information We Share">
                   <p>
                     {" "}
                     We may share your information as described in this Privacy
@@ -766,13 +717,8 @@ export default function Privacy({ customize }) {
                       </p>{" "}
                     </li>{" "}
                   </ul>{" "}
-                </div>{" "}
-                <div id="international-data-transfers">
-                  {" "}
-                  <h2>
-                    {" "}
-                    <span>5.2</span> International Data Transfers{" "}
-                  </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="international-data-transfers" title="5.2 International Data Transfers">
                   <p>
                     {" "}
                     Information collected via or by Sagemath may be transferred,
@@ -787,20 +733,10 @@ export default function Privacy({ customize }) {
                     location explicitly, such as compute servers or cloud file
                     systems, your data will be sent to the chosen location.
                   </p>
-                </div>{" "}
-              </div>{" "}
-              <div id="opt-out-right-to-object-to-processing">
-                {" "}
-                <h1>
-                  {" "}
-                  <span>6</span> Opt-Out (Right to Object to Processing){" "}
-                </h1>{" "}
-                <div id="general">
-                  {" "}
-                  <h2>
-                    {" "}
-                    <span>6.1</span> General{" "}
-                  </h2>{" "}
+                </PolicySubsection>{" "}
+              </PolicySection>{" "}
+              <PolicySection id="opt-out-right-to-object-to-processing" title="6 Opt-Out (Right to Object to Processing)">
+                <PolicySubsection id="general" title="6.1 General">
                   <p>
                     {" "}
                     You have the right to object to and opt out of certain uses
@@ -813,13 +749,8 @@ export default function Privacy({ customize }) {
                     occurred before withdrawal or processing that relies on
                     another lawful basis or applicable legal permission.{" "}
                   </p>{" "}
-                </div>{" "}
-                <div id="email-and-telephone-communications">
-                  {" "}
-                  <h2>
-                    {" "}
-                    <span>6.2</span> Email and Telephone Communications{" "}
-                  </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="email-and-telephone-communications" title="6.2 Email and Telephone Communications">
                   <p>
                     {" "}
                     If you receive an unwanted email from us, you can use the
@@ -841,13 +772,8 @@ export default function Privacy({ customize }) {
                     days after receipt, or such shorter time as may be required
                     by law.{" "}
                   </p>{" "}
-                </div>{" "}
-                <div id="mobile-devices">
-                  {" "}
-                  <h2>
-                    {" "}
-                    <span>6.3</span> Mobile devices{" "}
-                  </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="mobile-devices" title="6.3 Mobile devices">
                   <p>
                     {" "}
                     Sagemath may occasionally send you push notifications
@@ -859,13 +785,8 @@ export default function Privacy({ customize }) {
                     out of this collection by changing the settings on your
                     mobile device.{" "}
                   </p>{" "}
-                </div>{" "}
-                <div id="human-resources-data-1">
-                  {" "}
-                  <h2>
-                    {" "}
-                    <span>6.4</span> Human Resources Data{" "}
-                  </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="human-resources-data-1" title="6.4 Human Resources Data">
                   <p>
                     {" "}
                     With regard to Personal Information that Sagemath receives
@@ -877,13 +798,8 @@ export default function Privacy({ customize }) {
                     proceed only after obtaining affirmative express consent
                     (opt in).{" "}
                   </p>{" "}
-                </div>{" "}
-                <div id="do-not-track">
-                  {" "}
-                  <h2>
-                    {" "}
-                    <span>6.5</span> “Do Not Track”{" "}
-                  </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="do-not-track" title="6.5 “Do Not Track”">
                   <p>
                     {" "}
                     Do Not Track (<strong>“DNT”</strong>) is a privacy
@@ -894,15 +810,9 @@ export default function Privacy({ customize }) {
                     Please note that we do not respond to or honor DNT signals
                     or similar mechanisms transmitted by web browsers.{" "}
                   </p>{" "}
-                </div>{" "}
-              </div>{" "}
-              <div id="rights-of-access-rectification-erasure-and-restriction">
-                {" "}
-                <h1>
-                  {" "}
-                  <span>7</span> Rights of Access, Rectification, Erasure,
-                  Restriction, and to Object{" "}
-                </h1>{" "}
+                </PolicySubsection>{" "}
+              </PolicySection>{" "}
+              <PolicySection id="rights-of-access-rectification-erasure-and-restriction" title="7 Rights of Access, Rectification, Erasure, Restriction, and to Object">
                 <p>
                   {" "}
                   In accordance with applicable law, you may have the right to:
@@ -932,13 +842,8 @@ export default function Privacy({ customize }) {
                   protect your privacy, Sagemath will take steps to verify your
                   identity before fulfilling your request.{" "}
                 </p>{" "}
-              </div>{" "}
-              <div id="data-retention">
-                {" "}
-                <h1>
-                  {" "}
-                  <span>8</span> Data Retention{" "}
-                </h1>{" "}
+              </PolicySection>{" "}
+              <PolicySection id="data-retention" title="8 Data Retention">
                 <p>
                   {" "}
                   Sagemath retains the Personal Information we receive as
@@ -949,13 +854,8 @@ export default function Privacy({ customize }) {
                   business purposes, enforce our agreements, and comply with
                   applicable laws.{" "}
                 </p>{" "}
-              </div>{" "}
-              <div id="security-of-your-information">
-                {" "}
-                <h1>
-                  {" "}
-                  <span>9</span> Security of Your Information{" "}
-                </h1>{" "}
+              </PolicySection>{" "}
+              <PolicySection id="security-of-your-information" title="9 Security of Your Information">
                 <p>
                   {" "}
                   We implement appropriate technical and organizational measures
@@ -984,13 +884,8 @@ export default function Privacy({ customize }) {
                   electronically by posting a notice on the Services or sending
                   an e-mail to you.
                 </p>{" "}
-              </div>{" "}
-              <div id="childrens-privacy">
-                {" "}
-                <h1>
-                  {" "}
-                  <span>10</span> Children’s Privacy{" "}
-                </h1>{" "}
+              </PolicySection>{" "}
+              <PolicySection id="childrens-privacy" title="10 Children’s Privacy">
                 <p>
                   {" "}
                   The Services are not directed to children under 16 years of
@@ -1000,13 +895,8 @@ export default function Privacy({ customize }) {
                   under 16 years old, we will promptly take steps to delete such
                   information.{" "}
                 </p>{" "}
-              </div>{" "}
-              <div id="redresscompliance-and-accountability">
-                {" "}
-                <h1>
-                  {" "}
-                  <span>11</span> Redress/Compliance and Accountability{" "}
-                </h1>{" "}
+              </PolicySection>{" "}
+              <PolicySection id="redresscompliance-and-accountability" title="11 Redress/Compliance and Accountability">
                 <p>
                   {" "}
                   If you have any questions about our privacy practices or this
@@ -1089,20 +979,9 @@ export default function Privacy({ customize }) {
                   Sagemath’s compliance with the EU-U.S. DPF, the UK Extension
                   to the EU-U.S. DPF, and the Swiss-U.S. DPF.{" "}
                 </p>{" "}
-              </div>{" "}
-              <div id="other-rights-and-important-information">
-                {" "}
-                <h1>
-                  {" "}
-                  <span>12</span> Other Rights and Important Information{" "}
-                </h1>{" "}
-                <div id="changes-to-our-privacy-policy-and-practices">
-                  {" "}
-                  <h2>
-                    {" "}
-                    <span>12.1</span> Changes To Our Privacy Policy and
-                    Practices{" "}
-                  </h2>{" "}
+              </PolicySection>{" "}
+              <PolicySection id="other-rights-and-important-information" title="12 Other Rights and Important Information">
+                <PolicySubsection id="changes-to-our-privacy-policy-and-practices" title="12.1 Changes To Our Privacy Policy and Practices">
                   <p>
                     {" "}
                     We may revise this Privacy Policy from time to time. When we
@@ -1111,13 +990,8 @@ export default function Privacy({ customize }) {
                     additional notice or consent for a change, we will provide
                     it before the change applies.{" "}
                   </p>{" "}
-                </div>{" "}
-                <div id="california-privacy-rights">
-                  {" "}
-                  <h2>
-                    {" "}
-                    <span>12.2</span> California Privacy Rights{" "}
-                  </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="california-privacy-rights" title="12.2 California Privacy Rights">
                   <p>
                     {" "}
                     California law permits users who are California residents to
@@ -1129,13 +1003,8 @@ export default function Privacy({ customize }) {
                     does not share Personal Information with Third Parties for
                     their own marketing purposes.{" "}
                   </p>{" "}
-                </div>{" "}
-                <div id="supervisory-authority">
-                  {" "}
-                  <h2>
-                    {" "}
-                    <span>12.3</span> Supervisory Authority{" "}
-                  </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="supervisory-authority" title="12.3 Supervisory Authority">
                   <p>
                     {" "}
                     If you are located in the European Economic Area, you have
@@ -1143,13 +1012,8 @@ export default function Privacy({ customize }) {
                     if you believe our processing of your Personal Information
                     violates applicable law.{" "}
                   </p>{" "}
-                </div>{" "}
-                <div id="compliance">
-                  {" "}
-                  <h2>
-                    {" "}
-                    <span>12.4</span> Compliance{" "}
-                  </h2>{" "}
+                </PolicySubsection>{" "}
+                <PolicySubsection id="compliance" title="12.4 Compliance">
                   <p>
                     {" "}
                     This Policy shall be implemented by Sagemath and all its
@@ -1159,14 +1023,9 @@ export default function Privacy({ customize }) {
                     violates these privacy principles will be subject to
                     disciplinary procedures.{" "}
                   </p>{" "}
-                </div>{" "}
-              </div>{" "}
-              <div id="definitions">
-                {" "}
-                <h1>
-                  {" "}
-                  <span>13</span> Definitions{" "}
-                </h1>{" "}
+                </PolicySubsection>{" "}
+              </PolicySection>{" "}
+              <PolicySection id="definitions" title="13 Definitions">
                 <p>
                   {" "}
                   The following capitalized terms shall have the meanings herein
@@ -1274,16 +1133,9 @@ export default function Privacy({ customize }) {
                     </p>
                   </li>
                 </ul>
-              </div>
-              <div id="revision-history">
-                <h1>
-                  <span>14</span> Revision history
-                </h1>
-                {/* @ts-ignore */}
-                <table
-                  cellPadding="5px"
-                  style={{ margin: "auto", border: "1px solid black" }}
-                >
+              </PolicySection>
+              <PolicySection id="revision-history" title="14 Revision history">
+                <table cellPadding="5px">
                   <thead>
                     <tr>
                       <th align="left"> Title </th> <th> Effective Date </th>
@@ -1368,22 +1220,16 @@ export default function Privacy({ customize }) {
                   </A>
                   .{" "}
                 </p>{" "}
-              </div>
-              <h1>Questions?</h1>
-              <p>
-                Please contact us at{" "}
-                <A href="mailto:office@sagemath.com">office@sagemath.com</A> if
-                you have any questions about our Privacy Policy.
-              </p>
-            </div>
-          </div>
-          <Footer />
-        </Layout.Content>{" "}
-      </Layout>
-    </Customize>
-  );
-}
+              </PolicySection>
+              <PolicySection title="Questions?">
+                <p>
+                  Please contact us at{" "}
+                  <A href="mailto:office@sagemath.com">office@sagemath.com</A> if
+                  you have any questions about our Privacy Policy.
+                </p>
+              </PolicySection>
+    </>
+  ),
+};
 
-export async function getServerSideProps(context) {
-  return await withCustomize({ context });
-}
+export default privacyPolicy;
