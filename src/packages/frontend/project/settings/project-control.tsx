@@ -157,7 +157,7 @@ export const ProjectControl: React.FC<ReactProps> = (props: ReactProps) => {
     return (
       <Paragraph style={{ color: COLORS.GRAY_D, marginBottom: "12px" }}>
         {lifecycle.kind === "archived"
-          ? "Archived projects do not count toward active storage. Starting this project restores it from backup and may take a while while the RootFS image is made available on the host."
+          ? "Archived projects do not count toward active storage. Starting this project restores it from backup and may take a while if the RootFS image must be made available on the host."
           : "This project has not been provisioned yet. Starting it will create the filesystem and make it available on the host."}
       </Paragraph>
     );

@@ -148,7 +148,7 @@ export function getStartProgressMessage({
     if (normalizedLifecycleState === "archived") {
       return "Project restore is being prepared. Archived projects can wait here while backup restore and RootFS preparation are getting ready.";
     }
-    return "Project start is queued. This can take a while while backup restore and RootFS preparation are getting ready.";
+    return "Project start is queued. This can take a while if restore from backup or RootFS preparation is required.";
   }
   if (phase === "cache_rootfs") {
     return "Making the RootFS image available on this host.";
