@@ -4,10 +4,6 @@ but instead using NATS.
 
 How to do development (so in a dev project doing cc-in-cc dev):
 
-0. From the browser, send a terminate-handler message, so the handler running in the project stops:
-
-    await cc.client.conat_client.projectWebsocketApi({project_id:cc.current().project_id, mesg:{cmd:"terminate"}})
-
 1. Open a terminal in the project itself, which sets up the required environment variables.  See api/index.ts for details!!
 
 2. cd to your dev packages/project source code, e.g., ../cocalc/src/packages/project
@@ -64,13 +60,6 @@ export async function init(opts?) {
   });
   for await (const mesg of sub) {
     const data = mesg.data ?? ({} as any);
-    if (data.cmd == "terminate") {
-      logger.debug(
-        "received terminate-handler, so will not handle any further messages",
-      );
-      mesg.respond({ exiting: true }, { noThrow: true });
-      return;
-    }
     handleRequest({ data, mesg, primus });
   }
 }

@@ -43,7 +43,6 @@ export const system = {
   getCustomize: noAuth,
   listNews: noAuth,
   ping: noAuth,
-  terminate: authFirst,
   listBays: authFirst,
   getBayOpsOverview: authFirstRequireAccount,
   getBayOpsDetail: authFirstRequireAccount,
@@ -1426,10 +1425,6 @@ export interface System {
   listNews: () => Promise<NewsItemWebapp[]>;
   // ping server and get back the current time
   ping: () => { now: number };
-  // terminate a service:
-  //   - only admin can do this.
-  //   - useful for development
-  terminate: (service: "database" | "api") => Promise<void>;
 
   listBays: (opts?: { account_id?: string }) => Promise<BayInfo[]>;
 

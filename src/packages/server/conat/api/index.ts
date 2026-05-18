@@ -3,19 +3,12 @@ This is meant to be similar to the nexts pages http api/v2, but using Conat inst
 
 To do development:
 
-1. Turn off conat-server handling for the hub by sending this message from a browser as an admin:
-
-   await cc.client.conat_client.hub.system.terminate({service:'api'})
-
-NOTE: there's no way to turn the auth back on in the hub, so you'll have to restart
-your dev hub after doing the above.
-
-2. Run this script at the terminal:
+1. Run this script at the terminal:
 
     echo "require('@cocalc/server/conat/api').initAPI()" | COCALC_PRODUCT=launchpad DEBUG_CONSOLE=yes DEBUG=cocalc:* node
 
 
-3. Optional: start more servers -- requests get randomly routed to exactly one of them:
+2. Optional: start more servers -- requests get randomly routed to exactly one of them:
 
     echo "require('@cocalc/server/conat').default()" | COCALC_PRODUCT=launchpad DEBUG_CONSOLE=yes DEBUG=cocalc:* node
     echo "require('@cocalc/server/conat').default()" | COCALC_PRODUCT=launchpad DEBUG_CONSOLE=yes DEBUG=cocalc:* node
@@ -56,9 +49,6 @@ import * as notifications from "./notifications";
 import getLogger from "@cocalc/backend/logger";
 import { type HubApi, getUserId, transformArgs } from "@cocalc/conat/hub/api";
 import { conat } from "@cocalc/backend/conat";
-import userIsInGroup from "@cocalc/server/accounts/is-in-group";
-import { close as terminatePersistServer } from "@cocalc/backend/conat/persist";
-import * as Module from "module";
 import { delay } from "awaiting";
 import { recordServiceAdmissionDenialLocal } from "./service-admission-denials";
 import {
@@ -95,11 +85,10 @@ export function initAPI() {
   mainLoop();
 }
 
-let terminate = false;
 async function mainLoop() {
   let d = 3000;
   let lastStart = 0;
-  while (!terminate) {
+  while (true) {
     try {
       lastStart = Date.now();
       await serve();
@@ -129,7 +118,7 @@ async function serve() {
   for await (const mesg of api) {
     (async () => {
       try {
-        await handleMessage({ api, subject, mesg });
+        await handleMessage({ mesg });
       } catch (err) {
         logger.debug(`WARNING: unexpected error  - ${err}`);
       }
@@ -137,119 +126,53 @@ async function serve() {
   }
 }
 
-async function handleMessage({ api, subject, mesg }) {
+async function handleMessage({ mesg }) {
   const request = mesg.data ?? ({} as any);
-  if (request.name == "system.terminate") {
-    // special hook so admin can terminate handling. This is useful for development.
-    const { account_id } = getUserId(mesg.subject);
-    if (!(!!account_id && (await userIsInGroup(account_id, "admin")))) {
-      mesg.respond({ error: "only admin can terminate" }, { noThrow: true });
-      return;
-    }
-    // TODO: could be part of handleApiRequest below, but done differently because
-    // one case halts this loop
-    const { service } = request.args[0] ?? {};
-    logger.debug(`Terminate service '${service}'`);
-    if (service == "persist") {
-      terminatePersistServer();
-      mesg.respond({ status: "terminated", service }, { noThrow: true });
-      return;
-    } else if (service == "project-runner") {
-      const terminateProjectRunner = lazyTerminate(
-        "@cocalc/server/conat/project/run",
-        "close",
-      );
-      terminateProjectRunner();
-      mesg.respond({ status: "terminated", service }, { noThrow: true });
-      return;
-    } else if (service == "project-runner-load-balancer") {
-      const terminateProjectRunnerLoadBalancer = lazyTerminate(
-        "@cocalc/server/conat/project/load-balancer",
-        "close",
-      );
-      terminateProjectRunnerLoadBalancer();
-      mesg.respond({ status: "terminated", service }, { noThrow: true });
-      return;
-    } else if (service == "api") {
-      // special hook so admin can terminate handling. This is useful for development.
-      console.warn("TERMINATING listening on ", subject);
-      logger.debug("TERMINATING listening on ", subject);
-      terminate = true;
-      mesg.respond({ status: "terminated", service }, { noThrow: true });
-      api.stop();
-      return;
-    } else {
-      mesg.respond({ error: `Unknown service ${service}` }, { noThrow: true });
-    }
-  } else {
-    // we explicitly do NOT await this, since we want this hub server to handle
-    // potentially many messages at once, not one at a time!
-    const maxActiveApiRequests = getServiceAdmissionLimit(
-      "hub_conat_api_max_active",
-    );
-    const limitName = serviceAdmissionLimitEnvName("hub_conat_api_max_active");
-    if (activeApiRequests >= maxActiveApiRequests) {
-      void recordServiceAdmissionDenialLocal({
-        surface: "hub-conat-api",
-        source: "hub-api",
-        limit: limitName,
-        current: activeApiRequests,
-        maximum: maxActiveApiRequests,
-        reason: "hub api server is busy",
-        subject: mesg.subject,
-        key: request?.name,
-      });
-      logger.warn("rejecting hub.api request; active request cap reached", {
-        active: activeApiRequests,
-        max: maxActiveApiRequests,
-        name: request?.name,
-      });
-      mesg.respond(null, {
-        noThrow: true,
-        headers: {
-          error: "hub api server is busy",
-          error_attrs: { code: 503 },
-        },
-      });
-      return;
-    }
-    recordServiceAdmissionNearLimit({
+  // we explicitly do NOT await this, since we want this hub server to handle
+  // potentially many messages at once, not one at a time!
+  const maxActiveApiRequests = getServiceAdmissionLimit(
+    "hub_conat_api_max_active",
+  );
+  const limitName = serviceAdmissionLimitEnvName("hub_conat_api_max_active");
+  if (activeApiRequests >= maxActiveApiRequests) {
+    void recordServiceAdmissionDenialLocal({
       surface: "hub-conat-api",
       source: "hub-api",
       limit: limitName,
-      current: activeApiRequests + 1,
+      current: activeApiRequests,
       maximum: maxActiveApiRequests,
-      reason: "hub api server is near capacity",
+      reason: "hub api server is busy",
       subject: mesg.subject,
       key: request?.name,
     });
-    activeApiRequests += 1;
-    void handleApiRequest({ request, mesg }).finally(() => {
-      activeApiRequests -= 1;
+    logger.warn("rejecting hub.api request; active request cap reached", {
+      active: activeApiRequests,
+      max: maxActiveApiRequests,
+      name: request?.name,
     });
+    mesg.respond(null, {
+      noThrow: true,
+      headers: {
+        error: "hub api server is busy",
+        error_attrs: { code: 503 },
+      },
+    });
+    return;
   }
-}
-
-const moduleRequire: NodeRequire | undefined =
-  typeof require === "function"
-    ? require
-    : typeof (Module as { createRequire?: (path: string) => NodeRequire })
-          .createRequire === "function"
-      ? (
-          Module as { createRequire: (path: string) => NodeRequire }
-        ).createRequire(__filename)
-      : undefined;
-
-function lazyTerminate(moduleName: string, exportName: string): () => void {
-  if (!moduleRequire) {
-    return () => undefined;
-  }
-  try {
-    const mod = moduleRequire(moduleName) as Record<string, () => void>;
-    return mod?.[exportName] ?? (() => undefined);
-  } catch {
-    return () => undefined;
-  }
+  recordServiceAdmissionNearLimit({
+    surface: "hub-conat-api",
+    source: "hub-api",
+    limit: limitName,
+    current: activeApiRequests + 1,
+    maximum: maxActiveApiRequests,
+    reason: "hub api server is near capacity",
+    subject: mesg.subject,
+    key: request?.name,
+  });
+  activeApiRequests += 1;
+  void handleApiRequest({ request, mesg }).finally(() => {
+    activeApiRequests -= 1;
+  });
 }
 
 async function handleApiRequest({ request, mesg }) {

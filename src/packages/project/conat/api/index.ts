@@ -4,10 +4,6 @@ DEVELOPMENT:
 
 How to do development (so in a dev project doing cc-in-cc dev).
 
-0. From the browser, terminate this api server running in the project:
-
-    await cc.client.conat_client.projectApi(cc.current()).system.terminate({service:'api'})
-
 1. Create a file project-env.sh as explained in projects/conat/README.md, which defines these environment variables (your values will be different):
 
     export COCALC_PROJECT_ID="00847397-d6a8-4cb0-96a8-6ef64ac3e6cf"
@@ -50,15 +46,10 @@ Remember, if you don't set API_KEY, then the project MUST be running so that the
 
 import { type ProjectApi } from "@cocalc/conat/project/api";
 import { getSubject } from "../names";
-import { close as closeListings } from "@cocalc/project/conat/listings";
-import { close as closeFilesRead } from "@cocalc/project/conat/files/read";
-import { close as closeFilesWrite } from "@cocalc/project/conat/files/write";
-import { close as closeJupyter } from "@cocalc/project/conat/jupyter";
 import { getLogger } from "@cocalc/project/logger";
 import { getIdentity } from "../connection";
 const logger = getLogger("conat:api");
 
-let terminate = false;
 export async function init(opts?) {
   const { client, project_id } = getIdentity(opts);
   logger.debug("serve: create project conat api service");
@@ -68,60 +59,18 @@ export async function init(opts?) {
   logger.debug(`serve: creating api service ${name}`);
   const api = await client.subscribe(subject);
   logger.debug(`serve: subscribed to subject='${subject}'`);
-  listen(api, subject);
+  listen(api);
 }
 
-async function listen(api, subject) {
+async function listen(api) {
   for await (const mesg of api) {
-    if (terminate) {
-      return;
-    }
     (async () => {
       try {
-        await handleMessage(api, subject, mesg);
+        await handleApiRequest(mesg.data ?? ({} as any), mesg);
       } catch (err) {
         logger.debug(`WARNING: issue handling a message -- ${err}`);
       }
     })();
-  }
-}
-
-async function handleMessage(api, subject, mesg) {
-  const request = mesg.data ?? ({} as any);
-  // logger.debug("got message", request);
-  if (request.name == "system.terminate") {
-    // TODO: should be part of handleApiRequest below, but done differently because
-    // one case halts this loop
-    const { service } = request.args[0] ?? {};
-    if (service == "listings") {
-      closeListings();
-      await mesg.respond({ status: "terminated", service });
-      return;
-    } else if (service == "jupyter") {
-      closeJupyter();
-      await mesg.respond({ status: "terminated", service });
-      return;
-    } else if (service == "files:read") {
-      await closeFilesRead();
-      await mesg.respond({ status: "terminated", service });
-      return;
-    } else if (service == "files:write") {
-      await closeFilesWrite();
-      await mesg.respond({ status: "terminated", service });
-      return;
-    } else if (service == "api") {
-      // special hook so admin can terminate handling. This is useful for development.
-      terminate = true;
-      console.warn("TERMINATING listening on ", subject);
-      logger.debug("TERMINATING listening on ", subject);
-      await mesg.respond({ status: "terminated", service });
-      api.stop();
-      return;
-    } else {
-      await mesg.respond({ error: `Unknown service ${service}` });
-    }
-  } else {
-    await handleApiRequest(request, mesg);
   }
 }
 

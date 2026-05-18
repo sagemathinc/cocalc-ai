@@ -11,16 +11,9 @@
 
 DEVELOPMENT:
 
-1. Stop listings service running in the project by running this in your browser:
+1. Setup project environment variables as usual (see README.md)
 
-   await cc.client.conat_client.projectApi(cc.current()).system.terminate({service:'listings'})
-
-    {status: 'terminated', service: 'listings'}
-
-
-2. Setup project environment variables as usual (see README.md)
-
-3. Start your own server
+2. Start your own server
 
 .../src/packages/project/conat$ node
 

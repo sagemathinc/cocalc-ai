@@ -3,13 +3,7 @@
 DEVELOPMENT:
 
 
-1. Stop files:read service running in the project by running this in your browser:
-
-   await cc.client.conat_client.projectApi(cc.current()).system.terminate({service:'files:read'})
-
-    {status: 'terminated', service: 'files:read'}
-
-2. Setup the project environment variables. Then start the server in node:
+1. Setup the project environment variables. Then start the server in node:
 
 
     ~/cocalc/src/packages/project/conat$ . project-env.sh

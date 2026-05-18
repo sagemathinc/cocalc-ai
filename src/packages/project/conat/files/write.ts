@@ -3,13 +3,7 @@
 DEVELOPMENT:
 
 
-1. Stop the files:write service running in the project by running this in your browser:
-
-   await cc.client.conat_client.projectApi(cc.current()).system.terminate({service:'files:write'})
-
-    {status: 'terminated', service: 'files:write'}
-
-2. Setup the project environment variables. Then start the server in node:
+1. Setup the project environment variables. Then start the server in node:
 
 
     ~/cocalc/src/packages/project/conat$ . project-env.sh

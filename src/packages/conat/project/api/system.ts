@@ -9,8 +9,6 @@ import type {
 } from "@cocalc/comm/project-configuration";
 
 export const system = {
-  terminate: true,
-
   version: true,
 
   listing: true,
@@ -39,9 +37,6 @@ export const system = {
 };
 
 export interface System {
-  // stop the api service
-  terminate: () => Promise<void>;
-
   version: () => Promise<number>;
 
   listing: (opts: {

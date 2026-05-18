@@ -1,11 +1,7 @@
 /*
 
-To run just this for a project in a console, from the browser, terminate the jupyter server by running this
-in your browser with the project open:
-
-    await cc.client.conat_client.projectApi(cc.current()).system.terminate({service:'jupyter'})
-
-As explained in packages/project/conat/api/index.ts setup your environment as for the project.
+To run just this for a project in a console, setup your environment as for the
+project as explained in packages/project/conat/api/index.ts.
 
 Then run this code in nodejs:
 

@@ -276,8 +276,6 @@ export async function listNews(): Promise<NewsItemWebapp[]> {
     }));
 }
 
-export async function terminate() {}
-
 export async function listBays() {
   return await listConfiguredBays();
 }

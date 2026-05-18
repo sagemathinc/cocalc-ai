@@ -1,11 +1,7 @@
 /*
 DEV
 
- Turn off in the hub by sending this message from a browser as an admin:
-
-   await cc.client.conat_client.hub.system.terminate({service:'project-runner'})
-
-Then start this in nodejs
+Start this in nodejs
 
    require('@cocalc/project-runner/conat/project/run').init()
 */
