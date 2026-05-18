@@ -67,18 +67,45 @@ export async function getLegacyTimeTravelPatches({
   account_id,
   uuid,
 }: {
-  account_id: string;
+  account_id?: string;
   uuid: string;
 }): Promise<string> {
-  // only restriction on getting a blob when you know the sha1 uuid is
-  // that you are signed in.
   if (!account_id) {
     throw Error("you must be signed in");
   }
+  await assertCanReadBlob({ account_id, uuid });
   const D = db();
   const blob = await callback2(D.get_blob, { uuid });
   // we do NOT de-json this - leave it to the browser client to do that hard work...
   return blob.toString();
+}
+
+async function assertCanReadBlob({
+  account_id,
+  uuid,
+}: {
+  account_id: string;
+  uuid: string;
+}) {
+  if (!isValidUUID(uuid)) {
+    throw Error("uuid is invalid");
+  }
+  const pool = getPool();
+  const { rows } = await pool.query(
+    `
+      SELECT COALESCE(b.project_id, s.project_id::TEXT) AS project_id
+        FROM blobs AS b
+        LEFT JOIN syncstrings AS s ON s.archived = b.id
+       WHERE b.id = $1::UUID
+       LIMIT 1
+    `,
+    [uuid],
+  );
+  const project_id = rows[0]?.project_id;
+  if (!project_id) {
+    return;
+  }
+  await assertCollab({ account_id, project_id });
 }
 
 export async function removeBlobTtls({

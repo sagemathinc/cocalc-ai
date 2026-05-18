@@ -4,6 +4,7 @@
  */
 
 import { Table } from "./types";
+import { isValidUUID } from "@cocalc/util/misc";
 
 // Note that github has a 10MB limit --
 //   https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files
@@ -18,6 +19,65 @@ export const MAX_BLOB_SIZE_PER_PROJECT_PER_DAY = {
   licensed: 100 * MAX_BLOB_SIZE,
   unlicensed: 10 * MAX_BLOB_SIZE,
 };
+
+type DbClient = {
+  query: (...args: any[]) => Promise<any>;
+  release: () => void;
+};
+
+async function assertCanReadBlob({
+  database,
+  uuid,
+  account_id,
+}: {
+  database: any;
+  uuid: string;
+  account_id?: string;
+}) {
+  if (!account_id) {
+    throw Error("you must be signed in");
+  }
+  if (!isValidUUID(uuid)) {
+    throw Error("uuid is invalid");
+  }
+  let client: DbClient | undefined;
+  try {
+    client = await database._get_query_client();
+    if (!client) {
+      throw Error("database not connected -- try again later");
+    }
+    const { rows } = await client.query(
+      `
+        SELECT COALESCE(b.project_id, s.project_id::TEXT) AS project_id
+          FROM blobs AS b
+          LEFT JOIN syncstrings AS s ON s.archived = b.id
+         WHERE b.id = $1::UUID
+         LIMIT 1
+      `,
+      [uuid],
+    );
+    const project_id = rows[0]?.project_id;
+    if (!project_id) {
+      return;
+    }
+    const allowed = await client.query(
+      `
+        SELECT 1
+          FROM projects
+         WHERE project_id = $1::UUID
+           AND COALESCE(deleted, FALSE) IS NOT TRUE
+           AND (users -> $2::TEXT ->> 'group') IN ('owner', 'collaborator')
+         LIMIT 1
+      `,
+      [project_id, account_id],
+    );
+    if (allowed.rows.length === 0) {
+      throw Error("you do not have permission to read this project blob");
+    }
+  } finally {
+    client?.release();
+  }
+}
 
 Table({
   name: "blobs",
@@ -87,6 +147,16 @@ Table({
           const obj: any = Object.assign({}, opts.query);
           if (obj == null || obj.id == null) {
             cb("id must be specified");
+            return;
+          }
+          try {
+            await assertCanReadBlob({
+              database,
+              uuid: obj.id,
+              account_id: opts.account_id,
+            });
+          } catch (err) {
+            cb(`${err}`);
             return;
           }
           database.get_blob({
