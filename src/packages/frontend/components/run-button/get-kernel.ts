@@ -6,7 +6,7 @@
 import { fromJS } from "immutable";
 
 import infoToMode from "@cocalc/frontend/editors/slate/elements/code-block/info-to-mode";
-import { guesslang } from "@cocalc/frontend/misc/detect-language";
+import detectLanguage from "@cocalc/frontend/misc/detect-language";
 import { closest_kernel_match, field_cmp } from "@cocalc/util/misc";
 import { getKernelInfo } from "./kernel-info";
 
@@ -29,10 +29,10 @@ async function guessKernel({ info, code, project_id }): Promise<string> {
     throw Error("there are no available kernels");
   }
   if (!info) {
-    // we guess something since nothing was giving. We use the code in the input and history.
-    const guesses = await guesslang(code);
+    // Guess locally since nothing was given. Use Python when heuristics cannot identify the language.
+    const guess = detectLanguage(code);
     // TODO: should restrict guesses to available kernels...
-    info = guesses[0] ?? "py";
+    info = guess == "txt" ? "py" : guess;
   }
 
   const mode = infoToMode(info, { preferKernel: true });

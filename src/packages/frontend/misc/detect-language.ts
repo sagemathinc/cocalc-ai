@@ -1,10 +1,7 @@
 /*
 Detect the language of some code.
 
-This implements a quick ad hoc synchronous in browser heuristic *and*
-an API call to the backend to run a sophisticated tensorflow
-model (same code as vscode) that is "over 93% correct for 54
-languages".
+This implements a quick ad hoc synchronous in browser heuristic.
 */
 
 // The language should define a key in the file-associations map.
@@ -18,7 +15,6 @@ languages".
 // in the C programming language?" were helpful.
 
 import { file_associations } from "../file-associations";
-import api from "@cocalc/frontend/client/api";
 
 type PopularLangGuess = {
   mode: "sh" | "py" | "js" | "tex";
@@ -197,15 +193,4 @@ export default function detectLanguage(code: string): string {
   }
   v.sort((a, b) => b[1] - a[1]);
   return v[0]?.[0] ?? "txt";
-}
-
-// This calls a sophisticated tensorflow model, see
-// https://github.com/microsoft/vscode-languagedetection
-// and https://github.com/yoeo/guesslang
-// It returns up to cutoff guesses, with the first one the most likely.
-export async function guesslang(
-  code: string,
-  cutoff: number = 1,
-): Promise<string[]> {
-  return (await api("guesslang", { code, cutoff })).result;
 }

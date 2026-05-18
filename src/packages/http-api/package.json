@@ -41,7 +41,6 @@
     "@cocalc/frontend": "workspace:*",
     "@cocalc/server": "workspace:*",
     "@cocalc/util": "workspace:*",
-    "@vscode/vscode-languagedetection": "^1.0.22",
     "base-64": "^1.0.0",
     "express": "^5.2.1",
     "lodash": "^4.18.1",

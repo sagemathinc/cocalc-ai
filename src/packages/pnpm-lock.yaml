@@ -988,9 +988,6 @@ importers:
       '@cocalc/util':
         specifier: workspace:*
         version: link:../util
-      '@vscode/vscode-languagedetection':
-        specifier: ^1.0.22
-        version: 1.0.22
       base-64:
         specifier: ^1.0.0
         version: 1.0.0
@@ -5072,10 +5069,6 @@ packages:
 
   '@vercel/ncc@0.38.4':
     resolution: {integrity: sha512-8LwjnlP39s08C08J5NstzriPvW1SP8Zfpp1BvC2sI35kPeZnHfxVkCwu4/+Wodgnd60UtT1n8K8zw+Mp7J9JmQ==}
-    hasBin: true
-
-  '@vscode/vscode-languagedetection@1.0.22':
-    resolution: {integrity: sha512-rQ/BgMyLuIXSmbA0MSkIPHtcOw14QkeDbAq19sjvaS9LTRr905yij0S8lsyqN5JgOsbtIx7pAcyOxFMzPmqhZQ==}
     hasBin: true
 
   '@vue/compiler-core@3.5.31':
@@ -15055,8 +15048,6 @@ snapshots:
       react: 19.2.1
 
   '@vercel/ncc@0.38.4': {}
-
-  '@vscode/vscode-languagedetection@1.0.22': {}
 
   '@vue/compiler-core@3.5.31':
     dependencies:
