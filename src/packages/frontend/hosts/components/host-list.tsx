@@ -856,7 +856,11 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             : "descend"
           : undefined,
       render: (_: string, host: Host) => (
-        <HostStatusSummary host={host} op={hostOps?.[host.id]} />
+        <HostStatusSummary
+          host={host}
+          op={hostOps?.[host.id]}
+          onDetails={onDetails}
+        />
       ),
     },
     {

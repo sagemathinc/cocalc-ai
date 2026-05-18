@@ -5,12 +5,17 @@
 
 import {
   CheckCircleFilled,
+  ClockCircleOutlined,
   CloudOutlined,
+  CodeOutlined,
   DatabaseOutlined,
   DownOutlined,
   ExclamationCircleFilled,
+  FolderOutlined,
+  InfoCircleOutlined,
   SettingOutlined,
   SyncOutlined,
+  WifiOutlined,
 } from "@ant-design/icons";
 import { Button, Popover, Progress, Space, Tag, Typography } from "antd";
 import type { CSSProperties } from "react";
@@ -31,20 +36,16 @@ import {
   isHostOnline,
   isHostTransitioning,
 } from "../constants";
-import { HostPlacementSummary } from "../pressure-ui";
 import { isSpotStandardFallbackHost } from "../spot-ui";
 import type { HostLroState } from "../hooks/use-host-ops";
-import { HostBackupStatus } from "./host-backup-status";
 import { HostBillingEnforcementStatus } from "./host-billing-enforcement";
 import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
 import { HostBootstrapProgress } from "./host-bootstrap-progress";
-import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
 import {
   getHostOpLabel,
   getHostOpPhase,
   HostOpProgress,
 } from "./host-op-progress";
-import { HostProjectStatus } from "./host-project-status";
 import {
   currentHostRuntimeExceptionSummary,
   hostRuntimeExceptionDescription,
@@ -403,49 +404,572 @@ function ActiveOperation({
   );
 }
 
+function formatDateTime(value?: string): string {
+  if (!value) return "n/a";
+  const ts = Date.parse(value);
+  if (Number.isNaN(ts)) return "invalid";
+  return new Date(ts).toLocaleString();
+}
+
+function detailValueColor(tone?: Tone): string | undefined {
+  return tone ? TONE_COLORS[tone].text : undefined;
+}
+
+function StatusDot({ tone }: { tone: Tone }) {
+  return (
+    <span
+      style={{
+        width: 8,
+        height: 8,
+        borderRadius: 8,
+        background: TONE_COLORS[tone].text,
+        display: "inline-block",
+      }}
+    />
+  );
+}
+
+function DetailRow({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  tone?: Tone;
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "18px minmax(120px, 1fr) minmax(120px, auto) 10px",
+        gap: 8,
+        alignItems: "center",
+        minHeight: 27,
+      }}
+    >
+      <span style={{ color: COLORS.ANTD_LINK_BLUE, fontSize: 15 }}>{icon}</span>
+      <Typography.Text style={{ fontSize: 13 }}>{label}</Typography.Text>
+      <Typography.Text
+        style={{
+          color: detailValueColor(tone),
+          fontSize: 13,
+          textAlign: "right",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </Typography.Text>
+      {tone ? <StatusDot tone={tone} /> : <span />}
+    </div>
+  );
+}
+
+function DetailSection({
+  title,
+  description,
+  icon,
+  children,
+  footer,
+}: {
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        border: `1px solid ${COLORS.GRAY_LL}`,
+        borderRadius: 10,
+        background: "white",
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ padding: "12px 14px 8px" }}>
+        <Space size={7} align="start">
+          <span style={{ color: COLORS.ANTD_LINK_BLUE, marginTop: 2 }}>
+            {icon}
+          </span>
+          <span>
+            <Typography.Text strong style={{ fontSize: 15 }}>
+              {title}
+            </Typography.Text>
+            <Typography.Paragraph
+              type="secondary"
+              style={{ margin: 0, fontSize: 12 }}
+            >
+              {description}
+            </Typography.Paragraph>
+          </span>
+        </Space>
+        <div style={{ marginTop: 8 }}>{children}</div>
+      </div>
+      {footer ? (
+        <div
+          style={{
+            borderTop: `1px solid ${COLORS.GRAY_LL}`,
+            background: COLORS.GRAY_LLL,
+            padding: "6px 14px",
+            textAlign: "center",
+          }}
+        >
+          {footer}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function detailsGridStyle(): CSSProperties {
+  return {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+    gap: 12,
+  };
+}
+
+function operationStatus(op?: HostLroState): {
+  active: boolean;
+  failed: boolean;
+  percent?: number;
+  label: string;
+  phase?: string;
+  tone: Tone;
+} {
+  if (!op) {
+    return {
+      active: false,
+      failed: false,
+      label: "No active operations",
+      tone: "green",
+    };
+  }
+  const status = op.summary?.status ?? "queued";
+  const failed = status === "failed";
+  const active = status === "queued" || status === "running";
+  if (!active && !failed) {
+    return {
+      active: false,
+      failed: false,
+      label: "No active operations",
+      tone: "green",
+    };
+  }
+  return {
+    active,
+    failed,
+    percent: activeOpPercent(op),
+    label: getHostOpLabel(op),
+    phase: getHostOpPhase(op),
+    tone: failed ? "red" : "blue",
+  };
+}
+
+function projectCounts(host: Host): {
+  assigned: number;
+  provisioned: number;
+  running: number;
+} {
+  const status = host.backup_status;
+  return {
+    assigned: status?.total ?? host.projects ?? 0,
+    provisioned: status?.provisioned ?? 0,
+    running: status?.running ?? 0,
+  };
+}
+
+type ObservedComponent = NonNullable<Host["observed_components"]>[number];
+
+function componentTone(component: ObservedComponent): Tone {
+  if (
+    component.runtime_state !== "running" &&
+    component.runtime_state !== "disabled"
+  ) {
+    return "red";
+  }
+  if (
+    component.version_state === "drifted" ||
+    component.version_state === "mixed"
+  ) {
+    return "orange";
+  }
+  if (component.runtime_state === "disabled") return "gray";
+  return "green";
+}
+
+function componentLabel(component: string): string {
+  switch (component) {
+    case "project-host":
+      return "host";
+    case "conat-router":
+      return "router";
+    case "conat-persist":
+      return "persist";
+    case "acp-worker":
+      return "acp";
+    default:
+      return component;
+  }
+}
+
+function daemonTags(host: Host) {
+  const components = host.observed_components ?? [];
+  if (!components.length) {
+    return (
+      <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+        No host-reported daemon status yet.
+      </Typography.Text>
+    );
+  }
+  return (
+    <Space size={[6, 6]} wrap>
+      {components.map((component) => {
+        const tone = componentTone(component);
+        return (
+          <Tooltip
+            key={component.component}
+            title={`${component.component}: ${component.runtime_state}, ${component.version_state}`}
+          >
+            <Tag
+              style={{
+                marginInlineEnd: 0,
+                borderColor: TONE_COLORS[tone].border,
+                background: TONE_COLORS[tone].background,
+                color: TONE_COLORS[tone].text,
+              }}
+            >
+              <StatusDot tone={tone} /> {componentLabel(component.component)}
+            </Tag>
+          </Tooltip>
+        );
+      })}
+    </Space>
+  );
+}
+
+function cliCommands(host: Host): string[] {
+  return [
+    `cocalc host deploy status ${host.id}`,
+    `cocalc host deploy status ${host.id} --component project-host --component conat-router --component conat-persist --component acp-worker`,
+    `cocalc host logs ${host.id} --tail 200`,
+  ];
+}
+
+function CliPopover({ host }: { host: Host }) {
+  return (
+    <Popover
+      trigger="click"
+      title="Host CLI diagnostics"
+      content={
+        <div style={{ maxWidth: 560 }}>
+          <Typography.Paragraph style={{ marginBottom: 8 }}>
+            Use these commands from a shell with the hub environment loaded.
+          </Typography.Paragraph>
+          {cliCommands(host).map((command) => (
+            <Typography.Paragraph
+              key={command}
+              copyable={{ text: command }}
+              style={{ marginBottom: 8 }}
+            >
+              <code>{command}</code>
+            </Typography.Paragraph>
+          ))}
+        </div>
+      }
+    >
+      <Button size="small" icon={<CodeOutlined />}>
+        CLI
+      </Button>
+    </Popover>
+  );
+}
+
 function DetailsPopover({
   host,
   op,
   displayPhaseLabel,
   displayPhaseOwner,
   displayDeadlineAt,
+  onDetails,
 }: {
   host: Host;
   op?: HostLroState;
   displayPhaseLabel?: string;
   displayPhaseOwner?: string;
   displayDeadlineAt?: string;
+  onDetails?: (host: Host) => void;
 }) {
+  const placement = placementSummary(host);
+  const software = softwareSummary(host);
+  const backups = backupSummary(host);
+  const daemons = daemonSummary(host);
+  const projects = projectCounts(host);
+  const operation = operationStatus(op);
+  const lifecycle = host.bootstrap_lifecycle;
+  const backupStatus = host.backup_status;
   return (
     <Popover
       trigger="click"
-      title="Host status details"
-      content={
-        <Space
-          orientation="vertical"
-          size={8}
-          style={{ width: 520, maxWidth: "70vw" }}
-        >
-          <HostPlacementSummary
-            host={host}
-            compact
-            detailMode="popover"
-            showNormal
-          />
-          <HostOpProgress
-            op={op}
-            compact
-            displayPhaseLabel={displayPhaseLabel}
-            displayPhaseOwner={displayPhaseOwner}
-            displayDeadlineAt={displayDeadlineAt}
-          />
-          <HostBillingEnforcementStatus host={host} compact />
-          <HostBootstrapProgress host={host} compact />
-          <HostBootstrapLifecycle host={host} compact detailed />
-          <HostProjectStatus host={host} compact fontSize={12} />
-          <HostBackupStatus host={host} />
-          <HostDaemonHealthSummary host={host} compact />
+      title={
+        <Space size={8}>
+          <SyncOutlined />
+          <span>Host status details</span>
         </Space>
+      }
+      content={
+        <div style={{ width: 760, maxWidth: "82vw" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 16,
+              alignItems: "center",
+              marginBottom: 12,
+            }}
+          >
+            <Space size={[10, 6]} wrap>
+              <StatusHero host={host} />
+              <ConnectionTag host={host} />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                Last checked{" "}
+                {host.provider_observed_at ? (
+                  <TimeAgo date={host.provider_observed_at} />
+                ) : (
+                  "n/a"
+                )}
+              </Typography.Text>
+            </Space>
+            {onDetails ? (
+              <Button
+                size="small"
+                type="primary"
+                onClick={() => onDetails(host)}
+              >
+                Open full host details
+              </Button>
+            ) : null}
+          </div>
+          <div style={detailsGridStyle()}>
+            <DetailSection
+              title="Overview"
+              description="High-level state of this host."
+              icon={<InfoCircleOutlined />}
+            >
+              <DetailRow
+                icon={<SyncOutlined />}
+                label="Lifecycle"
+                value={statusLabel(host)}
+                tone={statusTone(host)}
+              />
+              <DetailRow
+                icon={<WifiOutlined />}
+                label="Connectivity"
+                value={isHostOnline(host.last_seen) ? "Online" : "Offline"}
+                tone={isHostOnline(host.last_seen) ? "green" : "orange"}
+              />
+              <DetailRow
+                icon={<ClockCircleOutlined />}
+                label="Last heartbeat"
+                value={formatDateTime(host.last_seen)}
+              />
+              <DetailRow
+                icon={<CloudOutlined />}
+                label="Cloud check"
+                value={formatDateTime(host.provider_observed_at)}
+              />
+            </DetailSection>
+            <DetailSection
+              title="Current operation"
+              description="Active actions on this host."
+              icon={<SyncOutlined />}
+              footer={
+                op ? (
+                  <HostOpProgress
+                    op={op}
+                    compact
+                    displayPhaseLabel={displayPhaseLabel}
+                    displayPhaseOwner={displayPhaseOwner}
+                    displayDeadlineAt={displayDeadlineAt}
+                  />
+                ) : null
+              }
+            >
+              <div
+                style={{
+                  border: `1px solid ${TONE_COLORS[operation.tone].border}`,
+                  background: TONE_COLORS[operation.tone].background,
+                  borderRadius: 8,
+                  padding: 10,
+                }}
+              >
+                <Space
+                  orientation="vertical"
+                  size={4}
+                  style={{ width: "100%" }}
+                >
+                  <Space size={8}>
+                    <StatusDot tone={operation.tone} />
+                    <Typography.Text strong>
+                      {operation.label}
+                      {operation.phase ? `: ${operation.phase}` : ""}
+                    </Typography.Text>
+                  </Space>
+                  {operation.active ? (
+                    <Progress
+                      percent={operation.percent ?? 30}
+                      showInfo={operation.percent != null}
+                      size="small"
+                      status={operation.percent == null ? "active" : "normal"}
+                    />
+                  ) : (
+                    <Typography.Text type="secondary">
+                      All actions are complete.
+                    </Typography.Text>
+                  )}
+                </Space>
+              </div>
+            </DetailSection>
+            <DetailSection
+              title="Placement"
+              description="Where and whether this host can receive projects."
+              icon={<CloudOutlined />}
+            >
+              <DetailRow
+                icon={<CloudOutlined />}
+                label="Placement"
+                value={placement.value}
+                tone={placement.tone}
+              />
+              <DetailRow
+                icon={<CloudOutlined />}
+                label="Pressure"
+                value={host.pressure?.zone ?? "normal"}
+                tone={placement.tone}
+              />
+              <DetailRow
+                icon={<InfoCircleOutlined />}
+                label="Reason"
+                value={
+                  host.reason_unavailable ??
+                  host.pressure?.reason ??
+                  "Normal placement candidate"
+                }
+              />
+            </DetailSection>
+            <DetailSection
+              title="Software lifecycle"
+              description="System image and bootstrap reconciliation."
+              icon={<SettingOutlined />}
+              footer={
+                lifecycle ? (
+                  <Popover
+                    title="Software lifecycle detail"
+                    content={
+                      <div style={{ maxWidth: 600 }}>
+                        <HostBootstrapLifecycle host={host} compact detailed />
+                      </div>
+                    }
+                    trigger="click"
+                  >
+                    <Button size="small" type="link">
+                      Details <DownOutlined />
+                    </Button>
+                  </Popover>
+                ) : null
+              }
+            >
+              <DetailRow
+                icon={<SettingOutlined />}
+                label="Summary"
+                value={software.value}
+                tone={software.tone}
+              />
+              <DetailRow
+                icon={<InfoCircleOutlined />}
+                label="Drift items"
+                value={lifecycle?.drift_count ?? 0}
+                tone={lifecycle?.drift_count ? "orange" : "green"}
+              />
+              <DetailRow
+                icon={<ClockCircleOutlined />}
+                label="Last reconcile"
+                value={
+                  lifecycle?.last_reconcile_finished_at
+                    ? formatDateTime(lifecycle.last_reconcile_finished_at)
+                    : "n/a"
+                }
+              />
+              <HostBootstrapProgress host={host} compact />
+            </DetailSection>
+            <DetailSection
+              title="Projects & backups"
+              description="Assigned projects and backup coverage."
+              icon={<DatabaseOutlined />}
+            >
+              <DetailRow
+                icon={<FolderOutlined />}
+                label="Projects"
+                value={`${projects.assigned} assigned · ${projects.provisioned} provisioned · ${projects.running} running`}
+              />
+              <DetailRow
+                icon={<DatabaseOutlined />}
+                label="Backups"
+                value={backups.value}
+                tone={backups.tone}
+              />
+              <DetailRow
+                icon={<InfoCircleOutlined />}
+                label="Needs backup"
+                value={
+                  (backupStatus?.provisioned_needs_backup ?? 0) +
+                  (backupStatus?.running ?? 0)
+                }
+                tone={
+                  (backupStatus?.provisioned_needs_backup ?? 0) +
+                    (backupStatus?.running ?? 0) >
+                  0
+                    ? "orange"
+                    : "green"
+                }
+              />
+            </DetailSection>
+            <DetailSection
+              title="Daemon health"
+              description="Background services reported by the host."
+              icon={<SettingOutlined />}
+            >
+              <DetailRow
+                icon={<SettingOutlined />}
+                label="Summary"
+                value={daemons.value}
+                tone={daemons.tone}
+              />
+              <div style={{ marginTop: 8 }}>{daemonTags(host)}</div>
+            </DetailSection>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <DetailSection
+              title="Troubleshooting"
+              description="Tools and diagnostics for support."
+              icon={<CodeOutlined />}
+            >
+              <Space size={12} wrap>
+                <CliPopover host={host} />
+                <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                  Use the CLI for deeper daemon status, logs, and deployment
+                  diagnostics.
+                </Typography.Text>
+              </Space>
+              <div style={{ marginTop: 8 }}>
+                <HostBillingEnforcementStatus host={host} compact />
+              </div>
+            </DetailSection>
+          </div>
+        </div>
       }
     >
       <Button size="small" type="link" style={{ padding: 0, height: "auto" }}>
@@ -458,9 +982,11 @@ function DetailsPopover({
 export function HostStatusSummary({
   host,
   op,
+  onDetails,
 }: {
   host: Host;
   op?: HostLroState;
+  onDetails?: (host: Host) => void;
 }) {
   const displayOp = shouldSuppressProjectHostFailedOp({
     op,
@@ -584,6 +1110,7 @@ export function HostStatusSummary({
           displayPhaseLabel={projectHostRolloutPhase?.label}
           displayPhaseOwner={projectHostRolloutPhase?.owner}
           displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
+          onDetails={onDetails}
         />
       </div>
     </div>

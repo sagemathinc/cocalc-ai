@@ -349,7 +349,11 @@ export const HostCard: React.FC<HostCardProps> = ({
             <Tag color="orange">Reprovision on next start</Tag>
           </Tooltip>
         )}
-        <HostStatusSummary host={host} op={displayHostOp} />
+        <HostStatusSummary
+          host={host}
+          op={displayHostOp}
+          onDetails={onDetails}
+        />
         <Typography.Text>
           Provider:{" "}
           {host.machine?.cloud
