@@ -57,7 +57,8 @@ course enrollment.
   Slack, LMS announcements, or other channels when email delivery fails.
 - Email content must be constrained for low-trust users because this feature
   lets users cause CoCalc to send email.
-- Throttling and content limits must be membership-tier parameters.
+- Throttling and content limits must be membership-tier parameters, which can
+  be overridden by admins.
 
 ## Terminology
 
@@ -86,6 +87,8 @@ Proposed additional fields:
 - `email_ciphertext`: encrypted target email for resend/revocation UI where
   needed.
 - `token_hash`: hash of the random redemption token, never the plaintext token.
+- `token_ciphertext`: encrypted token material used only to reconstruct the
+  invite link for authorized inviters, resend jobs, and CLI output.
 - `token_hint`: short non-secret suffix for support/debugging.
 - `accepted_account_id`: account that redeemed the token.
 - `expires`: token expiration timestamp.
@@ -113,9 +116,20 @@ context is primarily a redemption instruction.
 Token storage requirements:
 
 - Generate at least 128 bits of random token entropy.
-- Store only a keyed or slow hash of the token.
+- Store a keyed or slow hash of the token for redemption validation.
+- Store encrypted token material only when the product needs copy/resend/reuse
+  semantics. This is required for project owners, instructors, cocalc-cli, and
+  the email queue to recover the same active invite link.
+- Encrypt `token_ciphertext` using the site master-key infrastructure or an
+  invite-token-specific derived key. Never log, index, search, or expose the
+  plaintext token except to an authorized creator/project owner/instructor or
+  the outgoing email renderer.
 - Include `invite_id` in the URL for lookup, but validate using `token_hash`.
-- Do not store plaintext token in Postgres logs, events, or audit entries.
+- Do not store plaintext token in Postgres logs, events, audit entries, or
+  metrics.
+- Rotating a token is a security action and should invalidate the previous
+  encrypted token and hash. Ordinary resend should reuse the active token until
+  expiry or revocation.
 
 ## URL Shape
 
@@ -298,11 +312,16 @@ membership/tier parameters rather than constants:
 - `invite_email_allow_course_title`
 - `invite_email_allow_urls`
 - `invite_email_link_copy_enabled`
+- `invite_email_send_enabled`
+- `project_max_collaborators_and_pending_invites`
+- `course_max_students_and_pending_invites`
 
 Safe initial defaults:
 
-- Free/default account: 10 per day, 5 per hour, 10 pending per project, no URLs,
-  300 character note.
+- Free/default account: 10 token links per day, 5 per hour, 10 pending per
+  project, no system-sent email by default, no URLs, 300 character note. The
+  server should return a copyable invite link and tell the user to send it by
+  their own email, LMS, chat, or other channel.
 - Paid individual: 50 per day, 20 per hour, 50 pending per project, no URLs, 600
   character note.
 - Instructor/course tier: 500 per day, 200 per hour, 500 pending per course, no
@@ -314,6 +333,9 @@ Additional global abuse controls:
 - Per-IP creation rate limit.
 - Per-target-email-hash rate limit.
 - Per-project and per-course pending invite caps.
+- Per-project cap on current collaborators plus pending invites. Inviting past
+  the cap should fail with an actionable message to revoke a pending invite,
+  remove a collaborator, or upgrade the sponsoring membership tier.
 - Resend cooldown, e.g. 15 minutes.
 - Reuse active pending invite for same inviter/project-or-course/email hash
   instead of generating unlimited fresh tokens.
@@ -378,6 +400,16 @@ Course APIs:
 The project and course redemption APIs can share a common token validator and
 dispatch by `scope`.
 
+CLI requirements:
+
+- `cocalc-cli` must be able to create an email token invite and print the
+  redemption link without sending email.
+- `cocalc-cli` should also support `--send-email` when the account/tier allows
+  system-sent email.
+- This enables scripts such as "create project, create invite link, send the
+  link through an external workflow".
+- CLI output must not imply whether the target email is a CoCalc account.
+
 ## Security Notes
 
 - Invite token links are bearer credentials. They must be revocable, expiring,
@@ -440,16 +472,22 @@ Phase 6: LMS readiness.
 ## Open Questions
 
 - Should token links be included in ordinary invite list responses for inviters,
-  or should copying require a separate fresh-auth action?
+  or should copying require a separate fresh-auth action? ANS: yes; no fresh
+  auth.
 - Should resending reuse the same token until expiry, or rotate the token on
   each resend? Reuse is better for dedupe and LMS/manual sharing; rotation is
-  better if an email was sent to the wrong address.
+  better if an email was sent to the wrong address. ANS: reuse; user can cancel
+  the invite, then send a new one if they want to ensure one token is
+  invalidated.
 - Is the student-project `course` field currently sufficient to bind
   `account_id` and let course sync update the `.course` row, or do we need a
-  narrow course sync RPC?
-- What membership tier names should map to instructor-scale invite limits?
+  narrow course sync RPC? ANS: let's avoid this RPC if we can, since it will be
+  complicated to implement, similar to codex/acp sync work.
+- What membership tier names should map to instructor-scale invite limits? ANS:
+  create a new "instructor" membership tier.
 - Should organization-verified domains eventually increase invite limits or
-  loosen email content restrictions?
+  loosen email content restrictions? ANS: yes. If a user is at an org with a
+  site license, we should trust them more.
 
 ## Recommended First Implementation Slice
 
@@ -467,3 +505,270 @@ The first slice should include:
 
 After that works, course invites can reuse the token infrastructure and add the
 course-specific binding semantics.
+
+## Detailed Implementation Plan
+
+This section incorporates the review decisions above and is intended to be the
+execution plan.
+
+### Phase 0: Preflight Audit
+
+Confirm current behavior before changing it:
+
+- Enumerate all public and signed-in account search paths.
+- Enumerate all project collaborator invite paths, including frontend,
+  cocalc-cli, Conat, inter-bay, and legacy HTTP routes.
+- Enumerate course invite paths, especially `invite_collaborators_by_email`
+  calls from course student project configuration.
+- Confirm whether student project `projects.course.account_id` is sufficient to
+  reconcile the `.course` row without a new course sync RPC.
+- Confirm the current membership template schema supports new usage-limit
+  fields without a migration beyond template/default updates.
+
+### Phase 1: Membership Limits and Instructor Tier
+
+Add the missing quota knobs before enabling email-token invites broadly:
+
+- Add `project_max_collaborators_and_pending_invites` to effective membership
+  usage limits.
+- Enforce it on account invites and email token invites.
+- Count current project collaborators plus pending account/email/course invites
+  for that project.
+- Return an actionable error when the cap is reached: revoke pending invites,
+  remove collaborators, or upgrade membership.
+- Add invite email/link parameters to membership usage limits:
+  `invite_email_send_enabled`, `invite_email_daily_count`,
+  `invite_email_hourly_count`, `invite_email_recipients_per_batch`,
+  `invite_email_pending_per_project`, `invite_email_pending_per_course`,
+  `invite_email_resend_cooldown_minutes`,
+  `invite_email_custom_message_max_chars`, `invite_email_allow_project_title`,
+  `invite_email_allow_course_title`, `invite_email_allow_urls`, and
+  `invite_email_link_copy_enabled`.
+- Add `course_max_students_and_pending_invites` for course-scale enforcement.
+
+Create a built-in `instructor` membership tier template between `member` and
+`pro`.
+
+Suggested starting values:
+
+- `id`: `instructor`
+- `label`: `Instructor`
+- `store_visible`: true
+- `course_store_visible`: false
+- `priority`: between member and pro
+- `price_monthly`: around 75
+- `price_yearly`: around 75 * 9
+- `project_defaults.disk_quota`: 50000 MB
+- `project_defaults.memory`: 8000 MB
+- `project_defaults.cores`: 2
+- `project_defaults.network`: 1
+- `project_defaults.member_host`: 1
+- `project_defaults.mintime`: 8 hours
+- `max_projects`: substantially above member, e.g. 250
+- `max_sponsored_running_projects`: between member and pro, e.g. 10
+- `project_max_collaborators_and_pending_invites`: e.g. 250
+- `course_max_students_and_pending_invites`: e.g. 500
+- `invite_email_send_enabled`: true
+- `invite_email_daily_count`: 500
+- `invite_email_hourly_count`: 200
+- `invite_email_recipients_per_batch`: 200
+- `invite_email_pending_per_course`: 500
+- `invite_email_pending_per_project`: 250
+- `invite_email_custom_message_max_chars`: 600
+- `invite_email_allow_urls`: false
+- `invite_email_allow_project_title`: true
+- `invite_email_allow_course_title`: true
+- Blob/rootfs/ACP limits should be between member and pro, but biased toward
+  high project count and storage rather than high host-creation power.
+
+Site-license follow-up:
+
+- Site licenses need separate student and instructor pools, not one membership
+  class for every verified-domain user.
+- Model package metadata as two seat pools: student cap and instructor cap.
+- Students can self-claim automatically up to the student cap.
+- Instructor claims require manual approval by site admins or delegated
+  organization approvers.
+- Organization-verified instructor approval can raise invite/email limits, but
+  this should be explicit and audited.
+
+### Phase 2: Schema and Token Infrastructure
+
+Extend the invite data model:
+
+- Add source/scope fields for account, email, and course email invites.
+- Allow null `invitee_account_id` for email-token invites.
+- Add `accepted_account_id`, `email_hash`, `email_ciphertext`, `token_hash`,
+  `token_ciphertext`, `token_hint`, `expires`, `last_sent`, `resend_count`, and
+  `context`.
+- Add indexes for pending invite lookup by project, inviter, status, email hash,
+  and expiry.
+- Add maintenance to expire pending invites.
+
+Implement token helpers:
+
+- Normalize email addresses consistently.
+- Compute HMAC email hashes for dedupe/rate limits.
+- Generate random invite tokens.
+- Hash tokens for redemption.
+- Encrypt token material for authorized copy/resend/CLI/email rendering.
+- Redact tokens from logs and errors.
+- Add tests that plaintext tokens do not appear in serialized invite rows,
+  audit rows, or logger calls.
+
+Email queue handling:
+
+- If email is queued asynchronously, the queue must either receive the plaintext
+  token only in process memory or store an encrypted invite id reference that the
+  worker resolves.
+- Do not store plaintext token in queue payloads.
+- Prefer queue payload `{ invite_id, template }`; the worker decrypts
+  `token_ciphertext` only when rendering the outgoing email.
+
+### Phase 3: Project Email Token Invites
+
+Implement project email token invite creation:
+
+- Require signed-in caller.
+- Require project collaborator/admin permission to invite.
+- Enforce collaborator-plus-pending-invite cap.
+- Enforce membership invite limits and email-send permission.
+- Create or reuse a pending invite for the same project, inviter, email hash,
+  and scope.
+- Return the invite row and invite link to authorized inviters.
+- If the tier does not allow system-sent email, return the link with a clear
+  message that the inviter must send it externally.
+- If the tier allows email, enqueue a constrained email and still return the
+  link for fallback.
+
+Implement redemption:
+
+- Public route accepts `invite_id` and token.
+- If the user is not signed in, redirect through sign-in/create-account and
+  resume redemption.
+- Validate status, expiry, hash, project ownership, and revocation.
+- Route membership write to the project owning bay.
+- Add the accepting account as collaborator.
+- Store `accepted_account_id`, `responded`, and status `accepted`.
+- Project the resulting invite state to relevant home bays.
+
+Convert existing frontend project email invite UI:
+
+- Make "Invite by email" the primary path for unknown people.
+- Stop presenting email search as account discovery.
+- Show copy-link action after invite creation.
+- Show outgoing pending email invites with copy, resend, revoke, and status.
+- Keep account-to-account invites for already-related accounts.
+
+### Phase 4: cocalc-cli Support
+
+Add CLI commands after the server API is stable:
+
+- Create project invite link without sending email.
+- Optionally send email when allowed by membership tier.
+- Print machine-readable JSON with project id, invite id, expires, and invite
+  URL.
+- Never reveal whether the target email maps to an existing account.
+
+Example shape:
+
+```text
+cocalc project invite create --project <project_id> --email user@example.com --json
+cocalc project invite create --project <project_id> --email user@example.com --send-email
+cocalc project invite revoke --project <project_id> --invite <invite_id>
+```
+
+The exact command namespace should match existing CLI conventions.
+
+### Phase 5: Account Search Lockdown
+
+Remove the public HTTP account search route.
+
+For signed-in search:
+
+- Route through one policy implementation.
+- Allow admin exact lookup.
+- Allow normal users to search only related accounts.
+- Keep account-id-to-name display helpers for historical project/course
+  contexts.
+- Update tests to prove unauthenticated HTTP callers cannot search names,
+  emails, or UUIDs.
+
+### Phase 6: Course Email Token Invites
+
+Implement course invite creation using the same token infrastructure:
+
+- Instructor selects or bulk-invites course student rows.
+- For each row, create/reuse a course email token invite with course context.
+- Respect course/instructor membership limits.
+- Email is optional according to tier; copyable links are always available to
+  authorized instructors.
+- Add per-student invite status, copy, resend, revoke, and accepted-account UI.
+
+Implement course redemption:
+
+- Validate invite token as in project redemption.
+- Route to the owning bay for the course/student project.
+- Add the accepting account to the student project.
+- Prefer updating the student project `course` field with the accepted
+  `account_id`, then let existing course sync reconcile the `.course` row.
+- Only add a dedicated course sync RPC if the project `course` field path cannot
+  reliably update the roster.
+- Add shared-project collaboration if course settings require it.
+- Record accepted account id on the invite.
+
+Course tests:
+
+- Student accepts with an account whose primary email differs from the roster
+  email.
+- Instructor can copy a link when email sending is disabled.
+- Revoke prevents a copied link from working.
+- Reuse/resend keeps the same token until revocation or expiry.
+- Collaborator-plus-pending cap includes course pending invites.
+
+### Phase 7: Site License Instructor Approval
+
+Plan this after basic token invites are live, but do not ignore it:
+
+- Extend site license package metadata to include student and instructor pools.
+- Let verified-domain users self-select student or instructor intent.
+- Auto-approve student claims up to the student cap.
+- Queue instructor claims for approval by admins or delegated organization
+  approvers.
+- Apply instructor membership limits only after approval.
+- Audit approvals and revocations.
+
+This solves the current site-license flaw where everyone at a domain receives
+the same membership class despite very different abuse and resource profiles.
+
+### Phase 8: Cleanup and Hardening
+
+After project and course token invites work:
+
+- Remove old non-token email invite behavior.
+- Remove or disable any remaining exact email account lookup in normal invite
+  flows.
+- Ensure all invite emails use server templates and tier-gated content.
+- Add maintenance jobs for expired invites and old encrypted token cleanup.
+- Add admin views for invite abuse investigation: inviter, project, target email
+  hash, status, counts, and timestamps, without casually exposing plaintext
+  target emails.
+- Add metrics for created invites, sent emails, copied links, accepted invites,
+  revoked invites, expired invites, and rate-limit denials.
+
+### Phase 9: Validation Matrix
+
+Required tests before release:
+
+- Free user can create a copyable invite link but cannot send system email.
+- Free user hits project collaborator-plus-pending-invite cap.
+- Member user can send allowed volume of constrained emails.
+- Instructor user can bulk-create hundreds of course invites within limits.
+- Project owner can revoke a pending copied invite link.
+- Redeeming with a different account email succeeds.
+- Redeeming an expired, revoked, or rotated token fails.
+- Public account search is gone.
+- CLI can create a project, create an invite link, and output JSON for
+  automation.
+- Multibay route tests cover creation on home bay and redemption/write on
+  project owning bay.
