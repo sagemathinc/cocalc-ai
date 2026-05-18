@@ -67,7 +67,11 @@ import {
   hostRuntimeExceptionDescription,
   hostRuntimeExceptionLabel,
 } from "../utils/runtime-exceptions";
-import { isSpotHost, SpotHostTag } from "../spot-ui";
+import {
+  isSpotHost,
+  isSpotStandardFallbackHost,
+  SpotHostTag,
+} from "../spot-ui";
 
 type HostCardProps = {
   host: Host;
@@ -168,6 +172,7 @@ export const HostCard: React.FC<HostCardProps> = ({
     (pricingCatalogs ?? catalog)
       ? getHostDisplayedPrice(host, pricingCatalogs ?? catalog, pricingSettings)
       : undefined;
+  const standardFallback = isSpotStandardFallbackHost(host);
   const supportsCatalogPricing =
     host.machine?.cloud === "gcp" || host.machine?.cloud === "nebius";
   const allowStop =
@@ -360,7 +365,13 @@ export const HostCard: React.FC<HostCardProps> = ({
           >
             {host.name}
           </Button>
-          {isSpotHost(host) && <SpotHostTag host={host} />}
+          {isSpotHost(host) && (
+            <SpotHostTag
+              host={host}
+              catalog={pricingCatalogs ?? catalog}
+              pricingSettings={pricingSettings}
+            />
+          )}
         </Space>
       }
       extra={
@@ -475,9 +486,17 @@ export const HostCard: React.FC<HostCardProps> = ({
         {displayedPrice?.current_estimate ? (
           <>
             <Typography.Text>
-              Price now: {displayedPrice.current_estimate.hourly_label} ·{" "}
+              Price now{standardFallback ? " (standard fallback)" : ""}:{" "}
+              {displayedPrice.current_estimate.hourly_label} ·{" "}
               {displayedPrice.current_estimate.monthly_label}
             </Typography.Text>
+            {standardFallback && displayedPrice.running_estimate ? (
+              <Typography.Text type="secondary">
+                Spot when restored:{" "}
+                {displayedPrice.running_estimate.hourly_label} ·{" "}
+                {displayedPrice.running_estimate.monthly_label}
+              </Typography.Text>
+            ) : null}
             {displayedPrice.current_state === "running" &&
             displayedPrice.stopped_estimate ? (
               <Typography.Text type="secondary">

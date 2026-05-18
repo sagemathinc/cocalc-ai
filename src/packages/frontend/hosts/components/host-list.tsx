@@ -74,7 +74,11 @@ import {
   hostBillingEnforcementBlocksStart,
   hostBillingEnforcementSearchText,
 } from "./host-billing-enforcement";
-import { isSpotHost, SpotHostTag } from "../spot-ui";
+import {
+  isSpotHost,
+  isSpotStandardFallbackHost,
+  SpotHostTag,
+} from "../spot-ui";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type {
   HostListViewMode,
@@ -203,12 +207,23 @@ function renderHostPrice(
       </Typography.Text>
     );
   }
+  const standardFallback = isSpotStandardFallbackHost(host);
   return (
     <Space orientation="vertical" size={0}>
-      <span>{display.current_estimate.hourly_label}</span>
+      <span>
+        {standardFallback
+          ? `Standard fallback: ${display.current_estimate.hourly_label}`
+          : display.current_estimate.hourly_label}
+      </span>
       <Typography.Text type="secondary">
         {display.current_estimate.monthly_label}
       </Typography.Text>
+      {standardFallback && display.running_estimate ? (
+        <Typography.Text type="secondary">
+          Spot when restored: {display.running_estimate.hourly_label} ·{" "}
+          {display.running_estimate.monthly_label}
+        </Typography.Text>
+      ) : null}
       {display.current_state === "running" && display.stopped_estimate ? (
         <Typography.Text type="secondary">
           If stopped: {display.stopped_estimate.hourly_label} ·{" "}
@@ -772,7 +787,13 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             <Button type="link" onClick={() => onDetails(host)}>
               {host.name}
             </Button>
-            {isSpotHost(host) && <SpotHostTag host={host} />}
+            {isSpotHost(host) && (
+              <SpotHostTag
+                host={host}
+                catalog={pricingCatalogs ?? catalog}
+                pricingSettings={pricingSettings}
+              />
+            )}
           </Space>
           {host.status === "error" && host.last_error && (
             <Popover
@@ -813,7 +834,13 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
           <Space orientation="vertical" size={0}>
             <Space size="small" wrap>
               <span>{baseLabel}</span>
-              {isSpotHost(host) && <SpotHostTag host={host} />}
+              {isSpotHost(host) && (
+                <SpotHostTag
+                  host={host}
+                  catalog={pricingCatalogs ?? catalog}
+                  pricingSettings={pricingSettings}
+                />
+              )}
             </Space>
             {detail && (
               <Typography.Text type="secondary">{detail}</Typography.Text>

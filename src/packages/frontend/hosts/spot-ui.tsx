@@ -1,9 +1,15 @@
 import { Alert, Popover, Tag } from "antd";
 import type {
   Host,
+  HostCatalog,
   HostPricingModel,
   HostSpotRecoveryPhase,
 } from "@cocalc/conat/hub/api/hosts";
+import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
+import {
+  getHostDisplayedPrice,
+  type HostPriceCatalogSource,
+} from "./providers/registry";
 
 type HostLike =
   | Pick<
@@ -44,13 +50,38 @@ export function isSpotStandardFallbackHost(host?: HostLike | null): boolean {
   );
 }
 
-function spotDescription(host?: HostLike | null) {
+function spotDescription({
+  host,
+  catalog,
+  pricingSettings,
+}: {
+  host?: HostLike | null;
+  catalog?: HostPriceCatalogSource | HostCatalog;
+  pricingSettings?: DedicatedHostSurchargeSettings;
+}) {
+  const display =
+    catalog && host
+      ? getHostDisplayedPrice(host as Host, catalog, pricingSettings)
+      : undefined;
   if (isSpotStandardFallbackHost(host)) {
     return (
       <div style={{ maxWidth: 360 }}>
-        This host is configured for spot pricing, but is currently running as a
-        standard on-demand fallback while CoCalc probes for spot capacity. It is
-        currently charged at standard rates.
+        <div>
+          This host is configured for spot pricing, but is currently running as
+          a standard on-demand fallback while CoCalc probes for spot capacity.
+        </div>
+        {display?.current_estimate ? (
+          <div style={{ marginTop: 8 }}>
+            Current standard rate: {display.current_estimate.hourly_label} ·{" "}
+            {display.current_estimate.monthly_label}
+          </div>
+        ) : null}
+        {display?.running_estimate ? (
+          <div style={{ marginTop: 4 }}>
+            Spot rate when restored: {display.running_estimate.hourly_label} ·{" "}
+            {display.running_estimate.monthly_label}
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -63,13 +94,21 @@ function spotDescription(host?: HostLike | null) {
   );
 }
 
-export function SpotHostTag({ host }: { host?: HostLike | null } = {}) {
+export function SpotHostTag({
+  host,
+  catalog,
+  pricingSettings,
+}: {
+  host?: HostLike | null;
+  catalog?: HostPriceCatalogSource | HostCatalog;
+  pricingSettings?: DedicatedHostSurchargeSettings;
+} = {}) {
   const fallback = isSpotStandardFallbackHost(host);
   return (
     <Popover
       trigger={["hover", "click"]}
       title={fallback ? "Spot host running as standard fallback" : "Spot host"}
-      content={spotDescription(host)}
+      content={spotDescription({ host, catalog, pricingSettings })}
     >
       <Tag color={fallback ? "red" : "orange"} style={{ cursor: "help" }}>
         {fallback ? "standard fallback" : "spot"}
@@ -84,7 +123,7 @@ export function SpotHostAlert() {
       type="warning"
       showIcon
       title="Spot host"
-      description={spotDescription()}
+      description={spotDescription({})}
     />
   );
 }
