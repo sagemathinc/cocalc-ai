@@ -19,7 +19,6 @@ import {
 } from "antd";
 import { SyncOutlined } from "@ant-design/icons";
 import { React } from "@cocalc/frontend/app-framework";
-import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
 import type {
   Host,
@@ -29,31 +28,14 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import type { ParallelOpsWorkerStatus } from "@cocalc/conat/hub/api/system";
 import { HostCard } from "./host-card";
-import {
-  STATUS_COLOR,
-  getHostOnlineTooltip,
-  getHostStatusTooltip,
-  isHostOnline,
-  isHostTransitioning,
-} from "../constants";
 import type { ColumnsType } from "antd/es/table";
 import { COLORS } from "@cocalc/util/theme";
 import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
 import type { HostLroState } from "../hooks/use-host-ops";
-import {
-  describeBlockedHostActions,
-  getHostOpPhase,
-  HostOpProgress,
-} from "./host-op-progress";
-import { HostBackupStatus } from "./host-backup-status";
-import { HostBootstrapProgress } from "./host-bootstrap-progress";
-import { HostBootstrapLifecycle } from "./host-bootstrap-lifecycle";
-import { HostDaemonHealthSummary } from "./host-daemon-health-summary";
+import { describeBlockedHostActions, getHostOpPhase } from "./host-op-progress";
 import { HostErrorDetails } from "./host-error-details";
-import { HostProjectStatus } from "./host-project-status";
-import { HostPlacementSummary } from "../pressure-ui";
 import {
   confirmBulkHostDeprovision,
   confirmHostDeprovision,
@@ -66,12 +48,12 @@ import { HostParallelOpsSummary } from "./host-parallel-ops-summary";
 import { HostCurrentMetrics } from "./host-current-metrics";
 import { HostRuntimeVersionsPanel } from "./host-runtime-versions-panel";
 import {
-  HostBillingEnforcementStatus,
   hostBillingEnforcementBlocksStart,
   hostBillingEnforcementSearchText,
 } from "./host-billing-enforcement";
 import { isSpotHost, SpotHostTag } from "../spot-ui";
 import { HostPricingSummary } from "./host-pricing-summary";
+import { HostStatusSummary } from "./host-status-summary";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type {
   HostListViewMode,
@@ -87,14 +69,8 @@ import { canManageHostLifecycle } from "../utils/access";
 import {
   currentProjectHostAutomaticRollback,
   currentProjectHostRolloutPhase,
-  projectHostRollbackReasonLabel,
-  shouldSuppressProjectHostFailedOp,
 } from "@cocalc/conat/project-host/rollout";
-import {
-  currentHostRuntimeExceptionSummary,
-  hostRuntimeExceptionDescription,
-  hostRuntimeExceptionLabel,
-} from "../utils/runtime-exceptions";
+import { currentHostRuntimeExceptionSummary } from "../utils/runtime-exceptions";
 
 const STATUS_ORDER = [
   "running",
@@ -879,117 +855,9 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             ? "ascend"
             : "descend"
           : undefined,
-      render: (_: string, host: Host) => {
-        const hostOnline = isHostOnline(host.last_seen);
-        const showOnlineTag = host.status === "running" && hostOnline;
-        const showStaleTag = host.status === "running" && !hostOnline;
-        const showSpinner = isHostTransitioning(host.status);
-        const statusLabel = host.deleted ? "deleted" : host.status;
-        const op = hostOps?.[host.id];
-        const runtimeExceptionSummary =
-          currentHostRuntimeExceptionSummary(host);
-        const projectHostRollback = currentProjectHostAutomaticRollback({
-          observation: host.observed_host_agent?.project_host,
-          currentVersion: host.version,
-        });
-        const displayOp = shouldSuppressProjectHostFailedOp({
-          op,
-          currentVersion: host.version,
-          observation: host.observed_host_agent?.project_host,
-        })
-          ? undefined
-          : op;
-        const projectHostRolloutPhase = currentProjectHostRolloutPhase({
-          op: displayOp,
-          currentVersion: host.version,
-          observation: host.observed_host_agent?.project_host,
-        });
-        return (
-          <Space orientation="vertical" size={2}>
-            <Space size="small">
-              <Tooltip
-                title={getHostStatusTooltip(
-                  host.status,
-                  Boolean(host.deleted),
-                  host.provider_observed_at,
-                )}
-                placement="top"
-              >
-                <Tag
-                  color={host.deleted ? "default" : STATUS_COLOR[host.status]}
-                >
-                  {showSpinner ? (
-                    <Space size={4}>
-                      <SyncOutlined spin />
-                      <span>{statusLabel}</span>
-                    </Space>
-                  ) : (
-                    statusLabel
-                  )}
-                </Tag>
-              </Tooltip>
-              {showOnlineTag && (
-                <Tooltip title={getHostOnlineTooltip(host.last_seen)}>
-                  <Tag color="green">online</Tag>
-                </Tooltip>
-              )}
-              {showStaleTag && (
-                <Tooltip title={getHostOnlineTooltip(host.last_seen)}>
-                  <Tag color="orange">offline</Tag>
-                </Tooltip>
-              )}
-              {runtimeExceptionSummary && (
-                <Tooltip
-                  title={hostRuntimeExceptionDescription(
-                    runtimeExceptionSummary,
-                  )}
-                >
-                  <Tag color="blue">
-                    {hostRuntimeExceptionLabel(runtimeExceptionSummary)}
-                  </Tag>
-                </Tooltip>
-              )}
-            </Space>
-            <HostPlacementSummary
-              host={host}
-              compact
-              detailMode="popover"
-              showNormal
-            />
-            <HostOpProgress
-              op={displayOp}
-              compact
-              displayPhaseLabel={projectHostRolloutPhase?.label}
-              displayPhaseOwner={projectHostRolloutPhase?.owner}
-              displayDeadlineAt={projectHostRolloutPhase?.deadlineAt}
-            />
-            <HostBillingEnforcementStatus host={host} compact />
-            {projectHostRollback && (
-              <Tooltip
-                title={`Project-host rollout to ${
-                  projectHostRollback.target_version
-                } was rolled back to ${projectHostRollback.rollback_version}${
-                  projectHostRollback.finished_at
-                    ? ` on ${new Date(projectHostRollback.finished_at).toLocaleString()}`
-                    : ""
-                } because ${projectHostRollbackReasonLabel(
-                  projectHostRollback.reason,
-                )}.`}
-              >
-                <Typography.Text type="warning" style={{ fontSize: 12 }}>
-                  Project-host auto-rolled back to{" "}
-                  <code>{projectHostRollback.rollback_version}</code>
-                </Typography.Text>
-              </Tooltip>
-            )}
-            <HostBootstrapProgress host={host} compact />
-            <HostBootstrapLifecycle host={host} compact />
-            <HostProjectStatus host={host} compact />
-            <HostBackupStatus host={host} compact />
-            <HostDaemonHealthSummary host={host} compact />
-          </Space>
-        );
-      },
+      render: (_: string, host: Host) => (
+        <HostStatusSummary host={host} op={hostOps?.[host.id]} />
+      ),
     },
     {
       title: "Actions",
