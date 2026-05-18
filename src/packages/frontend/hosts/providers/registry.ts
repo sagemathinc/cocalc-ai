@@ -693,6 +693,13 @@ export type HostDisplayedPrice = {
   stopped_estimate?: ProviderPriceEstimate;
 };
 
+export type HostPricingModeEstimates = {
+  current_mode: "standard" | "spot" | "stopped";
+  standard_estimate?: ProviderPriceEstimate;
+  spot_estimate?: ProviderPriceEstimate;
+  stopped_estimate?: ProviderPriceEstimate;
+};
+
 function providerChargeNote(
   provider: HostProvider,
   fundingMode?: string,
@@ -909,6 +916,48 @@ export const getHostDisplayedPrice = (
     current_estimate,
     running_estimate,
     stopped_estimate: stoppedHostPriceEstimate(current_estimate),
+  };
+};
+
+export const getHostPricingModeEstimates = (
+  host: Host,
+  catalog: HostPriceCatalogSource,
+  surchargeSettings?: DedicatedHostSurchargeSettings,
+): HostPricingModeEstimates | undefined => {
+  const provider = host.machine?.cloud;
+  if (provider !== "gcp" && provider !== "nebius") return undefined;
+  const providerCatalog = resolveProviderCatalog(provider, catalog);
+  const selection = hostProviderSelectionForPricing(host);
+  const standard_estimate = getProviderPriceEstimate(
+    provider,
+    providerCatalog,
+    { ...selection, pricing_model: "on_demand" },
+    surchargeSettings,
+  );
+  const spot_estimate = getProviderPriceEstimate(
+    provider,
+    providerCatalog,
+    { ...selection, pricing_model: "spot" },
+    surchargeSettings,
+  );
+  const stopped_estimate = stoppedHostPriceEstimate(
+    standard_estimate ?? spot_estimate,
+  );
+  const currentPricingModel =
+    host.effective_pricing_model ??
+    host.pricing_model ??
+    host.desired_pricing_model;
+  const current_mode =
+    host.status === "off" || host.status === "deprovisioned"
+      ? "stopped"
+      : currentPricingModel === "spot"
+        ? "spot"
+        : "standard";
+  return {
+    current_mode,
+    standard_estimate,
+    spot_estimate,
+    stopped_estimate,
   };
 };
 

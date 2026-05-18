@@ -25,11 +25,7 @@ import {
   isHostOnline,
   isHostTransitioning,
 } from "../constants";
-import {
-  getHostDisplayedPrice,
-  getProviderDescriptor,
-  isKnownProvider,
-} from "../providers/registry";
+import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import { isHostOpActive, type HostLroState } from "../hooks/use-host-ops";
 import {
@@ -67,11 +63,8 @@ import {
   hostRuntimeExceptionDescription,
   hostRuntimeExceptionLabel,
 } from "../utils/runtime-exceptions";
-import {
-  isSpotHost,
-  isSpotStandardFallbackHost,
-  SpotHostTag,
-} from "../spot-ui";
+import { isSpotHost, SpotHostTag } from "../spot-ui";
+import { HostPricingSummary } from "./host-pricing-summary";
 
 type HostCardProps = {
   host: Host;
@@ -168,13 +161,6 @@ export const HostCard: React.FC<HostCardProps> = ({
   const stopLabel = host.status === "stopping" ? "Stopping" : "Stop";
   const providerId = host.machine?.cloud;
   const caps = providerId ? providerCapabilities?.[providerId] : undefined;
-  const displayedPrice =
-    (pricingCatalogs ?? catalog)
-      ? getHostDisplayedPrice(host, pricingCatalogs ?? catalog, pricingSettings)
-      : undefined;
-  const standardFallback = isSpotStandardFallbackHost(host);
-  const supportsCatalogPricing =
-    host.machine?.cloud === "gcp" || host.machine?.cloud === "nebius";
   const allowStop =
     !isDeleted &&
     host.can_start &&
@@ -483,41 +469,11 @@ export const HostCard: React.FC<HostCardProps> = ({
           Size: {size.primary}
           {size.secondary ? ` · ${size.secondary}` : ""}
         </Typography.Text>
-        {displayedPrice?.current_estimate ? (
-          <>
-            <Typography.Text>
-              Price now{standardFallback ? " (standard fallback)" : ""}:{" "}
-              {displayedPrice.current_estimate.hourly_label} ·{" "}
-              {displayedPrice.current_estimate.monthly_label}
-            </Typography.Text>
-            {standardFallback && displayedPrice.running_estimate ? (
-              <Typography.Text type="secondary">
-                Spot when restored:{" "}
-                {displayedPrice.running_estimate.hourly_label} ·{" "}
-                {displayedPrice.running_estimate.monthly_label}
-              </Typography.Text>
-            ) : null}
-            {displayedPrice.current_state === "running" &&
-            displayedPrice.stopped_estimate ? (
-              <Typography.Text type="secondary">
-                If stopped: {displayedPrice.stopped_estimate.hourly_label} ·{" "}
-                {displayedPrice.stopped_estimate.monthly_label}
-              </Typography.Text>
-            ) : null}
-            {displayedPrice.current_state !== "running" &&
-            displayedPrice.running_estimate ? (
-              <Typography.Text type="secondary">
-                {displayedPrice.current_state === "deprovisioned"
-                  ? "If reprovisioned"
-                  : "If started"}
-                : {displayedPrice.running_estimate.hourly_label} ·{" "}
-                {displayedPrice.running_estimate.monthly_label}
-              </Typography.Text>
-            ) : null}
-          </>
-        ) : supportsCatalogPricing ? (
-          <Typography.Text type="secondary">Price: unavailable</Typography.Text>
-        ) : null}
+        <HostPricingSummary
+          host={host}
+          catalog={pricingCatalogs ?? catalog}
+          pricingSettings={pricingSettings}
+        />
         <HostCurrentMetrics host={host} compact />
         <HostPlacementSummary host={host} showNormal />
         <Typography.Text>GPU: {host.gpu ? "Yes" : "No"}</Typography.Text>

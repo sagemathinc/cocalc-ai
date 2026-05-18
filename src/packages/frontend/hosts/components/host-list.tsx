@@ -38,11 +38,7 @@ import {
 } from "../constants";
 import type { ColumnsType } from "antd/es/table";
 import { COLORS } from "@cocalc/util/theme";
-import {
-  getHostDisplayedPrice,
-  getProviderDescriptor,
-  isKnownProvider,
-} from "../providers/registry";
+import { getProviderDescriptor, isKnownProvider } from "../providers/registry";
 import { useHostPricingSettings } from "../hooks/use-host-pricing-settings";
 import type { DedicatedHostSurchargeSettings } from "@cocalc/util/project-host-pricing";
 import type { HostLroState } from "../hooks/use-host-ops";
@@ -74,11 +70,8 @@ import {
   hostBillingEnforcementBlocksStart,
   hostBillingEnforcementSearchText,
 } from "./host-billing-enforcement";
-import {
-  isSpotHost,
-  isSpotStandardFallbackHost,
-  SpotHostTag,
-} from "../spot-ui";
+import { isSpotHost, SpotHostTag } from "../spot-ui";
+import { HostPricingSummary } from "./host-pricing-summary";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type {
   HostListViewMode,
@@ -195,51 +188,13 @@ function renderHostPrice(
     | undefined,
   pricingSettings: DedicatedHostSurchargeSettings,
 ) {
-  const display = catalog
-    ? getHostDisplayedPrice(host, catalog, pricingSettings)
-    : undefined;
-  if (!display?.current_estimate) {
-    const pricedProvider =
-      host.machine?.cloud === "gcp" || host.machine?.cloud === "nebius";
-    return (
-      <Typography.Text type="secondary">
-        {pricedProvider ? "unavailable" : "-"}
-      </Typography.Text>
-    );
-  }
-  const standardFallback = isSpotStandardFallbackHost(host);
   return (
-    <Space orientation="vertical" size={0}>
-      <span>
-        {standardFallback
-          ? `Standard fallback: ${display.current_estimate.hourly_label}`
-          : display.current_estimate.hourly_label}
-      </span>
-      <Typography.Text type="secondary">
-        {display.current_estimate.monthly_label}
-      </Typography.Text>
-      {standardFallback && display.running_estimate ? (
-        <Typography.Text type="secondary">
-          Spot when restored: {display.running_estimate.hourly_label} ·{" "}
-          {display.running_estimate.monthly_label}
-        </Typography.Text>
-      ) : null}
-      {display.current_state === "running" && display.stopped_estimate ? (
-        <Typography.Text type="secondary">
-          If stopped: {display.stopped_estimate.hourly_label} ·{" "}
-          {display.stopped_estimate.monthly_label}
-        </Typography.Text>
-      ) : null}
-      {display.current_state !== "running" && display.running_estimate ? (
-        <Typography.Text type="secondary">
-          {display.current_state === "deprovisioned"
-            ? "If reprovisioned"
-            : "If started"}
-          : {display.running_estimate.hourly_label} ·{" "}
-          {display.running_estimate.monthly_label}
-        </Typography.Text>
-      ) : null}
-    </Space>
+    <HostPricingSummary
+      host={host}
+      catalog={catalog}
+      pricingSettings={pricingSettings}
+      compact
+    />
   );
 }
 
@@ -898,6 +853,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
     {
       title: "Price",
       key: "price",
+      width: 240,
       render: (_: string, host: Host) =>
         renderHostPrice(host, pricingCatalogs ?? catalog, pricingSettings),
     },
