@@ -1,9 +1,4 @@
-import {
-  A,
-  policyHref,
-  PolicySection,
-  type PublicPolicy,
-} from "./policy";
+import { A, policyHref, PolicySection, type PublicPolicy } from "./policy";
 
 const SOC2LOGO = "/public/soc2-aicpa-logo.png";
 
@@ -45,8 +40,8 @@ export const trustPolicy: PublicPolicy = {
       <PolicySection title="GDPR">
         <p>
           SageMath, Inc. compliance with{" "}
-          <A href={"https://gdpr-info.eu/"}>GDPR</A> has been verified by
-          our EU and UK representative{" "}
+          <A href={"https://gdpr-info.eu/"}>GDPR</A> has been verified by our EU
+          and UK representative{" "}
           <A href={"https://gdprlocal.com/"}>GDPR Local</A>.
         </p>
         <p>
@@ -106,8 +101,8 @@ export const trustPolicy: PublicPolicy = {
       <PolicySection title="Questions?">
         <p>
           Please contact us at{" "}
-          <A href="mailto:office@sagemath.com">office@sagemath.com</A> if
-          you have any questions.
+          <A href="mailto:office@sagemath.com">office@sagemath.com</A> if you
+          have any questions.
         </p>
       </PolicySection>
     </>

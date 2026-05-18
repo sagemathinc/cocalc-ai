@@ -41,9 +41,7 @@ export function BuiltinPolicyPage({
   return <PolicyDocument policy={policy} siteName={siteName} />;
 }
 
-export function getBuiltinPolicy(
-  slug?: string,
-): PublicPolicy | undefined {
+export function getBuiltinPolicy(slug?: string): PublicPolicy | undefined {
   if (slug == null) return;
   return BUILTIN_POLICY_BY_SLUG[slug];
 }
