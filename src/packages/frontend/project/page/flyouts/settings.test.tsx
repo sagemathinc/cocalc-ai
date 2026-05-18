@@ -5,7 +5,13 @@ import { render, screen } from "@testing-library/react";
 import { SettingsFlyout } from "./settings";
 
 jest.mock("antd", () => {
-  const Button = ({ children, ...props }: any) => (
+  const Alert = ({ message, description }: any) => (
+    <div>
+      <div>{message}</div>
+      <div>{description}</div>
+    </div>
+  );
+  const Button = ({ children, danger, loading, ...props }: any) => (
     <button type="button" {...props}>
       {children}
     </button>
@@ -21,12 +27,27 @@ jest.mock("antd", () => {
       ))}
     </div>
   );
+  const InputNumber = ({ value, onChange }: any) => (
+    <input
+      value={value}
+      onChange={(event) => onChange?.(Number(event.target.value))}
+      readOnly
+    />
+  );
+  const Popconfirm = ({ children }: any) => <>{children}</>;
   const Space = ({ children }: any) => <div>{children}</div>;
   Space.Compact = ({ children }: any) => <div>{children}</div>;
   return {
+    Alert,
     Button,
     Card,
     Collapse,
+    InputNumber,
+    message: {
+      error: jest.fn(),
+      success: jest.fn(),
+    },
+    Popconfirm,
     Space,
     Tooltip: ({ children }: any) => <>{children}</>,
     Typography: {
@@ -36,7 +57,12 @@ jest.mock("antd", () => {
 });
 
 jest.mock("react-intl", () => ({
+  createIntlCache: () => ({}),
+  createIntl: () => ({
+    formatMessage: (msg: any) => msg?.defaultMessage ?? msg?.id ?? String(msg),
+  }),
   defineMessage: (msg: any) => msg,
+  defineMessages: (msgs: any) => msgs,
   useIntl: () => ({
     formatMessage: (msg: any) => msg?.defaultMessage ?? msg?.id ?? String(msg),
   }),

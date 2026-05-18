@@ -11,15 +11,19 @@ let getLaunchpadRestPortMock: jest.Mock;
 let registerSelfHostTunnelKeyMock: jest.Mock;
 let resolveOnPremHostMock: jest.Mock;
 
-jest.mock("@cocalc/backend/logger", () => ({
-  __esModule: true,
-  default: jest.fn(() => ({
+jest.mock("@cocalc/backend/logger", () => {
+  const getLogger = jest.fn(() => ({
     debug: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
-  })),
-}));
+  }));
+  return {
+    __esModule: true,
+    default: getLogger,
+    getLogger,
+  };
+});
 
 jest.mock("@cocalc/backend/conat", () => ({
   __esModule: true,
