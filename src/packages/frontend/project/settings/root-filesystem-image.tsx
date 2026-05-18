@@ -720,10 +720,17 @@ export default function RootFilesystemImage({
   }
 
   const activeImage = value || effectiveDefaultRootfs;
-  const activeLabel = displayRootfsLabel(activeDisplayEntry, activeImage);
+  const isCustomRootfs = !rootfsLoading && !activeDisplayEntry;
+  const activeLabel = activeDisplayEntry
+    ? displayRootfsLabel(activeDisplayEntry, activeImage)
+    : rootfsLoading
+      ? "Loading image metadata..."
+      : "Custom OCI image";
   const activeDescription =
     activeDisplayEntry?.description?.trim() ||
-    "This image defines the visible / software environment for terminals, notebooks, and project processes.";
+    (isCustomRootfs
+      ? "This project uses a custom image string that is not in the managed catalog. It can still run, but catalog metadata, publisher details, managed upgrade suggestions, and catalog scan metadata may be unavailable."
+      : "Loading managed catalog metadata for this project's runtime image.");
   const projectIsRunning = project.getIn(["state", "state"]) == "running";
 
   return (
@@ -755,7 +762,11 @@ export default function RootFilesystemImage({
                   >
                     {activeLabel}
                   </span>
-                  {renderRootfsTags(activeDisplayEntry)}
+                  {isCustomRootfs ? (
+                    <Tag color="default">Custom OCI image</Tag>
+                  ) : (
+                    renderRootfsTags(activeDisplayEntry)
+                  )}
                   {suggestedUpgradeEntry ? (
                     <Tag color="blue">Upgrade available</Tag>
                   ) : null}
@@ -824,19 +835,27 @@ export default function RootFilesystemImage({
               display: "grid",
               gap: 14,
               gridTemplateColumns: isModal
-                ? "minmax(0, 1.15fr) minmax(280px, 0.85fr)"
+                ? "repeat(auto-fit, minmax(min(340px, 100%), 1fr))"
                 : "1fr",
             }}
           >
             <RuntimePanel
               icon="bolt"
-              title="Recommended actions"
-              subtitle="Change, publish, or manage the image catalog entry."
+              title="Actions"
+              subtitle={
+                isCustomRootfs
+                  ? "Change, scan, or publish this custom image."
+                  : "Change, publish, scan, or manage the catalog entry."
+              }
             >
               <Space direction="vertical" size={10} style={{ width: "100%" }}>
                 <RuntimeAction
                   title="Change or upgrade image"
-                  description="Pick another managed catalog image or use an advanced OCI image."
+                  description={
+                    isCustomRootfs
+                      ? "Pick a managed catalog image or replace this custom OCI image."
+                      : "Pick another managed catalog image or use an advanced OCI image."
+                  }
                   action={
                     <Button type="primary" disabled={open} onClick={openPicker}>
                       Change
@@ -844,25 +863,16 @@ export default function RootFilesystemImage({
                   }
                 />
                 <RuntimeAction
-                  title="Scan current RootFS"
-                  description="Run a vulnerability preflight against the live project RootFS before publishing or continuing to use it."
-                  action={
-                    <Button
-                      disabled={open || scanningLiveRootfs}
-                      loading={scanningLiveRootfs}
-                      onClick={scanCurrentProjectRootfs}
-                    >
-                      Scan
-                    </Button>
-                  }
-                />
-                <RuntimeAction
                   title="Publish current RootFS"
                   description={
-                    <>
-                      Reuse software and <code>/</code>-filesystem
-                      customizations in other projects or courses.
-                    </>
+                    isCustomRootfs ? (
+                      "Save catalog metadata or publish the live project RootFS for reuse."
+                    ) : (
+                      <>
+                        Reuse software and <code>/</code>-filesystem
+                        customizations in other projects or courses.
+                      </>
+                    )
                   }
                   action={
                     <Button
@@ -870,7 +880,7 @@ export default function RootFilesystemImage({
                       onClick={() =>
                         openPublishDialog({
                           image: activeImage,
-                          entry: selectedRootfsEntry,
+                          entry: activeDisplayEntry,
                           publishMode: "copy",
                           copyMode: "project",
                         })
@@ -886,6 +896,7 @@ export default function RootFilesystemImage({
                     description="Update metadata, visibility, tags, version, or theme for this image."
                     action={
                       <Button
+                        type="link"
                         disabled={open}
                         onClick={() =>
                           openPublishDialog({
@@ -900,6 +911,19 @@ export default function RootFilesystemImage({
                     }
                   />
                 ) : null}
+                <RuntimeAction
+                  title="Scan current RootFS"
+                  description="Run a vulnerability preflight against the live project RootFS before publishing or continuing to use it."
+                  action={
+                    <Button
+                      disabled={open || scanningLiveRootfs}
+                      loading={scanningLiveRootfs}
+                      onClick={scanCurrentProjectRootfs}
+                    >
+                      Scan
+                    </Button>
+                  }
+                />
               </Space>
             </RuntimePanel>
 
@@ -936,6 +960,7 @@ export default function RootFilesystemImage({
                   action={
                     previousProjectRootfsState ? (
                       <Button
+                        danger
                         disabled={open || saving}
                         onClick={rollbackToPreviousRootfs}
                       >
@@ -2332,7 +2357,7 @@ function LifecycleRow({
         alignItems: "start",
         display: "grid",
         gap: 8,
-        gridTemplateColumns: action ? "88px minmax(0, 1fr) auto" : "88px 1fr",
+        gridTemplateColumns: "88px minmax(0, 1fr)",
       }}
     >
       <Tag style={{ marginInlineEnd: 0, textAlign: "center" }}>{label}</Tag>
@@ -2349,8 +2374,8 @@ function LifecycleRow({
           {value}
         </div>
         <div style={{ color: COLORS.GRAY_M, fontSize: 12 }}>{detail}</div>
+        {action ? <div style={{ marginTop: 8 }}>{action}</div> : null}
       </div>
-      {action}
     </div>
   );
 }
@@ -2394,7 +2419,11 @@ function RootfsTechnicalDetails({
               <TechnicalGroup title="Current RootFS state">
                 <TechnicalRow
                   label="Catalog label"
-                  value={displayRootfsLabel(activeEntry, activeImage)}
+                  value={
+                    activeEntry
+                      ? displayRootfsLabel(activeEntry, activeImage)
+                      : "Custom OCI image"
+                  }
                 />
                 <TechnicalRow
                   label="OCI image string"
