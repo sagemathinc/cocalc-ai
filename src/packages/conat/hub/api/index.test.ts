@@ -59,4 +59,36 @@ describe("hub API argument transforms", () => {
 
     expect(args[0].session_hash).toBe("explicit-session-hash");
   });
+
+  it("forces browser sign-in cookie issuance to the authenticated account", async () => {
+    const args = await transformArgs({
+      name: "system.issueBrowserSignInCookie",
+      args: [{ account_id: "victim-account", max_age_ms: 60_000 }],
+      account_id: "caller-account",
+    });
+
+    expect(args).toEqual([
+      { account_id: "caller-account", max_age_ms: 60_000 },
+    ]);
+  });
+
+  it("rejects project-authenticated browser sign-in cookie issuance", async () => {
+    await expect(
+      transformArgs({
+        name: "system.issueBrowserSignInCookie",
+        args: [{ account_id: "victim-account" }],
+        project_id: "project-1",
+      }),
+    ).rejects.toThrow("user must be signed in");
+  });
+
+  it("rejects host-authenticated browser sign-in cookie issuance", async () => {
+    await expect(
+      transformArgs({
+        name: "system.issueBrowserSignInCookie",
+        args: [{ account_id: "victim-account" }],
+        host_id: "host-1",
+      }),
+    ).rejects.toThrow("user must be signed in");
+  });
 });

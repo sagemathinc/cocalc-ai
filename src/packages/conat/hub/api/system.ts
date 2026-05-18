@@ -138,7 +138,7 @@ export const system = {
   upsertBrowserSession: authFirst,
   listBrowserSessions: authFirst,
   removeBrowserSession: authFirst,
-  issueBrowserSignInCookie: requireSignedIn,
+  issueBrowserSignInCookie: authFirstRequireAccount,
   assertProjectPublicSharingAllowed: authFirst,
   getProjectAppPublicPolicy: authFirst,
   tracePublicAppHostname: authFirst,
@@ -2159,7 +2159,6 @@ export interface System {
   }) => Promise<{ removed: boolean }>;
 
   issueBrowserSignInCookie: (opts?: {
-    account_id?: string;
     max_age_ms?: number;
   }) => Promise<BrowserSignInCookieInfo>;
 

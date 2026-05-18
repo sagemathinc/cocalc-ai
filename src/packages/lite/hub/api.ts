@@ -1276,12 +1276,9 @@ async function listManagedRootfsReleaseLifecycle(opts?: {
   });
 }
 
-async function issueBrowserSignInCookie(opts?: {
-  account_id?: string;
-  max_age_ms?: number;
-}) {
+async function issueBrowserSignInCookie(opts?: { max_age_ms?: number }) {
   return {
-    account_id: `${opts?.account_id ?? ACCOUNT_ID}`,
+    account_id: ACCOUNT_ID,
     max_age_ms: opts?.max_age_ms,
   };
 }
