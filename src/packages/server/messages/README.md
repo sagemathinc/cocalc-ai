@@ -2,11 +2,9 @@
 
 See util/db-schema/messages.ts for the database schema.
 
-See frontend/messages for the frontend client app.
-
-There could eventually be a lot here related to messages,
-since we are also going to build a support system around this.
-However, for now it is really simple.
+This package is now server-internal. The old frontend message center and
+public send/get APIs were removed; browser clients should use notifications,
+course tooling, or project chat instead of creating messages directly.
 
 ## Maintenance
 

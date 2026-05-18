@@ -307,10 +307,6 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
   },
-  "messages.send": {
-    decision: "fresh-auth-not-required",
-    reason: ORDINARY_AUTHZ,
-  },
   "messages.sendSystemNotice": {
     decision: "fresh-auth-not-required",
     reason: "admin-only notification send",

@@ -7,7 +7,6 @@ import { EventEmitter } from "events";
 import { delay } from "awaiting";
 import { alert_message } from "../alerts";
 import { ProjectCollaborators } from "./project-collaborators";
-import { Messages } from "./messages";
 import { QueryClient } from "./query";
 import { TimeClient } from "./time";
 import { AccountClient } from "./account";
@@ -61,7 +60,6 @@ export interface WebappClient extends EventEmitter {
   account_id?: string;
   browser_id: string;
   project_collaborators: ProjectCollaborators;
-  messages: Messages;
   query_client: QueryClient;
   time_client: TimeClient;
   account_client: AccountClient;
@@ -135,7 +133,6 @@ class Client extends EventEmitter implements WebappClient {
   account_id: string = Cookies.get(ACCOUNT_ID_COOKIE);
   browser_id: string = randomId();
   project_collaborators: ProjectCollaborators;
-  messages: Messages;
   query_client: QueryClient;
   time_client: TimeClient;
   account_client: AccountClient;
@@ -193,7 +190,6 @@ class Client extends EventEmitter implements WebappClient {
         return (..._) => {};
       };
     }
-    this.messages = new Messages();
     this.query_client = bind_methods(new QueryClient(this));
     this.time_client = bind_methods(new TimeClient(this));
     this.account_client = bind_methods(new AccountClient(this));

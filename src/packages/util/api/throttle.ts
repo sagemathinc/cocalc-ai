@@ -46,18 +46,11 @@ const THROTTLE = {
     minute: 100,
     hour: 1000,
   },
-  // i'm worried about abuse/bugs with message sending for now, so
-  // pretty aggressive throttling:
+  // Legacy message state writes are still throttled defensively, but message
+  // creation through user_query is disabled.
   "user_query-messages": {
     minute: 6,
     hour: 100,
-  },
-
-  // pretty limiting for now -- this only applies to sending messages via the api
-  "messages/send": {
-    second: 1,
-    minute: 5,
-    hour: 60,
   },
 } as const;
 

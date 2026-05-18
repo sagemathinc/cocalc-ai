@@ -4,7 +4,7 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
-import { send, sendSystemNotice } from "./messages";
+import { sendSystemNotice } from "./messages";
 
 const ADMIN_ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 const TARGET_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
@@ -50,43 +50,6 @@ describe("conat messages api", () => {
       ],
     );
   }
-
-  it("sends user messages only to collaborators", async () => {
-    await seedAccounts();
-
-    const id = await send({
-      account_id: USER_ACCOUNT_ID,
-      to_ids: [TARGET_ACCOUNT_ID, "target@example.com"],
-      subject: "Question",
-      body: "Please look at this.",
-    });
-
-    expect(typeof id).toBe("number");
-    const { rows } = await getPool().query(
-      `SELECT from_id, to_ids, subject, body, system_notice
-         FROM messages
-        ORDER BY id DESC
-        LIMIT 1`,
-    );
-    expect(rows).toEqual([
-      {
-        from_id: USER_ACCOUNT_ID,
-        to_ids: [TARGET_ACCOUNT_ID],
-        subject: "Question",
-        body: "Please look at this.",
-        system_notice: false,
-      },
-    ]);
-
-    await expect(
-      send({
-        account_id: USER_ACCOUNT_ID,
-        to_ids: [OTHER_ACCOUNT_ID],
-        subject: "Spam",
-        body: "No shared project.",
-      }),
-    ).rejects.toThrow("message recipients must be collaborators");
-  });
 
   it("requires admin to send a system notice", async () => {
     await seedAccounts();

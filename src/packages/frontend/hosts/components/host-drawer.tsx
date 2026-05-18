@@ -21,7 +21,7 @@ import {
 import { React, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
-import SelectUser from "@cocalc/frontend/messages/select-users";
+import SelectUser from "@cocalc/frontend/users/select-user";
 import { User } from "@cocalc/frontend/users/user";
 import { actions as usersActions } from "@cocalc/frontend/users/actions";
 import { shouldHydrateUserIdentity } from "@cocalc/frontend/users/store";

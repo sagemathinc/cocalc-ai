@@ -4,36 +4,14 @@
  */
 
 /*
-This is a table to support a simple messages system in cocalc, to support sending and replying to
-messages between these three classes of entities:
+This table stores legacy internal messages that are still used by server-side
+system, billing, admin, and course/organization workflows.
 
-- cocalc system
-- projects
-- users
-
-A message has a subject and body.
-
-When it is read can be set, and a message can also be saved for later.
-
-That's it!  This is meant to be just enough to support things liked:
-
- - the system sending messages to users, e.g., reminds about notification
- - a user replying and sending a message to the system (which admins could see).
- - users sending messages to each other (and replying)
- - users send message to system
- - system send message to user
- - project sending messages to users (e.g., about something happening)
-
-For simplicity there are no tags or any extra metadata -- put that in the markdown
-in the body of the message.
-
-On purpose, all messages are sent/received in one central place in the UI, NOT associated
-to particular files/directories/projects.  Again, use links in the message for that.
+Browser/API clients must not create messages through user_query. The old
+user-to-user message composer was removed because it was no longer a core
+product surface and exposed avoidable abuse/spam paths.
 */
 
-import { isEqual } from "lodash";
-
-import throttle from "@cocalc/util/api/throttle";
 import { isValidUUID } from "@cocalc/util/misc";
 
 import { ID } from "./crm";
@@ -336,7 +314,7 @@ Table({
                 cb(`${err}`);
               }
             } else {
-              cb(`use the sent_messages table to create a new message`);
+              cb("message creation via user_query is disabled");
             }
           } finally {
             client?.release();
@@ -345,221 +323,6 @@ Table({
       },
     },
   },
-});
-
-Table({
-  // this should be called "messages_from_me" because it also includes drafts that have not been sent yet
-  name: "sent_messages",
-  fields: SCHEMA.messages.fields,
-  rules: {
-    primary_key: SCHEMA.messages.primary_key,
-    changefeed_keys: ["from_id"],
-    virtual: "messages",
-    user_query: {
-      get: {
-        ...SCHEMA.messages.user_query?.get!,
-        pg_where: [{ "from_id = $::UUID": "account_id" }],
-      },
-      set: {
-        fields: {
-          id: true,
-          to_ids: true,
-          subject: true,
-          body: true,
-          sent: true,
-          thread_id: true,
-          saved: true,
-          starred: true,
-          liked: true,
-          read: true,
-          deleted: true,
-          expire: true,
-        },
-        async instead_of_change(
-          database,
-          old_val,
-          new_val,
-          account_id,
-          cb,
-        ): Promise<void> {
-          let client: DbClient | undefined;
-          try {
-            client = await database._get_query_client();
-          } catch (err) {
-            cb("database not connected -- try again later");
-            return;
-          }
-          if (!client) {
-            cb("database not connected -- try again later");
-            return;
-          }
-          try {
-            if (old_val != null) {
-              try {
-                if (old_val.sent) {
-                  // once a message is sent, the ONLY thing you can change are BITSET_FIELDS.
-                  for (const field in new_val) {
-                    // @ts-ignore
-                    if (!BITSET_FIELDS.includes(field)) {
-                      delete new_val[field];
-                    }
-                  }
-                  // TODO: we might later have a notion of editing messages after they are sent, but this will
-                  // be by adding one or more patches, so the edit history is clear.
-                }
-                if (
-                  new_val.to_ids != null &&
-                  !isEqual(new_val.to_ids, old_val.to_ids)
-                ) {
-                  await assertToIdsAreValid({ client, to_ids: new_val.to_ids });
-                }
-
-                const setBit = (field: BitSetField, value: string) => {
-                  const numUsers =
-                    1 + (new_val.to_ids ?? old_val.to_ids ?? []).length;
-                  const bit = value[0] ?? "0";
-                  if (bit != "0" && bit != "1") {
-                    throw Error(`invalid bit '${bit}'`);
-                  }
-                  return `${field} = overlay(coalesce(${field},'0'::bit(1))::bit(${numUsers}) PLACING '${bit}'::bit(1) FROM 1)`;
-                };
-                const v: string[] = [];
-                for (const field of BITSET_FIELDS) {
-                  if (
-                    new_val[field] != null &&
-                    new_val[field] != old_val[field]
-                  ) {
-                    v.push(setBit(field, new_val[field]));
-                  }
-                }
-                const bitsets = v.length == 0 ? "" : "," + v.join(",");
-
-                // user is allowed to change a lot about messages *from* them only.
-                // putting from_id in the query specifically as an extra security measure, so user can't change
-                // message with id they don't own.
-                const query = `UPDATE messages SET to_ids=$3,subject=$4,body=$5,sent=$6,thread_id=$7 ${bitsets} WHERE from_id=$1 AND id=$2`;
-                const params = [
-                  account_id,
-                  parseInt(old_val.id),
-                  new_val.to_ids ?? old_val.to_ids,
-                  new_val.subject ?? old_val.subject,
-                  new_val.body ?? old_val.body,
-                  new_val.sent ?? old_val.sent,
-                  new_val.thread_id ?? old_val.thread_id,
-                ];
-                await client.query(query, params);
-                const to_ids = new_val.to_ids ?? old_val.to_ids;
-                if (to_ids && (new_val.sent ?? old_val.sent)) {
-                  for (const account_id of to_ids) {
-                    await database.updateUnreadMessageCount({
-                      account_id,
-                    });
-                  }
-                }
-                cb();
-              } catch (err) {
-                cb(`${err}`);
-              }
-            } else {
-              // create a new message:
-              cb("use the create_message virtual table to create messages");
-            }
-          } finally {
-            client?.release();
-          }
-        },
-      },
-    },
-  },
-});
-
-async function assertToIdsAreValid({
-  client,
-  to_ids,
-}: {
-  client: DbClient;
-  to_ids: string[];
-}) {
-  const { rows } = await client.query(
-    "SELECT account_id FROM accounts WHERE account_id=ANY($1)",
-    [to_ids],
-  );
-  if (rows.length != to_ids.length) {
-    const exist = new Set(rows.map(({ account_id }) => account_id));
-    const missing = to_ids.filter((account_id) => !exist.has(account_id));
-    if (missing.length > 0) {
-      throw Error(
-        `every target account_id must exist -- these accounts do not exist: ${JSON.stringify(missing)}`,
-      );
-    }
-  }
-}
-
-// See comment in groups -- for create_groups.
-Table({
-  name: "create_message",
-  rules: {
-    virtual: "messages",
-    primary_key: "id",
-    user_query: {
-      get: {
-        fields: {
-          id: null,
-          to_ids: null,
-          subject: null,
-          body: null,
-          sent: null,
-          thread_id: null,
-        },
-        async instead_of_query(database, opts, cb): Promise<void> {
-          let client: DbClient | undefined;
-          try {
-            const { account_id } = opts;
-            throttle({
-              endpoint: "user_query-create_message",
-              account_id,
-            });
-            client = await database._get_query_client();
-            if (!client) {
-              cb("database not connected -- try again later");
-              return;
-            }
-            const query = opts.query ?? {};
-            const to_ids = Array.from(
-              new Set((query.to_ids ?? []) as string[]),
-            );
-            await assertToIdsAreValid({ client, to_ids });
-            const { rows } = await client.query(
-              `INSERT INTO messages(from_id,to_ids,subject,body,system_notice,thread_id,sent)
-                 VALUES($1::UUID,$2::UUID[],$3,$4,FALSE,$5,$6) RETURNING *
-                `,
-              [
-                account_id,
-                to_ids,
-                opts.query.subject,
-                opts.query.body,
-                opts.query.thread_id,
-                opts.query.sent,
-              ],
-            );
-            if (opts.query.sent) {
-              for (const account_id of to_ids) {
-                await database.updateUnreadMessageCount({
-                  account_id,
-                });
-              }
-            }
-            cb(undefined, rows[0]);
-          } catch (err) {
-            cb(`${err}`);
-          } finally {
-            client?.release();
-          }
-        },
-      },
-    },
-  },
-  fields: SCHEMA.groups.fields,
 });
 
 Table({

@@ -5,7 +5,6 @@ Some of these are only used by the nextjs app!
 */
 
 import api0 from "@cocalc/frontend/client/api";
-import { send } from "@cocalc/frontend/client/messages";
 import type {
   Purchase,
   Reason,
@@ -36,7 +35,6 @@ import type {
 } from "@cocalc/util/stripe/types";
 import throttle from "@cocalc/util/api/throttle";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
-import { QUOTA_SPEC } from "@cocalc/util/db-schema/purchase-quotas";
 
 async function api(endpoint: string, args?: object, noThrottle?: boolean) {
   if (!noThrottle) {
@@ -128,7 +126,6 @@ export async function setQuota(
   return await api("purchases/set-quota", { service, value });
 }
 
-let lastPurchaseAlert = 0;
 export async function isPurchaseAllowed(
   service: Service,
   cost?: MoneyValue,
@@ -138,33 +135,7 @@ export async function isPurchaseAllowed(
   reason?: string;
   chargeAmount?: number;
 }> {
-  const result = await api("purchases/is-purchase-allowed", { service, cost });
-  if (result.allowed && result.discouraged) {
-    if (Date.now() - lastPurchaseAlert >= 3000) {
-      lastPurchaseAlert = Date.now();
-      const display = QUOTA_SPEC[service]?.display ?? service;
-      try {
-        // fire off a warning to the user so they know they are hitting a budget.
-        await send({
-          subject: `Budget Alert: ${display}`,
-          body: `You recently made a purchase of ${display}.
-
-${result.reason}
-
-<br/>
-
-- [Pay As You Go Budgets](/settings/payg) -- raise your ${display} budget to stop these messages.
-
-- [All Purchases](/settings/purchases)
-
-`,
-        });
-      } catch (err) {
-        console.warn(err);
-      }
-    }
-  }
-  return result;
+  return await api("purchases/is-purchase-allowed", { service, cost });
 }
 
 interface PurchasesOptions {

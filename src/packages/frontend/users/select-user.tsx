@@ -1,13 +1,24 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Select } from "antd";
 import type { SelectProps } from "antd";
-import { webapp_client } from "@cocalc/frontend/webapp-client";
-import User from "./user";
 import { throttle } from "lodash";
+
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
-import { cmp, search_match, search_split } from "@cocalc/util/misc";
-import { is_valid_email_address as isValidEmailAddress } from "@cocalc/util/misc";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import {
+  cmp,
+  search_match,
+  search_split,
+  is_valid_email_address as isValidEmailAddress,
+} from "@cocalc/util/misc";
+import { COLORS } from "@cocalc/util/theme";
+import { User } from "./user";
 
 const AVATAR_SIZE = 22;
 
@@ -17,34 +28,29 @@ function UserLabel({
   last_active,
 }: {
   account_id: string;
-  knownUsers;
+  knownUsers: Set<string>;
   last_active?;
 }) {
   const users = useTypedRedux("users", "user_map");
+  const label =
+    account_id == webapp_client.account_id
+      ? "me"
+      : users?.get(account_id)?.get("collaborator")
+        ? "collaborator"
+        : knownUsers.has(account_id)
+          ? "known"
+          : "unrelated";
   return (
-    <div
-      style={{
-        marginLeft: "5px",
-        marginTop: "1px",
-      }}
-    >
+    <div style={{ marginLeft: "5px", marginTop: "1px" }}>
       <User
-        message={null}
-        id={account_id}
+        account_id={account_id}
         trunc={24}
-        type="account"
         show_avatar
         avatarSize={AVATAR_SIZE}
         style={{ overflow: "hidden", textOverflow: "ellipsis", flex: 0.7 }}
         addonAfter={
-          <span style={{ color: "#888", marginLeft: "10px" }}>
-            {account_id == webapp_client.account_id
-              ? "(me"
-              : users?.get(account_id)?.get("collaborator")
-                ? "(collaborator"
-                : knownUsers.has(account_id)
-                  ? "(messaged"
-                  : "(unrelated"}
+          <span style={{ color: COLORS.GRAY, marginLeft: "10px" }}>
+            ({label}
             {last_active ? (
               <span>
                 , active <TimeAgo date={last_active} />)
@@ -70,7 +76,6 @@ const handleSearch = throttle(
     knownUsers: Set<string>;
   }) => {
     const isEmail = query?.trim() && isValidEmailAddress(query?.trim());
-    // todo -- worry more about sort order
     const terms = search_split(query?.toLowerCase() ?? "");
     const v: { value: string; label; last_active?: Date }[] = [];
     const store = redux.getStore("users");
@@ -139,31 +144,21 @@ export default function SelectUser({
   placeholder: string;
   style?;
   disabled?: boolean;
-  onChange?: (users) => void;
+  onChange?: (users: string[]) => void;
   defaultValue?;
   autoFocus?: boolean;
   autoOpen?: number;
 }) {
-  const [open, setOpen] = useState<boolean>(false); // needed to do autoOpen
+  const [open, setOpen] = useState<boolean>(false);
   const ref = useRef<any>(null);
   const users = useTypedRedux("users", "user_map");
-  const messages = useTypedRedux("messages", "messages");
   const knownUsers = useMemo(() => {
     const known = new Set<string>();
-    if (messages == null) {
-      return known;
-    }
-    for (const [_, message] of messages) {
-      known.add(message.get("from_id"));
-      for (const id of message.get("to_ids")) {
-        known.add(id);
-      }
-    }
     for (const account_id of users?.keySeq() ?? []) {
       known.add(account_id);
     }
     return known;
-  }, [messages]);
+  }, [users]);
 
   const [data, setData] = useState<SelectProps["options"]>([]);
   const [value, setValue] = useState<string[] | null>(
@@ -189,9 +184,6 @@ export default function SelectUser({
       ref.current.focus();
     }
     if (autoOpen) {
-      // we also autoopen the selector, but ONLY after a delay, since
-      // this component is often used in a modal, and that modal animates
-      // into view, and it looks broken to have this open before the modal exists.
       setTimeout(() => {
         setOpen(true);
         handleSearch({ query: "", setData, knownUsers });
@@ -202,8 +194,6 @@ export default function SelectUser({
   const handleChange = (account_ids: string[]) => {
     setValue(account_ids);
     onChange?.(account_ids);
-    // change behavior from antd default to be like gmail, i.e., once you select the dropdown goes away
-    // until you type more.
     setOpen(false);
   };
 

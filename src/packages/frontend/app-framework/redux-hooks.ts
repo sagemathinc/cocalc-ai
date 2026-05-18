@@ -164,7 +164,6 @@ export interface StoreStates {
   billing: types.BillingState;
   customize: types.CustomizeState;
   mentions: types.MentionsState;
-  messages: types.MessagesState;
   page: types.PageState;
   projects: types.ProjectsState;
   users: types.UsersState;
@@ -411,7 +410,6 @@ export function useActions(name: "admin-users"): types.AdminUsersActions;
 export function useActions(name: "billing"): types.BillingActions;
 export function useActions(name: "document_activity"): types.FileUseActions;
 export function useActions(name: "mentions"): types.MentionsActions;
-export function useActions(name: "messages"): types.MessagesActions;
 export function useActions(name: "page"): types.PageActions;
 export function useActions(name: "projects"): types.ProjectsActions;
 export function useActions(name: "users"): types.UsersActions;
@@ -472,7 +470,6 @@ export interface Stores {
   billing: types.BillingStore;
   customize: types.CustomizeStore;
   mentions: types.MentionsStore;
-  messages: types.MessagesStore;
   page: types.PageStore;
   projects: types.ProjectsStore;
   users: types.UsersStore;
