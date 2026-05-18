@@ -44,21 +44,6 @@ Table({
           time: null,
         },
       },
-      set: {
-        fields: {
-          id: true,
-          event: true,
-          value: true,
-          time: true,
-        },
-        check_hook: (_db, query, _account_id, _project_id, cb): void => {
-          if (!query.event.startsWith("webapp-")) {
-            cb("event must start with 'webapp-'");
-          } else {
-            cb();
-          }
-        },
-      },
     },
   },
 });
