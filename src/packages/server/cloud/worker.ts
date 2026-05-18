@@ -9,6 +9,7 @@ import {
   claimCloudVmWork,
   markCloudVmWorkDone,
   markCloudVmWorkFailed,
+  requeueStaleCloudVmWork,
   type CloudVmWorkRow,
 } from "./db";
 import { logCloudVmEvent } from "./db";
@@ -36,6 +37,7 @@ export async function processCloudVmWorkOnce(opts: {
   max_concurrency?: number;
   max_per_provider?: number;
   max_per_provider_by_provider?: Map<string, number>;
+  stale_in_progress_ms?: number;
 }) {
   const maxConcurrency = opts.max_concurrency ?? DEFAULT_MAX_CONCURRENCY;
   const maxPerProvider = opts.max_per_provider ?? DEFAULT_PER_PROVIDER;
@@ -113,6 +115,13 @@ export async function processCloudVmWorkOnce(opts: {
     }
     return scheduled;
   };
+
+  const requeued = await requeueStaleCloudVmWork({
+    older_than_ms: opts.stale_in_progress_ms,
+  });
+  if (requeued) {
+    logger.warn("requeued stale cloud work", { requeued });
+  }
 
   await claimMore(opts.limit ?? maxConcurrency);
   schedule();

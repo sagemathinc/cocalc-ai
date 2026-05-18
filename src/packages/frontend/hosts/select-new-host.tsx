@@ -13,7 +13,7 @@ import {
   HostPlacementSummary,
   HostPressureTag,
 } from "@cocalc/frontend/hosts/pressure-ui";
-import { SpotHostTag } from "@cocalc/frontend/hosts/spot-ui";
+import { isSpotHost, SpotHostTag } from "@cocalc/frontend/hosts/spot-ui";
 
 const { Paragraph } = Typography;
 
@@ -61,7 +61,9 @@ export function SelectNewHost({
                       <span style={{ marginRight: 8 }}>
                         {selectedHost.name}
                       </span>
-                      {selectedHost.pricing_model === "spot" && <SpotHostTag />}
+                      {isSpotHost(selectedHost) && (
+                        <SpotHostTag host={selectedHost} />
+                      )}
                       {selectedHost.region && (
                         <Tag color="blue" style={{ marginRight: 6 }}>
                           {selectedHost.region}

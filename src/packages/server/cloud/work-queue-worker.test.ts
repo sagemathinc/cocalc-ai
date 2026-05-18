@@ -56,6 +56,46 @@ describe("cloud vm worker loop", () => {
     expect(rows[0].error).toContain("no handler for resize");
   });
 
+  it("retries stale in-progress items before claiming new work", async () => {
+    const id = await enqueueCloudVmWork({
+      vm_id: "vm-stale",
+      action: "probe_spot",
+    });
+    await getPool().query(
+      `
+        UPDATE cloud_vm_work
+        SET state='in_progress',
+            locked_by='dead-worker',
+            locked_at=NOW() - interval '2 hours'
+        WHERE id=$1
+      `,
+      [id],
+    );
+
+    const handled: string[] = [];
+    const processed = await processCloudVmWorkOnce({
+      worker_id: "worker-retry",
+      stale_in_progress_ms: 60 * 60 * 1000,
+      handlers: {
+        probe_spot: async (row) => {
+          handled.push(row.id);
+        },
+      },
+    });
+
+    expect(processed).toBe(1);
+    expect(handled).toEqual([id]);
+    const { rows } = await getPool().query(
+      "SELECT state, locked_by, locked_at FROM cloud_vm_work WHERE id=$1",
+      [id],
+    );
+    expect(rows[0]).toEqual({
+      state: "done",
+      locked_by: null,
+      locked_at: null,
+    });
+  });
+
   it("enforces global and per-provider concurrency caps", async () => {
     const total = 12;
     for (let i = 0; i < total; i++) {

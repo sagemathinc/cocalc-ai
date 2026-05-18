@@ -74,6 +74,7 @@ import {
   hostBillingEnforcementBlocksStart,
   hostBillingEnforcementSearchText,
 } from "./host-billing-enforcement";
+import { isSpotHost, SpotHostTag } from "../spot-ui";
 import { search_match, search_split } from "@cocalc/util/misc";
 import type {
   HostListViewMode,
@@ -771,7 +772,7 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
             <Button type="link" onClick={() => onDetails(host)}>
               {host.name}
             </Button>
-            {host.pricing_model === "spot" && <Tag color="orange">spot</Tag>}
+            {isSpotHost(host) && <SpotHostTag host={host} />}
           </Space>
           {host.status === "error" && host.last_error && (
             <Popover
@@ -807,12 +808,12 @@ export const HostList: React.FC<{ vm: HostListViewModel }> = ({ vm }) => {
       render: (_: string, host: Host) => {
         const baseLabel = getProviderLabel(host);
         const detail = getSelfHostDetail(host);
-        if (!detail && host.pricing_model !== "spot") return baseLabel;
+        if (!detail && !isSpotHost(host)) return baseLabel;
         return (
           <Space orientation="vertical" size={0}>
             <Space size="small" wrap>
               <span>{baseLabel}</span>
-              {host.pricing_model === "spot" && <Tag color="orange">spot</Tag>}
+              {isSpotHost(host) && <SpotHostTag host={host} />}
             </Space>
             {detail && (
               <Typography.Text type="secondary">{detail}</Typography.Text>

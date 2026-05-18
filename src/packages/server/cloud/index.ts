@@ -3,6 +3,7 @@ export {
   listCloudVmLog,
   enqueueCloudVmWork,
   claimCloudVmWork,
+  requeueStaleCloudVmWork,
   markCloudVmWorkDone,
   markCloudVmWorkFailed,
   type CloudVmLogEvent,

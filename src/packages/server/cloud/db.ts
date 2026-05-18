@@ -3,6 +3,8 @@ import getPool from "@cocalc/database/pool";
 
 const pool = () => getPool();
 
+const DEFAULT_STALE_IN_PROGRESS_MS = 30 * 60 * 1000;
+
 export type CloudVmLogEvent = {
   vm_id: string;
   action: string;
@@ -41,6 +43,16 @@ function normalizeNotBefore(value?: Date | string): Date | null {
     throw new Error(`invalid not_before '${value}'`);
   }
   return parsed;
+}
+
+export function getCloudVmWorkStaleInProgressMs(): number {
+  const raw = process.env.COCALC_CLOUD_VM_WORK_STALE_IN_PROGRESS_MS;
+  if (!raw) return DEFAULT_STALE_IN_PROGRESS_MS;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    return DEFAULT_STALE_IN_PROGRESS_MS;
+  }
+  return value;
 }
 
 export async function logCloudVmEvent(event: CloudVmLogEvent): Promise<void> {
@@ -113,8 +125,9 @@ export async function enqueueCloudVmWork(row: {
   const notBefore = normalizeNotBefore(row.not_before);
   await pool().query(
     `
-      INSERT INTO cloud_vm_work (id, vm_id, action, payload, state, not_before)
-      VALUES ($1,$2,$3,$4,'queued',$5)
+      INSERT INTO cloud_vm_work
+        (id, vm_id, action, payload, state, not_before, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,'queued',$5,NOW(),NOW())
     `,
     [id, row.vm_id, row.action, row.payload ?? {}, notBefore],
   );
@@ -131,8 +144,9 @@ export async function enqueueCloudVmWorkOnce(row: {
   const notBefore = normalizeNotBefore(row.not_before);
   const { rowCount } = await pool().query(
     `
-      INSERT INTO cloud_vm_work (id, vm_id, action, payload, state, not_before)
-      SELECT $1,$2,$3,$4,'queued',$5
+      INSERT INTO cloud_vm_work
+        (id, vm_id, action, payload, state, not_before, created_at, updated_at)
+      SELECT $1,$2,$3,$4,'queued',$5,NOW(),NOW()
       WHERE NOT EXISTS (
         SELECT 1
         FROM cloud_vm_work
@@ -157,6 +171,43 @@ export async function enqueueCloudVmWorkOnce(row: {
     );
   }
   return rowCount ? id : undefined;
+}
+
+export async function requeueStaleCloudVmWork(
+  opts: {
+    older_than_ms?: number;
+    limit?: number;
+  } = {},
+): Promise<number> {
+  const olderThanMs = opts.older_than_ms ?? getCloudVmWorkStaleInProgressMs();
+  const limit = opts.limit ?? 100;
+  if (olderThanMs <= 0 || limit <= 0) return 0;
+  const cutoff = new Date(Date.now() - olderThanMs);
+  const { rowCount } = await pool().query(
+    `
+      WITH stale AS (
+        SELECT id
+        FROM cloud_vm_work
+        WHERE state='in_progress'
+          AND locked_at IS NOT NULL
+          AND locked_at < $1
+        ORDER BY locked_at ASC
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE cloud_vm_work AS work
+      SET state='queued',
+          locked_by=NULL,
+          locked_at=NULL,
+          attempt=COALESCE(work.attempt, 0) + 1,
+          error='requeued stale in-progress cloud work',
+          updated_at=NOW()
+      FROM stale
+      WHERE work.id=stale.id
+    `,
+    [cutoff, limit],
+  );
+  return rowCount ?? 0;
 }
 
 export async function claimCloudVmWork(opts: {
@@ -211,6 +262,8 @@ export async function markCloudVmWorkDone(
       UPDATE cloud_vm_work
       SET state='done',
           error=$2,
+          locked_by=NULL,
+          locked_at=NULL,
           updated_at=now()
       WHERE id=$1
     `,
@@ -227,6 +280,8 @@ export async function markCloudVmWorkFailed(
       UPDATE cloud_vm_work
       SET state='failed',
           error=$2,
+          locked_by=NULL,
+          locked_at=NULL,
           updated_at=now()
       WHERE id=$1
     `,

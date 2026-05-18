@@ -67,6 +67,7 @@ import {
   hostRuntimeExceptionDescription,
   hostRuntimeExceptionLabel,
 } from "../utils/runtime-exceptions";
+import { isSpotHost, SpotHostTag } from "../spot-ui";
 
 type HostCardProps = {
   host: Host;
@@ -359,7 +360,7 @@ export const HostCard: React.FC<HostCardProps> = ({
           >
             {host.name}
           </Button>
-          {host.pricing_model === "spot" && <Tag color="orange">spot</Tag>}
+          {isSpotHost(host) && <SpotHostTag host={host} />}
         </Space>
       }
       extra={

@@ -28,7 +28,7 @@ import {
   HostPressureTag,
   hostPressureRank,
 } from "./pressure-ui";
-import { SpotHostTag } from "./spot-ui";
+import { isSpotHost, SpotHostTag } from "./spot-ui";
 
 const STATUS_COLOR = {
   stopped: "red",
@@ -415,7 +415,7 @@ export function HostPickerModal({
                       <Radio value={host.id} disabled={disabled}>
                         {host.name}
                       </Radio>
-                      {host.pricing_model === "spot" && <SpotHostTag />}
+                      {isSpotHost(host) && <SpotHostTag host={host} />}
                       <Tooltip
                         title={getHostStatusTooltip(
                           host.status,
