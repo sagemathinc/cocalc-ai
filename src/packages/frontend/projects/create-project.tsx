@@ -34,7 +34,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { A, ErrorDisplay, Icon, Paragraph } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import track from "@cocalc/frontend/user-tracking";
+
 import {
   DEFAULT_R2_REGION,
   mapCountryRegionToR2Region,
@@ -306,11 +306,7 @@ export function NewProjectCreator({ default_value, open, onClose }: Props) {
       set_error(`Error creating ${projectLabelLower} -- ${err}`);
       return;
     }
-    track("create-project", {
-      how: "projects-page",
-      project_id,
-      ...opts,
-    });
+
     // switch_to=true is perhaps suggested by #4088
     actions.open_project({
       project_id,

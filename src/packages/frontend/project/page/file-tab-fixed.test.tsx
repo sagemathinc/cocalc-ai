@@ -75,8 +75,6 @@ jest.mock("@cocalc/frontend/project/workspaces/chat-display", () => ({
   generatedWorkspaceChatLabel: () => null,
 }));
 
-jest.mock("@cocalc/frontend/user-tracking", () => jest.fn());
-
 jest.mock("./flyouts", () => ({
   AgentsFlyout: () => null,
   FilesFlyout: () => null,

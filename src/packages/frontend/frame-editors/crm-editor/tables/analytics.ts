@@ -22,14 +22,3 @@ register({
   allowCreate: false,
   changes: false,
 });
-
-register({
-  name: "user_tracking",
-  title: "User Tracking",
-  icon: "flow-chart",
-  query: {
-    user_tracking: [{ account_id: null, time: null, event: null, value: null }],
-  },
-  allowCreate: false,
-  changes: false,
-});

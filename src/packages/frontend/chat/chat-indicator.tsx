@@ -18,7 +18,7 @@ import { UsersViewing } from "@cocalc/frontend/account/avatar/users-viewing";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { HiddenXS, Tooltip } from "@cocalc/frontend/components";
 import { Icon } from "@cocalc/frontend/components/icon";
-import track from "@cocalc/frontend/user-tracking";
+
 import { labels } from "../i18n";
 import { lite } from "@cocalc/frontend/lite";
 import type { ChatActions } from "./actions";
@@ -78,10 +78,8 @@ function ChatButton({ project_id, path, chatState }) {
     () => {
       const actions = redux.getProjectActions(project_id);
       if (chatState) {
-        track("close-chat", { project_id, path, how: "chat-button" });
         actions.close_chat({ path });
       } else {
-        track("open-chat", { project_id, path, how: "chat-button" });
         actions.open_chat({ path });
       }
     },

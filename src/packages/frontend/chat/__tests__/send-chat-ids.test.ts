@@ -5,11 +5,6 @@ import { ChatActions } from "../actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { alert_message } from "@cocalc/frontend/alerts";
 
-jest.mock("@cocalc/frontend/user-tracking", () => ({
-  __esModule: true,
-  default: jest.fn(),
-}));
-
 jest.mock("@cocalc/frontend/alerts", () => ({
   alert_message: jest.fn(),
 }));

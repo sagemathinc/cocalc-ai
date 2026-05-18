@@ -89,7 +89,6 @@ export interface WebappClient extends EventEmitter {
   exec: Function;
   touch_project: (project_id: string) => void;
   log_error: (any) => void;
-  user_tracking: Function;
   send: Function;
   call: Function;
   dbg: (str: string) => Function;
@@ -163,7 +162,6 @@ class Client extends EventEmitter implements WebappClient {
   touch_project: (project_id: string) => void;
 
   log_error: (any) => void;
-  user_tracking: Function;
   send: Function;
   call: Function;
   is_connected: () => boolean;

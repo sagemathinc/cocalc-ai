@@ -1276,16 +1276,6 @@ API(
   }),
 );
 
-// client --> hub
-// It's an error if user is not signed in, since
-// then we don't know who to track.
-message({
-  event: "user_tracking",
-  id: undefined,
-  evt: required, // string -- the event being tracked (max length 80 characters)
-  value: required, // map -- additional info about that event
-});
-
 // Request to purchase a license (either via stripe or a quote)
 API(
   message({

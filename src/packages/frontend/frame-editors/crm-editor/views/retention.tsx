@@ -20,7 +20,7 @@ export interface Retention {
 }
 
 export const DEFAULT_RETENTION = {
-  model: "user_tracking",
+  model: "ai_usage_log",
   period: "1 day",
 } as Retention;
 

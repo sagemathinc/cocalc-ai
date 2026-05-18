@@ -19,7 +19,7 @@ import { open_new_tab } from "@cocalc/frontend/misc";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { ProjectActions } from "@cocalc/frontend/project_actions";
 import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
-import track from "@cocalc/frontend/user-tracking";
+
 import * as misc from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { url_href } from "@cocalc/frontend/project/utils";
@@ -274,11 +274,7 @@ export function FileRow({
       actions.set_file_search("");
     } else {
       const foreground = should_open_in_foreground(e);
-      track("open-file", {
-        project_id: actions.project_id,
-        path,
-        how: "click-on-listing",
-      });
+
       actions.open_file({
         path,
         foreground,

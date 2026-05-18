@@ -17,7 +17,7 @@ import LinkRetry from "@cocalc/frontend/components/link-retry";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { labels } from "@cocalc/frontend/i18n";
 import { serverURL, SPEC } from "@cocalc/frontend/project/named-server-panel";
-import track from "@cocalc/frontend/user-tracking";
+
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { type JSX, type MouseEvent } from "react";
@@ -70,7 +70,6 @@ export function MiscSideButtons({
       label: "Open Snapshots",
       onClick: () => {
         actions?.open_directory(SNAPSHOTS);
-        track("snapshots", { action: "open", where: "explorer" });
       },
     },
     {
@@ -103,7 +102,6 @@ export function MiscSideButtons({
       label: "Open Backups",
       onClick: () => {
         actions?.open_directory(BACKUPS);
-        track("backups", { action: "open", where: "explorer" });
       },
     },
     {

@@ -174,8 +174,6 @@ export interface CustomizeState {
 
   i18n?: List<Locale>;
 
-  user_tracking?: string;
-
   lite?: boolean;
   account_id?: string;
   project_id?: string;

@@ -4,7 +4,6 @@
 // - normalizes regenerate input,
 // - dispatches to the ACP/Codex backend path.
 
-import track from "@cocalc/frontend/user-tracking";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import type { LanguageModel } from "@cocalc/util/db-schema/ai-models";
@@ -64,18 +63,6 @@ export async function processAI({
   input = regen?.input ?? input;
 
   const acpPromptOverride = `${(message as any)?.acp_prompt ?? ""}`.trim();
-
-  track("codex", {
-    project_id: store.get("project_id"),
-    path: store.get("path"),
-    type: "chat",
-    is_reply: `${(message as any)?.parent_message_id ?? ""}`.trim().length > 0,
-    tag:
-      !tag && `${(message as any)?.parent_message_id ?? ""}`.trim()
-        ? "reply"
-        : tag,
-    model,
-  });
 
   await processAcpLLM({
     actions,

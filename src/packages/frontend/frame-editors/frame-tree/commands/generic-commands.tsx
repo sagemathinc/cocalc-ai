@@ -31,7 +31,7 @@ import { editor } from "@cocalc/frontend/i18n/common";
 import { open_new_tab as openNewTab } from "@cocalc/frontend/misc/open-browser-tab";
 import { isChatPath } from "@cocalc/frontend/chat/paths";
 import openSupportTab from "@cocalc/frontend/support/open";
-import userTracking from "@cocalc/frontend/user-tracking";
+
 import { DARK_MODE_ICON } from "@cocalc/util/consts/ui";
 import { addCommands } from "./commands";
 import {
@@ -877,7 +877,6 @@ addCommands({
     icon: "map",
     neverVisibleOnMobile: true,
     onClick: ({ props }) => {
-      userTracking("tour", { name: `frame-${props.type}` });
       props.actions.set_frame_full(props.id);
       // we have to wait until the frame renders before
       // setting the tour; otherwise, the references won't

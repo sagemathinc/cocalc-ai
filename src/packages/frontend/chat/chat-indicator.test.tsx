@@ -47,8 +47,6 @@ jest.mock("@cocalc/frontend/components/icon", () => ({
   Icon: () => null,
 }));
 
-jest.mock("@cocalc/frontend/user-tracking", () => jest.fn());
-
 jest.mock("../i18n", () => ({
   labels: {
     chat: { defaultMessage: "Chat" },

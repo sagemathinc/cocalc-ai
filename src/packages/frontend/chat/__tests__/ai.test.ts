@@ -1,13 +1,7 @@
 /** @jest-environment jsdom */
 
-import track from "@cocalc/frontend/user-tracking";
 import { processAI } from "../actions/ai";
 import { processAcpLLM } from "../acp-api";
-
-jest.mock("@cocalc/frontend/user-tracking", () => ({
-  __esModule: true,
-  default: jest.fn(),
-}));
 
 jest.mock("../acp-api", () => ({
   processAcpLLM: jest.fn(),
@@ -86,14 +80,6 @@ describe("processAI Codex dispatch", () => {
         model: "gpt-5.4",
         input: "please continue",
         sendMode: undefined,
-      }),
-    );
-    expect(track).toHaveBeenCalledWith(
-      "codex",
-      expect.objectContaining({
-        project_id: "proj",
-        path: "chat.chat",
-        model: "gpt-5.4",
       }),
     );
   });

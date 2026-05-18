@@ -13,7 +13,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { labels } from "@cocalc/frontend/i18n";
-import track from "@cocalc/frontend/user-tracking";
+
 import { COLORS } from "@cocalc/util/theme";
 import {
   FONT_SIZE_ICONS_NORMAL,
@@ -97,7 +97,6 @@ export const ConnectionIndicator: React.FC<Props> = React.memo(
         on_click();
       }
       blur_active_element(); // otherwise, it'll be highlighted even when closed again
-      track("top_nav", { name: "connection" });
     }
 
     return (

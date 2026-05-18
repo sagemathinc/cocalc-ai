@@ -622,10 +622,6 @@ export class ProjectClient {
   }): Promise<string> => {
     const project_id =
       await this.client.conat_client.hub.projects.createProject(opts);
-    this.client.tracking_client.user_tracking("create_project", {
-      project_id,
-      title: opts.title,
-    });
     return project_id;
   };
 

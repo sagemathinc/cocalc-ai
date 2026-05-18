@@ -8,7 +8,7 @@ import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { isIntlMessage } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { PathNavigator } from "@cocalc/frontend/project/explorer/path-navigator";
-import track from "@cocalc/frontend/user-tracking";
+
 import { capitalize } from "@cocalc/util/misc";
 import { FIX_BORDER } from "../common";
 import { FIXED_PROJECT_TABS, FixedTab } from "../file-tab";
@@ -95,11 +95,7 @@ export function FlyoutHeader(_: Readonly<Props>) {
             onClick={() => {
               // flyouts and full pages share the same internal name
               actions?.set_active_tab(flyout);
-              track("switch-to-fixed-tab", {
-                project_id,
-                flyout,
-                how: "click-on-flyout-expand-button",
-              });
+
               // now, close the flyout panel, to finish the transition
               actions?.toggleFlyout(flyout);
             }}

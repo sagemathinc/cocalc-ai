@@ -36,7 +36,7 @@ import {
   submitNavigatorPromptInWorkspaceChat,
   submitNavigatorPromptToCurrentThread,
 } from "@cocalc/frontend/project/new/navigator-intents";
-import track from "@cocalc/frontend/user-tracking";
+
 import { Kernel as KernelType } from "@cocalc/jupyter/util/misc";
 import * as misc from "@cocalc/util/misc";
 import {
@@ -337,11 +337,6 @@ export function KernelSelector({
         onClick={() => {
           onSelectKernel?.(name);
           actions.select_kernel(name);
-          track("jupyter", {
-            action: "select-kernel",
-            kernel: name,
-            how: "click-button-in-dialog",
-          });
         }}
         style={{ height: embedded ? "28px" : "35px" }}
       >
@@ -520,9 +515,6 @@ export function KernelSelector({
         size={embedded ? "small" : "middle"}
         defaultActiveKey="all"
         items={items}
-        onTabClick={(key) => {
-          track("jupyter-selector", { action: "tab-click", tab: key });
-        }}
       />
     );
   }
@@ -581,10 +573,6 @@ export function KernelSelector({
           <Checkbox
             checked={!ask_jupyter_kernel}
             onChange={(e) => {
-              track("jupyter", {
-                action: "dont_ask_kernel",
-                dont_ask: e.target.checked,
-              });
               dont_ask_again_click(e.target.checked);
             }}
           >

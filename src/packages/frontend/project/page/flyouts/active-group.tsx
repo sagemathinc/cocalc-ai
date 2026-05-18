@@ -13,7 +13,7 @@ import {
 } from "@cocalc/frontend/editor-tmp";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { handleFileEntryClick } from "@cocalc/frontend/project/history/utils";
-import track from "@cocalc/frontend/user-tracking";
+
 import { capitalize, trunc_middle } from "@cocalc/util/misc";
 import { ACTIVE_FOLDER_TYPE, FLYOUT_PADDING } from "./consts";
 import { FileListItem } from "./file-list-item";
@@ -110,22 +110,13 @@ export function Group({
           }}
           onClose={(e: React.MouseEvent) => {
             e.stopPropagation();
-            track("open-file", {
-              project_id,
-              group,
-              how: "flyout-active-directory-close",
-            });
+
             // close all files in that group
             for (const path of openFilesGrouped[group]) {
               actions?.close_tab(path);
             }
           }}
           onClick={(e) => {
-            track("open-file", {
-              project_id,
-              group: directoryPath,
-              how: "flyout-active-directory-open",
-            });
             // trailing slash indicates to open a directory
             handleFileEntryClick(
               e,

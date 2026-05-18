@@ -23,7 +23,7 @@ import {
 import LinkRetry from "@cocalc/frontend/components/link-retry";
 import { useStudentProjectFunctionality } from "@cocalc/frontend/course";
 import { IntlMessage } from "@cocalc/frontend/i18n";
-import track from "@cocalc/frontend/user-tracking";
+
 import { R_IDE } from "@cocalc/util/consts/ui";
 import { capitalize } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -237,9 +237,7 @@ export function NamedServerPanel({ project_id, name, style }: Props) {
               href={url}
               skipCheck
               loadingText={intl.formatMessage(LAUNCHING_SERVER)}
-              onClick={() => {
-                track("launch-server", { name, project_id });
-              }}
+              onClick={() => {}}
             >
               <Icon name={icon} /> {longName} Server...
             </LinkRetry>
@@ -372,9 +370,7 @@ export function ServerLink({
       skipCheck
       loadingText={intl.formatMessage(LAUNCHING_SERVER)}
       tooltip={mode === "flyout" ? description : undefined}
-      onClick={() => {
-        track("launch-server", { name, project_id });
-      }}
+      onClick={() => {}}
     >
       <Icon name={icon} /> {longName}...
     </LinkRetry>

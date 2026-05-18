@@ -33,7 +33,6 @@ export const NON_CRITICAL_TABLES = [
   "stats",
   "usage_info",
   "cloud_filesystem_metrics",
-  "user_tracking",
 
   // Caches
   "compute_servers_cache",

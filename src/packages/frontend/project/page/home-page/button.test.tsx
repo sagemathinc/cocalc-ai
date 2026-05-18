@@ -14,11 +14,6 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useActions: () => mockActions,
 }));
 
-jest.mock("@cocalc/frontend/user-tracking", () => ({
-  __esModule: true,
-  default: jest.fn(),
-}));
-
 describe("HomePageButton", () => {
   beforeEach(() => {
     jest.clearAllMocks();

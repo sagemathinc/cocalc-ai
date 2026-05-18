@@ -30,7 +30,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import { FILE_ACTIONS } from "@cocalc/frontend/project_actions";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { UserMap } from "@cocalc/frontend/todo-types";
-import track from "@cocalc/frontend/user-tracking";
+
 import * as misc from "@cocalc/util/misc";
 import { round1 } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -244,14 +244,6 @@ export const LogEntry: React.FC<Props> = React.memo(
               trunc={TRUNC}
               project_id={project_id}
               dimExtensions={dimFileExtensions}
-              onOpen={() =>
-                track("open-file", {
-                  how: "project-log",
-                  type: "open_file",
-                  path: filename,
-                  project_id,
-                })
-              }
             />
           ) : (
             <span style={{ color: COLORS.GRAY_M }}>
@@ -519,14 +511,6 @@ export const LogEntry: React.FC<Props> = React.memo(
           link={link}
           project_id={project_id != null ? project_id : props.project_id}
           dimExtensions={dimFileExtensions}
-          onOpen={() =>
-            track("open-file", {
-              how: "project-log",
-              type: "file_link",
-              path,
-              project_id,
-            })
-          }
         />
       );
     }

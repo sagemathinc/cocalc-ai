@@ -15,13 +15,12 @@ import {
 } from "@cocalc/frontend/frame-editors/ai/model-names";
 import { open_new_tab } from "@cocalc/frontend/misc";
 import Fragment from "@cocalc/frontend/misc/fragment-id";
-import track from "@cocalc/frontend/user-tracking";
+
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { ImmerDB } from "@cocalc/sync/editor/immer-db";
 import {
   isLanguageModel,
   isLanguageModelService,
-  model2service,
   type LanguageModel,
 } from "@cocalc/util/db-schema/ai-models";
 import { history_path, isValidUUID, uuid } from "@cocalc/util/misc";
@@ -786,14 +785,6 @@ export class ChatActions extends Actions<ChatState> {
     this.syncdb.commit();
     const model = this.isLanguageModelThread(date);
     if (isLanguageModel(model)) {
-      track("ai_feedback", {
-        project_id: this.store?.get("project_id"),
-        path: this.store?.get("path"),
-        msg_date: date,
-        type: "chat",
-        model: model2service(model),
-        feedback,
-      });
     }
   };
 
@@ -1012,7 +1003,6 @@ export class ChatActions extends Actions<ChatState> {
       action,
       ttl: 10000,
     });
-    track("send_chat", { project_id, path });
 
     if (!skipModelDispatch) {
       (async () => {
@@ -1075,7 +1065,6 @@ export class ChatActions extends Actions<ChatState> {
         action: "edit",
         ttl: 10000,
       });
-      track("create_chat_thread", { project_id, path });
     }
     return thread_id;
   };

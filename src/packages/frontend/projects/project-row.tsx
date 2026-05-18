@@ -24,7 +24,7 @@ import {
   TimeAgo,
   Tooltip,
 } from "@cocalc/frontend/components";
-import track from "@cocalc/frontend/user-tracking";
+
 import { COLORS } from "@cocalc/util/theme";
 import { Button } from "antd";
 import { ProjectAvatarImage } from "./project-avatar";
@@ -147,7 +147,6 @@ export const ProjectRow: React.FC<Props> = ({ project_id, index }: Props) => {
       switch_to: !(e?.which === 2 || e?.ctrlKey || e?.metaKey),
     });
     e?.preventDefault();
-    track("open_project", { how: "projects_page", project_id });
   }
 
   function open_project_settings(e): void {

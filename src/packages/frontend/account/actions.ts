@@ -11,7 +11,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { set_url } from "@cocalc/frontend/history";
 import { deleteRememberMe } from "@cocalc/frontend/misc/remember-me";
 import { clearStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
-import track from "@cocalc/frontend/user-tracking";
+
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { define, required } from "@cocalc/util/fill";
 import { Actions } from "@cocalc/util/redux/Actions";
@@ -170,7 +170,6 @@ export class AccountActions extends Actions<AccountState> {
   }
 
   public set_active_tab(tab: string): void {
-    track("settings", { tab });
     this.setState({ active_page: tab });
     this.push_state(
       getSettingsPushStatePath(

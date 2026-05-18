@@ -24,7 +24,7 @@ import { Icon, Paragraph } from "@cocalc/frontend/components";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { handleFileEntryClick } from "@cocalc/frontend/project/history/utils";
-import track from "@cocalc/frontend/user-tracking";
+
 import {
   filename_extension_notilde,
   path_split,
@@ -246,31 +246,19 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
 
   // end of hooks
 
-  function handleFileClick(
-    e: React.MouseEvent | undefined,
-    path: string,
-    how: "file" | "undo" | "star",
-  ) {
-    const trackInfo = {
-      path,
-      project_id,
-      how: `flyout-active-${how}-click`,
-    };
+  function handleFileClick(e: React.MouseEvent | undefined, path: string) {
     if (shouldOpenFileInNewWindow(e)) {
       actions?.open_file({
         path,
         new_browser_window: true,
       });
-      track("open-file-in-new-window", trackInfo);
     } else {
       handleFileEntryClick(e, path, project_id);
-      track("open-file", trackInfo);
     }
   }
 
   function renderFileItem(
     path: string,
-    how: "file" | "undo",
     group?: string,
     isLast?: boolean,
   ): React.JSX.Element {
@@ -297,7 +285,7 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
         displayedNameOverride={display}
         style={style}
         multiline={false}
-        onClick={(e) => handleFileClick(e, path, how)}
+        onClick={(e) => handleFileClick(e, path)}
         onClose={(e, path: string) => {
           e?.stopPropagation();
           actions?.close_tab(path);
@@ -316,7 +304,7 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
           if (isOpen) {
             setStarredPath(path, starState);
           } else {
-            handleFileClick(undefined, path, "star");
+            handleFileClick(undefined, path);
           }
         }}
         extra2={
@@ -457,7 +445,7 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
           .filter((path) => !path.endsWith("/") && !openFiles.includes(path))
           .sort((a, b) => a.localeCompare(b))
           .map((path) => {
-            return renderFileItem(path, "file");
+            return renderFileItem(path);
           })
       : [];
 
@@ -504,7 +492,7 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
 
       for (const path of fileNames) {
         const isLast = path === fileNames[fileNames.length - 1];
-        groups.push(renderFileItem(path, "file", group, isLast));
+        groups.push(renderFileItem(path, group, isLast));
       }
     }
 
@@ -656,7 +644,7 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
         </div>
         <div style={{ maxHeight: CLOSED_FILES_LIST_HEIGHT, overflowY: "auto" }}>
           {filteredClosed.map((path) => {
-            return renderFileItem(path, "undo");
+            return renderFileItem(path);
           })}
         </div>
       </div>
@@ -675,11 +663,6 @@ export function ActiveFlyout(props: Readonly<Props>): React.JSX.Element {
     }
     const openNext = getOpenedFileByIdx(idx);
     if (openNext !== "") {
-      track("open-file", {
-        project_id,
-        path: openNext,
-        how: "flyout-active-tab-scroll",
-      });
       handleFileEntryClick(undefined, openNext, project_id);
     }
   }

@@ -7,7 +7,7 @@ import { Button } from "antd";
 
 import { useActions } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
-import track from "@cocalc/frontend/user-tracking";
+
 import { COLORS } from "@cocalc/util/theme";
 
 export default function HomePageButton({ project_id, active, width }) {
@@ -31,12 +31,6 @@ export default function HomePageButton({ project_id, active, width }) {
         actions?.set_active_tab("home");
         actions?.setFlyoutExpanded("files", false, false);
         actions?.set_file_search("");
-
-        track("switch_to_fixed_tab", {
-          how: "click-on-tab",
-          name: "home",
-          project_id,
-        });
       }}
     >
       <Icon name="home" style={{ verticalAlign: "5px" }} />

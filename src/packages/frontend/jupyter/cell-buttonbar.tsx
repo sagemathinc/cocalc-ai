@@ -13,11 +13,10 @@ import { Map } from "immutable";
 import React, { useState } from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 
-import { useFrameContext } from "@cocalc/frontend/app-framework";
 import { Icon, Tooltip, isIconName } from "@cocalc/frontend/components";
 import useNotebookFrameActions from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/hook";
 import { jupyter, labels } from "@cocalc/frontend/i18n";
-import track from "@cocalc/frontend/user-tracking";
+
 import { AITools } from "@cocalc/jupyter/types";
 import { CellType } from "@cocalc/util/jupyter/types";
 import { JupyterActions } from "./browser-actions";
@@ -80,16 +79,11 @@ export const CellButtonBar: React.FC<Props> = React.memo(
   }: Props) => {
     const intl = useIntl();
 
-    const { project_id, path } = useFrameContext();
     const frameActions = useNotebookFrameActions();
     const [formatting, setFormatting] = useState<boolean>(false);
 
     const isCodeCell = cell_type === "code";
     const isMarkdownCell = cell_type === "markdown";
-
-    function trackButton(button: string) {
-      track("jupyter_cell_buttonbar", { button, project_id, path });
-    }
 
     function getRunStopButton(): {
       tooltip: string;
@@ -229,7 +223,6 @@ export const CellButtonBar: React.FC<Props> = React.memo(
               } finally {
                 setFormatting(false);
               }
-              trackButton("format");
             }}
           >
             <Icon name={formatting ? "spinner" : "sitemap"} spin={formatting} />{" "}

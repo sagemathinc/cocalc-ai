@@ -63,7 +63,6 @@ export const api_key_info: any;
 export const api_keys: any;
 export const api_keys_response: any;
 export const disconnect_from_project: any;
-export const user_tracking: any;
 export const purchase_license: any;
 export const purchase_license_resp: any;
 export const chatgpt: any;

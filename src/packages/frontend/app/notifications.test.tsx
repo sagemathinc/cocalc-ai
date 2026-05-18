@@ -10,7 +10,6 @@ let newsUnread: number | undefined = 0;
 let inviteUnread = 0;
 const setActiveTabMock = jest.fn();
 const setWindowTitleMock = jest.fn();
-const trackMock = jest.fn();
 
 jest.mock("antd", () => ({
   Badge: ({ count, children }) => (
@@ -54,11 +53,6 @@ jest.mock("@cocalc/frontend/browser", () => ({
   set_window_title: (...args: any[]) => setWindowTitleMock(...args),
 }));
 
-jest.mock("@cocalc/frontend/user-tracking", () => ({
-  __esModule: true,
-  default: (...args: any[]) => trackMock(...args),
-}));
-
 import { Notification } from "./notifications";
 
 const pageStyle = {
@@ -79,7 +73,6 @@ describe("top-nav notifications", () => {
     inviteUnread = 0;
     setActiveTabMock.mockReset();
     setWindowTitleMock.mockReset();
-    trackMock.mockReset();
   });
 
   it("includes shared unread invite count in the badge total", () => {
@@ -104,6 +97,5 @@ describe("top-nav notifications", () => {
     );
     fireEvent.click(screen.getByTestId("badge"));
     expect(setActiveTabMock).toHaveBeenCalledWith("notifications");
-    expect(trackMock).toHaveBeenCalledWith("top_nav", { name: "mentions" });
   });
 });

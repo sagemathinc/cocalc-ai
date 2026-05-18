@@ -19,7 +19,7 @@ import {
 } from "@cocalc/frontend/project/named-server-panel";
 import { getTime } from "@cocalc/frontend/project/page/flyouts/log";
 import { useAvailableFeatures } from "@cocalc/frontend/project/use-available-features";
-import track from "@cocalc/frontend/user-tracking";
+
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { COMPUTE_STATES, ComputeState } from "@cocalc/util/compute-states";
 import {
@@ -497,7 +497,7 @@ export function useServersMenuItems(
           icon: <Icon name={icon} />,
           onClick: () => {
             const url = serverURL(project_id, name);
-            track("launch-server", { name, project_id });
+
             window.open(url, "_blank");
             onServerOpen?.(name);
           },

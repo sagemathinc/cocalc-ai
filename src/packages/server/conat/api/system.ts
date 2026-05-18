@@ -31,7 +31,6 @@ import {
   getAccountNotificationIndexProjectionBacklogStatus,
 } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
-import { record_user_tracking } from "@cocalc/database/postgres/account/user-tracking";
 import { recordBrowserAutomationAuditEvent } from "./browser-automation-audit";
 import { db } from "@cocalc/database";
 import manageApiKeys from "@cocalc/server/api/manage";
@@ -2519,18 +2518,6 @@ export async function clearParallelOpsLimit({
     scope_type: normalizedScopeType,
     scope_id,
   });
-}
-
-export async function userTracking({
-  event,
-  value,
-  account_id,
-}: {
-  event: string;
-  value: object;
-  account_id?: string;
-}): Promise<void> {
-  await record_user_tracking(db(), account_id!, event, value);
 }
 
 export async function recordBrowserAutomationAudit({

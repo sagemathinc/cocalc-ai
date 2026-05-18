@@ -10,16 +10,6 @@ export const retentionModels = {
     description:
       "Number of accounts with an entry in the ai_usage_log during each period.",
   },
-  user_tracking: {
-    title: "User Tracking - Retention",
-    description:
-      "Number of accounts in the cohort with an entry in the user tracking table during each period.",
-  },
-  "user_tracking:all": {
-    title: "User Tracking - Active Users",
-    description:
-      "Number of accounts with an entry in the user tracking table during each period.",
-  },
   "client_error_log:all": {
     title: "Client Error Log - Active Users",
     description:
@@ -48,7 +38,7 @@ Table({
       type: "timestamp",
     },
     model: {
-      desc: "The model that defines active users, e.g., 'user_tracking', 'user_tracking:all'. This determines the cohort and how active is measured, via code that is hardcoded in cocalc's source code.",
+      desc: "The model that defines active users. This determines the cohort and how active is measured, via code that is hardcoded in cocalc's source code.",
       type: "string",
     },
     period: {

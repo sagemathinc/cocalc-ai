@@ -133,8 +133,6 @@ jest.mock("@cocalc/frontend/project/context", () => ({
   }),
 }));
 
-jest.mock("@cocalc/frontend/user-tracking", () => jest.fn());
-
 jest.mock("@cocalc/frontend/lite", () => ({
   get lite() {
     return mockLite;

@@ -30,7 +30,7 @@ import {
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
 import { useProjectContext } from "@cocalc/frontend/project/context";
-import track from "@cocalc/frontend/user-tracking";
+
 import { tab_to_path } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { ACTIVITY_BAR_TOGGLE_LABELS } from "./activity-bar-consts";
@@ -301,7 +301,6 @@ export function VerticalFixedTabs({
       names: overflowTabs,
       onCustomize: () => setShowCustomize(true),
       onToggleActivityBar: () => {
-        track("action-bar", { action: "hide" });
         setActivityBarCollapsed(true);
       },
       onToggleLabels: () => {
@@ -445,7 +444,6 @@ export function HiddenActivityBarLauncher() {
     names: tabOrder,
     onCustomize: () => setShowCustomize(true),
     onToggleActivityBar: () => {
-      track("action-bar", { action: "show" });
       setActivityBarCollapsed(false);
     },
     onToggleLabels: () => {
@@ -514,23 +512,14 @@ function openRailMenuTab(opts: {
   project_id: string;
   source: "overflow" | "hidden-launcher";
 }): void {
-  const { actions, domEvent, name, project_id, source } = opts;
+  const { actions, domEvent, name } = opts;
   const canOpenFullPage = !FIXED_PROJECT_TABS[name].noFullPage;
   if (canOpenFullPage && hasModifierKey(domEvent)) {
     actions?.set_active_tab(name);
-    track("action-bar", {
-      action: `open-${source}-full-page`,
-      name,
-      project_id,
-    });
+
     return;
   }
   actions?.toggleFlyout(name);
-  track("action-bar", {
-    action: `open-${source}-flyout`,
-    name,
-    project_id,
-  });
 }
 
 function createRailMenuItems(opts: {

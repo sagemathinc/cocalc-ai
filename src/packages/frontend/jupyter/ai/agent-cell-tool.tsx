@@ -15,7 +15,7 @@ import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "@cocalc/frontend/frame-editors/frame-tree/frame-context";
 import { labels, type IntlMessage } from "@cocalc/frontend/i18n";
 import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/ai/popup-agent-composer";
-import track from "@cocalc/frontend/user-tracking";
+
 import type { AITools } from "@cocalc/jupyter/types";
 import type { JupyterActions } from "../browser-actions";
 import { CODE_BAR_BTN_STYLE } from "../consts";
@@ -28,7 +28,6 @@ interface Props {
   cellType: "code" | "markdown";
 }
 
-const TRACKING_KEY = "jupyter_cell_ai";
 const DEFAULT_CELL_TOOL_CODEX_MODEL = "gpt-5.4-mini";
 
 const MODES_CODE = [
@@ -548,13 +547,7 @@ export function AgentCellTool({
         mode,
         path,
       });
-      track(TRACKING_KEY, {
-        action: "submitted",
-        mode,
-        path,
-        model: DEFAULT_CELL_TOOL_CODEX_MODEL,
-        project_id,
-      });
+
       setMode(null);
     } catch (err) {
       setError(`${err}`);

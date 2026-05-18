@@ -43,7 +43,7 @@ import {
   TypeFilterLabel,
 } from "@cocalc/frontend/project/explorer/file-listing/utils";
 import { TerminalModeDisplay } from "@cocalc/frontend/project/explorer/file-listing/terminal-mode-display";
-import track from "@cocalc/frontend/user-tracking";
+
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { KUCALC_COCALC_COM } from "@cocalc/util/db-schema/site-defaults";
 import { separate_file_extension, strictMod } from "@cocalc/util/misc";
@@ -834,10 +834,6 @@ export function FilesHeader({
                           label: "Browse Snapshots",
                           onClick: () => {
                             onNavigate(SNAPSHOTS);
-                            track("snapshots", {
-                              action: "open",
-                              where: "flyout-files",
-                            });
                           },
                         },
                         {
@@ -872,10 +868,6 @@ export function FilesHeader({
                           label: "Browse Backups",
                           onClick: () => {
                             onNavigate(BACKUPS);
-                            track("backups", {
-                              action: "open",
-                              where: "flyout-files",
-                            });
                           },
                         },
                         {

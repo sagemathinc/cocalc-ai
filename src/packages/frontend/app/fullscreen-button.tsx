@@ -12,7 +12,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Icon, Tip } from "@cocalc/frontend/components";
-import track from "@cocalc/frontend/user-tracking";
+
 import { COLORS } from "@cocalc/util/theme";
 import {
   NAV_HEIGHT_PX,
@@ -81,10 +81,6 @@ export const FullscreenButton: React.FC<Props> = React.memo((props: Props) => {
         style={icon_style}
         name={icon}
         onClick={(_) => {
-          track("top_nav", {
-            name: "fullscreen",
-            enabled: !fullscreen,
-          });
           page_actions.toggle_fullscreen();
         }}
       />

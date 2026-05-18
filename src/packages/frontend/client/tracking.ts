@@ -4,27 +4,14 @@
  */
 
 import { WebappClient } from "./client";
-import { redux } from "@cocalc/frontend/app-framework";
 
 export class TrackingClient {
   private client: WebappClient;
   private log_error_cache: { [error: string]: number } = {};
-  private userTrackingEnabled?: string;
 
   constructor(client: WebappClient) {
     this.client = client;
   }
-
-  user_tracking = async (event: string, value: object): Promise<void> => {
-    if (this.userTrackingEnabled == null) {
-      this.userTrackingEnabled = redux
-        .getStore("customize")
-        ?.get("user_tracking");
-    }
-    if (this.userTrackingEnabled == "yes") {
-      await this.client.conat_client.hub.system.userTracking({ event, value });
-    }
-  };
 
   log_error = (error: any): void => {
     if (typeof error != "string") {

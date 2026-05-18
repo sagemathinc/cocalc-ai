@@ -117,8 +117,7 @@ export type SiteSettingsKeys =
   | "project_rootfs_default_image_gpu"
   | "project_rootfs_prepull_images"
   | "samesite_remember_me"
-  | "browser_raw_exec_policy"
-  | "user_tracking";
+  | "browser_raw_exec_policy";
 
 type Mapping = { [key: string]: string | number | boolean };
 
@@ -1062,13 +1061,5 @@ export const site_settings_conf: SiteSettings = {
     group: "Access & Identity",
     subgroup: "Security",
     advanced: true,
-  },
-  user_tracking: {
-    name: "User Tracking",
-    desc: "If enabled, then information about what users do in the frontend browser gets temporarily recorded in the user_tracking table of the database.",
-    default: "no",
-    valid: only_booleans,
-    group: "System / Advanced",
-    subgroup: "Analytics",
   },
 } as const;

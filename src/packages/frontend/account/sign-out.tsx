@@ -7,7 +7,6 @@ import { FormattedMessage, useIntl } from "react-intl";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { React, Rendered, redux } from "@cocalc/frontend/app-framework";
 import { labels } from "@cocalc/frontend/i18n";
-import track from "@cocalc/frontend/user-tracking";
 
 interface Props {
   everywhere?: boolean;
@@ -25,7 +24,6 @@ export const SignOut: React.FC<Props> = (props: Readonly<Props>) => {
   function sign_out(): void {
     const account = redux.getActions("account");
     if (account != null) {
-      track("sign-out", { how: "settings-page", everywhere, sign_in });
       account.sign_out(!!everywhere, !!sign_in);
     }
   }

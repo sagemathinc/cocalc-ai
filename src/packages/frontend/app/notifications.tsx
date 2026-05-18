@@ -14,7 +14,7 @@ import { useUnreadIncomingInviteCount } from "@cocalc/frontend/collaborators";
 import { Icon } from "@cocalc/frontend/components";
 import { unreachable } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
-import track from "@cocalc/frontend/user-tracking";
+
 import { PageStyle, TOP_BAR_ELEMENT_CLASS } from "./top-nav-consts";
 import { useEffect, useMemo } from "react";
 import { set_window_title } from "@cocalc/frontend/browser";
@@ -68,7 +68,6 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
       case "notifications":
         page_actions.set_active_tab("notifications");
         if (!active) {
-          track("top_nav", { name: "mentions" });
         }
         break;
       default:

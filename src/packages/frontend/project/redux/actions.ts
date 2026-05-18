@@ -84,7 +84,7 @@ import {
   get_configuration,
 } from "@cocalc/frontend/project_configuration";
 import { ModalInfo, ProjectStore, ProjectStoreState } from "./store";
-import track from "@cocalc/frontend/user-tracking";
+
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
   acquireSharedProjectDStream,
@@ -1147,7 +1147,6 @@ export class ProjectActions extends Actions<ProjectStoreState> {
     // also store this in local storage
     storeFlyoutState(this.project_id, name, { expanded: flyout != null });
     if (flyout != null) {
-      track("flyout", { name: flyout, project_id: this.project_id });
     }
   }
 

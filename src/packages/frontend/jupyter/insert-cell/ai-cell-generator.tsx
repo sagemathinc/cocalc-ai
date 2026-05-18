@@ -16,7 +16,7 @@ import { Icon } from "@cocalc/frontend/components/icon";
 import { useFrameContext } from "@cocalc/frontend/app-framework";
 import type { NotebookFrameActions } from "@cocalc/frontend/frame-editors/jupyter-editor/cell-notebook/actions";
 import { PopupAgentComposer } from "@cocalc/frontend/frame-editors/ai/popup-agent-composer";
-import track from "@cocalc/frontend/user-tracking";
+
 import type { JupyterActions } from "../browser-actions";
 import type { Position } from "./types";
 
@@ -168,7 +168,6 @@ export function AIGenerateCodeCell({
       openFloating: true,
       waitForAgent: false,
     });
-    const position = showAICellGen;
     setShowAICellGen(null);
     void send
       .then((sent) => {
@@ -182,14 +181,6 @@ export function AIGenerateCodeCell({
           usage: "jupyter-generate-cell",
           model: DEFAULT_GENERATE_AGENT_MODEL,
           path,
-        });
-        track("codex", {
-          project_id,
-          path,
-          tag: "generate-jupyter-cell",
-          type: "generate",
-          model: DEFAULT_GENERATE_AGENT_MODEL,
-          position,
         });
       })
       .catch((err) => {

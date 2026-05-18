@@ -910,10 +910,6 @@ async function logClientError(_opts?: { event?: string; error?: string }) {
   // No-op in lite mode.
 }
 
-async function userTracking(_opts?: { event?: string; value?: object }) {
-  // No-op in lite mode.
-}
-
 async function webappError(_opts?: object) {
   // No-op in lite mode.
 }
@@ -1434,7 +1430,6 @@ export const hubApi: HubApi = {
     getCodexLocalStatus,
     getFrontendSourceFingerprint: getFrontendSourceFingerprintInfo,
     logClientError,
-    userTracking,
     webappError,
     upsertBrowserSession,
     listBrowserSessions,

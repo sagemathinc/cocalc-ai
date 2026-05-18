@@ -37,8 +37,6 @@ jest.mock("@cocalc/frontend/project/new/navigator-intents", () => ({
   submitNavigatorPromptToCurrentThread: jest.fn(),
 }));
 
-jest.mock("@cocalc/frontend/user-tracking", () => jest.fn());
-
 jest.mock("@cocalc/frontend/components/run-button/kernel-star", () => ({
   KernelStar: () => null,
 }));

@@ -37,7 +37,7 @@ import {
   to_search_string,
 } from "@cocalc/frontend/project/history/types";
 import { handleFileEntryClick } from "@cocalc/frontend/project/history/utils";
-import track from "@cocalc/frontend/user-tracking";
+
 import { User } from "@cocalc/frontend/users";
 import {
   search_match,
@@ -453,11 +453,6 @@ export function LogFlyout({
         multiline={true}
         selected={!scrollIdxHide && index === scrollIdx}
         onClick={(e) => {
-          track("open-file", {
-            project_id,
-            path,
-            how: "click-on-log-file-flyout",
-          });
           handleFileEntryClick(e, path, project_id);
         }}
         onMouseDown={(e: React.MouseEvent) => {
@@ -531,11 +526,7 @@ export function LogFlyout({
     if (mode !== "files") return;
     const file: OpenedFile = log[index];
     if (file == null) return;
-    track("open-file", {
-      project_id,
-      path: file.filename,
-      how: "keypress-on-log-file-flyout",
-    });
+
     handleFileEntryClick(e, file.filename, project_id);
   }
 

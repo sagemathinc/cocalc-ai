@@ -12,7 +12,6 @@
 
 import { Button } from "antd";
 import { Icon } from "@cocalc/frontend/components";
-import track from "@cocalc/frontend/user-tracking";
 
 export function OpenSnapshots({ actions }) {
   return (
@@ -20,7 +19,6 @@ export function OpenSnapshots({ actions }) {
       size="small"
       onClick={() => {
         actions.open_snapshots();
-        track("snapshots", { action: "open", where: "time-travel" });
       }}
       title={
         "Open the file system snapshots of this project, which may also be helpful in recovering past versions."

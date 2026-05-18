@@ -75,7 +75,6 @@ export const system = {
   getProjectHostParallelOpsLimit: authFirst,
   setParallelOpsLimit: authFirst,
   clearParallelOpsLimit: authFirst,
-  userTracking: authFirst,
   recordBrowserAutomationAudit: authFirstRequireAccount,
   logClientError: authFirst,
   webappError: authFirst,
@@ -1571,12 +1570,6 @@ export interface System {
     worker_kind: string;
     scope_type?: "global" | "provider" | "project_host";
     scope_id?: string;
-  }) => Promise<void>;
-
-  userTracking: (opts: {
-    event: string;
-    value: object;
-    account_id?: string;
   }) => Promise<void>;
 
   recordBrowserAutomationAudit: (opts: {

@@ -41,7 +41,7 @@ import { IntlMessage, isIntlMessage, labels } from "@cocalc/frontend/i18n";
 import type { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
 import { ACTIVITY_BAR_TOGGLE_LABELS } from "@cocalc/frontend/project/page/activity-bar-consts";
 import { AvailableFeatures } from "@cocalc/frontend/project_configuration";
-import userTracking from "@cocalc/frontend/user-tracking";
+
 import { copy, field_cmp, path_split, trunc_middle } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
 import { BaseEditorActions as Actions } from "../base-editor/actions-base";
@@ -195,18 +195,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         : (props.spec?.short ?? props.type),
     } satisfies FrameDragData,
   });
-  const track = useMemo(() => {
-    const { project_id, path } = props;
-    return (action: string) => {
-      userTracking("frame-tree", {
-        project_id,
-        path,
-        action,
-        type: props.type,
-      });
-    };
-  }, [props.project_id, props.path]);
-
   const intl = useIntl();
 
   const [showMainButtonsPopover, setShowMainButtonsPopover] =
@@ -379,7 +367,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           type="text"
           disabled={terminalsDisabled}
           onClick={() => {
-            track("terminal");
             props.actions.terminal(props.id);
           }}
         >
@@ -435,7 +422,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
             size="small"
             type="text"
             onClick={() => {
-              track("unset-full");
               props.actions.unset_frame_full();
             }}
             style={{
@@ -462,7 +448,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
             size="small"
             type="text"
             onClick={() => {
-              track("set-full");
               props.actions.set_frame_full(props.id);
             }}
           >
@@ -485,10 +470,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           onClick={(e) => {
             e.stopPropagation();
             if (props.is_full) {
-              track("unset-full");
               return props.actions.unset_frame_full();
             } else {
-              track("split-row");
               return props.actions.split_frame("row", props.id);
             }
           }}
@@ -509,10 +492,8 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
           onClick={(e) => {
             e.stopPropagation();
             if (props.is_full) {
-              track("unset-full");
               return props.actions.unset_frame_full();
             } else {
-              track("split-col");
               return props.actions.split_frame("col", props.id);
             }
           }}
@@ -564,7 +545,6 @@ export function FrameTitleBar(props: FrameTitleBarProps) {
         size={button_size()}
         onClick={(event) => {
           try {
-            track("time-travel");
             if (props.actions.name != props.editor_actions.name) {
               // a subframe editor -- always open time travel in a name tab.
               props.editor_actions.time_travel({ frame: false });

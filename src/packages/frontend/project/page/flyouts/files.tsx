@@ -28,7 +28,7 @@ import {
   DirectoryListingEntry,
   FileMap,
 } from "@cocalc/frontend/project/explorer/types";
-import track from "@cocalc/frontend/user-tracking";
+
 import {
   capitalize,
   filename_extension,
@@ -576,11 +576,7 @@ export function FilesFlyout({
           return;
         }
         const foreground = should_open_in_foreground(e as React.MouseEvent);
-        track("open-file", {
-          project_id,
-          path: fullPath,
-          how: "click-on-listing-flyout",
-        });
+
         actions?.open_file({
           path: fullPath,
           foreground,
